@@ -22,9 +22,9 @@ add_definitions(-D_THREAD_SAFE)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING
-    "Choose the type of build, options are: Debug Release RelWithDebInfo MinSizeRel."
-    FORCE)
-endif(NOT CMAKE_BUILD_TYPE)
+          "Choose the type of build, options are: Debug Release RelWithDebInfo MinSizeRel."
+          FORCE)
+endif (NOT CMAKE_BUILD_TYPE)
 
 find_library(NCDF NAMES netcdf PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/)
 find_package(Boost)
@@ -32,6 +32,9 @@ find_package(CGAL COMPONENTS Core)
 include(${CGAL_USE_FILE})
 
 add_library(sphere_database sphere_database.d netcdf.d)
+target_link_libraries(sphere_database ${NCDF})
+add_library(interpolator interpolator.cpp)
+target_link_libraries(interpolator ${CGAL})
 
-add_executable(caeser caeserdemo.d)
-target_link_libraries(caeser ${NCDF} sphere_database)
+add_executable(eqsam_demo eqsam_demo.d)
+target_link_libraries(eqsam_demo sphere_database interpolator)
