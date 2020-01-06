@@ -78,10 +78,10 @@ private __gshared static char[1] emptyStr;
  * same thing everywhere. */
 /**@{*/
 enum byte NC_MAX_BYTE     = 127;
-enum byte NC_MIN_BYTE     = -NC_MAX_BYTE-1;
+enum byte NC_MIN_BYTE     = -1 - NC_MAX_BYTE;
 enum char NC_MAX_CHAR     = 255;
 enum short NC_MAX_SHORT   = 32767;
-enum short NC_MIN_SHORT   = -NC_MAX_SHORT - 1;
+enum short NC_MIN_SHORT   = -1 - NC_MAX_SHORT;
 enum int NC_MAX_INT       = 2147483647;
 enum int NC_MIN_INT       = -NC_MAX_INT - 1;
 enum float NC_MAX_FLOAT   = 3.402823466e+38;
