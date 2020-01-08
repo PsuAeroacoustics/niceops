@@ -1,13 +1,15 @@
 module sphere_database;
 
-import std.stdio;
 import std.math;
-import std.array;
-import std.algorithm.sorting;
-import std.algorithm.iteration;
-import std.algorithm.searching;
-import std.string;
+import std.numeric : findRoot;
+import std.array : array, staticArray;
+import std.algorithm.sorting : sort;
+import std.algorithm.iteration : uniq, map, each, sum;
+import std.algorithm.searching : minElement, maxElement, until;
+import std.range : zip;
+import std.string : toStringz;
 import std.experimental.logger;
+import std.traits : isFloatingPoint;
 import netcdf;
 
 // Declare "C" functions from interpolator
@@ -52,7 +54,7 @@ private int get_array(T)(int ncid, string variable_name, size_t countp, ref T[] 
     auto status = nc_inq_varid( ncid, variable_name.toStringz, &varid);
     if (NC_NOERR != status)
     {
-        log( "Could not find variable ", variable_name, " in ncid ", ncid, ".");
+        info( "Could not find variable ", variable_name, " in ncid ", ncid, ".");
     }
     else
     {
@@ -115,6 +117,76 @@ size_t i_theta, in double[4] weights, in size_t[4] indicies)
     * metric[i_phi][i_theta][indicies[2]] + weights[3] * metric[i_phi][i_theta][indicies[3]];
 }
 
+private T dot(T)(in T[] x, in T[] y)
+{
+    return zip( x, y).map!"a[0]*a[1]".sum();
+}
+
+private T norm(T)(in T[] x)
+{
+    return sqrt( x.dot( x));
+}
+
+private T[] normalize(T)(in T[] x)
+{
+    return map!(a => a / x.norm())( x).array();
+}
+
+private T[3] cross(T)(in T[] x, in T[] y)
+{
+    assert(x.length == 3 && y.length == 3);
+    return [
+    x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2],
+    x[0] * y[1] - x[1] * y[0]
+    ].staticArray;
+}
+
+private T acosc(T)(T x)
+{
+    if (x > 1.0)
+        x = 1.0;
+    else if (x < -1.0)
+        x = -1.0;
+    return acos( x);
+}
+
+private double[2] lookup_angles(double[3] source, double[3] velocity,
+double[3] normal, double[3] observer)
+{
+    double[3] r, vn, rp;
+    r[] = observer[] - source[];
+    r = r.normalize();
+    auto n = normal.normalize();
+    // Elevation angle (positive above TPP)
+    auto elv = asin( fabs( n.dot( r)));
+    //Project velocity vector onto TPP to get a "nose" vector
+    auto v = velocity.normalize();
+    vn = v.dot( n) * n[];
+    vn = v[] - vn[];
+    vn = normalize( vn);
+    // Sphere theta angle is relative to projection of velocity onto TPP
+    auto theta = acosc( vn.dot( r));
+    //Define starboard as the cross product of the "nose"" and the TPP normal
+    auto pn = vn.cross( n);
+    //Project the propagation vector onto the plane normal to the "nose"
+    rp = r.dot( vn) * vn[];
+    rp = r[] - rp[];
+    rp = normalize( rp);
+    //Then, we can get sphere phi by computing the angle of the propagation vector in the plane
+    auto phi = acosc( fabs( n.dot( rp)));
+    // Sign is still uncertain, so check to see where we are in relation to starboard
+    auto phi_p = acosc( pn.dot( rp) / pn.norm());
+    //If we're more than 90 degrees away, phi is defined negative
+    if (phi_p > 0.5 * PI)
+    {
+        phi = -phi;
+    }
+    // Convert to degrees and return phi and theta packed in an array
+    phi *= 180.0 / PI;
+    theta *= 180.0 / PI;
+    return [ phi, theta].staticArray;
+}
+
 class Database
 {
     double[] phis;
@@ -130,15 +202,15 @@ class Database
 
         // Open netCDF file
         int file_ncid;
-        log( "Opening netCDF file: " ~ datafile_path);
+        info( "Opening netCDF file: " ~ datafile_path);
         if (NC_NOERR != nc_open( datafile_path.toStringz, NC_NOWRITE, &file_ncid))
         {
             fatal( "Can't open netCDF file at " ~ datafile_path);
         }
         scope (exit)
         {
-            log("Closing netCDF file: " ~ datafile_path);
-            nc_close(file_ncid);
+            info( "Closing netCDF file: " ~ datafile_path);
+            nc_close( file_ncid);
         }
 
         // Check for "same_grid" flag to detirmine if interpolation is required
@@ -146,7 +218,7 @@ class Database
         int same_grid_flag;
         get_scalar( file_ncid, "same_grid", same_grid_flag);
         same_grid = same_grid_flag ? true : false;
-        log( "same_grid is set to: ", same_grid);
+        info( "same_grid is set to: ", same_grid);
 
         // TODO: Enable interpolation when same_grid == false
         if (!same_grid)
@@ -162,9 +234,9 @@ class Database
         auto group_ids = new int[numgroups];
         if (NC_NOERR != nc_inq_grps( file_ncid, &numgroups, group_ids.ptr))
         {
-            fatal("Cannot get number of netCDF groups.");
+            fatal( "Cannot get number of netCDF groups.");
         }
-        log("There are ", numgroups, " groups.");
+        info( "There are ", numgroups, " groups.");
 
         // Allocate storage for operating conditions
         double[] advance_ratios, flight_path_angles, thrust_coefficients;
@@ -187,7 +259,7 @@ class Database
             advance_ratios ~= advance_ratio;
             flight_path_angles ~= flight_path_angle;
             thrust_coefficients ~= thrust_coefficient;
-            log( "Sphere ", group_id, " loaded with \t μ = ", advance_ratios[i],
+            trace( "Sphere ", group_id, " loaded with \t μ = ", advance_ratios[i],
             ",\t γ = ", flight_path_angles[i], ",\t CT = ",
             thrust_coefficients[i], ",\t scale = ", scale, ",\t radius = ", radius);
             if (i == 0)
@@ -213,7 +285,7 @@ class Database
             {
                 // Record number of channels to check for changes
                 nchannels0 = nchannels;
-                log( "First sphere contains ", nchannels, " channels.");
+                info( "First sphere contains ", nchannels, " channels.");
                 // Allocate arrays to store scattered data
                 phis_scattered = new double[]( nchannels);
                 thetas_scattered = new double[]( nchannels);
@@ -221,14 +293,14 @@ class Database
                 EAAs_scattered = new double[]( nchannels);
                 // Get scattered phi and theta
                 require_array( group_id, "phi", phis_scattered.length, phis_scattered);
-                log( "The original phi values are:\n", phis_scattered);
+                trace( "The original phi values are:\n", phis_scattered);
                 require_array( group_id, "theta", thetas_scattered.length, thetas_scattered);
-                log( "The original theta values are:\n", thetas_scattered);
+                trace( "The original theta values are:\n", thetas_scattered);
                 //Sort and identify unique elements
                 phis = phis_scattered.dup.sort().uniq().array();
                 thetas = thetas_scattered.dup.sort().uniq().array();
-                log( "The ", phis.length, " unique phi values are:\n", phis);
-                log( "The ", thetas.length, " unique theta values are:\n", thetas);
+                info( "The ", phis.length, " unique phi values are:\n", phis);
+                info( "The ", thetas.length, " unique theta values are:\n", thetas);
                 // Allocate noise level matricies
                 dBA = new double[][][]( phis.length, thetas.length, group_ids.length);
                 EAA = new double[][][]( phis.length, thetas.length, group_ids.length);
@@ -273,20 +345,20 @@ class Database
         flight_path_angle_min = flight_path_angles.minElement;
         thrust_coefficient_max = thrust_coefficients.maxElement;
         thrust_coefficient_min = thrust_coefficients.minElement;
-        log( "Operating condition ranges are:\n", "μ  = [", advance_ratio_min,
+        info( "Operating condition ranges are:\n", "μ  = [", advance_ratio_min,
         " , ", advance_ratio_max, "]\n", "γ  = [", flight_path_angle_min,
         " , ", flight_path_angle_max, "]\n", "CT = [",
         thrust_coefficient_min, " , ", thrust_coefficient_max, "]\n");
         // Normalize operating conditions
         advance_ratios.each!((ref x) => x = (x - advance_ratio_min) / (
         advance_ratio_max - advance_ratio_min));
-        log( "Normalized μ   = ", advance_ratios);
+        trace( "Normalized μ   = ", advance_ratios);
         flight_path_angles.each!((ref x) => x = (x - flight_path_angle_min) / (
         flight_path_angle_max - flight_path_angle_min));
-        log( "Normalized γ   = ", flight_path_angles);
+        trace( "Normalized γ   = ", flight_path_angles);
         thrust_coefficients.each!((ref x) => x = (x - thrust_coefficient_min) / (
         thrust_coefficient_max - thrust_coefficient_min));
-        log( "Normalized CT  = ", thrust_coefficients);
+        trace( "Normalized CT  = ", thrust_coefficients);
 
         if (set_interpolator3( advance_ratios.length, advance_ratios.ptr,
         flight_path_angles.ptr, thrust_coefficients.ptr))
@@ -301,8 +373,8 @@ class Database
         // Find the sphere grid points bounding the desired phi, theta
         auto phi_range = bracket( phis, phi);
         auto theta_range = bracket( thetas, theta);
-        log( "Found phi (", phi, ") in range ", phis[phi_range[0]], " -- ", phis[phi_range[1]]);
-        log( "Found theta (", theta, ") in range ", thetas[theta_range[0]],
+        trace( "Found phi (", phi, ") in range ", phis[phi_range[0]], " -- ", phis[phi_range[1]]);
+        trace( "Found theta (", theta, ") in range ", thetas[theta_range[0]],
         " -- ", thetas[theta_range[1]]);
 
         // Normalize flight condition and limit range to [0.0,1.0]
@@ -312,7 +384,7 @@ class Database
         flight_path_angle_max - flight_path_angle_min));
         thrust_coefficient = clamp( (thrust_coefficient - thrust_coefficient_min) / (
         thrust_coefficient_max - thrust_coefficient_min));
-        log( "Normalized operating condition is: ", "μ  = ", advance_ratio,
+        trace( "Normalized operating condition is: ", "μ  = ", advance_ratio,
         ", γ  = ", flight_path_angle, ", CT = ", thrust_coefficient);
 
         // Get barycentric weights and indicies
@@ -325,7 +397,7 @@ class Database
         }
         else
         {
-            log( "Barycentric weights: ", weights, " and indicies ", indicies);
+            trace( "Barycentric weights: ", weights, " and indicies ", indicies);
         }
         // Barycentric interpolation between conditions at each gridpoint
         auto d11 = barycentric_interp( dBA, phi_range[0], theta_range[0], weights, indicies);
@@ -343,18 +415,110 @@ class Database
         auto t2 = thetas[theta_range[1]];
         auto sphere_level = bilinear_interp( d11, d12, d21, d22, p1, p2, t1, t2, phi, theta);
         auto excess_factor = bilinear_interp( e11, e12, e21, e22, p1, p2, t1, t2, phi, theta);
-        log( "Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
+        trace( "Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
         //Apply spherical spreading and excess atmospheric absorption to surface level
         auto excess_attenuation = excess_factor * (range - sphere_radius) / 1000.0;
         auto spreading_loss = 20.0 * log10( range / sphere_radius);
-        log( "Spreading Loss (dB): ", spreading_loss,
+        trace( "Spreading Loss (dB): ", spreading_loss,
         "\tExcess Attenuation (dB): ", excess_attenuation);
         assert(isFinite( sphere_level));
         assert(isFinite( excess_factor));
         assert(isFinite( excess_attenuation));
         assert(isFinite( spreading_loss));
         auto ground_level = sphere_level - spreading_loss - excess_attenuation;
-        log( "Ground level: ", ground_level);
+        trace( "Ground level: ", ground_level);
         return ground_level;
+    }
+
+    double level_at_observer(double[3] observer, double[3] source, double[3] velocity,
+    double[3] normal, double advance_ratio, double flight_path_angle,
+    double thrust_coefficient)
+    {
+        double[3] r;
+        r[] = observer[] - source[];
+        auto slant_range = r.norm();
+        trace( "R = ", slant_range, " for r = ", r);
+        auto angles = lookup_angles( source, velocity, normal, observer);
+        trace( "Looked up [phi,theta] = ", angles);
+        assert(isFinite( angles[0]) && isFinite( angles[1]));
+        auto level = eval( slant_range, angles[0], angles[1], advance_ratio,
+        flight_path_angle, thrust_coefficient);
+        assert(isFinite( level));
+        return level;
+    }
+
+    double level_along_bearing(double range, double bearing, double altitude, double[3] velocity,
+    double[3] normal, double advance_ratio, double flight_path_angle,
+    double thrust_coefficient)
+    {
+        bearing *= PI / 180.0;
+        // Define ground velocity, and get heading vector from it
+        double[2] ground_velocity = [velocity[0], velocity[1]];
+        double[2] heading = ground_velocity.normalize();
+        // Place observer on ground at heading rotated by bearing
+        double[3] observer = [
+        range * (cos( bearing) * heading[0] + sin( bearing) * heading[1]),
+        range * (sin( -bearing) * heading[0] + cos( bearing) * heading[0]), 0.0
+        ];
+        // Put source at altitude above ground
+        double[3] source = [0.0, 0.0, altitude];
+        return level_at_observer( observer, source, velocity, normal,
+        advance_ratio, flight_path_angle, thrust_coefficient);
+    }
+
+    double zero_range_level(double altitude, double[3] velocity, double[3] normal,
+    double advance_ratio, double flight_path_angle, double thrust_coefficient)
+    {
+        double[3] observer = [0., 0., 0.];
+        double[3] source = [0., 0., altitude];
+        return level_at_observer( observer, source, velocity, normal,
+        advance_ratio, flight_path_angle, thrust_coefficient);
+    }
+
+    double find_range(double contour_level, double bearing, double altitude, double[3] velocity, double[3] normal,
+    double advance_ratio, double flight_path_angle,
+    double thrust_coefficient, double threshold, bool zero_range_check)
+    {
+        //Check if level directly below sphere (i.e. range = 0) is above the requested contour level.
+        auto zero_level = zero_range_level( altitude, velocity, normal,
+        advance_ratio, flight_path_angle, thrust_coefficient);
+        trace( "Zero range level is: ", zero_level);
+        //Initialize range to zero
+        auto range = 0.0;
+        //If level is greater than contour level, then search for the range associated with the contour level.
+        if (!zero_range_check || zero_level > contour_level)
+        {
+            trace( "Proceeding, zero range level above contour level.");
+            // Range error
+            double residual(double x)
+            {
+                auto level = level_along_bearing( x, bearing, altitude, velocity,
+                normal, advance_ratio, flight_path_angle, thrust_coefficient);
+                return level - contour_level;
+            }
+            // Tolerance function
+            bool tolerance(double a, double b)
+            {
+                return fabs( a - b) <= threshold;
+            }
+            // TODO: Check initial bracketing
+            immutable double range_max = 10000;
+            range = findRoot( &residual, 0.0, range_max, &tolerance);
+            trace( "Found range: ", range);
+            //Verify solution if zero_range_check is false
+            if (!zero_range_check)
+            {
+                auto check_level = level_along_bearing( range, bearing, altitude, velocity,
+                normal, advance_ratio, flight_path_angle, thrust_coefficient);
+                trace( "Check level: ", check_level);
+                if (check_level < (contour_level - threshold))
+                {
+                    //Bad solution, set range back to zero
+                    range = 0.0;
+                    trace( "Reset bad range to 0.0.");
+                }
+            }
+        }
+        return range;
     }
 }
