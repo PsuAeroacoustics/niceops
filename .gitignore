@@ -1,0 +1,11 @@
+CMakeCache.txt
+CMakeFiles
+cmake_install.cmake
+*.cbp
+.DS_Store
+Makefile
+.idea
+*~
+*.log
+*.a
+*.o
