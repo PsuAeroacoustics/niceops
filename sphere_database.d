@@ -21,6 +21,33 @@ extern (C)
             double x1, double x2, double y1, double y2, double x, double y);
 }
 
+unittest
+{
+    //Test bilinear interpolation
+    auto x1 = -1.0;
+    auto x2 = 1.0;
+    auto y1 = -1.0;
+    auto y2 = 1.0;
+    auto q11 = 0.0;
+    auto q22 = 1.0;
+    auto q12 = 0.5;
+    auto q21 = 0.5;
+    auto midpoint = bilinear_interp(q11, q12, q21, q22, x1, x2, y1, y2, 0.5, 0.5);
+    assert(midpoint <= 1.0);
+    assert(midpoint >= -1.0);
+
+    x1 = 1.0;
+    x2 = 1.0;
+    y1 = -1.0;
+    y2 = 1.0;
+    q11 = 0.0;
+    q22 = 1.0;
+    q12 = 1.0;
+    q21 = 0.0;
+    midpoint = bilinear_interp(q11, q12, q21, q22, x1, x2, y1, y2, 0.0, 0.0);
+    assert(approxEqual(midpoint, 0.5));
+}
+
 private int get_scalar(T)(int ncid, string variable_name, ref T value)
 {
     int varid;
@@ -104,9 +131,39 @@ private size_t[2] bracket(T)(T[] a, T val)
     return bracket;
 }
 
+unittest
+{
+    import std.range : iota;
+
+    auto test_range = iota(-90.0, 180.0, 5.0).array();
+    auto target = 10.0;
+    auto brack = bracket(test_range, target);
+    // A matching value in the range
+    assert(test_range[brack[0]] <= target && test_range[brack[1]] >= target);
+    // A bracketed value
+    target = 2.345;
+    brack = bracket(test_range, target);
+    assert(test_range[brack[0]] <= target && test_range[brack[1]] >= target);
+    // at lower limit
+    target = 0.0;
+    brack = bracket(test_range, target);
+    assert(test_range[brack[0]] <= target && test_range[brack[1]] >= target);
+    // wrap around upper limit
+    target = 180.0;
+    brack = bracket(test_range, target);
+    assert(test_range[brack[0]] <= target && brack[1] == 0);
+}
+
 private T clamp(T)(T x)
 {
     return x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x);
+}
+
+unittest
+{
+    assert(clamp(0.5) == 0.5);
+    assert(clamp(-10.) == 0.);
+    assert(clamp(2.3) == 1.0);
 }
 
 private double barycentric_interp(in double[][][] metric, size_t i_phi,
@@ -122,14 +179,29 @@ private T dot(T)(in T[] x, in T[] y)
     return zip(x, y).map!"a[0]*a[1]".sum();
 }
 
+unittest
+{
+    assert(dot([1, 2, 3], [-1, 2, 1]) == 6);
+}
+
 private T norm(T)(in T[] x)
 {
     return sqrt(x.dot(x));
 }
 
+unittest
+{
+    assert(approxEqual(norm([1., 2., 3.]), sqrt(1. ^^ 2 + 2. ^^ 2 + 3. ^^ 2)));
+}
+
 private T[] normalize(T)(in T[] x)
 {
     return map!(a => a / x.norm())(x).array();
+}
+
+unittest
+{
+    assert(approxEqual(norm([1., 2., 3., 4.].normalize()), 1.0));
 }
 
 private T[3] cross(T)(in T[] x, in T[] y)
@@ -141,13 +213,32 @@ private T[3] cross(T)(in T[] x, in T[] y)
     ].staticArray;
 }
 
+unittest
+{
+    auto x = cross([1.0, 2.0, 3.0], [3.0, 1.0, 2.0]);
+    assert(approxEqual(x[0], 1.0));
+    assert(approxEqual(x[1], 7.0));
+    assert(approxEqual(x[2], -5.0));
+}
+
 private T acosc(T)(T x)
 {
     if (x > 1.0)
+    {
         x = 1.0;
+    }
     else if (x < -1.0)
+    {
         x = -1.0;
+    }
     return acos(x);
+}
+
+unittest
+{
+    assert(acosc(0.5) == acos(0.5));
+    assert(acosc(10.0) == acos(1.0));
+    assert(acosc(-10.0) == acos(-1.0));
 }
 
 private double[2] lookup_angles(double[3] source, double[3] velocity,
@@ -185,6 +276,54 @@ private double[2] lookup_angles(double[3] source, double[3] velocity,
     phi *= 180.0 / PI;
     theta *= 180.0 / PI;
     return [phi, theta].staticArray;
+}
+
+unittest
+{
+    immutable r = 123.456;
+    double[3] source, observer, velocity1, velocity2, velocity3, velocity4,
+        normal1, normal2, normal3, normal4, normal5;
+    source = [0, 0, r];
+    observer = [r, 0, 0];
+    velocity1 = [1, 0, 0];
+    velocity2 = [0, 1, 0];
+    velocity3 = [0, -1, 0];
+    velocity4 = [-1, 0, 0];
+    normal1 = [0, 0, 1];
+    normal2 = [sqrt(2.), 0, sqrt(2.)];
+    normal3 = [-sqrt(2.), 0, sqrt(2.)];
+    normal4 = [0, sqrt(2.), sqrt(2.)];
+    normal5 = [0, -sqrt(2.), sqrt(2.)];
+
+    //Check various headings only
+    auto angles = lookup_angles(source, velocity1, normal1, observer);
+    assert(approxEqual(angles[0], 0.0) && approxEqual(angles[1], 45.0));
+    angles = lookup_angles(source, velocity2, normal1, observer);
+    assert(approxEqual(angles[0], 45.0) && approxEqual(angles[1], 90.0));
+    angles = lookup_angles(source, velocity3, normal1, observer);
+    assert(approxEqual(angles[0], -45.0) && approxEqual(angles[1], 90.0));
+    angles = lookup_angles(source, velocity4, normal1, observer);
+    assert(approxEqual(angles[0], 0.0) && approxEqual(angles[1], 135.0));
+
+    //Check various TPP tilt / heading combinations
+    angles = lookup_angles(source, velocity1, normal2, observer);
+    assert(approxEqual(angles[1], 0.0));
+    angles = lookup_angles(source, velocity2, normal2, observer);
+    assert(approxEqual(angles[0], 90.0) && approxEqual(angles[1], 90.0));
+    angles = lookup_angles(source, velocity3, normal2, observer);
+    assert(approxEqual(angles[0], -90.0) && approxEqual(angles[1], 90.0));
+    angles = lookup_angles(source, velocity1, normal3, observer);
+    assert(approxEqual(angles[0], 0.0) && approxEqual(angles[1], 90.0));
+    angles = lookup_angles(source, velocity2, normal3, observer);
+    assert(approxEqual(angles[0], 0.0) && approxEqual(angles[1], 90.0));
+    angles = lookup_angles(source, velocity3, normal3, observer);
+    assert(approxEqual(angles[0], 0.0) && approxEqual(angles[1], 90.0));
+    angles = lookup_angles(source, velocity2, normal2, observer);
+    assert(approxEqual(angles[0], 90.0) && approxEqual(angles[1], 90.0));
+    angles = lookup_angles(source, velocity1, normal4, observer);
+    assert(approxEqual(angles[0], -45.0) && approxEqual(angles[1], 45.0));
+    angles = lookup_angles(source, velocity1, normal5, observer);
+    assert(approxEqual(angles[0], 45.0) && approxEqual(angles[1], 45.0));
 }
 
 class Database
