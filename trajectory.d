@@ -10,7 +10,7 @@ import std.array;
 import std.uni : toLower;
 import std.math : isNaN, sqrt;
 
-immutable fps2g = 1.0/32.17405;
+immutable fps2g = 1.0 / 32.17405;
 
 class Trajectory
 {
@@ -27,6 +27,7 @@ class Trajectory
         double ny;
         double nz;
     }
+
     double utcstart;
     State[] states;
     this(string filename)
@@ -39,7 +40,7 @@ class Trajectory
             {
                 trace( "Loading " ~ filename ~ " as CSV.");
                 auto contents = readText( filename);
-                auto records  = csvReader!(double)( contents,null);
+                auto records = csvReader!(double)( contents, null);
 
                 foreach (record; records)
                 {
@@ -64,12 +65,12 @@ class Trajectory
                         now.ny = data[22] * fps2g;
                         now.nz = (data[23] * fps2g + 1.0);
                         //Normalize
-                        auto magnitude = 1.0/sqrt( now.nx^^2 + now.ny^^2 + now.nz^^2);
+                        auto magnitude = 1.0 / sqrt( now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
                         now.nx *= magnitude;
                         now.ny *= magnitude;
                         now.nz *= magnitude;
                         states ~= now;
-                        trace( "Parsed state: ", states[$-1]);
+                        trace( "Parsed state: ", states[$ - 1]);
                     }
                     else
                     {
