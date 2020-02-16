@@ -336,9 +336,6 @@ class Database
         flight_path_angle_max, thrust_coefficient_min, thrust_coefficient_max, max_level;
     this(string datafile_path)
     {
-        //Activate logging
-        sharedLog = new FileLogger("sphere_database.log");
-
         // Open netCDF file
         int file_ncid;
         info("Opening netCDF file: " ~ datafile_path);

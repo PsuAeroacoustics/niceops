@@ -35,6 +35,7 @@ add_library(sphere_database sphere_database.d netcdf.d)
 target_link_libraries(sphere_database ${NCDF})
 add_library(interpolator interpolator.cpp)
 target_link_libraries(interpolator ${CGAL})
+add_library(trajectory trajectory.d splines.d TOMS642.c)
 
 add_executable(eqsam_demo eqsam_demo.d)
-target_link_libraries(eqsam_demo sphere_database interpolator)
+target_link_libraries(eqsam_demo sphere_database interpolator trajectory)

@@ -1,7 +1,13 @@
 import sphere_database : Database;
+import splines : Spline;
+import trajectory : Trajectory;
+import std.experimental.logger;
 
 void main()
 {
+    //Set default logging to file
+    sharedLog = new FileLogger( "plan-ops.log");
+
     auto database = new Database( "databases/B407_M2.nc");
 
     auto range = 1000.;
@@ -29,4 +35,7 @@ void main()
     auto threshold = 1.0;
     auto zero_check = true;
     range = database.find_range( contour_level,bearing,altitude,velocity,normal,mu,fpa,CT,threshold,zero_check);
+
+
+    auto T = new Trajectory( "test.csv");
 }
