@@ -516,11 +516,11 @@ int nc_def_compound(int ncid, size_t size, const(char)* name, nc_type* typeidp);
 
 /* Insert a named field into a compound type. */
 int nc_insert_compound(int ncid, nc_type xtype, const(char)* name,
-size_t offset, nc_type field_typeid);
+        size_t offset, nc_type field_typeid);
 
 /* Insert a named array into a compound type. */
 int nc_insert_array_compound(int ncid, nc_type xtype, const(char)* name,
-size_t offset, nc_type field_typeid, int ndims, const(int)* dim_sizes);
+        size_t offset, nc_type field_typeid, int ndims, const(int)* dim_sizes);
 
 /* Get the name and size of a type. */
 int nc_inq_type(int ncid, nc_type xtype, char* name, size_t* size);
@@ -542,7 +542,7 @@ int nc_inq_compound_nfields(int ncid, nc_type xtype, size_t* nfieldsp);
 
 /* Given the xtype and the fieldid, get all info about it. */
 int nc_inq_compound_field(int ncid, nc_type xtype, int fieldid, char* name,
-size_t* offsetp, nc_type* field_typeidp, int* ndimsp, int* dim_sizesp);
+        size_t* offsetp, nc_type* field_typeidp, int* ndimsp, int* dim_sizesp);
 
 /* Given the typeid and the fieldid, get the name. */
 int nc_inq_compound_fieldname(int ncid, nc_type xtype, int fieldid, char* name);
@@ -604,7 +604,7 @@ int nc_free_string(size_t len, char** data);
 
 /* Find out about a user defined type. */
 int nc_inq_user_type(int ncid, nc_type xtype, char* name, size_t* size,
-nc_type* base_nc_typep, size_t* nfieldsp, int* classp);
+        nc_type* base_nc_typep, size_t* nfieldsp, int* classp);
 
 /* Write an attribute of any type. */
 int nc_put_att(int ncid, int varid, const(char)* name, nc_type xtype, size_t len, const(void)* op);
@@ -625,7 +625,7 @@ int nc_insert_enum(int ncid, nc_type xtype, const(char)* name, const(void)* valu
 /* Get information about an enum type: its name, base type and the
  * number of members defined. */
 int nc_inq_enum(int ncid, nc_type xtype, char* name, nc_type* base_nc_typep,
-size_t* base_sizep, size_t* num_membersp);
+        size_t* base_sizep, size_t* num_membersp);
 
 /* Get information about an enum member: a name and value. Name size
  * will be <= NC_MAX_NAME. */
@@ -656,27 +656,27 @@ int nc_get_var1(int ncid, int varid, const(size_t)* indexp, void* ip);
 
 /* Write an array of values. */
 int nc_put_vara(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(void)* op);
+        const(size_t)* countp, const(void)* op);
 
 /* Read an array of values. */
 int nc_get_vara(int ncid, int varid, const(size_t)* startp, const(size_t)* countp, void* ip);
 
 /* Write slices of an array of values. */
 int nc_put_vars(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(void)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(void)* op);
 
 /* Read slices of an array of values. */
 int nc_get_vars(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, void* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, void* ip);
 
 /* Write mapped slices of an array of values. */
 int nc_put_varm(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(void)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(void)* op);
 
 /* Read mapped slices of an array of values. */
 int nc_get_varm(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, void* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, void* ip);
 
 /* Extra netcdf-4 stuff. */
 
@@ -735,7 +735,7 @@ int nc_set_var_chunk_cache(int ncid, int varid, size_t size, size_t nelems, floa
 
 /* Set the per-variable cache size, nelems, and preemption policy. */
 int nc_get_var_chunk_cache(int ncid, int varid, size_t* sizep,
-size_t* nelemsp, float* preemptionp);
+        size_t* nelemsp, float* preemptionp);
 
 int nc_redef(int ncid);
 
@@ -872,10 +872,10 @@ int nc_get_att_string(int ncid, int varid, const(char)* name, char** ip);
 /* Begin _var */
 
 int nc_def_var(int ncid, const(char)* name, nc_type xtype, int ndims,
-const(int)* dimidsp, int* varidp);
+        const(int)* dimidsp, int* varidp);
 
 int nc_inq_var(int ncid, int varid, char* name, nc_type* xtypep, int* ndimsp,
-int* dimidsp, int* nattsp);
+        int* dimidsp, int* nattsp);
 
 int nc_inq_varid(int ncid, const(char)* name, int* varidp);
 
@@ -952,251 +952,251 @@ int nc_get_var1_string(int ncid, int varid, const(size_t)* indexp, char** ip);
 /* Begin {put,get}_vara */
 
 int nc_put_vara_text(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(char)* op);
+        const(size_t)* countp, const(char)* op);
 
 int nc_get_vara_text(int ncid, int varid, const(size_t)* startp, const(size_t)* countp, char* ip);
 
 int nc_put_vara_ubyte(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ubyte)* op);
+        const(size_t)* countp, const(ubyte)* op);
 
 int nc_get_vara_ubyte(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, ubyte* ip);
+        const(size_t)* countp, ubyte* ip);
 
 int nc_put_vara_schar(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(byte)* op);
+        const(size_t)* countp, const(byte)* op);
 
 int nc_get_vara_schar(int ncid, int varid, const(size_t)* startp, const(size_t)* countp, byte* ip);
 
 int nc_put_vara_short(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(short)* op);
+        const(size_t)* countp, const(short)* op);
 
 int nc_get_vara_short(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, short* ip);
+        const(size_t)* countp, short* ip);
 
 int nc_put_vara_int(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(int)* op);
+        const(size_t)* countp, const(int)* op);
 
 int nc_get_vara_int(int ncid, int varid, const(size_t)* startp, const(size_t)* countp, int* ip);
 
 int nc_put_vara_long(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(c_long)* op);
+        const(size_t)* countp, const(c_long)* op);
 
 int nc_get_vara_long(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, c_long* ip);
+        const(size_t)* countp, c_long* ip);
 
 int nc_put_vara_float(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(float)* op);
+        const(size_t)* countp, const(float)* op);
 
 int nc_get_vara_float(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, float* ip);
+        const(size_t)* countp, float* ip);
 
 int nc_put_vara_double(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(double)* op);
+        const(size_t)* countp, const(double)* op);
 
 int nc_get_vara_double(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, double* ip);
+        const(size_t)* countp, double* ip);
 
 int nc_put_vara_ushort(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ushort)* op);
+        const(size_t)* countp, const(ushort)* op);
 
 int nc_get_vara_ushort(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, ushort* ip);
+        const(size_t)* countp, ushort* ip);
 
 int nc_put_vara_uint(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(uint)* op);
+        const(size_t)* countp, const(uint)* op);
 
 int nc_get_vara_uint(int ncid, int varid, const(size_t)* startp, const(size_t)* countp, uint* ip);
 
 int nc_put_vara_longlong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(long)* op);
+        const(size_t)* countp, const(long)* op);
 
 int nc_get_vara_longlong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, long* ip);
+        const(size_t)* countp, long* ip);
 
 int nc_put_vara_ulonglong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ulong)* op);
+        const(size_t)* countp, const(ulong)* op);
 
 int nc_get_vara_ulonglong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, ulong* ip);
+        const(size_t)* countp, ulong* ip);
 
 int nc_put_vara_string(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(char)** op);
+        const(size_t)* countp, const(char)** op);
 
 int nc_get_vara_string(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, char** ip);
+        const(size_t)* countp, char** ip);
 
 /* End {put,get}_vara */
 /* Begin {put,get}_vars */
 
 int nc_put_vars_text(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(char)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(char)* op);
 
 int nc_get_vars_text(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, char* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, char* ip);
 
 int nc_put_vars_ubyte(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ubyte)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ubyte)* op);
 
 int nc_get_vars_ubyte(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, ubyte* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, ubyte* ip);
 
 int nc_put_vars_schar(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(byte)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(byte)* op);
 
 int nc_get_vars_schar(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, byte* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, byte* ip);
 
 int nc_put_vars_short(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(short)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(short)* op);
 
 int nc_get_vars_short(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, short* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, short* ip);
 
 int nc_put_vars_int(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(int)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(int)* op);
 
 int nc_get_vars_int(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, int* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, int* ip);
 
 int nc_put_vars_long(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(c_long)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(c_long)* op);
 
 int nc_get_vars_long(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, c_long* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, c_long* ip);
 
 int nc_put_vars_float(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(float)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(float)* op);
 
 int nc_get_vars_float(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, float* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, float* ip);
 
 int nc_put_vars_double(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(double)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(double)* op);
 
 int nc_get_vars_double(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, double* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, double* ip);
 
 int nc_put_vars_ushort(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ushort)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ushort)* op);
 
 int nc_get_vars_ushort(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, ushort* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, ushort* ip);
 
 int nc_put_vars_uint(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(uint)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(uint)* op);
 
 int nc_get_vars_uint(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, uint* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, uint* ip);
 
 int nc_put_vars_longlong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(long)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(long)* op);
 
 int nc_get_vars_longlong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, long* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, long* ip);
 
 int nc_put_vars_ulonglong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ulong)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ulong)* op);
 
 int nc_get_vars_ulonglong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, ulong* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, ulong* ip);
 
 int nc_put_vars_string(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(char)** op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(char)** op);
 
 int nc_get_vars_string(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, char** ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, char** ip);
 
 /* End {put,get}_vars */
 /* Begin {put,get}_varm */
 
 int nc_put_varm_text(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(char)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(char)* op);
 
 int nc_get_varm_text(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, char* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, char* ip);
 
 int nc_put_varm_ubyte(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(ubyte)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(ubyte)* op);
 
 int nc_get_varm_ubyte(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, ubyte* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, ubyte* ip);
 
 int nc_put_varm_schar(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(byte)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(byte)* op);
 
 int nc_get_varm_schar(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, byte* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, byte* ip);
 
 int nc_put_varm_short(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(short)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(short)* op);
 
 int nc_get_varm_short(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, short* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, short* ip);
 
 int nc_put_varm_int(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, const(int)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, const(int)* op);
 
 int nc_get_varm_int(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, int* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, int* ip);
 
 int nc_put_varm_long(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(c_long)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(c_long)* op);
 
 int nc_get_varm_long(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, c_long* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, c_long* ip);
 
 int nc_put_varm_float(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(float)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(float)* op);
 
 int nc_get_varm_float(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, float* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, float* ip);
 
 int nc_put_varm_double(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(double)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(double)* op);
 
 int nc_get_varm_double(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, double* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, double* ip);
 
 int nc_put_varm_ushort(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(ushort)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(ushort)* op);
 
 int nc_get_varm_ushort(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, ushort* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, ushort* ip);
 
 int nc_put_varm_uint(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(uint)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(uint)* op);
 
 int nc_get_varm_uint(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, uint* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, uint* ip);
 
 int nc_put_varm_longlong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, const long* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, const long* op);
 
 int nc_get_varm_longlong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, long* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, long* ip);
 
 int nc_put_varm_ulonglong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(ulong)* op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(ulong)* op);
 
 int nc_get_varm_ulonglong(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, ulong* ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, ulong* ip);
 
 int nc_put_varm_string(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep,
-const(ptrdiff_t)* imapp, const(char)** op);
+        const(size_t)* countp, const(ptrdiff_t)* stridep,
+        const(ptrdiff_t)* imapp, const(char)** op);
 
 int nc_get_varm_string(int ncid, int varid, const(size_t)* startp,
-const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, char** ip);
+        const(size_t)* countp, const(ptrdiff_t)* stridep, const(ptrdiff_t)* imapp, char** ip);
 
 /* End {put,get}_varm */
 /* Begin {put,get}_var */

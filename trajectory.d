@@ -32,15 +32,15 @@ class Trajectory
     State[] states;
     this(string filename)
     {
-        auto extension = filename.splitter( '.').retro.take( 1).array()[0];
-        info( "Opening file " ~ filename ~ " with extension ", extension);
-        switch (toLower( extension))
+        auto extension = filename.splitter('.').retro.take(1).array()[0];
+        info("Opening file " ~ filename ~ " with extension ", extension);
+        switch (toLower(extension))
         {
-            case "csv":
+        case "csv":
             {
-                trace( "Loading " ~ filename ~ " as CSV.");
-                auto contents = readText( filename);
-                auto records = csvReader!(double)( contents, null);
+                trace("Loading " ~ filename ~ " as CSV.");
+                auto contents = readText(filename);
+                auto records = csvReader!(double)(contents, null);
 
                 foreach (record; records)
                 {
@@ -49,7 +49,7 @@ class Trajectory
                     {
                         //Assume NASA/FAA AC state data format
                         State now;
-                        if (isNaN( utcstart))
+                        if (isNaN(utcstart))
                         {
                             utcstart = data[0];
                         }
@@ -65,29 +65,29 @@ class Trajectory
                         now.ny = data[22] * fps2g;
                         now.nz = (data[23] * fps2g + 1.0);
                         //Normalize
-                        auto magnitude = 1.0 / sqrt( now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
+                        auto magnitude = 1.0 / sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
                         now.nx *= magnitude;
                         now.ny *= magnitude;
                         now.nz *= magnitude;
                         states ~= now;
-                        trace( "Parsed state: ", states[$ - 1]);
+                        trace("Parsed state: ", states[$ - 1]);
                     }
                     else
                     {
-                        fatal( "Wrong number of columns.");
+                        fatal("Wrong number of columns.");
                     }
                 }
-                break ;
+                break;
             }
-            case "nc":
+        case "nc":
             {
-                fatal( "netCDF files not yet supported.");
-                break ;
+                fatal("netCDF files not yet supported.");
+                break;
             }
-            default:
+        default:
             {
-                fatal( "File extension " ~ extension ~ " not recognized.");
-                break ;
+                fatal("File extension " ~ extension ~ " not recognized.");
+                break;
             }
         }
     }
