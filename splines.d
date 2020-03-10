@@ -1,84 +1,55 @@
 module splines;
 
-import std.functional : memoize;
 import std.algorithm.iteration : map;
-import std.algorithm.searching : until;
 import std.array : array;
-import std.stdio;
+import std.experimental.logger;
 
-// Smoothing spline functions:
-extern (C)
-{
-    void cubgcv(double* x, double* f, double* df, int* n, double* y, double* c,
-            int* ic, double* var, int* job, double* se, double* wk, int* ier);
-    void b_spline(int n, double* x, double* y, int m, double* sx, double* sy);
-}
 
-private size_t find_index(T)(T[] x, T xi)
+extern(C)
 {
-    auto range = x.until!((a, b) => a > b)(xi);
-    return range.array.length - 1;
+size_t create_spline(size_t nsamples, const double *x_values, const double *y_values, int degree, double alpha);
+
+void destroy_spline(size_t key);
+
+double eval_spline(size_t key, double xi);
+
+double der_spline(size_t key, double xi);
+
+double der2_spline(size_t key, double xi);
 }
 
 struct Spline
 {
-    double[] c;
-    double[] y;
-    double[] x;
-    int ic;
-    double varience;
-    this(double[] x_, double[] f, double var = -1.0)
+    private:
+    size_t spline_key;
+    public:
+    this(const double[] x, const double[] f, int degree = 3, double alpha = 0.3)
     {
-        varience = var;
-        x = x_.dup;
-        int n = cast(int) x.length;
-        auto df = f.dup;
-        df[] = 1.0;
-        y = new double[n];
-        c = new double[3 * (n - 1)];
-        ic = n - 1;
-        int job = 0;
-        double* se = null;
-        double[] wk = new double[7 * (n + 2)];
-        int ier = 0;
-        cubgcv(x.ptr, f.ptr, df.ptr, &n, y.ptr, c.ptr, &ic, &varience,
-                &job, se, wk.ptr, &ier);
+        spline_key = create_spline(x.length,x.ptr,f.ptr,degree,alpha);
+    }
+    ~this()
+    {
+        destroy_spline(spline_key);
     }
 
     double eval(double xi, int order = 0)
     {
-        auto index = finder(x, xi);
-        auto xi0 = x[index];
-        auto c0 = c[ic * 0 + index];
-        auto c1 = c[ic * 1 + index];
-        auto c2 = c[ic * 2 + index];
-        auto d = xi - xi0;
-        assert(order >= 0 && order < 3);
-        switch (order)
+        switch(order)
         {
-        default:
-            {
-                return (c2 * d + c1) * d + c0 + y[index];
-            }
-        case 1:
-            {
-                return 2 * c2 * d + c1;
-            }
-        case 2:
-            {
-                return 2 * c2;
-            }
+            case 0:
+            return eval_spline(spline_key,xi);
+            case 1:
+            return der_spline(spline_key,xi);
+            case 2:
+            return der2_spline(spline_key,xi);
+            default:
+            fatal("Invalid interpolation order = ", order);
         }
+        assert(false);
     }
-
     //Convienience function to apply eval to entire array
-    double[] eval(double[] xi, int order = 0)
+    double[] eval(const double[] xi, int order = 0)
     {
         return map!(a => eval(a, order))(xi).array();
     }
-
-    // Instantiate find_index as double, and memoize
-private:
-    static auto find_d = (double[] x, double xi) => find_index(x, xi);
-    alias finder = memoize!find_d;
 }

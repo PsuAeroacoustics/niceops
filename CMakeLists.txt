@@ -17,7 +17,7 @@ set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++14")
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 set(CMAKE_CXX_STANDARD 14)
 
-include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include)
+include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include)
 add_definitions(-D_THREAD_SAFE)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -30,12 +30,16 @@ find_library(NCDF NAMES netcdf PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /u
 find_package(Boost)
 find_package(CGAL COMPONENTS Core)
 include(${CGAL_USE_FILE})
+find_package (Eigen3 REQUIRED NO_MODULE)
+
 
 add_library(sphere_database sphere_database.d netcdf.d)
 target_link_libraries(sphere_database ${NCDF})
 add_library(interpolator interpolator.cpp)
 target_link_libraries(interpolator ${CGAL})
-add_library(trajectory trajectory.d splines.d TOMS642.c)
+find_library(SPLINTER NAMES splinter PATHS external/splinter)
+add_library(trajectory trajectory.d splines.d splinter.cpp)
+target_link_libraries(trajectory ${SPLINTER})
 
 add_executable(eqsam_demo eqsam_demo.d)
 target_link_libraries(eqsam_demo sphere_database interpolator trajectory)

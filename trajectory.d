@@ -9,6 +9,7 @@ import std.experimental.logger;
 import std.array;
 import std.uni : toLower;
 import std.math : isNaN, sqrt;
+import splines : Spline;
 
 immutable fps2g = 1.0 / 32.17405;
 
@@ -91,4 +92,80 @@ class Trajectory
             }
         }
     }
+
+    void adapt(double dt, int degree = 3, double alpha = 0.3)
+    {
+        info("Adapting spline to dt ", dt, " with spline of degree ", degree,
+                " and smoothing ", alpha);
+        assert(dt > 0.0);
+
+        //Unpack states
+        double[] t;
+        double[] x;
+        double[] y;
+        double[] z;
+        foreach (now; states)
+        {
+            t ~= now.t;
+            x ~= now.x;
+            y ~= now.y;
+            z ~= now.z;
+        }
+        // Build interpolants
+        double[] ti;
+        ti ~= t[0];
+        double tnext = ti[0] + dt;
+        while (tnext <= t[$ - 1])
+        {
+            ti ~= tnext;
+            tnext += dt;
+        }
+        trace("Smoothing x.");
+        double[] xi;
+        double[] vxi;
+        double[] axi;
+        smoother(t, x, ti, xi, vxi, axi, degree, alpha);
+
+        trace("Smoothing y.");
+        double[] yi;
+        double[] vyi;
+        double[] ayi;
+        smoother(t, y, ti, yi, vyi, ayi, degree, alpha);
+
+        trace("Smoothing z.");
+        double[] zi;
+        double[] vzi;
+        double[] azi;
+        smoother(t, z, ti, zi, vzi, azi, degree, alpha);
+
+        //Repack data into states
+        states = [];
+        trace("States reset to ", states);
+        foreach (i, time; ti)
+        {
+            State now;
+            now.t = time;
+            now.x = xi[i];
+            now.y = yi[i];
+            now.z = zi[i];
+            now.vx = vxi[i];
+            now.vy = vyi[i];
+            now.vz = vzi[i];
+            //TODO: Transform accelerations to normal vector [check units!]
+            enum g = 32.2;
+            now.nx = axi[i] / g;
+            now.ny = ayi[i] / g;
+            now.nz = azi[i] / g + 1;
+            states ~= now;
+        }
+    }
+}
+
+static void smoother(in double[] x, in double[] f, in double[] xi, out double[] fi,
+        out double[] dfi, out double[] ddfi, int degree = 3, double alpha = 0.3)
+{
+    auto spline = Spline(x, f, degree, alpha);
+    fi = spline.eval(xi, 0);
+    dfi = spline.eval(xi, 1);
+    ddfi = spline.eval(xi, 2);
 }

@@ -38,4 +38,8 @@ void main()
             normal, mu, fpa, CT, threshold, zero_check);
 
     auto T = new Trajectory("test.csv");
+    double dt = 0.25;
+    T.adapt(dt);
+    //TODO write out trajectory before and after adaptation
+
 }
