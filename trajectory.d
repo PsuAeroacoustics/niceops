@@ -151,12 +151,29 @@ class Trajectory
             now.vx = vxi[i];
             now.vy = vyi[i];
             now.vz = vzi[i];
-            //TODO: Transform accelerations to normal vector [check units!]
-            enum g = 32.2;
-            now.nx = axi[i] / g;
-            now.ny = ayi[i] / g;
-            now.nz = azi[i] / g + 1;
+            // Convert to "g"
+            now.nx = axi[i] * fps2g;
+            now.ny = ayi[i] * fps2g;
+            now.nz = azi[i] * fps2g + 1.0;
+            //Normalize
+            auto magnitude = 1.0 / sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
+            now.nx *= magnitude;
+            now.ny *= magnitude;
+            now.nz *= magnitude;
             states ~= now;
+        }
+    }
+
+    template Get(string varname)
+    {
+        double[] get()
+        {
+            double[] x;
+            foreach (state; states)
+            {
+                mixin("x ~= state." ~ varname ~ ";");
+            }
+            return x;
         }
     }
 }
@@ -165,7 +182,29 @@ static void smoother(in double[] x, in double[] f, in double[] xi, out double[] 
         out double[] dfi, out double[] ddfi, int degree = 3, double alpha = 0.3)
 {
     auto spline = Spline(x, f, degree, alpha);
-    fi = spline.eval(xi, 0);
-    dfi = spline.eval(xi, 1);
-    ddfi = spline.eval(xi, 2);
+    //Use spline for interpolation
+    fi = spline.eval(xi);
+    //Use finite differences to get velocity and acceleration
+    double dx = xi[1] - xi[0];
+    diff(dx, fi, dfi, ddfi);
+}
+
+static void diff(double dx, in double[] f, out double[] df, out double[] ddf)
+{
+    //Create storage for first derivative
+    df = f.dup;
+    //Forward diff first point
+    df[0] = (f[1] - f[0]) / dx;
+    //Central diff interior points
+    df[1 .. $ - 1] = 0.5 * (f[2 .. $] - f[0 .. $ - 2]) / dx;
+    //Backward diff last point
+    df[$ - 1] = (f[$ - 1] - f[$ - 2]) / dx;
+    //Create storage for second derivative
+    ddf = df.dup;
+    //Forward diff first point
+    ddf[0] = (f[2] - 2 * f[1] + f[0]) / (dx ^^ 2);
+    //Central diff interior points
+    ddf[1 .. $ - 1] = (f[2 .. $] - 2 * f[1 .. $ - 1] + f[0 .. $ - 2]) / (dx ^^ 2);
+    //Backward diff last point
+    ddf[$ - 1] = (f[$ - 1] - 2 * f[$ - 2] + f[$ - 3]) / (dx ^^ 2);
 }

@@ -17,7 +17,7 @@ set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++14")
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 set(CMAKE_CXX_STANDARD 14)
 
-include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include)
+include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source)
 add_definitions(-D_THREAD_SAFE)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -41,5 +41,8 @@ find_library(SPLINTER NAMES splinter PATHS external/splinter)
 add_library(trajectory trajectory.d splines.d splinter.cpp)
 target_link_libraries(trajectory ${SPLINTER})
 
+add_subdirectory(external/matplotlibd)
 add_executable(eqsam_demo eqsam_demo.d)
-target_link_libraries(eqsam_demo sphere_database interpolator trajectory)
+target_link_libraries(eqsam_demo sphere_database interpolator trajectory matplotlib-d)
+set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
+target_compile_options(eqsam_demo PRIVATE "-J ${views_dir}")

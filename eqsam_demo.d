@@ -3,11 +3,15 @@ import splines : Spline;
 import trajectory : Trajectory;
 import std.experimental.logger;
 
+import std.math;
+import std.range;
+import std.algorithm;
+import plt = matplotlibd.pyplot;
+
 void main()
 {
     //Set default logging to file
     sharedLog = new FileLogger("plan-ops.log");
-
     auto database = new Database("databases/B407_M2.nc");
 
     auto range = 1000.;
@@ -37,9 +41,22 @@ void main()
     range = database.find_range(contour_level, bearing, altitude, velocity,
             normal, mu, fpa, CT, threshold, zero_check);
 
-    auto T = new Trajectory("test.csv");
-    double dt = 0.25;
-    T.adapt(dt);
-    //TODO write out trajectory before and after adaptation
+    //Create trajectory from CSV data
+    auto trajectory = new Trajectory("test.csv");
 
+    double[] t1 = trajectory.Get!("x").get();
+    double[] x1 = trajectory.Get!("y").get();
+
+    // Trajectory adaptation parameters
+    double dt = 0.25;
+    int degree = 5;
+    double smooth = 1e6;
+    trajectory.adapt(dt, degree, smooth);
+
+    double[] t2 = trajectory.Get!("x").get();
+    double[] x2 = trajectory.Get!("y").get();
+    //Plot trajectory before and after adaptation
+    plt.plot(t1, x1, t2, x2);
+    plt.show();
+    plt.clear();
 }
