@@ -1,11 +1,7 @@
 import sphere_database : Database;
-import splines : Spline;
 import trajectory : Trajectory;
 import std.experimental.logger;
 
-import std.math;
-import std.range;
-import std.algorithm;
 import plt = matplotlibd.pyplot;
 
 void main()
