@@ -27,6 +27,7 @@ class Trajectory
         double nx;
         double ny;
         double nz;
+        double LF;
     }
 
     double utcstart;
@@ -65,11 +66,11 @@ class Trajectory
                         now.nx = data[21] * fps2g;
                         now.ny = data[22] * fps2g;
                         now.nz = (data[23] * fps2g + 1.0);
-                        //Normalize
-                        auto magnitude = 1.0 / sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
-                        now.nx *= magnitude;
-                        now.ny *= magnitude;
-                        now.nz *= magnitude;
+                        //Compute load factor
+                        now.LF = sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
+                        now.nx /= now.LF;
+                        now.ny /= now.LF;
+                        now.nz /= now.LF;
                         states ~= now;
                         trace("Parsed state: ", states[$ - 1]);
                     }
@@ -155,11 +156,12 @@ class Trajectory
             now.nx = axi[i] * fps2g;
             now.ny = ayi[i] * fps2g;
             now.nz = azi[i] * fps2g + 1.0;
+            //Compute load facror
+            now.LF = sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
             //Normalize
-            auto magnitude = 1.0 / sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
-            now.nx *= magnitude;
-            now.ny *= magnitude;
-            now.nz *= magnitude;
+            now.nx /= now.LF;
+            now.ny /= now.LF;
+            now.nz /= now.LF;
             states ~= now;
         }
     }

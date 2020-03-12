@@ -50,9 +50,14 @@ void main()
     trajectory.adapt(dt, degree, smooth);
 
     double[] t2 = trajectory.Get!("x").get();
-    double[] x2 = trajectory.Get!("y").get();
+    double[] x2 = trajectory.Get!("z").get();
     //Plot trajectory before and after adaptation
-    plt.plot(t1, x1, t2, x2);
+
+    double[] LF = trajectory.Get!("LF").get();
+
+    plt.plot(t2,LF);
+    plt.show();
+    plt.plot(t2,x2);
     plt.show();
     plt.clear();
 }
