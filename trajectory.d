@@ -93,8 +93,7 @@ class Trajectory
                         now.nz /= now.LF;
                         //Non-dimensionalize
                         now.CT = now.LF * vehicle.weight / (
-                                0.5 * vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius
-                                ^^ 2);
+                                vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius ^^ 2);
                         auto v = sqrt(now.vx ^^ 2 + now.vy ^^ 2 + now.vz ^^ 2);
                         now.mu = v / vehicle.tip_speed;
                         auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
@@ -193,7 +192,7 @@ class Trajectory
             now.nz /= now.LF;
             //Non-dimensionalize
             now.CT = now.LF * vehicle.weight / (
-                    0.5 * vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius ^^ 2);
+                    vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius ^^ 2);
             auto v = sqrt(now.vx ^^ 2 + now.vy ^^ 2 + now.vz ^^ 2);
             now.mu = v / vehicle.tip_speed;
             auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
