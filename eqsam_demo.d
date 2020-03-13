@@ -69,21 +69,23 @@ void main()
     {
         import plt = matplotlibd.pyplot;
 
-        double[] x = trajectory.Get!("x").get();
-        double[] y = trajectory.Get!("y").get();
-        double[] y1 = trajectory.Get!("mu").get();
-        double[] y2 = trajectory.Get!("fpa_e").get();
-        double[] y22 = trajectory.Get!("fpa").get();
+        auto x = trajectory.Get!("x").get();
+        auto y = trajectory.Get!("y").get();
 
         plt.figure();
-        plt.plot(x, y1);
-        plt.figure();
-        plt.plot(x, y2, x, y22);
-
-        plt.figure;
         plt.contourf(x_obs, y_obs, levels_plot);
         plt.plot(x, y, "k-");
+        plt.axis("equal");
         plt.colorbar();
+
+        plt.figure();
+        plt.plot(x, trajectory.Get!("CT").get());
+
+        plt.figure();
+        plt.plot(x, trajectory.Get!("mu").get());
+
+        plt.figure();
+        plt.plot(x, trajectory.Get!("fpa").get(), x, trajectory.Get!("fpa_e").get());
 
         plt.show();
         plt.clear();
@@ -95,9 +97,72 @@ static double sound_exposure_level(double[] levels, double T)
     import std.math : log10;
     import std.algorithm.iteration : sum;
 
-    // TODO: Find 10-dB down points
+    auto index = peak_range(levels);
+    double[] levels_slice = levels[index[0] .. (index[1] + 1)];
     double[] p;
-    p.length = levels.length;
-    p[] = 10.0 ^^ (0.1 * levels[]);
+    p.length = levels_slice.length;
+    p[] = 10.0 ^^ (0.1 * levels_slice[]);
     return 10.0 * log10(T * sum(p));
+}
+
+static size_t[2] peak_range(double[] levels, double down = 10.0)
+{
+    import std.algorithm.searching : maxIndex;
+
+    // Find the 10-dB down points
+    size_t[2] index = [0, levels.length - 1];
+    auto peak_position = levels.maxIndex;
+    auto threshold = levels[peak_position] - down;
+
+    for (auto i = peak_position; i < levels.length; i++)
+    {
+        if (levels[i] < threshold)
+        {
+            index[1] = i - 1;
+            break;
+        }
+    }
+    for (auto i = peak_position; i > 0; i--)
+    {
+        if (levels[i] <= threshold)
+        {
+            if (levels[i] == threshold)
+            {
+                index[0] = i;
+            }
+            else
+            {
+                index[0] = i + 1;
+            }
+            break;
+        }
+    }
+    return index;
+}
+
+unittest
+{
+    //One peak
+    double[] levels = [0.0, 10.0, 20.0, 25.0, 20.0, 10.0, 0.0];
+    auto index = peak_range(levels);
+    assert(index[0] == 2);
+    assert(index[1] == 4);
+
+    //One peak, exact threshold levels
+    levels = [0.0, 15.0, 20.0, 25.0, 20.0, 15.0, 0.0];
+    index = peak_range(levels);
+    assert(index[0] == 1);
+    assert(index[1] == levels.length - 2);
+
+    //Soft peak, no 10 dB down points
+    levels = [20.0, 20.0, 20.0, 25.0, 20.0, 20.0, 20.0];
+    index = peak_range(levels);
+    assert(index[0] == 0);
+    assert(index[1] == levels.length - 1);
+
+    //Two peaks
+    levels = [20.0, 10.0, 20.0, 25.0, 20.0, 10.0, 20.0];
+    index = peak_range(levels);
+    assert(index[0] == 2);
+    assert(index[1] == 4);
 }
