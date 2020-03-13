@@ -208,6 +208,7 @@ class Trajectory
         double[] get()
         {
             double[] x;
+            x.reserve(states.length);
             foreach (state; states)
             {
                 mixin("x ~= state." ~ varname ~ ";");
