@@ -1,19 +1,42 @@
 import std.experimental.logger;
 
-void main()
+void main(string[] args)
 {
     import sphere_database : Database;
     import trajectory : Trajectory;
     import std.range : iota;
     import std.array;
+    import std.getopt;
+    import core.stdc.stdlib : exit;
+
+    string log_file = "plan-ops.log";
+    string database_file = "databases/B407_M2.nc";
+    string path_file = "test.csv";
+    string vehicle_file = "vehicle.json";
+    bool plotting = true;
+
+    auto option_results = getopt(args,
+    "d|database","netCDF noise database file.", &database_file,
+    "l|logfile","Output log file.", &log_file,
+    "t|trajectoryfile","CSV trajectory input file.", &path_file,
+    "v|vehicle","JSON vehicle definition file.", &vehicle_file,
+    "p|plotting","Enable plotting.",&plotting
+    );
+
+    if(option_results.helpWanted)
+    {
+        defaultGetoptPrinter("NICE-R-OPS low noise planning system.",
+        option_results.options);
+        exit(0);
+    }
 
     //Set default logging to file
-    sharedLog = new FileLogger("plan-ops.log");
+    sharedLog = new FileLogger(log_file);
 
-    auto database = new Database("databases/B407_M2.nc");
+    auto database = new Database(database_file);
 
     //Create trajectory from CSV data
-    auto trajectory = new Trajectory("test.csv", "vehicle.json");
+    auto trajectory = new Trajectory(path_file, vehicle_file);
 
     // Trajectory adaptation parameters
     double dt = 1.0;
@@ -64,7 +87,6 @@ void main()
         }
     }
 
-    immutable plotting = true;
     if (plotting)
     {
         import plt = matplotlibd.pyplot;
