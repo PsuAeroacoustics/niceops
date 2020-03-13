@@ -8,10 +8,13 @@ import std.range : retro, take;
 import std.experimental.logger;
 import std.array;
 import std.uni : toLower;
-import std.math : isNaN, sqrt;
+import std.math : isNaN, sqrt, PI, asin;
 import splines : Spline;
 
-immutable fps2g = 1.0 / 32.17405;
+immutable g = 9.80665; // m/s^^2
+immutable mps2g = 1.0 / g;
+immutable ft2m = 0.3048;
+immutable fps2g = mps2g * ft2m;
 
 class Trajectory
 {
@@ -28,12 +31,28 @@ class Trajectory
         double ny;
         double nz;
         double LF;
+        double CT;
+        double mu;
+        double fpa_e;
+        double fpa;
+    }
+
+    struct dimensional_data
+    {
+        double tip_speed; // m/s
+        double radius; // m
+        double weight; // kg
+        double rho; // kg/m^^3
     }
 
     double utcstart;
     State[] states;
-    this(string filename)
+    dimensional_data vehicle;
+    this(string filename, string vehicle_filename)
     {
+        //Get vehicle data
+        vehicle = configure_vehicle("vehicle.json");
+
         auto extension = filename.splitter('.').retro.take(1).array()[0];
         info("Opening file " ~ filename ~ " with extension ", extension);
         switch (toLower(extension))
@@ -55,13 +74,14 @@ class Trajectory
                         {
                             utcstart = data[0];
                         }
+                        // Convert to metric
                         now.t = data[1];
-                        now.x = data[5];
-                        now.y = data[6];
-                        now.z = data[7];
-                        now.vx = data[11];
-                        now.vy = data[13];
-                        now.vz = data[15];
+                        now.x = data[5] * ft2m;
+                        now.y = data[6] * ft2m;
+                        now.z = data[7] * ft2m;
+                        now.vx = data[11] * ft2m;
+                        now.vy = data[13] * ft2m;
+                        now.vz = data[15] * ft2m;
                         // Convert to "g"
                         now.nx = data[21] * fps2g;
                         now.ny = data[22] * fps2g;
@@ -71,6 +91,15 @@ class Trajectory
                         now.nx /= now.LF;
                         now.ny /= now.LF;
                         now.nz /= now.LF;
+                        //Non-dimensionalize
+                        now.CT = now.LF * vehicle.weight / (
+                                0.5 * vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius
+                                ^^ 2);
+                        auto v = sqrt(now.vx ^^ 2 + now.vy ^^ 2 + now.vz ^^ 2);
+                        now.mu = v / vehicle.tip_speed;
+                        auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
+                        now.fpa_e = 180.0 / PI * asin(vn_hat);
+                        now.fpa = 180.0 / PI * asin(now.vz / v);
                         states ~= now;
                         trace("Parsed state: ", states[$ - 1]);
                     }
@@ -153,16 +182,25 @@ class Trajectory
             now.vy = vyi[i];
             now.vz = vzi[i];
             // Convert to "g"
-            now.nx = axi[i] * fps2g;
-            now.ny = ayi[i] * fps2g;
-            now.nz = azi[i] * fps2g + 1.0;
+            now.nx = axi[i] * mps2g;
+            now.ny = ayi[i] * mps2g;
+            now.nz = azi[i] * mps2g + 1.0;
             //Compute load facror
             now.LF = sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
             //Normalize
             now.nx /= now.LF;
             now.ny /= now.LF;
             now.nz /= now.LF;
+            //Non-dimensionalize
+            now.CT = now.LF * vehicle.weight / (
+                    0.5 * vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius ^^ 2);
+            auto v = sqrt(now.vx ^^ 2 + now.vy ^^ 2 + now.vz ^^ 2);
+            now.mu = v / vehicle.tip_speed;
+            auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
+            now.fpa_e = 180.0 / PI * asin(vn_hat);
+            now.fpa = 180.0 / PI * asin(now.vz / v);
             states ~= now;
+            trace("Adapted state: ", states[$ - 1]);
         }
     }
 
@@ -209,4 +247,22 @@ static void diff(double dx, in double[] f, out double[] df, out double[] ddf)
     ddf[1 .. $ - 1] = (f[2 .. $] - 2 * f[1 .. $ - 1] + f[0 .. $ - 2]) / (dx ^^ 2);
     //Backward diff last point
     ddf[$ - 1] = (f[$ - 1] - 2 * f[$ - 2] + f[$ - 3]) / (dx ^^ 2);
+}
+
+static Trajectory.dimensional_data configure_vehicle(string filename)
+{
+    import std.json : parseJSON;
+    import std.file : readText;
+    import std.conv : to;
+
+    trace("Reading vehicle configuration: ", filename);
+    auto config = readText(filename).parseJSON;
+
+    Trajectory.dimensional_data vehicle;
+    vehicle.radius = to!double(config["Main Rotor"]["radius"].str);
+    vehicle.tip_speed = to!double(config["Main Rotor"]["tip speed"].str);
+    vehicle.weight = to!double(config["Vehicle"]["weight"].str) * g; //Actually a mass (kg), so convert to Newtons
+    vehicle.rho = to!double(config["Atmosphere"]["density"].str);
+    trace("Vehicle data structure: ", vehicle);
+    return vehicle;
 }
