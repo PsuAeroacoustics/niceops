@@ -16,39 +16,40 @@ void main()
     auto trajectory = new Trajectory("test.csv", "vehicle.json");
 
     // Trajectory adaptation parameters
-    double dt = 0.25;
+    double dt = 1.0;
     int degree = 5;
     double smooth = 1e6;
     trajectory.adapt(dt, degree, smooth);
 
     // Set up observer array
-    auto nt = trajectory.states.length;
-    auto x_obs = iota(-2500.0, 1100.0, 200.0).array;
+    auto x_obs = iota(-2500.0, 1100.0, 250.0).array;
     auto nx = x_obs.length;
-    auto y_obs = iota(-1500.0, 1600.0, 200.0).array;
+    auto y_obs = iota(-1500.0, 1600.0, 250.0).array;
     auto ny = y_obs.length;
 
     double[] levels_linear;
-    levels_linear.length = nt * nx * ny;
+    levels_linear.length = nx * ny;
 
-    auto it = 0;
-    auto state = trajectory.states[nt / 2];
+    // And time series data
+    auto nt = trajectory.states.length;
+    double[] time_history;
+    time_history.length = nt;
 
     foreach (iy, yo; y_obs)
     {
         foreach (ix, xo; x_obs)
         {
-            // TODO: Calculate time series, then SEL for each observer
-            //foreach (it, state; trajectory.states)
-            //{
-            double[3] observer = [xo, yo, 0.0];
-            double[3] source = [state.x, state.y, state.z];
-            double[3] velocity = [state.vx, state.vy, state.vz];
-            double[3] normal = [state.nx, state.ny, state.nz];
+            foreach (it, ref state; trajectory.states)
+            {
+                double[3] observer = [xo, yo, 0.0];
+                double[3] source = [state.x, state.y, state.z];
+                double[3] velocity = [state.vx, state.vy, state.vz];
+                double[3] normal = [state.nx, state.ny, state.nz];
+                time_history[it] = database.level_at_observer(observer, source,
+                        velocity, normal, state.mu, state.fpa_e, state.CT);
+            }
             auto index = ix + iy * nx;
-            levels_linear[index] = database.level_at_observer(observer, source,
-                    velocity, normal, state.mu, state.fpa_e, state.CT);
-            //}
+            levels_linear[index] = sound_exposure_level(time_history, dt);
         }
     }
 
@@ -87,4 +88,16 @@ void main()
         plt.show();
         plt.clear();
     }
+}
+
+static double sound_exposure_level(double[] levels, double T)
+{
+    import std.math : log10;
+    import std.algorithm.iteration : sum;
+
+    // TODO: Find 10-dB down points
+    double[] p;
+    p.length = levels.length;
+    p[] = 10.0 ^^ (0.1 * levels[]);
+    return 10.0 * log10(T * sum(p));
 }
