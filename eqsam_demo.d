@@ -65,7 +65,7 @@ void main(string[] args)
     {
         foreach (ix, xo; x_obs)
         {
-            foreach (it, ref state; trajectory.states)
+            foreach (it, const ref state; trajectory.states)
             {
                 double[3] observer = [xo, yo, 0.0];
                 double[3] source = [state.x, state.y, state.z];
@@ -79,7 +79,7 @@ void main(string[] args)
         }
     }
 
-    write_levels(x_obs,y_obs, levels_linear, out_file);
+    write_levels(x_obs, y_obs, levels_linear, out_file);
 
     if (plotting)
     {
@@ -202,6 +202,7 @@ static void write_levels(double[] x_obs, double[] y_obs, double[] levels, string
 {
     import std.file;
     import std.stdio;
+
     immutable ft2m = 0.3048;
 
     auto nx = x_obs.length;
@@ -210,10 +211,10 @@ static void write_levels(double[] x_obs, double[] y_obs, double[] levels, string
     auto file = File(out_file, "w");
     //Write header
     file.writeln("Line 1: x(ft), Line 2: y(ft),  Lines 3+ levels (x cols y rows)");
-    foreach(i,x; x_obs)
+    foreach (i, x; x_obs)
     {
-        file.write(x/ft2m);
-        if(i < (nx-1))
+        file.write(x / ft2m);
+        if (i < (nx - 1))
         {
             file.write(",");
         }
@@ -222,16 +223,16 @@ static void write_levels(double[] x_obs, double[] y_obs, double[] levels, string
             file.write("\n");
         }
     }
-    foreach(i,y; y_obs)
+    foreach (i, y; y_obs)
     {
-        file.write( y/ft2m);
-        if (i < (ny-1))
+        file.write(y / ft2m);
+        if (i < (ny - 1))
         {
-            file.write( ",");
+            file.write(",");
         }
         else
         {
-            file.write( "\n");
+            file.write("\n");
         }
     }
     foreach (i, level; levels)
