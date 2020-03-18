@@ -216,6 +216,31 @@ class Trajectory
             return x;
         }
     }
+
+    void watts_trim(double xstart_ft)
+    {
+        import std.algorithm.searching;
+        auto mu = Get!("mu").get();
+        auto z = Get!("z").get();
+        auto imin_z = z.minIndex;
+        auto imin_v = mu.minIndex;
+        auto ixmax = imin_z < imin_v ? imin_z : imin_v;
+
+        auto x = Get!("x").get();
+        size_t ixmin = 0;
+        foreach(i, xi ; x)
+        {
+            if(xi > xstart_ft*ft2m) break;
+            ixmin = i;
+        }
+        states = states[ixmin..(ixmax+1)];
+        //    [minz,indminz] = min(d.z);
+        //[mins,indmins] = min(d.Vk);
+        //xmax = min([d.x(indminz) d.x(indmins)]);
+        //xmaxind = find(d.x >= xmax, 1);
+        //xminind = find(d.x > xstart, 1);
+        //idacx = xminind:xmaxind;
+    }
 }
 
 static void smoother(in double[] x, in double[] f, in double[] xi, out double[] fi,

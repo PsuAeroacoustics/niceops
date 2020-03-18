@@ -536,6 +536,7 @@ class Database
         // Get barycentric weights and indicies
         size_t[4] indicies;
         double[4] weights;
+
         if (barycentric(advance_ratio, flight_path_angle, thrust_coefficient,
                 weights.ptr, indicies.ptr))
         {

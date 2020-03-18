@@ -13,20 +13,19 @@ void main(string[] args)
     string database_file = "databases/B407_M2.nc";
     string path_file = "test.csv";
     string vehicle_file = "vehicle.json";
+    string out_file = "levels.csv";
     bool plotting = true;
 
-    auto option_results = getopt(args,
-    "d|database","netCDF noise database file.", &database_file,
-    "l|logfile","Output log file.", &log_file,
-    "t|trajectoryfile","CSV trajectory input file.", &path_file,
-    "v|vehicle","JSON vehicle definition file.", &vehicle_file,
-    "p|plotting","Enable plotting.",&plotting
-    );
+    auto option_results = getopt(args, "d|database", "netCDF noise database file.",
+            &database_file, "l|logfile", "Output log file.", &log_file,
+            "t|trajectoryfile",
+            "CSV trajectory input file.", &path_file,
+            "v|vehicle", "JSON vehicle definition file.", &vehicle_file, "o|output",
+            "Output file name.", &out_file, "p|plotting", "Enable plotting.", &plotting);
 
-    if(option_results.helpWanted)
+    if (option_results.helpWanted)
     {
-        defaultGetoptPrinter("NICE-R-OPS low noise planning system.",
-        option_results.options);
+        defaultGetoptPrinter("NICE-R-OPS low noise planning system.", option_results.options);
         exit(0);
     }
 
@@ -37,6 +36,10 @@ void main(string[] args)
 
     //Create trajectory from CSV data
     auto trajectory = new Trajectory(path_file, vehicle_file);
+
+    //Trim trajectory (per Mike)
+    double xstart_ft = -6000.;
+    trajectory.watts_trim(xstart_ft);
 
     // Trajectory adaptation parameters
     double dt = 1.0;
@@ -76,16 +79,7 @@ void main(string[] args)
         }
     }
 
-    double[][] levels_plot;
-    levels_plot.length = ny;
-    for (auto iy = 0; iy < ny; iy++)
-    {
-        levels_plot[iy].length = nx;
-        for (auto ix = 0; ix < nx; ix++)
-        {
-            levels_plot[iy][ix] = levels_linear[ix + iy * nx];
-        }
-    }
+    write_levels(x_obs,y_obs, levels_linear, out_file);
 
     if (plotting)
     {
@@ -93,6 +87,18 @@ void main(string[] args)
 
         auto x = trajectory.Get!("x").get();
         auto y = trajectory.Get!("y").get();
+        auto z = trajectory.Get!("z").get();
+
+        double[][] levels_plot;
+        levels_plot.length = ny;
+        for (auto iy = 0; iy < ny; iy++)
+        {
+            levels_plot[iy].length = nx;
+            for (auto ix = 0; ix < nx; ix++)
+            {
+                levels_plot[iy][ix] = levels_linear[ix + iy * nx];
+            }
+        }
 
         plt.figure();
         plt.contourf(x_obs, y_obs, levels_plot);
@@ -108,6 +114,9 @@ void main(string[] args)
 
         plt.figure();
         plt.plot(x, trajectory.Get!("fpa").get(), x, trajectory.Get!("fpa_e").get());
+
+        plt.figure();
+        plt.plot(x, z);
 
         plt.show();
         plt.clear();
@@ -187,4 +196,56 @@ unittest
     index = peak_range(levels);
     assert(index[0] == 2);
     assert(index[1] == 4);
+}
+
+static void write_levels(double[] x_obs, double[] y_obs, double[] levels, string out_file)
+{
+    import std.file;
+    import std.stdio;
+    immutable ft2m = 0.3048;
+
+    auto nx = x_obs.length;
+    auto ny = y_obs.length;
+
+    auto file = File(out_file, "w");
+    //Write header
+    file.writeln("Line 1: x(ft), Line 2: y(ft),  Lines 3+ levels (x cols y rows)");
+    foreach(i,x; x_obs)
+    {
+        file.write(x/ft2m);
+        if(i < (nx-1))
+        {
+            file.write(",");
+        }
+        else
+        {
+            file.write("\n");
+        }
+    }
+    foreach(i,y; y_obs)
+    {
+        file.write( y/ft2m);
+        if (i < (ny-1))
+        {
+            file.write( ",");
+        }
+        else
+        {
+            file.write( "\n");
+        }
+    }
+    foreach (i, level; levels)
+    {
+        file.write(level);
+        if ((i + 1) % nx)
+        {
+            file.write(",");
+        }
+        else
+        {
+            file.write("\n");
+        }
+    }
+    file.write("\n");
+    file.close();
 }
