@@ -17,7 +17,7 @@ set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++14")
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 set(CMAKE_CXX_STANDARD 14)
 
-include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3)
+include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3)
 add_definitions(-D_THREAD_SAFE)
 
 if(NOT CMAKE_BUILD_TYPE)
