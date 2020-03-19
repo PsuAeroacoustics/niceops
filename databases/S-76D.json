@@ -1,0 +1,20 @@
+{
+    "Main Rotor": {
+        "radius": "6.705",
+        "tip speed": "220.0",
+        "blades": "4"
+    },
+    "Tail Rotor": {
+        "radius": "1.22",
+        "tip speed": "193.55",
+        "blades": "4"
+    },
+    "Atmosphere": {
+        "density": "1.225",
+        "temperature": "300.71"
+    },
+    "Vehicle": {
+        "weight": "5000",
+        "drag": "1.2"
+    }
+}

@@ -9,11 +9,12 @@ void main(string[] args)
     import std.getopt;
     import core.stdc.stdlib : exit;
 
-    string log_file = "plan-ops.log";
-    string database_file = "databases/B407_M2.nc";
-    string path_file = "test.csv";
-    string vehicle_file = "vehicle.json";
-    string out_file = "levels.csv";
+    //Default to demo case
+    string log_file = "niceops.log";
+    string database_file = "databases/S-76D_M3.nod";
+    string path_file = "tracks/S-76D/197421AC.csv";
+    string vehicle_file = "databases/S-76.json";
+    string out_file = "197421_LAE.csv";
     bool plotting = true;
 
     auto option_results = getopt(args, "d|database", "netCDF noise database file.",
@@ -25,7 +26,8 @@ void main(string[] args)
 
     if (option_results.helpWanted)
     {
-        defaultGetoptPrinter("NICE-R-OPS low noise planning system.", option_results.options);
+        defaultGetoptPrinter("Noise Informed Community Environment Operation Planning System (NICE-OPS).",
+                option_results.options);
         exit(0);
     }
 
@@ -48,9 +50,15 @@ void main(string[] args)
     trajectory.adapt(dt, degree, smooth);
 
     // Set up observer array
-    auto x_obs = iota(-2500.0, 1100.0, 250.0).array;
+    //const auto x_obs = iota(-2000.0, 1100.0, 100.0).array;
+    const auto x_obs = [
+        -2000., -1500., -1000., -750., -600., -500., -400., -300.,
+        -250., -150., -100., -75., -55., -40., -30., -20., -10., 0., 10.,
+        20., 30., 40., 55., 75., 100., 150., 250., 300., 400., 500., 600.,
+        750., 1000., 1500., 2000.
+    ];
     auto nx = x_obs.length;
-    auto y_obs = iota(-1500.0, 1600.0, 250.0).array;
+    const auto y_obs = iota(-1500.0, 1600.0, 200.0).array;
     auto ny = y_obs.length;
 
     double[] levels_linear;
@@ -198,7 +206,8 @@ unittest
     assert(index[1] == 4);
 }
 
-static void write_levels(double[] x_obs, double[] y_obs, double[] levels, string out_file)
+static void write_levels(const double[] x_obs, const double[] y_obs,
+        const double[] levels, string out_file)
 {
     import std.file;
     import std.stdio;
@@ -209,6 +218,7 @@ static void write_levels(double[] x_obs, double[] y_obs, double[] levels, string
     auto ny = y_obs.length;
 
     auto file = File(out_file, "w");
+    info("Writing output to ", out_file);
     //Write header
     file.writeln("Line 1: x(ft), Line 2: y(ft),  Lines 3+ levels (x cols y rows)");
     foreach (i, x; x_obs)

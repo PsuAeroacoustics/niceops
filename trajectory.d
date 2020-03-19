@@ -226,7 +226,6 @@ class Trajectory
         auto imin_z = z.minIndex;
         auto imin_v = mu.minIndex;
         auto ixmax = imin_z < imin_v ? imin_z : imin_v;
-
         auto x = Get!("x").get();
         size_t ixmin = 0;
         foreach (i, xi; x)
@@ -235,6 +234,7 @@ class Trajectory
                 break;
             ixmin = i;
         }
+        info("Trimming trajectory from x = ", x[ixmin], " to ", x[ixmax]);
         states = states[ixmin .. (ixmax + 1)];
     }
 }
@@ -276,7 +276,7 @@ static Trajectory.dimensional_data configure_vehicle(string filename)
     import std.file : readText;
     import std.conv : to;
 
-    trace("Reading vehicle configuration: ", filename);
+    info("Reading vehicle configuration: ", filename);
     auto config = readText(filename).parseJSON;
 
     Trajectory.dimensional_data vehicle;

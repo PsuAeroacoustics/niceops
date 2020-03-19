@@ -484,6 +484,7 @@ class Database
         info("Max level found in database is: ", max_level);
         // Set const sphere_radius to dimensional_radius
         sphere_radius = dimensional_radius;
+        info("Sphere radius set to ", sphere_radius);
         // Find range of conditions
         advance_ratio_max = advance_ratios.maxElement;
         advance_ratio_min = advance_ratios.minElement;
