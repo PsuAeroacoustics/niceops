@@ -2,7 +2,7 @@ module sphere_database;
 
 import std.math;
 import std.numeric : findRoot;
-import std.array : array, staticArray;
+import std.array : array;
 import std.algorithm.sorting : sort;
 import std.algorithm.iteration : uniq, map, each, sum;
 import std.algorithm.searching : minElement, maxElement, until;
@@ -210,7 +210,7 @@ private T[3] cross(T)(in T[] x, in T[] y)
     return [
         x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2],
         x[0] * y[1] - x[1] * y[0]
-    ].staticArray;
+    ];
 }
 
 unittest
@@ -275,7 +275,7 @@ private double[2] lookup_angles(double[3] source, double[3] velocity,
     // Convert to degrees and return phi and theta packed in an array
     phi *= 180.0 / PI;
     theta *= 180.0 / PI;
-    return [phi, theta].staticArray;
+    return [phi, theta];
 }
 
 unittest
