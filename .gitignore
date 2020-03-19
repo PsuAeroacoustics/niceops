@@ -13,6 +13,7 @@ Makefile
 *.png
 *.def
 niceops
-/eqsam_demo.dSYM/Contents/
-/databases/B407_M2.nc
+*.dSYM
+*.nc
+*_LAE.csv
 /external/matplotlibd/examples/
