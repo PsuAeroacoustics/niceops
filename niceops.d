@@ -13,7 +13,7 @@ void main(string[] args)
     string log_file = "niceops.log";
     string database_file = "databases/S-76D_M3.nod";
     string path_file = "tracks/S-76D/197421AC.csv";
-    string vehicle_file = "databases/S-76.json";
+    string vehicle_file = "databases/S-76D.json";
     string out_file = "197421_LAE.csv";
     bool plotting = true;
 

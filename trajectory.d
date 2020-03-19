@@ -51,7 +51,7 @@ class Trajectory
     this(string filename, string vehicle_filename)
     {
         //Get vehicle data
-        vehicle = configure_vehicle("vehicle.json");
+        vehicle = configure_vehicle(vehicle_filename);
 
         auto extension = filename.splitter('.').retro.take(1).array()[0];
         info("Opening file " ~ filename ~ " with extension ", extension);
