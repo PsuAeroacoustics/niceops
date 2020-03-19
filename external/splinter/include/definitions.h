@@ -32,8 +32,8 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wignored-attributes"
 #endif
-# include <eigen3/Eigen/Dense>
-# include <eigen3/Eigen/Sparse>
+# include <Eigen/Dense>
+# include <Eigen/Sparse>
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif

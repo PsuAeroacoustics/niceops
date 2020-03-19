@@ -17,3 +17,4 @@ niceops
 *.nc
 *_LAE.csv
 /external/matplotlibd/examples/
+splinter-test

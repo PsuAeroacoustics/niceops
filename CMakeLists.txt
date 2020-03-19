@@ -17,7 +17,7 @@ set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++14")
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 set(CMAKE_CXX_STANDARD 14)
 
-include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source)
+include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3)
 add_definitions(-D_THREAD_SAFE)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -37,9 +37,10 @@ add_library(sphere_database sphere_database.d netcdf.d)
 target_link_libraries(sphere_database ${NCDF})
 add_library(interpolator interpolator.cpp)
 target_link_libraries(interpolator ${CGAL})
-find_library(SPLINTER NAMES splinter PATHS external/splinter)
+
+add_subdirectory(external/splinter)
 add_library(trajectory trajectory.d splines.d splinter.cpp)
-target_link_libraries(trajectory ${SPLINTER})
+target_link_libraries(trajectory splinter-static)
 
 add_subdirectory(external/matplotlibd)
 add_executable(niceops niceops.d)
