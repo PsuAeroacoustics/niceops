@@ -74,10 +74,7 @@ int set_interpolator3(size_t n, const double *x1, const double *x2, const double
     return !triangles.is_valid();
 }
 
-int barycentric(double x1, double x2, double x3, double *weights, size_t *indicies) {
-    if (!triangles.is_valid()) {
-        return 1;
-    }
+void barycentric(double x1, double x2, double x3, double *weights, size_t *indicies) {
     // Clamp values between 0.0 and 1.0
     x1 = clamp(x1);
     x2 = clamp(x2);
@@ -130,7 +127,6 @@ int barycentric(double x1, double x2, double x3, double *weights, size_t *indici
             indicies[i] = tetrahedron->vertex(i)->info();
         }
     }
-    return 0;
 }
 
 double bilinear_interp(double q11, double q12, double q21, double q22,

@@ -16,7 +16,7 @@ import netcdf;
 extern (C)
 {
     int set_interpolator3(size_t n, const double* x1, const double* x2, const double* x3);
-    int barycentric(double x1, double x2, double x3, double* weights, size_t* indicies);
+    void barycentric(double x1, double x2, double x3, double* weights, size_t* indicies);
     double bilinear_interp(double q11, double q12, double q21, double q22,
             double x1, double x2, double y1, double y2, double x, double y);
 }
@@ -538,15 +538,9 @@ class Database
         size_t[4] indicies;
         double[4] weights;
 
-        if (barycentric(advance_ratio, flight_path_angle, thrust_coefficient,
-                weights.ptr, indicies.ptr))
-        {
-            fatal("Invalid barycentric interpolation.");
-        }
-        else
-        {
-            trace("Barycentric weights: ", weights, " and indicies ", indicies);
-        }
+        barycentric(advance_ratio, flight_path_angle, thrust_coefficient,weights.ptr, indicies.ptr);
+        trace("Barycentric weights: ", weights, " and indicies ", indicies);
+
         // Barycentric interpolation between conditions at each gridpoint
         auto d11 = barycentric_interp(dBA, phi_range[0], theta_range[0], weights, indicies);
         auto d12 = barycentric_interp(dBA, phi_range[0], theta_range[1], weights, indicies);
