@@ -16,13 +16,15 @@ void main(string[] args)
     string vehicle_file = "databases/S-76D.json";
     string out_file = "197421_LAE.csv";
     bool plotting = true;
+    double dt = 1.0;
 
     auto option_results = getopt(args, "d|database", "netCDF noise database file.",
             &database_file, "l|logfile", "Output log file.", &log_file,
             "t|trajectoryfile",
             "CSV trajectory input file.", &path_file,
-            "v|vehicle", "JSON vehicle definition file.", &vehicle_file, "o|output",
-            "Output file name.", &out_file, "p|plotting", "Enable plotting.", &plotting);
+            "v|vehicle", "JSON vehicle definition file.", &vehicle_file,
+            "o|output", "Output file name.", &out_file, "p|plotting",
+            "Enable plotting.", &plotting, "s|step", "Time step in seconds.", &dt);
 
     if (option_results.helpWanted)
     {
@@ -44,21 +46,14 @@ void main(string[] args)
     trajectory.watts_trim(xstart_ft);
 
     // Trajectory adaptation parameters
-    double dt = 1.0;
     int degree = 5;
     double smooth = 1e6;
     trajectory.adapt(dt, degree, smooth);
 
     // Set up observer array
-    //const auto x_obs = iota(-2000.0, 1100.0, 100.0).array;
-    const auto x_obs = [
-        -2000., -1500., -1000., -750., -600., -500., -400., -300.,
-        -250., -150., -100., -75., -55., -40., -30., -20., -10., 0., 10.,
-        20., 30., 40., 55., 75., 100., 150., 250., 300., 400., 500., 600.,
-        750., 1000., 1500., 2000.
-    ];
+    const auto x_obs = iota(-2000.0, 1100.0, 25.0).array;
     auto nx = x_obs.length;
-    const auto y_obs = iota(-1500.0, 1600.0, 200.0).array;
+    const auto y_obs = iota(-1500.0, 1600.0, 25.0).array;
     auto ny = y_obs.length;
 
     double[] levels_linear;
