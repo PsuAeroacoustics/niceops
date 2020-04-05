@@ -1,5 +1,7 @@
 import std.experimental.logger;
 
+static immutable ft2m = 0.3048;
+
 void main(string[] args)
 {
     import sphere_database : Database;
@@ -8,6 +10,7 @@ void main(string[] args)
     import std.array;
     import std.getopt;
     import core.stdc.stdlib : exit;
+    import std.conv : to;
 
     //Default to demo case
     string log_file = "niceops.log";
@@ -15,16 +18,18 @@ void main(string[] args)
     string path_file = "tracks/S-76D/197421AC.csv";
     string vehicle_file = "databases/S-76D.json";
     string out_file = "197421_LAE.csv";
-    bool plotting = true;
+    bool plotting = false;
     double dt = 1.0;
+    bool write_time_history = false;
 
-    auto option_results = getopt(args, "d|database", "netCDF noise database file.",
-            &database_file, "l|logfile", "Output log file.", &log_file,
-            "t|trajectoryfile",
+    auto option_results = getopt(args, "database|d", "netCDF noise database file.",
+            &database_file, "logfile|l", "Output log file.", &log_file,
+            "trajectoryfile|t",
             "CSV trajectory input file.", &path_file,
-            "v|vehicle", "JSON vehicle definition file.", &vehicle_file,
-            "o|output", "Output file name.", &out_file, "p|plotting",
-            "Enable plotting.", &plotting, "s|step", "Time step in seconds.", &dt);
+            "vehicle|v", "JSON vehicle definition file.", &vehicle_file,
+            "output|o", "Output file name.", &out_file, "plotting|p",
+            "Enable plotting.", &plotting, "step|s", "Time step in seconds.",
+            &dt, "history|i", "Enable time history.", &write_time_history);
 
     if (option_results.helpWanted)
     {
@@ -79,6 +84,13 @@ void main(string[] args)
             }
             auto index = ix + iy * nx;
             levels_linear[index] = sound_exposure_level(time_history, dt);
+            if (write_time_history)
+            {
+                //Write out time history files
+                auto time_history_filename = "timehistory_x" ~ to!string(
+                        ix) ~ "_y" ~ to!string(iy) ~ ".csv";
+                write_time_history_file(time_history, dt, xo, yo, time_history_filename);
+            }
         }
     }
 
@@ -207,8 +219,6 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
     import std.file;
     import std.stdio;
 
-    immutable ft2m = 0.3048;
-
     auto nx = x_obs.length;
     auto ny = y_obs.length;
 
@@ -254,4 +264,20 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
     }
     file.write("\n");
     file.close();
+}
+
+static void write_time_history_file(double[] time_history, double dt, double x,
+        double y, string filename)
+{
+    import std.file;
+    import std.stdio;
+
+    info("Writing time history to ", filename);
+    auto file = File(filename, "w");
+    file.writeln("Level time history. Next row [dt (s), x (ft), y(ft)], remaining rows, dB.");
+    file.writeln(dt, ",", x / ft2m, ",", y / ft2m);
+    foreach (level; time_history)
+    {
+        file.writeln(level);
+    }
 }
