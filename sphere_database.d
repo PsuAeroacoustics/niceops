@@ -559,7 +559,9 @@ class Database
         auto excess_factor = bilinear_interp(e11, e12, e21, e22, p1, p2, t1, t2, phi, theta);
         trace("Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
         //Apply spherical spreading and excess atmospheric absorption to surface level
-        auto excess_attenuation = excess_factor * (range - sphere_radius) / 1000.0;
+        //TODO Add ground effects
+        immutable ground_effect = 4.0;
+        auto excess_attenuation = ground_effect*excess_factor * (range - sphere_radius) / 1000.0;
         auto spreading_loss = 20.0 * log10(range / sphere_radius);
         trace("Spreading Loss (dB): ", spreading_loss,
                 "\tExcess Attenuation (dB): ", excess_attenuation);
