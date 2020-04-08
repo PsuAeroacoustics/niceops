@@ -12,6 +12,7 @@ void main(string[] args)
     import core.stdc.stdlib : exit;
     import std.conv : to;
     import std.math : isNaN, log10;
+    import std.datetime.stopwatch;
 
     //Default to demo case
     string log_file = "log/niceops.log";
@@ -25,7 +26,7 @@ void main(string[] args)
     double contour_step = 5.0;
     bool scattered = false;
     string observer_file = "";
-    double dt = 1.0;
+    double dt = 0.5;
     double ambient_level;
     bool write_time_history = false;
     string time_history_prefix = "";
@@ -64,7 +65,11 @@ void main(string[] args)
     //Set default logging to file
     sharedLog = new FileLogger(log_file);
 
+    // Start stopwatch
+    auto watch = StopWatch(AutoStart.yes);
     auto database = new Database(database_file);
+    auto t1 = watch.peek.total!"msecs";
+    log("Database loaded in ", t1 / 1000.0, " seconds.");
 
     //Create trajectory from CSV data
     auto trajectory = new Trajectory(path_file, vehicle_file);
@@ -154,6 +159,8 @@ void main(string[] args)
         }
     }
 
+    auto t2 = watch.peek.total!"msecs";
+    log("Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
     write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
 
     if (plotting)
@@ -202,30 +209,30 @@ void main(string[] args)
                     ]);
         }
         plt.plot(x, y, "k-");
-        plt.xlabel("X, ft",["fontsize":14]);
-        plt.ylabel("Y, ft",["fontsize":14]);
+        plt.xlabel("X, ft", ["fontsize": 14]);
+        plt.ylabel("Y, ft", ["fontsize": 14]);
         plt.axis("equal");
         plt.colorbar();
 
         plt.figure();
         plt.plot(x, trajectory.Get!("CT").get());
-        plt.xlabel("X, ft",["fontsize":14]);
-        plt.ylabel("$C_T$",["fontsize":14]);
+        plt.xlabel("X, ft", ["fontsize": 14]);
+        plt.ylabel("$C_T$", ["fontsize": 14]);
 
         plt.figure();
         plt.plot(x, trajectory.Get!("mu").get());
-        plt.xlabel("X, ft",["fontsize":14]);
-        plt.ylabel("$\\mu$",["fontsize":14]);
+        plt.xlabel("X, ft", ["fontsize": 14]);
+        plt.ylabel("$\\mu$", ["fontsize": 14]);
 
         plt.figure();
         plt.plot(x, trajectory.Get!("fpa").get(), x, trajectory.Get!("fpa_e").get());
-        plt.xlabel("X, ft",["fontsize":14]);
-        plt.ylabel("$\\gamma$",["fontsize":14]);
+        plt.xlabel("X, ft", ["fontsize": 14]);
+        plt.ylabel("$\\gamma$", ["fontsize": 14]);
 
         plt.figure();
         plt.plot(x, z);
-        plt.xlabel("X, ft",["fontsize":14]);
-        plt.ylabel("Z, ft",["fontsize":14]);
+        plt.xlabel("X, ft", ["fontsize": 14]);
+        plt.ylabel("Z, ft", ["fontsize": 14]);
 
         plt.show();
         plt.clear();
