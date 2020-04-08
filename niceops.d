@@ -11,26 +11,49 @@ void main(string[] args)
     import std.getopt;
     import core.stdc.stdlib : exit;
     import std.conv : to;
+    import std.math : isNaN, log10;
 
     //Default to demo case
-    string log_file = "niceops.log";
+    string log_file = "log/niceops.log";
     string database_file = "databases/S-76D_M3.nod";
     string path_file = "tracks/S-76D/197421AC.csv";
     string vehicle_file = "databases/S-76D.json";
-    string out_file = "197421_LAE.csv";
+    string out_file = "integrated/197421_LAE.csv";
     bool plotting = false;
+    double contour_min = 65.0;
+    double contour_max = 95.0;
+    double contour_step = 5.0;
+    bool scattered = false;
+    string observer_file = "";
     double dt = 1.0;
+    double ambient_level;
     bool write_time_history = false;
+    string time_history_prefix = "";
+    bool qsam = true;
 
     auto option_results = getopt(args, "database|d", "netCDF noise database file.",
             &database_file, "logfile|l", "Output log file.", &log_file,
             "trajectoryfile|t",
             "CSV trajectory input file.", &path_file,
-            "vehicle|v", "JSON vehicle definition file.", &vehicle_file,
-            "output|o", "Output file name.", &out_file, "plotting|p",
-            "Enable plotting.", &plotting, "step|s", "Time step in seconds.",
-            &dt, "history|i", "Enable time history.", &write_time_history);
+            "vehicle|v", "JSON vehicle definition file.", &vehicle_file, "output|o",
+            "Output file name.", &out_file, "plotting|p", "Enable plotting.",
+            &plotting, "cmin", "Minimum contour level, dB.",
+            &contour_min, "cmax", "Maximum contour level, dB.", &contour_max,
+            "cstep", "Contour level step, dB.", &contour_step, "step|s",
+            "Time step in seconds.",
+            &dt, "ambient|a", "Ambient noise level, dB", &ambient_level,
+            "history|i", "Time history file prefix.", &time_history_prefix,
+            "observer|b", "Observer file name.", &observer_file, "qsam|q",
+            "Enable extended QSAM", &qsam);
 
+    if (observer_file.length > 0)
+    {
+        scattered = true;
+    }
+    if (time_history_prefix.length > 0)
+    {
+        write_time_history = true;
+    }
     if (option_results.helpWanted)
     {
         defaultGetoptPrinter("Noise Informed Community Environment Operation Planning System (NICE-OPS).",
@@ -55,46 +78,83 @@ void main(string[] args)
     double smooth = 1e6;
     trajectory.adapt(dt, degree, smooth);
 
-    // Set up observer array
-    const auto x_obs = iota(-2000.0, 1100.0, 25.0).array;
-    auto nx = x_obs.length;
-    const auto y_obs = iota(-1500.0, 1600.0, 25.0).array;
-    auto ny = y_obs.length;
-
-    double[] levels_linear;
-    levels_linear.length = nx * ny;
-
     // And time series data
     auto nt = trajectory.states.length;
     double[] time_history;
     time_history.length = nt;
 
-    foreach (iy, yo; y_obs)
+    double[] integrated_levels;
+    double[] x_obs;
+    double[] y_obs;
+    double[3][] observers;
+    if (scattered)
     {
-        foreach (ix, xo; x_obs)
+        // Read in scattered observer data
+        read_observer_file(observer_file, observers);
+        //Set length for levels and observer x, y arrays
+        integrated_levels.length = observers.length;
+        x_obs.reserve(observers.length);
+        y_obs.reserve(observers.length);
+        //Deal observers out to x_obs and y_obs arrays
+        foreach (observer; observers)
         {
-            foreach (it, const ref state; trajectory.states)
+            x_obs ~= observer[0];
+            y_obs ~= observer[1];
+        }
+    }
+    else
+    {
+        // Set up observer array
+        x_obs = iota(-2000.0, 1100.0, 25.0).array;
+        auto nx = x_obs.length;
+        y_obs = iota(-1500.0, 1600.0, 25.0).array;
+        auto ny = y_obs.length;
+        //Set corresponding length for levels
+        integrated_levels.length = nx * ny;
+        observers.reserve(nx * ny);
+        foreach (iy, yo; y_obs)
+        {
+            foreach (ix, xo; x_obs)
             {
-                double[3] observer = [xo, yo, 0.0];
-                double[3] source = [state.x, state.y, state.z];
-                double[3] velocity = [state.vx, state.vy, state.vz];
-                double[3] normal = [state.nx, state.ny, state.nz];
-                time_history[it] = database.level_at_observer(observer, source,
-                        velocity, normal, state.mu, state.fpa_e, state.CT);
-            }
-            auto index = ix + iy * nx;
-            levels_linear[index] = sound_exposure_level(time_history, dt);
-            if (write_time_history)
-            {
-                //Write out time history files
-                auto time_history_filename = "timehistory_x" ~ to!string(
-                        ix) ~ "_y" ~ to!string(iy) ~ ".csv";
-                write_time_history_file(time_history, dt, xo, yo, time_history_filename);
+                observers ~= [xo, yo, 0.0];
             }
         }
     }
+    foreach (index, observer; observers)
+    {
+        foreach (it, const ref state; trajectory.states)
+        {
+            double[3] source = [state.x, state.y, state.z];
+            double[3] velocity = [state.vx, state.vy, state.vz];
+            double[3] normal = [state.nx, state.ny, state.nz];
+            if (qsam)
+            {
+                time_history[it] = database.level_at_observer(observer, source,
+                        velocity, normal, state.mu, state.fpa_e, state.CT);
+            }
+            else
+            {
+                time_history[it] = database.level_at_observer(observer, source,
+                        velocity, normal, state.mu, state.fpa, state.CT);
+            }
+            if (!isNaN(ambient_level))
+            {
+                //Add ambient noise
+                time_history[it] = 20.0 * log10(
+                        10.0 ^^ (time_history[it] / 20.) + 10.0 ^^ (ambient_level / 20.));
+            }
+        }
+        integrated_levels[index] = sound_exposure_level(time_history, dt);
+        if (write_time_history)
+        {
+            //Write out time history files
+            auto time_history_filename = time_history_prefix ~ "_i" ~ to!string(index) ~ ".csv";
+            write_time_history_file(time_history, dt, observer[0], observer[1],
+                    time_history_filename);
+        }
+    }
 
-    write_levels(x_obs, y_obs, levels_linear, out_file);
+    write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
 
     if (plotting)
     {
@@ -104,34 +164,68 @@ void main(string[] args)
         auto y = trajectory.Get!("y").get();
         auto z = trajectory.Get!("z").get();
 
-        double[][] levels_plot;
-        levels_plot.length = ny;
-        for (auto iy = 0; iy < ny; iy++)
-        {
-            levels_plot[iy].length = nx;
-            for (auto ix = 0; ix < nx; ix++)
-            {
-                levels_plot[iy][ix] = levels_linear[ix + iy * nx];
-            }
-        }
+        //Convert to ft for plotting
+        // TODO add units throughout
+        x_obs[] *= 1.0 / ft2m;
+        y_obs[] *= 1.0 / ft2m;
+        x[] *= 1.0 / ft2m;
+        y[] *= 1.0 / ft2m;
+        z[] *= 1.0 / ft2m;
 
+        //Set contour levels
+        auto clevels = iota(contour_min, contour_max + contour_step, contour_step).array();
         plt.figure();
-        plt.contourf(x_obs, y_obs, levels_plot);
+        if (scattered)
+        {
+
+            plt.tricontourf(x_obs, y_obs, integrated_levels, clevels, [
+                    "cmap": "YlOrRd"
+                    ]);
+            plt.plot(x_obs, y_obs, "ko");
+        }
+        else
+        {
+            double[][] gridded_levels;
+            auto nx = x_obs.length;
+            auto ny = y_obs.length;
+            gridded_levels.length = ny;
+            for (auto iy = 0; iy < ny; iy++)
+            {
+                gridded_levels[iy].length = nx;
+                for (auto ix = 0; ix < nx; ix++)
+                {
+                    gridded_levels[iy][ix] = integrated_levels[ix + iy * nx];
+                }
+            }
+            plt.contourf(x_obs, y_obs, gridded_levels, clevels, [
+                    "cmap": "YlOrRd"
+                    ]);
+        }
         plt.plot(x, y, "k-");
+        plt.xlabel("X, ft",["fontsize":14]);
+        plt.ylabel("Y, ft",["fontsize":14]);
         plt.axis("equal");
         plt.colorbar();
 
         plt.figure();
         plt.plot(x, trajectory.Get!("CT").get());
+        plt.xlabel("X, ft",["fontsize":14]);
+        plt.ylabel("$C_T$",["fontsize":14]);
 
         plt.figure();
         plt.plot(x, trajectory.Get!("mu").get());
+        plt.xlabel("X, ft",["fontsize":14]);
+        plt.ylabel("$\\mu$",["fontsize":14]);
 
         plt.figure();
         plt.plot(x, trajectory.Get!("fpa").get(), x, trajectory.Get!("fpa_e").get());
+        plt.xlabel("X, ft",["fontsize":14]);
+        plt.ylabel("$\\gamma$",["fontsize":14]);
 
         plt.figure();
         plt.plot(x, z);
+        plt.xlabel("X, ft",["fontsize":14]);
+        plt.ylabel("Z, ft",["fontsize":14]);
 
         plt.show();
         plt.clear();
@@ -214,62 +308,76 @@ unittest
 }
 
 static void write_levels(const double[] x_obs, const double[] y_obs,
-        const double[] levels, string out_file)
+        const double[] levels, string out_file, bool scattered)
 {
     import std.file;
     import std.stdio;
 
-    auto nx = x_obs.length;
-    auto ny = y_obs.length;
-
     auto file = File(out_file, "w");
     info("Writing output to ", out_file);
-    //Write header
-    file.writeln("Line 1: x(ft), Line 2: y(ft),  Lines 3+ levels (x cols y rows)");
-    foreach (i, x; x_obs)
+    if (scattered)
     {
-        file.write(x / ft2m);
-        if (i < (nx - 1))
+        info("Scattered output.");
+        assert(levels.length == x_obs.length && levels.length == y_obs.length);
+        file.writeln("x(ft), y(ft), Level(dB)");
+        foreach (i, level; levels)
         {
-            file.write(",");
-        }
-        else
-        {
-            file.write("\n");
+            file.writeln(x_obs[i] / ft2m, ",", y_obs[i] / ft2m, ",", level);
         }
     }
-    foreach (i, y; y_obs)
+    else
     {
-        file.write(y / ft2m);
-        if (i < (ny - 1))
+        info("Gridded output.");
+        auto nx = x_obs.length;
+        auto ny = y_obs.length;
+        assert(nx * ny == levels.length);
+
+        //Write header
+        file.writeln("Line 1: x(ft), Line 2: y(ft),  Lines 3+ levels (x cols y rows)");
+        foreach (i, x; x_obs)
         {
-            file.write(",");
+            file.write(x / ft2m);
+            if (i < (nx - 1))
+            {
+                file.write(",");
+            }
+            else
+            {
+                file.write("\n");
+            }
         }
-        else
+        foreach (i, y; y_obs)
         {
-            file.write("\n");
+            file.write(y / ft2m);
+            if (i < (ny - 1))
+            {
+                file.write(",");
+            }
+            else
+            {
+                file.write("\n");
+            }
         }
+        foreach (i, level; levels)
+        {
+            file.write(level);
+            if ((i + 1) % nx)
+            {
+                file.write(",");
+            }
+            else
+            {
+                file.write("\n");
+            }
+        }
+        file.write("\n");
     }
-    foreach (i, level; levels)
-    {
-        file.write(level);
-        if ((i + 1) % nx)
-        {
-            file.write(",");
-        }
-        else
-        {
-            file.write("\n");
-        }
-    }
-    file.write("\n");
     file.close();
 }
 
 static void write_time_history_file(double[] time_history, double dt, double x,
         double y, string filename)
 {
-    import std.file;
     import std.stdio;
 
     info("Writing time history to ", filename);
@@ -279,5 +387,33 @@ static void write_time_history_file(double[] time_history, double dt, double x,
     foreach (level; time_history)
     {
         file.writeln(level);
+    }
+}
+
+static void read_observer_file(string observer_file, out double[3][] observers)
+{
+    import std.csv;
+    import std.file : readText;
+    import std.array;
+
+    trace("Reading observers from " ~ observer_file ~ ".");
+    auto contents = readText(observer_file);
+    auto records = csvReader!(double)(contents, null);
+    foreach (record; records)
+    {
+        auto data = record.array;
+        if (data.length == 3)
+        {
+            observers ~= [data[0] * ft2m, data[1] * ft2m, data[2] * ft2m];
+        }
+        else if (data.length == 4)
+        {
+            //Skip channel ID in first column
+            observers ~= [data[1] * ft2m, data[2] * ft2m, data[3] * ft2m];
+        }
+        else
+        {
+            fatal("Observer file format unreadable.");
+        }
     }
 }
