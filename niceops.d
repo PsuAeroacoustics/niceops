@@ -21,6 +21,7 @@ void main(string[] args)
     string vehicle_file = "databases/S-76D.json";
     string out_file = "integrated/197421_LAE.csv";
     bool plotting = false;
+    string figure_file = "";
     double contour_min = 65.0;
     double contour_max = 95.0;
     double contour_step = 5.0;
@@ -38,14 +39,14 @@ void main(string[] args)
             "CSV trajectory input file.", &path_file,
             "vehicle|v", "JSON vehicle definition file.", &vehicle_file, "output|o",
             "Output file name.", &out_file, "plotting|p", "Enable plotting.",
-            &plotting, "cmin", "Minimum contour level, dB.",
-            &contour_min, "cmax", "Maximum contour level, dB.", &contour_max,
-            "cstep", "Contour level step, dB.", &contour_step, "step|s",
-            "Time step in seconds.",
-            &dt, "ambient|a", "Ambient noise level, dB", &ambient_level,
-            "history|i", "Time history file prefix.", &time_history_prefix,
-            "observer|b", "Observer file name.", &observer_file, "qsam|q",
-            "Enable extended QSAM", &qsam);
+            &plotting, "figfile|f", "Filename to save figure.",
+            &figure_file, "cmin", "Minimum contour level, dB.", &contour_min,
+            "cmax", "Maximum contour level, dB.", &contour_max, "cstep",
+            "Contour level step, dB.", &contour_step, "step|s",
+            "Time step in seconds.", &dt, "ambient|a", "Ambient noise level, dB",
+            &ambient_level, "history|i", "Time history file prefix.",
+            &time_history_prefix, "observer|b", "Observer file name.",
+            &observer_file, "qsam|q", "Enable extended QSAM", &qsam);
 
     if (observer_file.length > 0)
     {
@@ -163,7 +164,7 @@ void main(string[] args)
     log("Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
     write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
 
-    if (plotting)
+    if (plotting || figure_file.length > 0)
     {
         import plt = matplotlibd.pyplot;
 
@@ -213,28 +214,38 @@ void main(string[] args)
         plt.ylabel("Y, ft", ["fontsize": 14]);
         plt.axis("equal");
         plt.colorbar();
+        plt.tight_layout();
 
-        plt.figure();
-        plt.plot(x, trajectory.Get!("CT").get());
-        plt.xlabel("X, ft", ["fontsize": 14]);
-        plt.ylabel("$C_T$", ["fontsize": 14]);
+        if (figure_file.length > 0)
+        {
+            plt.savefig(figure_file);
+        }
 
-        plt.figure();
-        plt.plot(x, trajectory.Get!("mu").get());
-        plt.xlabel("X, ft", ["fontsize": 14]);
-        plt.ylabel("$\\mu$", ["fontsize": 14]);
+        if (plotting)
+        {
+            plt.figure();
+            plt.plot(x, trajectory.Get!("CT").get());
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("$C_T$", ["fontsize": 14]);
 
-        plt.figure();
-        plt.plot(x, trajectory.Get!("fpa").get(), x, trajectory.Get!("fpa_e").get());
-        plt.xlabel("X, ft", ["fontsize": 14]);
-        plt.ylabel("$\\gamma$", ["fontsize": 14]);
+            plt.figure();
+            plt.plot(x, trajectory.Get!("mu").get());
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("$\\mu$", ["fontsize": 14]);
 
-        plt.figure();
-        plt.plot(x, z);
-        plt.xlabel("X, ft", ["fontsize": 14]);
-        plt.ylabel("Z, ft", ["fontsize": 14]);
+            plt.figure();
+            plt.plot(x, trajectory.Get!("fpa").get(), x, trajectory.Get!("fpa_e").get());
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("$\\gamma$", ["fontsize": 14]);
 
-        plt.show();
+            plt.figure();
+            plt.plot(x, z);
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("Z, ft", ["fontsize": 14]);
+
+            plt.show();
+        }
+
         plt.clear();
     }
 }
