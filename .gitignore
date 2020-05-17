@@ -18,3 +18,9 @@ niceops
 *_LAE.csv
 /external/matplotlibd/examples/
 splinter-test
+/figures/
+/integrated/
+/niceops.trace/
+/timehistory/
+/tracks/
+/databases/
