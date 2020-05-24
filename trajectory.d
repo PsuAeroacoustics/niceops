@@ -250,7 +250,7 @@ static void smoother(in double[] x, in double[] f, in double[] xi, out double[] 
     diff(dx, fi, dfi, ddfi);
 }
 
-static void diff(double dx, in double[] f, out double[] df, out double[] ddf)
+static pure void diff(double dx, in double[] f, out double[] df, out double[] ddf)
 {
     //Create storage for first derivative
     df = f.dup;

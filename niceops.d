@@ -32,21 +32,23 @@ void main(string[] args)
     bool write_time_history = false;
     string time_history_prefix = "";
     bool qsam = true;
+    bool self_test = false;
 
     auto option_results = getopt(args, "database|d", "netCDF noise database file.",
             &database_file, "logfile|l", "Output log file.", &log_file,
             "trajectoryfile|t",
-            "CSV trajectory input file.", &path_file,
-            "vehicle|v", "JSON vehicle definition file.", &vehicle_file, "output|o",
-            "Output file name.", &out_file, "plotting|p", "Enable plotting.",
-            &plotting, "figfile|f", "Filename to save figure.",
-            &figure_file, "cmin", "Minimum contour level, dB.", &contour_min,
-            "cmax", "Maximum contour level, dB.", &contour_max, "cstep",
-            "Contour level step, dB.", &contour_step, "step|s",
-            "Time step in seconds.", &dt, "ambient|a", "Ambient noise level, dB",
-            &ambient_level, "history|i", "Time history file prefix.",
-            &time_history_prefix, "observer|b", "Observer file name.",
-            &observer_file, "qsam|q", "Enable extended QSAM", &qsam);
+    "CSV trajectory input file.", &path_file,
+    "vehicle|v", "JSON vehicle definition file.", &vehicle_file, "output|o",
+    "Output file name.", &out_file, "plotting|p", "Enable plotting.",
+    &plotting, "figfile|f", "Filename to save figure.",
+    &figure_file, "cmin", "Minimum contour level, dB.", &contour_min,
+    "cmax", "Maximum contour level, dB.", &contour_max, "cstep",
+    "Contour level step, dB.", &contour_step, "step|s",
+    "Time step in seconds.", &dt, "ambient|a", "Ambient noise level, dB",
+    &ambient_level, "history|i", "Time history file prefix.",
+    &time_history_prefix, "observer|b", "Observer file name.",
+    &observer_file, "qsam|q", "Enable extended QSAM", &qsam,
+    "self_test","Run self tests.",&self_test);
 
     if (observer_file.length > 0)
     {
@@ -64,20 +66,25 @@ void main(string[] args)
     }
 
     //Set default logging to file
-    sharedLog = new FileLogger(log_file);
+    sharedLog = new FileLogger( log_file);
 
     // Start stopwatch
-    auto watch = StopWatch(AutoStart.yes);
-    auto database = new Database(database_file);
+    auto watch = StopWatch( AutoStart.yes);
+    auto database = new Database( database_file);
     auto t1 = watch.peek.total!"msecs";
-    log("Database loaded in ", t1 / 1000.0, " seconds.");
+    log( "Database loaded in ", t1 / 1000.0, " seconds.");
+
+    if (self_test)
+    {
+        database.self_test( database_file);
+    }
 
     //Create trajectory from CSV data
-    auto trajectory = new Trajectory(path_file, vehicle_file);
+    auto trajectory = new Trajectory( path_file, vehicle_file);
 
     //Trim trajectory (per Mike)
     double xstart_ft = -6000.;
-    trajectory.watts_trim(xstart_ft);
+    trajectory.watts_trim( xstart_ft);
 
     // Trajectory adaptation parameters
     int degree = 5;
