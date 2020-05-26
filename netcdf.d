@@ -15,7 +15,7 @@ import core.stdc.config;
 /*! The nc_type type is just an int. */
 alias nc_type = int;
 
-extern (C):
+extern (C) @system @nogc nothrow:
 
 /*
  * The netcdf external data types
