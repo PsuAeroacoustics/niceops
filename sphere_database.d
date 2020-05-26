@@ -13,12 +13,12 @@ import std.traits : isFloatingPoint;
 import netcdf;
 
 // Declare "C" functions from interpolator
-extern (C)
+extern (C) @nogc
 {
     int set_interpolator3(size_t n, const double* x1, const double* x2, const double* x3);
     void barycentric(double x1, double x2, double x3, double* weights, size_t* indicies);
-    double bilinear_interp(double q11, double q12, double q21, double q22,
-            double x1, double x2, double y1, double y2, double x, double y);
+    pure double bilinear_interp(double q11, double q12, double q21, double q22,
+    double x1, double x2, double y1, double y2, double x, double y);
 }
 
 unittest
@@ -32,7 +32,7 @@ unittest
     auto q22 = 1.0;
     auto q12 = 0.5;
     auto q21 = 0.5;
-    auto midpoint = bilinear_interp(q11, q12, q21, q22, x1, x2, y1, y2, 0.5, 0.5);
+    auto midpoint = periodic_bilinear_interp( q11, q12, q21, q22, x1, x2, y1, y2, 0.5, 0.5);
     assert(midpoint <= 1.0);
     assert(midpoint >= -1.0);
 
@@ -44,8 +44,39 @@ unittest
     q22 = 1.0;
     q12 = 1.0;
     q21 = 0.0;
-    midpoint = bilinear_interp( q11, q12, q21, q22, x1, x2, y1, y2, 0.0, 0.0);
+    midpoint = periodic_bilinear_interp( q11, q12, q21, q22, x1, x2, y1, y2, 0.0, 0.0);
     assert(approxEqual( midpoint, 0.5));
+
+    x1 = 50.0;
+    x2 = -40.0;
+    y1 = 85;
+    y2 = -95.0;
+    q11 = 0.0;
+    q22 = 1.0;
+    q12 = 1.0;
+    q21 = 0.0;
+    midpoint = periodic_bilinear_interp( q11, q12, q21, q22, x1, x2, y1, y2, 5.0, -5.0);
+    assert(approxEqual( midpoint, 0.5));
+}
+
+private pure @nogc double periodic_bilinear_interp(double q11, double q12, double q21, double q22,
+double x1, double x2, double y1, double y2, double x, double y)
+{
+    import std.algorithm.mutation : swap;
+    //Check if points "wrap around" sphere, and swap inputs to bilinear interpolation if necessary
+    if (x1 > x2)
+    {
+        swap( x1,x2);
+        swap( q11,q21);
+        swap( q12,q22);
+    }
+    if (y1 > y2)
+    {
+        swap( y1,y2);
+        swap( q11,q12);
+        swap( q21,q22);
+    }
+    return bilinear_interp( q11,q12,q21,q22,x1,x2,y1,y2,x,y);
 }
 
 private int[] get_group_ids(int ncid)
@@ -562,24 +593,25 @@ class Database
         auto e11 = barycentric_interp( EAA, phi_range[0], theta_range[0], weights, indicies);
         auto e12 = barycentric_interp( EAA, phi_range[0], theta_range[1], weights, indicies);
         auto e21 = barycentric_interp( EAA, phi_range[1], theta_range[0], weights, indicies);
-        auto e22 = barycentric_interp(EAA, phi_range[1], theta_range[1], weights, indicies);
+        auto e22 = barycentric_interp( EAA, phi_range[1], theta_range[1], weights, indicies);
         // Bilinear interolation between gridpoints
         auto p1 = phis[phi_range[0]];
         auto p2 = phis[phi_range[1]];
         auto t1 = thetas[theta_range[0]];
         auto t2 = thetas[theta_range[1]];
-        auto sphere_level = bilinear_interp(d11, d12, d21, d22, p1, p2, t1, t2, phi, theta);
-        auto excess_factor = bilinear_interp(e11, e12, e21, e22, p1, p2, t1, t2, phi, theta);
-        trace("Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
+
+        auto sphere_level = periodic_bilinear_interp( d11, d12, d21, d22, p1, p2, t1, t2, phi, theta);
+        auto excess_factor = periodic_bilinear_interp( e11, e12, e21, e22, p1, p2, t1, t2, phi, theta);
+        trace( "Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
         //Apply spherical spreading and excess atmospheric absorption to surface level
         //TODO Add ground effects
         immutable ground_effect = 4.0;
         auto excess_attenuation = ground_effect * excess_factor * (range - sphere_radius) / 1000.0;
         auto spreading_loss = 20.0 * log10( range / sphere_radius);
-        trace("Spreading Loss (dB): ", spreading_loss,
-                "\tExcess Attenuation (dB): ", excess_attenuation);
-        assert(isFinite(sphere_level));
-        assert(isFinite(excess_factor));
+        trace( "Spreading Loss (dB): ", spreading_loss,
+        "\tExcess Attenuation (dB): ", excess_attenuation);
+        assert(isFinite( sphere_level));
+        assert(isFinite( excess_factor));
         assert(isFinite(excess_attenuation));
         assert(isFinite(spreading_loss));
         auto ground_level = sphere_level - spreading_loss - excess_attenuation;
