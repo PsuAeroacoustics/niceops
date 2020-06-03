@@ -20,8 +20,11 @@ void main(string[] args)
     string path_file = "tracks/S-76D/197421AC.csv";
     string vehicle_file = "databases/S-76D.json";
     string out_file = "integrated/197421_LAE.csv";
+    string state_file = "";
+    bool write_state = false;
     bool plotting = false;
     string figure_file = "";
+    string state_figure_file = "";
     double contour_min = 65.0;
     double contour_max = 95.0;
     double contour_step = 5.0;
@@ -34,21 +37,24 @@ void main(string[] args)
     bool qsam = true;
     bool self_test = false;
 
-    auto option_results = getopt(args, "database|d", "netCDF noise database file.",
-            &database_file, "logfile|l", "Output log file.", &log_file,
-            "trajectoryfile|t",
-    "CSV trajectory input file.", &path_file,
-    "vehicle|v", "JSON vehicle definition file.", &vehicle_file, "output|o",
-    "Output file name.", &out_file, "plotting|p", "Enable plotting.",
-    &plotting, "figfile|f", "Filename to save figure.",
-    &figure_file, "cmin", "Minimum contour level, dB.", &contour_min,
+    auto option_results = getopt( args, std.getopt.config.caseSensitive,
+    "database|d", "netCDF noise database file.", &database_file,
+    "logfile|l", "Output log file.", &log_file, "trajectoryfile|t",
+    "CSV trajectory input file.", &path_file, "vehicle|v",
+    "JSON vehicle definition file.",
+    &vehicle_file, "output|o", "Output file name.", &out_file,
+    "plotting|p", "Enable plotting.", &plotting, "figfile|f",
+    "Filename to save figure.", &figure_file,
+    "statefigfile|F", "Filename to save state figures.",
+    &state_figure_file, "cmin", "Minimum contour level, dB.", &contour_min,
     "cmax", "Maximum contour level, dB.", &contour_max, "cstep",
     "Contour level step, dB.", &contour_step, "step|s",
     "Time step in seconds.", &dt, "ambient|a", "Ambient noise level, dB",
     &ambient_level, "history|i", "Time history file prefix.",
     &time_history_prefix, "observer|b", "Observer file name.",
-    &observer_file, "qsam|q", "Enable extended QSAM", &qsam,
-    "self_test","Run self tests.",&self_test);
+    &observer_file, "qsam|q", "Enable extended QSAM", &qsam, "state|S",
+    "Filename to save state data", &state_file, "self_test",
+    "Run self tests.", &self_test);
 
     if (observer_file.length > 0)
     {
@@ -58,11 +64,15 @@ void main(string[] args)
     {
         write_time_history = true;
     }
+    if (state_file.length > 0)
+    {
+        write_state = true;
+    }
     if (option_results.helpWanted)
     {
-        defaultGetoptPrinter("Noise Informed Community Environment Operation Planning System (NICE-OPS).",
-                option_results.options);
-        exit(0);
+        defaultGetoptPrinter( "Noise Informed Community Environment Operation Planning System (NICE-OPS).",
+        option_results.options);
+        exit( 0);
     }
 
     //Set default logging to file
@@ -76,6 +86,10 @@ void main(string[] args)
 
     if (self_test)
     {
+        // TODO: Check out this literal corner case
+        //2020-05-25T16:02:22.223 [all] sphere_database.d:740:self_test Surface level disagreement of D:83.6494 versus N:85.3316 for φ = -90, θ = 180, μ  = 0.164848,γ  =  -4.25762, CT = 0
+        //        database.eval(database.sphere_radius, -90., 180.,0.164848, -4.25762, 0.);
+        //        exit(0);
         database.self_test( database_file);
     }
 
@@ -161,23 +175,29 @@ void main(string[] args)
         if (write_time_history)
         {
             //Write out time history files
-            auto time_history_filename = time_history_prefix ~ "_i" ~ to!string(index) ~ ".csv";
-            write_time_history_file(time_history, dt, observer[0], observer[1],
-                    time_history_filename);
+            auto time_history_filename = time_history_prefix ~ "_i" ~ to!string( index) ~ ".csv";
+            write_time_history_file( time_history, dt, observer[0], observer[1],
+            time_history_filename);
         }
     }
 
     auto t2 = watch.peek.total!"msecs";
-    log("Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
-    write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
+    log( "Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
+    write_levels( x_obs, y_obs, integrated_levels, out_file, scattered);
 
-    if (plotting || figure_file.length > 0)
+    if (write_state)
+    {
+        trajectory.write_state( state_file);
+    }
+
+    if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
     {
         import plt = matplotlibd.pyplot;
 
         auto x = trajectory.Get!("x").get();
         auto y = trajectory.Get!("y").get();
         auto z = trajectory.Get!("z").get();
+        import std.stdio;
 
         //Convert to ft for plotting
         // TODO add units throughout
@@ -187,72 +207,100 @@ void main(string[] args)
         y[] *= 1.0 / ft2m;
         z[] *= 1.0 / ft2m;
 
-        //Set contour levels
-        auto clevels = iota(contour_min, contour_max + contour_step, contour_step).array();
-        plt.figure();
-        if (scattered)
+        if (plotting || figure_file.length > 0)
         {
-
-            plt.tricontourf(x_obs, y_obs, integrated_levels, clevels, [
-                    "cmap": "YlOrRd"
-                    ]);
-            plt.plot(x_obs, y_obs, "ko");
-        }
-        else
-        {
-            double[][] gridded_levels;
-            auto nx = x_obs.length;
-            auto ny = y_obs.length;
-            gridded_levels.length = ny;
-            for (auto iy = 0; iy < ny; iy++)
+            //Set contour levels
+            auto clevels = iota( contour_min, contour_max + contour_step, contour_step).array();
+            plt.figure();
+            if (scattered)
             {
-                gridded_levels[iy].length = nx;
-                for (auto ix = 0; ix < nx; ix++)
-                {
-                    gridded_levels[iy][ix] = integrated_levels[ix + iy * nx];
-                }
+                plt.tricontourf( x_obs, y_obs, integrated_levels, clevels, [
+                "cmap": "YlOrRd"
+                ]);
+                plt.plot( x_obs, y_obs, "ko");
             }
-            plt.contourf(x_obs, y_obs, gridded_levels, clevels, [
-                    "cmap": "YlOrRd"
-                    ]);
-        }
-        plt.plot(x, y, "k-");
-        plt.xlabel("X, ft", ["fontsize": 14]);
-        plt.ylabel("Y, ft", ["fontsize": 14]);
-        plt.axis("equal");
-        plt.colorbar();
-        plt.tight_layout();
+            else
+            {
+                double[][] gridded_levels;
+                auto nx = x_obs.length;
+                auto ny = y_obs.length;
+                gridded_levels.length = ny;
+                for (auto iy = 0; iy < ny; iy++)
+                {
+                    gridded_levels[iy].length = nx;
+                    for (auto ix = 0; ix < nx; ix++)
+                    {
+                        gridded_levels[iy][ix] = integrated_levels[ix + iy * nx];
+                    }
+                }
+                plt.contourf( x_obs, y_obs, gridded_levels, clevels, [
+                "cmap": "YlOrRd"
+                ]);
+            }
+            plt.plot( x, y, "k-");
+            plt.xlabel( "X, ft", ["fontsize": 14]);
+            plt.ylabel( "Y, ft", ["fontsize": 14]);
+            plt.axis( "equal");
+            plt.colorbar();
+            plt.tight_layout();
 
-        if (figure_file.length > 0)
+            if (figure_file.length > 0)
+            {
+                plt.savefig( figure_file);
+            }
+        }
+        if (plotting || state_figure_file.length > 0)
         {
-            plt.savefig(figure_file);
-        }
+            import std.path;
 
+            auto CT = trajectory.Get!("CT").get();
+            auto mu = trajectory.Get!("mu").get();
+            auto gamma = trajectory.Get!("fpa").get();
+            auto gamma_e = trajectory.Get!("fpa_e").get();
+
+            plt.figure();
+            plt.plot( x, CT);
+            plt.xlabel( "X, ft", ["fontsize": 14]);
+            plt.ylabel( "$C_T$", ["fontsize": 14]);
+            if (state_figure_file.length > 0)
+            {
+                plt.savefig( stripExtension(
+                state_figure_file) ~ "_CT_" ~ extension( state_figure_file));
+            }
+
+            plt.figure();
+            plt.plot( x, mu);
+            plt.xlabel( "X, ft", ["fontsize": 14]);
+            plt.ylabel( "$\\mu$", ["fontsize": 14]);
+            if (state_figure_file.length > 0)
+            {
+                plt.savefig( stripExtension(
+                state_figure_file) ~ "_mu_" ~ extension( state_figure_file));
+            }
+
+            plt.figure();
+            plt.plot( x, gamma, x, gamma_e);
+            plt.xlabel( "X, ft", ["fontsize": 14]);
+            plt.ylabel( "$\\gamma$", ["fontsize": 14]);
+            if (state_figure_file.length > 0)
+            {
+                plt.savefig( stripExtension(
+                state_figure_file) ~ "_gamma_" ~ extension( state_figure_file));
+            }
+
+            plt.figure();
+            plt.plot( x, z);
+            plt.xlabel( "X, ft", ["fontsize": 14]);
+            plt.ylabel( "Z, ft", ["fontsize": 14]);
+            if (state_figure_file.length > 0)
+            {
+                plt.savefig( stripExtension( state_figure_file) ~ "_z_" ~ extension( state_figure_file));
+            }
+        }
         if (plotting)
         {
-            plt.figure();
-            plt.plot(x, trajectory.Get!("CT").get());
-            plt.xlabel("X, ft", ["fontsize": 14]);
-            plt.ylabel("$C_T$", ["fontsize": 14]);
-
-            plt.figure();
-            plt.plot(x, trajectory.Get!("mu").get());
-            plt.xlabel("X, ft", ["fontsize": 14]);
-            plt.ylabel("$\\mu$", ["fontsize": 14]);
-
-            plt.figure();
-            plt.plot(x, trajectory.Get!("fpa").get(), x, trajectory.Get!("fpa_e").get());
-            plt.xlabel("X, ft", ["fontsize": 14]);
-            plt.ylabel("$\\gamma$", ["fontsize": 14]);
-
-            plt.figure();
-            plt.plot(x, z);
-            plt.xlabel("X, ft", ["fontsize": 14]);
-            plt.ylabel("Z, ft", ["fontsize": 14]);
-
             plt.show();
         }
-
         plt.clear();
     }
 }
@@ -338,8 +386,9 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
     import std.file;
     import std.stdio;
 
-    auto file = File(out_file, "w");
-    info("Writing output to ", out_file);
+    info( "Writing output to ", out_file);
+    auto file = File( out_file, "w");
+
     if (scattered)
     {
         info("Scattered output.");
