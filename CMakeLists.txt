@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.1)
 
-set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${CMAKE_CURRENT_SOURCE_DIR}/cmake-d")
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake-d)
 
-project(EQSAM VERSION 1.0 LANGUAGES C CXX D)
+project(NICEOPS VERSION 1.0 LANGUAGES C CXX D)
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX
     "build" CACHE PATH "default install prefix" FORCE
@@ -18,6 +18,8 @@ set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 set(CMAKE_CXX_STANDARD 14)
 
 include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3)
+# Including the source directory is apparently required to support out of source builds of D modules
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 add_definitions(-D_THREAD_SAFE)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -26,7 +28,9 @@ if(NOT CMAKE_BUILD_TYPE)
           FORCE)
 endif (NOT CMAKE_BUILD_TYPE)
 
-find_library(NCDF NAMES netcdf PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/)
+# Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place)
+find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so libnetcdf.dll PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/)
+
 find_package(Boost)
 find_package(CGAL COMPONENTS Core)
 include(${CGAL_USE_FILE})

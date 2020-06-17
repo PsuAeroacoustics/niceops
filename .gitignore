@@ -5,6 +5,8 @@ cmake_install.cmake
 .DS_Store
 Makefile
 .idea
+.vscode
+build
 *~
 *.log
 *.a
@@ -25,3 +27,4 @@ splinter-test
 /tracks/
 /databases/
 octave-workspace
+/state/
