@@ -26,7 +26,7 @@ void main(string[] args)
     string figure_file = "";
     string state_figure_file = "";
     double contour_min = 65.0;
-    double contour_max = 95.0;
+    double contour_max = 100.0;
     double contour_step = 5.0;
     bool scattered = false;
     string observer_file = "";
@@ -34,6 +34,7 @@ void main(string[] args)
     double ambient_level;
     bool write_time_history = false;
     string time_history_prefix = "";
+    string metric_file = "";
     bool qsam = true;
     bool self_test = false;
 
@@ -51,7 +52,8 @@ void main(string[] args)
     "Contour level step, dB.", &contour_step, "step|s",
     "Time step in seconds.", &dt, "ambient|a", "Ambient noise level, dB",
     &ambient_level, "history|i", "Time history file prefix.",
-    &time_history_prefix, "observer|b", "Observer file name.",
+    &time_history_prefix, "metricfile|m", "File to append overall noise metrics.", &metric_file,
+    "observer|b", "Observer file name.",
     &observer_file, "qsam|q", "Enable extended QSAM", &qsam, "state|S",
     "Filename to save state data", &state_file, "self_test",
     "Run self tests.", &self_test);
@@ -185,10 +187,19 @@ void main(string[] args)
     log( "Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
     write_levels( x_obs, y_obs, integrated_levels, out_file, scattered);
 
+    if(metric_file.length > 0)
+    {
+        import std.path : baseName, stripExtension;
+        auto casename = baseName(stripExtension(path_file));
+        append_metrics_file(metric_file, casename, integrated_levels);
+    }
+
     if (write_state)
     {
         trajectory.write_state( state_file);
     }
+
+
 
     if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
     {
@@ -453,7 +464,6 @@ static void write_time_history_file(double[] time_history, double dt, double x,
         double y, string filename)
 {
     import std.stdio;
-
     info("Writing time history to ", filename);
     auto file = File(filename, "w");
     file.writeln("Level time history. Next row [dt (s), x (ft), y(ft)], remaining rows, dB.");
@@ -462,6 +472,28 @@ static void write_time_history_file(double[] time_history, double dt, double x,
     {
         file.writeln(level);
     }
+}
+
+static void append_metrics_file(string filename, string casename, const double[] levels, double threshold=65.0)
+{
+    import std.stdio;
+    auto file = File(filename,"a");
+    double average = 0;
+    double maximum = -double.infinity;
+    size_t count = 0;
+    // Iterate over range and compute average and maximum value
+    foreach(level; levels)
+    {
+        average += level;
+        maximum = level > maximum ? level : maximum;
+        if(level>=threshold)
+        {
+            count++;
+        }
+    }
+    average /= levels.length;
+    auto area = double(count) / levels.length;
+    file.writeln(casename, ",", average, ",", maximum, ",", area);
 }
 
 static void read_observer_file(string observer_file, out double[3][] observers)

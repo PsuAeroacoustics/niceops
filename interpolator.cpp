@@ -3,6 +3,7 @@
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Delaunay_triangulation_3.h>
 #include <CGAL/Triangulation_vertex_base_with_info_3.h>
+//#include <iostream>
 
 
 // Hide CGAL triangulation in an anonymous namespace
@@ -103,8 +104,10 @@ void barycentric(double x1, double x2, double x3, double *weights, size_t *indic
     } else {
         // Compute the barycentric weights from surrounding verticies
         auto x = std::array<Point, 4>{};
+//        std::cout << "R: " << request.x() << "," << request.y() << "," << request.z() << std::endl;
         for (size_t i = 0; i < 4; i++) {
             x[i] = tetrahedron->vertex(i)->point();
+//            std::cout << "P" << i << ": " << x[i].x() << "," << x[i].y() << "," << x[i].z() << std::endl;
         }
         auto volume = std::array<double, 4>{};
         auto total_volume = 0.0f;
@@ -118,6 +121,7 @@ void barycentric(double x1, double x2, double x3, double *weights, size_t *indic
             }
             // Volume of tetra formed by point and facet
             volume[i] = std::fabs(1. / 6. * dot(pr[0], cross(pr[1], pr[2])));
+//            std::cout << "V" << i << ": " << volume[i] << std::endl;
             // Accumulate volume
             total_volume += volume[i];
         }
@@ -125,6 +129,7 @@ void barycentric(double x1, double x2, double x3, double *weights, size_t *indic
             //Calculate barycentric weights and add indicies
             weights[i] = volume[i] / total_volume;
             indicies[i] = tetrahedron->vertex(i)->info();
+//            std::cout << "W" << i << ": " << weights[i] << std::endl;
         }
     }
 }
@@ -137,6 +142,7 @@ double bilinear_interp(double q11, double q12, double q21, double q22,
     auto y2y = y2 - y;
     auto yy1 = y - y1;
     auto xx1 = x - x1;
+    assert(x2x1 >= 0.0 && y2y1 >= 0.0);
 
     if (x2x1 < 10 * std::numeric_limits<double>::epsilon()) {
         x2x1 = 2.0;
@@ -147,6 +153,11 @@ double bilinear_interp(double q11, double q12, double q21, double q22,
         y2y = 1.0;
         yy1 = 1.0;
     }
+//    std::cout << "W1: " << x2x * y2y
+//    << "    W2: " << xx1*y2y
+//            << "    W3: " << x2x*yy1
+//            << "    W4: " << xx1 * yy1
+//            << std::endl;
     return (q11 * x2x * y2y +
             q21 * xx1 * y2y +
             q12 * x2x * yy1 +
