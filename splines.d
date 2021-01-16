@@ -5,7 +5,7 @@ import std.array : array;
 import std.experimental.logger;
 
 
-extern(C)
+extern(C) @trusted @nogc nothrow
 {
 size_t create_spline(size_t nsamples, const double *x_values, const double *y_values, int degree, double alpha);
 
@@ -23,16 +23,16 @@ struct Spline
     private:
     size_t spline_key;
     public:
-    this(const double[] x, const double[] f, int degree = 3, double alpha = 0.3)
+    this(const double[] x, const double[] f, int degree = 3, double alpha = 0.3) @safe @nogc
     {
-        spline_key = create_spline(x.length,x.ptr,f.ptr,degree,alpha);
+        spline_key = create_spline(x.length,&x[0],&f[0],degree,alpha);
     }
-    ~this()
+    ~this() @safe @nogc
     {
         destroy_spline(spline_key);
     }
 
-    double eval(double xi, int order = 0)
+    double eval(double xi, int order = 0) @safe
     {
         switch(order)
         {
@@ -48,7 +48,7 @@ struct Spline
         assert(false);
     }
     //Convienience function to apply eval to entire array
-    double[] eval(const double[] xi, int order = 0)
+    double[] eval(const double[] xi, int order = 0) @safe
     {
         return map!(a => eval(a, order))(xi).array();
     }
