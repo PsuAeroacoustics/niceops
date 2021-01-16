@@ -7,12 +7,12 @@ void main(string[] args)
     import sphere_database : Database;
     import trajectory : Trajectory;
     import std.range : iota;
-    import std.array;
-    import std.getopt;
+    import std.array : array;
+    import std.getopt : getopt, config, defaultGetoptPrinter;
     import core.stdc.stdlib : exit;
     import std.conv : to;
     import std.math : isNaN, log10;
-    import std.datetime.stopwatch;
+    import std.datetime.stopwatch : StopWatch, AutoStart;
 
     //Default to demo case
     string log_file = "log/niceops.log";
@@ -38,7 +38,7 @@ void main(string[] args)
     bool qsam = true;
     bool self_test = false;
 
-    auto option_results = getopt( args, std.getopt.config.caseSensitive,
+    auto option_results = getopt( args, config.caseSensitive,
     "database|d", "netCDF noise database file.", &database_file,
     "logfile|l", "Output log file.", &log_file, "trajectoryfile|t",
     "CSV trajectory input file.", &path_file, "vehicle|v",
@@ -81,7 +81,7 @@ void main(string[] args)
     sharedLog = new FileLogger( log_file);
 
     // Start stopwatch
-    auto watch = StopWatch( AutoStart.yes);
+    immutable watch = StopWatch( AutoStart.yes);
     auto database = new Database( database_file);
     auto t1 = watch.peek.total!"msecs";
     log( "Database loaded in ", t1 / 1000.0, " seconds.");
@@ -99,16 +99,16 @@ void main(string[] args)
     auto trajectory = new Trajectory( path_file, vehicle_file);
 
     //Trim trajectory (per Mike)
-    double xstart_ft = -6000.;
+    immutable double xstart_ft = -6000.;
     trajectory.watts_trim( xstart_ft);
 
     // Trajectory adaptation parameters
-    int degree = 5;
-    double smooth = 1e6;
+    immutable int degree = 5;
+    immutable double smooth = 1e6;
     trajectory.adapt(dt, degree, smooth);
 
     // And time series data
-    auto nt = trajectory.states.length;
+    immutable nt = trajectory.states.length;
     double[] time_history;
     time_history.length = nt;
 
@@ -198,8 +198,6 @@ void main(string[] args)
     {
         trajectory.write_state( state_file);
     }
-
-
 
     if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
     {
@@ -498,7 +496,7 @@ static void append_metrics_file(string filename, string casename, const double[]
 
 static void read_observer_file(string observer_file, out double[3][] observers)
 {
-    import std.csv;
+    import std.csv : csvReader;
     import std.file : readText;
     import std.array;
 
