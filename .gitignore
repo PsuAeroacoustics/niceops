@@ -28,3 +28,9 @@ splinter-test
 /databases/
 octave-workspace
 /state/
+
+external/splinter/Doxyfile
+
+CMakeDoxyfile.in
+
+CMakeDoxygenDefaults.cmake

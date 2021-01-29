@@ -74,19 +74,19 @@ void main(string[] args)
     }
     if (option_results.helpWanted)
     {
-        defaultGetoptPrinter( "Noise Informed Community Environment Operation Planning System (NICE-OPS).",
-        option_results.options);
-        exit( 0);
+        defaultGetoptPrinter("Noise Informed Community Environment Operation Planning System (NICE-OPS).",
+                option_results.options);
+        exit(0);
     }
 
     //Set default logging to file
-    sharedLog = new FileLogger( log_file, LogLevel.info);
+    sharedLog = new FileLogger(log_file, LogLevel.info, CreateFolder.yes);
 
     // Start stopwatch
-    immutable watch = StopWatch( AutoStart.yes);
-    auto database = new Database( database_file);
+    immutable watch = StopWatch(AutoStart.yes);
+    auto database = new Database(database_file);
     auto t1 = watch.peek.total!"msecs";
-    log( "Database loaded in ", t1 / 1000.0, " seconds.");
+    log("Database loaded in ", t1 / 1000.0, " seconds.");
 
     if (self_test)
     {
@@ -94,7 +94,7 @@ void main(string[] args)
         //2020-05-25T16:02:22.223 [all] sphere_database.d:740:self_test Surface level disagreement of D:83.6494 versus N:85.3316 for φ = -90, θ = 180, μ  = 0.164848,γ  =  -4.25762, CT = 0
         //        database.eval(database.sphere_radius, -90., 180.,0.164848, -4.25762, 0.);
         //        exit(0);
-        database.self_test( database_file);
+        database.self_test(database_file);
     }
 
     //Create trajectory from CSV data
@@ -112,7 +112,7 @@ void main(string[] args)
 
     //Trim trajectory (per Mike)
     immutable double xstart_ft = -6000.;
-    trajectory.watts_trim( xstart_ft);
+    trajectory.watts_trim(xstart_ft);
 
     // Trajectory adaptation parameters
     immutable int degree = 5;
@@ -189,26 +189,27 @@ void main(string[] args)
         if (write_time_history)
         {
             //Write out time history files
-            auto time_history_filename = time_history_prefix ~ "_i" ~ to!string( index) ~ ".csv";
-            write_time_history_file( time_history, dt, observer[0], observer[1],
-            time_history_filename);
+            auto time_history_filename = time_history_prefix ~ "_i" ~ to!string(index) ~ ".csv";
+            write_time_history_file(time_history, dt, observer[0], observer[1],
+                    time_history_filename);
         }
     }
 
     auto t2 = watch.peek.total!"msecs";
-    log( "Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
-    write_levels( x_obs, y_obs, integrated_levels, out_file, scattered);
+    log("Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
+    write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
 
-    if(metric_file.length > 0)
+    if (metric_file.length > 0)
     {
         import std.path : baseName, stripExtension;
+
         auto casename = baseName(stripExtension(path_file));
         append_metrics_file(metric_file, casename, integrated_levels);
     }
 
     if (write_state)
     {
-        trajectory.write_state( state_file);
+        trajectory.write_state(state_file);
     }
 
     if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
@@ -231,14 +232,14 @@ void main(string[] args)
         if (plotting || figure_file.length > 0)
         {
             //Set contour levels
-            auto clevels = iota( contour_min, contour_max + contour_step, contour_step).array();
+            auto clevels = iota(contour_min, contour_max + contour_step, contour_step).array();
             plt.figure();
             if (scattered)
             {
-                plt.tricontourf( x_obs, y_obs, integrated_levels, clevels, [
-                "cmap": "YlOrRd"
-                ]);
-                plt.plot( x_obs, y_obs, "ko");
+                plt.tricontourf(x_obs, y_obs, integrated_levels, clevels, [
+                        "cmap": "YlOrRd"
+                        ]);
+                plt.plot(x_obs, y_obs, "ko");
             }
             else
             {
@@ -254,20 +255,20 @@ void main(string[] args)
                         gridded_levels[iy][ix] = integrated_levels[ix + iy * nx];
                     }
                 }
-                plt.contourf( x_obs, y_obs, gridded_levels, clevels, [
-                "cmap": "YlOrRd"
-                ]);
+                plt.contourf(x_obs, y_obs, gridded_levels, clevels, [
+                        "cmap": "YlOrRd"
+                        ]);
             }
-            plt.plot( x, y, "k-");
-            plt.xlabel( "X, ft", ["fontsize": 14]);
-            plt.ylabel( "Y, ft", ["fontsize": 14]);
-            plt.axis( "equal");
+            plt.plot(x, y, "k-");
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("Y, ft", ["fontsize": 14]);
+            plt.axis("equal");
             plt.colorbar();
             plt.tight_layout();
 
             if (figure_file.length > 0)
             {
-                plt.savefig( figure_file);
+                plt.savefig(figure_file);
             }
         }
         if (plotting || state_figure_file.length > 0)
@@ -280,42 +281,42 @@ void main(string[] args)
             auto gamma_e = trajectory.Get!("fpa_e").get();
 
             plt.figure();
-            plt.plot( x, CT);
-            plt.xlabel( "X, ft", ["fontsize": 14]);
-            plt.ylabel( "$C_T$", ["fontsize": 14]);
+            plt.plot(x, CT);
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("$C_T$", ["fontsize": 14]);
             if (state_figure_file.length > 0)
             {
-                plt.savefig( stripExtension(
-                state_figure_file) ~ "_CT_" ~ extension( state_figure_file));
+                plt.savefig(stripExtension(
+                        state_figure_file) ~ "_CT_" ~ extension(state_figure_file));
             }
 
             plt.figure();
-            plt.plot( x, mu);
-            plt.xlabel( "X, ft", ["fontsize": 14]);
-            plt.ylabel( "$\\mu$", ["fontsize": 14]);
+            plt.plot(x, mu);
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("$\\mu$", ["fontsize": 14]);
             if (state_figure_file.length > 0)
             {
-                plt.savefig( stripExtension(
-                state_figure_file) ~ "_mu_" ~ extension( state_figure_file));
+                plt.savefig(stripExtension(
+                        state_figure_file) ~ "_mu_" ~ extension(state_figure_file));
             }
 
             plt.figure();
-            plt.plot( x, gamma, x, gamma_e);
-            plt.xlabel( "X, ft", ["fontsize": 14]);
-            plt.ylabel( "$\\gamma$", ["fontsize": 14]);
+            plt.plot(x, gamma, x, gamma_e);
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("$\\gamma$", ["fontsize": 14]);
             if (state_figure_file.length > 0)
             {
-                plt.savefig( stripExtension(
-                state_figure_file) ~ "_gamma_" ~ extension( state_figure_file));
+                plt.savefig(stripExtension(
+                        state_figure_file) ~ "_gamma_" ~ extension(state_figure_file));
             }
 
             plt.figure();
-            plt.plot( x, z);
-            plt.xlabel( "X, ft", ["fontsize": 14]);
-            plt.ylabel( "Z, ft", ["fontsize": 14]);
+            plt.plot(x, z);
+            plt.xlabel("X, ft", ["fontsize": 14]);
+            plt.ylabel("Z, ft", ["fontsize": 14]);
             if (state_figure_file.length > 0)
             {
-                plt.savefig( stripExtension( state_figure_file) ~ "_z_" ~ extension( state_figure_file));
+                plt.savefig(stripExtension(state_figure_file) ~ "_z_" ~ extension(state_figure_file));
             }
         }
         if (plotting)
@@ -407,8 +408,8 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
     import std.file;
     import std.stdio;
 
-    info( "Writing output to ", out_file);
-    auto file = File( out_file, "w");
+    info("Writing output to ", out_file);
+    auto file = File(out_file, "w");
 
     if (scattered)
     {
@@ -474,6 +475,7 @@ static void write_time_history_file(double[] time_history, double dt, double x,
         double y, string filename)
 {
     import std.stdio;
+
     info("Writing time history to ", filename);
     auto file = File(filename, "w");
     file.writeln("Level time history. Next row [dt (s), x (ft), y(ft)], remaining rows, dB.");
@@ -484,19 +486,21 @@ static void write_time_history_file(double[] time_history, double dt, double x,
     }
 }
 
-static void append_metrics_file(string filename, string casename, const double[] levels, double threshold=65.0)
+static void append_metrics_file(string filename, string casename,
+        const double[] levels, double threshold = 65.0)
 {
     import std.stdio;
-    auto file = File(filename,"a");
+
+    auto file = File(filename, "a");
     double average = 0;
     double maximum = -double.infinity;
     size_t count = 0;
     // Iterate over range and compute average and maximum value
-    foreach(level; levels)
+    foreach (level; levels)
     {
         average += level;
         maximum = level > maximum ? level : maximum;
-        if(level>=threshold)
+        if (level >= threshold)
         {
             count++;
         }

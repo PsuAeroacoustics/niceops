@@ -11,7 +11,8 @@ namespace {
     // Define kernel
     typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
     typedef CGAL::Triangulation_vertex_base_with_info_3<size_t, K> Vb;
-    typedef CGAL::Triangulation_data_structure_3<Vb> Tds;
+    typedef CGAL::Delaunay_triangulation_cell_base_3<K> Cb;
+    typedef CGAL::Triangulation_data_structure_3<Vb, Cb> Tds;
     // Define 3D triangulation
     typedef CGAL::Delaunay_triangulation_3<K, Tds, CGAL::Fast_location> Triangulation;
     // Handy typedefs for CGAL cell handles and points
@@ -65,6 +66,7 @@ int set_interpolator3(size_t n, const double *x1, const double *x2, const double
         points.push_back(std::make_pair(Point(xx1, xx2, xx3), i));
         //If point is on edge of data range, then add another extended point
         //at the domain limits with the same data index
+
         if (approx(xx1, 0.0) || approx(xx2, 0.0) || approx(xx3, 0.0) ||
             approx(xx1, 1.0) || approx(xx2, 1.0) || approx(xx3, 1.0)) {
             auto extended_point = Point(extend(xx1, dmin, dmax), extend(xx2, dmin, dmax), extend(xx3, dmin, dmax));
