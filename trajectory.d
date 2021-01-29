@@ -139,6 +139,66 @@ class Trajectory
         }
     }
 
+    this(string aircraft_vel_filename, string flightpath_filename, string vehicle_filename)
+    {
+        import std.array : staticArray, array;
+        import std.algorithm : filter, map, strip;
+        import std.conv : to;
+        import std.exception : enforce;
+        import std.range : dropOne, dropExactly, enumerate, takeOne, tee, walkLength, zip;
+        import std.string : isNumeric;
+        import std.typecons : Tuple, tuple;
+        import std.stdio : writeln;
+
+        alias time_vel = tuple!("t", "vel");
+
+        auto velocity_data =
+            aircraft_vel_filename
+                .readText
+                .split("\n")
+                .map!(a => a.strip(' '))
+                .filter!(a => a.length > 0 && a[0].to!string.isNumeric)
+                .map!((a) {
+                    auto values = a.split(" ").filter!(b => b != "").map!(b => b.to!double);
+                    return time_vel(values.takeOne.front, values.dropExactly(4).staticArray!3);
+                });
+
+        auto pos_data =
+            flightpath_filename
+                .readText
+                .split("\n")
+                .map!(a => a.strip(' '))
+                .filter!(a => a.length > 0 && a[0].to!string.isNumeric) // Drop all lines that have no data or do not start with a number
+                .dropOne // Drop first line as its the timestamp at the top.
+                .map!(a =>
+                    a
+                    .split(" ")
+                    .filter!(b => b != "")
+                    .map!(b => b.strip(' '))
+                    .dropExactly(4)
+                    .map!(b => b.to!double).staticArray!3
+                );
+
+        enforce(velocity_data.walkLength == pos_data.walkLength, "Number of data samples in velocity file and position file do match");
+
+        states = zip(pos_data, velocity_data)
+            .map!((a) {
+                State now = {
+                    t: a[1].t,
+                    x: a[0][0],
+                    y: a[0][1],
+                    z: a[0][2],
+                    vx: a[1].vel[0],
+                    vy: a[1].vel[1],
+                    vz: a[1].vel[2]
+
+                };
+                return now;
+            }).array;
+
+        //writeln(states);
+    }
+
     void adapt(double dt, int degree = 3, double alpha = 0.3)
     {
         info("Adapting spline to dt ", dt, " with spline of degree ", degree,

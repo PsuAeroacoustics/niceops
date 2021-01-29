@@ -29,7 +29,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif (NOT CMAKE_BUILD_TYPE)
 
 # Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place)
-find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so libnetcdf.dll PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/)
+find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so libnetcdf.dll PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu/netcdf/mpi)
 
 find_package(Boost)
 find_package(CGAL COMPONENTS Core)

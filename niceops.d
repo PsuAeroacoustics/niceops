@@ -37,6 +37,7 @@ void main(string[] args)
     string metric_file = "";
     bool qsam = true;
     bool self_test = false;
+    string stk_vel_file = "";
 
     auto option_results = getopt( args, config.caseSensitive,
     "database|d", "netCDF noise database file.", &database_file,
@@ -56,7 +57,8 @@ void main(string[] args)
     "observer|b", "Observer file name.",
     &observer_file, "qsam|q", "Enable extended QSAM", &qsam, "state|S",
     "Filename to save state data", &state_file, "self_test",
-    "Run self tests.", &self_test);
+    "Run self tests.", &self_test,
+    "stk_vel", "STK scenario timeposvel file", &stk_vel_file);
 
     if (observer_file.length > 0)
     {
@@ -78,7 +80,7 @@ void main(string[] args)
     }
 
     //Set default logging to file
-    sharedLog = new FileLogger( log_file);
+    sharedLog = new FileLogger( log_file, LogLevel.info);
 
     // Start stopwatch
     immutable watch = StopWatch( AutoStart.yes);
@@ -96,7 +98,17 @@ void main(string[] args)
     }
 
     //Create trajectory from CSV data
-    auto trajectory = new Trajectory( path_file, vehicle_file);
+    Trajectory trajectory;
+
+    if(stk_vel_file == "") {
+        trajectory = new Trajectory( path_file, vehicle_file);
+    } else {
+        trajectory = new Trajectory(stk_vel_file, path_file, vehicle_file);
+        double[3][] observers;
+        read_observer_file(observer_file, observers);
+        
+        return;
+    }
 
     //Trim trajectory (per Mike)
     immutable double xstart_ft = -6000.;
@@ -496,28 +508,52 @@ static void append_metrics_file(string filename, string casename, const double[]
 
 static void read_observer_file(string observer_file, out double[3][] observers)
 {
+    import std.conv : to;
     import std.csv : csvReader;
     import std.file : readText;
-    import std.array;
+    import std.array : array, staticArray;
+    import std.string : indexOf, split, isNumeric;
+    import std.range : dropOne;
+    import std.algorithm : filter, map, strip;
+    import std.stdio : writeln;
 
-    trace("Reading observers from " ~ observer_file ~ ".");
-    auto contents = readText(observer_file);
-    auto records = csvReader!(double)(contents, null);
-    foreach (record; records)
+    immutable ext = observer_file.split(".")[$-1];
+
+    if(ext == "csv")
     {
-        auto data = record.array;
-        if (data.length == 3)
+        trace("Reading observers from " ~ observer_file ~ ".");
+        auto contents = readText(observer_file);
+        auto records = csvReader!(double)(contents, null);
+        foreach (record; records)
         {
-            observers ~= [data[0] * ft2m, data[1] * ft2m, data[2] * ft2m];
+            auto data = record.array;
+            if (data.length == 3)
+            {
+                observers ~= [data[0] * ft2m, data[1] * ft2m, data[2] * ft2m];
+            }
+            else if (data.length == 4)
+            {
+                //Skip channel ID in first column
+                observers ~= [data[1] * ft2m, data[2] * ft2m, data[3] * ft2m];
+            }
+            else
+            {
+                fatal("Observer file format unreadable.");
+            }
         }
-        else if (data.length == 4)
-        {
-            //Skip channel ID in first column
-            observers ~= [data[1] * ft2m, data[2] * ft2m, data[3] * ft2m];
-        }
-        else
-        {
-            fatal("Observer file format unreadable.");
-        }
+    }
+    else if(ext == "txt" && (observer_file.indexOf("PointsFromCov") != -1))
+    {
+        observers =
+            observer_file
+                .readText
+                .split("\n")
+                .map!(a => a.strip(' '))
+                .filter!(a => a.length > 0 && a[0].to!string.isNumeric)
+                .dropOne
+                .map!(a => a.split(" ").filter!(b => b != "").dropOne.map!(b => b.to!double).staticArray!3)
+                .array;
+
+        //writeln(observers);
     }
 }
