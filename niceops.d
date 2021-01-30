@@ -503,7 +503,7 @@ static void append_metrics_file(string filename, string casename,
     if (!exists(directory))
     {
         mkdirRecurse(directory);
-    }    import std.stdio : File;
+    }
 
     auto file = File(filename, "a");
     double average = 0;

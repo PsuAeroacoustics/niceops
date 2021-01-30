@@ -50,15 +50,16 @@ class Trajectory
         import std.conv;
         import std.array;
         import std.file;
-        info( "Writing state data to ", state_file);
-        auto file = File( state_file, "w");
+
+        info("Writing state data to ", state_file);
+        auto file = File(state_file, "w");
         // Write header automatically from field names
         auto fields = __traits(allMembers, State);
-        file.writeln( [ fields].join( ","));
+        file.writeln([fields].join(","));
         foreach (state; states)
         {
             auto values = state.tupleof;
-            file.writeln( to!(string[])( [ values]).join( ","));
+            file.writeln(to!(string[])([values]).join(","));
         }
     }
 
@@ -68,9 +69,9 @@ class Trajectory
     this(string filename, string vehicle_filename)
     {
         //Get vehicle data
-        vehicle = configure_vehicle( vehicle_filename);
+        vehicle = configure_vehicle(vehicle_filename);
 
-        auto extension = filename.splitter( '.').retro.take( 1).array()[0];
+        auto extension = filename.splitter('.').retro.take(1).array()[0];
         info("Opening file " ~ filename ~ " with extension ", extension);
         switch (toLower(extension))
         {
