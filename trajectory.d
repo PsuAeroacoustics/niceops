@@ -237,7 +237,7 @@ class Trajectory
 
     void watts_trim(double xstart_ft)
     {
-        import std.algorithm.searching;
+        import std.algorithm.searching : minIndex;
 
         auto mu = Get!("mu").get();
         auto z = Get!("z").get();
@@ -264,7 +264,7 @@ static void smoother(in double[] x, in double[] f, in double[] xi, out double[] 
     //Use spline for interpolation
     fi = spline.eval(xi);
     //Use finite differences to get velocity and acceleration
-    double dx = xi[1] - xi[0];
+    immutable dx = xi[1] - xi[0];
     diff(dx, fi, dfi, ddfi);
 }
 

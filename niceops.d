@@ -207,7 +207,6 @@ void main(string[] args)
         auto x = trajectory.Get!("x").get();
         auto y = trajectory.Get!("y").get();
         auto z = trajectory.Get!("z").get();
-        import std.stdio;
 
         //Convert to ft for plotting
         // TODO add units throughout
@@ -261,7 +260,7 @@ void main(string[] args)
         }
         if (plotting || state_figure_file.length > 0)
         {
-            import std.path;
+            import std.path : extension, stripExtension;
 
             auto CT = trajectory.Get!("CT").get();
             auto mu = trajectory.Get!("mu").get();
@@ -335,7 +334,7 @@ static size_t[2] peak_range(double[] levels, double down = 10.0)
     // Find the 10-dB down points
     size_t[2] index = [0, levels.length - 1];
     auto peak_position = levels.maxIndex;
-    auto threshold = levels[peak_position] - down;
+    immutable threshold = levels[peak_position] - down;
 
     for (auto i = peak_position; i < levels.length; i++)
     {
@@ -420,8 +419,8 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
     else
     {
         info("Gridded output.");
-        auto nx = x_obs.length;
-        auto ny = y_obs.length;
+        immutable nx = x_obs.length;
+        immutable ny = y_obs.length;
         assert(nx * ny == levels.length);
 
         //Write header
@@ -528,7 +527,7 @@ static void read_observer_file(string observer_file, out double[3][] observers)
 {
     import std.csv : csvReader;
     import std.file : readText;
-    import std.array;
+    import std.array : array;
 
     trace("Reading observers from " ~ observer_file ~ ".");
     auto contents = readText(observer_file);

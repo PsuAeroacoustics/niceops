@@ -314,8 +314,6 @@ private double[2] lookup_angles(double[3] source, double[3] velocity,
     r[] = observer[] - source[];
     r = r.normalize();
     auto n = normal.normalize();
-    // Elevation angle (positive above TPP)
-    auto elv = asin(fabs(n.dot(r)));
     //Project velocity vector onto TPP to get a "nose" vector
     auto v = velocity.normalize();
     vn = v.dot(n) * n[];
@@ -792,7 +790,5 @@ class Database
         {
             fatal("Self test failed on ", invalid, " of ", valid + invalid, " samples.");
         }
-
     }
-
 }
