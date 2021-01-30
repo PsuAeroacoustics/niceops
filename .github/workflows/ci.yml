@@ -54,5 +54,5 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: log
-        path: ${{github.workspace}}/log/niceops.log
+        path: ${{github.workspace}}
       
