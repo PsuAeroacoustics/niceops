@@ -393,8 +393,16 @@ unittest
 static void write_levels(const double[] x_obs, const double[] y_obs,
         const double[] levels, string out_file, bool scattered)
 {
-    import std.file;
-    import std.stdio;
+    import std.stdio : File;
+    import std.file : exists, mkdirRecurse;
+    import std.path : dirName;
+
+    // Check if directory exists;  if not, create it.
+    auto directory = dirName(out_file);
+    if (!exists(directory))
+    {
+        mkdirRecurse(directory);
+    }
 
     info("Writing output to ", out_file);
     auto file = File(out_file, "w");
@@ -462,7 +470,16 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
 static void write_time_history_file(double[] time_history, double dt, double x,
         double y, string filename)
 {
-    import std.stdio;
+    import std.stdio : File;
+    import std.file : exists, mkdirRecurse;
+    import std.path : dirName;
+
+    // Check if directory exists;  if not, create it.
+    auto directory = dirName(filename);
+    if (!exists(directory))
+    {
+        mkdirRecurse(directory);
+    }
 
     info("Writing time history to ", filename);
     auto file = File(filename, "w");
@@ -477,7 +494,16 @@ static void write_time_history_file(double[] time_history, double dt, double x,
 static void append_metrics_file(string filename, string casename,
         const double[] levels, double threshold = 65.0)
 {
-    import std.stdio;
+    import std.stdio : File;
+    import std.file : exists, mkdirRecurse;
+    import std.path : dirName;
+
+    // Check if directory exists;  if not, create it.
+    auto directory = dirName(filename);
+    if (!exists(directory))
+    {
+        mkdirRecurse(directory);
+    }    import std.stdio : File;
 
     auto file = File(filename, "a");
     double average = 0;
