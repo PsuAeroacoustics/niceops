@@ -51,3 +51,8 @@ add_executable(niceops niceops.d)
 target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d)
 set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
 target_compile_options(niceops PRIVATE "-J ${views_dir}")
+
+# Add testing with CTest
+enable_testing()
+add_test(NAME regression_default COMMAND niceops  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME broken_self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
