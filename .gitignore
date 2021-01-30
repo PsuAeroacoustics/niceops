@@ -34,3 +34,7 @@ external/splinter/Doxyfile
 CMakeDoxyfile.in
 
 CMakeDoxygenDefaults.cmake
+
+Testing/
+
+CTestTestfile.cmake
