@@ -1,15 +1,6 @@
 module trajectory;
 
-import std.csv;
-import std.file : readText;
-import std.algorithm.iteration : splitter;
-import std.stdio;
-import std.range : retro, take;
 import std.experimental.logger;
-import std.array;
-import std.uni : toLower;
-import std.math : isNaN, sqrt, PI, asin;
-import splines : Spline;
 
 immutable g = 9.80665; // m/s^^2
 immutable mps2g = 1.0 / g;
@@ -47,9 +38,9 @@ class Trajectory
 
     void write_state(string state_file)
     {
-        import std.conv;
-        import std.array;
-        import std.file;
+        import std.conv : to;
+        import std.array : join;
+        import std.stdio : File;
 
         info("Writing state data to ", state_file);
         auto file = File(state_file, "w");
@@ -68,6 +59,14 @@ class Trajectory
     dimensional_data vehicle;
     this(string filename, string vehicle_filename)
     {
+        import std.array : array;
+        import std.csv : csvReader;
+        import std.file : readText;
+        import std.algorithm : splitter;
+        import std.uni : toLower;
+        import std.range : retro, take;
+        import std.math : isNaN, sqrt, PI, asin;
+
         //Get vehicle data
         vehicle = configure_vehicle(vehicle_filename);
 
@@ -142,6 +141,8 @@ class Trajectory
 
     void adapt(double dt, int degree = 3, double alpha = 0.3)
     {
+        import std.math : sqrt, PI, asin;
+
         info("Adapting spline to dt ", dt, " with spline of degree ", degree,
                 " and smoothing ", alpha);
         assert(dt > 0.0);
@@ -260,6 +261,8 @@ class Trajectory
 static void smoother(in double[] x, in double[] f, in double[] xi, out double[] fi,
         out double[] dfi, out double[] ddfi, int degree = 3, double alpha = 0.3)
 {
+    import splines : Spline;
+
     auto spline = Spline(x, f, degree, alpha);
     //Use spline for interpolation
     fi = spline.eval(xi);
