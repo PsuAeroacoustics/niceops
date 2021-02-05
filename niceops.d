@@ -1,5 +1,7 @@
 import std.experimental.logger;
 
+import worldtransforms;
+
 static immutable ft2m = 0.3048;
 
 void main(string[] args)
@@ -13,6 +15,8 @@ void main(string[] args)
     import std.conv : to;
     import std.math : isNaN, log10;
     import std.datetime.stopwatch : StopWatch, AutoStart;
+
+    
 
     //Default to demo case
     string log_file = "log/niceops.log";
@@ -37,7 +41,8 @@ void main(string[] args)
     string metric_file = "";
     bool qsam = true;
     bool self_test = false;
-    string stk_vel_file = "";
+    //string stk_vel_file = "";
+    bool stk_format = false;
 
     auto option_results = getopt( args, config.caseSensitive,
     "database|d", "netCDF noise database file.", &database_file,
@@ -58,7 +63,7 @@ void main(string[] args)
     &observer_file, "qsam|q", "Enable extended QSAM", &qsam, "state|S",
     "Filename to save state data", &state_file, "self_test",
     "Run self tests.", &self_test,
-    "stk_vel", "STK scenario timeposvel file", &stk_vel_file);
+    "stk", "Path, observer, and aircraft file are in STK format", &stk_format);
 
     if (observer_file.length > 0)
     {
@@ -80,7 +85,7 @@ void main(string[] args)
     }
 
     //Set default logging to file
-    sharedLog = new FileLogger(log_file, LogLevel.info, CreateFolder.yes);
+    sharedLog = new FileLogger(log_file, LogLevel.trace, CreateFolder.yes);
 
     // Start stopwatch
     immutable watch = StopWatch(AutoStart.yes);
@@ -97,8 +102,9 @@ void main(string[] args)
         database.self_test(database_file);
     }
 
+    auto trajectory = new Trajectory( path_file, vehicle_file, stk_format);
     //Create trajectory from CSV data
-    Trajectory trajectory;
+    /+Trajectory trajectory;
 
     if(stk_vel_file == "") {
         trajectory = new Trajectory( path_file, vehicle_file);
@@ -108,7 +114,7 @@ void main(string[] args)
         read_observer_file(observer_file, observers);
         
         return;
-    }
+    }+/
 
     //Trim trajectory (per Mike)
     immutable double xstart_ft = -6000.;
@@ -131,7 +137,7 @@ void main(string[] args)
     if (scattered)
     {
         // Read in scattered observer data
-        read_observer_file(observer_file, observers);
+        read_observer_file(observer_file, observers, stk_format, trajectory.world_transform);
         //Set length for levels and observer x, y arrays
         integrated_levels.length = observers.length;
         x_obs.reserve(observers.length);
@@ -510,7 +516,7 @@ static void append_metrics_file(string filename, string casename,
     file.writeln(casename, ",", average, ",", maximum, ",", area);
 }
 
-static void read_observer_file(string observer_file, out double[3][] observers)
+static void read_observer_file(string observer_file, out double[3][] observers, bool stk_format = false, WorldTransform world_transform = null)
 {
     import std.conv : to;
     import std.csv : csvReader;
@@ -523,7 +529,7 @@ static void read_observer_file(string observer_file, out double[3][] observers)
 
     immutable ext = observer_file.split(".")[$-1];
 
-    if(ext == "csv")
+    if(!stk_format)
     {
         trace("Reading observers from " ~ observer_file ~ ".");
         auto contents = readText(observer_file);
@@ -546,8 +552,15 @@ static void read_observer_file(string observer_file, out double[3][] observers)
             }
         }
     }
-    else if(ext == "txt" && (observer_file.indexOf("PointsFromCov") != -1))
+    else
     {
+        import std.exception : enforce;
+        
+        import trajectory : deg2rad;
+        import numd.linearalgebra.matrix : Matrix, Vector;
+
+        enforce(world_transform !is null, "Need a valid world transform to parse STK observer files");
+
         observers =
             observer_file
                 .readText
@@ -555,7 +568,15 @@ static void read_observer_file(string observer_file, out double[3][] observers)
                 .map!(a => a.strip(' '))
                 .filter!(a => a.length > 0 && a[0].to!string.isNumeric)
                 .dropOne
-                .map!(a => a.split(" ").filter!(b => b != "").dropOne.map!(b => b.to!double).staticArray!3)
+                .map!((line) {
+                    auto lat_lon_alt_arr = line.split(" ").filter!(b => b != "").dropOne.map!(b => b.to!double).staticArray!3;
+
+                    auto lat_lon_alt = Vector!(3, double)(lat_lon_alt_arr[0]*deg2rad, lat_lon_alt_arr[1]*deg2rad, lat_lon_alt_arr[2]*1000);
+
+                    auto obs_pos_vec = world_transform.lat_long_alt_to_enu(lat_lon_alt);
+
+                    return obs_pos_vec.mData;
+                })                
                 .array;
 
         //writeln(observers);

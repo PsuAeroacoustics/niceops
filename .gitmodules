@@ -1,0 +1,3 @@
+[submodule "external/numd"]
+	path = external/numd
+	url = git@github.com:Rob-Rau/numd.git

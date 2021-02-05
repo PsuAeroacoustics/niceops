@@ -17,7 +17,7 @@ set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++14")
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 set(CMAKE_CXX_STANDARD 14)
 
-include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3)
+include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3 external/numd/source)
 # Including the source directory is apparently required to support out of source builds of D modules
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 add_definitions(-D_THREAD_SAFE)
@@ -43,11 +43,13 @@ add_library(interpolator interpolator.cpp)
 target_link_libraries(interpolator ${CGAL})
 
 add_subdirectory(external/splinter)
-add_library(trajectory trajectory.d splines.d splinter.cpp)
+add_library(trajectory trajectory.d wgs84tocartesian.d worldtransforms.d splines.d splinter.cpp)
 target_link_libraries(trajectory splinter-static)
+
+add_subdirectory(external/numd)
 
 add_subdirectory(external/matplotlibd)
 add_executable(niceops niceops.d)
-target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d)
+target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d numd)
 set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
 target_compile_options(niceops PRIVATE "-J ${views_dir}")
