@@ -24,6 +24,7 @@ immutable mps2g = 1.0 / g;
 immutable ft2m = 0.3048;
 immutable fps2g = mps2g * ft2m;
 immutable deg2rad = PI/180.0;
+immutable rad2deg = 180.0/PI;
 
 auto parse_greenwood(string file_contents, Trajectory.dimensional_data vehicle) {
     import std.typecons : tuple;
@@ -164,20 +165,16 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
             "Time (UTCG)",
             "Lat (deg)",
             "Lon (deg)",
-            "Alt (km)",
+            "Alt (m)",
             "Lat Rate (deg/sec)",
             "Lon Rate (deg/sec)",
-            "Alt Rate (km/sec)",
-            "Velocity (km/sec)",
+            "Alt Rate (m/sec)",
             "Yaw (deg)",
             "Pitch (deg)",
             "Roll (deg)",
             "Bank (deg)",
             "Heading (deg)",
-            "ax (m/sec^2)",
-            "ay (m/sec^2)",
-            "az (m/sec^2)",
-            "acc mag (m/sec^2)"
+            "Acceleration (m/sec^2)"
         +/
         double lat;
         double lon;
@@ -185,15 +182,15 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
         double lat_rate;
         double lon_rate;
         double alt_rate;
-        double velocity;
+        //double velocity;
         double yaw;
         double pitch;
         double roll;
         double bank;
         double heading;
-        double x_acc;
-        double y_acc;
-        double z_acc;
+        //double x_acc;
+        //double y_acc;
+        //double z_acc;
         double acc_mag;
     }
 
@@ -206,7 +203,7 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
     auto lat_long_alt_reference = Vector!(3, double)(
         start_record.lat*deg2rad,
         start_record.lon*deg2rad,
-        start_record.alt*1000
+        start_record.alt
     );
 
     auto world_transform = new WorldTransform(lat_long_alt_reference);
@@ -220,13 +217,13 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
             auto lat_long_alt_point = Vector!(3, double)(
                 record.value.lat*deg2rad,
                 record.value.lon*deg2rad,
-                record.value.alt*1000
+                record.value.alt
             );
 
             auto lat_long_alt_rate = Vector!(3, double)(
                 record.value.lat_rate*deg2rad,
                 record.value.lon_rate*deg2rad,
-                record.value.alt_rate*1000
+                record.value.alt_rate
             );
 
             auto point = world_transform.lat_long_alt_to_enu(lat_long_alt_point);
@@ -259,7 +256,7 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
 
             state.nx = x_acc/g;
             state.ny = y_acc/g;
-            state.nz = y_acc/g + 1.0;
+            state.nz = z_acc/g + 1.0;
 
         }
 

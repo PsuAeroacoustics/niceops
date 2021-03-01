@@ -102,19 +102,8 @@ void main(string[] args)
         database.self_test(database_file);
     }
 
-    auto trajectory = new Trajectory( path_file, vehicle_file, stk_format);
     //Create trajectory from CSV data
-    /+Trajectory trajectory;
-
-    if(stk_vel_file == "") {
-        trajectory = new Trajectory( path_file, vehicle_file);
-    } else {
-        trajectory = new Trajectory(stk_vel_file, path_file, vehicle_file);
-        double[3][] observers;
-        read_observer_file(observer_file, observers);
-        
-        return;
-    }+/
+    auto trajectory = new Trajectory( path_file, vehicle_file, stk_format);
 
     //Trim trajectory (per Mike)
     immutable double xstart_ft = -6000.;
@@ -122,7 +111,7 @@ void main(string[] args)
 
     // Trajectory adaptation parameters
     immutable int degree = 5;
-    immutable double smooth = 1e6;
+    immutable double smooth = 0.5;
     trajectory.adapt(dt, degree, smooth);
 
     // And time series data
@@ -203,7 +192,7 @@ void main(string[] args)
 
     auto t2 = watch.peek.total!"msecs";
     log("Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
-    write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
+    write_levels(x_obs, y_obs, integrated_levels, out_file, scattered, stk_format);
 
     if (metric_file.length > 0)
     {
@@ -229,11 +218,33 @@ void main(string[] args)
 
         //Convert to ft for plotting
         // TODO add units throughout
-        x_obs[] *= 1.0 / ft2m;
-        y_obs[] *= 1.0 / ft2m;
-        x[] *= 1.0 / ft2m;
-        y[] *= 1.0 / ft2m;
-        z[] *= 1.0 / ft2m;
+
+        /+if(stk_format) {
+            import numd.linearalgebra.matrix : Vector;
+            import trajectory : rad2deg;
+            foreach(idx, ref obs; observers) {
+                auto lat_lon_alt = trajectory.world_transform.enu_to_lat_lon(Vector!(3, double)(obs));
+                x_obs[idx] = lat_lon_alt[1]*rad2deg;
+                y_obs[idx] = /+90.0 - +/(lat_lon_alt[0]*rad2deg);
+            }
+
+            foreach(idx, ref state; trajectory.states) {
+                auto xyz = Vector!(3, double)(state.x, state.y, state.z);
+                auto lat_lon_alt = trajectory.world_transform.enu_to_lat_lon(xyz);
+                x[idx] = lat_lon_alt[1]*rad2deg;
+                y[idx] = /+90.0 - +/(lat_lon_alt[0]*rad2deg);
+                z[idx] = lat_lon_alt[2];
+            }
+
+            writeln(y);
+        } else {+/
+            x_obs[] *= 1.0 / ft2m;
+            y_obs[] *= 1.0 / ft2m;
+            x[] *= 1.0 / ft2m;
+            y[] *= 1.0 / ft2m;
+            z[] *= 1.0 / ft2m;
+        //}
+        
 
         if (plotting || figure_file.length > 0)
         {
@@ -242,10 +253,10 @@ void main(string[] args)
             plt.figure();
             if (scattered)
             {
-                plt.tricontourf(x_obs, y_obs, integrated_levels, clevels, [
+                plt.tricontourf(x_obs, y_obs, integrated_levels/+, clevels+/, [
                         "cmap": "YlOrRd"
                         ]);
-                plt.plot(x_obs, y_obs, "ko");
+                plt.plot(x_obs, y_obs, "ko", ["markersize": 0.1]);
             }
             else
             {
@@ -409,7 +420,7 @@ unittest
 }
 
 static void write_levels(const double[] x_obs, const double[] y_obs,
-        const double[] levels, string out_file, bool scattered)
+        const double[] levels, string out_file, bool scattered, bool stk_format = false)
 {
     import std.file;
     import std.stdio;
@@ -420,11 +431,19 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
     if (scattered)
     {
         info("Scattered output.");
-        assert(levels.length == x_obs.length && levels.length == y_obs.length);
-        file.writeln("x(ft), y(ft), Level(dB)");
-        foreach (i, level; levels)
-        {
-            file.writeln(x_obs[i] / ft2m, ",", y_obs[i] / ft2m, ",", level);
+        if(!stk_format) {
+            assert(levels.length == x_obs.length && levels.length == y_obs.length);
+            file.writeln("x(ft), y(ft), Level(dB)");
+            foreach (i, level; levels)
+            {
+                file.writeln(x_obs[i] / ft2m, ",", y_obs[i] / ft2m, ",", level);
+            }
+        } else {
+            file.writeln("observer, Level(dB)");
+            foreach (i, level; levels)
+            {
+                file.writeln(i, ",", level);
+            }
         }
     }
     else
@@ -555,13 +574,45 @@ static void read_observer_file(string observer_file, out double[3][] observers, 
     else
     {
         import std.exception : enforce;
-        
+        import std.typecons : tuple;
+        import std.algorithm : sort;
+
         import trajectory : deg2rad;
         import numd.linearalgebra.matrix : Matrix, Vector;
 
         enforce(world_transform !is null, "Need a valid world transform to parse STK observer files");
 
-        observers =
+        struct Layout {
+            /++
+                "Point Number",
+                "Latitude (deg)",
+                "Longitude (deg)",
+                "Altitude (km)",
+                "Area (km^2)",
+                "Latitude Span (deg)",
+                "Longitude Span (deg)"
+            +/
+            size_t point_num;
+            double lat;
+            double lon;
+            double alt;
+            double area;
+            double lat_span;
+            double lon_span;
+        }
+
+        //auto records = file_contents.csvReader!Layout(null);
+        observers = 
+            observer_file
+                .readText
+                .csvReader!Layout(null)
+                .map!((a) {
+                    auto lat_lon_alt = Vector!(3, double)(a.lat*deg2rad, a.lon*deg2rad, a.alt);
+                    auto obs_pos_vec = world_transform.lat_long_alt_to_enu(lat_lon_alt);
+                    return obs_pos_vec.mData;
+                })
+                .array;
+        /+observers =
             observer_file
                 .readText
                 .split("\n")
@@ -569,15 +620,21 @@ static void read_observer_file(string observer_file, out double[3][] observers, 
                 .filter!(a => a.length > 0 && a[0].to!string.isNumeric)
                 .dropOne
                 .map!((line) {
+                    auto split_line = line.split(" ").filter!(b => b != "");
+                    auto index = split_line.front;
                     auto lat_lon_alt_arr = line.split(" ").filter!(b => b != "").dropOne.map!(b => b.to!double).staticArray!3;
 
                     auto lat_lon_alt = Vector!(3, double)(lat_lon_alt_arr[0]*deg2rad, lat_lon_alt_arr[1]*deg2rad, lat_lon_alt_arr[2]*1000);
 
                     auto obs_pos_vec = world_transform.lat_long_alt_to_enu(lat_lon_alt);
 
-                    return obs_pos_vec.mData;
-                })                
+                    return tuple(index, obs_pos_vec.mData);
+                })
+                .array
+                .sort!((a, b) => a[0] < b[0])
+                .map!(a => a[1])
                 .array;
+        +/
 
         //writeln(observers);
     }
