@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.1)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake-d)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3/cmake)
 
 project(NICEOPS VERSION 1.0 LANGUAGES C CXX D)
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -36,14 +37,20 @@ find_package(NetCDF)
 message(NOTICE ${NetCDF_VERSION})
 
 # Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place)
-find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so libnetcdf.dll PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
+find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
 
 find_package(Boost)
 find_package(CGAL COMPONENTS Core)
 include(${CGAL_USE_FILE})
-find_package (Eigen3 REQUIRED NO_MODULE)
 
-#add_subdirectory(external/eigen3)
+if(NOT ${GMP_INCLUDES} STREQUAL "")
+  include_directories(${GMP_INCLUDES})
+endif()
+
+if(NOT ${MPFR_INCLUDES} STREQUAL "")
+  include_directories(${MPFR_INCLUDES})
+endif()
+
 add_library(sphere_database sphere_database.d netcdf.d)
 target_link_libraries(sphere_database ${NCDF})
 add_library(interpolator interpolator.cpp)
