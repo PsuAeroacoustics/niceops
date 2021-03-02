@@ -4,12 +4,17 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake-d)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3/cmake)
 
+include(BuildDExecutable)
+
+
 project(NICEOPS VERSION 1.0 LANGUAGES C CXX D)
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX
     "build" CACHE PATH "default install prefix" FORCE
     )
 endif(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+
+include(ExtractDMDSystemLinker)
 
 #Set dylib paths relative to executable path under OSX
 set(CMAKE_MACOSX_RPATH 0)
@@ -53,17 +58,72 @@ endif()
 
 add_library(sphere_database sphere_database.d netcdf.d)
 target_link_libraries(sphere_database ${NCDF})
+set_target_properties(
+  sphere_database PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ./
+    LIBRARY_OUTPUT_DIRECTORY ./
+    ARCHIVE_OUTPUT_DIRECTORY ./
+    ARCHIVE_OUTPUT_NAME sphere_database
+    LIBRARY_OUTPUT_NAME sphere_database
+    RUNTIME_OUTPUT_NAME sphere_database
+    COMPILE_FLAGS ""
+    LINKER_LANGUAGE CXX
+    LINK_FLAGS "${SANITIZE_LDFLAGS}"
+    # Use a custom .props file to set up Visual D (import paths, predefined versions...).
+    VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+)
+
 add_library(interpolator interpolator.cpp)
 target_link_libraries(interpolator ${CGAL})
 
 add_subdirectory(external/splinter)
 add_library(trajectory trajectory.d wgs84tocartesian.d worldtransforms.d splines.d splinter.cpp)
 target_link_libraries(trajectory splinter-static)
+set_target_properties(
+    trajectory PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ./
+    LIBRARY_OUTPUT_DIRECTORY ./
+    ARCHIVE_OUTPUT_DIRECTORY ./
+    ARCHIVE_OUTPUT_NAME trajectory
+    LIBRARY_OUTPUT_NAME trajectory
+    RUNTIME_OUTPUT_NAME trajectory
+    COMPILE_FLAGS ""
+    LINKER_LANGUAGE CXX
+    LINK_FLAGS "${SANITIZE_LDFLAGS}"
+    # Use a custom .props file to set up Visual D (import paths, predefined versions...).
+    VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+)
 
 add_subdirectory(external/numd)
 
 add_subdirectory(external/matplotlibd)
-add_executable(niceops niceops.d)
-target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d numd)
+#function(build_d_executable target_name output_exe d_src_files compiler_args linker_args extra_compile_deps link_deps compile_separately)
+#build_d_executable(
+#    "${LDMD_EXE}"
+#    "${LDMD_EXE_FULL}"
+#    "${LDMD_D_SOURCE_FILES}"
+#    "${DFLAGS_BUILD_TYPE}"
+#    "${LDC_LINKERFLAG_LIST}"
+#    ""
+#    "LDMD_CXX_LIB"
+#    ${COMPILE_D_MODULES_SEPARATELY}
+#)
 set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
-target_compile_options(niceops PRIVATE "-J ${views_dir}")
+set(LDC_LINK_MANUALLY TRUE)
+
+build_d_executable(
+  niceops
+  ./niceops
+  ${CMAKE_CURRENT_SOURCE_DIR}/niceops.d
+  "-J${views_dir} -Iexternal/matplotlibd/source -Iexternal/numd/source"
+  "-Wl,--copy-dt-needed-entries"
+  ""
+  ""
+  "sphere_database;interpolator;trajectory;matplotlib-d;numd"
+  TRUE
+)
+#add_executable(niceops niceops.d)
+#target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d numd)
+
+#set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
+#target_compile_options(niceops PRIVATE "-J ${views_dir}")
