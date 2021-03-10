@@ -11,6 +11,8 @@ import std.experimental.logger;
 import std.array;
 import std.uni : toLower;
 import std.math : isNaN, sqrt, PI, asin;
+import std.string;
+
 import splines : Spline;
 
 import wgs84tocartesian : toCartesian;
@@ -192,9 +194,14 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
         //double y_acc;
         //double z_acc;
         double acc_mag;
+        int day;
     }
 
-    auto records = file_contents.csvReader!Layout(null);
+    /+if((file_contents[$-1] == '\n') && (file_contents[$-2] == '\n')) {
+        file_contents = file_contents[0..$-1];
+    }+/
+    //file_contents = file_contents.strip;
+    auto records = file_contents.strip.csvReader!Layout(null);
     
     auto start_record = records.front;
 

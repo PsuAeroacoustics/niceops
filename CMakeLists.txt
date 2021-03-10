@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.1)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake-d)
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3/cmake)
+#list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+#list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3/cmake)
 
-include(BuildDExecutable)
+#include(BuildDExecutable)
 
 
 project(NICEOPS VERSION 1.0 LANGUAGES C CXX D)
@@ -14,7 +14,20 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     )
 endif(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 
-include(ExtractDMDSystemLinker)
+#list(APPEND DFLAGS_BASE "-m64")
+#include(ExtractDMDSystemLinker)
+
+if("${CMAKE_CL_64}" STREQUAL "1")
+  message(NOTICE "64 bit!")
+  set(CMAKE_D_FLAGS "${CMAKE_D_FLAGS}-m64")
+  set(CMAKE_D_LINK_FLAGS "${CMAKE_D_LINK_FLAGS}-m64")
+  set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS}-m64")
+  set(CMAKE_STATIC_LIBRARY_CREATE_D_FLAGS "${CMAKE_STATIC_LIBRARY_CREATE_D_FLAGS}-m64")
+  set(CMAKE_SHARED_LIBRARY_D_FLAGS "${CMAKE_SHARED_LIBRARY_D_FLAGS}-m64")
+  set(CMAKE_STATIC_LIBRARY_CREATE_D_FLAGS "${CMAKE_STATIC_LIBRARY_CREATE_D_FLAGS}-m64")
+  
+endif()
+
 
 #Set dylib paths relative to executable path under OSX
 set(CMAKE_MACOSX_RPATH 0)
@@ -23,6 +36,8 @@ set(CMAKE_INSTALL_NAME_DIR @executable_path)
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++14")
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 set(CMAKE_CXX_STANDARD 14)
+
+
 
 #include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3 external/numd/source)
 include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source external/eigen3 external/numd/source)
@@ -38,8 +53,8 @@ if(NOT CMAKE_BUILD_TYPE)
           FORCE)
 endif (NOT CMAKE_BUILD_TYPE)
 
-find_package(NetCDF)
-message(NOTICE ${NetCDF_VERSION})
+find_package(netCDF)
+message(NOTICE ${netCDF_VERSION})
 
 # Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place)
 find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
@@ -60,39 +75,70 @@ add_library(sphere_database sphere_database.d netcdf.d)
 target_link_libraries(sphere_database ${NCDF})
 set_target_properties(
   sphere_database PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ./
-    LIBRARY_OUTPUT_DIRECTORY ./
-    ARCHIVE_OUTPUT_DIRECTORY ./
-    ARCHIVE_OUTPUT_NAME sphere_database
-    LIBRARY_OUTPUT_NAME sphere_database
-    RUNTIME_OUTPUT_NAME sphere_database
-    COMPILE_FLAGS ""
+    #RUNTIME_OUTPUT_DIRECTORY ./
+    #LIBRARY_OUTPUT_DIRECTORY ./
+    #ARCHIVE_OUTPUT_DIRECTORY ./
+    #ARCHIVE_OUTPUT_NAME sphere_database
+    #LIBRARY_OUTPUT_NAME sphere_database
+    #RUNTIME_OUTPUT_NAME sphere_database
+    #COMPILE_FLAGS ""
     LINKER_LANGUAGE CXX
-    LINK_FLAGS "${SANITIZE_LDFLAGS}"
+    #LINK_FLAGS ""
     # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-    VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+    #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
 )
+#set_target_properties(
+#  sphere_database PROPERTIES
+#    RUNTIME_OUTPUT_DIRECTORY ./
+#    LIBRARY_OUTPUT_DIRECTORY ./
+#    ARCHIVE_OUTPUT_DIRECTORY ./
+#    ARCHIVE_OUTPUT_NAME sphere_database
+#    LIBRARY_OUTPUT_NAME sphere_database
+#    RUNTIME_OUTPUT_NAME sphere_database
+#    COMPILE_FLAGS ""
+#    LINKER_LANGUAGE CXX
+#    LINK_FLAGS "${SANITIZE_LDFLAGS}"
+#    # Use a custom .props file to set up Visual D (import paths, predefined versions...).
+#    VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+#)
 
 add_library(interpolator interpolator.cpp)
 target_link_libraries(interpolator ${CGAL})
 
 add_subdirectory(external/splinter)
-add_library(trajectory trajectory.d wgs84tocartesian.d worldtransforms.d splines.d splinter.cpp)
-target_link_libraries(trajectory splinter-static)
+
+#if(MSVC_IDE) # Visual Studio generator
+#    # Add the .d files as (Visual D) source files to this lib, so that they show up somewhere.
+#    #set(LDC_LIB_EXTRA_SOURCES ${LDC_D_SOURCE_FILES})
+#    message(NOTICE "Setting D")
+#    set_property(SOURCE ${CMAKE_CURRENT_LIST_DIR}/trajectory.d PROPERTY VS_TOOL_OVERRIDE "DCompile")
+#    # 'Clear' the original list for the custom commands below, producing ldc2.exe and ldc2-unittest.exe -
+#    # we still need a dummy .d file.
+#    #set(LDC_D_SOURCE_FILES "${PROJECT_SOURCE_DIR}/dmd/root/man.d")
+#    # Mark this main library target as (bold) startup project for the generated Visual Studio solution.
+#    #set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${LDC_LIB})
+#endif()
+
+add_library(trajectory ${CMAKE_CURRENT_LIST_DIR}/trajectory.d wgs84tocartesian.d worldtransforms.d splines.d splinter.cpp)
+
+#Qadd_library(trajectory splinter.cpp)
+
 set_target_properties(
     trajectory PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ./
-    LIBRARY_OUTPUT_DIRECTORY ./
-    ARCHIVE_OUTPUT_DIRECTORY ./
-    ARCHIVE_OUTPUT_NAME trajectory
-    LIBRARY_OUTPUT_NAME trajectory
-    RUNTIME_OUTPUT_NAME trajectory
-    COMPILE_FLAGS ""
+    #RUNTIME_OUTPUT_DIRECTORY ./
+    #LIBRARY_OUTPUT_DIRECTORY ./
+    #ARCHIVE_OUTPUT_DIRECTORY ./
+    #ARCHIVE_OUTPUT_NAME trajectory
+    #LIBRARY_OUTPUT_NAME trajectory
+    #RUNTIME_OUTPUT_NAME trajectory
+    #COMPILE_FLAGS ""
     LINKER_LANGUAGE CXX
-    LINK_FLAGS "${SANITIZE_LDFLAGS}"
+    #LINK_FLAGS ""
     # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-    VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+    #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
 )
+
+target_link_libraries(trajectory splinter-static)
 
 add_subdirectory(external/numd)
 
@@ -108,22 +154,37 @@ add_subdirectory(external/matplotlibd)
 #    "LDMD_CXX_LIB"
 #    ${COMPILE_D_MODULES_SEPARATELY}
 #)
-set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
-set(LDC_LINK_MANUALLY TRUE)
-
-build_d_executable(
-  niceops
-  ./niceops
-  ${CMAKE_CURRENT_SOURCE_DIR}/niceops.d
-  "-J${views_dir} -Iexternal/matplotlibd/source -Iexternal/numd/source"
-  "-Wl,--copy-dt-needed-entries"
-  ""
-  ""
-  "sphere_database;interpolator;trajectory;matplotlib-d;numd"
-  TRUE
-)
-#add_executable(niceops niceops.d)
-#target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d numd)
-
 #set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
-#target_compile_options(niceops PRIVATE "-J ${views_dir}")
+#set(LDC_LINK_MANUALLY TRUE)
+
+#build_d_executable(
+#  niceops
+#  ./niceops
+#  ${CMAKE_CURRENT_SOURCE_DIR}/niceops.d
+#  "-J${views_dir} -Iexternal/matplotlibd/source -Iexternal/numd/source"
+#  "-Wl,--copy-dt-needed-entries"
+#  ""
+#  ""
+#  "sphere_database;interpolator;trajectory;matplotlib-d;numd"
+#  TRUE
+#)
+add_executable(niceops niceops.d)
+target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d numd)
+
+set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
+target_compile_options(niceops PRIVATE "-J ${views_dir}")
+set_target_properties(
+  niceops PROPERTIES
+    #RUNTIME_OUTPUT_DIRECTORY ./
+    #LIBRARY_OUTPUT_DIRECTORY ./
+    #ARCHIVE_OUTPUT_DIRECTORY ./
+    #ARCHIVE_OUTPUT_NAME sphere_database
+    #LIBRARY_OUTPUT_NAME sphere_database
+    #RUNTIME_OUTPUT_NAME sphere_database
+    #COMPILE_FLAGS ""
+    LINKER_LANGUAGE D
+    LINK_FLAGS "/NODEFAULTLIB:MSVCRT"
+    # Use a custom .props file to set up Visual D (import paths, predefined versions...).
+    #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+)
+

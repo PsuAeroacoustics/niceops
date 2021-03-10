@@ -601,10 +601,12 @@ static void read_observer_file(string observer_file, out double[3][] observers, 
             double lon_span;
         }
 
-        //auto records = file_contents.csvReader!Layout(null);
+        import std.string : strip;
+
         observers = 
             observer_file
                 .readText
+                .strip
                 .csvReader!Layout(null)
                 .map!((a) {
                     auto lat_lon_alt = Vector!(3, double)(a.lat*deg2rad, a.lon*deg2rad, a.alt);

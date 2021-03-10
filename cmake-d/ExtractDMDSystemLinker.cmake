@@ -28,8 +28,11 @@ if(UNIX)
 else()
     separate_arguments(cmdflags WINDOWS_COMMAND "${CMAKE_D_COMPILER_FLAGS} ${DFLAGS_BASE}")
 endif()
+
+message(STATUS ${CMAKE_D_COMPILER} ${cmdflags} -v ${source_file})
 execute_process(
     COMMAND ${CMAKE_D_COMPILER} ${cmdflags} -v ${source_file}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     RESULT_VARIABLE result_code
     OUTPUT_VARIABLE stdout
     OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -38,7 +41,7 @@ execute_process(
 )
 
 if(result_code)
-    message(FATAL_ERROR "Failed to compile empty program using D compiler '${CMAKE_D_COMPILER}'")
+    message(FATAL_ERROR "Failed to compile empty program using D compiler '${CMAKE_D_COMPILER}' ${stderr} ${stdio}")
 endif()
 
 if("${CMAKE_D_COMPILER_ID}" STREQUAL "GDMD")
