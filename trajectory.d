@@ -28,7 +28,7 @@ immutable fps2g = mps2g * ft2m;
 immutable deg2rad = PI/180.0;
 immutable rad2deg = 180.0/PI;
 
-auto parse_greenwood(string file_contents, Trajectory.dimensional_data vehicle) {
+auto parse_greenwood(string file_contents, Trajectory.dimensional_data vehicle, WorldTransform world_transform) {
     import std.typecons : tuple;
 
     double utcstart;
@@ -81,7 +81,7 @@ auto parse_greenwood(string file_contents, Trajectory.dimensional_data vehicle) 
         }
     }
 
-    return tuple!("states", "utcstart", "world_transform")(states, utcstart, new WorldTransform);
+    return tuple!("states", "utcstart"/+, "world_transform"+/)(states, utcstart/+, new WorldTransform+/);
 }
 
 auto month_str_to_int(string month) {
@@ -151,13 +151,15 @@ double time_str_to_double(string timestamp) {
     return timeval.tv_sec.to!double + fraction;
 }
 
-auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
+auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldTransform world_transform) {
     import std.algorithm : filter, map;
     import std.conv : to;
+    import std.exception : enforce;
     import std.range : enumerate, slide;
     import std.stdio : writeln;
     import std.typecons : tuple;
 
+    enforce(world_transform !is null, "Invalid world transform");
     double utcstart;
     Trajectory.State[] states;
 
@@ -201,19 +203,20 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
         file_contents = file_contents[0..$-1];
     }+/
     //file_contents = file_contents.strip;
+    trace("Parsing trajectory file as csv");
     auto records = file_contents.strip.csvReader!Layout(null);
-    
+    trace("CSV parsed");
     auto start_record = records.front;
 
     utcstart = start_record.utc_timestamp.time_str_to_double;
 
-    auto lat_long_alt_reference = Vector!(3, double)(
+    /+auto lat_long_alt_reference = Vector!(3, double)(
         start_record.lat*deg2rad,
         start_record.lon*deg2rad,
         start_record.alt
-    );
+    );+/
 
-    auto world_transform = new WorldTransform(lat_long_alt_reference);
+    //auto world_transform = new WorldTransform(lat_long_alt_reference);
 
     states = records
         .enumerate
@@ -244,6 +247,8 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
             now.vx = enu_vel[0];
             now.vy = enu_vel[1];
             now.vz = enu_vel[2];
+
+            now.day = record.value.day == 1;
 
             return now;
         })
@@ -284,7 +289,7 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle) {
         trace("Parsed state: ", state);
     }
 
-    return tuple!("states", "utcstart", "world_transform")(states, utcstart, world_transform);
+    return tuple!("states", "utcstart"/+, "world_transform"+/)(states, utcstart/+, world_transform+/);
 }
 
 class Trajectory
@@ -306,6 +311,7 @@ class Trajectory
         double mu;
         double fpa_e;
         double fpa;
+        bool day;
     }
 
     struct dimensional_data
@@ -337,10 +343,13 @@ class Trajectory
     State[] states;
     dimensional_data vehicle;
 
-    WorldTransform world_transform;
+    private WorldTransform world_transform;
 
-    this(string filename, string vehicle_filename, bool stk_format = false)
+    this(string filename, string vehicle_filename, WorldTransform _world_transform, bool stk_format = false)
     {
+        import std.exception : enforce;
+        enforce(_world_transform !is null, "Received invalid world transform");
+        world_transform = _world_transform;
         //Get vehicle data
         vehicle = configure_vehicle( vehicle_filename);
 
@@ -354,56 +363,12 @@ class Trajectory
                 auto contents = readText(filename);
                 //auto records = csvReader!(double)(contents, null);
 
-                auto parsed_data = stk_format ? contents.parse_stk(vehicle) : contents.parse_greenwood(vehicle);
+                auto parsed_data = stk_format ? contents.parse_stk(vehicle, world_transform) : contents.parse_greenwood(vehicle, world_transform);
 
                 utcstart = parsed_data.utcstart;
                 states = parsed_data.states;
-                world_transform = parsed_data.world_transform;
+                //world_transform = parsed_data.world_transform;
 
-                /+foreach (record; records)
-                {
-                    auto data = record.array;
-                    if (data.length == 27)
-                    {
-                        //Assume NASA/FAA AC state data format
-                        State now;
-                        if (isNaN(utcstart))
-                        {
-                            utcstart = data[0];
-                        }
-                        // Convert to metric
-                        now.t = data[1];
-                        now.x = data[5] * ft2m;
-                        now.y = data[6] * ft2m;
-                        now.z = data[7] * ft2m;
-                        now.vx = data[11] * ft2m;
-                        now.vy = data[13] * ft2m;
-                        now.vz = data[15] * ft2m;
-                        // Convert to "g"
-                        now.nx = data[21] * fps2g;
-                        now.ny = data[22] * fps2g;
-                        now.nz = (data[23] * fps2g + 1.0);
-                        //Compute load factor
-                        now.LF = sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
-                        now.nx /= now.LF;
-                        now.ny /= now.LF;
-                        now.nz /= now.LF;
-                        //Non-dimensionalize
-                        now.CT = now.LF * vehicle.weight / (
-                                vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius ^^ 2);
-                        auto v = sqrt(now.vx ^^ 2 + now.vy ^^ 2 + now.vz ^^ 2);
-                        now.mu = v / vehicle.tip_speed;
-                        auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
-                        now.fpa_e = 180.0 / PI * asin(vn_hat);
-                        now.fpa = 180.0 / PI * asin(now.vz / v);
-                        states ~= now;
-                        trace("Parsed state: ", states[$ - 1]);
-                    }
-                    else
-                    {
-                        fatal("Wrong number of columns.");
-                    }
-                }+/
                 break;
             }
         case "nc":
@@ -497,6 +462,7 @@ class Trajectory
             y ~= now.y;
             z ~= now.z;
         }
+        trace("t[$ - 1]: ", t[$ - 1]);
         // Build interpolants
         double[] ti;
         ti ~= t[0];
@@ -506,11 +472,13 @@ class Trajectory
             ti ~= tnext;
             tnext += dt;
         }
+        trace("ti: ", ti);
         trace("Smoothing x.");
         double[] xi;
         double[] vxi;
         double[] axi;
         smoother(t, x, ti, xi, vxi, axi, degree, alpha);
+        trace("ti: ", ti);
 
         trace("Smoothing y.");
         double[] yi;
@@ -524,12 +492,27 @@ class Trajectory
         double[] azi;
         smoother(t, z, ti, zi, vzi, azi, degree, alpha);
 
+        import std.algorithm : map;
+        import std.array : array;
+        import std.typecons : tuple;
+        auto day_night = states.map!(a => tuple!("time", "day")(a.t, a.day)).array;
+        size_t current_day_idx = 0;
+
         //Repack data into states
         states = [];
         trace("States reset to ", states);
         foreach (i, time; ti)
         {
             State now;
+
+            if(current_day_idx < day_night.length - 1) {
+                if(time >= day_night[current_day_idx + 1].time) {
+                    current_day_idx++;
+                }
+            } else {
+                current_day_idx = day_night.length - 1;
+            }
+
             now.t = time;
             now.x = xi[i];
             now.y = yi[i];
@@ -555,6 +538,7 @@ class Trajectory
             auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
             now.fpa_e = 180.0 / PI * asin(vn_hat);
             now.fpa = 180.0 / PI * asin(now.vz / v);
+            now.day = day_night[current_day_idx].day;
             states ~= now;
             trace("Adapted state: ", states[$ - 1]);
         }

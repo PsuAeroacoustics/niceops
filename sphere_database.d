@@ -397,10 +397,13 @@ class Database
     double[] thetas;
     double[][][] dBA;
     double[][][] EAA;
+    double range_cutoff;
     const double sphere_radius, advance_ratio_min, advance_ratio_max, flight_path_angle_min,
         flight_path_angle_max, thrust_coefficient_min, thrust_coefficient_max, max_level;
-    this(string datafile_path)
+    this(string datafile_path, double _range_cutoff)
     {
+        range_cutoff = _range_cutoff;
+        
         // Open netCDF file
         int file_ncid;
         info("Opening netCDF file: " ~ datafile_path);
@@ -633,6 +636,10 @@ class Database
         auto level = eval(slant_range, angles[0], angles[1], advance_ratio,
                 flight_path_angle, thrust_coefficient);
         assert(isFinite(level));
+
+        if(!isFinite(level)) {
+            level = -50; //Super hack for the moment
+        }
         return level;
     }
 

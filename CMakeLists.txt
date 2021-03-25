@@ -183,7 +183,7 @@ set_target_properties(
     #RUNTIME_OUTPUT_NAME sphere_database
     #COMPILE_FLAGS ""
     LINKER_LANGUAGE D
-    LINK_FLAGS "/NODEFAULTLIB:MSVCRT"
+    LINK_FLAGS "-L/NODEFAULTLIB:MSVCRT -L/NODEFAULTLIB:libucrt ucrt.lib"
     # Use a custom .props file to set up Visual D (import paths, predefined versions...).
     #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
 )

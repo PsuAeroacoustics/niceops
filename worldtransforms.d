@@ -11,8 +11,8 @@ class WorldTransform {
 	enum double MinorMajorRatioSquared = (EarthMinorAxis*EarthMinorAxis)/(EarthMajorAxis*EarthMajorAxis);
 	enum double EarthEcentricity = 1.0 - MinorMajorRatioSquared;
 
-	Matrix!(3, 3, double) rot_mat;
-	Vector!(3, double) reference_point;
+	immutable Matrix!(3, 3, double) rot_mat;
+	immutable Vector!(3, double) reference_point;
 
 	this() {
 		reference_point = Vector!(3, double)(0, 0, 0);
@@ -93,24 +93,6 @@ class WorldTransform {
 		immutable double U = sqrt(r_p*r_p + XYZ[2]*XYZ[2]);
 		immutable double V = sqrt(r_p*r_p + (1.0 - EarthEcentricity)*XYZ[2]*XYZ[2]);
 		immutable double z_0 = EarthMinorAxis*EarthMinorAxis*XYZ[2]/(EarthMajorAxis*V);
-
-		import std.stdio : writeln;
-
-		writeln("r: ", r);
-		writeln("e_p_2: ", e_p_2);
-		writeln("F: ", F);
-		writeln("G: ", G);
-		writeln("c: ", c);
-		writeln("s: ", s);
-		writeln("s_p: ", s_p);
-		writeln("P: ", P);
-		writeln("Q: ", Q);
-		writeln("r_0: ", r_0);
-		writeln("r_p: ", r_p);
-		writeln("U: ", U);
-		writeln("V: ", V);
-		writeln("z_0: ", z_0);
-		writeln;
 
 		Vector!(3, double) lat_lon_alt;
 		lat_lon_alt[2] = U*(1.0 - EarthMinorAxis*EarthMinorAxis/(EarthMajorAxis*V))*1000.0;
