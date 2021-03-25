@@ -173,18 +173,35 @@ target_link_libraries(niceops sphere_database interpolator trajectory matplotlib
 
 set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
 target_compile_options(niceops PRIVATE "-J ${views_dir}")
-set_target_properties(
-  niceops PROPERTIES
-    #RUNTIME_OUTPUT_DIRECTORY ./
-    #LIBRARY_OUTPUT_DIRECTORY ./
-    #ARCHIVE_OUTPUT_DIRECTORY ./
-    #ARCHIVE_OUTPUT_NAME sphere_database
-    #LIBRARY_OUTPUT_NAME sphere_database
-    #RUNTIME_OUTPUT_NAME sphere_database
-    #COMPILE_FLAGS ""
-    LINKER_LANGUAGE D
-    LINK_FLAGS "-L/NODEFAULTLIB:MSVCRT -L/NODEFAULTLIB:libucrt ucrt.lib"
-    # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-    #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
-)
 
+if(MSVC)
+  set_target_properties(
+    niceops PROPERTIES
+      #RUNTIME_OUTPUT_DIRECTORY ./
+      #LIBRARY_OUTPUT_DIRECTORY ./
+      #ARCHIVE_OUTPUT_DIRECTORY ./
+      #ARCHIVE_OUTPUT_NAME sphere_database
+      #LIBRARY_OUTPUT_NAME sphere_database
+      #RUNTIME_OUTPUT_NAME sphere_database
+      #COMPILE_FLAGS ""
+      LINKER_LANGUAGE D
+      LINK_FLAGS "-L/NODEFAULTLIB:MSVCRT -L/NODEFAULTLIB:libucrt ucrt.lib"
+      # Use a custom .props file to set up Visual D (import paths, predefined versions...).
+      #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+  )
+else()
+  set_target_properties(
+    niceops PROPERTIES
+      #RUNTIME_OUTPUT_DIRECTORY ./
+      #LIBRARY_OUTPUT_DIRECTORY ./
+      #ARCHIVE_OUTPUT_DIRECTORY ./
+      #ARCHIVE_OUTPUT_NAME sphere_database
+      #LIBRARY_OUTPUT_NAME sphere_database
+      #RUNTIME_OUTPUT_NAME sphere_database
+      #COMPILE_FLAGS ""
+      LINKER_LANGUAGE D
+      LINK_FLAGS ""
+      # Use a custom .props file to set up Visual D (import paths, predefined versions...).
+      #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+  )
+endif()

@@ -29,7 +29,7 @@ auto compute_trajectory(string database_file, string vehicle_file, string path_f
     import core.stdc.stdlib : exit;
     import std.conv : to;
     import std.exception : enforce;
-    import std.math : isNaN, log10;
+    import std.math : isNaN, log10, sqrt;
     import std.datetime.stopwatch : StopWatch, AutoStart;
     import std.typecons : tuple;
     // Start stopwatch
@@ -63,51 +63,69 @@ auto compute_trajectory(string database_file, string vehicle_file, string path_f
 
     auto result = AcousticResult(nt, observers.length, trajectory);
     
-    foreach (index, observer; observers)
+    foreach(obs_idx; 0..observers.length) {
+        if(!ambient_level.isNaN) {
+            result.time_history[obs_idx][] = ambient_level;
+        } else {
+            result.time_history[obs_idx][] = 0;
+        }
+    }
+    import std.algorithm : sort, map;
+    import std.range : enumerate, zip;
+    
+    foreach (it, const ref state; trajectory.states)
     {
-        foreach (it, const ref state; trajectory.states)
-        {
-            day[it] = state.day;
+        double[3] source = [state.x, state.y, state.z];
+        double[3] velocity = [state.vx, state.vy, state.vz];
+        double[3] normal = [state.nx, state.ny, state.nz];
+        day[it] = state.day;
+        
+        auto sorted_observers =
+            observers
+                .map!(a => sqrt((a[0] - source[0])^^2.0 + (a[1] - source[1])^^2.0 + (a[2] - source[2])^^2.0 ))
+                .zip(observers, iota(0, observers.length))
+                .array
+                .sort!"a[0] < b[0]"
+                .map!(a => tuple(a[2], a[1]));
 
-            double[3] source = [state.x, state.y, state.z];
-            double[3] velocity = [state.vx, state.vy, state.vz];
-            double[3] normal = [state.nx, state.ny, state.nz];
-            if (qsam)
-            {
-                result.time_history[index][it] = database.level_at_observer(observer, source,
-                        velocity, normal, state.mu, state.fpa_e, state.CT);
-            }
-            else
-            {
-                result.time_history[index][it] = database.level_at_observer(observer, source,
-                        velocity, normal, state.mu, state.fpa, state.CT);
-            }
+        //trace(sorted_observers);
+        foreach (index, observer; sorted_observers)
+        {
+            auto level = database.level_at_observer(observer, source,
+                        velocity, normal, state.mu, qsam ? state.fpa_e : state.fpa, state.CT);
+
+            result.time_history[index][it] = level;
+
             if (!isNaN(ambient_level))
             {
                 //Add ambient noise
                 result.time_history[index][it] = 20.0 * log10(
                         10.0 ^^ (result.time_history[index][it] / 20.) + 10.0 ^^ (ambient_level / 20.));
+
+                if(level < (ambient_level - 1)) {
+                    trace("Killing at observer: ", index, ": ", observer, " level: ", level);
+                    result.time_history[index][it] = ambient_level;
+                    break;
+                }
+            } else if(level < 0) {
+                trace("Killing at observer: ", index, ": ", observer, " level: ", level);
+                result.time_history[index][it] = 0;
+                break;
             }
         }
 
+        //result.sel[index] = sound_exposure_level(result.time_history[index], dt);
+        //result.dnl[index] = day_night_level(result.time_history[index], dt, day);
+    }
+
+    foreach (index, observer; observers)
+    {
         result.sel[index] = sound_exposure_level(result.time_history[index], dt);
         result.dnl[index] = day_night_level(result.time_history[index], dt, day);
-        /+if (write_time_history)
-        {
-            import std.file : exists, mkdirRecurse;
-            if(!time_history_dir.exists) {
-                time_history_dir.mkdirRecurse;
-            }
-
-            //Write out time history files
-            auto time_history_filename = time_history_dir~"/"~time_history_prefix ~ "_i" ~ to!string(index) ~ ".csv";
-            write_time_history_file(time_history, dt, observer[0], observer[1],
-                    time_history_filename);
-        }+/
     }
 
     auto t2 = watch.peek.total!"msecs";
-    log("Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
+    info("Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
 
     return result;
 }
@@ -216,7 +234,7 @@ void main(string[] args)
     //Set default logging to file
     sharedLog = new FileLogger(log_file, log_level, CreateFolder.yes);
 
-    log("database_files.length: ", database_files.length, ", database_files: ", database_files);
+    info("database_files.length: ", database_files.length, ", database_files: ", database_files);
 
     double[] x_obs;
     double[] y_obs;
