@@ -6,8 +6,8 @@ import std.math;
 
 class WorldTransform {
 	
-	enum double EarthMajorAxis = 6_378.1370;
-	enum double EarthMinorAxis = 6_356.7523;
+	enum double EarthMajorAxis = 6_378_137.0;
+	enum double EarthMinorAxis = 6_356_752.3;
 	enum double MinorMajorRatioSquared = (EarthMinorAxis*EarthMinorAxis)/(EarthMajorAxis*EarthMajorAxis);
 	enum double EarthEcentricity = 1.0 - MinorMajorRatioSquared;
 
@@ -20,7 +20,7 @@ class WorldTransform {
 	}
 
 	this(Vector!(3, double) lat_long_alt_reference) {
-		lat_long_alt_reference[2] /= 1000.0;
+		//lat_long_alt_reference[2] /= 1000.0;
 		reference_point = lat_lon_alt_to_ecef(lat_long_alt_reference);
 		rot_mat = generate_rot_mat(lat_long_alt_reference);
 	}
@@ -60,11 +60,11 @@ class WorldTransform {
 	}
 
 	auto lat_long_alt_to_enu(Vector!(3, double) lat_long_alt_point) {
-		lat_long_alt_point[2] /= 1000.0; // To preserve some precision we go to km
+		//lat_long_alt_point[2] /= 1000.0; // To preserve some precision we go to km
 		auto point = lat_lon_alt_to_ecef(lat_long_alt_point);
 
 		auto xyz = rot_mat*(point - reference_point);
-		xyz *= 1000.0; // Back to m
+		//xyz *= 1000.0; // Back to m
 		return xyz;
 		//return rot_mat*(point - reference_point);
 	}
@@ -102,8 +102,8 @@ class WorldTransform {
 	}
 
 	auto lat_long_alt_rate_to_enu_rate(Vector!(3, double) lat_long_alt, Vector!(3, double) lat_long_alt_rate) {
-		lat_long_alt_rate[2] /= 1000.0;
-		lat_long_alt[2] /= 1000.0;
+		//lat_long_alt_rate[2] /= 1000.0;
+		//lat_long_alt[2] /= 1000.0;
 		immutable sin_lat = sin(lat_long_alt[0]);
 		immutable cos_lat = cos(lat_long_alt[0]);
 		immutable sin_long = sin(lat_long_alt[1]);
@@ -117,7 +117,7 @@ class WorldTransform {
 			(MinorMajorRatioSquared*N_hat*lat_long_alt_rate[0] + lat_long_alt_rate[2])*sin_lat + (MinorMajorRatioSquared*N + lat_long_alt[2])*lat_long_alt_rate[0]*cos_lat
 		);
 
-		V *= 1000.0;
+		//V *= 1000.0;
 
 		return rot_mat*V;
 	}

@@ -9,6 +9,7 @@ struct AcousticResult {
     double[] sel;
     double[] dnl;
     double[][] time_history;
+    bool[][] has_ambient;
     Trajectory trajectory;
 
     this(size_t timesteps, size_t observers, Trajectory _trajectory) {
@@ -16,6 +17,10 @@ struct AcousticResult {
         sel = new double[observers];
         dnl = new double[observers];
         time_history = new double[][](observers, timesteps);
+        has_ambient = new bool[][](observers, timesteps);
+        foreach(ref am; has_ambient) {
+            am[] = true;
+        }
     }
 }
 
@@ -65,9 +70,9 @@ auto compute_trajectory(string database_file, string vehicle_file, string path_f
     
     foreach(obs_idx; 0..observers.length) {
         if(!ambient_level.isNaN) {
-            result.time_history[obs_idx][] = ambient_level;
+            result.time_history[obs_idx][] = ambient_level;//-40000000000;//ambient_level;
         } else {
-            result.time_history[obs_idx][] = 0;
+            result.time_history[obs_idx][] = 0;//-40000000000;
         }
     }
     import std.algorithm : sort, map;
@@ -88,7 +93,6 @@ auto compute_trajectory(string database_file, string vehicle_file, string path_f
                 .sort!"a[0] < b[0]"
                 .map!(a => tuple(a[2], a[1]));
 
-        //trace(sorted_observers);
         foreach (index, observer; sorted_observers)
         {
             auto level = database.level_at_observer(observer, source,
@@ -99,28 +103,39 @@ auto compute_trajectory(string database_file, string vehicle_file, string path_f
             if (!isNaN(ambient_level))
             {
                 //Add ambient noise
-                result.time_history[index][it] = 20.0 * log10(
-                        10.0 ^^ (result.time_history[index][it] / 20.) + 10.0 ^^ (ambient_level / 20.));
+                /+result.time_history[index][it] = 20.0 * log10(
+                        10.0 ^^ (result.time_history[index][it] / 20.) + 10.0 ^^ (ambient_level / 20.));+/
 
-                if(level < (ambient_level - 1)) {
+                if(level < ambient_level) {
+                    //result.has_ambient[index][it] = true;
+                    result.time_history[index][it] = ambient_level;//-40000000000;//ambient_level;
+                } else {
+                    result.has_ambient[index][it] = false;
+                }
+                
+                if(level < (ambient_level - 10)) {
+                    //result.has_ambient[index][it] = true;
                     trace("Killing at observer: ", index, ": ", observer, " level: ", level);
-                    result.time_history[index][it] = ambient_level;
+                    result.time_history[index][it] = ambient_level;//-40000000000;//ambient_level;
                     break;
                 }
             } else if(level < 0) {
+                //result.has_ambient[index][it] = true;
+                result.time_history[index][it] = 0;//-40000000000;
+            }
+            
+            if(level < -10 && isNaN(ambient_level)) {
+                //result.has_ambient[index][it] = true;
                 trace("Killing at observer: ", index, ": ", observer, " level: ", level);
-                result.time_history[index][it] = 0;
+                result.time_history[index][it] = 0;//-40000000000;
                 break;
             }
         }
-
-        //result.sel[index] = sound_exposure_level(result.time_history[index], dt);
-        //result.dnl[index] = day_night_level(result.time_history[index], dt, day);
     }
 
     foreach (index, observer; observers)
     {
-        result.sel[index] = sound_exposure_level(result.time_history[index], dt);
+        result.sel[index] = sound_exposure_level(result.time_history[index], dt, ambient_level, result.has_ambient[index]);
         result.dnl[index] = day_night_level(result.time_history[index], dt, day);
     }
 
@@ -304,44 +319,39 @@ void main(string[] args)
         write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
         //write_levels(x_obs, y_obs, acoustic_result.dnl, dnl_file, scattered, stk_format);
 
+        foreach(obs_idx; 0..x_obs.length) {
+            foreach(ref level; acoustic_results[idx].time_history[obs_idx]) {
+                level = 20.0 * log10(10.0 ^^ (level / 20.) + 10.0 ^^ (ambient_level / 20.));
+            }
+
+            //static void write_time_history_file(double[] time_history, double dt, double x, double y, string filename)
+            auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_flightpath_" ~ idx.to!string ~ ".csv";
+            write_time_history_file(acoustic_results[idx].time_history[obs_idx], dt, x_obs[obs_idx], y_obs[obs_idx], output_file);
+        }
+
+        
         if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
         {
             import plt = matplotlibd.pyplot;
 
+            auto t = acoustic_results[idx].trajectory.Get!("t").get();
             auto x = acoustic_results[idx].trajectory.Get!("x").get();
             auto y = acoustic_results[idx].trajectory.Get!("y").get();
             auto z = acoustic_results[idx].trajectory.Get!("z").get();
+            auto vx = acoustic_results[idx].trajectory.Get!("vx").get();
+            auto vy = acoustic_results[idx].trajectory.Get!("vy").get();
+            auto vz = acoustic_results[idx].trajectory.Get!("vz").get();
+
             import std.stdio;
 
-            //Convert to ft for plotting
-            // TODO add units throughout
-
-            /+if(stk_format) {
-                import numd.linearalgebra.matrix : Vector;
-                import trajectory : rad2deg;
-                foreach(idx, ref obs; observers) {
-                    auto lat_lon_alt = trajectory.world_transform.enu_to_lat_lon(Vector!(3, double)(obs));
-                    x_obs[idx] = lat_lon_alt[1]*rad2deg;
-                    y_obs[idx] = /+90.0 - +/(lat_lon_alt[0]*rad2deg);
-                }
-
-                foreach(idx, ref state; trajectory.states) {
-                    auto xyz = Vector!(3, double)(state.x, state.y, state.z);
-                    auto lat_lon_alt = trajectory.world_transform.enu_to_lat_lon(xyz);
-                    x[idx] = lat_lon_alt[1]*rad2deg;
-                    y[idx] = /+90.0 - +/(lat_lon_alt[0]*rad2deg);
-                    z[idx] = lat_lon_alt[2];
-                }
-
-                writeln(y);
-            } else {+/
-                x_obs[] *= 1.0 / ft2m;
-                y_obs[] *= 1.0 / ft2m;
-                x[] *= 1.0 / ft2m;
-                y[] *= 1.0 / ft2m;
-                z[] *= 1.0 / ft2m;
-            //}
-            
+            x_obs[] *= 1.0 / ft2m;
+            y_obs[] *= 1.0 / ft2m;
+            x[] *= 1.0 / ft2m;
+            y[] *= 1.0 / ft2m;
+            z[] *= 1.0 / ft2m;
+            vx[] *= 1.0 / ft2m;
+            vy[] *= 1.0 / ft2m;
+            vz[] *= 1.0 / ft2m;
 
             if (plotting || figure_file.length > 0)
             {
@@ -432,6 +442,61 @@ void main(string[] args)
                 {
                     plt.savefig(stripExtension(state_figure_file) ~ "_z_" ~ extension(state_figure_file));
                 }
+
+                plt.figure();
+                plt.plot(t, z);
+                plt.xlabel("t, ft", ["fontsize": 14]);
+                plt.ylabel("Z, ft", ["fontsize": 14]);
+                if (state_figure_file.length > 0)
+                {
+                    plt.savefig(stripExtension(state_figure_file) ~ "_zvt_" ~ extension(state_figure_file));
+                }
+
+                plt.figure();
+                plt.plot(t, x);
+                plt.xlabel("t, ft", ["fontsize": 14]);
+                plt.ylabel("X, ft", ["fontsize": 14]);
+                if (state_figure_file.length > 0)
+                {
+                    plt.savefig(stripExtension(state_figure_file) ~ "_xvt_" ~ extension(state_figure_file));
+                }
+
+                plt.figure();
+                plt.plot(t, y);
+                plt.xlabel("t, ft", ["fontsize": 14]);
+                plt.ylabel("Y, ft", ["fontsize": 14]);
+                if (state_figure_file.length > 0)
+                {
+                    plt.savefig(stripExtension(state_figure_file) ~ "_yvt_" ~ extension(state_figure_file));
+                }
+
+                plt.figure();
+                plt.plot(t, vx);
+                plt.xlabel("t, ft", ["fontsize": 14]);
+                plt.ylabel("V_x, ft/s", ["fontsize": 14]);
+                if (state_figure_file.length > 0)
+                {
+                    plt.savefig(stripExtension(state_figure_file) ~ "_vxvt_" ~ extension(state_figure_file));
+                }
+
+                plt.figure();
+                plt.plot(t, vy);
+                plt.xlabel("t, ft", ["fontsize": 14]);
+                plt.ylabel("V_y, ft/s", ["fontsize": 14]);
+                if (state_figure_file.length > 0)
+                {
+                    plt.savefig(stripExtension(state_figure_file) ~ "_vyvt_" ~ extension(state_figure_file));
+                }
+
+                plt.figure();
+                plt.plot(t, vz);
+                plt.xlabel("t, ft", ["fontsize": 14]);
+                plt.ylabel("V_z, ft/s", ["fontsize": 14]);
+                if (state_figure_file.length > 0)
+                {
+                    plt.savefig(stripExtension(state_figure_file) ~ "_vzvt_" ~ extension(state_figure_file));
+                }
+
             }
             if (plotting)
             {
@@ -441,8 +506,26 @@ void main(string[] args)
         }
     }
 
+    double min_time = double.infinity;
+    double max_time = -double.infinity;
+
+    import std.algorithm : min, max;
+    foreach(ref acoustic_result; acoustic_results) {
+        min_time = min(min_time, acoustic_result.trajectory.utcstart);
+        auto end_time = acoustic_result.trajectory.utcstart + acoustic_result.trajectory.states[$-1].t;
+        max_time = max(max_time, end_time);
+    }
+
+    import std.math : round;
+    double all_elapsed = max_time - min_time;
+    long samples = round(all_elapsed/dt).to!long;
+    ambient_level = 10.0^^(0.1*ambient_level);
+
+    import std.math : log10;
+    double ambient_dnl = 10.0*log10(dt*samples*ambient_level);
+
     double[] final_dnl = new double[observers.length];
-    final_dnl[] = 0.;
+    final_dnl[] = ambient_dnl;
     foreach(ref acoustic_result; acoustic_results) {
         final_dnl[] += acoustic_result.dnl[];
     }
@@ -450,13 +533,23 @@ void main(string[] args)
     write_levels(x_obs, y_obs, final_dnl, dnl_file, scattered, stk_format);
 }
 
-static double sound_exposure_level(double[] levels, double T)
+static double sound_exposure_level(double[] levels, double T, double ambient_level, bool[] has_ambient)
 {
     import std.math : log10;
     import std.algorithm.iteration : sum;
 
     auto index = peak_range(levels);
     double[] levels_slice = levels[index[0] .. (index[1] + 1)];
+
+    foreach(idx, ref level; levels_slice) {
+        if(!has_ambient[idx]) {
+            level =
+                20.0 * log10(
+                    10.0 ^^ (level / 20.) + 10.0 ^^ (ambient_level / 20.)
+                );
+        }
+    }
+
     double[] p;
     p.length = levels_slice.length;
     p[] = 10.0 ^^ (0.1 * levels_slice[]);
@@ -704,18 +797,7 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
         import trajectory : deg2rad;
         import numd.linearalgebra.matrix : Matrix, Vector;
 
-        //enforce(world_transform !is null, "Need a valid world transform to parse STK observer files");
-
         struct Layout {
-            /++
-                "Point Number",
-                "Latitude (deg)",
-                "Longitude (deg)",
-                "Altitude (km)",
-                "Area (km^2)",
-                "Latitude Span (deg)",
-                "Longitude Span (deg)"
-            +/
             size_t point_num;
             double lat;
             double lon;
@@ -726,7 +808,6 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
         }
 
         import std.string : strip;
-        //import std.math : min, max
         double min_lat = double.infinity;
         double max_lat = -double.infinity;
         double min_long = double.infinity;
@@ -747,8 +828,6 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
                     min_alt = min(min_alt, a.alt);
                     max_alt = max(max_alt, a.alt);
                     return Vector!(3, double)(a.lat*deg2rad, a.lon*deg2rad, a.alt);
-                    ////auto obs_pos_vec = world_transform.lat_long_alt_to_enu(lat_lon_alt);
-                    //return obs_pos_vec.mData;
                 })
                 .array;
 
@@ -762,7 +841,7 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
         double lat_ref = (max_lat + min_lat)/2.;
         double lon_ref = (max_long + min_long)/2.;
         double alt_ref = (max_alt + min_alt)/2.;
-        auto lat_long_alt_ref = Vector!(3, double)(lat_ref, lon_ref, alt_ref);
+        auto lat_long_alt_ref = Vector!(3, double)(lat_ref, lon_ref, alt_ref*1000.0 /+ convert to meters +/);
         trace("lat_long_alt_ref: ", lat_long_alt_ref);
         auto wt = new WorldTransform(lat_long_alt_ref);
 
@@ -772,30 +851,5 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
                 .array;
 
         return wt;
-        /+observers =
-            observer_file
-                .readText
-                .split("\n")
-                .map!(a => a.strip(' '))
-                .filter!(a => a.length > 0 && a[0].to!string.isNumeric)
-                .dropOne
-                .map!((line) {
-                    auto split_line = line.split(" ").filter!(b => b != "");
-                    auto index = split_line.front;
-                    auto lat_lon_alt_arr = line.split(" ").filter!(b => b != "").dropOne.map!(b => b.to!double).staticArray!3;
-
-                    auto lat_lon_alt = Vector!(3, double)(lat_lon_alt_arr[0]*deg2rad, lat_lon_alt_arr[1]*deg2rad, lat_lon_alt_arr[2]*1000);
-
-                    auto obs_pos_vec = world_transform.lat_long_alt_to_enu(lat_lon_alt);
-
-                    return tuple(index, obs_pos_vec.mData);
-                })
-                .array
-                .sort!((a, b) => a[0] < b[0])
-                .map!(a => a[1])
-                .array;
-        +/
-
-        //writeln(observers);
     }
 }
