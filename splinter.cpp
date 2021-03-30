@@ -53,18 +53,23 @@ public:
     }
 };
 
-static size_t number_of_splines = 0;
+#include <atomic>
+#include <thread>
+#include <mutex>
+static std::atomic<size_t> number_of_splines = 0;
 static std::unordered_map<size_t, spline_interface *> splines;
-
+static std::mutex spline_mutex;
 extern "C"
 {
 size_t create_spline(size_t nsamples, const double *x_values, const double *y_values, int degree, double alpha) {
+    std::scoped_lock lock(spline_mutex);
     number_of_splines++;
     splines[number_of_splines] = new spline_interface(nsamples, x_values, y_values, degree, alpha);
     return number_of_splines;
 }
 
 void destroy_spline(size_t key) {
+    std::scoped_lock lock(spline_mutex);
     delete splines[key];
     splines.erase(key);
 }

@@ -33,7 +33,7 @@ endif()
 set(CMAKE_MACOSX_RPATH 0)
 set(CMAKE_INSTALL_NAME_DIR @executable_path)
 #Set attributes for Xcode project
-set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++14")
+set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++17")
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 set(CMAKE_CXX_STANDARD 14)
 
@@ -120,7 +120,7 @@ add_subdirectory(external/splinter)
 #endif()
 
 add_library(trajectory ${CMAKE_CURRENT_LIST_DIR}/trajectory.d wgs84tocartesian.d worldtransforms.d splines.d splinter.cpp)
-
+set_property(TARGET trajectory PROPERTY CXX_STANDARD 17)
 #Qadd_library(trajectory splinter.cpp)
 
 set_target_properties(

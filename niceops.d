@@ -2,6 +2,7 @@ import std.experimental.logger;
 
 import trajectory;
 import worldtransforms;
+import sphere_database : Database;
 
 static immutable ft2m = 0.3048;
 
@@ -24,7 +25,7 @@ struct AcousticResult {
     }
 }
 
-auto compute_trajectory(string database_file, string vehicle_file, string path_file, double[3][] observers, bool qsam, double dt, double ambient_level, double range_cutoff, WorldTransform world_transform, bool stk_format) {
+auto compute_trajectory(Database database, string vehicle_file, string path_file, double[3][] observers, bool qsam, double dt, double ambient_level, double range_cutoff, WorldTransform world_transform, bool stk_format) {
 
     import sphere_database : Database;
     import trajectory : Trajectory;
@@ -39,9 +40,9 @@ auto compute_trajectory(string database_file, string vehicle_file, string path_f
     import std.typecons : tuple;
     // Start stopwatch
     immutable watch = StopWatch(AutoStart.yes);
-    auto database = new Database(database_file, range_cutoff);
+    //auto database = new Database(database_file, range_cutoff);
     auto t1 = watch.peek.total!"msecs";
-    log("Database loaded in ", t1 / 1000.0, " seconds.");
+    //log("Database loaded in ", t1 / 1000.0, " seconds.");
 
     enforce(world_transform !is null, "Received invalid world transform");
     /+if (self_test)
@@ -147,7 +148,6 @@ auto compute_trajectory(string database_file, string vehicle_file, string path_f
 
 void main(string[] args)
 {
-    import sphere_database : Database;
     import trajectory : Trajectory;
     import std.range : iota;
     import std.array : array;
@@ -156,7 +156,7 @@ void main(string[] args)
     import std.conv : to;
     import std.math : isNaN, log10;
     import std.datetime.stopwatch : StopWatch, AutoStart;
-
+    import std.algorithm : map;
     //Default to demo case
     string log_file = "log/niceops.log";
     string[] database_files = [/+"databases/S-76D_M3.nod"+/];
@@ -251,6 +251,7 @@ void main(string[] args)
 
     info("database_files.length: ", database_files.length, ", database_files: ", database_files);
 
+    auto databases = database_files.map!(a => new Database(a, range_cutoff)).array;
     double[] x_obs;
     double[] y_obs;
     double[3][] observers;
@@ -300,22 +301,22 @@ void main(string[] args)
     }
 
     enforce(path_files.length == vehicle_files.length, "Need the same number of vehicle files as flight path files");
-    enforce(path_files.length == database_files.length, "Need the same number of database files as flight path files");
+    enforce(path_files.length == databases.length, "Need the same number of database files as flight path files");
     enforce(path_files.length == out_files.length, "Need the same number of SEL output files as flight path files");
 
     auto acoustic_results = new AcousticResult[path_files.length];
     import std.range : zip;
     import std.parallelism : parallel;
 
-    foreach(idx, e; zip(path_files, database_files, vehicle_files, out_files).parallel)
+    foreach(idx, e; zip(path_files, databases, vehicle_files, out_files).parallel(1))
     {
         auto path_file = e[0];
-        auto database_file = e[1];
+        auto database = e[1];
         auto vehicle_file = e[2];
         auto out_file = e[3];
 
         enforce(world_transform !is null, "Passing in invalid world transform");
-        acoustic_results[idx] = compute_trajectory(database_file, vehicle_file, path_file, observers, qsam, dt, ambient_level, range_cutoff, world_transform, stk_format);
+        acoustic_results[idx] = compute_trajectory(database, vehicle_file, path_file, observers, qsam, dt, ambient_level, range_cutoff, world_transform, stk_format);
         write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
         //write_levels(x_obs, y_obs, acoustic_result.dnl, dnl_file, scattered, stk_format);
 
@@ -325,7 +326,7 @@ void main(string[] args)
             }
 
             //static void write_time_history_file(double[] time_history, double dt, double x, double y, string filename)
-            auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_flightpath_" ~ idx.to!string ~ ".csv";
+            auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_"~obs_idx.to!string~"_flightpath_" ~ idx.to!string ~ ".csv";
             write_time_history_file(acoustic_results[idx].time_history[obs_idx], dt, x_obs[obs_idx], y_obs[obs_idx], output_file);
         }
 
