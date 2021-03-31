@@ -218,6 +218,9 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
 
     //auto world_transform = new WorldTransform(lat_long_alt_reference);
 
+    import std.array : staticArray;
+    auto lat_lon_ref = staticArray!(double, 2)([world_transform.reference_point_lat_lon_alt[0]*rad2deg, world_transform.reference_point_lat_lon_alt[1]*rad2deg]);
+
     states = records
         .enumerate
         .map!((record) {
@@ -226,6 +229,7 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
 
             auto lat_long_alt_point = Vector!(3, double)(
                 record.value.lat*deg2rad,
+                //(record.value.lon + 360.0)*deg2rad,
                 record.value.lon*deg2rad,
                 record.value.alt
             );
@@ -236,13 +240,21 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
                 record.value.alt_rate
             );
 
-            auto point = world_transform.lat_long_alt_to_enu(lat_long_alt_point);
+            now.lat = record.value.lat;
+            //now.lon = record.value.lon;
+            now.lon = record.value.lon + 360;
 
-            now.x = point[0];
-            now.y = point[1];
-            now.z = point[2];
+            //auto point = world_transform.lat_long_alt_to_enu(lat_long_alt_point);
+            //auto point = world_transform.lat_long_alt_to_ecef(lat_long_alt_point);
+            auto lat_lon = staticArray!(double, 2)([now.lat, now.lon]);
 
-            auto enu_vel = world_transform.lat_long_alt_rate_to_enu_rate(lat_long_alt_point, lat_long_alt_rate);
+            auto xy_point = toCartesian(lat_lon_ref, lat_lon);
+            now.x = xy_point[0];
+            now.y = xy_point[1];
+            now.z = record.value.alt;
+
+            //auto enu_vel = world_transform.lat_long_alt_rate_to_enu_rate(lat_long_alt_point, lat_long_alt_rate);
+            auto enu_vel = world_transform.lat_long_alt_rate_to_ecef_rate(lat_long_alt_point, lat_long_alt_rate);
 
             now.vx = enu_vel[0];
             now.vy = enu_vel[1];
@@ -256,19 +268,23 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
 
     // Compute accelerations and other derived quantities.
     foreach(idx, ref state; states) {
+        //auto pos_vec = Vector!(3, double)(state.x, state.y, state.z);
+        //auto gravity_vec = pos_vec.normalize;
+        auto gravity_vec = Vector!(3, double)(0.0, 0.0, 1.0);
+
         if(idx == 0) {
-            state.nx = 0;
-            state.ny = 0;
-            state.nz = 1.0;
+            state.nx = gravity_vec[0];
+            state.ny = gravity_vec[1];
+            state.nz = gravity_vec[2];
         } else {
             immutable dt = state.t - states[idx - 1].t;
             immutable x_acc = (state.vx - states[idx - 1].vx)/dt;
             immutable y_acc = (state.vy - states[idx - 1].vy)/dt;
             immutable z_acc = (state.vz - states[idx - 1].vz)/dt;
 
-            state.nx = x_acc/g;
-            state.ny = y_acc/g;
-            state.nz = z_acc/g + 1.0;
+            state.nx = x_acc/g + gravity_vec[0];
+            state.ny = y_acc/g + gravity_vec[1];
+            state.nz = z_acc/g + gravity_vec[2];
 
         }
 
@@ -312,6 +328,8 @@ class Trajectory
         double fpa_e;
         double fpa;
         bool day;
+        double lat;
+        double lon;
     }
 
     struct dimensional_data
@@ -455,12 +473,16 @@ class Trajectory
         double[] x;
         double[] y;
         double[] z;
+        double[] lat;
+        double[] lon;
         foreach (now; states)
         {
             t ~= now.t;
             x ~= now.x;
             y ~= now.y;
             z ~= now.z;
+            lat ~= now.lat;
+            lon ~= now.lon;
         }
         trace("t[$ - 1]: ", t[$ - 1]);
         // Build interpolants
@@ -492,6 +514,18 @@ class Trajectory
         double[] azi;
         smoother(t, z, ti, zi, vzi, azi, degree, alpha);
 
+
+        double[] lati;
+        double[] vlati;
+        double[] alati;
+        smoother(t, lat, ti, lati, vlati, alati, degree, alpha);
+
+        double[] loni;
+        double[] vloni;
+        double[] aloni;
+        smoother(t, lon, ti, loni, vloni, aloni, degree, alpha);
+
+
         import std.algorithm : map;
         import std.array : array;
         import std.typecons : tuple;
@@ -514,16 +548,25 @@ class Trajectory
             }
 
             now.t = time;
+
+            now.lat = lati[i];
+            now.lon = loni[i];
+            
             now.x = xi[i];
             now.y = yi[i];
             now.z = zi[i];
             now.vx = vxi[i];
             now.vy = vyi[i];
             now.vz = vzi[i];
+
+            //auto pos_vec = Vector!(3, double)(now.x, now.y, now.z);
+            //auto gravity_vec = pos_vec.normalize;
+            auto gravity_vec = Vector!(3, double)(0.0, 0.0, 1.0);
+
             // Convert to "g"
-            now.nx = axi[i] * mps2g;
-            now.ny = ayi[i] * mps2g;
-            now.nz = azi[i] * mps2g + 1.0;
+            now.nx = axi[i] * mps2g + gravity_vec[0];
+            now.ny = ayi[i] * mps2g + gravity_vec[1];
+            now.nz = azi[i] * mps2g + gravity_vec[2];
             //Compute load facror
             now.LF = sqrt(now.nx ^^ 2 + now.ny ^^ 2 + now.nz ^^ 2);
             //Normalize

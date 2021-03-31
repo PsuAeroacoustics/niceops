@@ -2,6 +2,7 @@ import std.experimental.logger;
 
 import trajectory;
 import worldtransforms;
+import wgs84tocartesian;
 import sphere_database : Database;
 
 static immutable ft2m = 0.3048;
@@ -188,6 +189,10 @@ void main(string[] args)
     string dnl_file = "integrated/dnl.csv";
     double range_cutoff = 5000; // meters
 
+    double adv;
+    double ct;
+    double fpa;
+
     arraySep = ",";
     auto option_results = getopt( args, config.caseSensitive,
         "database|d", "netCDF noise database file.", &database_files,
@@ -214,7 +219,10 @@ void main(string[] args)
         "version", "Print niceops version and exit", &print_version,
         "timehistory|T", "Directory to save timehistory files to", &time_history_dir,
         "dnlfile|D", "Day night level result file", &dnl_file,
-        "cutoff", "Cutoff range", &range_cutoff
+        "cutoff", "Cutoff range", &range_cutoff,
+        "adv", "Plot sphere with advance ratio", &adv,
+        "ct", "Plot sphere with C_T", &ct,
+        "fpa", "Plot sphere with flight path angle", &fpa
     );
 
     if(print_version) {
@@ -245,13 +253,72 @@ void main(string[] args)
         exit(0);
     }
 
-    
     //Set default logging to file
     sharedLog = new FileLogger(log_file, log_level, CreateFolder.yes);
 
     info("database_files.length: ", database_files.length, ", database_files: ", database_files);
 
     auto databases = database_files.map!(a => new Database(a, range_cutoff)).array;
+
+    //trace("databases[0].advance_ratios: ", databases[0].advance_ratios.map!(a => a*(databases[0].advance_ratio_max - databases[0].advance_ratio_min) + databases[0].advance_ratio_min) );
+    //trace("databases[0].thrust_coefficients: ", databases[0].thrust_coefficients.map!(a => a*(databases[0].thrust_coefficient_max - databases[0].thrust_coefficient_min) + databases[0].thrust_coefficient_min) );
+    //trace("databases[0].flight_path_angles: ", databases[0].flight_path_angles.map!(a => a*(databases[0].flight_path_angle_max - databases[0].flight_path_angle_min) + databases[0].flight_path_angle_min) );
+
+    if(!fpa.isNaN && !ct.isNaN && !adv.isNaN) {
+
+        /+ct = (ct - databases[0].thrust_coefficient_min)/(databases[0].thrust_coefficient_max - databases[0].thrust_coefficient_min);
+        adv = (ct - databases[0].advance_ratio_min)/(databases[0].advance_ratio_max - databases[0].advance_ratio_min);
+        fpa = (ct - databases[0].flight_path_angle_min)/(databases[0].flight_path_angle_max - databases[0].flight_path_angle_min);
+
+        import std.algorithm;
+        import std.math : abs, approxEqual;
+        import std.range;
+        import std.stdio;
+
+        auto adv_diff = databases[0].advance_ratios.map!(a => abs(adv - a)).array.sort;
+        auto min_adv_diff = adv_diff[0];
+        auto adv_selection = databases[0].advance_ratios.map!(a => abs(adv - a)).enumerate.filter!(a => approxEqual(min_adv_diff, a[1]));
+
+        writeln(adv_selection);+/
+
+        import std.algorithm;
+        import std.math;
+        import std.range;
+        import std.stdio;
+
+        auto thetas = iota(90, 180, 5);
+        auto phis = iota(-180, 170, 5);
+
+        auto num_elements = phis.length*thetas.length;
+        double[] x = new double[num_elements];
+        double[] y = new double[num_elements];
+        double[] dba = new double[num_elements];
+
+        foreach(i, theta; thetas.enumerate) {
+            auto theta_r = theta*(PI/180.0);
+            foreach(j, phi; phis.enumerate) {
+                auto phi_r = phi*(PI/180.0);
+
+                auto idx = j + i*phis.length;
+                
+                x[idx] = databases[0].sphere_radius*cos(theta_r)*cos(phi_r);
+                y[idx] = databases[0].sphere_radius*cos(theta_r)*sin(phi_r);
+                //double eval(double range, double phi, double theta, double advance_ratio, double flight_path_angle, double thrust_coefficient)
+                dba[idx] = databases[0].eval(databases[0].sphere_radius, phi, theta, adv, fpa, ct);
+            }
+        }
+        import plt = matplotlibd.pyplot;
+        plt.tricontourf(x, y, dba, ["cmap": "YlOrRd"]);
+        plt.colorbar;
+        plt.axis("equal");
+        plt.show;
+    }
+
+
+    if(!fpa.isNaN && !ct.isNaN && !adv.isNaN) {
+        return;
+    }
+
     double[] x_obs;
     double[] y_obs;
     double[3][] observers;
@@ -260,11 +327,16 @@ void main(string[] args)
     import std.exception : enforce;
 
     WorldTransform world_transform;
+    double[2] ref_point;
+    double[2][] lat_lon_obs;
     if (scattered)
     {
         // Read in scattered observer data
-        world_transform = read_observer_file(observer_file, observers, stk_format);
-        
+        auto parsed_obs = read_observer_file(observer_file, observers, stk_format);
+        world_transform = parsed_obs.world_transform;
+        ref_point = parsed_obs.reference;
+        lat_lon_obs = parsed_obs.lat_lon;
+
         enforce(world_transform !is null, "Failed to create world transform");
         //Set length for levels and observer x, y arrays
         //integrated_levels.length = observers.length;
@@ -316,6 +388,7 @@ void main(string[] args)
         auto out_file = e[3];
 
         enforce(world_transform !is null, "Passing in invalid world transform");
+        info("Computing trajectory for flight path ", idx);
         acoustic_results[idx] = compute_trajectory(database, vehicle_file, path_file, observers, qsam, dt, ambient_level, range_cutoff, world_transform, stk_format);
         write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
         //write_levels(x_obs, y_obs, acoustic_result.dnl, dnl_file, scattered, stk_format);
@@ -334,8 +407,11 @@ void main(string[] args)
         if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
         {
             import plt = matplotlibd.pyplot;
+            import std.array : staticArray;
 
             auto t = acoustic_results[idx].trajectory.Get!("t").get();
+            auto lat = acoustic_results[idx].trajectory.Get!("lat").get();
+            auto lon = acoustic_results[idx].trajectory.Get!("lon").get();
             auto x = acoustic_results[idx].trajectory.Get!("x").get();
             auto y = acoustic_results[idx].trajectory.Get!("y").get();
             auto z = acoustic_results[idx].trajectory.Get!("z").get();
@@ -354,6 +430,34 @@ void main(string[] args)
             vy[] *= 1.0 / ft2m;
             vz[] *= 1.0 / ft2m;
 
+            //double[] wgs84
+            auto wgs84_obs_pos = lat_lon_obs.map!(a => toCartesian(ref_point, a));
+            auto wgs84_x_obs = wgs84_obs_pos.map!(a => a[0]);
+            auto wgs84_y_obs = wgs84_obs_pos.map!(a => a[1]);
+
+            auto wgs84_pos = zip(lat, lon).map!(a => toCartesian(ref_point, staticArray!(double, 2)([a[0], a[1]])));
+            auto obs_pos = zip(x_obs, y_obs).map!(a => staticArray!(double, 2)([a[0], a[1]]));
+
+            auto wgs84_x = wgs84_pos.map!(a => a[0]);
+            auto wgs84_y = wgs84_pos.map!(a => a[1]);
+
+            double min_x = double.infinity;
+            double max_x = -double.infinity;
+            double min_y = double.infinity;
+            double max_y = -double.infinity;
+
+            //foreach(pos; wgs84_obs_pos) {
+            foreach(pos; obs_pos) {
+                import std.algorithm : min, max;
+                min_x = min(pos[0], min_x);
+                max_x = max(pos[0], max_x);
+                min_y = min(pos[1], min_y);
+                max_y = max(pos[1], max_y);
+            }
+
+            double x_span = max_x - min_x;
+            double y_span = max_y - min_y;
+
             if (plotting || figure_file.length > 0)
             {
                 //Set contour levels
@@ -364,7 +468,13 @@ void main(string[] args)
                     plt.tricontourf(x_obs, y_obs, acoustic_results[idx].sel/+, clevels+/, [
                             "cmap": "YlOrRd"
                             ]);
+                    /+plt.tricontourf(wgs84_x_obs, wgs84_y_obs, acoustic_results[idx].sel/+, clevels+/, [
+                            "cmap": "YlOrRd"
+                            ]);+/
                     plt.plot(x_obs, y_obs, "ko", ["markersize": 0.1]);
+                    //plt.plot(wgs84_x_obs, wgs84_y_obs, "ko", ["markersize": 0.8]);
+                    plt.xlim(["left": min_x - 0.05*x_span], ["right": max_x + 0.05*x_span]);
+                    plt.ylim(["bottom": min_y - 0.05*y_span], ["top": max_y + 0.05*y_span]);
                 }
                 else
                 {
@@ -384,16 +494,25 @@ void main(string[] args)
                             "cmap": "YlOrRd"
                             ]);
                 }
+
                 plt.plot(x, y, "k-");
+                //plt.plot(wgs84_x, wgs84_y, "k-");
                 plt.xlabel("X, ft", ["fontsize": 14]);
                 plt.ylabel("Y, ft", ["fontsize": 14]);
-                plt.axis("equal");
+                plt.xlim(["left": min_x - 0.05*x_span], ["right": max_x + 0.05*x_span]);
+                plt.ylim(["bottom": min_y - 0.05*y_span], ["top": max_y + 0.05*y_span]);
+                //plt.axis("equal");
                 plt.colorbar();
-                plt.tight_layout();
+                //plt.tight_layout();
 
                 if (figure_file.length > 0)
                 {
-                    plt.savefig(figure_file);
+                    import std.path;
+
+                    auto fig_file_no_ext = stripExtension(figure_file);
+                    auto ext = extension(figure_file);
+                    auto filename = fig_file_no_ext~"_"~idx.to!string~ext;
+                    plt.savefig(filename);
                 }
             }
             if (plotting || state_figure_file.length > 0)
@@ -717,7 +836,7 @@ static void write_time_history_file(double[] time_history, double dt, double x,
 {
     import std.stdio;
 
-    info("Writing time history to ", filename);
+    trace("Writing time history to ", filename);
     auto file = File(filename, "w");
     file.writeln("Level time history. Next row [dt (s), x (ft), y(ft)], remaining rows, dB.");
     file.writeln(dt, ",", x / ft2m, ",", y / ft2m);
@@ -761,6 +880,7 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
     import std.range : dropOne;
     import std.algorithm : filter, map, strip;
     import std.stdio : writeln;
+    import std.typecons : tuple;
 
     immutable ext = observer_file.split(".")[$-1];
 
@@ -787,14 +907,17 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
             }
         }
 
-        return null;
+        //return null;
+        double[2][] null_lat_lon;
+        WorldTransform wt;
+        return tuple!("world_transform", "lat_lon", "reference")(wt, null_lat_lon, staticArray!(double, 2)([0, 0]));
     }
     else
     {
         import std.exception : enforce;
         import std.typecons : tuple;
         import std.algorithm : min, max, sort;
-
+        
         import trajectory : deg2rad;
         import numd.linearalgebra.matrix : Matrix, Vector;
 
@@ -828,9 +951,11 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
                     max_long = max(max_long, a.lon*deg2rad);
                     min_alt = min(min_alt, a.alt);
                     max_alt = max(max_alt, a.alt);
-                    return Vector!(3, double)(a.lat*deg2rad, a.lon*deg2rad, a.alt);
+                    return Vector!(3, double)(a.lat, a.lon, a.alt);
                 })
                 .array;
+
+        auto lat_lon_obs = lat_lon_alt_obs.map!(a => staticArray!(double, 2)([a[0], a[1]])).array;
 
         trace("min_lat: ", min_lat);
         trace("max_lat: ", max_lat);
@@ -843,14 +968,22 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
         double lon_ref = (max_long + min_long)/2.;
         double alt_ref = (max_alt + min_alt)/2.;
         auto lat_long_alt_ref = Vector!(3, double)(lat_ref, lon_ref, alt_ref*1000.0 /+ convert to meters +/);
+        double[2] lat_long_ref = [lat_ref/deg2rad, lon_ref/deg2rad];
+
         trace("lat_long_alt_ref: ", lat_long_alt_ref);
         auto wt = new WorldTransform(lat_long_alt_ref);
 
         observers = 
             lat_lon_alt_obs
-                .map!(a => wt.lat_long_alt_to_enu(a).mData)
+                //.map!(a => wt.lat_long_alt_to_enu(Vector!(3, double)(a[0]*deg2rad, a[1]*deg2rad, a[2]*1000.0)).mData)
+                //.map!(a => wt.lat_long_alt_to_ecef(Vector!(3, double)(a[0]*deg2rad, a[1]*deg2rad, a[2]*1000.0)).mData)
+                .map!((a) {
+                    auto lat_lon = staticArray!(double, 2)([a[0], a[1]]);
+                    auto xy_point = toCartesian(lat_long_ref, lat_lon);
+                    return staticArray!(double, 3)([xy_point[0], xy_point[1], a[2]*1000.0]);
+                })
                 .array;
 
-        return wt;
+        return tuple!("world_transform", "lat_lon", "reference")(wt, lat_lon_obs, lat_long_ref);
     }
 }

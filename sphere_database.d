@@ -400,6 +400,8 @@ class Database
     double range_cutoff;
     const double sphere_radius, advance_ratio_min, advance_ratio_max, flight_path_angle_min,
         flight_path_angle_max, thrust_coefficient_min, thrust_coefficient_max, max_level;
+
+    //double[] advance_ratios, flight_path_angles, thrust_coefficients;
     this(string datafile_path, double _range_cutoff)
     {
         range_cutoff = _range_cutoff;

@@ -13,15 +13,18 @@ class WorldTransform {
 
 	immutable Matrix!(3, 3, double) rot_mat;
 	immutable Vector!(3, double) reference_point;
+	immutable Vector!(3, double) reference_point_lat_lon_alt;
 
 	this() {
 		reference_point = Vector!(3, double)(0, 0, 0);
+		reference_point_lat_lon_alt = Vector!(3, double)(0, 0, 0);
 		rot_mat = Matrix!(3, 3, double).identity;
 	}
 
 	this(Vector!(3, double) lat_long_alt_reference) {
+		reference_point_lat_lon_alt = lat_long_alt_reference;
 		//lat_long_alt_reference[2] /= 1000.0;
-		reference_point = lat_lon_alt_to_ecef(lat_long_alt_reference);
+		reference_point = lat_long_alt_to_ecef(lat_long_alt_reference);
 		rot_mat = generate_rot_mat(lat_long_alt_reference);
 	}
 
@@ -35,7 +38,7 @@ class WorldTransform {
 		return EarthMajorAxis*EarthEcentricity*sin(latitude)*cos(latitude)/pow(1.0 - EarthEcentricity*lat_sin*lat_sin, 1.5);
 	}
 
-	static Vector!(3, double) lat_lon_alt_to_ecef(Vector!(3, double) lat_long_alt) {
+	static Vector!(3, double) lat_long_alt_to_ecef(Vector!(3, double) lat_long_alt) {
 		immutable cos_lat = cos(lat_long_alt[0]);
 		immutable surf_height = surface_height(lat_long_alt[0]);
 		immutable r = (surf_height + lat_long_alt[2]);
@@ -61,7 +64,7 @@ class WorldTransform {
 
 	auto lat_long_alt_to_enu(Vector!(3, double) lat_long_alt_point) {
 		//lat_long_alt_point[2] /= 1000.0; // To preserve some precision we go to km
-		auto point = lat_lon_alt_to_ecef(lat_long_alt_point);
+		auto point = lat_long_alt_to_ecef(lat_long_alt_point);
 
 		auto xyz = rot_mat*(point - reference_point);
 		//xyz *= 1000.0; // Back to m
@@ -101,9 +104,8 @@ class WorldTransform {
 		return lat_lon_alt;
 	}
 
-	auto lat_long_alt_rate_to_enu_rate(Vector!(3, double) lat_long_alt, Vector!(3, double) lat_long_alt_rate) {
-		//lat_long_alt_rate[2] /= 1000.0;
-		//lat_long_alt[2] /= 1000.0;
+	auto lat_long_alt_rate_to_ecef_rate(Vector!(3, double) lat_long_alt, Vector!(3, double) lat_long_alt_rate) {
+
 		immutable sin_lat = sin(lat_long_alt[0]);
 		immutable cos_lat = cos(lat_long_alt[0]);
 		immutable sin_long = sin(lat_long_alt[1]);
@@ -117,7 +119,11 @@ class WorldTransform {
 			(MinorMajorRatioSquared*N_hat*lat_long_alt_rate[0] + lat_long_alt_rate[2])*sin_lat + (MinorMajorRatioSquared*N + lat_long_alt[2])*lat_long_alt_rate[0]*cos_lat
 		);
 
-		//V *= 1000.0;
+		return V;
+	}
+
+	auto lat_long_alt_rate_to_enu_rate(Vector!(3, double) lat_long_alt, Vector!(3, double) lat_long_alt_rate) {
+		auto V = lat_long_alt_rate_to_ecef_rate(lat_long_alt, lat_long_alt_rate);
 
 		return rot_mat*V;
 	}
