@@ -152,12 +152,13 @@ void main(string[] args)
     import trajectory : Trajectory;
     import std.range : iota;
     import std.array : array;
-    import std.getopt : getopt, config, defaultGetoptPrinter, arraySep;
+    import std.getopt : GetOptException, GetoptResult, getopt, config, defaultGetoptPrinter, arraySep;
     import core.stdc.stdlib : exit;
     import std.conv : to;
     import std.math : isNaN, log10;
     import std.datetime.stopwatch : StopWatch, AutoStart;
     import std.algorithm : map;
+
     //Default to demo case
     string log_file = "log/niceops.log";
     string[] database_files = [/+"databases/S-76D_M3.nod"+/];
@@ -194,63 +195,79 @@ void main(string[] args)
     double fpa;
 
     arraySep = ",";
-    auto option_results = getopt( args, config.caseSensitive,
-        "database|d", "netCDF noise database file.", &database_files,
-        "logfile|l", "Output log file.", &log_file,
-        "trajectoryfile|t", "CSV trajectory input file.", &path_files,
-        "vehicle|v", "JSON vehicle definition file.", &vehicle_files,
-        "output|o", "Output file name.", &out_files,
-        "plotting|p", "Enable plotting.", &plotting,
-        "figfile|f", "Filename to save figure.", &figure_file,
-        "statefigfile|F", "Filename to save state figures.", &state_figure_file,
-        "cmin", "Minimum contour level, dB.", &contour_min,
-        "cmax", "Maximum contour level, dB.", &contour_max,
-        "cstep", "Contour level step, dB.", &contour_step,
-        "step|s", "Time step in seconds.", &dt, 
-        "ambient|a", "Ambient noise level, dB", &ambient_level,
-        "history|i", "Time history file prefix.", &time_history_prefix,
-        "metricfile|m", "File to append overall noise metrics.", &metric_file,
-        "observer|b", "Observer file name.", &observer_file,
-        "qsam|q", "Enable extended QSAM", &qsam,
-        "state|S", "Filename to save state data", &state_file,
-        "self_test", "Run self tests.", &self_test,
-        "stk", "Path, observer, and aircraft file are in STK format", &stk_format,
-        "loglevel|L", "Log verbosisty level (options are: trace, info, warning, error, critical, fatal) default = info", &log_level,
-        "version", "Print niceops version and exit", &print_version,
-        "timehistory|T", "Directory to save timehistory files to", &time_history_dir,
-        "dnlfile|D", "Day night level result file", &dnl_file,
-        "cutoff", "Cutoff range", &range_cutoff,
-        "adv", "Plot sphere with advance ratio", &adv,
-        "ct", "Plot sphere with C_T", &ct,
-        "fpa", "Plot sphere with flight path angle", &fpa
-    );
+    GetoptResult option_results;
+    
+    try {
+        option_results = getopt( args, config.caseSensitive,
+            "database|d", "netCDF noise database file.", &database_files,
+            "logfile|l", "Output log file.", &log_file,
+            "trajectoryfile|t", "CSV trajectory input file.", &path_files,
+            "vehicle|v", "JSON vehicle definition file.", &vehicle_files,
+            "output|o", "Output file name.", &out_files,
+            "plotting|p", "Enable plotting.", &plotting,
+            "figfile|f", "Filename to save figure.", &figure_file,
+            "statefigfile|F", "Filename to save state figures.", &state_figure_file,
+            "cmin", "Minimum contour level, dB.", &contour_min,
+            "cmax", "Maximum contour level, dB.", &contour_max,
+            "cstep", "Contour level step, dB.", &contour_step,
+            "step|s", "Time step in seconds.", &dt, 
+            "ambient|a", "Ambient noise level, dB", &ambient_level,
+            "history|i", "Time history file prefix.", &time_history_prefix,
+            "metricfile|m", "File to append overall noise metrics.", &metric_file,
+            "observer|b", "Observer file name.", &observer_file,
+            "qsam|q", "Enable extended QSAM", &qsam,
+            "state|S", "Filename to save state data", &state_file,
+            "self_test", "Run self tests.", &self_test,
+            "stk", "Path, observer, and aircraft file are in STK format", &stk_format,
+            "loglevel|L", "Log verbosisty level (options are: trace, info, warning, error, critical, fatal) default = info. These are case sensitive.", &log_level,
+            "version", "Print niceops version and exit", &print_version,
+            "timehistory|T", "Directory to save timehistory files to", &time_history_dir,
+            "dnlfile|D", "Day night level result file", &dnl_file,
+            "cutoff", "Cutoff range", &range_cutoff,
+            "adv", "Plot sphere with advance ratio", &adv,
+            "ct", "Plot sphere with C_T", &ct,
+            "fpa", "Plot sphere with flight path angle", &fpa
+        );
 
-    if(print_version) {
-        import std.stdio : writeln;
-        writeln("Niceops is currently not versioned");
-    }
+        if(print_version) {
+            import std.stdio : writeln;
+            writeln("Niceops is currently not versioned");
+        }
 
-    if(time_history_dir == "") {
-        time_history_dir = "./";
-    }
+        if(time_history_dir == "") {
+            time_history_dir = "./";
+        }
 
-    if (observer_file.length > 0)
-    {
-        scattered = true;
-    }
-    if (time_history_prefix.length > 0)
-    {
-        write_time_history = true;
-    }
-    if (state_file.length > 0)
-    {
-        write_state = true;
-    }
-    if (option_results.helpWanted)
-    {
-        defaultGetoptPrinter("Noise Informed Community Environment Operation Planning System (NICE-OPS).",
-                option_results.options);
-        exit(0);
+        if (observer_file.length > 0)
+        {
+            scattered = true;
+        }
+        if (time_history_prefix.length > 0)
+        {
+            write_time_history = true;
+        }
+        if (state_file.length > 0)
+        {
+            write_state = true;
+        }
+        if (option_results.helpWanted)
+        {
+            defaultGetoptPrinter("Noise Informed Community Environment Operation Planning System (NICE-OPS).",
+                    option_results.options);
+            exit(0);
+        }
+    } catch(GetOptException ex) {
+        //Set default logging to file
+        sharedLog = new FileLogger(log_file, log_level, CreateFolder.yes);
+
+        fatal("Failed to parse command line options: ", ex.msg);
+        exit(-1);
+    } catch(Exception ex) {
+        //Set default logging to file
+        sharedLog = new FileLogger(log_file, log_level, CreateFolder.yes);
+
+        fatal("Caught unknown exception while parsing command line arguments:\n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
+        exit(-1);
     }
 
     //Set default logging to file
@@ -258,7 +275,14 @@ void main(string[] args)
 
     info("database_files.length: ", database_files.length, ", database_files: ", database_files);
 
-    auto databases = database_files.map!(a => new Database(a, range_cutoff)).array;
+    Database[] databases;
+    try {
+        databases = database_files.map!(a => new Database(a, range_cutoff)).array;
+    } catch(Exception ex) {
+        //fatal("Caught exception while opening database files.\n", ex.msg);
+        fatal("Caught exception while opening database files: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
+        exit(-2);
+    }
 
     //trace("databases[0].advance_ratios: ", databases[0].advance_ratios.map!(a => a*(databases[0].advance_ratio_max - databases[0].advance_ratio_min) + databases[0].advance_ratio_min) );
     //trace("databases[0].thrust_coefficients: ", databases[0].thrust_coefficients.map!(a => a*(databases[0].thrust_coefficient_max - databases[0].thrust_coefficient_min) + databases[0].thrust_coefficient_min) );
@@ -329,52 +353,58 @@ void main(string[] args)
     WorldTransform world_transform;
     double[2] ref_point;
     double[2][] lat_lon_obs;
-    if (scattered)
-    {
-        // Read in scattered observer data
-        auto parsed_obs = read_observer_file(observer_file, observers, stk_format);
-        world_transform = parsed_obs.world_transform;
-        ref_point = parsed_obs.reference;
-        lat_lon_obs = parsed_obs.lat_lon;
 
-        enforce(world_transform !is null, "Failed to create world transform");
-        //Set length for levels and observer x, y arrays
-        //integrated_levels.length = observers.length;
-        //day_night_levels.length = observers.length;
-        num_observers = observers.length;
-        x_obs.reserve(observers.length);
-        y_obs.reserve(observers.length);
-        //Deal observers out to x_obs and y_obs arrays
-        foreach (observer; observers)
+    try{
+        if (scattered)
         {
-            x_obs ~= observer[0];
-            y_obs ~= observer[1];
-        }
-    }
-    else
-    {
-        // Set up observer array
-        x_obs = iota(-2000.0, 1100.0, 25.0).array;
-        auto nx = x_obs.length;
-        y_obs = iota(-1500.0, 1600.0, 25.0).array;
-        auto ny = y_obs.length;
-        //Set corresponding length for levels
-        //integrated_levels.length = nx * ny;
-        //day_night_levels.length = nx * ny;
-        observers.reserve(nx * ny);
-        num_observers = nx*ny;
-        foreach (iy, yo; y_obs)
-        {
-            foreach (ix, xo; x_obs)
+            // Read in scattered observer data
+            auto parsed_obs = read_observer_file(observer_file, observers, stk_format);
+            world_transform = parsed_obs.world_transform;
+            ref_point = parsed_obs.reference;
+            lat_lon_obs = parsed_obs.lat_lon;
+
+            enforce(world_transform !is null, "Failed to create world transform");
+            //Set length for levels and observer x, y arrays
+            //integrated_levels.length = observers.length;
+            //day_night_levels.length = observers.length;
+            num_observers = observers.length;
+            x_obs.reserve(observers.length);
+            y_obs.reserve(observers.length);
+            //Deal observers out to x_obs and y_obs arrays
+            foreach (observer; observers)
             {
-                observers ~= [xo, yo, 0.0];
+                x_obs ~= observer[0];
+                y_obs ~= observer[1];
             }
         }
-    }
+        else
+        {
+            // Set up observer array
+            x_obs = iota(-2000.0, 1100.0, 25.0).array;
+            auto nx = x_obs.length;
+            y_obs = iota(-1500.0, 1600.0, 25.0).array;
+            auto ny = y_obs.length;
+            //Set corresponding length for levels
+            //integrated_levels.length = nx * ny;
+            //day_night_levels.length = nx * ny;
+            observers.reserve(nx * ny);
+            num_observers = nx*ny;
+            foreach (iy, yo; y_obs)
+            {
+                foreach (ix, xo; x_obs)
+                {
+                    observers ~= [xo, yo, 0.0];
+                }
+            }
+        }
 
-    enforce(path_files.length == vehicle_files.length, "Need the same number of vehicle files as flight path files");
-    enforce(path_files.length == databases.length, "Need the same number of database files as flight path files");
-    enforce(path_files.length == out_files.length, "Need the same number of SEL output files as flight path files");
+        enforce(path_files.length == vehicle_files.length, "Need the same number of vehicle files as flight path files");
+        enforce(path_files.length == databases.length, "Need the same number of database files as flight path files");
+        enforce(path_files.length == out_files.length, "Need the same number of SEL output files as flight path files");
+    } catch(Exception ex) {
+        fatal("Caught exception while setting up observer grid: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
+        exit(-3);
+    }
 
     auto acoustic_results = new AcousticResult[path_files.length];
     import std.range : zip;
@@ -382,28 +412,32 @@ void main(string[] args)
 
     foreach(idx, e; zip(path_files, databases, vehicle_files, out_files).parallel(1))
     {
-        auto path_file = e[0];
-        auto database = e[1];
-        auto vehicle_file = e[2];
-        auto out_file = e[3];
+        try{
+            auto path_file = e[0];
+            auto database = e[1];
+            auto vehicle_file = e[2];
+            auto out_file = e[3];
 
-        enforce(world_transform !is null, "Passing in invalid world transform");
-        info("Computing trajectory for flight path ", idx);
-        acoustic_results[idx] = compute_trajectory(database, vehicle_file, path_file, observers, qsam, dt, ambient_level, range_cutoff, world_transform, stk_format);
-        write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
-        //write_levels(x_obs, y_obs, acoustic_result.dnl, dnl_file, scattered, stk_format);
+            enforce(world_transform !is null, "Passing in invalid world transform");
+            info("Computing trajectory for flight path ", idx);
+            acoustic_results[idx] = compute_trajectory(database, vehicle_file, path_file, observers, qsam, dt, ambient_level, range_cutoff, world_transform, stk_format);
+            write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+            //write_levels(x_obs, y_obs, acoustic_result.dnl, dnl_file, scattered, stk_format);
 
-        foreach(obs_idx; 0..x_obs.length) {
-            foreach(ref level; acoustic_results[idx].time_history[obs_idx]) {
-                level = 20.0 * log10(10.0 ^^ (level / 20.) + 10.0 ^^ (ambient_level / 20.));
+            foreach(obs_idx; 0..x_obs.length) {
+                foreach(ref level; acoustic_results[idx].time_history[obs_idx]) {
+                    level = 20.0 * log10(10.0 ^^ (level / 20.) + 10.0 ^^ (ambient_level / 20.));
+                }
+
+                //static void write_time_history_file(double[] time_history, double dt, double x, double y, string filename)
+                auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_"~obs_idx.to!string~"_flightpath_" ~ idx.to!string ~ ".csv";
+                write_time_history_file(acoustic_results[idx].time_history[obs_idx], dt, x_obs[obs_idx], y_obs[obs_idx], output_file);
             }
-
-            //static void write_time_history_file(double[] time_history, double dt, double x, double y, string filename)
-            auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_"~obs_idx.to!string~"_flightpath_" ~ idx.to!string ~ ".csv";
-            write_time_history_file(acoustic_results[idx].time_history[obs_idx], dt, x_obs[obs_idx], y_obs[obs_idx], output_file);
+        } catch(Exception ex) {
+            error("Caught unknown exception while simulating trajectory of path file ", e[0], ": \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
         }
 
-        
+
         if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
         {
             import plt = matplotlibd.pyplot;
@@ -650,7 +684,12 @@ void main(string[] args)
         final_dnl[] += acoustic_result.dnl[];
     }
 
-    write_levels(x_obs, y_obs, final_dnl, dnl_file, scattered, stk_format);
+    try {
+        write_levels(x_obs, y_obs, final_dnl, dnl_file, scattered, stk_format);
+    } catch(Exception ex) {
+        fatal("Caught exception while writing dnl file: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
+        exit(-4);
+    }
 }
 
 static double sound_exposure_level(double[] levels, double T, double ambient_level, bool[] has_ambient)
