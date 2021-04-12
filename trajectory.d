@@ -165,44 +165,21 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
 
     struct Layout {
         string utc_timestamp;
-        /+
-            "Time (UTCG)",
-            "Lat (deg)",
-            "Lon (deg)",
-            "Alt (m)",
-            "Lat Rate (deg/sec)",
-            "Lon Rate (deg/sec)",
-            "Alt Rate (m/sec)",
-            "Yaw (deg)",
-            "Pitch (deg)",
-            "Roll (deg)",
-            "Bank (deg)",
-            "Heading (deg)",
-            "Acceleration (m/sec^2)"
-        +/
         double lat;
         double lon;
         double alt;
         double lat_rate;
         double lon_rate;
         double alt_rate;
-        //double velocity;
         double yaw;
         double pitch;
         double roll;
         double bank;
         double heading;
-        //double x_acc;
-        //double y_acc;
-        //double z_acc;
         double acc_mag;
         int day;
     }
 
-    /+if((file_contents[$-1] == '\n') && (file_contents[$-2] == '\n')) {
-        file_contents = file_contents[0..$-1];
-    }+/
-    //file_contents = file_contents.strip;
     trace("Parsing trajectory file as csv");
     auto records = file_contents.strip.csvReader!Layout(null);
     trace("CSV parsed");
@@ -210,17 +187,17 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
 
     utcstart = start_record.utc_timestamp.time_str_to_double;
 
-    /+auto lat_long_alt_reference = Vector!(3, double)(
-        start_record.lat*deg2rad,
-        start_record.lon*deg2rad,
-        start_record.alt
-    );+/
-
-    //auto world_transform = new WorldTransform(lat_long_alt_reference);
-
     import std.array : staticArray;
     auto lat_lon_ref = staticArray!(double, 2)([world_transform.reference_point_lat_lon_alt[0]*rad2deg, world_transform.reference_point_lat_lon_alt[1]*rad2deg]);
 
+    double min_lat = double.infinity;
+    double max_lat = -double.infinity;
+    double min_long = double.infinity;
+    double max_long = -double.infinity;
+    double min_alt = double.infinity;
+    double max_alt = -double.infinity;
+
+    import std.algorithm : max, min;
     states = records
         .enumerate
         .map!((record) {
@@ -228,37 +205,33 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
             now.t = record.value.utc_timestamp.time_str_to_double - utcstart;
 
             auto lat_long_alt_point = Vector!(3, double)(
-                record.value.lat*deg2rad,
-                //(record.value.lon + 360.0)*deg2rad,
-                record.value.lon*deg2rad,
+                record.value.lat,
+                //record.value.lon + 360.0,
+                record.value.lon,
                 record.value.alt
             );
 
             auto lat_long_alt_rate = Vector!(3, double)(
-                record.value.lat_rate*deg2rad,
-                record.value.lon_rate*deg2rad,
+                record.value.lat_rate,
+                record.value.lon_rate,
                 record.value.alt_rate
             );
 
+            min_lat = min(min_lat, lat_long_alt_point[0]);
+            max_lat = max(max_lat, lat_long_alt_point[0]);
+            min_long = min(min_long, lat_long_alt_point[1]);
+            max_long = max(max_long, lat_long_alt_point[1]);
+            min_alt = min(min_alt, lat_long_alt_point[2]);
+            max_alt = max(max_alt, lat_long_alt_point[2]);
+
             now.lat = record.value.lat;
-            //now.lon = record.value.lon;
-            now.lon = record.value.lon + 360;
+            now.lon = record.value.lon;
 
-            //auto point = world_transform.lat_long_alt_to_enu(lat_long_alt_point);
-            //auto point = world_transform.lat_long_alt_to_ecef(lat_long_alt_point);
-            auto lat_lon = staticArray!(double, 2)([now.lat, now.lon]);
+            auto point = world_transform.lat_long_alt_to_enu(lat_long_alt_point);
 
-            auto xy_point = toCartesian(lat_lon_ref, lat_lon);
-            now.x = xy_point[0];
-            now.y = xy_point[1];
-            now.z = record.value.alt;
-
-            //auto enu_vel = world_transform.lat_long_alt_rate_to_enu_rate(lat_long_alt_point, lat_long_alt_rate);
-            auto enu_vel = world_transform.lat_long_alt_rate_to_ecef_rate(lat_long_alt_point, lat_long_alt_rate);
-
-            now.vx = enu_vel[0];
-            now.vy = enu_vel[1];
-            now.vz = enu_vel[2];
+            now.x = point[0];
+            now.y = point[1];
+            now.z = point[2];
 
             now.day = record.value.day == 1;
 
@@ -266,6 +239,12 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
         })
         .array;
 
+    trace("min_lat: ", min_lat);
+    trace("max_lat: ", max_lat);
+    trace("min_long: ", min_long);
+    trace("max_long: ", max_long);
+    trace("min_alt: ", min_alt);
+    trace("max_alt: ", max_alt);
     // Compute accelerations and other derived quantities.
     foreach(idx, ref state; states) {
         //auto pos_vec = Vector!(3, double)(state.x, state.y, state.z);
@@ -273,11 +252,22 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
         auto gravity_vec = Vector!(3, double)(0.0, 0.0, 1.0);
 
         if(idx == 0) {
+            immutable dt = states[idx + 1].t - state.t;
+
+            state.vx = (states[idx + 1].x - state.x)/dt;
+            state.vy = (states[idx + 1].y - state.y)/dt;
+            state.vz = (states[idx + 1].z - state.z)/dt;
+
             state.nx = gravity_vec[0];
             state.ny = gravity_vec[1];
             state.nz = gravity_vec[2];
         } else {
             immutable dt = state.t - states[idx - 1].t;
+
+            state.vx = (state.x - states[idx - 1].x)/dt;
+            state.vy = (state.y - states[idx - 1].y)/dt;
+            state.vz = (state.z - states[idx - 1].z)/dt;
+
             immutable x_acc = (state.vx - states[idx - 1].vx)/dt;
             immutable y_acc = (state.vy - states[idx - 1].vy)/dt;
             immutable z_acc = (state.vz - states[idx - 1].vz)/dt;
@@ -401,66 +391,6 @@ class Trajectory
             }
         }
     }
-
-    /+this(string aircraft_vel_filename, string flightpath_filename, string vehicle_filename)
-    {
-        import std.array : staticArray, array;
-        import std.algorithm : filter, map, strip;
-        import std.conv : to;
-        import std.exception : enforce;
-        import std.range : dropOne, dropExactly, enumerate, takeOne, tee, walkLength, zip;
-        import std.string : isNumeric;
-        import std.typecons : Tuple, tuple;
-        import std.stdio : writeln;
-
-        alias time_vel = tuple!("t", "vel");
-
-        auto velocity_data =
-            aircraft_vel_filename
-                .readText
-                .split("\n")
-                .map!(a => a.strip(' '))
-                .filter!(a => a.length > 0 && a[0].to!string.isNumeric)
-                .map!((a) {
-                    auto values = a.split(" ").filter!(b => b != "").map!(b => b.to!double);
-                    return time_vel(values.takeOne.front, values.dropExactly(4).staticArray!3);
-                });
-
-        auto pos_data =
-            flightpath_filename
-                .readText
-                .split("\n")
-                .map!(a => a.strip(' '))
-                .filter!(a => a.length > 0 && a[0].to!string.isNumeric) // Drop all lines that have no data or do not start with a number
-                .dropOne // Drop first line as its the timestamp at the top.
-                .map!(a =>
-                    a
-                    .split(" ")
-                    .filter!(b => b != "")
-                    .map!(b => b.strip(' '))
-                    .dropExactly(4)
-                    .map!(b => b.to!double).staticArray!3
-                );
-
-        enforce(velocity_data.walkLength == pos_data.walkLength, "Number of data samples in velocity file and position file do match");
-
-        states = zip(pos_data, velocity_data)
-            .map!((a) {
-                State now = {
-                    t: a[1].t,
-                    x: a[0][0],
-                    y: a[0][1],
-                    z: a[0][2],
-                    vx: a[1].vel[0],
-                    vy: a[1].vel[1],
-                    vz: a[1].vel[2]
-
-                };
-                return now;
-            }).array;
-
-        //writeln(states);
-    }+/
 
     void adapt(double dt, int degree = 3, double alpha = 0.3)
     {

@@ -41,9 +41,7 @@ auto compute_trajectory(Database database, string vehicle_file, string path_file
     import std.typecons : tuple;
     // Start stopwatch
     immutable watch = StopWatch(AutoStart.yes);
-    //auto database = new Database(database_file, range_cutoff);
     auto t1 = watch.peek.total!"msecs";
-    //log("Database loaded in ", t1 / 1000.0, " seconds.");
 
     enforce(world_transform !is null, "Received invalid world transform");
     /+if (self_test)
@@ -60,7 +58,8 @@ auto compute_trajectory(Database database, string vehicle_file, string path_file
 
     // Trajectory adaptation parameters
     immutable int degree = 5;
-    immutable double smooth = 10.0;
+    //immutable double smooth = 10.0;
+    immutable double smooth = 0.5;
     trajectory.adapt(dt, degree, smooth);
 
     // And time series data
@@ -72,9 +71,9 @@ auto compute_trajectory(Database database, string vehicle_file, string path_file
     
     foreach(obs_idx; 0..observers.length) {
         if(!ambient_level.isNaN) {
-            result.time_history[obs_idx][] = ambient_level;//-40000000000;//ambient_level;
+            result.time_history[obs_idx][] = ambient_level;
         } else {
-            result.time_history[obs_idx][] = 0;//-40000000000;
+            result.time_history[obs_idx][] = 0;
         }
     }
     import std.algorithm : sort, map;
@@ -104,32 +103,25 @@ auto compute_trajectory(Database database, string vehicle_file, string path_file
 
             if (!isNaN(ambient_level))
             {
-                //Add ambient noise
-                /+result.time_history[index][it] = 20.0 * log10(
-                        10.0 ^^ (result.time_history[index][it] / 20.) + 10.0 ^^ (ambient_level / 20.));+/
-
                 if(level < ambient_level) {
-                    //result.has_ambient[index][it] = true;
-                    result.time_history[index][it] = ambient_level;//-40000000000;//ambient_level;
+                    result.time_history[index][it] = ambient_level;
                 } else {
+                    trace("Level for observer ", index, " at traj point ", it, ": ", level);
                     result.has_ambient[index][it] = false;
                 }
                 
                 if(level < (ambient_level - 10)) {
-                    //result.has_ambient[index][it] = true;
                     trace("Killing at observer: ", index, ": ", observer, " level: ", level);
-                    result.time_history[index][it] = ambient_level;//-40000000000;//ambient_level;
+                    result.time_history[index][it] = ambient_level;
                     break;
                 }
             } else if(level < 0) {
-                //result.has_ambient[index][it] = true;
-                result.time_history[index][it] = 0;//-40000000000;
+                result.time_history[index][it] = 0;
             }
             
             if(level < -10 && isNaN(ambient_level)) {
-                //result.has_ambient[index][it] = true;
                 trace("Killing at observer: ", index, ": ", observer, " level: ", level);
-                result.time_history[index][it] = 0;//-40000000000;
+                result.time_history[index][it] = 0;
                 break;
             }
         }
@@ -351,7 +343,7 @@ void main(string[] args)
     import std.exception : enforce;
 
     WorldTransform world_transform;
-    double[2] ref_point;
+    //double[2] ref_point;
     double[2][] lat_lon_obs;
 
     try{
@@ -360,7 +352,7 @@ void main(string[] args)
             // Read in scattered observer data
             auto parsed_obs = read_observer_file(observer_file, observers, stk_format);
             world_transform = parsed_obs.world_transform;
-            ref_point = parsed_obs.reference;
+            //ref_point = parsed_obs.reference;
             lat_lon_obs = parsed_obs.lat_lon;
 
             enforce(world_transform !is null, "Failed to create world transform");
@@ -465,15 +457,15 @@ void main(string[] args)
             vz[] *= 1.0 / ft2m;
 
             //double[] wgs84
-            auto wgs84_obs_pos = lat_lon_obs.map!(a => toCartesian(ref_point, a));
-            auto wgs84_x_obs = wgs84_obs_pos.map!(a => a[0]);
-            auto wgs84_y_obs = wgs84_obs_pos.map!(a => a[1]);
+            //auto wgs84_obs_pos = lat_lon_obs.map!(a => toCartesian(ref_point, a));
+            //auto wgs84_x_obs = wgs84_obs_pos.map!(a => a[0]);
+            //auto wgs84_y_obs = wgs84_obs_pos.map!(a => a[1]);
 
-            auto wgs84_pos = zip(lat, lon).map!(a => toCartesian(ref_point, staticArray!(double, 2)([a[0], a[1]])));
+            //auto wgs84_pos = zip(lat, lon).map!(a => toCartesian(ref_point, staticArray!(double, 2)([a[0], a[1]])));
             auto obs_pos = zip(x_obs, y_obs).map!(a => staticArray!(double, 2)([a[0], a[1]]));
 
-            auto wgs84_x = wgs84_pos.map!(a => a[0]);
-            auto wgs84_y = wgs84_pos.map!(a => a[1]);
+            //auto wgs84_x = wgs84_pos.map!(a => a[0]);
+            //auto wgs84_y = wgs84_pos.map!(a => a[1]);
 
             double min_x = double.infinity;
             double max_x = -double.infinity;
@@ -530,6 +522,9 @@ void main(string[] args)
                 }
 
                 plt.plot(x, y, "k-");
+                /+foreach(o_idx; 0..x_obs.length) {
+                    plt.annotate(o_idx.to!string, [x_obs[o_idx], y_obs[o_idx]]);
+                }+/
                 //plt.plot(wgs84_x, wgs84_y, "k-");
                 plt.xlabel("X, ft", ["fontsize": 14]);
                 plt.ylabel("Y, ft", ["fontsize": 14]);
@@ -946,10 +941,9 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
             }
         }
 
-        //return null;
         double[2][] null_lat_lon;
         WorldTransform wt;
-        return tuple!("world_transform", "lat_lon", "reference")(wt, null_lat_lon, staticArray!(double, 2)([0, 0]));
+        return tuple!("world_transform", "lat_lon")(wt, null_lat_lon);
     }
     else
     {
@@ -984,10 +978,10 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
                 .strip
                 .csvReader!Layout(null)
                 .map!((a) {
-                    min_lat = min(min_lat, a.lat*deg2rad);
-                    max_lat = max(max_lat, a.lat*deg2rad);
-                    min_long = min(min_long, a.lon*deg2rad);
-                    max_long = max(max_long, a.lon*deg2rad);
+                    min_lat = min(min_lat, a.lat);
+                    max_lat = max(max_lat, a.lat);
+                    min_long = min(min_long, a.lon);
+                    max_long = max(max_long, a.lon);
                     min_alt = min(min_alt, a.alt);
                     max_alt = max(max_alt, a.alt);
                     return Vector!(3, double)(a.lat, a.lon, a.alt);
@@ -1006,23 +1000,16 @@ static auto read_observer_file(string observer_file, out double[3][] observers, 
         double lat_ref = (max_lat + min_lat)/2.;
         double lon_ref = (max_long + min_long)/2.;
         double alt_ref = (max_alt + min_alt)/2.;
-        auto lat_long_alt_ref = Vector!(3, double)(lat_ref, lon_ref, alt_ref*1000.0 /+ convert to meters +/);
-        double[2] lat_long_ref = [lat_ref/deg2rad, lon_ref/deg2rad];
+        auto lat_long_alt_ref = Vector!(3, double)(lat_ref, lon_ref, alt_ref);
 
         trace("lat_long_alt_ref: ", lat_long_alt_ref);
         auto wt = new WorldTransform(lat_long_alt_ref);
 
         observers = 
             lat_lon_alt_obs
-                //.map!(a => wt.lat_long_alt_to_enu(Vector!(3, double)(a[0]*deg2rad, a[1]*deg2rad, a[2]*1000.0)).mData)
-                //.map!(a => wt.lat_long_alt_to_ecef(Vector!(3, double)(a[0]*deg2rad, a[1]*deg2rad, a[2]*1000.0)).mData)
-                .map!((a) {
-                    auto lat_lon = staticArray!(double, 2)([a[0], a[1]]);
-                    auto xy_point = toCartesian(lat_long_ref, lat_lon);
-                    return staticArray!(double, 3)([xy_point[0], xy_point[1], a[2]*1000.0]);
-                })
+                .map!(a => wt.lat_long_alt_to_enu(Vector!(3, double)(a[0], a[1], a[2]/+*1000.0+/)).mData)
                 .array;
 
-        return tuple!("world_transform", "lat_lon", "reference")(wt, lat_lon_obs, lat_long_ref);
+        return tuple!("world_transform", "lat_lon")(wt, lat_lon_obs);
     }
 }
