@@ -583,6 +583,18 @@ void main(string[] args)
                             state_figure_file) ~ "_gamma_" ~ extension(state_figure_file));
                 }
 
+
+                plt.figure();
+                plt.plot(t, gamma_e);
+                plt.xlabel("t, s", ["fontsize": 14]);
+                plt.ylabel("$\\gamma_e$", ["fontsize": 14]);
+                if (state_figure_file.length > 0)
+                {
+                    plt.savefig(stripExtension(
+                            state_figure_file) ~ "_gamma_e_time_" ~ extension(state_figure_file));
+                }
+
+
                 plt.figure();
                 plt.plot(x, z);
                 plt.xlabel("X, ft", ["fontsize": 14]);
