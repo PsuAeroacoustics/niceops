@@ -289,8 +289,14 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
         auto v = sqrt(state.vx ^^ 2 + state.vy ^^ 2 + state.vz ^^ 2);
         state.mu = v / vehicle.tip_speed;
         auto vn_hat = (state.vx * state.nx + state.vy * state.ny + state.vz * state.nz) / v;
-        state.fpa_e = 180.0 / PI * asin(vn_hat);
-        state.fpa = 180.0 / PI * asin(state.vz / v);
+        import std.math : isClose;
+        if(!v.isClose(0.0, 1.0e-10)) {
+            state.fpa_e = 180.0 / PI * asin(vn_hat);
+            state.fpa = 180.0 / PI * asin(state.vz / v);
+        } else {
+            state.fpa_e = 0;
+            state.fpa = 0;
+        }
 
         trace("Parsed state: ", state);
     }
@@ -509,8 +515,15 @@ class Trajectory
             auto v = sqrt(now.vx ^^ 2 + now.vy ^^ 2 + now.vz ^^ 2);
             now.mu = v / vehicle.tip_speed;
             auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
-            now.fpa_e = 180.0 / PI * asin(vn_hat);
-            now.fpa = 180.0 / PI * asin(now.vz / v);
+
+            import std.math : isClose;
+            if(!v.isClose(0.0, 1.0e-10)) {
+                now.fpa_e = 180.0 / PI * asin(vn_hat);
+                now.fpa = 180.0 / PI * asin(now.vz / v);
+            } else {
+                now.fpa_e = 0.0;
+                now.fpa = 0.0;
+            }
             now.day = day_night[current_day_idx].day;
             states ~= now;
             trace("Adapted state: ", states[$ - 1]);
