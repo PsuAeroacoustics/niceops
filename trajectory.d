@@ -206,8 +206,8 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
 
             auto lat_long_alt_point = Vector!(3, double)(
                 record.value.lat,
-                //record.value.lon + 360.0,
                 record.value.lon,
+                //record.value.lon + 360,
                 record.value.alt
             );
 
@@ -235,6 +235,7 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
 
             now.day = record.value.day == 1;
 
+            now.heading = record.value.heading*deg2rad;
             return now;
         })
         .array;
@@ -290,13 +291,18 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
         state.mu = v / vehicle.tip_speed;
         auto vn_hat = (state.vx * state.nx + state.vy * state.ny + state.vz * state.nz) / v;
         import std.math : isClose;
-        if(!v.isClose(0.0, 1.0e-10)) {
+        //if(!v.isClose(0.0, 1.0e-10)) {
+        import std.math : abs;
+        if((abs(v) > 1.0e-2) && (abs(abs(vn_hat) - 1.0) > 1.0e-2)) {
             state.fpa_e = 180.0 / PI * asin(vn_hat);
             state.fpa = 180.0 / PI * asin(state.vz / v);
         } else {
             state.fpa_e = 0;
             state.fpa = 0;
         }
+
+        state.v = v;
+        state.vn_hat = vn_hat;
 
         trace("Parsed state: ", state);
     }
@@ -326,6 +332,9 @@ class Trajectory
         bool day;
         double lat;
         double lon;
+        double heading;
+        double v;
+        double vn_hat;
     }
 
     struct dimensional_data
@@ -411,6 +420,7 @@ class Trajectory
         double[] z;
         double[] lat;
         double[] lon;
+        double[] heading;
         foreach (now; states)
         {
             t ~= now.t;
@@ -419,6 +429,7 @@ class Trajectory
             z ~= now.z;
             lat ~= now.lat;
             lon ~= now.lon;
+            heading ~= now.heading;
         }
         trace("t[$ - 1]: ", t[$ - 1]);
         // Build interpolants
@@ -430,13 +441,13 @@ class Trajectory
             ti ~= tnext;
             tnext += dt;
         }
-        trace("ti: ", ti);
+        //trace("ti: ", ti);
         trace("Smoothing x.");
         double[] xi;
         double[] vxi;
         double[] axi;
         smoother(t, x, ti, xi, vxi, axi, degree, alpha);
-        trace("ti: ", ti);
+        //trace("ti: ", ti);
 
         trace("Smoothing y.");
         double[] yi;
@@ -461,6 +472,10 @@ class Trajectory
         double[] aloni;
         smoother(t, lon, ti, loni, vloni, aloni, degree, alpha);
 
+        double[] headingi;
+        double[] vheadingi;
+        double[] aheadingi;
+        smoother(t, heading, ti, headingi, vheadingi, aheadingi, degree, alpha);
 
         import std.algorithm : map;
         import std.array : array;
@@ -517,7 +532,10 @@ class Trajectory
             auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
 
             import std.math : isClose;
-            if(!v.isClose(0.0, 1.0e-10)) {
+            //if(!v.isClose(0.0, 1.0e-10)) {
+            import std.math : abs;
+            //if(abs(v) > 1.0e-5) {
+            if((abs(v) > 1.0e-2) && (abs(abs(vn_hat) - 1.0) > 1.0e-2)) {
                 now.fpa_e = 180.0 / PI * asin(vn_hat);
                 now.fpa = 180.0 / PI * asin(now.vz / v);
             } else {
@@ -525,6 +543,11 @@ class Trajectory
                 now.fpa = 0.0;
             }
             now.day = day_night[current_day_idx].day;
+            now.heading = headingi[i];
+
+            now.v = v;
+            now.vn_hat = vn_hat;
+
             states ~= now;
             trace("Adapted state: ", states[$ - 1]);
         }

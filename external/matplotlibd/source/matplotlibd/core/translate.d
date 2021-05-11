@@ -1,5 +1,7 @@
 module matplotlibd.core.translate;
 
+import std.traits : isArray, ForeachType;
+
 alias immutable bool PyBool;
 alias immutable (void*) PyNone;
 
@@ -10,17 +12,23 @@ PyNone None = null;
 
 string d2py(T)(T v) {
     import std.format: format;
-    static if (is(typeof(v) : PyNone))
+    static if (is(typeof(v) : PyNone)) {
         return "None";
-
-    else static if (is(typeof(v) : bool))
+    } else static if (is(typeof(v) : bool)) {
         return v ? "True" : "False";        
-
-    else static if (is(typeof(v) : string))
+    } else static if (is(typeof(v) : string)) {
         return format("\"%s\"", v);
-
-    else
+    } else static if(isArray!T && !isArray!(ForeachType!T)) {
+        import std.algorithm : map;
+        import std.conv : to;
+        import std.math : isInfinity, isFinite;
+        import std.array : join;
+        return format("np.array([%s])", v.map!(a => !a.isFinite ? "float(\""~a.to!string~"\")," : a.to!string~", ").join);
+    } else static if(isArray!T) {
+        return format("np.array(%s)", v);
+    } else {
         return format("%s", v);
+    }
 }
 
 unittest {
@@ -33,6 +41,8 @@ unittest {
     assert(d2py(false) == "False");
     assert(d2py("Hello!") == "\"Hello!\"");
     assert(d2py(5.iota) == "[0, 1, 2, 3, 4]");
+    import std.array : array;
+    assert(d2py(5.iota.array) == "np.array([0, 1, 2, 3, 4])");
 }
 
 
