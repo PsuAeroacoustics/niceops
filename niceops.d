@@ -528,14 +528,14 @@ void main(string[] args)
 
             import std.stdio;
 
-            x_obs[] *= 1.0 / ft2m;
-            y_obs[] *= 1.0 / ft2m;
-            x[] *= 1.0 / ft2m;
-            y[] *= 1.0 / ft2m;
-            z[] *= 1.0 / ft2m;
-            vx[] *= 1.0 / ft2m;
-            vy[] *= 1.0 / ft2m;
-            vz[] *= 1.0 / ft2m;
+            //x_obs[] *= 1.0 / ft2m;
+            //y_obs[] *= 1.0 / ft2m;
+            //x[] *= 1.0 / ft2m;
+            //y[] *= 1.0 / ft2m;
+            //z[] *= 1.0 / ft2m;
+            //vx[] *= 1.0 / ft2m;
+            //vy[] *= 1.0 / ft2m;
+            //vz[] *= 1.0 / ft2m;
 
             auto obs_pos = zip(x_obs, y_obs).map!(a => staticArray!(double, 2)([a[0], a[1]]));
 
@@ -577,10 +577,6 @@ void main(string[] args)
                         }
                     }
                 }
-
-                import std.stdio : writeln;
-                writeln("contour_min: ", contour_min);
-                writeln("contour_max: ", contour_max);
 
                 if(contour_max <= contour_min) {
                     contour_max = contour_min + contour_step;
@@ -626,8 +622,8 @@ void main(string[] args)
                     plt.annotate(o_idx.to!string, [x_obs[o_idx], y_obs[o_idx]]);
                 }+/
 
-                plt.xlabel("X, ft", ["fontsize": 14]);
-                plt.ylabel("Y, ft", ["fontsize": 14]);
+                plt.xlabel("X, m", ["fontsize": 14]);
+                plt.ylabel("Y, m", ["fontsize": 14]);
                 plt.xlim(["left": min_x - 0.05*x_span], ["right": max_x + 0.05*x_span]);
                 plt.ylim(["bottom": min_y - 0.05*y_span], ["top": max_y + 0.05*y_span]);
                 plt.colorbar();
@@ -642,7 +638,7 @@ void main(string[] args)
                     plt.savefig(filename);
                 }
             }
-            if (plotting || state_figure_file.length > 0)
+            /+if (plotting || state_figure_file.length > 0)
             {
                 import std.path;
 
@@ -800,7 +796,7 @@ void main(string[] args)
                     plt.savefig(stripExtension(state_figure_file) ~ "_vzvt_" ~ extension(state_figure_file));
                 }
 
-            }
+            }+/
             /+if (plotting)
             {
                 plt.show();
@@ -914,14 +910,14 @@ void main(string[] args)
             auto x = acoustic_result.trajectory.Get!("x").get();
             auto y = acoustic_result.trajectory.Get!("y").get();
 
-            x[] *= 1.0 / ft2m;
-            y[] *= 1.0 / ft2m;
+            //x[] *= 1.0 / ft2m;
+            //y[] *= 1.0 / ft2m;
 
             plt.plot(x, y, "k-");
         }
 
-        plt.xlabel("X, ft", ["fontsize": 14]);
-        plt.ylabel("Y, ft", ["fontsize": 14]);
+        plt.xlabel("X, m", ["fontsize": 14]);
+        plt.ylabel("Y, m", ["fontsize": 14]);
         plt.xlim(["left": min_x - 0.05*x_span], ["right": max_x + 0.05*x_span]);
         plt.ylim(["bottom": min_y - 0.05*y_span], ["top": max_y + 0.05*y_span]);
         plt.colorbar();

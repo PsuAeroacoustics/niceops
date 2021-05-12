@@ -175,7 +175,7 @@ private void require_array(T)(int ncid, string variable_name, size_t countp, ref
     // Grab the range up to target value
     auto b = a.countUntil!((a, b) => a > b)( val);
     // Index is one less the length of this range
-    auto index = b;//.array.length - 1;
+    auto index = b - 1;//.array.length - 1;
 
     size_t[2] bracket;
     //Wrap around if range of a exceeded
@@ -661,10 +661,14 @@ class Database
         //Apply spherical spreading and excess atmospheric absorption to surface level
         //TODO Add ground effects
         immutable ground_effect = 4.0;
-        auto excess_attenuation = ground_effect * abs(excess_factor) * (range - sphere_radius) / 1000.0; // This is a hack. Idealy excess_factor should just never be negative.
+        auto excess_attenuation = ground_effect * excess_factor * (range - sphere_radius) / 1000.0; // This is a hack. Idealy excess_factor should just never be negative.
         auto spreading_loss = 20.0 * log10( range / sphere_radius);
         //trace( "Spreading Loss (dB): ", spreading_loss,
         //"\tExcess Attenuation (dB): ", excess_attenuation);
+        import std.conv : to;
+        debug assert(excess_factor >= 0, "excess attenuation factor less than 0; excess_factor: "~excess_factor.to!string~". e11: "~e11.to!string~", e12: "~e12.to!string~", e21: "~e21.to!string~", e22: "~e22.to!string~" phi: "~phi.to!string~" theta: "~theta.to!string~" range: "~range.to!string
+            ~" ph_1: "~p1.to!string~" phi_2: "~p2.to!string~" theta_1: "~t1.to!string~" theta_2: "~t2.to!string);
+
         assert(isFinite( sphere_level));
         assert(isFinite( excess_factor));
         assert(isFinite(excess_attenuation));
