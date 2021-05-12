@@ -11,7 +11,6 @@ struct AcousticResult {
     double[] sel;
     double[] dnl;
     double[][] time_history;
-    //bool[][] has_ambient;
     Trajectory trajectory;
 
     this(size_t timesteps, size_t observers, Trajectory _trajectory) {
@@ -19,14 +18,10 @@ struct AcousticResult {
         sel = new double[observers];
         dnl = new double[observers];
         time_history = new double[][](observers, timesteps);
-        /+has_ambient = new bool[][](observers, timesteps);
-        foreach(ref am; has_ambient) {
-            am[] = true;
-        }+/
     }
 }
 
-auto compute_trajectory(Database database, string vehicle_file, string path_file, double[3][] observers, bool qsam, double dt, double ambient_level, double db_cutoff, WorldTransform world_transform, bool stk_format, bool smooth, double[2] smooth_params) {
+auto compute_trajectory(Trajectory trajectory, Database database, double[3][] observers, bool qsam, double dt, double ambient_level, double db_cutoff) {
 
     import sphere_database : Database;
     import trajectory : Trajectory;
@@ -43,7 +38,7 @@ auto compute_trajectory(Database database, string vehicle_file, string path_file
     immutable watch = StopWatch(AutoStart.yes);
     auto t1 = watch.peek.total!"msecs";
 
-    enforce(world_transform !is null, "Received invalid world transform");
+    //enforce(world_transform !is null, "Received invalid world transform");
     /+if (self_test)
     {
         // TODO: Check out this literal corner case
@@ -53,30 +48,11 @@ auto compute_trajectory(Database database, string vehicle_file, string path_file
         database.self_test(database_file);
     }+/
 
-    //Create trajectory from CSV data
-    auto trajectory = new Trajectory( path_file, vehicle_file, world_transform, stk_format);
-
-    if(smooth) {
-        // Trajectory adaptation parameters
-        immutable int degree = smooth_params[0].to!int;
-        //immutable double smoothing = 1000.0;
-        immutable double smoothing = smooth_params[1];
-        trajectory.adapt(dt, degree, smoothing);
-    }
-
     info("Starting flight path");
     // And time series data
     immutable nt = trajectory.states.length;
 
-    bool[] day = new bool[nt];
-
     auto result = AcousticResult(nt, observers.length, trajectory);
-    
-    //Add ambient noise
-    /+
-    time_history[it] = 20.0 * log10(
-            10.0 ^^ (time_history[it] / 20.) + 10.0 ^^ (ambient_level / 20.));
-    +/
 
     foreach(obs_idx; 0..observers.length) {
         result.time_history[obs_idx][] = -double.infinity;
@@ -84,21 +60,27 @@ auto compute_trajectory(Database database, string vehicle_file, string path_file
 
     import std.algorithm : sort, map;
     import std.range : enumerate, zip;
-    
+    import std.typecons : Tuple, tuple;
+    alias IndexTuple = Tuple!(size_t, "index", double, "range", double[3], "observer");
+    auto indexed_range = new IndexTuple[observers.length];
+
     foreach (it, const ref state; trajectory.states)
     {
         double[3] source = [state.x, state.y, state.z];
         double[3] velocity = [state.vx, state.vy, state.vz];
         double[3] normal = [state.nx, state.ny, state.nz];
-        day[it] = state.day;
         
-        auto sorted_observers =
-            observers
-                .map!(a => sqrt((a[0] - source[0])^^2.0 + (a[1] - source[1])^^2.0 + (a[2] - source[2])^^2.0 ))
-                .zip(observers, iota(0, observers.length))
-                .array
-                .sort!"a[0] < b[0]"
-                .map!(a => tuple(a[2], a[1]));
+        foreach(idx, ref obs; observers) {
+            indexed_range[idx].observer[] = obs[];
+            indexed_range[idx].index = idx;
+            indexed_range[idx].range = sqrt((obs[0] - source[0])^^2.0 + (obs[1] - source[1])^^2.0 + (obs[2] - source[2])^^2.0);
+        }
+
+        auto sorted_observers = 
+            indexed_range
+                .sort!("a.range < b.range")
+                .map!(a => tuple(a.index, a.observer));
+        
 
         foreach (index, observer; sorted_observers)
         {
@@ -122,8 +104,8 @@ auto compute_trajectory(Database database, string vehicle_file, string path_file
 
     foreach (index, observer; observers)
     {
-        result.sel[index] = sound_exposure_level(result.time_history[index], dt/+, ambient_level, result.has_ambient[index]+/);
-        result.dnl[index] = day_night_level(result.time_history[index], dt, day);
+        result.sel[index] = result.time_history[index].sound_exposure_level(dt);
+        result.dnl[index] = result.time_history[index].day_night_level(dt, trajectory.states);
     }
 
     auto t2 = watch.peek.total!"msecs";
@@ -182,6 +164,8 @@ void main(string[] args)
     double ct;
     double fpa;
 
+    bool parallel_by_observer = false;
+
     arraySep = ",";
     GetoptResult option_results;
     
@@ -215,7 +199,8 @@ void main(string[] args)
             "adv", "Plot sphere with advance ratio", &adv,
             "ct", "Plot sphere with C_T", &ct,
             "fpa", "Plot sphere with flight path angle", &fpa,
-            "smooth", "Smooth flight path with degree and smoothness factor. Default = 3, 0.5", &_smooth_params
+            "smooth", "Smooth flight path with degree and smoothness factor. Default = 3, 0.5", &_smooth_params,
+            "pbo", "Parallellize by observer instead of flight path", &parallel_by_observer
         );
 
         if(_smooth_params.length != 0) {
@@ -233,9 +218,9 @@ void main(string[] args)
             writeln("Niceops is currently not versioned");
         }
 
-        if(time_history_dir == "") {
+        /+if(time_history_dir == "") {
             time_history_dir = "./";
-        }
+        }+/
 
         if (observer_file.length > 0)
         {
@@ -415,33 +400,119 @@ void main(string[] args)
         exit(-3);
     }
 
-    auto acoustic_results = new AcousticResult[path_files.length];
+    AcousticResult[] acoustic_results;
     import std.range : zip;
-    import std.parallelism : parallel;
+    import std.parallelism : parallel, totalCPUs;
 
-    foreach(idx, e; zip(path_files, databases, vehicle_files, out_files).parallel(1))
-    {
-        try{
-            auto path_file = e[0];
-            auto database = e[1];
-            auto vehicle_file = e[2];
-            auto out_file = e[3];
+    if(!parallel_by_observer) {
+        acoustic_results = new AcousticResult[path_files.length];
 
-            enforce(world_transform !is null, "Passing in invalid world transform");
-            info("Computing trajectory for flight path ", idx);
+        foreach(idx, e; zip(path_files, databases, vehicle_files, out_files).parallel(1))
+        {
+            try{
+                auto path_file = e[0];
+                auto database = e[1];
+                auto vehicle_file = e[2];
+                auto out_file = e[3];
 
-            acoustic_results[idx] = compute_trajectory(database, vehicle_file, path_file, observers, qsam, dt, ambient_level, db_cutoff, world_transform, stk_format, smooth, smooth_params);
-            write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+                enforce(world_transform !is null, "Passing in invalid world transform");
 
-            foreach(obs_idx; 0..x_obs.length) {
-                auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_"~obs_idx.to!string~"_flightpath_" ~ idx.to!string ~ ".csv";
-                write_time_history_file(acoustic_results[idx].time_history[obs_idx], dt, x_obs[obs_idx], y_obs[obs_idx], output_file);
+                auto trajectory = new Trajectory( path_file, vehicle_file, world_transform, stk_format);
+
+                if(smooth) {
+                    // Trajectory adaptation parameters
+                    immutable int degree = smooth_params[0].to!int;
+                    immutable double smoothing = smooth_params[1];
+                    trajectory.adapt(dt, degree, smoothing);
+                }
+
+                info("Computing trajectory for flight path ", idx);
+
+                acoustic_results[idx] = trajectory.compute_trajectory(database, observers, qsam, dt, ambient_level, db_cutoff);
+                write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+
+                if(time_history_dir != "") {
+                    foreach(obs_idx; 0..x_obs.length) {
+                        auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_"~obs_idx.to!string~"_flightpath_" ~ idx.to!string ~ ".csv";
+                        write_time_history_file(acoustic_results[idx].time_history[obs_idx], dt, x_obs[obs_idx], y_obs[obs_idx], output_file);
+                    }
+                }
+            } catch(Exception ex) {
+                error("Caught unknown exception while simulating trajectory of path file ", e[0], ": \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
             }
-        } catch(Exception ex) {
-            error("Caught unknown exception while simulating trajectory of path file ", e[0], ": \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
+        }
+    } else {
+        import std.algorithm : each, sum;
+        import std.range : chunks, enumerate;
+
+        Trajectory[] trajectories =
+            zip(path_files, vehicle_files)
+                .map!((z) {
+                    auto t = new Trajectory(z[0], z[1], world_transform, stk_format);
+                    if(smooth) t.adapt(dt, smooth_params[0].to!int, smooth_params[1]);
+                    return t;
+                })
+                .array;
+
+        acoustic_results = 
+            trajectories.map!(t => AcousticResult(t.states.length, observers.length, t)).array;
+
+        immutable observers_per_core = observers.length/totalCPUs;
+		immutable left_over_observers = observers.length%totalCPUs;
+
+        immutable observers_on_core =
+            iota(0, totalCPUs)
+            .map!(core => core < left_over_observers ? 1 : 0) // evenly distribute the remainder accross as many cores as possible
+            .map!(a => a + observers_per_core)
+            .array;
+
+        double[3][][] split_observers;
+        split_observers.length = totalCPUs;
+        foreach(proc; 0..totalCPUs) {
+            split_observers[proc] = new double[3][observers_on_core[proc]];
+            
+            immutable size_t slice_start = proc == 0 ? 0 : observers_on_core[0..proc].sum;
+            immutable size_t slice_end = slice_start + observers_on_core[proc];
+
+            split_observers[proc][] = observers[slice_start..slice_end];
+        }
+        import std.stdio : writeln;
+
+        foreach(proc, observer_chunk; split_observers.parallel(1)) {
+
+            foreach(idx, database; databases)
+            {
+                try{
+                    enforce(world_transform !is null, "Passing in invalid world transform");
+                    info("Computing trajectory for flight path ", idx);
+
+                    auto acoustic_result = trajectories[idx].compute_trajectory(database, observer_chunk, qsam, dt, ambient_level, db_cutoff);
+
+                    immutable size_t slice_start = proc == 0 ? 0 : observers_on_core[0..proc].sum;
+                    immutable size_t slice_end = slice_start + observers_on_core[proc];
+
+                    acoustic_results[idx].time_history[slice_start..slice_end] = acoustic_result.time_history[];
+                    acoustic_results[idx].sel[slice_start..slice_end] = acoustic_result.sel[];
+                    acoustic_results[idx].dnl[slice_start..slice_end] = acoustic_result.dnl[];
+
+                    if(time_history_dir != "") {
+                        foreach(obs_idx; 0..observer_chunk.length) {
+                            auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_"~(obs_idx + slice_start).to!string~"_flightpath_" ~ idx.to!string ~ ".csv";
+                            write_time_history_file(acoustic_result.time_history[obs_idx], dt, observer_chunk[obs_idx][0], observer_chunk[obs_idx][1], output_file);
+                        }
+                    }
+                } catch(Exception ex) {
+                    error("Caught unknown exception while simulating trajectory of path file: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
+                }
+            }
         }
 
+        foreach(idx, out_file; out_files) {
+            write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+        }
+    }
 
+    foreach(idx; 0..path_files.length) {
         if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
         {
             import plt = matplotlibd.pyplot;
@@ -737,7 +808,6 @@ void main(string[] args)
             plt.clear();+/
         }
     }
-
     double min_time = double.infinity;
     double max_time = -double.infinity;
 
@@ -811,8 +881,8 @@ void main(string[] args)
         auto clevels = iota(contour_min - contour_step, contour_max + contour_step, contour_step).array();
         plt.figure();
 
-        x_obs[] *= 1.0 / ft2m;
-        y_obs[] *= 1.0 / ft2m;
+        //x_obs[] *= 1.0 / ft2m;
+        //y_obs[] *= 1.0 / ft2m;
 
         auto obs_pos = zip(x_obs, y_obs).map!(a => staticArray!(double, 2)([a[0], a[1]]));
 
@@ -861,46 +931,33 @@ void main(string[] args)
     }
 }
 
-static double sound_exposure_level(double[] levels, double T/+, double ambient_level, bool[] has_ambient+/)
+@nogc static double sound_exposure_level(double[] levels, double T)
 {
     import std.math : log10;
-    import std.algorithm.iteration : sum;
+    import std.algorithm.iteration : sum, map;
 
     auto index = peak_range(levels);
     double[] levels_slice = levels[index[0] .. (index[1] + 1)];
 
-    /+foreach(idx, ref level; levels_slice) {
-        if(!has_ambient[idx]) {
-            level =
-                20.0 * log10(
-                    10.0 ^^ (level / 20.) + 10.0 ^^ (ambient_level / 20.)
-                );
-        }
-    }+/
-
-    double[] p;
-    p.length = levels_slice.length;
-    p[] = 10.0 ^^ (0.1 * levels_slice[]);
-    return 10.0 * log10(T * sum(p));
+    immutable p_sum = levels_slice.map!(l => 10.0^^(0.1*l)).sum;
+    return 10.0 * log10(T * p_sum);
 }
 
-static double day_night_level(double[] levels, double T, bool[] day)
+@nogc static double day_night_level(double[] levels, double T, Trajectory.State[] state)
 {
     import std.math : log10;
-    import std.algorithm;//.iteration : sum;
-    import std.range;
+    import std.algorithm : map, sum;
+    import std.range : zip;
 
-    levels = levels.enumerate.map!(a => day[a.index] ? a.value : a.value + 10).array; // Add 10dB penalty for night ops.
+    auto p_levels = zip(levels, state).map!(a => a[1].day ? a[0] : a[0] + 10); // Add 10dB penalty for night ops.
 
-    auto index = peak_range(levels);
-    double[] levels_slice = levels[index[0] .. (index[1] + 1)];
-    double[] p;
-    p.length = levels_slice.length;
-    p[] = 10.0 ^^ (0.1 * levels_slice[]);
-    return 10.0 * log10(T * sum(p));
+    auto index = peak_range(p_levels);
+
+    immutable p_sum = p_levels[index[0] .. (index[1] + 1)].map!(l => 10.0^^(0.1*l)).sum;
+    return 10.0 * log10(T * p_sum);
 }
 
-static size_t[2] peak_range(double[] levels, double down = 10.0)
+@nogc static size_t[2] peak_range(R)(R levels, double down = 10.0)
 {
     import std.algorithm.searching : maxIndex;
 
