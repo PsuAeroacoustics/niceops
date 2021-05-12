@@ -278,10 +278,6 @@ void main(string[] args)
         exit(-2);
     }
 
-    //trace("databases[0].advance_ratios: ", databases[0].advance_ratios.map!(a => a*(databases[0].advance_ratio_max - databases[0].advance_ratio_min) + databases[0].advance_ratio_min) );
-    //trace("databases[0].thrust_coefficients: ", databases[0].thrust_coefficients.map!(a => a*(databases[0].thrust_coefficient_max - databases[0].thrust_coefficient_min) + databases[0].thrust_coefficient_min) );
-    //trace("databases[0].flight_path_angles: ", databases[0].flight_path_angles.map!(a => a*(databases[0].flight_path_angle_max - databases[0].flight_path_angle_min) + databases[0].flight_path_angle_min) );
-
     if(!fpa.isNaN && !ct.isNaN && !adv.isNaN) {
 
         /+ct = (ct - databases[0].thrust_coefficient_min)/(databases[0].thrust_coefficient_max - databases[0].thrust_coefficient_min);
@@ -345,7 +341,6 @@ void main(string[] args)
     import std.exception : enforce;
 
     WorldTransform world_transform;
-    //double[2] ref_point;
     double[2][] lat_lon_obs;
 
     try{
@@ -831,12 +826,13 @@ void main(string[] args)
     
     foreach(ref acoustic_result; acoustic_results) {
         foreach(idx; 0..final_dnl.length) {
-            if(acoustic_result.dnl[idx] != -double.infinity) {
-                final_dnl[idx] += acoustic_result.dnl[idx];
-            }
+            final_dnl[idx] += 10.0^^(acoustic_result.dnl[idx]/10.0);
         }
     }
 
+    foreach(idx; 0..final_dnl.length) {
+        final_dnl[idx] = 10.0*log10(final_dnl[idx]);
+    }
 
     try {
         write_levels(x_obs, y_obs, final_dnl, dnl_file, scattered, stk_format);
@@ -877,9 +873,6 @@ void main(string[] args)
         auto clevels = iota(contour_min - contour_step, contour_max + contour_step, contour_step).array();
         plt.figure();
 
-        //x_obs[] *= 1.0 / ft2m;
-        //y_obs[] *= 1.0 / ft2m;
-
         auto obs_pos = zip(x_obs, y_obs).map!(a => staticArray!(double, 2)([a[0], a[1]]));
 
         double min_x = double.infinity;
@@ -909,9 +902,6 @@ void main(string[] args)
         foreach(idx, ref acoustic_result; acoustic_results) {
             auto x = acoustic_result.trajectory.Get!("x").get();
             auto y = acoustic_result.trajectory.Get!("y").get();
-
-            //x[] *= 1.0 / ft2m;
-            //y[] *= 1.0 / ft2m;
 
             plt.plot(x, y, "k-");
         }
