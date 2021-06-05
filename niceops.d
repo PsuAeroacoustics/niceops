@@ -84,8 +84,11 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
 
         foreach (index, observer; sorted_observers)
         {
+            //    @nogc double level_at_observer(double[3] observer, double[3] source, double[3] velocity,
+            //double[3] normal, double mach_number, double flight_path_angle,
+            //double tilt_angle, double heading)
             auto level = database.level_at_observer(observer, source,
-                        velocity, normal, state.mu, qsam ? state.fpa_e : state.fpa, state.CT, state.heading);
+                        velocity, normal, state.mach, qsam ? state.fpa_e : state.fpa, state.flight_mode, state.heading);
 
             result.time_history[index][it] = level;
 

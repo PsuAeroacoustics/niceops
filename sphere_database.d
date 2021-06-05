@@ -445,10 +445,9 @@ class Database
     immutable double[] thetas;
     double[][][] dBA;
     double[][][] EAA;
-    immutable double sphere_radius, advance_ratio_min, advance_ratio_max, flight_path_angle_min,
-        flight_path_angle_max, thrust_coefficient_min, thrust_coefficient_max, max_level;
+    immutable double sphere_radius, mach_number_min, mach_number_max, flight_path_angle_min,
+        flight_path_angle_max, tilt_angle_min, tilt_angle_max, max_level;
 
-    //double[] advance_ratios, flight_path_angles, thrust_coefficients;
     this(string datafile_path)
     {
         double[] _phis;
@@ -468,10 +467,10 @@ class Database
         }
 
         // Check for "same_grid" flag to detirmine if interpolation is required
-        auto same_grid = false;
-        int same_grid_flag;
-        get_scalar(file_ncid, "same_grid", same_grid_flag);
-        same_grid = same_grid_flag ? true : false;
+        auto same_grid = true;
+        //int same_grid_flag;
+        //get_scalar(file_ncid, "same_grid", same_grid_flag);
+        //same_grid = same_grid_flag ? true : false;
         info("same_grid is set to: ", same_grid);
 
         // TODO: Enable interpolation when same_grid == false
@@ -481,39 +480,40 @@ class Database
         auto group_ids = get_group_ids(file_ncid);
 
         // Allocate storage for operating conditions
-        double[] advance_ratios, flight_path_angles, thrust_coefficients;
-        advance_ratios.reserve(group_ids.length);
+        //double[] mach_numbers, flight_path_angles, tilt_angles;
+        double[] mach_numbers, flight_path_angles, tilt_angles;
+        mach_numbers.reserve(group_ids.length);
         flight_path_angles.reserve(group_ids.length);
-        thrust_coefficients.reserve(group_ids.length);
+        tilt_angles.reserve(group_ids.length);
 
         // Local operating parameters
-        double advance_ratio, flight_path_angle, thrust_coefficient, radius,
-            scale, dimensional_radius;
+        double mach_number, flight_path_angle, tilt_angle, /+radius,
+            scale,+/ dimensional_radius;
         double[] phis_scattered, thetas_scattered, dBAs_scattered, EAAs_scattered;
         size_t nchannels0;
         auto dba_max = -double.infinity;
         // Cycle through sphere groups and load data
         foreach (i, group_id; group_ids)
         {
-            require_scalar(group_id, "advance_ratio", advance_ratio);
+            require_scalar(group_id, "mach", mach_number);
             require_scalar(group_id, "flight_path_angle", flight_path_angle);
-            require_scalar(group_id, "thrust_coefficient", thrust_coefficient);
-            require_scalar(group_id, "radius", radius);
-            require_scalar(group_id, "rotor_scale", scale);
-            advance_ratios ~= advance_ratio;
+            require_scalar(group_id, "tilt_angle", tilt_angle);
+            require_scalar(group_id, "radius", dimensional_radius);
+            //require_scalar(group_id, "rotor_scale", scale);
+            mach_numbers ~= mach_number;
             flight_path_angles ~= flight_path_angle;
-            thrust_coefficients ~= thrust_coefficient;
-            trace("Sphere ", group_id, " loaded with \t μ = ", advance_ratios[i],
-                    ",\t γ = ", flight_path_angles[i], ",\t CT = ",
-                    thrust_coefficients[i], ",\t scale = ", scale, ",\t radius = ", radius);
-            if (i == 0)
+            tilt_angles ~= tilt_angle;
+            trace("Sphere ", group_id, " loaded with \t M = ", mach_numbers[i],
+                    ",\t γ = ", flight_path_angles[i], ",\t β = ",
+                    tilt_angles[i], ",\t radius = ", dimensional_radius);
+            /+if (i == 0)
             {
                 dimensional_radius = radius * scale;
             }
             else if (!approxEqual(radius * scale, dimensional_radius))
             {
                 fatal("Database error: sphere radius*scale not constant.");
-            }
+            }+/
             auto nchannels = get_dim_length("channels", group_id);
             if (i == 0)
             {
@@ -582,29 +582,29 @@ class Database
         sphere_radius = dimensional_radius;
         info("Sphere radius set to ", sphere_radius);
         // Find range of conditions
-        advance_ratio_max = advance_ratios.maxElement;
-        advance_ratio_min = advance_ratios.minElement;
+        mach_number_max = mach_numbers.maxElement;
+        mach_number_min = mach_numbers.minElement;
         flight_path_angle_max = flight_path_angles.maxElement;
         flight_path_angle_min = flight_path_angles.minElement;
-        thrust_coefficient_max = thrust_coefficients.maxElement;
-        thrust_coefficient_min = thrust_coefficients.minElement;
-        info("Operating condition ranges are:\n", "μ  = [", advance_ratio_min,
-                " , ", advance_ratio_max, "]\n", "γ  = [", flight_path_angle_min,
-                " , ", flight_path_angle_max, "]\n", "CT = [",
-                thrust_coefficient_min, " , ", thrust_coefficient_max, "]\n");
+        tilt_angle_max = tilt_angles.maxElement;
+        tilt_angle_min = tilt_angles.minElement;
+        info("Operating condition ranges are:\n", "M = [", mach_number_min,
+                " , ", mach_number_max, "]\n", "γ  = [", flight_path_angle_min,
+                " , ", flight_path_angle_max, "]\n", "β = [",
+                tilt_angle_min, " , ", tilt_angle_max, "]\n");
         // Normalize operating conditions
-        advance_ratios.each!((ref x) => x = (x - advance_ratio_min) / (
-                advance_ratio_max - advance_ratio_min));
-        trace("Normalized μ   = ", advance_ratios);
+        mach_numbers.each!((ref x) => x = (x - mach_number_min) / (
+                mach_number_max - mach_number_min));
+        trace("Normalized M   = ", mach_numbers);
         flight_path_angles.each!((ref x) => x = (x - flight_path_angle_min) / (
                 flight_path_angle_max - flight_path_angle_min));
         trace("Normalized γ   = ", flight_path_angles);
-        thrust_coefficients.each!((ref x) => x = (x - thrust_coefficient_min) / (
-                thrust_coefficient_max - thrust_coefficient_min));
-        trace("Normalized CT  = ", thrust_coefficients);
+        tilt_angles.each!((ref x) => x = (x - tilt_angle_min) / (
+                tilt_angle_max - tilt_angle_min));
+        trace("Normalized β  = ", tilt_angles);
 
-        if (set_interpolator3(advance_ratios.length, advance_ratios.ptr,
-                flight_path_angles.ptr, thrust_coefficients.ptr))
+        if (set_interpolator3(mach_numbers.length, mach_numbers.ptr,
+                flight_path_angles.ptr, tilt_angles.ptr))
         {
             fatal("Could not set interpolator.");
         }
@@ -615,8 +615,8 @@ class Database
         trace("EAA: ", EAA);
     }
 
-    @nogc double eval(double range, double phi, double theta, double advance_ratio,
-            double flight_path_angle, double thrust_coefficient)
+    @nogc double eval(double range, double phi, double theta, double mach_number,
+            double flight_path_angle, double tilt_angle)
     {
         // Find the sphere grid points bounding the desired phi, theta
         auto phi_range = bracket(phis, phi);
@@ -626,20 +626,20 @@ class Database
         //        " -- ", thetas[theta_range[1]]);
 
         // Normalize flight condition and limit range to [0.0,1.0]
-        advance_ratio = clamp((advance_ratio - advance_ratio_min) / (
-                advance_ratio_max - advance_ratio_min));
+        mach_number = clamp((mach_number - mach_number_min) / (
+                mach_number_max - mach_number_min));
         flight_path_angle = clamp((flight_path_angle - flight_path_angle_min) / (
                 flight_path_angle_max - flight_path_angle_min));
-        thrust_coefficient = clamp((thrust_coefficient - thrust_coefficient_min) / (
-                thrust_coefficient_max - thrust_coefficient_min));
-        //trace("Normalized operating condition is: ", "μ  = ", advance_ratio,
-        //        ", γ  = ", flight_path_angle, ", CT = ", thrust_coefficient);
+        tilt_angle = clamp((tilt_angle - tilt_angle_min) / (
+                tilt_angle_max - tilt_angle_min));
+        //trace("Normalized operating condition is: ", "M = ", mach_number,
+        //        ", γ  = ", flight_path_angle, ", β = ", tilt_angle);
 
         // Get barycentric weights and indicies
         size_t[4] indicies;
         double[4] weights;
 
-        barycentric(advance_ratio, flight_path_angle, thrust_coefficient,
+        barycentric(mach_number, flight_path_angle, tilt_angle,
                 weights.ptr, indicies.ptr);
         //trace("Barycentric weights: ", weights, " and indicies ", indicies);
 
@@ -682,8 +682,8 @@ class Database
     }
 
     @nogc double level_at_observer(double[3] observer, double[3] source, double[3] velocity,
-            double[3] normal, double advance_ratio, double flight_path_angle,
-            double thrust_coefficient, double heading)
+            double[3] normal, double mach_number, double flight_path_angle,
+            double tilt_angle, double heading)
     {
         double[3] r;
         r[] = observer[] - source[];
@@ -692,16 +692,16 @@ class Database
         auto angles = lookup_angles(source, velocity, normal, observer, heading);
         //trace("Looked up [phi,theta] = ", angles);
         assert(isFinite(angles[0]) && isFinite(angles[1]));
-        auto level = eval(slant_range, angles[0], angles[1], advance_ratio,
-                flight_path_angle, thrust_coefficient);
+        auto level = eval(slant_range, angles[0], angles[1], mach_number,
+                flight_path_angle, tilt_angle);
         assert(isFinite(level));
 
         return level;
     }
 
     double level_along_bearing(double range, double bearing, double altitude, double[3] velocity,
-            double[3] normal, double advance_ratio, double flight_path_angle,
-            double thrust_coefficient, double fp_heading)
+            double[3] normal, double mach_number, double flight_path_angle,
+            double tilt_angle, double fp_heading)
     {
         bearing *= PI / 180.0;
         // Define ground velocity, and get heading vector from it
@@ -715,25 +715,25 @@ class Database
         // Put source at altitude above ground
         double[3] source = [0.0, 0.0, altitude];
         return level_at_observer(observer, source, velocity, normal,
-                advance_ratio, flight_path_angle, thrust_coefficient, fp_heading);
+                mach_number, flight_path_angle, tilt_angle, fp_heading);
     }
 
     double zero_range_level(double altitude, double[3] velocity, double[3] normal,
-            double advance_ratio, double flight_path_angle, double thrust_coefficient, double heading)
+            double mach_number, double flight_path_angle, double tilt_angle, double heading)
     {
         double[3] observer = [0., 0., 0.];
         double[3] source = [0., 0., altitude];
         return level_at_observer(observer, source, velocity, normal,
-                advance_ratio, flight_path_angle, thrust_coefficient, heading);
+                mach_number, flight_path_angle, tilt_angle, heading);
     }
 
     double find_range(double contour_level, double bearing, double altitude, double[3] velocity, double[3] normal,
-            double advance_ratio, double flight_path_angle,
-            double thrust_coefficient, double threshold, bool zero_range_check, double heading)
+            double mach_number, double flight_path_angle,
+            double tilt_angle, double threshold, bool zero_range_check, double heading)
     {
         //Check if level directly below sphere (i.e. range = 0) is above the requested contour level.
         auto zero_level = zero_range_level(altitude, velocity, normal,
-                advance_ratio, flight_path_angle, thrust_coefficient, heading);
+                mach_number, flight_path_angle, tilt_angle, heading);
         trace("Zero range level is: ", zero_level);
         //Initialize range to zero
         auto range = 0.0;
@@ -745,7 +745,7 @@ class Database
             double residual(double x)
             {
                 auto level = level_along_bearing(x, bearing, altitude, velocity,
-                        normal, advance_ratio, flight_path_angle, thrust_coefficient, heading);
+                        normal, mach_number, flight_path_angle, tilt_angle, heading);
                 return level - contour_level;
             }
             // Tolerance function
@@ -762,7 +762,7 @@ class Database
             if (!zero_range_check)
             {
                 auto check_level = level_along_bearing(range, bearing, altitude, velocity,
-                        normal, advance_ratio, flight_path_angle, thrust_coefficient, heading);
+                        normal, mach_number, flight_path_angle, tilt_angle, heading);
                 trace("Check level: ", check_level);
                 if (check_level < (contour_level - threshold))
                 {
@@ -795,21 +795,21 @@ class Database
 
         auto group_ids = get_group_ids(file_ncid);
         // Local operating parameters
-        double advance_ratio, flight_path_angle, thrust_coefficient, radius,
+        double mach_number, flight_path_angle, tilt_angle, radius,
             scale, dimensional_radius;
         // Cycle through sphere groups and verify data
         foreach (i, group_id; group_ids)
         {
             //Get the sphere parameters
-            require_scalar(group_id, "advance_ratio", advance_ratio);
+            require_scalar(group_id, "mach_number", mach_number);
             require_scalar(group_id, "flight_path_angle", flight_path_angle);
-            require_scalar(group_id, "thrust_coefficient", thrust_coefficient);
+            require_scalar(group_id, "tilt_angle", tilt_angle);
             require_scalar(group_id, "radius", radius);
             require_scalar(group_id, "rotor_scale", scale);
             dimensional_radius = radius * scale;
-            log("Checking sphere ", group_id, " with \t μ = ", advance_ratio,
-                    ",\t γ = ", flight_path_angle, ",\t CT = ",
-                    thrust_coefficient, ",\t scale = ", scale, ",\t radius = ", radius);
+            log("Checking sphere ", group_id, " with \t μ = ", mach_number,
+                    ",\t γ = ", flight_path_angle, ",\t β = ",
+                    tilt_angle, ",\t scale = ", scale, ",\t radius = ", radius);
 
             //Get the data for this sphere
             auto nchannels = get_dim_length("channels", group_id);
@@ -829,13 +829,13 @@ class Database
             foreach (ch, dBA; dBA_data)
             {
                 auto level = eval(dimensional_radius, phi_data[ch], theta_data[ch],
-                        advance_ratio, flight_path_angle, thrust_coefficient);
+                        mach_number, flight_path_angle, tilt_angle);
                 if (!approxEqual(dBA, level))
                 {
                     log("Surface level disagreement of D:", dBA, " versus N:",
                             level, " for φ = ", phi_data[ch], ", θ = ",
-                            theta_data[ch], ", μ  = ", advance_ratio, ",γ  =  ",
-                            flight_path_angle, ", CT = ", thrust_coefficient);
+                            theta_data[ch], ", M = ", mach_number, ",γ  =  ",
+                            flight_path_angle, ", β = ", tilt_angle);
                     invalid++;
                 }
                 else

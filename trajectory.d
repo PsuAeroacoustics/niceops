@@ -176,8 +176,9 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
         double roll;
         double bank;
         double heading;
-        double acc_mag;
+        double ground_speed;
         int day;
+        double flight_mode;
     }
 
     trace("Parsing trajectory file as csv");
@@ -236,6 +237,8 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
             now.day = record.value.day == 1;
 
             now.heading = record.value.heading*deg2rad;
+
+            now.flight_mode = record.value.flight_mode;
             return now;
         })
         .array;
@@ -302,6 +305,8 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
         }
 
         state.v = v;
+        state.mach = v/343;
+
         state.vn_hat = vn_hat;
 
         trace("Parsed state: ", state);
@@ -335,6 +340,8 @@ class Trajectory
         double heading;
         double v;
         double vn_hat;
+        double flight_mode;
+        double mach;
     }
 
     struct dimensional_data
@@ -424,6 +431,7 @@ class Trajectory
         double[] lat;
         double[] lon;
         double[] heading;
+        double[] flight_mode;
         foreach (now; states)
         {
             t ~= now.t;
@@ -433,6 +441,7 @@ class Trajectory
             lat ~= now.lat;
             lon ~= now.lon;
             heading ~= now.heading;
+            flight_mode ~= now.flight_mode;
         }
         trace("t[$ - 1]: ", t[$ - 1]);
         // Build interpolants
@@ -480,6 +489,11 @@ class Trajectory
         double[] aheadingi;
         smoother(t, heading, ti, headingi, vheadingi, aheadingi, degree, alpha);
 
+        double[] flight_modei;
+        double[] vflight_modei;
+        double[] aflight_modei;
+        smoother(t, flight_mode, ti, flight_modei, vflight_modei, aflight_modei, degree, alpha);
+
         import std.algorithm : map;
         import std.array : array;
         import std.typecons : tuple;
@@ -512,6 +526,8 @@ class Trajectory
             now.vx = vxi[i];
             now.vy = vyi[i];
             now.vz = vzi[i];
+
+            now.flight_mode = flight_modei[i];
 
             //auto pos_vec = Vector!(3, double)(now.x, now.y, now.z);
             //auto gravity_vec = pos_vec.normalize;
@@ -549,6 +565,9 @@ class Trajectory
             now.heading = headingi[i];
 
             now.v = v;
+
+            now.mach = v/343;
+
             now.vn_hat = vn_hat;
 
             states ~= now;
