@@ -56,7 +56,7 @@ endif (NOT CMAKE_BUILD_TYPE)
 find_package(netCDF)
 message(NOTICE ${netCDF_VERSION})
 
-# Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place)
+# Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place). Keeping windows static for now.
 find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
 
 find_package(Boost)
@@ -211,3 +211,14 @@ else()
       #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
   )
 endif()
+add_executable(niceops_unit_tests niceops.d sphere_database.d trajectory.d splines.d)
+target_link_libraries(niceops_unit_tests sphere_database interpolator trajectory matplotlib-d numd)
+target_compile_options(niceops_unit_tests PRIVATE "-J ${views_dir}" )
+target_compile_options(niceops_unit_tests PRIVATE "-unittest" )
+
+
+# Add testing with CTest
+enable_testing()
+add_test(NAME regression_default COMMAND niceops  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME broken_self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

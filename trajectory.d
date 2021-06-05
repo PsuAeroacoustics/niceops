@@ -347,18 +347,19 @@ class Trajectory
 
     void write_state(string state_file)
     {
-        import std.conv;
-        import std.array;
-        import std.file;
-        info( "Writing state data to ", state_file);
-        auto file = File( state_file, "w");
+        import std.conv : to;
+        import std.array : join;
+        import std.stdio : File;
+
+        info("Writing state data to ", state_file);
+        auto file = File(state_file, "w");
         // Write header automatically from field names
         auto fields = __traits(allMembers, State);
-        file.writeln( [ fields].join( ","));
+        file.writeln([fields].join(","));
         foreach (state; states)
         {
             auto values = state.tupleof;
-            file.writeln( to!(string[])( [ values]).join( ","));
+            file.writeln(to!(string[])([values]).join(","));
         }
     }
 
@@ -374,9 +375,9 @@ class Trajectory
         enforce(_world_transform !is null, "Received invalid world transform");
         world_transform = _world_transform;
         //Get vehicle data
-        vehicle = configure_vehicle( vehicle_filename);
+        vehicle = configure_vehicle(vehicle_filename);
 
-        auto extension = filename.splitter( '.').retro.take( 1).array()[0];
+        auto extension = filename.splitter('.').retro.take(1).array()[0];
         info("Opening file " ~ filename ~ " with extension ", extension);
         switch (toLower(extension))
         {
@@ -409,6 +410,8 @@ class Trajectory
 
     void adapt(double dt, int degree = 3, double alpha = 0.3)
     {
+        import std.math : sqrt, PI, asin;
+
         info("Adapting spline to dt ", dt, " with spline of degree ", degree,
                 " and smoothing ", alpha);
         assert(dt > 0.0);
@@ -569,7 +572,7 @@ class Trajectory
 
     void watts_trim(double xstart_ft)
     {
-        import std.algorithm.searching;
+        import std.algorithm.searching : minIndex;
 
         auto mu = Get!("mu").get();
         auto z = Get!("z").get();
@@ -592,11 +595,13 @@ class Trajectory
 static void smoother(in double[] x, in double[] f, in double[] xi, out double[] fi,
         out double[] dfi, out double[] ddfi, int degree = 3, double alpha = 0.3)
 {
+    import splines : Spline;
+
     auto spline = Spline(x, f, degree, alpha);
     //Use spline for interpolation
     fi = spline.eval(xi);
     //Use finite differences to get velocity and acceleration
-    double dx = xi[1] - xi[0];
+    immutable dx = xi[1] - xi[0];
     diff(dx, fi, dfi, ddfi);
 }
 

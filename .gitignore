@@ -34,3 +34,9 @@ external/splinter/Doxyfile
 CMakeDoxyfile.in
 
 CMakeDoxygenDefaults.cmake
+
+Testing/
+
+CTestTestfile.cmake
+
+niceops_unit_tests

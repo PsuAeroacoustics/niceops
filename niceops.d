@@ -950,7 +950,7 @@ void main(string[] args)
     // Find the 10-dB down points
     size_t[2] index = [0, levels.length - 1];
     auto peak_position = levels.maxIndex;
-    auto threshold = levels[peak_position] - down;
+    immutable threshold = levels[peak_position] - down;
 
     for (auto i = peak_position; i < levels.length; i++)
     {
@@ -1008,8 +1008,16 @@ unittest
 static void write_levels(const double[] x_obs, const double[] y_obs,
         const double[] levels, string out_file, bool scattered, bool stk_format = false)
 {
-    import std.file;
-    import std.stdio;
+    import std.stdio : File;
+    import std.file : exists, mkdirRecurse;
+    import std.path : dirName;
+
+    // Check if directory exists;  if not, create it.
+    auto directory = dirName(out_file);
+    if (!exists(directory))
+    {
+        mkdirRecurse(directory);
+    }
 
     info("Writing output to ", out_file);
     auto file = File(out_file, "w");
@@ -1035,8 +1043,8 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
     else
     {
         info("Gridded output.");
-        auto nx = x_obs.length;
-        auto ny = y_obs.length;
+        immutable nx = x_obs.length;
+        immutable ny = y_obs.length;
         assert(nx * ny == levels.length);
 
         //Write header
@@ -1085,7 +1093,16 @@ static void write_levels(const double[] x_obs, const double[] y_obs,
 static void write_time_history_file(double[] time_history, double dt, double x,
         double y, string filename)
 {
-    import std.stdio;
+    import std.stdio : File;
+    import std.file : exists, mkdirRecurse;
+    import std.path : dirName;
+
+    // Check if directory exists;  if not, create it.
+    auto directory = dirName(filename);
+    if (!exists(directory))
+    {
+        mkdirRecurse(directory);
+    }
 
     trace("Writing time history to ", filename);
     auto file = File(filename, "w");
@@ -1100,7 +1117,16 @@ static void write_time_history_file(double[] time_history, double dt, double x,
 static void append_metrics_file(string filename, string casename,
         const double[] levels, double threshold = 65.0)
 {
-    import std.stdio;
+    import std.stdio : File;
+    import std.file : exists, mkdirRecurse;
+    import std.path : dirName;
+
+    // Check if directory exists;  if not, create it.
+    auto directory = dirName(filename);
+    if (!exists(directory))
+    {
+        mkdirRecurse(directory);
+    }
 
     auto file = File(filename, "a");
     double average = 0;
