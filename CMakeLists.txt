@@ -57,7 +57,7 @@ find_package(netCDF)
 message(NOTICE ${netCDF_VERSION})
 
 # Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place). Keeping windows static for now.
-find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
+find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
 
 find_package(Boost)
 find_package(CGAL COMPONENTS Core)
