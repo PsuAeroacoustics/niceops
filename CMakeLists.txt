@@ -171,8 +171,14 @@ add_subdirectory(external/matplotlibd)
 add_executable(niceops niceops.d)
 target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d numd)
 
+add_executable(wopwop2aam wopwop2aam.d)
+target_link_libraries(wopwop2aam sphere_database interpolator trajectory matplotlib-d numd)
+
 set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
 target_compile_options(niceops PRIVATE "-J ${views_dir}")
+
+#set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
+target_compile_options(wopwop2aam PRIVATE "-J ${views_dir}")
 
 if(MSVC)
   set_target_properties(
