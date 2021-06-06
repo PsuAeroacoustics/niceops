@@ -219,6 +219,6 @@ target_compile_options(niceops_unit_tests PRIVATE "-unittest" )
 
 # Add testing with CTest
 enable_testing()
-add_test(NAME regression_default COMMAND niceops  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME regression_default COMMAND niceops  "-h" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME broken_self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
