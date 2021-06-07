@@ -501,8 +501,8 @@ class Database
             require_scalar(group_id, "radius", dimensional_radius);
             //require_scalar(group_id, "rotor_scale", scale);
             mach_numbers ~= mach_number;
-            flight_path_angles ~= flight_path_angle;
-            tilt_angles ~= tilt_angle;
+            flight_path_angles ~= flight_path_angle*(PI/180.0);
+            tilt_angles ~= tilt_angle/90.0;
             trace("Sphere ", group_id, " loaded with \t M = ", mach_numbers[i],
                     ",\t γ = ", flight_path_angles[i], ",\t β = ",
                     tilt_angles[i], ",\t radius = ", dimensional_radius);
@@ -621,9 +621,12 @@ class Database
         // Find the sphere grid points bounding the desired phi, theta
         auto phi_range = bracket(phis, phi);
         auto theta_range = bracket(thetas, theta);
-        //trace("Found phi (", phi, ") in range ", phis[phi_range[0]], " -- ", phis[phi_range[1]]);
-        //trace("Found theta (", theta, ") in range ", thetas[theta_range[0]],
-        //        " -- ", thetas[theta_range[1]]);
+        debug trace("Unnormalized operating condition is: ", "M = ", mach_number,
+                 ", γ  = ", flight_path_angle, ", β = ", tilt_angle);
+
+        debug trace("Found phi (", phi, ") in range ", phis[phi_range[0]], " -- ", phis[phi_range[1]]);
+        debug trace("Found theta (", theta, ") in range ", thetas[theta_range[0]],
+                " -- ", thetas[theta_range[1]]);
 
         // Normalize flight condition and limit range to [0.0,1.0]
         mach_number = clamp((mach_number - mach_number_min) / (
@@ -632,8 +635,8 @@ class Database
                 flight_path_angle_max - flight_path_angle_min));
         tilt_angle = clamp((tilt_angle - tilt_angle_min) / (
                 tilt_angle_max - tilt_angle_min));
-        //trace("Normalized operating condition is: ", "M = ", mach_number,
-        //        ", γ  = ", flight_path_angle, ", β = ", tilt_angle);
+        debug trace("Normalized operating condition is: ", "M = ", mach_number,
+                 ", γ  = ", flight_path_angle, ", β = ", tilt_angle);
 
         // Get barycentric weights and indicies
         size_t[4] indicies;
@@ -641,7 +644,7 @@ class Database
 
         barycentric(mach_number, flight_path_angle, tilt_angle,
                 weights.ptr, indicies.ptr);
-        //trace("Barycentric weights: ", weights, " and indicies ", indicies);
+        debug trace("Barycentric weights: ", weights, " and indicies ", indicies);
 
         // Barycentric interpolation between conditions at each gridpoint
         auto d11 = barycentric_interp(dBA, phi_range[0], theta_range[0], weights, indicies);
@@ -660,14 +663,14 @@ class Database
 
         auto sphere_level = periodic_bilinear_interp( d11, d12, d21, d22, p1, p2, t1, t2, phi, theta);
         auto excess_factor = periodic_bilinear_interp( e11, e12, e21, e22, p1, p2, t1, t2, phi, theta);
-        //trace( "Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
+        debug trace( "Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
         //Apply spherical spreading and excess atmospheric absorption to surface level
         //TODO Add ground effects
         immutable ground_effect = 4.0;
         auto excess_attenuation = ground_effect * excess_factor * (range - sphere_radius) / 1000.0; // This is a hack. Idealy excess_factor should just never be negative.
         auto spreading_loss = 20.0 * log10( range / sphere_radius);
-        //trace( "Spreading Loss (dB): ", spreading_loss,
-        //"\tExcess Attenuation (dB): ", excess_attenuation);
+        debug trace( "Spreading Loss (dB): ", spreading_loss,
+        "\tExcess Attenuation (dB): ", excess_attenuation);
         import std.conv : to;
         debug assert(excess_factor >= 0, "excess attenuation factor less than 0; excess_factor: "~excess_factor.to!string~". e11: "~e11.to!string~", e12: "~e12.to!string~", e21: "~e21.to!string~", e22: "~e22.to!string~" phi: "~phi.to!string~" theta: "~theta.to!string~" range: "~range.to!string
             ~" ph_1: "~p1.to!string~" phi_2: "~p2.to!string~" theta_1: "~t1.to!string~" theta_2: "~t2.to!string);
@@ -677,7 +680,7 @@ class Database
         assert(isFinite(excess_attenuation));
         assert(isFinite(spreading_loss));
         auto ground_level = sphere_level - spreading_loss - excess_attenuation;
-        //trace("Ground level: ", ground_level);
+        debug trace("Ground level: ", ground_level);
         return ground_level;
     }
 

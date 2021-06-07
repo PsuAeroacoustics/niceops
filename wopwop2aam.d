@@ -15,6 +15,7 @@ import std.path;
 import std.range;
 import std.stdio;
 import std.string;
+import std.typecons;
 
 double safe_log10(double x) {
     if (x == 0) {
@@ -69,7 +70,8 @@ auto read_dataset(string dir) {
 	int[] header_buffer = new int[4];
 
 	auto spectrum_file = File(dir.buildPath("spl_spectrum.fn"), "rb");
-
+	scope(exit) spectrum_file.close;
+	
 	float[] flight_condition = readText(dir.buildPath("flight_condition.txt")).split(",").map!(a => a.strip.to!float).array;
 
 	Dataset dataset;
@@ -129,7 +131,7 @@ auto read_dataset(string dir) {
 	return dataset;
 }
 
-void to_aam_sphere(ref Dataset dataset, string dir, bool hemisphere = false) {
+void to_aam_sphere(ref Dataset dataset, string dir, size_t idx, bool hemisphere = false) {
 	
 	float[] thetas = iota(0., 185., 5.).map!(a => a.to!float).array;
 	float[] phis = iota(-180., 180., 10.).map!(a => a.to!float).array;
@@ -178,9 +180,14 @@ void to_aam_sphere(ref Dataset dataset, string dir, bool hemisphere = false) {
 		phis = real_phis;
 	}
 
+	import std.format : format;
+
+	auto filename = format!("%s%06d.nc")("sphere_", idx);
+
 	int file_handle;
-	auto nc_ret = nc_create(dir.buildPath("sphere_"~dataset.hash.to!string~".nc").toStringz, NC_WRITE, &file_handle);
+	auto nc_ret = nc_create(dir.buildPath(filename).toStringz, NC_WRITE, &file_handle);
 	enforce(nc_ret == NC_NOERR, "Failed to create netCDF file");
+	scope(exit) nc_close(file_handle);
 
 	int phi_dimid;
 	nc_ret = nc_def_dim(file_handle, "PHI_DIM", phis.length, &phi_dimid);
@@ -296,21 +303,46 @@ int main(string[] args) {
 	}
 
 	size_t[] dataset_hashes;
-	foreach(dir; dirEntries(directory, SpanMode.shallow)) {
+
+	auto directories = dirEntries(directory, SpanMode.shallow).array;
+	
+	alias Condition = Tuple!(string, "directory", float, "m", float, "fpa", float, "tilt");
+
+	Condition[] conditions = new Condition[directories.length];
+
+	foreach(d_idx, dir; directories) {
 		if(!dir.isDir) {
 			continue;
 		}
+		float[] flight_condition = readText(dir.buildPath("flight_condition.txt")).split(",").map!(a => a.strip.to!float).array;
 
-		if(dir.buildPath("spl_spectrum.fn").exists) {
-			writeln("Converting ", dir);
-			auto dataset = read_dataset(dir);
+		conditions[d_idx] = Condition(dir, flight_condition[0], flight_condition[1], flight_condition[2]);
+	}
+
+	// multiSort!("a.x < b.x", "a.y < b.y", SwapStrategy.unstable)(pts1);
+
+	conditions.multiSort!("a.m < b.m", "a.fpa < b.fpa", "a.tilt < b.tilt");
+
+	size_t d_idx = 0;
+	foreach(condition; conditions) {
+		/+if(!condition.directory.isDir) {
+			continue;
+		}+/
+
+		if(condition.directory.buildPath("spl_spectrum.fn").exists) {
+
+			auto dataset = read_dataset(condition.directory);
 
 			size_t hash = dataset.hash;
 
 			enforce(!dataset_hashes.canFind(hash), "Found duplicate database hash");
+
+			writeln("Converting ", condition.directory, ". Flight condition hash: ", hash);
 			dataset_hashes ~= hash;
 
-			dataset.to_aam_sphere(output_directory, hemispheres);
+			dataset.to_aam_sphere(output_directory, d_idx, hemispheres);
+
+			d_idx++;
 		}
 	}
 
