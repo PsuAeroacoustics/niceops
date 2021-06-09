@@ -71,7 +71,7 @@ auto read_dataset(string dir) {
 
 	auto spectrum_file = File(dir.buildPath("spl_spectrum.fn"), "rb");
 	scope(exit) spectrum_file.close;
-	
+
 	float[] flight_condition = readText(dir.buildPath("flight_condition.txt")).split(",").map!(a => a.strip.to!float).array;
 
 	Dataset dataset;
@@ -181,7 +181,6 @@ void to_aam_sphere(ref Dataset dataset, string dir, size_t idx, bool hemisphere 
 	}
 
 	import std.format : format;
-
 	auto filename = format!("%s%06d.nc")("sphere_", idx);
 
 	int file_handle;
@@ -337,8 +336,11 @@ int main(string[] args) {
 
 			enforce(!dataset_hashes.canFind(hash), "Found duplicate database hash");
 
-			writeln("Converting ", condition.directory, ". Flight condition hash: ", hash);
+			//writeln("Converting ", condition.directory, ". Flight condition hash: ", hash);
 			dataset_hashes ~= hash;
+
+			import std.format : format;
+			writeln("Converting ", condition.directory, " to ", format!("%s%06d.nc")("sphere_", d_idx));
 
 			dataset.to_aam_sphere(output_directory, d_idx, hemispheres);
 

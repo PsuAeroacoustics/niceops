@@ -501,7 +501,7 @@ class Database
             require_scalar(group_id, "radius", dimensional_radius);
             //require_scalar(group_id, "rotor_scale", scale);
             mach_numbers ~= mach_number;
-            flight_path_angles ~= flight_path_angle*(PI/180.0);
+            flight_path_angles ~= flight_path_angle/+*(PI/180.0)+/;
             tilt_angles ~= tilt_angle/90.0;
             trace("Sphere ", group_id, " loaded with \t M = ", mach_numbers[i],
                     ",\t γ = ", flight_path_angles[i], ",\t β = ",
