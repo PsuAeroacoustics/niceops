@@ -319,61 +319,41 @@ unittest
 @nogc private double[2] lookup_angles(double[3] source, double[3] velocity,
         double[3] normal, double[3] observer, double heading = double.nan)
 {
-    //trace("source: ", source);
-    //trace("velocity: ", velocity);
-    //trace("normal: ", normal);
-    //trace("observer: ", observer);
-
     double[3] r, vn, rp;
     r[] = observer[] - source[];
     r = r.normalize();
     auto n = normal.normalize();
+
     //Project velocity vector onto TPP to get a "nose" vector
     double[3] v;
-    //trace("velocity.norm: ", velocity.norm);
-    //trace("velocity.norm.isClose(0.0): ", velocity.norm.isClose(0.0));
-    //trace("velocity.norm.isClose(0.0, 1.0e-10): ", velocity.norm.isClose(0.0, 1.0e-10));
-    //trace("velocity.norm.isClose(0.0, 1.0e-5): ", velocity.norm.isClose(0.0, 1.0e-5));
-    //auto vn_hat = velocity.dot(normal) / velocity.norm;
-    //if(abs(velocity.norm) < 1.0e-19) {
-    //if((abs(velocity.norm) > 1.0e-2) && (abs(abs(vn_hat) - 1.0) > 1.0e-2)) {
+    if(!heading.isNaN) {
         velocity[0] = cos(heading);
         velocity[1] = sin(heading);
         velocity[2] = 0;
-        //trace("Setting velocity to heading: ", heading);
-        //trace("velocity: ", velocity);
-    //}
+    }
+
     v = velocity.normalize();
-    //trace("v: ", v);
     vn = v.dot(n) * n[];
-    //trace("vn: ", vn);
     vn = v[] - vn[];
-    //trace("vn: ", vn);
     vn = normalize(vn);
-    //trace("vn: ", vn);
 
     // Sphere theta angle is relative to projection of velocity onto TPP
     auto theta = acosc(vn.dot(r));
+    
     //Define starboard as the cross product of the "nose"" and the TPP normal
     auto pn = vn.cross(n);
+
     //Project the propagation vector onto the plane normal to the "nose"
-    //trace("r: ", r);
-    //trace("vn: ", vn);
     rp = r.dot(vn) * vn[];
-    //trace("rp: ", rp);
     rp = r[] - rp[];
-    //trace("rp: ", rp);
     rp = normalize(rp);
-    //trace("rp: ", rp);
-    //trace("n: ", n);
-    //trace("n.dot(rp): ", n.dot(rp));
+
     //Then, we can get sphere phi by computing the angle of the propagation vector in the plane
     auto phi = acosc(fabs(n.dot(rp)));
-    //trace("phi: ", phi);
+
     // Sign is still uncertain, so check to see where we are in relation to starboard
     auto phi_p = acosc(pn.dot(rp) / pn.norm());
-    //trace("pn: ", pn);
-    //trace("phi_p: ", phi_p);
+
     //If we're more than 90 degrees away, phi is defined negative
     if (phi_p > 0.5 * PI)
     {
@@ -688,9 +668,9 @@ class Database
         double[3] r;
         r[] = observer[] - source[];
         auto slant_range = r.norm();
-        //trace("R = ", slant_range, " for r = ", r);
+        debug trace("R = ", slant_range, " for r = ", r);
         auto angles = lookup_angles(source, velocity, normal, observer, heading);
-        //trace("Looked up [phi,theta] = ", angles);
+        debug trace("Looked up [phi,theta] = ", angles);
         assert(isFinite(angles[0]) && isFinite(angles[1]));
         auto level = eval(slant_range, angles[0], angles[1], advance_ratio,
                 flight_path_angle, thrust_coefficient);

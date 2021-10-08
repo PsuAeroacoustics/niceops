@@ -28,7 +28,7 @@ immutable fps2g = mps2g * ft2m;
 immutable deg2rad = PI/180.0;
 immutable rad2deg = 180.0/PI;
 
-auto parse_greenwood(string file_contents, Trajectory.dimensional_data vehicle, WorldTransform world_transform) {
+auto parse_greenwood(string file_contents, Trajectory.dimensional_data vehicle) {
     import std.typecons : tuple;
 
     double utcstart;
@@ -70,6 +70,7 @@ auto parse_greenwood(string file_contents, Trajectory.dimensional_data vehicle, 
             auto v = sqrt(now.vx ^^ 2 + now.vy ^^ 2 + now.vz ^^ 2);
             now.mu = v / vehicle.tip_speed;
             auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
+            now.vn_hat = vn_hat;
             now.fpa_e = 180.0 / PI * asin(vn_hat);
             now.fpa = 180.0 / PI * asin(now.vz / v);
             states ~= now;
@@ -188,7 +189,6 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
     utcstart = start_record.utc_timestamp.time_str_to_double;
 
     import std.array : staticArray;
-    auto lat_lon_ref = staticArray!(double, 2)([world_transform.reference_point_lat_lon_alt[0]*rad2deg, world_transform.reference_point_lat_lon_alt[1]*rad2deg]);
 
     double min_lat = double.infinity;
     double max_lat = -double.infinity;
@@ -207,14 +207,7 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
             auto lat_long_alt_point = Vector!(3, double)(
                 record.value.lat,
                 record.value.lon,
-                //record.value.lon + 360,
                 record.value.alt
-            );
-
-            auto lat_long_alt_rate = Vector!(3, double)(
-                record.value.lat_rate,
-                record.value.lon_rate,
-                record.value.alt_rate
             );
 
             min_lat = min(min_lat, lat_long_alt_point[0]);
@@ -248,8 +241,6 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
     trace("max_alt: ", max_alt);
     // Compute accelerations and other derived quantities.
     foreach(idx, ref state; states) {
-        //auto pos_vec = Vector!(3, double)(state.x, state.y, state.z);
-        //auto gravity_vec = pos_vec.normalize;
         auto gravity_vec = Vector!(3, double)(0.0, 0.0, 1.0);
 
         if(idx == 0) {
@@ -284,6 +275,7 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
         state.nx /= state.LF;
         state.ny /= state.LF;
         state.nz /= state.LF;
+        
         //Non-dimensionalize
         state.CT = state.LF * vehicle.weight / (
                 vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius ^^ 2);
@@ -291,7 +283,7 @@ auto parse_stk(string file_contents, Trajectory.dimensional_data vehicle, WorldT
         state.mu = v / vehicle.tip_speed;
         auto vn_hat = (state.vx * state.nx + state.vy * state.ny + state.vz * state.nz) / v;
         import std.math : isClose;
-        //if(!v.isClose(0.0, 1.0e-10)) {
+
         import std.math : abs;
         if((abs(v) > 1.0e-2) && (abs(abs(vn_hat) - 1.0) > 1.0e-2)) {
             state.fpa_e = 180.0 / PI * asin(vn_hat);
@@ -372,7 +364,7 @@ class Trajectory
     this(string filename, string vehicle_filename, WorldTransform _world_transform, bool stk_format = false)
     {
         import std.exception : enforce;
-        enforce(_world_transform !is null, "Received invalid world transform");
+        //enforce(_world_transform !is null, "Received invalid world transform");
         world_transform = _world_transform;
         //Get vehicle data
         vehicle = configure_vehicle(vehicle_filename);
@@ -387,11 +379,14 @@ class Trajectory
                 auto contents = readText(filename);
                 //auto records = csvReader!(double)(contents, null);
 
-                auto parsed_data = stk_format ? contents.parse_stk(vehicle, world_transform) : contents.parse_greenwood(vehicle, world_transform);
+                if(stk_format) {
+                    enforce(world_transform !is null, "Did not recieve a valid world transform");
+                }
+
+                auto parsed_data = stk_format ? contents.parse_stk(vehicle, world_transform) : contents.parse_greenwood(vehicle);
 
                 utcstart = parsed_data.utcstart;
                 states = parsed_data.states;
-                //world_transform = parsed_data.world_transform;
 
                 break;
             }

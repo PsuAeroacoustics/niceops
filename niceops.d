@@ -349,13 +349,9 @@ void main(string[] args)
             // Read in scattered observer data
             auto parsed_obs = read_observer_file(observer_file, observers, stk_format);
             world_transform = parsed_obs.world_transform;
-            //ref_point = parsed_obs.reference;
             lat_lon_obs = parsed_obs.lat_lon;
 
-            enforce(world_transform !is null, "Failed to create world transform");
             //Set length for levels and observer x, y arrays
-            //integrated_levels.length = observers.length;
-            //day_night_levels.length = observers.length;
             num_observers = observers.length;
             x_obs.reserve(observers.length);
             y_obs.reserve(observers.length);
@@ -410,7 +406,7 @@ void main(string[] args)
                 auto vehicle_file = e[2];
                 auto out_file = e[3];
 
-                enforce(world_transform !is null, "Passing in invalid world transform");
+                //enforce(world_transform !is null, "Passing in invalid world transform");
 
                 auto trajectory = new Trajectory( path_file, vehicle_file, world_transform, stk_format);
 
@@ -478,7 +474,7 @@ void main(string[] args)
             foreach(idx, database; databases)
             {
                 try{
-                    enforce(world_transform !is null, "Passing in invalid world transform");
+                    //enforce(world_transform !is null, "Passing in invalid world transform");
                     info("Computing trajectory for flight path ", idx);
 
                     auto acoustic_result = trajectories[idx].compute_trajectory(database, observer_chunk, qsam, dt, ambient_level, db_cutoff);
