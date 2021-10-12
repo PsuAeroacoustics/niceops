@@ -15,11 +15,12 @@ For ubuntu as of 10/12/2021, CGAL, Boost, and libeigen3 are up to date and avail
 		III) sudo apt-get install libboost-all-dev
 		IV)  sudo apt-get install libnetcdf-dev libnetcdff-dev
 		V)   download ldc2 from github: https://github.com/ldc-developers/ldc/releases/tag/v1.27.1
-			a) unzip ldc2 using "tar xd /folder/to/ldc2-1.XX.X-linuxx86_64.tar.xz"
+			a) unzip ldc2 using "tar xd /folder/to/ldc2-1.XX.X-linux-86_64.tar.xz"
 			b) move ldc2 to ./.local/bin directory
 				You may need to make this. The command is "mkdir -p ./.local/bin" from within your home directory (navigated to using cd  ~/)
-			c) add ldc2 to your .bashrc (add "export PATH=$HOME/.local/bin:$PATH")
-			d) update linux using "source .bashrc"
+			c) Add symbolic link to ldc2 "ln -s /path/to/ldc2-1.XX.X-linux-x86_64/bin/ldc2 ./"
+			d) add ldc2 to your .bashrc (add "export PATH=$HOME/.local/bin:$PATH" to end of file)
+			e) update linux using "source .bashrc"
 
 2) The command to compile NICEOPS is just cmake. However your first time might require directing the cmake files to your netcdf folder. THe first time you run cmake use this command:
 "cmake -DNETCDF=/usr/lib/x86_64-linux-gnu/libnetcdf.so ./"
