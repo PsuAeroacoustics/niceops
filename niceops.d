@@ -132,7 +132,7 @@ void main(string[] args)
     string[] path_files = [/+"tracks/S-76D/197421AC.csv"+/];
     string[] vehicle_files = [/+"databases/S-76D.json"+/];
     string[] out_files = [/+"integrated/197421_LAE.csv"+/];
-    string state_file = "";
+    string[] state_files = [];//"";
     bool write_state = false;
     bool plotting = false;
     string figure_file = "";
@@ -188,7 +188,7 @@ void main(string[] args)
             "metricfile|m", "File to append overall noise metrics.", &metric_file,
             "observer|b", "Observer file name.", &observer_file,
             "qsam|q", "Enable extended QSAM", &qsam,
-            "state|S", "Filename to save state data", &state_file,
+            "state|S", "Filenames to save state data", &state_files,
             "self_test", "Run self tests.", &self_test,
             "stk", "Path, observer, and aircraft file are in STK format", &stk_format,
             "loglevel|L", "Log verbosisty level (options are: trace, info, warning, error, critical, fatal) default = info. These are case sensitive.", &log_level,
@@ -230,7 +230,7 @@ void main(string[] args)
         {
             write_time_history = true;
         }
-        if (state_file.length > 0)
+        if (state_files.length > 0)
         {
             write_state = true;
         }
@@ -398,13 +398,14 @@ void main(string[] args)
     if(!parallel_by_observer) {
         acoustic_results = new AcousticResult[path_files.length];
 
-        foreach(idx, e; zip(path_files, databases, vehicle_files, out_files).parallel(1))
+        foreach(idx, e; zip(path_files, databases, vehicle_files, out_files, state_files).parallel(1))
         {
             try{
                 auto path_file = e[0];
                 auto database = e[1];
                 auto vehicle_file = e[2];
                 auto out_file = e[3];
+                auto state_file = e[4];
 
                 //enforce(world_transform !is null, "Passing in invalid world transform");
 
@@ -421,6 +422,10 @@ void main(string[] args)
 
                 acoustic_results[idx] = trajectory.compute_trajectory(database, observers, qsam, dt, ambient_level, db_cutoff);
                 write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+
+                if(write_state) {
+                    trajectory.write_state(state_file);
+                }
 
                 if(time_history_dir != "") {
                     foreach(obs_idx; 0..x_obs.length) {
@@ -518,15 +523,6 @@ void main(string[] args)
             auto vz = acoustic_results[idx].trajectory.Get!("vz").get();
 
             import std.stdio;
-
-            //x_obs[] *= 1.0 / ft2m;
-            //y_obs[] *= 1.0 / ft2m;
-            //x[] *= 1.0 / ft2m;
-            //y[] *= 1.0 / ft2m;
-            //z[] *= 1.0 / ft2m;
-            //vx[] *= 1.0 / ft2m;
-            //vy[] *= 1.0 / ft2m;
-            //vz[] *= 1.0 / ft2m;
 
             auto obs_pos = zip(x_obs, y_obs).map!(a => staticArray!(double, 2)([a[0], a[1]]));
 
@@ -629,7 +625,7 @@ void main(string[] args)
                     plt.savefig(filename);
                 }
             }
-            /+if (plotting || state_figure_file.length > 0)
+            if (plotting || state_figure_file.length > 0)
             {
                 import std.path;
 
@@ -640,15 +636,16 @@ void main(string[] args)
                 auto heading = acoustic_results[idx].trajectory.Get!("heading").get();
                 auto v = acoustic_results[idx].trajectory.Get!("v").get();
                 auto vn_hat = acoustic_results[idx].trajectory.Get!("vn_hat").get();
-                /+plt.figure();
+
+                plt.figure();
                 plt.plot(x, CT);
-                plt.xlabel("X, ft", ["fontsize": 14]);
+                plt.xlabel("X, m", ["fontsize": 14]);
                 plt.ylabel("$C_T$", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
                     plt.savefig(stripExtension(
                             state_figure_file) ~ "_CT_" ~ extension(state_figure_file));
-                }+/
+                }
 
                 plt.figure();
                 plt.plot(t, CT);
@@ -657,18 +654,18 @@ void main(string[] args)
                 if (state_figure_file.length > 0)
                 {
                     plt.savefig(stripExtension(
-                            state_figure_file) ~ "_CT_" ~ extension(state_figure_file));
+                            state_figure_file) ~ "_CT_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
-                /+plt.figure();
+                plt.figure();
                 plt.plot(x, mu);
-                plt.xlabel("X, ft", ["fontsize": 14]);
+                plt.xlabel("X, m", ["fontsize": 14]);
                 plt.ylabel("$\\mu$", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
                     plt.savefig(stripExtension(
                             state_figure_file) ~ "_mu_" ~ extension(state_figure_file));
-                }+/
+                }
 
                 plt.figure();
                 plt.plot(t, mu);
@@ -677,18 +674,18 @@ void main(string[] args)
                 if (state_figure_file.length > 0)
                 {
                     plt.savefig(stripExtension(
-                            state_figure_file) ~ "_mu_" ~ extension(state_figure_file));
+                            state_figure_file) ~ "_mu_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
-                /+plt.figure();
+                plt.figure();
                 plt.plot(x, gamma, x, gamma_e);
-                plt.xlabel("X, ft", ["fontsize": 14]);
+                plt.xlabel("X, m", ["fontsize": 14]);
                 plt.ylabel("$\\gamma$", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
                     plt.savefig(stripExtension(
                             state_figure_file) ~ "_gamma_" ~ extension(state_figure_file));
-                }+/
+                }
 
 
                 plt.figure();
@@ -698,7 +695,7 @@ void main(string[] args)
                 if (state_figure_file.length > 0)
                 {
                     plt.savefig(stripExtension(
-                            state_figure_file) ~ "_gamma_e_time_" ~ extension(state_figure_file));
+                            state_figure_file) ~ "_gamma_e_time_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
 
@@ -709,90 +706,90 @@ void main(string[] args)
                 if (state_figure_file.length > 0)
                 {
                     plt.savefig(stripExtension(
-                            state_figure_file) ~ "_heading_time_" ~ extension(state_figure_file));
+                            state_figure_file) ~ "_heading_time_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
 
 
-                /+plt.figure();
+                plt.figure();
                 plt.plot(x, z);
-                plt.xlabel("X, ft", ["fontsize": 14]);
-                plt.ylabel("Z, ft", ["fontsize": 14]);
+                plt.xlabel("X, m", ["fontsize": 14]);
+                plt.ylabel("Z, m", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
                     plt.savefig(stripExtension(state_figure_file) ~ "_z_" ~ extension(state_figure_file));
-                }+/
+                }
 
                 plt.figure();
                 plt.plot(t, v, t, vn_hat);
-                plt.xlabel("t, ft", ["fontsize": 14]);
+                plt.xlabel("t, s", ["fontsize": 14]);
                 plt.ylabel("v, m/s", ["fontsize": 14]);
                 plt.legend(["v", "vn_hat"]);
                 if (state_figure_file.length > 0)
                 {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_vvt_" ~ extension(state_figure_file));
+                    plt.savefig(stripExtension(state_figure_file) ~ "_vvt_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
                 plt.figure();
                 plt.plot(t, z);
-                plt.xlabel("t, ft", ["fontsize": 14]);
-                plt.ylabel("Z, ft", ["fontsize": 14]);
+                plt.xlabel("t, s", ["fontsize": 14]);
+                plt.ylabel("Z, m", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_zvt_" ~ extension(state_figure_file));
+                    plt.savefig(stripExtension(state_figure_file) ~ "_zvt_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
                 plt.figure();
                 plt.plot(t, x);
-                plt.xlabel("t, ft", ["fontsize": 14]);
-                plt.ylabel("X, ft", ["fontsize": 14]);
+                plt.xlabel("t, s", ["fontsize": 14]);
+                plt.ylabel("X, m", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_xvt_" ~ extension(state_figure_file));
+                    plt.savefig(stripExtension(state_figure_file) ~ "_xvt_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
                 plt.figure();
                 plt.plot(t, y);
-                plt.xlabel("t, ft", ["fontsize": 14]);
-                plt.ylabel("Y, ft", ["fontsize": 14]);
+                plt.xlabel("t, s", ["fontsize": 14]);
+                plt.ylabel("Y, m", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_yvt_" ~ extension(state_figure_file));
+                    plt.savefig(stripExtension(state_figure_file) ~ "_yvt_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
                 plt.figure();
                 plt.plot(t, vx);
-                plt.xlabel("t, ft", ["fontsize": 14]);
-                plt.ylabel("V_x, ft/s", ["fontsize": 14]);
+                plt.xlabel("t, s", ["fontsize": 14]);
+                plt.ylabel("V_x, m/s", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_vxvt_" ~ extension(state_figure_file));
+                    plt.savefig(stripExtension(state_figure_file) ~ "_vxvt_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
                 plt.figure();
                 plt.plot(t, vy);
-                plt.xlabel("t, ft", ["fontsize": 14]);
-                plt.ylabel("V_y, ft/s", ["fontsize": 14]);
+                plt.xlabel("t, s", ["fontsize": 14]);
+                plt.ylabel("V_y, m/s", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_vyvt_" ~ extension(state_figure_file));
+                    plt.savefig(stripExtension(state_figure_file) ~ "_vyvt_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
                 plt.figure();
                 plt.plot(t, vz);
-                plt.xlabel("t, ft", ["fontsize": 14]);
-                plt.ylabel("V_z, ft/s", ["fontsize": 14]);
+                plt.xlabel("t, s", ["fontsize": 14]);
+                plt.ylabel("V_z, m/s", ["fontsize": 14]);
                 if (state_figure_file.length > 0)
                 {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_vzvt_" ~ extension(state_figure_file));
+                    plt.savefig(stripExtension(state_figure_file) ~ "_vzvt_" ~ idx.to!string~ extension(state_figure_file));
                 }
 
-            }+/
-            /+if (plotting)
+            }
+            if (plotting)
             {
                 plt.show();
             }
-            plt.clear();+/
+            plt.clear();
         }
     }
     double min_time = double.infinity;
