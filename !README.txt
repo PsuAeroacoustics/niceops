@@ -8,13 +8,21 @@ Compiling on Linux
 	b) netCDF
 	c) Boost
 	d) libeigen3
+	e) CMAKE
+	f) DMD
 
 For ubuntu as of 10/12/2021, CGAL, Boost, and libeigen3 are up to date and available. NetCDF will need to be installed from the website. Steps for these installations on ubuntu are written below:
 		I)   sudo apt-get install libeigen3-dev
 		II)  sudo apt-get install libcgal-dev
 		III) sudo apt-get install libboost-all-dev
 		IV)  sudo apt-get install libnetcdf-dev libnetcdff-dev
-		V)   download ldc2 from github: https://github.com/ldc-developers/ldc/releases/tag/v1.27.1
+		V) 	 sudo apt install cmake
+		VI)  install DMD with the following:
+			sudo wget https://netcologne.dl.sourceforge.net/project/d-apt/files/d-apt.list -O /etc/apt/sources.list.d/d-apt.list
+			sudo apt-get update --allow-insecure-repositories
+			sudo apt-get -y --allow-unauthenticated install --reinstall d-apt-keyring
+			sudo apt-get update && sudo apt-get install dmd-compiler dub
+		VII)   download ldc2 from github: https://github.com/ldc-developers/ldc/releases/tag/v1.27.1
 			a) unzip ldc2 using "tar xd /folder/to/ldc2-1.XX.X-linux-86_64.tar.xz"
 			b) move ldc2 to ./.local/bin directory
 				You may need to make this. The command is "mkdir -p ./.local/bin" from within your home directory (navigated to using cd  ~/)
