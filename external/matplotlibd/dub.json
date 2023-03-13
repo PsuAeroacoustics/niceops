@@ -8,5 +8,6 @@
     "targetType": "staticLibrary",
     "targetPath": "build",
     "workingDirectory": "build",
-    "preBuildCommands": ["python3 $PACKAGE_DIR/python/prebuild.py $PACKAGE_DIR"]
+    "preBuildCommands-posix": ["python3 $PACKAGE_DIR/python/prebuild.py $PACKAGE_DIR"],
+    "preBuildCommands-windows": ["python $PACKAGE_DIR/python/prebuild.py $PACKAGE_DIR"]
 }
