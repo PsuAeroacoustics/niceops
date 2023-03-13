@@ -6,13 +6,26 @@
 	},
 	"targetType": "executable",
 	"excludedSourceFiles": ["source/niceops/wopwop2aam.d"],
-	"preBuildCommands": [
+	"preBuildCommands-posix": [
 		"mkdir $NICEOPS_PACKAGE_DIR/splinter_cpp/build ; cd $NICEOPS_PACKAGE_DIR/splinter_cpp/build ; cmake ../ -DBUILD_TYPE=$BUILD_TYPE; make",
 		"mkdir $NICEOPS_PACKAGE_DIR/interpolator_cpp/build ; cd $NICEOPS_PACKAGE_DIR/interpolator_cpp/build ; cmake ../ -DBUILD_TYPE=$BUILD_TYPE; make"
 	],
-	"lflags": ["-L${NICEOPS_PACKAGE_DIR}/splinter_cpp/build", "-L${NICEOPS_PACKAGE_DIR}/splinter_cpp/build/external/splinter", "-L${NICEOPS_PACKAGE_DIR}/interpolator_cpp/build"],
-	"lflags-posix": ["-lstdc++", "-lsplinter_cpp", "-lsplinter-static"],
-	"libs": ["gmp", "mpfr", "netcdf", "interpolator"],
+	"preBuildCommands-windows": [
+		"mkdir $NICEOPS_PACKAGE_DIR\\splinter_cpp\\build & cd $NICEOPS_PACKAGE_DIR\\splinter_cpp\\build & cmake ../ -DBUILD_TYPE=release & cmake --build .\\ --config=release",
+		"mkdir $NICEOPS_PACKAGE_DIR\\interpolator_cpp\\build & cd $NICEOPS_PACKAGE_DIR\\interpolator_cpp\\build & cmake ../ -DBUILD_TYPE=release -DBOOST_INCLUDEDIR=$NICEOPS_PACKAGE_DIR\\interpolator_cpp\\external\\boost_1_81_0 & cmake --build .\\ --config=release"
+	],
+	"lflags-windows": [
+		"/LIBPATH:${NICEOPS_PACKAGE_DIR}/splinter_cpp/build/Release",
+		"/LIBPATH:${NICEOPS_PACKAGE_DIR}/splinter_cpp/build/external/splinter/Release",
+		"/LIBPATH:${NICEOPS_PACKAGE_DIR}/interpolator_cpp/build/Release",
+		"/LIBPATH:C:\\Program Files\\netCDF 4.9.1\\lib",
+		"/LIBPATH:$GMP_LIB_DIR",
+		"/NODEFAULTLIB:MSVCRT",
+		"/NODEFAULTLIB:libucrt"
+	],
+	"lflags-posix": ["-L${NICEOPS_PACKAGE_DIR}/splinter_cpp/build", "-L${NICEOPS_PACKAGE_DIR}/splinter_cpp/build/external/splinter", "-L${NICEOPS_PACKAGE_DIR}/interpolator_cpp/build", "-lstdc++", "-lsplinter_cpp", "-lsplinter-static"],
+	"libs-windows": ["splinter_cpp", "splinter-static", "libgmp-10", "libmpfr-4", "ucrt"],
+	"libs": ["netcdf", "interpolator"],
 	"buildTypes": {
 		"debug": {
 			"buildOptions": ["debugMode", "debugInfo"],

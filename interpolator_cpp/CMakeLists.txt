@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.1)
 
 project(interpolator_cpp VERSION 1.0 LANGUAGES C CXX)
 
+message(NOTICE "BUILD_TYPE set to ${BUILD_TYPE}")
 if(${BUILD_TYPE} STREQUAL "")
 	set(CMAKE_BUILD_TYPE "Debug")
 elseif(${BUILD_TYPE} MATCHES "debug")

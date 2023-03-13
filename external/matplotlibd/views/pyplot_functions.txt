@@ -5,8 +5,12 @@ AutoLocator
 Axes
 Button
 Circle
+Enum
+ExitStack
 Figure
+FigureBase
 FigureCanvasBase
+FigureManagerBase
 FixedFormatter
 FixedLocator
 FormatStrFormatter
@@ -143,7 +147,6 @@ pink
 plasma
 plot
 plot_date
-plotting
 polar
 prism
 psd

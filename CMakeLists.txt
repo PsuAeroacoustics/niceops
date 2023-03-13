@@ -53,11 +53,14 @@ if(NOT CMAKE_BUILD_TYPE)
           FORCE)
 endif (NOT CMAKE_BUILD_TYPE)
 
-find_package(netCDF)
+find_package(netCDF 4.9.1)
 message(NOTICE ${netCDF_VERSION})
 
 # Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place). Keeping windows static for now.
-find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
+find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${netCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${netCDF_VERSION}\\lib")
+
+message(NOTICE "C:\\Program Files\\netCDF ${netCDF_VERSION}\\lib")
+message(NOTICE ${NCDF})
 
 find_package(Boost)
 find_package(CGAL COMPONENTS Core)
@@ -85,7 +88,7 @@ set_target_properties(
     LINKER_LANGUAGE CXX
     #LINK_FLAGS ""
     # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-    #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+    VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
 )
 #set_target_properties(
 #  sphere_database PROPERTIES
@@ -135,7 +138,7 @@ set_target_properties(
     LINKER_LANGUAGE CXX
     #LINK_FLAGS ""
     # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-    #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+    VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
 )
 
 target_link_libraries(trajectory splinter-static)
@@ -193,7 +196,7 @@ if(MSVC)
       LINKER_LANGUAGE D
       LINK_FLAGS "-L/NODEFAULTLIB:MSVCRT -L/NODEFAULTLIB:libucrt ucrt.lib"
       # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-      #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+      VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
   )
 else()
   set_target_properties(
