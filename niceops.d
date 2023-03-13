@@ -31,9 +31,10 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
     import core.stdc.stdlib : exit;
     import std.conv : to;
     import std.exception : enforce;
-    import std.math : isNaN, log10, sqrt;
+    import std.math : isNaN, log10, sqrt, abs;
     import std.datetime.stopwatch : StopWatch, AutoStart;
     import std.typecons : tuple;
+    import std.algorithm : map, sum;
     // Start stopwatch
     immutable watch = StopWatch(AutoStart.yes);
     auto t1 = watch.peek.total!"msecs";
@@ -64,12 +65,44 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
     alias IndexTuple = Tuple!(size_t, "index", double, "range", double[3], "observer");
     auto indexed_range = new IndexTuple[observers.length];
 
+    auto rotor_positions = new Vec4[trajectory.vehicle.rotor_positions.length];
+    auto levels = new double[trajectory.vehicle.rotor_positions.length];
+    double[] CTs = new double[trajectory.vehicle.rotor_positions.length];
+
+    double total_length = trajectory.vehicle.rotor_positions.map!(r => abs(r[0])).sum;
+
     foreach (it, const ref state; trajectory.states)
     {
+        auto n = Vec3(state.nx, state.ny, state.nz);
+        n = n.normalize;
+
+        auto v = Vec3(state.vx, state.vy, state.vz);
+        auto t = n.cross(v);
+        t = t.normalize;
+
+        auto f = t.cross(n);
+        f = f.normalize;
+
+        auto pos = Vec4(state.x, state.y, state.z, 1);
+
         double[3] source = [state.x, state.y, state.z];
         double[3] velocity = [state.vx, state.vy, state.vz];
         double[3] normal = [state.nx, state.ny, state.nz];
         
+        auto ac_xform = Mat4(
+            f[0], t[0], n[0], pos[0],
+            f[1], t[1], n[1], pos[1],
+            f[2], t[2], n[2], pos[2],
+            0,    0,    0,    1
+        );
+
+        foreach(p_idx, ref r_pos; trajectory.vehicle.rotor_positions) {
+            rotor_positions[p_idx] = ac_xform*r_pos;
+        }
+
+        trace("Vehicle position: ", pos);
+        trace("Rotor positions: ", rotor_positions);
+
         foreach(idx, ref obs; observers) {
             indexed_range[idx].observer[] = obs[];
             indexed_range[idx].index = idx;
@@ -84,9 +117,20 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
 
         foreach (index, observer; sorted_observers)
         {
-            auto level = database.level_at_observer(observer, source,
-                        velocity, normal, state.mu, qsam ? state.fpa_e : state.fpa, state.CT, state.heading);
+            foreach(r_idx, ref r_pos; rotor_positions) {
+                source[0] = r_pos[0];
+                source[1] = r_pos[1];
+                source[2] = r_pos[2];
+                CTs[r_idx] = state.CT*abs(trajectory.vehicle.rotor_positions[(r_idx - 1)%2][0])/total_length;
 
+                levels[r_idx] = database.level_at_observer(observer, source,
+                        velocity, normal, state.mu, qsam ? state.fpa_e : state.fpa, CTs[r_idx], state.heading);
+            }
+
+            trace("Main CT: ", state.CT, " rotor CTs: ", CTs);
+            auto level = 10.0*log10(levels.map!(l => 10.0^^(0.1*l)).sum );
+
+            trace("Combined level: ", level, " rotor levels: ", levels);
             result.time_history[index][it] = level;
 
             if(!ambient_level.isNaN) {

@@ -21,6 +21,11 @@ import worldtransforms;
 
 import numd.linearalgebra.matrix;
 
+alias Vec3 = Vector!(3, double);
+alias Vec4 = Vector!(4, double);
+alias Mat3 = Matrix!(3, 3, double);
+alias Mat4 = Matrix!(4, 4, double);
+
 immutable g = 9.80665; // m/s^^2
 immutable mps2g = 1.0 / g;
 immutable ft2m = 0.3048;
@@ -331,6 +336,7 @@ class Trajectory
 
     struct dimensional_data
     {
+        Vec4[] rotor_positions;
         double tip_speed; // m/s
         double radius; // m
         double weight; // kg
@@ -622,14 +628,24 @@ static pure void diff(double dx, in double[] f, out double[] df, out double[] dd
 
 static Trajectory.dimensional_data configure_vehicle(string filename)
 {
+    import std.algorithm : map;
     import std.json : parseJSON;
     import std.file : readText;
     import std.conv : to;
+    import std.exception : enforce;
 
     info("Reading vehicle configuration: ", filename);
     auto config = readText(filename).parseJSON;
 
     Trajectory.dimensional_data vehicle;
+
+    auto positons = config["Rotor Positions"].array;
+    vehicle.rotor_positions = new Vec4[positons.length];
+    foreach(idx, ref pos; positons) {
+        auto p_arr = pos.array.map!(a => a.floating).array ~ [1.0];
+        enforce(p_arr.length == 4, "More than 3 vector components specified in vehicle file");
+        vehicle.rotor_positions[idx] = Vec4(p_arr);
+    }
     vehicle.radius = to!double(config["Main Rotor"]["radius"].str);
     vehicle.tip_speed = to!double(config["Main Rotor"]["tip speed"].str);
     vehicle.weight = to!double(config["Vehicle"]["weight"].str) * g; //Actually a mass (kg), so convert to Newtons
