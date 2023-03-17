@@ -23,7 +23,7 @@
 		"/NODEFAULTLIB:MSVCRT",
 		"/NODEFAULTLIB:libucrt"
 	],
-	"lflags-posix": ["-L${NICEOPS_PACKAGE_DIR}/splinter_cpp/build", "-L${NICEOPS_PACKAGE_DIR}/splinter_cpp/build/external/splinter", "-L${NICEOPS_PACKAGE_DIR}/interpolator_cpp/build", "-lstdc++", "-lsplinter_cpp", "-lsplinter-static"],
+	"lflags-posix": ["-L${NICEOPS_PACKAGE_DIR}/splinter_cpp/build", "-L${NICEOPS_PACKAGE_DIR}/splinter_cpp/build/external/splinter", "-L${NICEOPS_PACKAGE_DIR}/interpolator_cpp/build", "-lstdc++", "-lsplinter_cpp", "-lsplinter-static", "-lgmp", "-lmpfr"],
 	"libs-windows": ["splinter_cpp", "splinter-static", "libgmp-10", "libmpfr-4", "ucrt"],
 	"libs": ["netcdf", "interpolator"],
 	"buildTypes": {
