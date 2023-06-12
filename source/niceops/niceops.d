@@ -12,12 +12,14 @@ struct AcousticResult {
     double[] dnl;
     double[][] time_history;
     Trajectory trajectory;
+    double[] power;
 
     this(size_t timesteps, size_t observers, Trajectory _trajectory) {
         trajectory = _trajectory;
         sel = new double[observers];
         dnl = new double[observers];
         time_history = new double[][](observers, timesteps);
+        power = new double[timesteps];
     }
 }
 
@@ -79,7 +81,7 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
         auto sorted_observers = 
             indexed_range
                 .sort!("a.range < b.range")
-                .map!(a => tuple(a.index, a.observer));
+                .map!(a => tuple(a.index, a.observer)); //limit the search area of observers
         
 
         foreach (index, observer; sorted_observers)
@@ -100,6 +102,9 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
                 }
             }
         }
+        // query power file
+        auto power = database.eval_power(state.mu, qsam ? state.fpa_e : state.fpa, state.CT); //do we need qsam?
+        result.power[it]=power;
     }
 
     foreach (index, observer; observers)
@@ -999,7 +1004,7 @@ unittest
 }
 
 static void write_levels(const double[] x_obs, const double[] y_obs,
-        const double[] levels, string out_file, bool scattered, bool stk_format = false)
+        const double[] levels, string out_file, bool scattered, bool stk_format = false) //duplicate something like this for power in it's own file D.Zachos
 {
     import std.stdio : File;
     import std.file : exists, mkdirRecurse;

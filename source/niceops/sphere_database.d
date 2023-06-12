@@ -241,6 +241,16 @@ unittest
         * metric[i_phi][i_theta][indicies[2]] + weights[3] * metric[i_phi][i_theta][indicies[3]];
 }
 
+//D. Zachos query shaft power condition
+//dynamic arrays - allocatable (e.g. [])
+//static array - fixed (e.g. [4] - 4 element array)
+@nogc private double barycentric_interp_2D(in double[] metric, in double[4] weights, in size_t[4] indicies)
+{
+    return weights[0] * metric[indicies[0]] + weights[1]
+        * metric[indicies[1]] + weights[2]
+        * metric[indicies[2]] + weights[3] * metric[indicies[3]];
+}
+
 @nogc private T dot(T)(in T[] x, in T[] y)
 {
     return zip(x, y).map!"a[0]*a[1]".sum();
@@ -425,6 +435,7 @@ class Database
     immutable double[] thetas;
     double[][][] dBA;
     double[][][] EAA;
+    double[] ShaftPower;
     immutable double sphere_radius, advance_ratio_min, advance_ratio_max, flight_path_angle_min,
         flight_path_angle_max, thrust_coefficient_min, thrust_coefficient_max, max_level;
 
@@ -465,27 +476,31 @@ class Database
         advance_ratios.reserve(group_ids.length);
         flight_path_angles.reserve(group_ids.length);
         thrust_coefficients.reserve(group_ids.length);
+        ShaftPower.reserve(group_ids.length);
 
         // Local operating parameters
         double advance_ratio, flight_path_angle, thrust_coefficient, radius,
-            scale, dimensional_radius;
+            scale, dimensional_radius, ShaftPower;
         double[] phis_scattered, thetas_scattered, dBAs_scattered, EAAs_scattered;
         size_t nchannels0;
         auto dba_max = -double.infinity;
         // Cycle through sphere groups and load data
         foreach (i, group_id; group_ids)
         {
+            // header information for database
             require_scalar(group_id, "advance_ratio", advance_ratio);
             require_scalar(group_id, "flight_path_angle", flight_path_angle);
             require_scalar(group_id, "thrust_coefficient", thrust_coefficient);
             require_scalar(group_id, "radius", radius);
             require_scalar(group_id, "rotor_scale", scale);
+            require_scalar(group_id, "ShaftPower", advance_ratio); // should probably be total_power
             advance_ratios ~= advance_ratio;
             flight_path_angles ~= flight_path_angle;
             thrust_coefficients ~= thrust_coefficient;
+            ShaftPower ~= ShaftPower;
             trace("Sphere ", group_id, " loaded with \t μ = ", advance_ratios[i],
                     ",\t γ = ", flight_path_angles[i], ",\t CT = ",
-                    thrust_coefficients[i], ",\t scale = ", scale, ",\t radius = ", radius);
+                    thrust_coefficients[i], ",\t scale = ", scale, ",\t radius = ", radius); //log output
             if (i == 0)
             {
                 dimensional_radius = radius * scale;
@@ -596,7 +611,7 @@ class Database
     }
 
     @nogc double eval(double range, double phi, double theta, double advance_ratio,
-            double flight_path_angle, double thrust_coefficient)
+            double flight_path_angle, double thrust_coefficient) 
     {
         // Find the sphere grid points bounding the desired phi, theta
         auto phi_range = bracket(phis, phi);
@@ -620,18 +635,24 @@ class Database
         double[4] weights;
 
         barycentric(advance_ratio, flight_path_angle, thrust_coefficient,
-                weights.ptr, indicies.ptr);
+                weights.ptr, indicies.ptr); // takes in flight condition and returns sphere D. Zachos
         //trace("Barycentric weights: ", weights, " and indicies ", indicies);
-
+        
+        
+        
+        //D. Zachos this is where sphere database is queried
         // Barycentric interpolation between conditions at each gridpoint
         auto d11 = barycentric_interp(dBA, phi_range[0], theta_range[0], weights, indicies);
         auto d12 = barycentric_interp(dBA, phi_range[0], theta_range[1], weights, indicies);
         auto d21 = barycentric_interp(dBA, phi_range[1], theta_range[0], weights, indicies);
         auto d22 = barycentric_interp(dBA, phi_range[1], theta_range[1], weights, indicies);
-        auto e11 = barycentric_interp(EAA, phi_range[0], theta_range[0], weights, indicies);
+
+        auto e11 = barycentric_interp(EAA, phi_range[0], theta_range[0], weights, indicies); //atm absorption?
         auto e12 = barycentric_interp(EAA, phi_range[0], theta_range[1], weights, indicies);
         auto e21 = barycentric_interp(EAA, phi_range[1], theta_range[0], weights, indicies);
         auto e22 = barycentric_interp(EAA, phi_range[1], theta_range[1], weights, indicies);
+
+        auto s11 = barycentric_interp_2D(ShaftPower, weights, indicies);
         // Bilinear interolation between gridpoints
         auto p1 = phis[phi_range[0]];
         auto p2 = phis[phi_range[1]];
@@ -656,10 +677,11 @@ class Database
         assert(isFinite( excess_factor));
         assert(isFinite(excess_attenuation));
         assert(isFinite(spreading_loss));
-        auto ground_level = sphere_level - spreading_loss - excess_attenuation;
+        auto ground_level = sphere_level - spreading_loss - excess_attenuation; //output noise at ground
         //trace("Ground level: ", ground_level);
-        return ground_level;
-    }
+        import std.typecons : tuple; // create return structure
+        return tuple!("ground_level", "shaft_power")(ground_level, s11); //populate return data with tuple containing ground noise and shaft power
+    } //could make eval_power separate function D.Zachos
 
     @nogc double level_at_observer(double[3] observer, double[3] source, double[3] velocity,
             double[3] normal, double advance_ratio, double flight_path_angle,
@@ -676,7 +698,7 @@ class Database
                 flight_path_angle, thrust_coefficient);
         assert(isFinite(level));
 
-        return level;
+        return level; //level.ground_level for just SPL at ground observer
     }
 
     double level_along_bearing(double range, double bearing, double altitude, double[3] velocity,
