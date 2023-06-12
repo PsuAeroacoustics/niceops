@@ -28,6 +28,7 @@ splinter-test
 /databases/
 octave-workspace
 /state/
+/NICEOPS_dep/
 
 external/splinter/Doxyfile
 

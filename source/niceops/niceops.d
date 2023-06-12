@@ -103,8 +103,8 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
             }
         }
         // query power file
-        auto power = database.eval_power(state.mu, qsam ? state.fpa_e : state.fpa, state.CT); //do we need qsam?
-        result.power[it]=power;
+        //auto power = database.eval_power(state.mu, qsam ? state.fpa_e : state.fpa, state.CT); //do we need qsam?
+        //result.power[it]=power;
     }
 
     foreach (index, observer; observers)
@@ -392,7 +392,8 @@ void main(string[] args)
         enforce(path_files.length == databases.length, "Need the same number of database files as flight path files");
         enforce(path_files.length == out_files.length, "Need the same number of SEL output files as flight path files");
     } catch(Exception ex) {
-        fatal("Caught exception while setting up observer grid: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
+        fatal("Caught exce\
+        ption while setting up observer grid: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
         exit(-3);
     }
 
