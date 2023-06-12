@@ -1,0 +1,11 @@
+$env:Path += ‘D:\Software\Cmake\bin’
+$env:GMP_LIB_DIR=‘D:\VLRCOE\NICEOPS\NICEOPS_dep\CGAL-5.5.1\auxiliary\gmp\lib’
+$env:BOOST_INCLUDEDIR='D:\VLRCOE\NICEOPS\interpolator_cpp\external\boost_1_81_0\'
+$env:BOOST_LIBRARYDIR='D:\VLRCOE\NICEOPS\interpolator_cpp\external\boost_1_81_0\lib64-msvc-14.3\'
+$env:Path += ';D:\VLRCOE\NICEOPS\interpolator_cpp\external\boost_1_81_0\'
+$env:Path += ';D:\VLRCOE\NICEOPS\NICEOPS_dep\CGAL-5.5.1\auxiliary\gmp\lib' 
+$env:Path += ';D:\Software\Cmake\bin'                                                                        
+$env:Path += ';D:\VLRCOE\NICEOPS\interpolator_cpp\external'                                                                     
+$env:Path += ';D:\VLRCOE\NICEOPS\NICEOPS_dep\CGAL-5.5.1\'                  
+$env:PATH -split ';'                                                                                            
+dub build -b release --compiler=ldc2    
