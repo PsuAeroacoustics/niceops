@@ -102,6 +102,7 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
                 }
             }
         }
+        // D. Zachos 6.12.2023
         // query power file
         //auto power = database.eval_power(state.mu, qsam ? state.fpa_e : state.fpa, state.CT); //do we need qsam?
         //result.power[it]=power;
@@ -312,6 +313,9 @@ void main(string[] args)
         double[] x = new double[num_elements];
         double[] y = new double[num_elements];
         double[] dba = new double[num_elements];
+
+        // D. Zachos 6.13.2023
+        power = databases[0].eval_power(adv, fpa, ct);
 
         foreach(i, theta; thetas.enumerate) {
             auto theta_r = theta*(PI/180.0);

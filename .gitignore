@@ -29,6 +29,8 @@ splinter-test
 octave-workspace
 /state/
 /NICEOPS_dep/
+/interpolator_cpp/
+/.dub/
 
 external/splinter/Doxyfile
 

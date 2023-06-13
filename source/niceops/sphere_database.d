@@ -638,7 +638,7 @@ class Database
                 weights.ptr, indicies.ptr); // takes in flight condition and returns sphere D. Zachos
         //trace("Barycentric weights: ", weights, " and indicies ", indicies);
         
-        //D. Zachos this is where sphere database is queried
+        //This is where sphere database is queried
         // Barycentric interpolation between conditions at each gridpoint
         auto d11 = barycentric_interp(dBA, phi_range[0], theta_range[0], weights, indicies);
         auto d12 = barycentric_interp(dBA, phi_range[0], theta_range[1], weights, indicies);
@@ -680,25 +680,24 @@ class Database
     } 
     
     //D. Zachos 6.12.2023 Added eval power to query power results in database
-    // @nogc double eval_power(double advance_ratio, double flight_path_angle, double thrust_coefficient) 
-    // {
-    //     advance_ratio = clamp((advance_ratio - advance_ratio_min) / (
-    //             advance_ratio_max - advance_ratio_min));
-    //     flight_path_angle = clamp((flight_path_angle - flight_path_angle_min) / (
-    //             flight_path_angle_max - flight_path_angle_min));
-    //     thrust_coefficient = clamp((thrust_coefficient - thrust_coefficient_min) / (
-    //             thrust_coefficient_max - thrust_coefficient_min));
+    @nogc double eval_power(double advance_ratio, double flight_path_angle, double thrust_coefficient) 
+     {
+         advance_ratio = clamp((advance_ratio - advance_ratio_min) / (
+                 advance_ratio_max - advance_ratio_min));
+         flight_path_angle = clamp((flight_path_angle - flight_path_angle_min) / (
+                 flight_path_angle_max - flight_path_angle_min));
+         thrust_coefficient = clamp((thrust_coefficient - thrust_coefficient_min) / (
+                 thrust_coefficient_max - thrust_coefficient_min));
         
-    //     // Get barycentric weights
-    //     size_t[4] indicies;
-    //     double[4] weights;
+         // Get barycentric weights
+         size_t[4] indicies;
+         double[4] weights;
 
-    //     barycentric(advance_ratio, flight_path_angle, thrust_coefficient, weights.ptr, indicies.ptr); 
-    //     // takes in flight condition and returns power data
-   
-    //     auto power = barycentric_interp_2D(ShaftPower, weights, indicies);
-    //     return power; 
-    // }
+         barycentric(advance_ratio, flight_path_angle, thrust_coefficient, weights.ptr, indicies.ptr); 
+         // takes in flight condition and returns power data
+         auto power = barycentric_interp_2D(ShaftPower, weights, indicies);
+         return power; 
+     }
 
     @nogc double level_at_observer(double[3] observer, double[3] source, double[3] velocity,
             double[3] normal, double advance_ratio, double flight_path_angle,
