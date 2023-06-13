@@ -31,6 +31,8 @@ octave-workspace
 /NICEOPS_dep/
 /interpolator_cpp/
 /.dub/
+/splinter_cpp/
+/source/NICEOPS.code-workspace
 
 external/splinter/Doxyfile
 
