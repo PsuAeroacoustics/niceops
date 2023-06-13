@@ -244,12 +244,12 @@ unittest
 //D. Zachos query shaft power condition
 //dynamic arrays - allocatable (e.g. [])
 //static array - fixed (e.g. [4] - 4 element array)
-@nogc private double barycentric_interp_2D(in double[] metric, in double[4] weights, in size_t[4] indicies)
-{
-    return weights[0] * metric[indicies[0]] + weights[1]
-        * metric[indicies[1]] + weights[2]
-        * metric[indicies[2]] + weights[3] * metric[indicies[3]];
-}
+//@nogc private double barycentric_interp_2D(in double[] metric, in double[4] weights, in size_t[4] indicies)
+//{
+//    return weights[0] * metric[indicies[0]] + weights[1]
+//        * metric[indicies[1]] + weights[2]
+//        * metric[indicies[2]] + weights[3] * metric[indicies[3]];
+//}
 
 @nogc private T dot(T)(in T[] x, in T[] y)
 {
@@ -435,7 +435,7 @@ class Database
     immutable double[] thetas;
     double[][][] dBA;
     double[][][] EAA;
-    double[] ShaftPower;
+    //double[] ShaftPower; //D. Zachos add shaft power to database
     immutable double sphere_radius, advance_ratio_min, advance_ratio_max, flight_path_angle_min,
         flight_path_angle_max, thrust_coefficient_min, thrust_coefficient_max, max_level;
 
@@ -476,11 +476,11 @@ class Database
         advance_ratios.reserve(group_ids.length);
         flight_path_angles.reserve(group_ids.length);
         thrust_coefficients.reserve(group_ids.length);
-        ShaftPower.reserve(group_ids.length);
+        //ShaftPower.reserve(group_ids.length); //D. Zachos shaft power addition
 
         // Local operating parameters
         double advance_ratio, flight_path_angle, thrust_coefficient, radius,
-            scale, dimensional_radius, ShaftPower;
+            scale, dimensional_radius;//, ShaftPower;
         double[] phis_scattered, thetas_scattered, dBAs_scattered, EAAs_scattered;
         size_t nchannels0;
         auto dba_max = -double.infinity;
@@ -493,11 +493,11 @@ class Database
             require_scalar(group_id, "thrust_coefficient", thrust_coefficient);
             require_scalar(group_id, "radius", radius);
             require_scalar(group_id, "rotor_scale", scale);
-            require_scalar(group_id, "ShaftPower", advance_ratio); // should probably be total_power
+            //require_scalar(group_id, "ShaftPower", ShaftPower); // should probably be total_power D. Zachos
             advance_ratios ~= advance_ratio;
             flight_path_angles ~= flight_path_angle;
             thrust_coefficients ~= thrust_coefficient;
-            ShaftPower ~= ShaftPower;
+            //ShaftPower ~= ShaftPower; //D. Zachos
             trace("Sphere ", group_id, " loaded with \t μ = ", advance_ratios[i],
                     ",\t γ = ", flight_path_angles[i], ",\t CT = ",
                     thrust_coefficients[i], ",\t scale = ", scale, ",\t radius = ", radius); //log output
@@ -635,7 +635,7 @@ class Database
         double[4] weights;
 
         barycentric(advance_ratio, flight_path_angle, thrust_coefficient,
-                weights.ptr, indicies.ptr); // takes in flight condition and returns sphere D. Zachos
+                weights.ptr, indicies.ptr); // takes in flight condition and returns sphere
         //trace("Barycentric weights: ", weights, " and indicies ", indicies);
         
         //This is where sphere database is queried
@@ -680,24 +680,24 @@ class Database
     } 
     
     //D. Zachos 6.12.2023 Added eval power to query power results in database
-    @nogc double eval_power(double advance_ratio, double flight_path_angle, double thrust_coefficient) 
-     {
-         advance_ratio = clamp((advance_ratio - advance_ratio_min) / (
-                 advance_ratio_max - advance_ratio_min));
-         flight_path_angle = clamp((flight_path_angle - flight_path_angle_min) / (
-                 flight_path_angle_max - flight_path_angle_min));
-         thrust_coefficient = clamp((thrust_coefficient - thrust_coefficient_min) / (
-                 thrust_coefficient_max - thrust_coefficient_min));
-        
-         // Get barycentric weights
-         size_t[4] indicies;
-         double[4] weights;
-
-         barycentric(advance_ratio, flight_path_angle, thrust_coefficient, weights.ptr, indicies.ptr); 
-         // takes in flight condition and returns power data
-         auto power = barycentric_interp_2D(ShaftPower, weights, indicies);
-         return power; 
-     }
+    //@nogc double eval_power(double advance_ratio, double flight_path_angle, double thrust_coefficient) 
+    // {
+    //     advance_ratio = clamp((advance_ratio - advance_ratio_min) / (
+    //             advance_ratio_max - advance_ratio_min));
+    //     flight_path_angle = clamp((flight_path_angle - flight_path_angle_min) / (
+    //             flight_path_angle_max - flight_path_angle_min));
+    //     thrust_coefficient = clamp((thrust_coefficient - thrust_coefficient_min) / (
+    //             thrust_coefficient_max - thrust_coefficient_min));
+    //    
+    //     // Get barycentric weights
+    //     size_t[4] indicies;
+    //     double[4] weights;
+    //
+    //     barycentric(advance_ratio, flight_path_angle, thrust_coefficient, weights.ptr, indicies.ptr); 
+    //     // takes in flight condition and returns power data
+    //     auto power = barycentric_interp_2D(ShaftPower, weights, indicies);
+    //     return power; 
+    // }
 
     @nogc double level_at_observer(double[3] observer, double[3] source, double[3] velocity,
             double[3] normal, double advance_ratio, double flight_path_angle,
@@ -843,9 +843,9 @@ class Database
             auto EAA_data = new double[](nchannels);
             require_array(group_id, "EAA", nchannels, EAA_data);
 
-            //D. Zachos 
-            auto power_data = new double[](nchannels);
-            require_array(group_id, "ShaftPower", nchannels, ShaftPower);
+            //D. Zachos Add shaft power to database headers
+            //auto power_data = new double[](nchannels);
+            //require_array(group_id, "ShaftPower", nchannels, ShaftPower);
 
             // Validate the database against the known data at sphere surface
             foreach (ch, dBA; dBA_data)

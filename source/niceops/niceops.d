@@ -12,14 +12,14 @@ struct AcousticResult {
     double[] dnl;
     double[][] time_history;
     Trajectory trajectory;
-    double[] power;
+    //double[] power;
 
     this(size_t timesteps, size_t observers, Trajectory _trajectory) {
         trajectory = _trajectory;
         sel = new double[observers];
         dnl = new double[observers];
         time_history = new double[][](observers, timesteps);
-        power = new double[timesteps];
+        //power = new double[timesteps];
     }
 }
 
@@ -315,7 +315,8 @@ void main(string[] args)
         double[] dba = new double[num_elements];
 
         // D. Zachos 6.13.2023
-        power = databases[0].eval_power(adv, fpa, ct);
+        //double power;
+        //power = databases[0].eval_power(adv, fpa, ct);
 
         foreach(i, theta; thetas.enumerate) {
             auto theta_r = theta*(PI/180.0);
@@ -396,8 +397,8 @@ void main(string[] args)
         enforce(path_files.length == databases.length, "Need the same number of database files as flight path files");
         enforce(path_files.length == out_files.length, "Need the same number of SEL output files as flight path files");
     } catch(Exception ex) {
-        fatal("Caught exce\
-        ption while setting up observer grid: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
+						   
+        fatal("Caught exception while setting up observer grid: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
         exit(-3);
     }
 
