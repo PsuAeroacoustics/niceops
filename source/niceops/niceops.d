@@ -12,14 +12,14 @@ struct AcousticResult {
     double[] dnl;
     double[][] time_history;
     Trajectory trajectory;
-    //double[] power;
+    double[] power;
 
     this(size_t timesteps, size_t observers, Trajectory _trajectory) {
         trajectory = _trajectory;
         sel = new double[observers];
         dnl = new double[observers];
         time_history = new double[][](observers, timesteps);
-        //power = new double[timesteps];
+        power = new double[timesteps];
     }
 }
 
