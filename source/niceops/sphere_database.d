@@ -440,6 +440,7 @@ class Database
         auto nc_open_return = nc_open(datafile_path.toStringz, NC_NOWRITE, &file_ncid);
         if (NC_NOERR != nc_open_return)
         {
+            import std.conv : to;
             fatal("Can't open netCDF file at " ~ datafile_path ~ ". Failed with error code: " ~ nc_open_return.to!string);
         }
         scope (exit)
