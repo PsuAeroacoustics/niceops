@@ -437,9 +437,10 @@ class Database
         // Open netCDF file
         int file_ncid;
         info("Opening netCDF file: " ~ datafile_path);
-        if (NC_NOERR != nc_open(datafile_path.toStringz, NC_NOWRITE, &file_ncid))
+        auto nc_open_return = nc_open(datafile_path.toStringz, NC_NOWRITE, &file_ncid);
+        if (NC_NOERR != nc_open_return)
         {
-            fatal("Can't open netCDF file at " ~ datafile_path);
+            fatal("Can't open netCDF file at " ~ datafile_path ~ ". Failed with error code: " ~ nc_open_return.to!string);
         }
         scope (exit)
         {
