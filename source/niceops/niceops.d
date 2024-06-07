@@ -77,6 +77,7 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
 
     size_t interpolation_stride = 0;
     size_t interpolation_idx = 0;
+    
     if(interp_options.num_interpolated_spheres > 0) {
         if(interp_options.num_interpolated_spheres < trajectory.states.length) {
             interpolation_stride = trajectory.states.length/interp_options.num_interpolated_spheres;
@@ -87,7 +88,6 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
             warning("More interpolated spheres requested than available flight states. Providing one interpolated sphere per flight state");
             interpolation_stride = 1;
         }
-        
     }
 
     if(interp_options.num_interpolated_spheres > 1000) {
@@ -474,9 +474,12 @@ void main(string[] args)
             }
         }
 
-        enforce(path_files.length == vehicle_files.length, "Need the same number of vehicle files as flight path files");
-        enforce(path_files.length == databases.length, "Need the same number of database files as flight path files");
-        enforce(path_files.length == out_files.length, "Need the same number of SEL output files as flight path files");
+        if(!interpolate_only) {
+            enforce(path_files.length == vehicle_files.length, "Need the same number of vehicle files as flight path files");
+            enforce(path_files.length == databases.length, "Need the same number of database files as flight path files");
+            enforce(path_files.length == out_files.length, "Need the same number of SEL output files as flight path files");
+        }
+
     } catch(Exception ex) {
         fatal("Caught exception while setting up observer grid: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
         exit(-3);
@@ -488,6 +491,11 @@ void main(string[] args)
 
     if(!parallel_by_observer) {
         acoustic_results = new AcousticResult[path_files.length];
+
+        if(interpolate_only) {
+            out_files = new string[path_files.length];
+            state_files = new string[path_files.length];
+        }
 
         //foreach(idx, e; zip(path_files, databases, vehicle_files, out_files, state_files).parallel(1))
         foreach(idx, e; zip(path_files, databases, vehicle_files, out_files, state_files).enumerate)
