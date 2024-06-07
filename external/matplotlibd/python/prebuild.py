@@ -13,7 +13,7 @@ def extract_function_names(module):
     scope = locals()
 
     def iscallable(name):
-        ignore_decorators = ['dedent','deprecated','silent_list', 'warn_deprecated']
+        ignore_decorators = ['dedent','deprecated','silent_list', 'warn_deprecated', 'cast']
         return eval('callable(mod.{})'.format(name), scope) and name not in ignore_decorators
 
     return filter(iscallable, attr_list)
@@ -25,9 +25,12 @@ def gen_pyplot_functions(dub_root):
     '''
     import matplotlib.pyplot
     from string import ascii_lowercase
+    import os
 
     functions = filter(lambda i: i[0] != '_' or i[0] in ascii_lowercase,
                        extract_function_names(matplotlib.pyplot))
+
+    os.makedirs(dub_root + "/views", exist_ok=True)
 
     with open(dub_root + "/views/pyplot_functions.txt", "w") as f:
         f.write("\n".join(functions))

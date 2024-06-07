@@ -14,7 +14,7 @@ build
 *.lst
 *.png
 *.def
-niceops
+/niceops
 *.dSYM
 *.nc
 *_LAE.csv

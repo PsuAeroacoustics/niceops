@@ -1,13 +1,17 @@
 module sphere_database;
 
+import std.conv : to;
 import std.math;
 import std.numeric : findRoot;
 import std.array : array;
+import std.algorithm : max, maxElement;
 import std.algorithm.sorting : sort;
 import std.algorithm.iteration : uniq, map, each, sum;
 import std.algorithm.searching : minElement, maxElement, until;
 import std.range : zip;
 import std.string : toStringz;
+import std.stdio : writeln;
+import std.uni : toUpper, toLower;
 import std.experimental.logger;
 import std.traits : isFloatingPoint;
 import netcdf;
@@ -114,6 +118,19 @@ private size_t get_dim_length(string dimname, int group_id)
     return dim_length;
 }
 
+private bool get_dim_length(string dimname, int group_id, size_t* dim_length)
+{
+    // Get number of channels
+    int dim_id;
+    bool have_dim = nc_inq_dimid(group_id, toStringz(dimname), &dim_id) == NC_NOERR;
+
+    if(have_dim) {
+        have_dim = NC_NOERR == nc_inq_dimlen(group_id, dim_id, dim_length);
+    }
+
+    return have_dim;
+}
+
 private int get_scalar(T)(int ncid, string variable_name, ref T value)
 {
     int varid;
@@ -143,20 +160,104 @@ private void require_scalar(T)(int ncid, string variable_name, ref T value)
 
 private int get_array(T)(int ncid, string variable_name, size_t countp, ref T[] values)
 {
-    int varid;
-    auto status = nc_inq_varid(ncid, variable_name.toStringz, &varid);
-    if (NC_NOERR != status)
+    int varid_lower, varid_upper, varid_as_is;
+    auto status_lower = nc_inq_varid(ncid, variable_name.toLower.toStringz, &varid_lower);
+    auto status_upper = nc_inq_varid(ncid, variable_name.toUpper.toStringz, &varid_upper);
+    auto status_as_is = nc_inq_varid(ncid, variable_name.toStringz, &varid_as_is);
+    int status;
+
+    if ((NC_NOERR != status_lower) && (NC_NOERR != status_upper) && (NC_NOERR != status_as_is))
     {
-        info("Could not find variable ", variable_name, " in ncid ", ncid, ".");
+        info("Could not find variable ", variable_name, "  in ncid ", ncid, ".");
+        status = status_lower;
     }
     else
     {
+        int varid;
+        if(status_lower == NC_NOERR) {
+            varid = varid_lower;
+        } else if (status_upper == NC_NOERR) {
+            varid = varid_upper;
+        } else {
+            varid = varid_as_is;
+        }
+
         size_t startp = 0;
         values.length = countp;
         status = nc_get_vara(ncid, varid, &startp, &countp, values.ptr);
         if (NC_NOERR != status)
         {
             fatal("Found but could not read variable ", variable_name, "in ncid ", ncid, ".");
+        }
+    }
+    return status;
+}
+
+private int get_data(T)(int ncid, string variable_name, size_t countp, T* values)
+{
+    int varid_lower, varid_upper, varid_as_is;
+    auto status_lower = nc_inq_varid(ncid, variable_name.toLower.toStringz, &varid_lower);
+    auto status_upper = nc_inq_varid(ncid, variable_name.toUpper.toStringz, &varid_upper);
+    auto status_as_is = nc_inq_varid(ncid, variable_name.toStringz, &varid_as_is);
+
+    int status;
+    if ((NC_NOERR != status_lower) && (NC_NOERR != status_upper) && (NC_NOERR != status_as_is))
+    {
+        info("Could not find variable ", variable_name, " in ncid ", ncid, ".");
+        status = status_lower;
+    }
+    else
+    {
+        int varid;
+        if(status_lower == NC_NOERR) {
+            varid = varid_lower;
+        } else if (status_upper == NC_NOERR) {
+            varid = varid_upper;
+        } else {
+            varid = varid_as_is;
+        }
+
+        size_t startp = 0;
+        //values.length = countp;
+        status = nc_get_vara(ncid, varid, &startp, &countp, values);
+        if (NC_NOERR != status)
+        {
+            fatal("Found but could not read variable ", variable_name, " in ncid ", ncid, " with error code ", status, ".");
+        }
+    }
+    return status;
+}
+
+private int get_data(T)(int ncid, string variable_name, size_t[3] countp, T* values)
+{
+    int varid_lower, varid_upper, varid_as_is;
+    auto status_lower = nc_inq_varid(ncid, variable_name.toLower.toStringz, &varid_lower);
+    auto status_upper = nc_inq_varid(ncid, variable_name.toUpper.toStringz, &varid_upper);
+    auto status_as_is = nc_inq_varid(ncid, variable_name.toStringz, &varid_as_is);
+
+    int status;
+    if ((NC_NOERR != status_lower) && (NC_NOERR != status_upper) && (NC_NOERR != status_as_is))
+    {
+        info("Could not find variable ", variable_name, " in ncid ", ncid, ".");
+        status = status_lower;
+    }
+    else
+    {
+        int varid;
+        if(status_lower == NC_NOERR) {
+            varid = varid_lower;
+        } else if (status_upper == NC_NOERR) {
+            varid = varid_upper;
+        } else {
+            varid = varid_as_is;
+        }
+
+        size_t[3] startp = 0;
+        //values.length = countp;
+        status = nc_get_vara(ncid, varid, startp.ptr, countp.ptr, values);
+        if (NC_NOERR != status)
+        {
+            fatal("Found but could not read variable ", variable_name, " in ncid ", ncid, " with error code ", status, ".");
         }
     }
     return status;
@@ -236,9 +337,33 @@ unittest
 @nogc private double barycentric_interp(in double[][][] metric, size_t i_phi,
         size_t i_theta, in double[4] weights, in size_t[4] indicies)
 {
-    return weights[0] * metric[i_phi][i_theta][indicies[0]] + weights[1]
-        * metric[i_phi][i_theta][indicies[1]] + weights[2]
-        * metric[i_phi][i_theta][indicies[2]] + weights[3] * metric[i_phi][i_theta][indicies[3]];
+    return
+        weights[0] * metric[i_phi][i_theta][indicies[0]] + 
+        weights[1] * metric[i_phi][i_theta][indicies[1]] + 
+        weights[2] * metric[i_phi][i_theta][indicies[2]] +
+        weights[3] * metric[i_phi][i_theta][indicies[3]];
+}
+
+@nogc private double barycentric_interp(string metric)(Database.SphereData[] spheres, size_t i_phi,
+        size_t i_theta, in double[4] weights, in size_t[4] indicies)
+{
+    mixin("return
+        weights[0] * spheres[indicies[0]]."~metric~"[i_phi][i_theta] +
+        weights[1] * spheres[indicies[1]]."~metric~"[i_phi][i_theta] +
+        weights[2] * spheres[indicies[2]]."~metric~"[i_phi][i_theta] + 
+        weights[3] * spheres[indicies[3]]."~metric~"[i_phi][i_theta];"
+    );
+}
+
+@nogc private double barycentric_interp(string metric)(Database.SphereData[] spheres, size_t i_phi,
+        size_t i_theta, size_t i_freq, in double[4] weights, in size_t[4] indicies)
+{
+    mixin("return
+        weights[0] * spheres[indicies[0]]."~metric~"[i_phi][i_theta][i_freq] +
+        weights[1] * spheres[indicies[1]]."~metric~"[i_phi][i_theta][i_freq] +
+        weights[2] * spheres[indicies[2]]."~metric~"[i_phi][i_theta][i_freq] +
+        weights[3] * spheres[indicies[3]]."~metric~"[i_phi][i_theta][i_freq];"
+    );
 }
 
 @nogc private T dot(T)(in T[] x, in T[] y)
@@ -419,12 +544,53 @@ unittest
     assert(isClose(angles[0], 45.0) && isClose(angles[1], 45.0));
 }
 
+double[][] allocate_dense(size_t r, size_t c) {
+    double[] _f = new double[r*c];
+    double[][] f;
+    f.length = r;
+    foreach(idx; 0..r) {
+        f[idx] = _f[idx*c..idx*c+c];
+    }
+	return f;
+}
+
+double[][][] allocate_dense(size_t r, size_t c, size_t j) {
+    double[] _f = new double[r*c*j];
+    double[][][] f;
+    f.length = r;
+    foreach(idx; 0..r) {
+        f[idx].length = c;
+        foreach(c_idx; 0..c) {
+            //position[0] + position[1]*x_blocks + position[2]*x_blocks*y_blocks;
+            auto start = idx*c*j + c_idx*j;
+            auto end = start + j;
+            f[idx][c_idx] = _f[start..end];
+        }
+    }
+	return f;
+}
+
 class Database
 {
+    struct SphereData {
+        double[][] dBA;
+        double[][] EAA;
+        double[][][] amplitudes;
+        double[] frequencies;
+        double advance_ratio;
+        double flight_path_angle;
+        double thrust_coefficient;
+        double radius;
+        double rotor_scale;
+    }
+
     immutable double[] phis;
     immutable double[] thetas;
-    double[][][] dBA;
-    double[][][] EAA;
+    //double[][][] dBA;
+    //double[][][] EAA;
+    double[] frequencies;
+    SphereData[] spheres;
+
     immutable double sphere_radius, advance_ratio_min, advance_ratio_max, flight_path_angle_min,
         flight_path_angle_max, thrust_coefficient_min, thrust_coefficient_max, max_level;
 
@@ -497,6 +663,9 @@ class Database
                 fatal("Database error: sphere radius*scale not constant.");
             }
             auto nchannels = get_dim_length("channels", group_id);
+            size_t frequency_length = 0;
+            auto have_freq_dim = get_dim_length("frequency", group_id, &frequency_length);
+
             if (i == 0)
             {
                 // Record number of channels to check for changes
@@ -507,6 +676,7 @@ class Database
                 thetas_scattered = new double[](nchannels);
                 dBAs_scattered = new double[](nchannels);
                 EAAs_scattered = new double[](nchannels);
+
                 // Get scattered phi and theta
                 require_array(group_id, "phi", phis_scattered.length, phis_scattered);
                 trace("The original phi values are:\n", phis_scattered);
@@ -515,40 +685,86 @@ class Database
                 //Sort and identify unique elements
                 _phis = phis_scattered.dup.sort().uniq().array();
                 _thetas = thetas_scattered.dup.sort().uniq().array();
+
                 info("The ", _phis.length, " unique phi values are:\n", _phis);
                 info("The ", _thetas.length, " unique theta values are:\n", _thetas);
                 // Allocate noise level matricies
-                dBA = new double[][][](_phis.length, _thetas.length, group_ids.length);
-                EAA = new double[][][](_phis.length, _thetas.length, group_ids.length);
+                spheres = new SphereData[group_ids.length];
+                foreach(idx, ref sphere; spheres) {
+                    trace("Allocating data for sphere ", idx);
+                    sphere.dBA = allocate_dense(_phis.length, _thetas.length);
+                    sphere.EAA = allocate_dense(_phis.length, _thetas.length);
+                    if(have_freq_dim) {
+                        trace("Allocating frequency data for sphere ", idx);
+                        sphere.frequencies = new double[frequency_length];
+                        require_array(group_id, "frequency", frequency_length, sphere.frequencies);
+                        sphere.amplitudes = allocate_dense(_phis.length, _thetas.length, frequency_length);
+                    }
+                }
+
             }
             else if (nchannels != nchannels0)
             {
                 fatal("Database error: number of channels is not constant.");
             }
-            // Fetch scattered acoustic data for each sphere
-            require_array(group_id, "dBA", dBAs_scattered.length, dBAs_scattered);
-            require_array(group_id, "EAA", EAAs_scattered.length, EAAs_scattered);
+
+            spheres[i].advance_ratio = advance_ratio;
+            spheres[i].thrust_coefficient = thrust_coefficient;
+            spheres[i].flight_path_angle = flight_path_angle;
+            spheres[i].radius = radius;
+            spheres[i].rotor_scale = scale;
+
+            if(nchannels != _phis.length*_thetas.length) {
+                // Fetch scattered acoustic data for each sphere
+                require_array(group_id, "dBA", dBAs_scattered.length, dBAs_scattered);
+                require_array(group_id, "EAA", EAAs_scattered.length, EAAs_scattered);
+            }
+
             if (same_grid)
             {
-                //Search through scattered data for grided values
-                foreach (m, phi_target; _phis)
-                {
-                    foreach (n, theta_target; _thetas)
+                if(nchannels == _phis.length*_thetas.length) {
+                    auto dBA_status = get_data(group_id, "dBA", dBAs_scattered.length, spheres[i].dBA[0].ptr);
+                    if(dBA_status != NC_NOERR) {
+                        fatal("Failed to pull dBA data from NC file");
+                    }
+
+                    foreach(ref dba; spheres[i].dBA) {
+                        dba_max = max(dba_max, dba.maxElement);
+                    }
+
+                    auto EAA_status = get_data(group_id, "EAA", EAAs_scattered.length, spheres[i].EAA[0].ptr);
+                    if(EAA_status != NC_NOERR) {
+                        fatal("Failed to pull dBA data from NC file");
+                    }
+                } else {
+                    //Search through scattered data for grided values
+                    foreach (m, phi_target; _phis)
                     {
-                        foreach (c, phi_val; phis_scattered)
+                        foreach (n, theta_target; _thetas)
                         {
-                            if (approxEqual(phi_target, phi_val)
-                                    && approxEqual(theta_target, thetas_scattered[c]))
+                            foreach (c, phi_val; phis_scattered)
                             {
-                                //Load sphere data into grid
-                                dBA[m][n][i] = dBAs_scattered[c];
-                                EAA[m][n][i] = EAAs_scattered[c];
-                                if (dBAs_scattered[c] > dba_max)
+                                if (approxEqual(phi_target, phi_val)
+                                    && approxEqual(theta_target, thetas_scattered[c]))
                                 {
-                                    dba_max = dBAs_scattered[c];
+                                    spheres[i].dBA[m][n] = dBAs_scattered[c];
+                                    spheres[i].EAA[m][n] = EAAs_scattered[c];
+
+                                    if (dBAs_scattered[c] > dba_max)
+                                    {
+                                        dba_max = dBAs_scattered[c];
+                                    }
                                 }
                             }
                         }
+                    }
+                }
+
+                if(have_freq_dim) {
+                    size_t[3] counts = [_phis.length, _thetas.length, frequency_length];
+                    auto amplitude_status = get_data(group_id, "amplitude", counts, spheres[i].amplitudes[0][0].ptr);
+                    if(amplitude_status != NC_NOERR) {
+                        fatal("Failed to pull dBA data from NC file");
                     }
                 }
             }
@@ -558,6 +774,7 @@ class Database
                 fatal("Not implemented");
             }
         }
+
         max_level = dba_max;
         info("Max level found in database is: ", max_level);
         // Set const sphere_radius to dimensional_radius
@@ -594,7 +811,108 @@ class Database
         phis = _phis.idup;
         thetas = _thetas.idup;
 
-        trace("EAA: ", EAA);
+        //trace("EAA: ", EAA);
+    }
+
+    auto ref interpolate_sphere(double advance_ratio, double flight_path_angle, double thrust_coefficient) {
+        
+        auto new_sphere = SphereData();
+
+        new_sphere.dBA = allocate_dense(phis.length, thetas.length);
+        new_sphere.EAA = allocate_dense(phis.length, thetas.length);
+
+        new_sphere.advance_ratio = advance_ratio;
+        new_sphere.thrust_coefficient = thrust_coefficient;
+        new_sphere.flight_path_angle = flight_path_angle;
+
+        // Normalize flight condition and limit range to [0.0,1.0]
+        advance_ratio = clamp((advance_ratio - advance_ratio_min) / (
+                advance_ratio_max - advance_ratio_min));
+        flight_path_angle = clamp((flight_path_angle - flight_path_angle_min) / (
+                flight_path_angle_max - flight_path_angle_min));
+        thrust_coefficient = clamp((thrust_coefficient - thrust_coefficient_min) / (
+                thrust_coefficient_max - thrust_coefficient_min));
+
+        size_t[4] indicies;
+        double[4] weights;
+
+        barycentric(advance_ratio, flight_path_angle, thrust_coefficient,
+                weights.ptr, indicies.ptr);
+
+        if(spheres[indicies[0]].frequencies.length > 0) {
+            new_sphere.frequencies = new double[spheres[indicies[0]].frequencies.length];
+            new_sphere.frequencies[] = spheres[indicies[0]].frequencies[];
+            new_sphere.amplitudes = allocate_dense(phis.length, thetas.length, spheres[indicies[0]].frequencies.length);
+        }
+
+        new_sphere.radius = spheres[indicies[0]].radius;
+        new_sphere.rotor_scale = spheres[indicies[0]].rotor_scale;
+
+        foreach(phi_idx, ref phi; phis) {
+            foreach(theta_idx, ref theta; thetas) {
+
+                auto phi_range = bracket(phis, phi);
+                auto theta_range = bracket(thetas, theta);
+
+                auto d11 = barycentric_interp!"dBA"(spheres, phi_range[0], theta_range[0], weights, indicies);
+                auto d12 = barycentric_interp!"dBA"(spheres, phi_range[0], theta_range[1], weights, indicies);
+                auto d21 = barycentric_interp!"dBA"(spheres, phi_range[1], theta_range[0], weights, indicies);
+                auto d22 = barycentric_interp!"dBA"(spheres, phi_range[1], theta_range[1], weights, indicies);
+                auto e11 = barycentric_interp!"EAA"(spheres, phi_range[0], theta_range[0], weights, indicies);
+                auto e12 = barycentric_interp!"EAA"(spheres, phi_range[0], theta_range[1], weights, indicies);
+                auto e21 = barycentric_interp!"EAA"(spheres, phi_range[1], theta_range[0], weights, indicies);
+                auto e22 = barycentric_interp!"EAA"(spheres, phi_range[1], theta_range[1], weights, indicies);
+                // Bilinear interolation between gridpoints
+                auto p1 = phis[phi_range[0]];
+                auto p2 = phis[phi_range[1]];
+                auto t1 = thetas[theta_range[0]];
+                auto t2 = thetas[theta_range[1]];
+
+                new_sphere.dBA[phi_idx][theta_idx] = periodic_bilinear_interp( d11, d12, d21, d22, p1, p2, t1, t2, phi, theta);
+                new_sphere.EAA[phi_idx][theta_idx] = periodic_bilinear_interp( e11, e12, e21, e22, p1, p2, t1, t2, phi, theta);
+                
+                assert(isFinite(new_sphere.dBA[phi_idx][theta_idx]));
+                assert(isFinite(new_sphere.EAA[phi_idx][theta_idx]));
+
+                foreach(f_idx; 0..new_sphere.frequencies.length) {
+                    // assert(isFinite(spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[0]][f_idx]));
+                    // assert(isFinite(spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[0]][f_idx]));
+                    // assert(isFinite(spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[0]][f_idx]));
+                    // assert(isFinite(spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[0]][f_idx]));
+
+                    // assert(isFinite(spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[1]][f_idx]: "~spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
+                    // assert(isFinite(spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[1]][f_idx]: "~spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
+                    // assert(isFinite(spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[1]][f_idx]: "~spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
+                    // assert(isFinite(spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[1]][f_idx]: "~spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
+
+                    // assert(isFinite(spheres[indicies[0]].amplitudes[phi_range[1]][theta_range[0]][f_idx]));
+                    // assert(isFinite(spheres[indicies[1]].amplitudes[phi_range[1]][theta_range[0]][f_idx]));
+                    // assert(isFinite(spheres[indicies[2]].amplitudes[phi_range[1]][theta_range[0]][f_idx]));
+                    // assert(isFinite(spheres[indicies[3]].amplitudes[phi_range[1]][theta_range[0]][f_idx]));
+
+                    // assert(isFinite(spheres[indicies[0]].amplitudes[phi_range[1]][theta_range[1]][f_idx]));
+                    // assert(isFinite(spheres[indicies[1]].amplitudes[phi_range[1]][theta_range[1]][f_idx]));
+                    // assert(isFinite(spheres[indicies[2]].amplitudes[phi_range[1]][theta_range[1]][f_idx]));
+                    // assert(isFinite(spheres[indicies[3]].amplitudes[phi_range[1]][theta_range[1]][f_idx]));
+
+                    auto amp_11 = barycentric_interp!"amplitudes"(spheres, phi_range[0], theta_range[0], f_idx, weights, indicies);
+                    auto amp_12 = barycentric_interp!"amplitudes"(spheres, phi_range[0], theta_range[1], f_idx, weights, indicies);
+                    auto amp_21 = barycentric_interp!"amplitudes"(spheres, phi_range[1], theta_range[0], f_idx, weights, indicies);
+                    auto amp_22 = barycentric_interp!"amplitudes"(spheres, phi_range[1], theta_range[1], f_idx, weights, indicies);
+
+                    // assert(isFinite(amp_11));
+                    // assert(isFinite(amp_12));
+                    // assert(isFinite(amp_21));
+                    // assert(isFinite(amp_22));
+
+                    new_sphere.amplitudes[phi_idx][theta_idx][f_idx] = periodic_bilinear_interp( amp_11, amp_12, amp_21, amp_22, p1, p2, t1, t2, phi, theta);
+
+                    //assert(isFinite(new_sphere.amplitudes[phi_idx][theta_idx][f_idx]));
+                }
+            }
+        }
+
+        return new_sphere;
     }
 
     @nogc double eval(double range, double phi, double theta, double advance_ratio,
@@ -626,14 +944,14 @@ class Database
         //trace("Barycentric weights: ", weights, " and indicies ", indicies);
 
         // Barycentric interpolation between conditions at each gridpoint
-        auto d11 = barycentric_interp(dBA, phi_range[0], theta_range[0], weights, indicies);
-        auto d12 = barycentric_interp(dBA, phi_range[0], theta_range[1], weights, indicies);
-        auto d21 = barycentric_interp(dBA, phi_range[1], theta_range[0], weights, indicies);
-        auto d22 = barycentric_interp(dBA, phi_range[1], theta_range[1], weights, indicies);
-        auto e11 = barycentric_interp(EAA, phi_range[0], theta_range[0], weights, indicies);
-        auto e12 = barycentric_interp(EAA, phi_range[0], theta_range[1], weights, indicies);
-        auto e21 = barycentric_interp(EAA, phi_range[1], theta_range[0], weights, indicies);
-        auto e22 = barycentric_interp(EAA, phi_range[1], theta_range[1], weights, indicies);
+        auto d11 = barycentric_interp!"dBA"(spheres, phi_range[0], theta_range[0], weights, indicies);
+        auto d12 = barycentric_interp!"dBA"(spheres, phi_range[0], theta_range[1], weights, indicies);
+        auto d21 = barycentric_interp!"dBA"(spheres, phi_range[1], theta_range[0], weights, indicies);
+        auto d22 = barycentric_interp!"dBA"(spheres, phi_range[1], theta_range[1], weights, indicies);
+        auto e11 = barycentric_interp!"EAA"(spheres, phi_range[0], theta_range[0], weights, indicies);
+        auto e12 = barycentric_interp!"EAA"(spheres, phi_range[0], theta_range[1], weights, indicies);
+        auto e21 = barycentric_interp!"EAA"(spheres, phi_range[1], theta_range[0], weights, indicies);
+        auto e22 = barycentric_interp!"EAA"(spheres, phi_range[1], theta_range[1], weights, indicies);
         // Bilinear interolation between gridpoints
         auto p1 = phis[phi_range[0]];
         auto p2 = phis[phi_range[1]];

@@ -2,6 +2,7 @@ module trajectory;
 
 import std.csv;
 import std.file : readText;
+import std.algorithm : min, max;
 import std.algorithm.iteration : splitter;
 import std.datetime;
 import std.format;
@@ -484,6 +485,14 @@ class Trajectory
         //Repack data into states
         states = [];
         trace("States reset to ", states);
+
+        double max_v = -double.infinity;
+        double min_v = double.infinity;
+        double max_CT = -double.infinity;
+        double min_CT = double.infinity;
+        double max_fpa_e = -double.infinity;
+        double min_fpa_e = double.infinity;
+
         foreach (i, time; ti)
         {
             State now;
@@ -526,6 +535,9 @@ class Trajectory
             now.CT = now.LF * vehicle.weight / (
                     vehicle.rho * vehicle.tip_speed ^^ 2 * PI * vehicle.radius ^^ 2);
             auto v = sqrt(now.vx ^^ 2 + now.vy ^^ 2 + now.vz ^^ 2);
+            min_v = min(v, min_v);
+            max_v = max(v, max_v);
+
             now.mu = v / vehicle.tip_speed;
             auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
 
@@ -540,6 +552,13 @@ class Trajectory
                 now.fpa_e = 0.0;
                 now.fpa = 0.0;
             }
+
+            min_fpa_e = min(now.fpa_e, min_fpa_e);
+            max_fpa_e = max(now.fpa_e, max_fpa_e);
+
+            min_CT = min(now.CT, min_CT);
+            max_CT = max(now.CT, max_CT);
+
             now.day = day_night[current_day_idx].day;
             now.heading = headingi[i];
 
@@ -549,6 +568,11 @@ class Trajectory
             states ~= now;
             trace("Adapted state: ", states[$ - 1]);
         }
+
+        info("Trajectory extents: ");
+        info("V range: [", min_v, ", ", max_v, "]");
+        info("CT range: [", min_CT, ", ", max_CT, "]");
+        info("Effective FPA range: [", min_fpa_e, ", ", max_fpa_e, "]");
     }
 
     template Get(string varname)
@@ -630,6 +654,7 @@ static Trajectory.dimensional_data configure_vehicle(string filename)
     auto config = readText(filename).parseJSON;
 
     Trajectory.dimensional_data vehicle;
+
     vehicle.radius = to!double(config["Main Rotor"]["radius"].str);
     vehicle.tip_speed = to!double(config["Main Rotor"]["tip speed"].str);
     vehicle.weight = to!double(config["Vehicle"]["weight"].str) * g; //Actually a mass (kg), so convert to Newtons

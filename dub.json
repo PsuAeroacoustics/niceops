@@ -7,12 +7,12 @@
 	"targetType": "executable",
 	"excludedSourceFiles": ["source/niceops/wopwop2aam.d"],
 	"preBuildCommands-posix": [
-		"mkdir $NICEOPS_PACKAGE_DIR/splinter_cpp/build ; cd $NICEOPS_PACKAGE_DIR/splinter_cpp/build ; cmake ../ -DBUILD_TYPE=$BUILD_TYPE; make",
-		"mkdir $NICEOPS_PACKAGE_DIR/interpolator_cpp/build ; cd $NICEOPS_PACKAGE_DIR/interpolator_cpp/build ; cmake ../ -DBUILD_TYPE=$BUILD_TYPE; make"
+		"mkdir $NICEOPS_PACKAGE_DIR/splinter_cpp/build ; cd $NICEOPS_PACKAGE_DIR/splinter_cpp/build ; cmake ../ -DBUILD_TYPE=$BUILD_TYPE; make -j 8",
+		"mkdir $NICEOPS_PACKAGE_DIR/interpolator_cpp/build ; cd $NICEOPS_PACKAGE_DIR/interpolator_cpp/build ; cmake ../ -DBUILD_TYPE=$BUILD_TYPE; make -j 8"
 	],
 	"preBuildCommands-windows": [
-		"mkdir $NICEOPS_PACKAGE_DIR\\splinter_cpp\\build & cd $NICEOPS_PACKAGE_DIR\\splinter_cpp\\build & cmake ../ -DBUILD_TYPE=release & cmake --build .\\ --config=release",
-		"mkdir $NICEOPS_PACKAGE_DIR\\interpolator_cpp\\build & cd $NICEOPS_PACKAGE_DIR\\interpolator_cpp\\build & cmake ../ -DBUILD_TYPE=release -DBOOST_INCLUDEDIR=$NICEOPS_PACKAGE_DIR\\interpolator_cpp\\external\\boost_1_81_0 & cmake --build .\\ --config=release"
+		"mkdir $NICEOPS_PACKAGE_DIR\\splinter_cpp\\build & cd $NICEOPS_PACKAGE_DIR\\splinter_cpp\\build & cmake ../ -DBUILD_TYPE=release & cmake --build .\\ --config=release -j 8",
+		"mkdir $NICEOPS_PACKAGE_DIR\\interpolator_cpp\\build & cd $NICEOPS_PACKAGE_DIR\\interpolator_cpp\\build & cmake ../ -DBUILD_TYPE=release -DBOOST_INCLUDEDIR=$NICEOPS_PACKAGE_DIR\\interpolator_cpp\\external\\boost_1_81_0 & cmake --build .\\ --config=release -j 8"
 	],
 	"lflags-windows": [
 		"/LIBPATH:${NICEOPS_PACKAGE_DIR}/splinter_cpp/build/Release",

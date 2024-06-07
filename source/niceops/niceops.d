@@ -1,5 +1,9 @@
 import std.experimental.logger;
+import std.file : mkdirRecurse, exists;
+import std.format;
+import std.path;
 
+import sphere_export;
 import trajectory;
 import worldtransforms;
 import wgs84tocartesian;
@@ -21,7 +25,14 @@ struct AcousticResult {
     }
 }
 
-auto compute_trajectory(Trajectory trajectory, Database database, double[3][] observers, bool qsam, double dt, double ambient_level, double db_cutoff) {
+struct InterpolationOptions {
+    size_t num_interpolated_spheres;
+    bool interpolate_only;
+    string output_prefix;
+    string output_directory;
+}
+
+auto compute_trajectory(Trajectory trajectory, Database database, double[3][] observers, bool qsam, double dt, double ambient_level, double db_cutoff, InterpolationOptions interp_options) {
 
     import sphere_database : Database;
     import trajectory : Trajectory;
@@ -64,6 +75,25 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
     alias IndexTuple = Tuple!(size_t, "index", double, "range", double[3], "observer");
     auto indexed_range = new IndexTuple[observers.length];
 
+    size_t interpolation_stride = 0;
+    size_t interpolation_idx = 0;
+    if(interp_options.num_interpolated_spheres > 0) {
+        if(interp_options.num_interpolated_spheres < trajectory.states.length) {
+            interpolation_stride = trajectory.states.length/interp_options.num_interpolated_spheres;
+            if(trajectory.states.length%interp_options.num_interpolated_spheres != 0) {
+                interpolation_stride++;
+            }
+        } else {
+            warning("More interpolated spheres requested than available flight states. Providing one interpolated sphere per flight state");
+            interpolation_stride = 1;
+        }
+        
+    }
+
+    if(interp_options.num_interpolated_spheres > 1000) {
+        fatal("Number of requested interpolated spheres must be less than or equal to 1000");
+    }
+
     foreach (it, const ref state; trajectory.states)
     {
         double[3] source = [state.x, state.y, state.z];
@@ -81,22 +111,34 @@ auto compute_trajectory(Trajectory trajectory, Database database, double[3][] ob
                 .sort!("a.range < b.range")
                 .map!(a => tuple(a.index, a.observer));
         
+        if((interp_options.num_interpolated_spheres > 0) && ((it % interpolation_stride) == 0)) {
 
-        foreach (index, observer; sorted_observers)
-        {
-            auto level = database.level_at_observer(observer, source,
-                        velocity, normal, state.mu, qsam ? state.fpa_e : state.fpa, state.CT, state.heading);
+            auto new_sphere = database.interpolate_sphere(state.mu, qsam ? state.fpa_e : state.fpa, state.CT);
 
-            result.time_history[index][it] = level;
+            string output_filename = format("%s%0.3d.nc", interp_options.output_prefix, interpolation_idx);
+            string output_filepath = buildPath(interp_options.output_directory, output_filename);
 
-            if(!ambient_level.isNaN) {
-                result.time_history[index][it] = 20.0 * log10(
-                    10.0 ^^ (result.time_history[index][it] / 20.) + 10.0 ^^ (ambient_level / 20.));
-            }
+            to_aam_sphere(new_sphere, trajectory.vehicle, output_filepath, database.phis, database.thetas);
+            interpolation_idx++;
+        }
 
-            if(!db_cutoff.isNaN) {
-                if(level < (db_cutoff - 10)) {
-                    break;
+        if(!interp_options.interpolate_only) {
+            foreach (index, observer; sorted_observers)
+            {
+                auto level = database.level_at_observer(observer, source,
+                            velocity, normal, state.mu, qsam ? state.fpa_e : state.fpa, state.CT, state.heading);
+
+                result.time_history[index][it] = level;
+
+                if(!ambient_level.isNaN) {
+                    result.time_history[index][it] = 20.0 * log10(
+                        10.0 ^^ (result.time_history[index][it] / 20.) + 10.0 ^^ (ambient_level / 20.));
+                }
+
+                if(!db_cutoff.isNaN) {
+                    if(level < (db_cutoff - 10)) {
+                        break;
+                    }
                 }
             }
         }
@@ -155,6 +197,12 @@ void main(string[] args)
     bool print_version = false;
     string time_history_dir = "";
     string dnl_file = "integrated/dnl.csv";
+
+    string interpolation_output_dir = "interpolated_output";
+    string interpolation_prefix = "";
+    size_t num_interpolated_spheres = 0;
+    bool interpolate_only = false;
+
     double db_cutoff; // meters
 
     bool smooth = false;
@@ -200,7 +248,11 @@ void main(string[] args)
             "ct", "Plot sphere with C_T", &ct,
             "fpa", "Plot sphere with flight path angle", &fpa,
             "smooth", "Smooth flight path with degree and smoothness factor. Default = 3, 0.5", &_smooth_params,
-            "pbo", "Parallellize by observer instead of flight path", &parallel_by_observer
+            "pbo", "Parallellize by observer instead of flight path", &parallel_by_observer,
+            "I|interp_output", "Output directory for interpolated spheres", &interpolation_output_dir,
+            "P|interp_prefix", "Prefix to attach to each interpolated sphere when saving to disk", &interpolation_prefix,
+            "N|num_spheres", "Number of interpolated spheres to compute from provided flight path", &num_interpolated_spheres,
+            "O|interp_only", "Only perform sphere interpolation along flight path, don't compute observer levels", &interpolate_only
         );
 
         if(_smooth_params.length != 0) {
@@ -226,13 +278,33 @@ void main(string[] args)
         {
             scattered = true;
         }
+
+        auto dir_name = dnl_file.dirName;
+        mkdirRecurse(dir_name);
+
+        dir_name = figure_file.dirName;
+        mkdirRecurse(dir_name);
+
+        dir_name = state_figure_file.dirName;
+        mkdirRecurse(dir_name);
+
+        dir_name = metric_file.dirName;
+        mkdirRecurse(dir_name);
+
         if (time_history_prefix.length > 0)
         {
             write_time_history = true;
+            dir_name = time_history_prefix.dirName;
+            mkdirRecurse(dir_name);
+
         }
         if (state_files.length > 0)
         {
             write_state = true;
+            foreach(state_file; state_files) {
+                dir_name = state_file.dirName;
+                mkdirRecurse(dir_name);
+            }
         }
         if (option_results.helpWanted)
         {
@@ -240,6 +312,17 @@ void main(string[] args)
                     option_results.options);
             exit(0);
         }
+
+        foreach(out_file; out_files) {
+            dir_name = out_file.dirName;
+            mkdirRecurse(dir_name);
+        }
+
+        foreach(state_file; state_files) {
+            dir_name = state_file.dirName;
+            mkdirRecurse(dir_name);
+        }
+
     } catch(GetOptException ex) {
         //Set default logging to file
         sharedLog = new FileLogger(log_file, log_level, CreateFolder.yes);
@@ -252,6 +335,14 @@ void main(string[] args)
 
         fatal("Caught unknown exception while parsing command line arguments:\n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
         exit(-1);
+    }
+
+    auto interp_options = InterpolationOptions(num_interpolated_spheres, interpolate_only, interpolation_prefix, interpolation_output_dir);
+
+    if(num_interpolated_spheres > 0) {
+        if(!exists(interpolation_output_dir)) {
+            mkdirRecurse(interpolation_output_dir);
+        }
     }
 
     //Set default logging to file
@@ -392,13 +483,14 @@ void main(string[] args)
     }
 
     AcousticResult[] acoustic_results;
-    import std.range : zip;
+    import std.range : enumerate, zip;
     import std.parallelism : parallel, totalCPUs;
 
     if(!parallel_by_observer) {
         acoustic_results = new AcousticResult[path_files.length];
 
-        foreach(idx, e; zip(path_files, databases, vehicle_files, out_files, state_files).parallel(1))
+        //foreach(idx, e; zip(path_files, databases, vehicle_files, out_files, state_files).parallel(1))
+        foreach(idx, e; zip(path_files, databases, vehicle_files, out_files, state_files).enumerate)
         {
             try{
                 auto path_file = e[0];
@@ -418,16 +510,19 @@ void main(string[] args)
                     trajectory.adapt(dt, degree, smoothing);
                 }
 
-                info("Computing trajectory for flight path ", idx);
+                info("Serially computing trajectory for flight path ", idx);
 
-                acoustic_results[idx] = trajectory.compute_trajectory(database, observers, qsam, dt, ambient_level, db_cutoff);
-                write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+                acoustic_results[idx] = trajectory.compute_trajectory(database, observers, qsam, dt, ambient_level, db_cutoff, interp_options);
+                if(!interpolate_only)
+                {
+                    write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+                }
 
                 if(write_state) {
                     trajectory.write_state(state_file);
                 }
 
-                if(time_history_dir != "") {
+                if((time_history_dir != "") && !interpolate_only) {
                     foreach(obs_idx; 0..x_obs.length) {
                         auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_"~obs_idx.to!string~"_flightpath_" ~ idx.to!string ~ ".csv";
                         write_time_history_file(acoustic_results[idx].time_history[obs_idx], dt, x_obs[obs_idx], y_obs[obs_idx], output_file);
@@ -482,7 +577,7 @@ void main(string[] args)
                     //enforce(world_transform !is null, "Passing in invalid world transform");
                     info("Computing trajectory for flight path ", idx);
 
-                    auto acoustic_result = trajectories[idx].compute_trajectory(database, observer_chunk, qsam, dt, ambient_level, db_cutoff);
+                    auto acoustic_result = trajectories[idx].compute_trajectory(database, observer_chunk, qsam, dt, ambient_level, db_cutoff, interp_options);
 
                     immutable size_t slice_start = proc == 0 ? 0 : observers_on_core[0..proc].sum;
                     immutable size_t slice_end = slice_start + observers_on_core[proc];
@@ -491,7 +586,7 @@ void main(string[] args)
                     acoustic_results[idx].sel[slice_start..slice_end] = acoustic_result.sel[];
                     acoustic_results[idx].dnl[slice_start..slice_end] = acoustic_result.dnl[];
 
-                    if(time_history_dir != "") {
+                    if((time_history_dir != "") && !interpolate_only) {
                         foreach(obs_idx; 0..observer_chunk.length) {
                             auto output_file = time_history_dir ~ "/" ~ time_history_prefix ~ "_"~(obs_idx + slice_start).to!string~"_flightpath_" ~ idx.to!string ~ ".csv";
                             write_time_history_file(acoustic_result.time_history[obs_idx], dt, observer_chunk[obs_idx][0], observer_chunk[obs_idx][1], output_file);
@@ -503,293 +598,299 @@ void main(string[] args)
             }
         }
 
-        foreach(idx, out_file; out_files) {
-            write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+        if(!interpolate_only)
+        {
+            foreach(idx, out_file; out_files) {
+                write_levels(x_obs, y_obs, acoustic_results[idx].sel, out_file, scattered, stk_format);
+            }
         }
     }
 
-    foreach(idx; 0..path_files.length) {
-        if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
-        {
-            import plt = matplotlibd.pyplot;
-            import std.array : staticArray;
-
-            auto t = acoustic_results[idx].trajectory.Get!("t").get();
-            auto x = acoustic_results[idx].trajectory.Get!("x").get();
-            auto y = acoustic_results[idx].trajectory.Get!("y").get();
-            auto z = acoustic_results[idx].trajectory.Get!("z").get();
-            auto vx = acoustic_results[idx].trajectory.Get!("vx").get();
-            auto vy = acoustic_results[idx].trajectory.Get!("vy").get();
-            auto vz = acoustic_results[idx].trajectory.Get!("vz").get();
-
-            import std.stdio;
-
-            auto obs_pos = zip(x_obs, y_obs).map!(a => staticArray!(double, 2)([a[0], a[1]]));
-
-            double min_x = double.infinity;
-            double max_x = -double.infinity;
-            double min_y = double.infinity;
-            double max_y = -double.infinity;
-
-            //foreach(pos; wgs84_obs_pos) {
-            foreach(pos; obs_pos) {
-                import std.algorithm : min, max;
-                min_x = min(pos[0], min_x);
-                max_x = max(pos[0], max_x);
-                min_y = min(pos[1], min_y);
-                max_y = max(pos[1], max_y);
-            }
-
-            double x_span = max_x - min_x;
-            double y_span = max_y - min_y;
-
-            if (plotting || figure_file.length > 0)
+    if(!interpolate_only)
+    {
+        foreach(idx; 0..path_files.length) {
+            if (plotting || figure_file.length > 0 || state_figure_file.length > 0)
             {
-                import std.algorithm : min, max;
-                if(db_cutoff.isNaN) {
-                    contour_min = double.infinity;
-                    contour_max = -double.infinity;
-                    foreach(s; acoustic_results[idx].sel) {
-                        if(!s.isNaN) {
-                            contour_min = min(s, contour_min);
-                            contour_max = max(s, contour_max);
-                        }
-                    }
-                } else {
-                    contour_min = db_cutoff;
-                    contour_max = -double.infinity;
-                    foreach(s; acoustic_results[idx].sel) {
-                        if(!s.isNaN) {
-                            contour_max = max(s, contour_max);
-                        }
-                    }
+                import plt = matplotlibd.pyplot;
+                import std.array : staticArray;
+
+                auto t = acoustic_results[idx].trajectory.Get!("t").get();
+                auto x = acoustic_results[idx].trajectory.Get!("x").get();
+                auto y = acoustic_results[idx].trajectory.Get!("y").get();
+                auto z = acoustic_results[idx].trajectory.Get!("z").get();
+                auto vx = acoustic_results[idx].trajectory.Get!("vx").get();
+                auto vy = acoustic_results[idx].trajectory.Get!("vy").get();
+                auto vz = acoustic_results[idx].trajectory.Get!("vz").get();
+
+                import std.stdio;
+
+                auto obs_pos = zip(x_obs, y_obs).map!(a => staticArray!(double, 2)([a[0], a[1]]));
+
+                double min_x = double.infinity;
+                double max_x = -double.infinity;
+                double min_y = double.infinity;
+                double max_y = -double.infinity;
+
+                //foreach(pos; wgs84_obs_pos) {
+                foreach(pos; obs_pos) {
+                    import std.algorithm : min, max;
+                    min_x = min(pos[0], min_x);
+                    max_x = max(pos[0], max_x);
+                    min_y = min(pos[1], min_y);
+                    max_y = max(pos[1], max_y);
                 }
 
-                if(contour_max <= contour_min) {
-                    contour_max = contour_min + contour_step;
-                }
+                double x_span = max_x - min_x;
+                double y_span = max_y - min_y;
 
-                //Set contour levels
-                auto clevels = iota(contour_min - contour_step, contour_max + contour_step, contour_step).array();
-                plt.figure();
-                if (scattered)
+                if (plotting || figure_file.length > 0)
                 {
-                    plt.tricontourf(x_obs, y_obs, acoustic_results[idx].sel, clevels, [
-                            "cmap": "YlOrRd"
-                            ]);
-                    /+plt.tricontourf(wgs84_x_obs, wgs84_y_obs, acoustic_results[idx].sel/+, clevels+/, [
-                            "cmap": "YlOrRd"
-                            ]);+/
-                    plt.plot(x_obs, y_obs, "ko", ["markersize": 0.1]);
+                    import std.algorithm : min, max;
+                    if(db_cutoff.isNaN) {
+                        contour_min = double.infinity;
+                        contour_max = -double.infinity;
+                        foreach(s; acoustic_results[idx].sel) {
+                            if(!s.isNaN) {
+                                contour_min = min(s, contour_min);
+                                contour_max = max(s, contour_max);
+                            }
+                        }
+                    } else {
+                        contour_min = db_cutoff;
+                        contour_max = -double.infinity;
+                        foreach(s; acoustic_results[idx].sel) {
+                            if(!s.isNaN) {
+                                contour_max = max(s, contour_max);
+                            }
+                        }
+                    }
+
+                    if(contour_max <= contour_min) {
+                        contour_max = contour_min + contour_step;
+                    }
+
+                    //Set contour levels
+                    auto clevels = iota(contour_min - contour_step, contour_max + contour_step, contour_step).array();
+                    plt.figure();
+                    if (scattered)
+                    {
+                        plt.tricontourf(x_obs, y_obs, acoustic_results[idx].sel, clevels, [
+                                "cmap": "YlOrRd"
+                                ]);
+                        /+plt.tricontourf(wgs84_x_obs, wgs84_y_obs, acoustic_results[idx].sel/+, clevels+/, [
+                                "cmap": "YlOrRd"
+                                ]);+/
+                        plt.plot(x_obs, y_obs, "ko", ["markersize": 0.1]);
+                        plt.xlim(["left": min_x - 0.05*x_span], ["right": max_x + 0.05*x_span]);
+                        plt.ylim(["bottom": min_y - 0.05*y_span], ["top": max_y + 0.05*y_span]);
+                    }
+                    else
+                    {
+                        double[][] gridded_levels;
+                        auto nx = x_obs.length;
+                        auto ny = y_obs.length;
+                        gridded_levels.length = ny;
+                        for (auto iy = 0; iy < ny; iy++)
+                        {
+                            gridded_levels[iy].length = nx;
+                            for (auto ix = 0; ix < nx; ix++)
+                            {
+                                gridded_levels[iy][ix] = acoustic_results[idx].sel[ix + iy * nx];
+                            }
+                        }
+                        plt.contourf(x_obs, y_obs, gridded_levels, clevels, [
+                                "cmap": "YlOrRd"
+                                ]);
+                    }
+
+                    plt.plot(x, y, "k-");
+
+                    /+foreach(o_idx; 0..x_obs.length) {
+                        plt.annotate(o_idx.to!string, [x_obs[o_idx], y_obs[o_idx]]);
+                    }+/
+
+                    plt.xlabel("X, m", ["fontsize": 14]);
+                    plt.ylabel("Y, m", ["fontsize": 14]);
                     plt.xlim(["left": min_x - 0.05*x_span], ["right": max_x + 0.05*x_span]);
                     plt.ylim(["bottom": min_y - 0.05*y_span], ["top": max_y + 0.05*y_span]);
-                }
-                else
-                {
-                    double[][] gridded_levels;
-                    auto nx = x_obs.length;
-                    auto ny = y_obs.length;
-                    gridded_levels.length = ny;
-                    for (auto iy = 0; iy < ny; iy++)
+                    plt.colorbar();
+
+                    if (figure_file.length > 0)
                     {
-                        gridded_levels[iy].length = nx;
-                        for (auto ix = 0; ix < nx; ix++)
-                        {
-                            gridded_levels[iy][ix] = acoustic_results[idx].sel[ix + iy * nx];
-                        }
+                        import std.path;
+
+                        auto fig_file_no_ext = stripExtension(figure_file);
+                        auto ext = extension(figure_file);
+                        auto filename = fig_file_no_ext~"_"~idx.to!string~ext;
+                        plt.savefig(filename);
                     }
-                    plt.contourf(x_obs, y_obs, gridded_levels, clevels, [
-                            "cmap": "YlOrRd"
-                            ]);
                 }
-
-                plt.plot(x, y, "k-");
-
-                /+foreach(o_idx; 0..x_obs.length) {
-                    plt.annotate(o_idx.to!string, [x_obs[o_idx], y_obs[o_idx]]);
-                }+/
-
-                plt.xlabel("X, m", ["fontsize": 14]);
-                plt.ylabel("Y, m", ["fontsize": 14]);
-                plt.xlim(["left": min_x - 0.05*x_span], ["right": max_x + 0.05*x_span]);
-                plt.ylim(["bottom": min_y - 0.05*y_span], ["top": max_y + 0.05*y_span]);
-                plt.colorbar();
-
-                if (figure_file.length > 0)
+                if (plotting || state_figure_file.length > 0)
                 {
                     import std.path;
 
-                    auto fig_file_no_ext = stripExtension(figure_file);
-                    auto ext = extension(figure_file);
-                    auto filename = fig_file_no_ext~"_"~idx.to!string~ext;
-                    plt.savefig(filename);
+                    auto CT = acoustic_results[idx].trajectory.Get!("CT").get();
+                    auto mu = acoustic_results[idx].trajectory.Get!("mu").get();
+                    auto gamma = acoustic_results[idx].trajectory.Get!("fpa").get();
+                    auto gamma_e = acoustic_results[idx].trajectory.Get!("fpa_e").get();
+                    auto heading = acoustic_results[idx].trajectory.Get!("heading").get();
+                    auto v = acoustic_results[idx].trajectory.Get!("v").get();
+                    auto vn_hat = acoustic_results[idx].trajectory.Get!("vn_hat").get();
+
+                    plt.figure();
+                    plt.plot(x, CT);
+                    plt.xlabel("X, m", ["fontsize": 14]);
+                    plt.ylabel("$C_T$", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(
+                                state_figure_file) ~ "_CT_" ~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, CT);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("$C_T$", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(
+                                state_figure_file) ~ "_CT_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(x, mu);
+                    plt.xlabel("X, m", ["fontsize": 14]);
+                    plt.ylabel("$\\mu$", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(
+                                state_figure_file) ~ "_mu_" ~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, mu);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("$\\mu$", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(
+                                state_figure_file) ~ "_mu_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(x, gamma, x, gamma_e);
+                    plt.xlabel("X, m", ["fontsize": 14]);
+                    plt.ylabel("$\\gamma$", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(
+                                state_figure_file) ~ "_gamma_" ~ extension(state_figure_file));
+                    }
+
+
+                    plt.figure();
+                    plt.plot(t, gamma_e);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("$\\gamma_e$", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(
+                                state_figure_file) ~ "_gamma_e_time_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+
+                    plt.figure();
+                    plt.plot(t, heading);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("heading", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(
+                                state_figure_file) ~ "_heading_time_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+
+
+                    plt.figure();
+                    plt.plot(x, z);
+                    plt.xlabel("X, m", ["fontsize": 14]);
+                    plt.ylabel("Z, m", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(state_figure_file) ~ "_z_" ~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, v, t, vn_hat);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("v, m/s", ["fontsize": 14]);
+                    plt.legend(["v", "vn_hat"]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(state_figure_file) ~ "_vvt_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, z);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("Z, m", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(state_figure_file) ~ "_zvt_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, x);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("X, m", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(state_figure_file) ~ "_xvt_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, y);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("Y, m", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(state_figure_file) ~ "_yvt_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, vx);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("V_x, m/s", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(state_figure_file) ~ "_vxvt_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, vy);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("V_y, m/s", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(state_figure_file) ~ "_vyvt_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
+                    plt.figure();
+                    plt.plot(t, vz);
+                    plt.xlabel("t, s", ["fontsize": 14]);
+                    plt.ylabel("V_z, m/s", ["fontsize": 14]);
+                    if (state_figure_file.length > 0)
+                    {
+                        plt.savefig(stripExtension(state_figure_file) ~ "_vzvt_" ~ idx.to!string~ extension(state_figure_file));
+                    }
+
                 }
+                if (plotting)
+                {
+                    plt.show();
+                }
+                plt.clear();
             }
-            if (plotting || state_figure_file.length > 0)
-            {
-                import std.path;
-
-                auto CT = acoustic_results[idx].trajectory.Get!("CT").get();
-                auto mu = acoustic_results[idx].trajectory.Get!("mu").get();
-                auto gamma = acoustic_results[idx].trajectory.Get!("fpa").get();
-                auto gamma_e = acoustic_results[idx].trajectory.Get!("fpa_e").get();
-                auto heading = acoustic_results[idx].trajectory.Get!("heading").get();
-                auto v = acoustic_results[idx].trajectory.Get!("v").get();
-                auto vn_hat = acoustic_results[idx].trajectory.Get!("vn_hat").get();
-
-                plt.figure();
-                plt.plot(x, CT);
-                plt.xlabel("X, m", ["fontsize": 14]);
-                plt.ylabel("$C_T$", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(
-                            state_figure_file) ~ "_CT_" ~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, CT);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("$C_T$", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(
-                            state_figure_file) ~ "_CT_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(x, mu);
-                plt.xlabel("X, m", ["fontsize": 14]);
-                plt.ylabel("$\\mu$", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(
-                            state_figure_file) ~ "_mu_" ~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, mu);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("$\\mu$", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(
-                            state_figure_file) ~ "_mu_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(x, gamma, x, gamma_e);
-                plt.xlabel("X, m", ["fontsize": 14]);
-                plt.ylabel("$\\gamma$", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(
-                            state_figure_file) ~ "_gamma_" ~ extension(state_figure_file));
-                }
-
-
-                plt.figure();
-                plt.plot(t, gamma_e);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("$\\gamma_e$", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(
-                            state_figure_file) ~ "_gamma_e_time_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-
-                plt.figure();
-                plt.plot(t, heading);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("heading", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(
-                            state_figure_file) ~ "_heading_time_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-
-
-                plt.figure();
-                plt.plot(x, z);
-                plt.xlabel("X, m", ["fontsize": 14]);
-                plt.ylabel("Z, m", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_z_" ~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, v, t, vn_hat);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("v, m/s", ["fontsize": 14]);
-                plt.legend(["v", "vn_hat"]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_vvt_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, z);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("Z, m", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_zvt_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, x);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("X, m", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_xvt_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, y);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("Y, m", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_yvt_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, vx);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("V_x, m/s", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_vxvt_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, vy);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("V_y, m/s", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_vyvt_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-                plt.figure();
-                plt.plot(t, vz);
-                plt.xlabel("t, s", ["fontsize": 14]);
-                plt.ylabel("V_z, m/s", ["fontsize": 14]);
-                if (state_figure_file.length > 0)
-                {
-                    plt.savefig(stripExtension(state_figure_file) ~ "_vzvt_" ~ idx.to!string~ extension(state_figure_file));
-                }
-
-            }
-            if (plotting)
-            {
-                plt.show();
-            }
-            plt.clear();
         }
     }
     double min_time = double.infinity;
@@ -828,14 +929,17 @@ void main(string[] args)
     }
 
     try {
-        write_levels(x_obs, y_obs, final_dnl, dnl_file, scattered, stk_format);
+        if(!interpolate_only)
+        {
+            write_levels(x_obs, y_obs, final_dnl, dnl_file, scattered, stk_format);
+        }
     } catch(Exception ex) {
         fatal("Caught exception while writing dnl file: \n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
         exit(-4);
     }
 
 
-    if(plotting) {
+    if(plotting && !interpolate_only) {
         import plt = matplotlibd.pyplot;
         import std.array : staticArray;
         import std.algorithm : min, max;
