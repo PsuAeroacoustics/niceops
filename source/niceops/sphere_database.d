@@ -875,39 +875,37 @@ class Database
                 assert(isFinite(new_sphere.EAA[phi_idx][theta_idx]));
 
                 foreach(f_idx; 0..new_sphere.frequencies.length) {
-                    // assert(isFinite(spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[0]][f_idx]));
-                    // assert(isFinite(spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[0]][f_idx]));
-                    // assert(isFinite(spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[0]][f_idx]));
-                    // assert(isFinite(spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[0]][f_idx]));
+                    warning(!isFinite(spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[0]][f_idx]), "Non-finite value: spheres[", indicies[0], "].amplitudes[", phi_range[0], "][", theta_range[0], "][", f_idx, "]: ", spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[0]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[0]][f_idx]), "Non-finite value: spheres[", indicies[1], "].amplitudes[", phi_range[0], "][", theta_range[0], "][", f_idx, "]: ", spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[0]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[0]][f_idx]), "Non-finite value: spheres[", indicies[2], "].amplitudes[", phi_range[0], "][", theta_range[0], "][", f_idx, "]: ", spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[0]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[0]][f_idx]), "Non-finite value: spheres[", indicies[3], "].amplitudes[", phi_range[0], "][", theta_range[0], "][", f_idx, "]: ", spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[0]][f_idx].to!string);
 
-                    // assert(isFinite(spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[1]][f_idx]: "~spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
-                    // assert(isFinite(spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[1]][f_idx]: "~spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
-                    // assert(isFinite(spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[1]][f_idx]: "~spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
-                    // assert(isFinite(spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[1]][f_idx]: "~spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[", indicies[0], "].amplitudes[", phi_range[0], "][", theta_range[1], "][", f_idx, "]: ", spheres[indicies[0]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[", indicies[1], "].amplitudes[", phi_range[0], "][", theta_range[1], "][", f_idx, "]: ", spheres[indicies[1]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[", indicies[2], "].amplitudes[", phi_range[0], "][", theta_range[1], "][", f_idx, "]: ", spheres[indicies[2]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[1]][f_idx]), "Non-finite value: spheres[", indicies[3], "].amplitudes[", phi_range[0], "][", theta_range[1], "][", f_idx, "]: ", spheres[indicies[3]].amplitudes[phi_range[0]][theta_range[1]][f_idx].to!string);
 
-                    // assert(isFinite(spheres[indicies[0]].amplitudes[phi_range[1]][theta_range[0]][f_idx]));
-                    // assert(isFinite(spheres[indicies[1]].amplitudes[phi_range[1]][theta_range[0]][f_idx]));
-                    // assert(isFinite(spheres[indicies[2]].amplitudes[phi_range[1]][theta_range[0]][f_idx]));
-                    // assert(isFinite(spheres[indicies[3]].amplitudes[phi_range[1]][theta_range[0]][f_idx]));
+                    warning(!isFinite(spheres[indicies[0]].amplitudes[phi_range[1]][theta_range[0]][f_idx]), "Non-finite value: spheres[", indicies[0], "].amplitudes[", phi_range[1], "][", theta_range[0], "][", f_idx, "]: ", spheres[indicies[0]].amplitudes[phi_range[1]][theta_range[0]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[1]].amplitudes[phi_range[1]][theta_range[0]][f_idx]), "Non-finite value: spheres[", indicies[1], "].amplitudes[", phi_range[1], "][", theta_range[0], "][", f_idx, "]: ", spheres[indicies[1]].amplitudes[phi_range[1]][theta_range[0]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[2]].amplitudes[phi_range[1]][theta_range[0]][f_idx]), "Non-finite value: spheres[", indicies[2], "].amplitudes[", phi_range[1], "][", theta_range[0], "][", f_idx, "]: ", spheres[indicies[2]].amplitudes[phi_range[1]][theta_range[0]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[3]].amplitudes[phi_range[1]][theta_range[0]][f_idx]), "Non-finite value: spheres[", indicies[3], "].amplitudes[", phi_range[1], "][", theta_range[0], "][", f_idx, "]: ", spheres[indicies[3]].amplitudes[phi_range[1]][theta_range[0]][f_idx].to!string);
 
-                    // assert(isFinite(spheres[indicies[0]].amplitudes[phi_range[1]][theta_range[1]][f_idx]));
-                    // assert(isFinite(spheres[indicies[1]].amplitudes[phi_range[1]][theta_range[1]][f_idx]));
-                    // assert(isFinite(spheres[indicies[2]].amplitudes[phi_range[1]][theta_range[1]][f_idx]));
-                    // assert(isFinite(spheres[indicies[3]].amplitudes[phi_range[1]][theta_range[1]][f_idx]));
+                    warning(!isFinite(spheres[indicies[0]].amplitudes[phi_range[1]][theta_range[1]][f_idx]), "Non-finite value: spheres[", indicies[0], "].amplitudes[", phi_range[1], "][", theta_range[1], "][", f_idx, "]: ", spheres[indicies[0]].amplitudes[phi_range[1]][theta_range[1]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[1]].amplitudes[phi_range[1]][theta_range[1]][f_idx]), "Non-finite value: spheres[", indicies[1], "].amplitudes[", phi_range[1], "][", theta_range[1], "][", f_idx, "]: ", spheres[indicies[1]].amplitudes[phi_range[1]][theta_range[1]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[2]].amplitudes[phi_range[1]][theta_range[1]][f_idx]), "Non-finite value: spheres[", indicies[2], "].amplitudes[", phi_range[1], "][", theta_range[1], "][", f_idx, "]: ", spheres[indicies[2]].amplitudes[phi_range[1]][theta_range[1]][f_idx].to!string);
+                    warning(!isFinite(spheres[indicies[3]].amplitudes[phi_range[1]][theta_range[1]][f_idx]), "Non-finite value: spheres[", indicies[3], "].amplitudes[", phi_range[1], "][", theta_range[1], "][", f_idx, "]: ", spheres[indicies[3]].amplitudes[phi_range[1]][theta_range[1]][f_idx].to!string);
 
                     auto amp_11 = barycentric_interp!"amplitudes"(spheres, phi_range[0], theta_range[0], f_idx, weights, indicies);
                     auto amp_12 = barycentric_interp!"amplitudes"(spheres, phi_range[0], theta_range[1], f_idx, weights, indicies);
                     auto amp_21 = barycentric_interp!"amplitudes"(spheres, phi_range[1], theta_range[0], f_idx, weights, indicies);
                     auto amp_22 = barycentric_interp!"amplitudes"(spheres, phi_range[1], theta_range[1], f_idx, weights, indicies);
 
-                    // assert(isFinite(amp_11));
-                    // assert(isFinite(amp_12));
-                    // assert(isFinite(amp_21));
-                    // assert(isFinite(amp_22));
-
                     new_sphere.amplitudes[phi_idx][theta_idx][f_idx] = periodic_bilinear_interp( amp_11, amp_12, amp_21, amp_22, p1, p2, t1, t2, phi, theta);
 
-                    //assert(isFinite(new_sphere.amplitudes[phi_idx][theta_idx][f_idx]));
+                    if(!isFinite(new_sphere.amplitudes[phi_idx][theta_idx][f_idx])) {
+                        warning("Non-finite value in interpolated sphere at phi: ", phis[phi_idx], " theta: ", thetas[theta_idx], " setting to 1e35");
+                        new_sphere.amplitudes[phi_idx][theta_idx][f_idx] = 1.0e35;
+                    }
                 }
             }
         }

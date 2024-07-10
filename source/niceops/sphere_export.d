@@ -86,9 +86,9 @@ void to_aam_sphere(ref Database.SphereData dataset, ref Trajectory.dimensional_d
 
 	string title = "Title for the netCDF tile";
 
-	double BB = 1;
+	double BB = 0;
 	double PT = 0;
-	double NB = 0;
+	double NB = 1;
 	enforce(BB+PT+NB == 1, "BB+NB+PT should be equal to 1");
 	double DOPPLER_SHIFT_REMOVED = 0;
 	double EMPTY_WEIGHT = 10020;
