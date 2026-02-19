@@ -242,20 +242,20 @@ void main(string[] args)
         }
     } catch(GetOptException ex) {
         //Set default logging to file
-        sharedLog = new FileLogger(log_file, log_level, CreateFolder.yes);
+        sharedLog = new shared FileLogger(log_file, log_level, CreateFolder.yes);
 
         fatal("Failed to parse command line options: ", ex.msg);
         exit(-1);
     } catch(Exception ex) {
         //Set default logging to file
-        sharedLog = new FileLogger(log_file, log_level, CreateFolder.yes);
+        sharedLog = new shared FileLogger(log_file, log_level, CreateFolder.yes);
 
         fatal("Caught unknown exception while parsing command line arguments:\n", ex.msg, "\n", ex.file, ":", ex.line, "\n", ex.info);
         exit(-1);
     }
 
     //Set default logging to file
-    sharedLog = new FileLogger(log_file, log_level, CreateFolder.yes);
+    sharedLog = new shared FileLogger(log_file, log_level, CreateFolder.yes);
 
     info("database_files.length: ", database_files.length, ", database_files: ", database_files);
 

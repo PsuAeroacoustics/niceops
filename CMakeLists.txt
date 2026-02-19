@@ -1,7 +1,7 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.10)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake-d)
-#list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 #list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3/cmake)
 
 #include(BuildDExecutable)
@@ -40,7 +40,7 @@ set(CMAKE_CXX_STANDARD 14)
 
 
 #include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3 external/numd/source)
-include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3 external/eigen3 external/numd/source)
+include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/splinter/thirdparty/Eigen external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3 external/numd/source)
 #include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source external/numd/source)
 
 # Including the source directory is apparently required to support out of source builds of D modules
@@ -53,26 +53,26 @@ if(NOT CMAKE_BUILD_TYPE)
           FORCE)
 endif (NOT CMAKE_BUILD_TYPE)
 
-find_package(netCDF)
-message(NOTICE ${netCDF_VERSION})
-
-# Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place). Keeping windows static for now.
-find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
+find_package(NetCDF REQUIRED)
+message(NOTICE ${NetCDF_VERSION})
 
 find_package(Boost)
-find_package(CGAL COMPONENTS Core)
-include(${CGAL_USE_FILE})
+find_package(CGAL COMPONENTS Core REQUIRED)
 
-if(NOT ${GMP_INCLUDES} STREQUAL "")
+if(CGAL_USE_FILE)
+  include("${CGAL_USE_FILE}")
+endif()
+
+if(NOT "${GMP_INCLUDES}" STREQUAL "")
   include_directories(${GMP_INCLUDES})
 endif()
 
-if(NOT ${MPFR_INCLUDES} STREQUAL "")
+if(NOT "${MPFR_INCLUDES}" STREQUAL "")
   include_directories(${MPFR_INCLUDES})
 endif()
 
 add_library(sphere_database sphere_database.d netcdf.d)
-target_link_libraries(sphere_database ${NCDF})
+target_link_libraries(sphere_database NetCDF::NetCDF)
 set_target_properties(
   sphere_database PROPERTIES
     #RUNTIME_OUTPUT_DIRECTORY ./
@@ -103,7 +103,12 @@ set_target_properties(
 #)
 
 add_library(interpolator interpolator.cpp)
-target_link_libraries(interpolator ${CGAL})
+target_include_directories(interpolator BEFORE PRIVATE
+  /opt/homebrew/include/eigen3
+  /usr/local/include/eigen3
+  /usr/include/eigen3
+)
+target_link_libraries(interpolator CGAL::CGAL CGAL::CGAL_Core)
 
 add_subdirectory(external/splinter)
 
@@ -121,6 +126,11 @@ add_subdirectory(external/splinter)
 
 add_library(trajectory ${CMAKE_CURRENT_LIST_DIR}/trajectory.d wgs84tocartesian.d worldtransforms.d splines.d splinter.cpp)
 set_property(TARGET trajectory PROPERTY CXX_STANDARD 17)
+target_include_directories(trajectory BEFORE PRIVATE
+  /opt/homebrew/include/eigen3
+  /usr/local/include/eigen3
+  /usr/include/eigen3
+)
 #Qadd_library(trajectory splinter.cpp)
 
 set_target_properties(
