@@ -65,13 +65,34 @@ View the built-in manual by adding `--help` to the niceops run command.
 
 ## Command line arguments
 
-- `-t` Tracks file location
-- `-v` Database location
-- `-d` .nod database (noise output database)
-- `--qsam=true` Enable quasistatic aeroacoustic model
-- `--loglevel=trace` Detailed logging output
-- `-o` Output CSV file
-- `-f` Write grid output using matplotlib (supports EPS)
-- `-F` AC file location
-- `-S` Save aircraft states to CSV
-- `-m` Metrics file location
+- `-d`, `--database` — netCDF noise database file
+- `-l`, `--logfile` — Output log file
+- `-t`, `--trajectoryfile` — CSV trajectory input file
+- `-v`, `--vehicle` — JSON vehicle definition file
+- `-o`, `--output` — Output file name
+- `-p`, `--plotting` — Enable plotting
+- `-f`, `--figfile` — Filename to save figure
+- `-F`, `--statefigfile` — Filename to save state figures
+- `--cmin` — Minimum contour level, dB
+- `--cmax` — Maximum contour level, dB
+- `--cstep` — Contour level step, dB
+- `-s`, `--step` — Time step in seconds
+- `-a`, `--ambient` — Ambient noise level, dB
+- `-i`, `--history` — Time history file prefix
+- `-m`, `--metricfile` — File to append overall noise metrics
+- `-b`, `--observer` — Observer file name
+- `-q`, `--qsam` — Enable extended QSAM
+- `-S`, `--state` — Filenames to save state data
+- `--self_test` — Run self tests
+- `--stk` — Path, observer, and aircraft file are in STK format
+- `-L`, `--loglevel` — Log verbosity level (options: `trace`, `info`, `warning`, `error`, `critical`, `fatal`; default = `info`, case sensitive)
+- `--version` — Print niceops version and exit
+- `-T`, `--timehistory` — Directory to save timehistory files to
+- `-D`, `--dnlfile` — Day night level result file
+- `-c`, `--cutoff` — Cutoff range
+- `--adv` — Plot sphere with advance ratio
+- `--ct` — Plot sphere with C_T
+- `--fpa` — Plot sphere with flight path angle
+- `--smooth` — Smooth flight path with degree and smoothness factor (default = 3, 0.5)
+- `--pbo` — Parallelize by observer instead of flight path
+- `-h`, `--help` — This help information
