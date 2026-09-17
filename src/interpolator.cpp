@@ -90,11 +90,32 @@ void barycentric(double x1, double x2, double x3, double *weights, size_t *indic
 
     // Store a hint about the last cell found
     static thread_local Cell_handle hint;
+    auto request = Point{x1, x2, x3};
     //Find tetrahedron that encloses (x1,x2,x3)
-    auto tetrahedron = triangles.locate({x1, x2, x3}, hint);
+    Triangulation::Locate_type locate_type;
+    int li = 0, lj = 0;
+    auto tetrahedron = triangles.locate(request, locate_type, li, lj, hint);
     assert(tetrahedron->is_valid());
     hint = tetrahedron;
-    auto request = Point{x1, x2, x3};
+
+    // The query coincides exactly with an existing vertex, i.e. with one of
+    // the database's own operating conditions.  Return that sphere's data
+    // rather than a blend of its neighbours.  Without this, hover (mu = 0)
+    // sits on the convex hull boundary where locate() is ambiguous between
+    // the infinite-cell branch below and the finite-cell volume ratios, and
+    // Database::self_test -- which queries every sphere at its own condition
+    // -- disagreed by up to 5.8 dB on all 24 hover spheres.
+    if (locate_type == Triangulation::VERTEX) {
+        weights[0] = 1.0;
+        weights[1] = 0.0;
+        weights[2] = 0.0;
+        weights[3] = 0.0;
+        indicies[0] = tetrahedron->vertex(li)->info();
+        indicies[1] = 0;
+        indicies[2] = 0;
+        indicies[3] = 0;
+        return;
+    }
 
     //Check if cell is closed
     if (triangles.is_infinite(tetrahedron)) {
@@ -115,7 +136,9 @@ void barycentric(double x1, double x2, double x3, double *weights, size_t *indic
             x[i] = tetrahedron->vertex(i)->point();
         }
         auto volume = std::array<double, 4>{};
-        auto total_volume = 0.0f;
+        // NB: double, not float -- a float accumulator here capped every
+        // barycentric weight at ~7 significant digits.
+        auto total_volume = 0.0;
         for (size_t i = 0; i < 4; i++) {
             auto facet = triangles.triangle(Triangulation::Facet(tetrahedron, i));
             auto pr = std::array<std::array<double, 3>, 3>{};
