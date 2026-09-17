@@ -106,6 +106,7 @@ add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
   tests/test_sphere_database.cpp
   tests/test_trajectory.cpp
+  tests/test_csv.cpp
 )
 target_link_libraries(niceops_unit_tests niceops_core Catch2::Catch2WithMain)
 

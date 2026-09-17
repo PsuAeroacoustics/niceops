@@ -13,17 +13,30 @@
 
 namespace niceops {
 
-inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path)
+// skip_first_record mirrors D's csvReader!(double)(contents, null): passing a
+// null header makes std.csv consume the first record as a header row and
+// discard it, unconditionally -- even when it holds numbers.  Callers that
+// port such a csvReader must pass true, or they will read one extra observer
+// that the D original silently dropped.
+inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path,
+        bool skip_first_record = false)
 {
     std::ifstream in(path);
     if (!in)
         throw std::runtime_error("Unable to open CSV file: " + path);
     std::vector<std::vector<double>> rows;
     std::string line;
+    bool first = true;
     while (std::getline(in, line))
     {
         if (line.empty())
             continue;
+        if (first && skip_first_record)
+        {
+            first = false;
+            continue;
+        }
+        first = false;
         std::vector<double> row;
         std::stringstream ss(line);
         std::string field;

@@ -99,7 +99,11 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
     if (extension == "csv")
     {
         trace("Loading ", filename, " as CSV.");
-        auto records = read_numeric_csv(filename);
+        // D reads this with csvReader!(double)(contents, null), which discards
+        // the first record as a header regardless of content.  The demo tracks
+        // all carry a text header so both paths agreed by luck; a headerless
+        // trajectory would have gained a spurious first state here.
+        auto records = read_numeric_csv(filename, /*skip_first_record=*/true);
 
         for (const auto& data : records)
         {

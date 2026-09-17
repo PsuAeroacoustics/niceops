@@ -166,7 +166,9 @@ void append_metrics_file(const std::string& filename, const std::string& casenam
 void read_observer_file(const std::string& observer_file, std::vector<Eigen::Vector3d>& observers)
 {
     trace("Reading observers from ", observer_file, ".");
-    auto records = read_numeric_csv(observer_file);
+    // D reads this with csvReader!(double)(contents, null), which consumes the
+    // first record as a header and discards it whether or not it is numeric.
+    auto records = read_numeric_csv(observer_file, /*skip_first_record=*/true);
     for (const auto& data : records)
     {
         if (data.size() == 3)
