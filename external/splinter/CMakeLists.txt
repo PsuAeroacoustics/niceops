@@ -6,7 +6,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 project(SPLINTER CXX)
-cmake_minimum_required(VERSION 2.8)
+# Bumped from 2.8: CMake 4 removed compatibility with < 3.5 outright, so the
+# original line makes the whole project unconfigurable on current CMake.
+cmake_minimum_required(VERSION 3.5...3.27)
 string(TOLOWER ${PROJECT_NAME} PROJECT_NAME_LOWER)
 
 # Default configuration values

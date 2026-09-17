@@ -118,8 +118,11 @@ SparseMatrix BSplineBasis::evalBasisJacobian(DenseVector &x) const
         SparseVector Ji = kroneckerProductVectors(values);
 
         // Fill out column
-        for (int k = 0; k < Ji.outerSize(); ++k)
-        for (SparseMatrix::InnerIterator it(Ji,k); it; ++it)
+        // Ji is a SparseVector (outerSize() == 1), so iterate it with
+        // SparseVector::InnerIterator -- matching evalBasisJacobian below.
+        // Eigen 3.4 made SparseMatrix::InnerIterator(SparseMatrixBase, Index)
+        // private precisely to reject this mismatch.
+        for (SparseVector::InnerIterator it(Ji); it; ++it)
         {
             if (it.value() != 0)
                 J.insert(it.row(),i) = it.value();
