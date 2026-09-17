@@ -86,6 +86,14 @@ CTest defines five tests, all with the **source root** as their working director
 
   Historical note: this test briefly failed on 99.8% of samples with `eval` returning exactly 0. That was the in-place `phis_scattered`/`thetas_scattered` sort bug (see Code Conventions), now fixed. If the failure count jumps far above 7,788 again, suspect the database grid fill first.
 
+  **Root cause of the remaining 7,788 (diagnosed, not yet fixed).** Every failure is at **μ = 0** — hover. All 24 hover groups in `S-76D_M3.nod` fail; no non-hover group fails. μ = 0 is the minimum of the advance-ratio range and is isolated by a large gap (next μ is 0.10617), so after normalization those points sit exactly on the convex-hull boundary of the operating-condition cloud that `interpolator.cpp` triangulates. `barycentric()` has an explicit branch for queries whose located cell is infinite (falling back to `nearest_vertex`), and a hull-boundary query is precisely where CGAL's `locate()` is ambiguous between that branch and the finite-cell volume-ratio path. Errors reach ±5.8 dB, median −0.85 dB, which is consistent with weights blending neighbouring conditions instead of returning the vertex's own value.
+
+  Two concrete defects to address when fixing this (both inherited — `interpolator.cpp` was shared with the D build, which is why D fails identically):
+  - `barycentric()` does not special-case a query that coincides with a triangulation vertex. Self-test queries always sit exactly on one, and should return weight 1 for it.
+  - `total_volume` in `barycentric()` is declared `float` (`auto total_volume = 0.0f;`) inside an otherwise double-precision computation, capping every barycentric weight at ~7 significant digits. This is independent of the hover problem and worth fixing regardless.
+
+  Fixing either changes numerical output and invalidates `golden/`, so it is deliberately staged after the faithful-port work.
+
 - `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All 7 cases pass (~26k assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
 - `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines. See the caveat above: the golden files are missing.
 
