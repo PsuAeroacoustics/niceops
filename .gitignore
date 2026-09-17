@@ -18,7 +18,8 @@ niceops
 *.dSYM
 *.nc
 *_LAE.csv
-/external/matplotlibd/examples/
+# ...but keep the golden reference outputs tracked for regression comparison
+!golden/*_LAE.csv
 splinter-test
 /figures/
 /integrated/

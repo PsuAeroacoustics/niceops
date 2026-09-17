@@ -1,3 +1,8 @@
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cmath>
+#include <utility>
 #include <vector>
 #include <numeric>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>

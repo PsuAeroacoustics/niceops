@@ -25,8 +25,8 @@ void main(string[] args)
     bool plotting = false;
     string figure_file = "";
     string state_figure_file = "";
-    double contour_min = 65.0;
-    double contour_max = 100.0;
+    double contour_min = 45.0;
+    double contour_max = 90.0;
     double contour_step = 5.0;
     bool scattered = false;
     string observer_file = "";
@@ -78,7 +78,7 @@ void main(string[] args)
     }
 
     //Set default logging to file
-    sharedLog = new FileLogger(log_file, LogLevel.info, CreateFolder.yes);
+    sharedLog = cast(shared) new FileLogger(log_file, LogLevel.info, CreateFolder.yes);
 
     // Start stopwatch
     immutable watch = StopWatch(AutoStart.yes);
@@ -99,13 +99,13 @@ void main(string[] args)
     auto trajectory = new Trajectory(path_file, vehicle_file);
 
     //Trim trajectory (per Mike)
-    immutable double xstart_ft = -6000.;
-    trajectory.watts_trim(xstart_ft);
+    //immutable double xstart_ft = -6000.;
+    //trajectory.watts_trim(xstart_ft);
 
     // Trajectory adaptation parameters
     immutable int degree = 5;
     immutable double smooth = 1e6;
-    trajectory.adapt(dt, degree, smooth);
+    //trajectory.adapt(dt, degree, smooth);
 
     // And time series data
     immutable nt = trajectory.states.length;
@@ -134,9 +134,9 @@ void main(string[] args)
     else
     {
         // Set up observer array
-        x_obs = iota(-2000.0, 1100.0, 25.0).array;
+        x_obs = iota(-1500.0, 1500.0, 25.0).array;
         auto nx = x_obs.length;
-        y_obs = iota(-1500.0, 1600.0, 25.0).array;
+        y_obs = iota(-1500.0, 1500.0, 25.0).array;
         auto ny = y_obs.length;
         //Set corresponding length for levels
         integrated_levels.length = nx * ny;
@@ -246,7 +246,7 @@ void main(string[] args)
                         "cmap": "YlOrRd"
                         ]);
             }
-            plt.plot(x, y, "k-");
+//            plt.plot(x, y, "k-");
             plt.xlabel("X, ft", ["fontsize": 14]);
             plt.ylabel("Y, ft", ["fontsize": 14]);
             plt.axis("equal");
