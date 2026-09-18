@@ -20,7 +20,7 @@
 #include <vector>
 
 #include <CLI/CLI.hpp>
-#include <Eigen/Dense>
+#include "vec3.hpp"
 
 #include "plotting.hpp"
 #include "sphere_database.hpp"
@@ -140,7 +140,7 @@ void append_metrics_file(const std::string& filename, const std::string& casenam
     file << casename << "," << average << "," << maximum << "," << area << "\n";
 }
 
-void read_observer_file(const std::string& observer_file, std::vector<Eigen::Vector3d>& observers)
+void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers)
 {
     trace("Reading observers from ", observer_file, ".");
     // D reads this with csvReader!(double)(contents, null), which consumes the
@@ -150,12 +150,12 @@ void read_observer_file(const std::string& observer_file, std::vector<Eigen::Vec
     {
         if (data.size() == 3)
         {
-            observers.push_back(Eigen::Vector3d(data[0] * ft2m, data[1] * ft2m, data[2] * ft2m));
+            observers.push_back(Vec3(data[0] * ft2m, data[1] * ft2m, data[2] * ft2m));
         }
         else if (data.size() == 4)
         {
             // Skip channel ID in first column
-            observers.push_back(Eigen::Vector3d(data[1] * ft2m, data[2] * ft2m, data[3] * ft2m));
+            observers.push_back(Vec3(data[1] * ft2m, data[2] * ft2m, data[3] * ft2m));
         }
         else
         {
@@ -404,7 +404,7 @@ int main(int argc, char* argv[])
     std::vector<double> integrated_levels;
     std::vector<double> x_obs;
     std::vector<double> y_obs;
-    std::vector<Eigen::Vector3d> observers;
+    std::vector<Vec3> observers;
     if (scattered)
     {
         // Read in scattered observer data
@@ -437,7 +437,7 @@ int main(int argc, char* argv[])
         {
             for (std::size_t ix = 0; ix < nx; ix++)
             {
-                observers.push_back(Eigen::Vector3d(x_obs[ix], y_obs[iy], 0.0));
+                observers.push_back(Vec3(x_obs[ix], y_obs[iy], 0.0));
             }
         }
     }
@@ -529,9 +529,9 @@ int main(int argc, char* argv[])
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
     {
-        source_states.push_back(database.source_state(Eigen::Vector3d(state.x, state.y, state.z),
-                Eigen::Vector3d(state.vx, state.vy, state.vz),
-                Eigen::Vector3d(state.nx, state.ny, state.nz), state.mu,
+        source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
+                Vec3(state.vx, state.vy, state.vz),
+                Vec3(state.nx, state.ny, state.nz), state.mu,
                 qsam ? state.fpa_e : state.fpa, state.CT));
     }
 

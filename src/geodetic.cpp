@@ -60,8 +60,14 @@ double parallel_radius(double sin_phi, double cos_phi)
 }
 
 // Transverse Mercator forward, in units of the equatorial radius, with `lon`
-// already relative to the reference meridian.
-Eigen::Vector2d project(double lat, double lon, double meridian_at_reference)
+// already relative to the reference meridian.  Returns (easting, northing).
+struct Projected
+{
+    double east;
+    double north;
+};
+
+Projected project(double lat, double lon, double meridian_at_reference)
 {
     if (std::fabs(lat) < EPSILON10)
     {
@@ -101,7 +107,7 @@ LocalFrame LocalFrame::track_aligned(const Geodetic& reference, double bearing)
     return frame;
 }
 
-Eigen::Vector3d LocalFrame::to_local(const Geodetic& position) const
+Vec3 LocalFrame::to_local(const Geodetic& position) const
 {
     double lat = position.latitude * DEG_TO_RAD;
     double lon = position.longitude * DEG_TO_RAD;
@@ -119,18 +125,19 @@ Eigen::Vector3d LocalFrame::to_local(const Geodetic& position) const
     lon -= reference_.longitude * DEG_TO_RAD;
 
     const auto projected = project(lat, lon, meridian_at_reference_);
-    const double east = EQUATOR_RADIUS * projected(0);
-    const double north = EQUATOR_RADIUS * projected(1);
+    const double east = EQUATOR_RADIUS * projected.east;
+    const double north = EQUATOR_RADIUS * projected.north;
     return {east * cos_rotation_ + north * sin_rotation_,
             -east * sin_rotation_ + north * cos_rotation_, position.altitude};
 }
 
-Geodetic LocalFrame::to_geodetic(const Eigen::Vector3d& local) const
+Geodetic LocalFrame::to_geodetic(const Vec3& local) const
 {
     // Newton on the 2x2 forward map, from the reference point.  The projection
     // is smooth and very nearly an identity near the reference, so this lands
     // on the answer in three or four steps.
-    const Eigen::Vector2d target(local(0), local(1));
+    const double target_east = local(0);
+    const double target_north = local(1);
     Geodetic guess = reference_;
     guess.altitude = local(2);
 
@@ -139,33 +146,39 @@ Geodetic LocalFrame::to_geodetic(const Eigen::Vector3d& local) const
     const double step = 1.0e-8;
     for (int iteration = 0; iteration < 50; iteration++)
     {
-        const Eigen::Vector3d at = to_local(guess);
-        const Eigen::Vector2d residual = Eigen::Vector2d(at(0), at(1)) - target;
-        if (residual.norm() < 1.0e-9)
+        const Vec3 at = to_local(guess);
+        const double residual_east = at(0) - target_east;
+        const double residual_north = at(1) - target_north;
+        if (std::hypot(residual_east, residual_north) < 1.0e-9)
             break;
 
         Geodetic d_lat = guess;
         d_lat.latitude += step;
         Geodetic d_lon = guess;
         d_lon.longitude += step;
-        const Eigen::Vector3d at_lat = to_local(d_lat);
-        const Eigen::Vector3d at_lon = to_local(d_lon);
+        const Vec3 at_lat = to_local(d_lat);
+        const Vec3 at_lon = to_local(d_lon);
 
-        Eigen::Matrix2d jacobian;
-        jacobian(0, 0) = (at_lat(0) - at(0)) / step;
-        jacobian(1, 0) = (at_lat(1) - at(1)) / step;
-        jacobian(0, 1) = (at_lon(0) - at(0)) / step;
-        jacobian(1, 1) = (at_lon(1) - at(1)) / step;
+        // The 2x2 Jacobian of (easting, northing) against (latitude, longitude),
+        // by finite differences, solved by hand -- Cramer's rule on two rows
+        // needs no linear algebra library.
+        const double d_east_d_lat = (at_lat(0) - at(0)) / step;
+        const double d_north_d_lat = (at_lat(1) - at(1)) / step;
+        const double d_east_d_lon = (at_lon(0) - at(0)) / step;
+        const double d_north_d_lon = (at_lon(1) - at(1)) / step;
 
-        const double determinant = jacobian.determinant();
+        const double determinant = d_east_d_lat * d_north_d_lon - d_east_d_lon * d_north_d_lat;
         if (std::fabs(determinant) < 1.0e-20)
         {
             // Degenerate at the poles, where every longitude maps to one point.
             break;
         }
-        const Eigen::Vector2d correction = jacobian.inverse() * residual;
-        guess.latitude -= correction(0);
-        guess.longitude -= correction(1);
+        const double correction_lat
+                = (d_north_d_lon * residual_east - d_east_d_lon * residual_north) / determinant;
+        const double correction_lon
+                = (d_east_d_lat * residual_north - d_north_d_lat * residual_east) / determinant;
+        guess.latitude -= correction_lat;
+        guess.longitude -= correction_lon;
     }
     return guess;
 }

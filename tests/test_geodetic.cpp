@@ -89,7 +89,7 @@ TEST_CASE("Track-aligned frames rotate the axes", "[geodetic]")
     for (double bearing = -180.0; bearing <= 180.0; bearing += 37.0)
     {
         const auto rotated = LocalFrame::track_aligned(reference, bearing).to_local(north_of_it);
-        REQUIRE(std::fabs(rotated.head<2>().norm() - east_north.head<2>().norm()) < 1e-6);
+        REQUIRE(std::fabs(rotated.horizontal_norm() - east_north.horizontal_norm()) < 1e-6);
     }
 }
 
@@ -121,7 +121,7 @@ TEST_CASE("Projection matches the shipped tracks' own geometry", "[geodetic]")
         const auto& current = records[i];
         const auto a = frame.to_local({previous[2], previous[3], 0.0});
         const auto b = frame.to_local({current[2], current[3], 0.0});
-        const double projected = (b - a).head<2>().norm();
+        const double projected = (b - a).horizontal_norm();
         const double from_file = std::hypot((current[5] - previous[5]) * ft2m,
                 (current[6] - previous[6]) * ft2m);
         worst = std::max(worst, std::fabs(projected - from_file));

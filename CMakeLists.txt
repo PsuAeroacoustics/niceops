@@ -36,7 +36,6 @@ endif()
 # CGAL is gone: the Delaunay triangulation is now src/delaunay.cpp on the exact
 # predicates in src/predicates.cpp, which also sheds the Boost, GMP and MPFR
 # that CGAL pulled in behind it.
-find_package(Eigen3 REQUIRED NO_MODULE)
 
 # Third-party dependencies, fetched at configure time
 include(FetchContent)
@@ -155,7 +154,6 @@ target_include_directories(niceops_core PUBLIC
 )
 target_link_libraries(niceops_core PUBLIC
   ${NETCDF_LIBRARY}
-  Eigen3::Eigen
   nlohmann_json::nlohmann_json
 )
 if(NICEOPS_PLOTTING)

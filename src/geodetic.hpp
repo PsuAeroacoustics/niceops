@@ -16,7 +16,7 @@
 
 #include <string>
 
-#include <Eigen/Dense>
+#include "vec3.hpp"
 
 namespace niceops {
 
@@ -56,14 +56,14 @@ public:
     // Geodetic -> local Cartesian metres.  Throws for a position outside the
     // projection's domain; the D original quietly returned the origin instead,
     // which silently teleports a bad coordinate to the reference point.
-    Eigen::Vector3d to_local(const Geodetic& position) const;
+    Vec3 to_local(const Geodetic& position) const;
 
     // ...and back.  Newton iteration on the forward projection, which converges
     // to the last bit in a handful of steps.  The D original walked latitude
     // and then longitude in fixed 1e-5 degree increments until the error
     // stopped shrinking, stopping a centimetre out after thousands of forward
     // evaluations.
-    Geodetic to_geodetic(const Eigen::Vector3d& local) const;
+    Geodetic to_geodetic(const Vec3& local) const;
 
 private:
     Geodetic reference_;

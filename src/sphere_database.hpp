@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-#include <Eigen/Dense>
+#include "vec3.hpp"
 
 #include "interpolator.hpp"
 
@@ -87,21 +87,21 @@ double acosc(double x);
 // across the whole observer grid.
 struct SphereFrame
 {
-    Eigen::Vector3d normal;    // n, unit TPP normal
-    Eigen::Vector3d nose;      // vn, velocity projected into the TPP, unit
-    Eigen::Vector3d starboard; // pn = vn x n
+    Vec3 normal;    // n, unit TPP normal
+    Vec3 nose;      // vn, velocity projected into the TPP, unit
+    Vec3 starboard; // pn = vn x n
 };
 
-SphereFrame sphere_frame(const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal);
+SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal);
 
 // Sphere angles (phi, theta in degrees) of an already-normalized propagation
 // direction.
-std::array<double, 2> lookup_angles(const SphereFrame& frame, const Eigen::Vector3d& direction);
+std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direction);
 
 // Sphere angles (phi, theta in degrees) of the propagation direction
-std::array<double, 2> lookup_angles(const Eigen::Vector3d& source,
-        const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal,
-        const Eigen::Vector3d& observer);
+std::array<double, 2> lookup_angles(const Vec3& source,
+        const Vec3& velocity, const Vec3& normal,
+        const Vec3& observer);
 
 // Repair the azimuth labels of a sphere written by a pre-versioned builder
 // (database_version < 1), whose upper surface was completed with `-phi` instead
@@ -134,7 +134,7 @@ public:
     // to blend.
     struct SourceState
     {
-        Eigen::Vector3d position;
+        Vec3 position;
         SphereFrame frame;
         Blend blend;
     };
@@ -144,8 +144,8 @@ public:
     Blend blend_at(double advance_ratio, double flight_path_angle,
             double thrust_coefficient) const;
 
-    SourceState source_state(const Eigen::Vector3d& source, const Eigen::Vector3d& velocity,
-            const Eigen::Vector3d& normal, double advance_ratio, double flight_path_angle,
+    SourceState source_state(const Vec3& source, const Vec3& velocity,
+            const Vec3& normal, double advance_ratio, double flight_path_angle,
             double thrust_coefficient) const;
 
     double eval(double range, double phi, double theta, const Blend& blend) const;
@@ -153,24 +153,24 @@ public:
     double eval(double range, double phi, double theta, double advance_ratio,
             double flight_path_angle, double thrust_coefficient) const;
 
-    double level_at_observer(const Eigen::Vector3d& observer, const SourceState& state) const;
+    double level_at_observer(const Vec3& observer, const SourceState& state) const;
 
-    double level_at_observer(const Eigen::Vector3d& observer,
-            const Eigen::Vector3d& source, const Eigen::Vector3d& velocity,
-            const Eigen::Vector3d& normal, double advance_ratio,
+    double level_at_observer(const Vec3& observer,
+            const Vec3& source, const Vec3& velocity,
+            const Vec3& normal, double advance_ratio,
             double flight_path_angle, double thrust_coefficient) const;
 
     double level_along_bearing(double range, double bearing, double altitude,
-            const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal,
+            const Vec3& velocity, const Vec3& normal,
             double advance_ratio, double flight_path_angle,
             double thrust_coefficient) const;
 
-    double zero_range_level(double altitude, const Eigen::Vector3d& velocity,
-            const Eigen::Vector3d& normal, double advance_ratio,
+    double zero_range_level(double altitude, const Vec3& velocity,
+            const Vec3& normal, double advance_ratio,
             double flight_path_angle, double thrust_coefficient) const;
 
     double find_range(double contour_level, double bearing, double altitude,
-            const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal,
+            const Vec3& velocity, const Vec3& normal,
             double advance_ratio, double flight_path_angle,
             double thrust_coefficient, double threshold, bool zero_range_check) const;
 

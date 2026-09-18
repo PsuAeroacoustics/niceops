@@ -116,8 +116,8 @@ TEST_CASE("clamp", "[sphere_database]")
 
 TEST_CASE("acosc clamps its argument", "[sphere_database]")
 {
-    // dot/norm/normalize/cross were one-line pass-throughs to Eigen and have
-    // been removed; testing them tested Eigen, not this project.  acosc is
+    // dot/norm/normalize/cross are one-line vector helpers and are not tested
+    // here; testing them would test vec3.hpp, not this file.  acosc is
     // real: it clamps before acos so round-off past the ends is not NaN.
     REQUIRE(acosc(0.5) == std::acos(0.5));
     REQUIRE(acosc(10.0) == std::acos(1.0));
@@ -127,18 +127,18 @@ TEST_CASE("acosc clamps its argument", "[sphere_database]")
 TEST_CASE("lookup_angles", "[sphere_database]")
 {
     const double r = 123.456;
-    Eigen::Vector3d source(0, 0, r);
-    Eigen::Vector3d observer(r, 0, 0);
-    Eigen::Vector3d velocity1(1, 0, 0);
-    Eigen::Vector3d velocity2(0, 1, 0);
-    Eigen::Vector3d velocity3(0, -1, 0);
-    Eigen::Vector3d velocity4(-1, 0, 0);
+    Vec3 source(0, 0, r);
+    Vec3 observer(r, 0, 0);
+    Vec3 velocity1(1, 0, 0);
+    Vec3 velocity2(0, 1, 0);
+    Vec3 velocity3(0, -1, 0);
+    Vec3 velocity4(-1, 0, 0);
     const double s2 = std::sqrt(2.);
-    Eigen::Vector3d normal1(0, 0, 1);
-    Eigen::Vector3d normal2(s2, 0, s2);
-    Eigen::Vector3d normal3(-s2, 0, s2);
-    Eigen::Vector3d normal4(0, s2, s2);
-    Eigen::Vector3d normal5(0, -s2, s2);
+    Vec3 normal1(0, 0, 1);
+    Vec3 normal2(s2, 0, s2);
+    Vec3 normal3(-s2, 0, s2);
+    Vec3 normal4(0, s2, s2);
+    Vec3 normal5(0, -s2, s2);
 
     // Check various headings only
     auto angles = lookup_angles(source, velocity1, normal1, observer);

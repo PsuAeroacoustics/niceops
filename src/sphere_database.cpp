@@ -416,12 +416,12 @@ double acosc(double x)
     return std::acos(std::clamp(x, -1.0, 1.0));
 }
 
-SphereFrame sphere_frame(const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal)
+SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal)
 {
     SphereFrame frame;
     frame.normal = normal.normalized();
     // Project velocity vector onto TPP to get a "nose" vector
-    const Eigen::Vector3d v = velocity.normalized();
+    const Vec3 v = velocity.normalized();
     frame.nose = v - v.dot(frame.normal) * frame.normal;
     frame.nose.normalize();
     // Define starboard as the cross product of the "nose" and the TPP normal
@@ -429,12 +429,12 @@ SphereFrame sphere_frame(const Eigen::Vector3d& velocity, const Eigen::Vector3d&
     return frame;
 }
 
-std::array<double, 2> lookup_angles(const SphereFrame& frame, const Eigen::Vector3d& direction)
+std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direction)
 {
     // Sphere theta angle is relative to projection of velocity onto TPP
     double theta = acosc(frame.nose.dot(direction));
     // Project the propagation vector onto the plane normal to the "nose"
-    Eigen::Vector3d rp = direction - direction.dot(frame.nose) * frame.nose;
+    Vec3 rp = direction - direction.dot(frame.nose) * frame.nose;
     rp.normalize();
     // Then, we can get sphere phi by computing the angle of the propagation
     // vector in the plane
@@ -453,8 +453,8 @@ std::array<double, 2> lookup_angles(const SphereFrame& frame, const Eigen::Vecto
     return {phi, theta};
 }
 
-std::array<double, 2> lookup_angles(const Eigen::Vector3d& source, const Eigen::Vector3d& velocity,
-        const Eigen::Vector3d& normal, const Eigen::Vector3d& observer)
+std::array<double, 2> lookup_angles(const Vec3& source, const Vec3& velocity,
+        const Vec3& normal, const Vec3& observer)
 {
     return lookup_angles(sphere_frame(velocity, normal), (observer - source).normalized());
 }
@@ -768,8 +768,8 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     return blend;
 }
 
-Database::SourceState Database::source_state(const Eigen::Vector3d& source,
-        const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal, double advance_ratio,
+Database::SourceState Database::source_state(const Vec3& source,
+        const Vec3& velocity, const Vec3& normal, double advance_ratio,
         double flight_path_angle, double thrust_coefficient) const
 {
     return {source, sphere_frame(velocity, normal),
@@ -932,15 +932,15 @@ double Database::cull_range(const Blend& blend, double cutoff) const
     return sphere_radius_ * std::pow(10.0, 0.05 * (blended_max - cutoff));
 }
 
-double Database::level_at_observer(const Eigen::Vector3d& observer, const SourceState& state) const
+double Database::level_at_observer(const Vec3& observer, const SourceState& state) const
 {
-    Eigen::Vector3d r = observer - state.position;
+    Vec3 r = observer - state.position;
     auto slant_range = r.norm();
-    trace("R = ", slant_range, " for r = ", r.transpose());
-    // Reuse the slant range as the normalization: Eigen's normalized() divides
-    // by this same sqrt(squaredNorm()) (returning the vector untouched when it
-    // is zero), so this is the identical direction without a second subtraction
-    // and square root.
+    trace("R = ", slant_range, " for r = ", r);
+    // Reuse the slant range as the normalization: normalized() divides by this
+    // same sqrt(squaredNorm()) (returning the vector untouched when it is zero),
+    // so this is the identical direction without a second subtraction and square
+    // root.
     if (slant_range > 0.0)
     {
         r /= slant_range;
@@ -953,8 +953,8 @@ double Database::level_at_observer(const Eigen::Vector3d& observer, const Source
     return level;
 }
 
-double Database::level_at_observer(const Eigen::Vector3d& observer, const Eigen::Vector3d& source,
-        const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal, double advance_ratio,
+double Database::level_at_observer(const Vec3& observer, const Vec3& source,
+        const Vec3& velocity, const Vec3& normal, double advance_ratio,
         double flight_path_angle, double thrust_coefficient) const
 {
     return level_at_observer(observer,
@@ -963,7 +963,7 @@ double Database::level_at_observer(const Eigen::Vector3d& observer, const Eigen:
 }
 
 double Database::level_along_bearing(double range, double bearing, double altitude,
-        const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal, double advance_ratio,
+        const Vec3& velocity, const Vec3& normal, double advance_ratio,
         double flight_path_angle, double thrust_coefficient) const
 {
     bearing *= PI / 180.0;
@@ -974,26 +974,26 @@ double Database::level_along_bearing(double range, double bearing, double altitu
     // Place observer on ground at heading rotated by bearing
     // NOTE: second component faithfully reproduces the D original, which uses
     // heading[0] twice (likely a latent bug in level_along_bearing).
-    Eigen::Vector3d observer = {range * (std::cos(bearing) * heading[0] + std::sin(bearing) * heading[1]),
+    Vec3 observer = {range * (std::cos(bearing) * heading[0] + std::sin(bearing) * heading[1]),
             range * (std::sin(-bearing) * heading[0] + std::cos(bearing) * heading[0]), 0.0};
     // Put source at altitude above ground
-    Eigen::Vector3d source = {0.0, 0.0, altitude};
+    Vec3 source = {0.0, 0.0, altitude};
     return level_at_observer(observer, source, velocity, normal, advance_ratio, flight_path_angle,
             thrust_coefficient);
 }
 
-double Database::zero_range_level(double altitude, const Eigen::Vector3d& velocity,
-        const Eigen::Vector3d& normal, double advance_ratio, double flight_path_angle,
+double Database::zero_range_level(double altitude, const Vec3& velocity,
+        const Vec3& normal, double advance_ratio, double flight_path_angle,
         double thrust_coefficient) const
 {
-    Eigen::Vector3d observer = {0.0, 0.0, 0.0};
-    Eigen::Vector3d source = {0.0, 0.0, altitude};
+    Vec3 observer = {0.0, 0.0, 0.0};
+    Vec3 source = {0.0, 0.0, altitude};
     return level_at_observer(observer, source, velocity, normal, advance_ratio, flight_path_angle,
             thrust_coefficient);
 }
 
 double Database::find_range(double contour_level, double bearing, double altitude,
-        const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal, double advance_ratio,
+        const Vec3& velocity, const Vec3& normal, double advance_ratio,
         double flight_path_angle, double thrust_coefficient, double threshold,
         bool zero_range_check) const
 {

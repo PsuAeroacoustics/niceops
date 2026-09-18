@@ -10,11 +10,11 @@ units in the last place.
 
 ## Building
 
-Requirements: a C++17 compiler, netCDF, and Eigen3. Plotting additionally needs Python 3 with
+Requirements: a C++17 compiler and netCDF. Plotting additionally needs Python 3 with
 development headers; matplotlib itself is installed by the build, not by you. On Ubuntu:
 
 ```sh
-sudo apt-get install libnetcdf-dev libeigen3-dev python3-dev
+sudo apt-get install libnetcdf-dev python3-dev
 ```
 
 Plotting can be dropped entirely, which removes the Python requirement with it:

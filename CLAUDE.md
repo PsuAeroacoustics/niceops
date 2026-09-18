@@ -16,11 +16,13 @@ When you add a C++ source, put it in `src/` and add it to the right target — a
 
 ## Build
 
-Requirements: a C++17 compiler, netCDF (shared library) and Eigen3. Plotting also needs Python 3 **with development headers**; matplotlib is installed by the build into `build/pyenv` rather than being a prerequisite. CGAL is gone, and Boost, GMP and MPFR went with it -- they were only ever transitive dependencies of CGAL. On Ubuntu, as CI does:
+Requirements: a C++17 compiler and netCDF (shared library). Plotting also needs Python 3 **with development headers**; matplotlib is installed by the build into `build/pyenv` rather than being a prerequisite. CGAL is gone (and Boost, GMP and MPFR with it, which were only ever CGAL's transitive dependencies), as is Eigen -- `src/vec3.hpp` covers what was actually used of it. On Ubuntu, as CI does:
 
 ```sh
-sudo apt-get install libnetcdf-dev libeigen3-dev python3-dev
+sudo apt-get install libnetcdf-dev python3-dev
 ```
+
+With `-DNICEOPS_PLOTTING=OFF` the only prerequisite left is netCDF.
 
 `-DNICEOPS_PLOTTING=OFF` drops plotting and the whole Python dependency with it -- worth using in CI, where it also skips the matplotlib download. `-DNICEOPS_BUNDLE_PYTHON=OFF` keeps plotting but uses the interpreter's own packages instead of the build's environment.
 
