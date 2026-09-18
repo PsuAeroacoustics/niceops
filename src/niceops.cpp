@@ -351,12 +351,11 @@ int main(int argc, char* argv[])
                 Eigen::Vector3d(state.nx, state.ny, state.nz), state.mu,
                 qsam ? state.fpa_e : state.fpa, state.CT));
     }
-    // NOTE: ambient_level is zero-initialized rather than NaN (see the note on
-    // its declaration), so this guard is always true and a default run mixes in
-    // 0 dB of "ambient".  Faithful to the D original; the pressure it converts
-    // to is loop-invariant either way.
+    // ambient_level stays NaN unless -a was given, which is how D's default-NaN
+    // double suppressed the ambient mix-in.  The reference pressure it converts
+    // to is loop-invariant; it used to be a pow() per evaluation.
     const bool add_ambient = !std::isnan(ambient_level);
-    const double ambient_pressure = std::pow(10.0, ambient_level / 20.);
+    const double ambient_pressure = add_ambient ? std::pow(10.0, ambient_level / 20.) : 0.0;
 
     for (std::size_t index = 0; index < observers.size(); index++)
     {

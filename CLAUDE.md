@@ -9,7 +9,6 @@ NICE-OPS (Noise Informed Community Environment Operation Planning System) is a h
 The implementation is C++17, under `src/`. It began as a port of a D original, which is why several comments reference D semantics — those are load-bearing: the port reproduces the D reference bit-for-bit on the demo case, and the goldens come from it.
 
 - `src/` — the implementation. **Every `.cpp` lives here and is listed in CMakeLists.txt**; there are no C++ sources at the repo root.
-- `tests/` — Catch2 unit tests plus the `golden_compare` tool.
 
 The D sources (`niceops.d`, `sphere_database.d`, `trajectory.d`, `splines.d`, `netcdf.d`), along with `cmake-d/` and the vendored `external/matplotlibd/`, were removed once the port was verified complete: every D function, all 19 CLI options and all 10 `unittest` blocks have C++ counterparts. **They remain in history at `c74bab3`** (on `origin/no-stk`), which is what to check out if you ever need the oracle again — see the golden-file section.
 
@@ -44,31 +43,17 @@ Notes:
 
 `golden/197421_LAE.csv` and `golden/state_197421.csv` are captured from the **D reference implementation** and the C++ port matches them to **1e-9** (actual max relative difference ~1e-14, i.e. a few ULPs of LDC-vs-clang round-off). `regression_golden` and `state_golden` both pass.
 
-To regenerate them, build the D original in a scratch worktree — do NOT do this in the working tree:
-
-```sh
-# c74bab3 is the last commit that still contains the D sources and the D-capable
-# CMakeLists; 9ccbf0a is the D-era build (c74bab3's CMakeLists is C++-only).
-git worktree add --detach /tmp/dref 9ccbf0a
-git show c74bab3:niceops.d > /tmp/dref/niceops.d   # see below: 9ccbf0a's copy is NOT the oracle
-cmake -S /tmp/dref -B /tmp/drefbuild -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_D_COMPILER=$(which ldc2) -DNCDF=/opt/homebrew/lib/libnetcdf.dylib \
-      -DCMAKE_CXX_FLAGS=-I/opt/homebrew/include/eigen3 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-cmake --build /tmp/drefbuild --target niceops
-```
-
-Three things will bite you:
-
-- **Take `niceops.d` from `c74bab3`, not from the D-era commit.** The port was derived from a later revision of it: contour defaults 45/90 (the D-era copy has 65/100), and `watts_trim()`/`adapt()` both commented out. The older copy runs trimming and spline adaptation, computes a different trajectory, and yields a golden the port can never match.
-- **D prints only 6 significant figures** by default, so a stock D build agrees with the port to just 5e-6. For a 1e-9 golden, patch the writers to `%.17g` (`write_levels` in `niceops.d`, `write_state` in `trajectory.d`, both recovered from `c74bab3`) — formatting only, no numerics.
-- The D CMakeLists hardcodes `/usr/local` paths for netCDF and Eigen; override as above on Apple Silicon. D also crashes if `state/` does not already exist (it does not create the directory, unlike the port).
+To regenerate them, follow the `regenerate-goldens` skill
+(`.claude/skills/regenerate-goldens/SKILL.md`) — it builds the D original in a scratch
+worktree and covers the three traps (wrong `niceops.d` revision, D's 6-significant-figure
+default output, hardcoded `/usr/local` paths) that otherwise make the result unusable.
 
 ## Tests
 
 From the build directory:
 
 ```sh
-ctest -V -C Release -E broken      # what CI runs
+ctest -V -C Release                # what CI runs (no -E; the whole suite passes)
 ctest -R unit_test -V              # one CTest test
 ```
 
@@ -86,7 +71,7 @@ CTest defines five tests, all with the **source root** as their working director
 - `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion.
 
 - `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All 7 cases pass (~26k assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
-- `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines. See the caveat above: the golden files are missing.
+- `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines.
 
 ### Legacy databases (`database_version` < 1)
 
@@ -103,7 +88,7 @@ Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERS
 
 ## Running the Tool
 
-Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. Key options (see the CLI11 setup in `src/niceops.cpp`): `-d` database, `-t` trajectory CSV, `-v` vehicle JSON, `-o` output, `-b` observer file (switches to scattered-observer mode), `-a` ambient level, `-i` time-history prefix, `-m` metrics file, `-S` state file, `-p`/`-f` plotting, `-q`/`--no-qsam`, `--self_test`.
+Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. For the full option set, see the CLI11 setup in `src/niceops.cpp`.
 
 Input/output files use **feet**; internal computation is metric (`ft2m = 0.3048`). Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
 
@@ -111,12 +96,30 @@ Input/output files use **feet**; internal computation is metric (`ft2m = 0.3048`
 
 Pipeline in `main()` (`src/niceops.cpp`): load `Database` + `Trajectory` → for each observer and each trajectory state, compute instantaneous dBA via `Database::level_at_observer` → integrate the time history into a sound exposure level (SEL) using the 10-dB-down-from-peak window (`peak_range`/`sound_exposure_level` in `src/util/sel.hpp`) → write CSV output and optional matplotlib figures.
 
+### Why the hot path is shaped the way it is
+
+A default run evaluates 14,400 observers × 6,551 states = 94.3M times, so anything left in `eval` costs ~100 M×. Do not "simplify" these back:
+
+- **`Database::SourceState` is built once per trajectory state, in `main`, and reused across every observer.** It carries the source position, the `SphereFrame` (unit TPP normal, nose, starboard) and the `Blend` (four bracketing spheres + barycentric weights). The `Blend` is a CGAL Delaunay `locate()` walk and was ~60% of the whole run when it sat inside `eval`. Anything that depends only on (μ, γ, CT) or on attitude belongs here, not in `eval`.
+- **`lookup_angles` is split**: `sphere_frame(velocity, normal)` is per state, `lookup_angles(frame, direction)` is per observer. The four-argument overload still exists for the unit tests and composes the two.
+- **The level grid is one flat `vector<Sample>`** (`{dBA, EAA}` pairs), indexed `(i_phi * n_theta + i_theta) * n_conditions + condition`, not `vector<vector<vector<double>>>`. Both metrics are read together, so they share a cache line. A condition-major layout was tried and is *worse* — it also breaks bit-exactness via different FMA contraction.
+- **`GridAxis` replaces a binary search** with arithmetic when the axis is uniform, then corrects the estimate against the neighbouring knots so the answer provably equals `upper_bound`'s. The searches alone were about a third of the loop. `tests/test_sphere_database.cpp` sweeps both paths against each other; keep that test if you touch it.
+- **`trace()` is force-inlined and `Logger::write` is `noinline`** (`src/util/logger.hpp`). `eval` and `level_at_observer` make ~7 trace calls each; as ordinary calls that was a sixth of the loop spent entering functions that immediately returned. The level lives in `detail::min_level`, outside the `Logger` singleton, so testing it does not touch a function-local static's guard.
+- **The database grid fill walks channels and places them**, rather than scanning all 1,406 channels for each of the 1,332 cells (2.5 billion `approx_equal` probes, most of the load time). Two semantics are load-bearing and preserved: a later channel still wins a shared cell, and `dba_max` covers matched channels only.
+
+Current cost on the demo case: database load ~0.65 s, acoustic loop ~3.2 s. It was 2.2 s and 11.7 s. What is left is roughly 40% grid gather and arithmetic in `eval`, 20% `acos` (two per evaluation, irreducible without changing results), 10% `log10`.
+
+Two suggested optimizations were deliberately **not** taken:
+
+- Storing reciprocals of the (max − min) normalizing ranges: a reciprocal multiply is not the same as a divide, so it would move the goldens, and the normalization is per state now anyway.
+- Hoisting the output-directory check out of `write_time_history_file`: one `exists()` next to creating and writing a ~130 KB file is noise, and it would mean bypassing `open_output`'s guarantee.
+
+The remaining structural option is collapsing the database to a per-state 36×37 slab (L1-resident) instead of gathering from the 28 MB grid per evaluation. That needs `state` as the outer loop, which means tiling the observer loop into blocks so the full 754 MB level matrix is never materialized. Worth perhaps another 20%, at real cost in the shape of `main`.
+
 **The SEL integral takes its time step from the trajectory, not from `-s`.** `sound_exposure_level` weights every sample by a time step, and `-s` is only the resampling step for `adapt()` — the two coincide *only* when `adapt()` actually resamples onto that grid, and it is commented out in `main`. Every shipped track is sampled at 0.02 s, so using the 0.5 s default as the weight overstated every level by exactly `10*log10(0.5/0.02) = 13.98 dB`. `main` now derives the step via `uniform_sample_interval()` and logs it, warning if the sampling is not uniform. If you re-enable `adapt()`, it resamples to `-s` and the derived step follows automatically.
 
-The `niceops_core` static library (`sphere_database.cpp`, `trajectory.cpp`, `plotting.cpp` + the `interpolator` library) holds everything; `niceops.cpp` is only the CLI driver, and the tests link `niceops_core` directly.
-
 - `src/sphere_database.{hpp,cpp}` — `Database` class. Loads a netCDF noise database (`.nod`): one group per operating condition (μ advance ratio, γ flight path angle, CT thrust coefficient), each holding scattered (phi, θ) channels of dBA level and EAA excess-attenuation factor. `eval()` computes ground level: geometry → sphere angles (`lookup_angles`), barycentric interpolation between operating conditions, periodic bilinear interpolation on the sphere grid, then spherical spreading + excess attenuation (EAA × range) + a fixed 4 dB ground effect. Only `same_grid == true` databases are supported (the interpolation path is unimplemented). Free functions (`bracket`, `periodic_bilinear_interp`, `lookup_angles`, the geometry helpers) are exported in the header so the unit tests can reach them.
-- `src/interpolator.cpp` — C++/CGAL 3D Delaunay triangulation over the operating-condition space; exposes `set_interpolator3`/`barycentric`/`bilinear_interp` via `extern "C"` (declared in `sphere_database.hpp`). Built as its own `interpolator` library so CGAL's heavy headers compile once.
+- `src/interpolator.cpp` — C++/CGAL 3D Delaunay triangulation over the operating-condition space; exposes `set_interpolator3`/`barycentric` via `extern "C"` (declared in `sphere_database.hpp`). Built as its own `interpolator` library so CGAL's heavy headers compile once.
 - `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `src/splines.hpp` wraps it as `Spline` for `trajectory.cpp`. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
@@ -156,10 +159,9 @@ General rule: when a D construct looks obvious, check it against Phobos semantic
 
 
 - **Port fidelity outranks correctness.** Several `NOTE:` comments mark places that faithfully reproduce D quirks; leave them alone unless you are also regenerating the golden outputs, and say so explicitly:
-  - `src/niceops.cpp:208` — `ambient_level` is zero-initialized as D did, so the `!isNaN` guard is always true and every default run mixes in 0 dB "ambient" noise.
-  - `src/trajectory.hpp:76` — `utcstart`'s isNaN guard is dead code for the same reason.
-  - D's `iota` is inclusive of the stop value; observer grids and contour levels reconstruct that off-by-one deliberately (`src/niceops.cpp:423`).
+  - D's `iota` is EXCLUSIVE of the stop value; observer grids and contour levels reconstruct that off-by-one deliberately (`iota_exclusive` in `src/niceops.cpp`).
   - `write_levels` emits one extra trailing newline because the D original did.
+  - `level_along_bearing` uses `heading[0]` twice where the second component wants `heading[1]`; that is the D original's latent bug, kept.
   - `fatal()` is `[[noreturn]]` and aborts, matching D's logger; RAII cleanup intentionally does not run on fatal paths.
 - `using namespace niceops;` at the top of the `src/*.cpp` files is intentional (marked `// NOLINT`) so ported code reads like the D original.
 - Logging goes through `src/util/logger.hpp`; `main` points it at `log/niceops.log`. The logger's `print` overloads handle vectors and arrays inline, as D's did.
