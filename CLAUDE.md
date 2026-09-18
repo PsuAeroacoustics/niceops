@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NICE-OPS (Noise Informed Community Environment Operation Planning System) is a helicopter noise footprint tool. It predicts ground-level dBA noise exposure over an observer grid (or scattered observer set) from a flight trajectory and a rotor-noise "sphere" database.
 
-**The project is mid-port from D to C++17.** The layout encodes that split, and it is worth keeping clean:
+The implementation is C++17, under `src/`. It began as a port of a D original, which is why several comments reference D semantics — those are load-bearing: the port reproduces the D reference bit-for-bit on the demo case, and the goldens come from it.
 
-- `src/` — the live C++ implementation, and the only thing CMake builds (`project(... LANGUAGES CXX)`). **Every `.cpp` in the port lives here and is listed in CMakeLists.txt**; there are no C++ sources at the repo root.
+- `src/` — the implementation. **Every `.cpp` lives here and is listed in CMakeLists.txt**; there are no C++ sources at the repo root.
 - `tests/` — Catch2 unit tests plus the `golden_compare` tool.
-- Repo root — the D originals (`niceops.d`, `sphere_database.d`, `trajectory.d`, `splines.d`, `netcdf.d`), kept as the reference implementation. Read them to resolve intent, but don't edit them expecting a rebuild. `cmake-d/` and `external/matplotlibd/` are vestigial for the same reason.
+
+The D sources (`niceops.d`, `sphere_database.d`, `trajectory.d`, `splines.d`, `netcdf.d`), along with `cmake-d/` and the vendored `external/matplotlibd/`, were removed once the port was verified complete: every D function, all 19 CLI options and all 10 `unittest` blocks have C++ counterparts. **They remain in history at `c74bab3`** (on `origin/no-stk`), which is what to check out if you ever need the oracle again — see the golden-file section.
 
 When you add a C++ source, put it in `src/` and add it to the right target — a file that compiles but is never linked in shows up as an undefined-symbol error far from its cause.
 
@@ -48,8 +49,10 @@ Notes:
 To regenerate them, build the D original in a scratch worktree — do NOT do this in the working tree:
 
 ```sh
-git worktree add --detach /tmp/dref HEAD
-cp niceops.d /tmp/dref/niceops.d          # see below: HEAD's copy is NOT the right oracle
+# c74bab3 is the last commit that still contains the D sources and the D-capable
+# CMakeLists; 9ccbf0a is the D-era build (c74bab3's CMakeLists is C++-only).
+git worktree add --detach /tmp/dref 9ccbf0a
+git show c74bab3:niceops.d > /tmp/dref/niceops.d   # see below: 9ccbf0a's copy is NOT the oracle
 cmake -S /tmp/dref -B /tmp/drefbuild -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_D_COMPILER=$(which ldc2) -DNCDF=/opt/homebrew/lib/libnetcdf.dylib \
       -DCMAKE_CXX_FLAGS=-I/opt/homebrew/include/eigen3 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
@@ -58,8 +61,8 @@ cmake --build /tmp/drefbuild --target niceops
 
 Three things will bite you:
 
-- **Use the working-tree `niceops.d`, not `HEAD`'s.** The port was derived from the *uncommitted* version: contour defaults 45/90 (HEAD has 65/100), and `watts_trim()`/`adapt()` both commented out. HEAD's copy runs trimming and spline adaptation, computes a different trajectory, and yields a golden the port can never match.
-- **D prints only 6 significant figures** by default, so a stock D build agrees with the port to just 5e-6. For a 1e-9 golden, patch the writers to `%.17g` (`write_levels` in `niceops.d`, `write_state` in `trajectory.d`) — formatting only, no numerics.
+- **Take `niceops.d` from `c74bab3`, not from the D-era commit.** The port was derived from a later revision of it: contour defaults 45/90 (the D-era copy has 65/100), and `watts_trim()`/`adapt()` both commented out. The older copy runs trimming and spline adaptation, computes a different trajectory, and yields a golden the port can never match.
+- **D prints only 6 significant figures** by default, so a stock D build agrees with the port to just 5e-6. For a 1e-9 golden, patch the writers to `%.17g` (`write_levels` in `niceops.d`, `write_state` in `trajectory.d`, both recovered from `c74bab3`) — formatting only, no numerics.
 - The D CMakeLists hardcodes `/usr/local` paths for netCDF and Eigen; override as above on Apple Silicon. D also crashes if `state/` does not already exist (it does not create the directory, unlike the port).
 
 ## Tests
