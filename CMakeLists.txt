@@ -70,6 +70,7 @@ FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2 pybind11)
 add_library(niceops_core STATIC
   src/sphere_database.cpp
   src/geodetic.cpp
+  src/predicates.cpp
   src/trajectory.cpp
   src/plotting.cpp
   src/smoothing_spline.cpp
@@ -100,6 +101,7 @@ add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
+  tests/test_predicates.cpp
   tests/test_trajectory.cpp
   tests/test_csv.cpp
   tests/test_legacy_repair.cpp
