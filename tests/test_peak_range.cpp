@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <vector>
 
 #include "util/sel.hpp"
@@ -33,4 +34,24 @@ TEST_CASE("peak_range", "[sel]")
     index = peak_range(levels);
     REQUIRE(index[0] == 2);
     REQUIRE(index[1] == 4);
+}
+
+TEST_CASE("uniform_sample_interval", "[sel]")
+{
+    // Evenly spaced: the interval is exact and the spread is zero.
+    std::vector<double> times;
+    for (int i = 0; i < 11; i++)
+        times.push_back(0.02 * i);
+    double spread = -1.0;
+    REQUIRE(std::fabs(uniform_sample_interval(times, &spread) - 0.02) < 1e-12);
+    REQUIRE(spread < 1e-12);
+
+    // A single jitter is reported, and the mean still spans the whole series.
+    times[5] += 0.005;
+    REQUIRE(std::fabs(uniform_sample_interval(times, &spread) - 0.02) < 1e-12);
+    REQUIRE(spread > 0.2);
+
+    // Degenerate inputs return zero rather than dividing by nothing.
+    REQUIRE(uniform_sample_interval({}, &spread) == 0.0);
+    REQUIRE(uniform_sample_interval({1.0}, &spread) == 0.0);
 }

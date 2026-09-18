@@ -231,7 +231,8 @@ int main(int argc, char* argv[])
     app.add_option("--cmin", contour_min, "Minimum contour level, dB.");
     app.add_option("--cmax", contour_max, "Maximum contour level, dB.");
     app.add_option("--cstep", contour_step, "Contour level step, dB.");
-    app.add_option("-s,--step", dt, "Time step in seconds.");
+    app.add_option("-s,--step", dt, "Resampling time step for --adapt, in seconds. "
+            "The sound exposure level integral uses the trajectory's own sample interval.");
     app.add_option("-a,--ambient", ambient_level, "Ambient noise level, dB");
     app.add_option("-i,--history", time_history_prefix, "Time history file prefix.");
     app.add_option("-m,--metricfile", metric_file, "File to append overall noise metrics.");
@@ -299,6 +300,29 @@ int main(int argc, char* argv[])
     // And time series data
     const std::size_t nt = trajectory.states.size();
     std::vector<double> time_history(nt);
+
+    // The sound exposure level integral weights each sample by the trajectory's
+    // own time step, so take that from the states rather than from -s.  Those
+    // two coincide only when adapt() resamples onto the -s grid, and adapt() is
+    // disabled below; every shipped track is sampled at 0.02 s, so the 0.5 s
+    // default would overstate every level by 10*log10(0.5/0.02) = 14 dB.
+    double integration_step = dt;
+    if (nt >= 2)
+    {
+        std::vector<double> sample_times;
+        sample_times.reserve(nt);
+        for (const auto& state : trajectory.states)
+            sample_times.push_back(state.t);
+        double relative_spread = 0.0;
+        integration_step = uniform_sample_interval(sample_times, &relative_spread);
+        info("Integrating with the trajectory's sample interval of ", integration_step, " s.");
+        if (relative_spread > 1e-6)
+        {
+            log("Trajectory sampling is not uniform (worst interval deviates by ",
+                    100.0 * relative_spread, "% from the mean); the sound exposure level "
+                    "integral assumes the mean step.");
+        }
+    }
 
     std::vector<double> integrated_levels;
     std::vector<double> x_obs;
@@ -380,12 +404,13 @@ int main(int argc, char* argv[])
             }
             time_history[it] = level;
         }
-        integrated_levels[index] = sound_exposure_level(time_history, dt);
+        integrated_levels[index] = sound_exposure_level(time_history, integration_step);
         if (write_time_history)
         {
             // Write out time history files
             auto time_history_filename = time_history_prefix + "_i" + std::to_string(index) + ".csv";
-            write_time_history_file(time_history, dt, observer(0), observer(1), time_history_filename);
+            write_time_history_file(time_history, integration_step, observer(0), observer(1),
+                    time_history_filename);
         }
     }
 

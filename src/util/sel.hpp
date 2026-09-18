@@ -47,6 +47,31 @@ inline std::array<std::size_t, 2> peak_range(const std::vector<double>& levels, 
     return index;
 }
 
+// Mean spacing of a monotonically increasing time series, and how far the worst
+// interval strays from it (relative).  The SEL integral weights every sample by
+// this, so it must come from the data rather than from an assumed step.
+inline double uniform_sample_interval(const std::vector<double>& times, double* relative_spread = nullptr)
+{
+    if (times.size() < 2)
+    {
+        if (relative_spread != nullptr)
+            *relative_spread = 0.0;
+        return 0.0;
+    }
+    const double mean = (times.back() - times.front()) / static_cast<double>(times.size() - 1);
+    if (relative_spread != nullptr)
+    {
+        double worst = 0.0;
+        if (mean > 0.0)
+        {
+            for (std::size_t i = 1; i < times.size(); i++)
+                worst = std::max(worst, std::fabs((times[i] - times[i - 1]) - mean) / mean);
+        }
+        *relative_spread = worst;
+    }
+    return mean;
+}
+
 inline double sound_exposure_level(const std::vector<double>& levels, double T)
 {
     auto index = peak_range(levels);
