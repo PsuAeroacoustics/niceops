@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -198,11 +199,24 @@ public:
         double flight_path_angle = 0.0;
         double thrust_coefficient = 0.0;
         double radius = 0.0; // dimensional, metres
+        // Mechanical shaft power for this condition, when the database carries
+        // it.  NaN means the database has none.
+        double shaft_power = std::numeric_limits<double>::quiet_NaN();
         std::vector<double> phis;
         std::vector<double> thetas;
         // Row-major over (phi, theta): cells[i_phi * thetas.size() + i_theta].
         std::vector<Sample> cells;
     };
+
+    // Whether the database carries a per-condition shaft power.
+    bool has_shaft_power() const
+    {
+        return !shaft_power_.empty();
+    }
+
+    // Shaft power at a blended operating condition, or NaN when the database
+    // has none.  Blended with the same barycentric weights as the levels.
+    double shaft_power(const Blend& blend) const;
 
     // Blend the database down to one operating condition over the whole grid.
     Sphere interpolate_sphere(double advance_ratio, double flight_path_angle,
@@ -240,6 +254,10 @@ private:
     // attenuation factor anywhere in the database.  Together they bound how
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
+    // Per-condition shaft power, empty when the database does not carry it.
+    // Shaft power is a property of the flight condition, not of a direction on
+    // the sphere, so it is one value per sphere rather than per channel.
+    std::vector<double> shaft_power_;
     double min_excess_factor_ = 0.0;
 };
 

@@ -181,6 +181,7 @@ int main(int argc, char* argv[])
     std::string dnl_file = "";
     double utc_offset = 0.0;
     std::string sphere_file = "";
+    std::string power_file = "";
     std::vector<double> sphere_condition;
     bool write_state = false;
     bool plotting = false;
@@ -237,6 +238,8 @@ int main(int argc, char* argv[])
             "Write the day-night level, summed over every trajectory, to this file.");
     app.add_option("--utc_offset", utc_offset,
             "Hours from UTC to local time, for the 22:00-07:00 DNL night window.");
+    app.add_option("--powerfile", power_file,
+            "Write per-state shaft power, if the database carries any, to this file.");
     app.add_option("--export_sphere", sphere_file,
             "Interpolate a whole noise sphere and write it as a one-group .nod database.");
     app.add_option("--sphere_condition", sphere_condition,
@@ -466,6 +469,36 @@ int main(int argc, char* argv[])
                 Eigen::Vector3d(state.vx, state.vy, state.vz),
                 Eigen::Vector3d(state.nx, state.ny, state.nz), state.mu,
                 qsam ? state.fpa_e : state.fpa, state.CT));
+    }
+
+    if (!power_file.empty())
+    {
+        // Shaft power is a property of the flight condition, so it falls out of
+        // the per-state blends with no extra geometry.  It is written per
+        // trajectory rather than mixed into the state file, whose columns are
+        // pinned by the state golden.
+        if (!database.has_shaft_power())
+        {
+            log("--powerfile given but ", loaded_database,
+                    " carries no ShaftPower; skipping ", path_file, ".");
+        }
+        else
+        {
+            const auto name = path_count == 1
+                    ? power_file
+                    : (std::filesystem::path(power_file).parent_path()
+                              / (std::filesystem::path(path_file).stem().string() + "_power.csv"))
+                              .string();
+            auto file = open_output(name);
+            info("Writing shaft power to ", name);
+            file << "t(s),advance_ratio,flight_path_angle(deg),CT,shaft_power\n";
+            for (std::size_t it = 0; it < nt; it++)
+            {
+                const auto& state = trajectory.states[it];
+                file << state.t << "," << state.mu << "," << (qsam ? state.fpa_e : state.fpa) << ","
+                     << state.CT << "," << database.shaft_power(source_states[it].blend) << "\n";
+            }
+        }
     }
     // ambient_level stays NaN unless -a was given, which is how D's default-NaN
     // double suppressed the ambient mix-in.  The reference pressure it converts

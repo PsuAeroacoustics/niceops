@@ -534,6 +534,22 @@ Database::Database(const std::string& datafile_path)
         {
             fatal("Database error: sphere radius*scale not constant.");
         }
+        // Shaft power, when the builder wrote it.  Optional: no shipped database
+        // carries it, and a database without it simply has the feature off.
+        // The D original (DRZ_edits) made it required, which would refuse every
+        // database in this repository.
+        double shaft_power_value = 0.0;
+        if (NC_NOERR == get_scalar(group_id, "ShaftPower", &shaft_power_value))
+        {
+            if (i != 0 && shaft_power_.size() != i)
+                fatal("Database error: ShaftPower present on some spheres but not others.");
+            shaft_power_.push_back(shaft_power_value);
+        }
+        else if (!shaft_power_.empty())
+        {
+            fatal("Database error: ShaftPower present on some spheres but not others.");
+        }
+
         auto nchannels = get_dim_length("channels", group_id);
         if (i == 0)
         {
@@ -757,6 +773,16 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     return ground_level;
 }
 
+double Database::shaft_power(const Blend& blend) const
+{
+    if (shaft_power_.empty())
+        return std::numeric_limits<double>::quiet_NaN();
+    const auto& w = blend.weights;
+    const auto& i = blend.indices;
+    return w[0] * shaft_power_[i[0]] + w[1] * shaft_power_[i[1]] + w[2] * shaft_power_[i[2]]
+            + w[3] * shaft_power_[i[3]];
+}
+
 Database::Sphere Database::interpolate_sphere(double advance_ratio, double flight_path_angle,
         double thrust_coefficient) const
 {
@@ -765,6 +791,7 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.flight_path_angle = flight_path_angle;
     sphere.thrust_coefficient = thrust_coefficient;
     sphere.radius = sphere_radius_;
+    sphere.shaft_power = shaft_power(blend_at(advance_ratio, flight_path_angle, thrust_coefficient));
     sphere.phis = phis.values();
     sphere.thetas = thetas.values();
 
@@ -981,6 +1008,8 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     const int theta_var = define_scalar(group, "theta", channel_dim);
     const int dba_var = define_scalar(group, "dBA", channel_dim);
     const int eaa_var = define_scalar(group, "EAA", channel_dim);
+    const bool has_power = !std::isnan(sphere.shaft_power);
+    const int power_var = has_power ? define_scalar(group, "ShaftPower", condition_dim) : -1;
 
     nc_check(nc_enddef(file), "ending define mode");
 
@@ -1018,6 +1047,10 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     nc_check(nc_put_var_double(group, theta_var, theta_channel.data()), "writing theta");
     nc_check(nc_put_var_double(group, dba_var, dba.data()), "writing dBA");
     nc_check(nc_put_var_double(group, eaa_var, eaa.data()), "writing EAA");
+    if (has_power)
+    {
+        nc_check(nc_put_var_double(group, power_var, &sphere.shaft_power), "writing ShaftPower");
+    }
 
     log("Wrote interpolated sphere to ", path, " (", n_channels, " channels).");
 }
@@ -1056,6 +1089,22 @@ void Database::self_test(const std::string& datafile_path)
                 ",\t radius = ", radius);
 
         // Get the data for this sphere
+        // Shaft power, when the builder wrote it.  Optional: no shipped database
+        // carries it, and a database without it simply has the feature off.
+        // The D original (DRZ_edits) made it required, which would refuse every
+        // database in this repository.
+        double shaft_power_value = 0.0;
+        if (NC_NOERR == get_scalar(group_id, "ShaftPower", &shaft_power_value))
+        {
+            if (i != 0 && shaft_power_.size() != i)
+                fatal("Database error: ShaftPower present on some spheres but not others.");
+            shaft_power_.push_back(shaft_power_value);
+        }
+        else if (!shaft_power_.empty())
+        {
+            fatal("Database error: ShaftPower present on some spheres but not others.");
+        }
+
         auto nchannels = get_dim_length("channels", group_id);
         std::vector<double> theta_data(nchannels);
         require_array(group_id, "theta", nchannels, theta_data);

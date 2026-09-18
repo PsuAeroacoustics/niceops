@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <filesystem>
 #include <vector>
 
 #include "sphere_database.hpp"
@@ -168,4 +169,32 @@ TEST_CASE("lookup_angles", "[sphere_database]")
     REQUIRE((approx_equal(angles[0], -45.0) && approx_equal(angles[1], 45.0)));
     angles = lookup_angles(source, velocity1, normal5, observer);
     REQUIRE((approx_equal(angles[0], 45.0) && approx_equal(angles[1], 45.0)));
+}
+
+TEST_CASE("Shaft power round-trips through a written sphere", "[sphere_database]")
+{
+    // No shipped database carries ShaftPower, so build one that does: take a
+    // sphere out of the demo database, attach a power, write it, and read it
+    // back.  This exercises the whole optional path -- write, detect, load,
+    // blend -- which is otherwise unreachable with the data in this repository.
+    Database source("databases/S-76D_M3.nod");
+    REQUIRE(!source.has_shaft_power());
+
+    auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    REQUIRE(std::isnan(sphere.shaft_power));
+    const double power = 1234.5;
+    sphere.shaft_power = power;
+
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_power_test.nod").string();
+    write_sphere(sphere, path);
+
+    Database reloaded(path);
+    REQUIRE(reloaded.has_shaft_power());
+    // One sphere, so every blend lands on it whatever the weights.
+    const auto blend = reloaded.blend_at(0.15, -4.0, 0.006);
+    REQUIRE(std::fabs(reloaded.shaft_power(blend) - power) < 1e-9);
+
+    // And the levels still survive the round trip.
+    REQUIRE(reloaded.sphere_radius() == sphere.radius);
+    std::filesystem::remove(path);
 }
