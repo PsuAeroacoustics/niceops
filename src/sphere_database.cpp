@@ -51,6 +51,17 @@ std::vector<int> get_group_ids(int ncid)
     return group_ids;
 }
 
+// Length of an optional dimension.  Returns the netCDF status rather than
+// aborting, so a caller can treat "absent" as a normal answer.
+int nc_inq_dimid_len(int group_id, const char* dimname, std::size_t* length)
+{
+    int dimid = 0;
+    const int status = nc_inq_dimid(group_id, dimname, &dimid);
+    if (status != NC_NOERR)
+        return status;
+    return nc_inq_dimlen(group_id, dimid, length);
+}
+
 std::size_t get_dim_length(const std::string& dimname, int group_id)
 {
     // Get number of channels
@@ -495,6 +506,15 @@ Database::Database(const std::string& datafile_path)
     if (!same_grid)
         fatal("same_grid == false not supported");
 
+    // Optional: builders since the versioned format record the rotor scale at
+    // the root, which is enough to redimensionalize without a vehicle file.
+    double tip_speed_value = 0.0;
+    if (NC_NOERR == get_scalar(file_ncid, "main_rotor_tip_speed_meters_per_sec", &tip_speed_value))
+    {
+        tip_speed_ = tip_speed_value;
+        info("Database records a main rotor tip speed of ", tip_speed_, " m/s.");
+    }
+
     auto group_ids = get_group_ids(file_ncid);
 
     // Allocate storage for operating conditions
@@ -603,6 +623,39 @@ Database::Database(const std::string& datafile_path)
         EAAs_scattered.resize(nchannels);
         require_array(group_id, "dBA", dBAs_scattered.size(), dBAs_scattered);
         require_array(group_id, "EAA", EAAs_scattered.size(), EAAs_scattered);
+        // Optional per-band spectra, written gridded over the sorted unique
+        // angles.  Absent from every database built before the builder learned
+        // to carry them, so its absence is not an error -- but a database that
+        // has them on some spheres and not others is malformed.
+        std::size_t n_bands = 0;
+        if (NC_NOERR == nc_inq_dimid_len(group_id, "frequency", &n_bands))
+        {
+            std::vector<double> bands(n_bands);
+            require_array(group_id, "frequency", n_bands, bands);
+            if (i == 0)
+            {
+                frequencies_ = bands;
+                spectra_.assign(phis.size() * thetas.size() * group_ids.size() * n_bands, 0.0);
+                info("Database carries ", n_bands, " frequency bands from ", bands.front(),
+                        " to ", bands.back(), " Hz.");
+            }
+            else if (bands != frequencies_)
+            {
+                fatal("Database error: frequency bands differ between spheres.");
+            }
+            int amplitude_id = 0;
+            if (NC_NOERR != nc_inq_varid(group_id, "amplitude", &amplitude_id))
+                fatal("Database error: sphere has a frequency dimension but no amplitude.");
+            if (NC_NOERR
+                    != nc_get_var_double(group_id, amplitude_id,
+                            spectra_.data() + i * phis.size() * thetas.size() * n_bands))
+                fatal("Database error: could not read amplitude for sphere ", i, ".");
+        }
+        else if (!frequencies_.empty())
+        {
+            fatal("Database error: spectra present on some spheres but not others.");
+        }
+
         // Place each channel into the grid cells it matches, rather than
         // scanning every channel for every cell.  The original nesting cost
         // n_phi * n_theta * n_channels approx_equal probes per sphere -- 2.5
@@ -807,6 +860,29 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
             sphere.cells[m * thetas.size() + n] = blend_cell(m, n, blend);
         }
     }
+    if (!frequencies_.empty())
+    {
+        // Blend the bands with the same weights as the level, in dB, which is
+        // how the level itself is blended.
+        sphere.frequencies = frequencies_;
+        const std::size_t n_bands = frequencies_.size();
+        const std::size_t cells = sphere.cells.size();
+        sphere.amplitudes.assign(cells * n_bands, 0.0);
+        const auto& w = blend.weights;
+        for (std::size_t cell = 0; cell < sphere.cells.size(); cell++)
+        {
+            for (std::size_t band = 0; band < n_bands; band++)
+            {
+                double value = 0.0;
+                for (std::size_t k = 0; k < 4; k++)
+                {
+                    value += w[k]
+                            * spectra_[(blend.indices[k] * cells + cell) * n_bands + band];
+                }
+                sphere.amplitudes[cell * n_bands + band] = value;
+            }
+        }
+    }
     info("Interpolated sphere at \u03bc = ", advance_ratio, ", \u03b3 = ", flight_path_angle,
             ", CT = ", thrust_coefficient, " over ", sphere.cells.size(), " cells.");
     return sphere;
@@ -1008,6 +1084,22 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     const int theta_var = define_scalar(group, "theta", channel_dim);
     const int dba_var = define_scalar(group, "dBA", channel_dim);
     const int eaa_var = define_scalar(group, "EAA", channel_dim);
+    const bool has_spectra = !sphere.frequencies.empty();
+    int band_dim = 0, band_var = 0, amplitude_var = 0;
+    if (has_spectra)
+    {
+        nc_check(nc_def_dim(group, "frequency", sphere.frequencies.size(), &band_dim),
+                "defining frequency dimension");
+        band_var = define_scalar(group, "frequency", band_dim);
+        int phi_dim = 0, theta_dim = 0;
+        nc_check(nc_def_dim(group, "phi_grid", sphere.phis.size(), &phi_dim),
+                "defining phi_grid dimension");
+        nc_check(nc_def_dim(group, "theta_grid", sphere.thetas.size(), &theta_dim),
+                "defining theta_grid dimension");
+        const int dims[3] = {phi_dim, theta_dim, band_dim};
+        nc_check(nc_def_var(group, "amplitude", NC_DOUBLE, 3, dims, &amplitude_var),
+                "defining amplitude");
+    }
     const bool has_power = !std::isnan(sphere.shaft_power);
     const int power_var = has_power ? define_scalar(group, "ShaftPower", condition_dim) : -1;
 
@@ -1051,8 +1143,125 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     {
         nc_check(nc_put_var_double(group, power_var, &sphere.shaft_power), "writing ShaftPower");
     }
+    if (has_spectra)
+    {
+        nc_check(nc_put_var_double(group, band_var, sphere.frequencies.data()),
+                "writing frequency");
+        nc_check(nc_put_var_double(group, amplitude_var, sphere.amplitudes.data()),
+                "writing amplitude");
+    }
 
     log("Wrote interpolated sphere to ", path, " (", n_channels, " channels).");
+}
+
+void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed)
+{
+    if (sphere.frequencies.empty())
+    {
+        fatal("Cannot write ", path,
+                " in AAM format: the database carries no spectra, and AMPLITUDE(PHI, THETA, "
+                "FREQUENCY) is the whole payload of the format.");
+    }
+    const auto directory = std::filesystem::path(path).parent_path();
+    if (!directory.empty())
+        std::filesystem::create_directories(directory);
+
+    const double m2ft = 1.0 / 0.3048;
+    const double mps2kt = 1.94384;
+
+    int file = 0;
+    nc_check(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file), "creating " + path);
+    NcGuard guard(file);
+
+    // The AAM/RNM hemisphere layout, as the source spheres themselves carry it:
+    // a handful of scalar descriptors, the three axes, and the spectrum.
+    auto scalar_dim = [&](const char* name) {
+        int dim = 0;
+        nc_check(nc_def_dim(file, name, 1, &dim), std::string("defining ") + name);
+        return dim;
+    };
+    auto scalar_var = [&](const char* name, int dim, const char* unit) {
+        int var = 0;
+        nc_check(nc_def_var(file, name, NC_FLOAT, 1, &dim, &var), std::string("defining ") + name);
+        nc_check(nc_put_att_text(file, var, "unit", std::strlen(unit), unit),
+                std::string("annotating ") + name);
+        return var;
+    };
+
+    const int bb_var = scalar_var("BB", scalar_dim("BB"), "");
+    const int nb_var = scalar_var("NB", scalar_dim("NB"), "");
+    const int pt_var = scalar_var("PT", scalar_dim("PT"), "");
+    const int dsr_var = scalar_var(
+            "DOPPLER_SHIFT_REMOVED", scalar_dim("DOPPLER_SHIFT_REMOVED"), "");
+    const int empty_var = scalar_var("EMPTY_WEIGHT", scalar_dim("EMPTY_WEIGHT"), "POUNDS");
+    const int fuel_var = scalar_var("FUEL_WEIGHT", scalar_dim("FUEL_WEIGHT"), "POUNDS");
+    const int load_var = scalar_var("LOAD_WEIGHT", scalar_dim("LOAD_WEIGHT"), "POUNDS");
+    const int radius_var = scalar_var("RADIUS", scalar_dim("RADIUS"), "FEET");
+    const int fpa_var = scalar_var("FLIGHT_PATH_ANGLE", scalar_dim("FLIGHT_PATH_ANGLE"), "DEGREE");
+    const int pylon_var = scalar_var("PYLON_ANGLE", scalar_dim("PYLON_ANGLE"), "DEGREE");
+    const int speed_var = scalar_var("SPEED", scalar_dim("SPEED"), "KNOTS");
+    const int masttilt_var = scalar_var("MASTTILT", scalar_dim("MASTTILT"), "DEGREE");
+
+    int xyz_dim = 0, phi_dim = 0, theta_dim = 0, freq_dim = 0;
+    nc_check(nc_def_dim(file, "XYZ", 3, &xyz_dim), "defining XYZ dimension");
+    nc_check(nc_def_dim(file, "PHI", sphere.phis.size(), &phi_dim), "defining PHI dimension");
+    nc_check(nc_def_dim(file, "THETA", sphere.thetas.size(), &theta_dim),
+            "defining THETA dimension");
+    nc_check(nc_def_dim(file, "FREQUENCY", sphere.frequencies.size(), &freq_dim),
+            "defining FREQUENCY dimension");
+
+    const int xyz_var = scalar_var("XYZ", xyz_dim, "FEET");
+    const int phi_var = scalar_var("PHI", phi_dim, "DEGREE");
+    const int theta_var = scalar_var("THETA", theta_dim, "DEGREE");
+    const int freq_var = scalar_var("FREQUENCY", freq_dim, "HERTZ");
+
+    int amplitude_var = 0;
+    const int amplitude_dims[3] = {phi_dim, theta_dim, freq_dim};
+    nc_check(nc_def_var(file, "AMPLITUDE", NC_FLOAT, 3, amplitude_dims, &amplitude_var),
+            "defining AMPLITUDE");
+    nc_check(nc_put_att_text(file, amplitude_var, "unit", 7, "DECIBEL"), "annotating AMPLITUDE");
+
+    const std::string title = "NICE-OPS interpolated sphere";
+    nc_check(nc_put_att_text(file, NC_GLOBAL, "title", title.size(), title.c_str()),
+            "writing title");
+    nc_check(nc_enddef(file), "ending define mode");
+
+    auto put_scalar = [&](int var, double value) {
+        const float as_float = static_cast<float>(value);
+        nc_check(nc_put_var_float(file, var, &as_float), "writing a scalar");
+    };
+    // Narrowband only: these spheres carry no broadband/tonal split.
+    put_scalar(bb_var, 0.0);
+    put_scalar(nb_var, 1.0);
+    put_scalar(pt_var, 0.0);
+    put_scalar(dsr_var, 0.0);
+    // The database records no weight breakdown, and the format has no way to
+    // say "unknown", so these stay zero rather than inventing a figure.
+    put_scalar(empty_var, 0.0);
+    put_scalar(fuel_var, 0.0);
+    put_scalar(load_var, 0.0);
+    put_scalar(radius_var, sphere.radius * m2ft);
+    put_scalar(fpa_var, sphere.flight_path_angle);
+    put_scalar(pylon_var, 90.0);
+    put_scalar(speed_var, sphere.advance_ratio * tip_speed * mps2kt);
+    put_scalar(masttilt_var, 0.0);
+
+    const float origin[3] = {0.0F, 0.0F, 0.0F};
+    nc_check(nc_put_var_float(file, xyz_var, origin), "writing XYZ");
+
+    auto put_axis = [&](int var, const std::vector<double>& values) {
+        std::vector<float> as_float(values.begin(), values.end());
+        nc_check(nc_put_var_float(file, var, as_float.data()), "writing an axis");
+    };
+    put_axis(phi_var, sphere.phis);
+    put_axis(theta_var, sphere.thetas);
+    put_axis(freq_var, sphere.frequencies);
+
+    std::vector<float> amplitude(sphere.amplitudes.begin(), sphere.amplitudes.end());
+    nc_check(nc_put_var_float(file, amplitude_var, amplitude.data()), "writing AMPLITUDE");
+
+    log("Wrote AAM sphere to ", path, " (", sphere.phis.size(), " x ", sphere.thetas.size(),
+            " x ", sphere.frequencies.size(), ").");
 }
 
 void Database::self_test(const std::string& datafile_path)
@@ -1070,6 +1279,15 @@ void Database::self_test(const std::string& datafile_path)
     NcGuard guard(file_ncid);
 
     const int self_test_version = get_int_scalar(file_ncid, "database_version", 0);
+    // Optional: builders since the versioned format record the rotor scale at
+    // the root, which is enough to redimensionalize without a vehicle file.
+    double tip_speed_value = 0.0;
+    if (NC_NOERR == get_scalar(file_ncid, "main_rotor_tip_speed_meters_per_sec", &tip_speed_value))
+    {
+        tip_speed_ = tip_speed_value;
+        info("Database records a main rotor tip speed of ", tip_speed_, " m/s.");
+    }
+
     auto group_ids = get_group_ids(file_ncid);
     // Local operating parameters
     double advance_ratio, flight_path_angle, thrust_coefficient, radius, scale, dimensional_radius;

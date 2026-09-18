@@ -63,6 +63,11 @@ inline std::ostream& operator<<(std::ostream& os, const dimensional_data& v)
         << v.weight << ", rho: " << v.rho << ")";
 }
 
+// Read the vehicle JSON into its dimensional parameters.  Exported because the
+// sphere export needs the tip speed to turn an advance ratio back into an
+// airspeed, without building a whole Trajectory to get at it.
+dimensional_data configure_vehicle(const std::string& filename);
+
 // Derive the non-dimensional flight parameters (LF, CT, mu, fpa, fpa_e) from a
 // state's raw kinematics.  Expects nx/ny/nz to hold the un-normalised
 // load-factor components on entry, and normalises them in place.  Exported so

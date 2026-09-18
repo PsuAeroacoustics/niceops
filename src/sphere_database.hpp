@@ -206,7 +206,26 @@ public:
         std::vector<double> thetas;
         // Row-major over (phi, theta): cells[i_phi * thetas.size() + i_theta].
         std::vector<Sample> cells;
+        // Band centres, and the per-band level at every cell laid out as
+        // amplitudes[cell * frequencies.size() + band].  Both empty when the
+        // database carries no spectra.
+        std::vector<double> frequencies;
+        std::vector<double> amplitudes;
     };
+
+    // Main rotor tip speed in m/s as recorded at the root of the database, or
+    // NaN when the file does not carry it.  It turns a non-dimensional advance
+    // ratio back into an airspeed without needing a matching vehicle file.
+    double tip_speed() const
+    {
+        return tip_speed_;
+    }
+
+    // Whether the database carries per-band spectra alongside the overall level.
+    bool has_spectra() const
+    {
+        return !frequencies_.empty();
+    }
 
     // Whether the database carries a per-condition shaft power.
     bool has_shaft_power() const
@@ -254,6 +273,13 @@ private:
     // attenuation factor anywhere in the database.  Together they bound how
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
+    // Band centres shared by every sphere, and the per-band levels laid out as
+    // spectra_[(condition * cell_count + cell) * frequencies_.size() + band].
+    // Both empty unless the database carries spectra.
+    double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> frequencies_;
+    std::vector<double> spectra_;
+
     // Per-condition shaft power, empty when the database does not carry it.
     // Shaft power is a property of the flight condition, not of a direction on
     // the sphere, so it is one value per sphere rather than per channel.
@@ -264,5 +290,11 @@ private:
 // Write a single interpolated sphere as a one-group .nod database, the same
 // format Database reads, so an exported sphere can be loaded straight back.
 void write_sphere(const Database::Sphere& sphere, const std::string& path);
+
+// Write an interpolated sphere in the AAM/RNM hemisphere format -- the format
+// the source spheres themselves arrive in.  Requires spectra: the format's
+// payload is AMPLITUDE(PHI, THETA, FREQUENCY), and there is nothing meaningful
+// to put there when all the database holds is an overall A-weighted level.
+void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, double tip_speed);
 
 } // namespace niceops

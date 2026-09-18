@@ -70,6 +70,12 @@ double json_to_double(const nlohmann::json& value)
     return value.get<double>();
 }
 
+
+
+} // namespace
+
+namespace niceops {
+
 dimensional_data configure_vehicle(const std::string& filename)
 {
     info("Reading vehicle configuration: ", filename);
@@ -86,10 +92,6 @@ dimensional_data configure_vehicle(const std::string& filename)
     trace("Vehicle data structure: ", vehicle);
     return vehicle;
 }
-
-} // namespace
-
-namespace niceops {
 
 // Derive the non-dimensional flight parameters from a state's raw kinematics.
 // The trajectory constructor and adapt() both need exactly this, from different

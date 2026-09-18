@@ -198,3 +198,47 @@ TEST_CASE("Shaft power round-trips through a written sphere", "[sphere_database]
     REQUIRE(reloaded.sphere_radius() == sphere.radius);
     std::filesystem::remove(path);
 }
+
+TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")
+{
+    // Spectra are optional, and none of the shipped databases has any.
+    Database plain("databases/S-76D_M3.nod");
+    REQUIRE(!plain.has_spectra());
+    auto plain_sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
+    REQUIRE(plain_sphere.frequencies.empty());
+    REQUIRE(plain_sphere.amplitudes.empty());
+
+    // Build one that does have them, by attaching a synthetic spectrum to an
+    // interpolated sphere and writing it out.  A real spectral database comes
+    // from panam; this keeps the read/blend/write path covered without one.
+    const std::size_t bands = 4;
+    plain_sphere.frequencies = {100.0, 200.0, 400.0, 800.0};
+    plain_sphere.amplitudes.resize(plain_sphere.cells.size() * bands);
+    for (std::size_t cell = 0; cell < plain_sphere.cells.size(); cell++)
+    {
+        for (std::size_t band = 0; band < bands; band++)
+        {
+            // Something cell- and band-dependent, so a transposed or shifted
+            // read shows up rather than cancelling out.
+            plain_sphere.amplitudes[cell * bands + band]
+                    = 50.0 + 0.01 * static_cast<double>(cell) + static_cast<double>(band);
+        }
+    }
+
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_spectra_test.nod").string();
+    write_sphere(plain_sphere, path);
+
+    Database reloaded(path);
+    REQUIRE(reloaded.has_spectra());
+    auto round_tripped = reloaded.interpolate_sphere(0.15, -4.0, 0.006);
+    REQUIRE(round_tripped.frequencies == plain_sphere.frequencies);
+    REQUIRE(round_tripped.amplitudes.size() == plain_sphere.amplitudes.size());
+    // One sphere, so the blend is a copy: every band at every cell must come
+    // back exactly as written.
+    double worst = 0.0;
+    for (std::size_t i = 0; i < round_tripped.amplitudes.size(); i++)
+        worst = std::max(worst, std::fabs(round_tripped.amplitudes[i] - plain_sphere.amplitudes[i]));
+    REQUIRE(worst < 1e-9);
+
+    std::filesystem::remove(path);
+}

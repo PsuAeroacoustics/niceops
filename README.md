@@ -109,6 +109,7 @@ Input and output files use **feet**; the computation is metric internally.
 | Option | Meaning |
 | --- | --- |
 | `--export_sphere` | Interpolate a whole noise sphere and write it as a one-group `.nod` database. |
+| `--export_aam` | The same sphere in AAM/RNM format. Needs a database with spectra. |
 | `--sphere_condition` | The operating condition for it: advance ratio, flight path angle, C<sub>T</sub>. |
 | `--self_test` | Validate every sphere in the database against its own stored levels. |
 | `-p`, `--plotting` | Plot the footprint; `--cmin`/`--cmax`/`--cstep` set the contour levels. |
@@ -145,6 +146,19 @@ evaluations and every cell at or above 85 dB is unchanged to the last bit.
 
 Observers that never reach the cutoff come out as `-inf` — they contributed no energy, and those
 cells will not plot. That is the trade the flag asks for; it is off by default.
+
+### Spectra
+
+A database may carry per-band spectra alongside the overall A-weighted level: a
+`frequency` dimension and an `amplitude(phi, theta, frequency)` array per sphere. When it
+does, `--export_aam` can write an interpolated sphere back out in the AAM/RNM hemisphere
+format the source spheres arrive in. Without spectra the flag refuses, since
+`AMPLITUDE(PHI, THETA, FREQUENCY)` is the whole payload of that format.
+
+None of the databases in `databases/` carries spectra. Build one with panam's
+`build_empirical_database(..., include_spectra=True)`, which now carries the per-band
+amplitudes through from the source spheres. Band-limit it — `infreqs=(10.0, 3500.0)` —
+because the top few bands of a measured sphere are usually noise-floor artifacts.
 
 ### Threads
 

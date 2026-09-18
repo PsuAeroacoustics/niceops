@@ -182,6 +182,7 @@ int main(int argc, char* argv[])
     std::string dnl_file = "";
     double utc_offset = 0.0;
     std::string sphere_file = "";
+    std::string aam_file = "";
     std::string power_file = "";
     std::string log_level = "info";
     std::vector<double> sphere_condition;
@@ -246,6 +247,8 @@ int main(int argc, char* argv[])
             "Write per-state shaft power, if the database carries any, to this file.");
     app.add_option("--export_sphere", sphere_file,
             "Interpolate a whole noise sphere and write it as a one-group .nod database.");
+    app.add_option("--export_aam", aam_file,
+            "Interpolate a whole noise sphere and write it in AAM/RNM format (needs spectra).");
     app.add_option("--sphere_condition", sphere_condition,
             "Operating condition for --export_sphere: advance ratio, flight path angle, CT.")
             ->expected(3);
@@ -261,9 +264,10 @@ int main(int argc, char* argv[])
         return app.exit(e);
     }
 
-    if (!sphere_file.empty() && sphere_condition.size() != 3)
+    if ((!sphere_file.empty() || !aam_file.empty()) && sphere_condition.size() != 3)
     {
-        fatal("--export_sphere needs --sphere_condition <advance_ratio> <flight_path_angle> <CT>.");
+        fatal("--export_sphere/--export_aam need "
+              "--sphere_condition <advance_ratio> <flight_path_angle> <CT>.");
     }
 
     // Each per-trajectory list is either one entry to share across every
@@ -339,13 +343,26 @@ int main(int argc, char* argv[])
                         .count();
     log("Database loaded in ", t1 / 1000.0, " seconds.");
 
-    if (!sphere_file.empty())
+    if (!sphere_file.empty() || !aam_file.empty())
     {
         // A standalone job: interpolate the database down to one operating
         // condition and write that sphere out.  No trajectory is involved.
-        write_sphere(database.interpolate_sphere(sphere_condition[0], sphere_condition[1],
-                             sphere_condition[2]),
-                sphere_file);
+        const auto sphere = database.interpolate_sphere(
+                sphere_condition[0], sphere_condition[1], sphere_condition[2]);
+        if (!sphere_file.empty())
+            write_sphere(sphere, sphere_file);
+        if (!aam_file.empty())
+        {
+            // The tip speed turns the non-dimensional advance ratio back into
+            // the airspeed the AAM format records.  Prefer the one the database
+            // itself records, so an exported sphere cannot pick up the tip speed
+            // of whatever unrelated vehicle file happened to be on the command
+            // line; fall back to the vehicle file for older databases.
+            const double tip_speed = !std::isnan(database.tip_speed())
+                    ? database.tip_speed()
+                    : configure_vehicle(vehicle_files.front()).tip_speed;
+            write_aam_sphere(sphere, aam_file, tip_speed);
+        }
         return 0;
     }
 

@@ -27,6 +27,15 @@ namespace {
     // Instantiate triangulation
     Triangulation triangles = {};
 
+    // Walk hint for locate().  A Cell_handle points into the triangulation, so
+    // rebuilding `triangles` invalidates it and it MUST be cleared alongside --
+    // otherwise the next locate() walks into freed cells.  Loading a second
+    // database in one run does exactly that.  Only the calling thread's hint is
+    // reset, which is sufficient: set_interpolator3 runs during Database
+    // construction, before any worker threads exist, and the observer loop
+    // never calls barycentric().
+    thread_local Cell_handle locate_hint = {};
+
     template<typename T>
     bool approx(T x, T y, T epsilon = 10 * std::numeric_limits<T>::epsilon()) {
         static_assert(std::is_floating_point<T>::value, "Only valid for floating point types.");
@@ -80,6 +89,7 @@ int set_interpolator3(size_t n, const double *x1, const double *x2, const double
         }
     }
     triangles = Triangulation(points.begin(), points.end());
+    locate_hint = Cell_handle();
     return !triangles.is_valid();
 }
 
@@ -89,15 +99,13 @@ void barycentric(double x1, double x2, double x3, double *weights, size_t *indic
     x2 = clamp(x2);
     x3 = clamp(x3);
 
-    // Store a hint about the last cell found
-    static thread_local Cell_handle hint;
     auto request = Point{x1, x2, x3};
     //Find tetrahedron that encloses (x1,x2,x3)
     Triangulation::Locate_type locate_type;
     int li = 0, lj = 0;
-    auto tetrahedron = triangles.locate(request, locate_type, li, lj, hint);
+    auto tetrahedron = triangles.locate(request, locate_type, li, lj, locate_hint);
     assert(tetrahedron->is_valid());
-    hint = tetrahedron;
+    locate_hint = tetrahedron;
 
     // The query coincides exactly with an existing vertex, i.e. with one of
     // the database's own operating conditions.  Return that sphere's data
