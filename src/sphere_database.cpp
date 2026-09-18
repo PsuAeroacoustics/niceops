@@ -507,6 +507,8 @@ Database::Database(const std::string& datafile_path)
     std::vector<double> phis_scattered, thetas_scattered, dBAs_scattered, EAAs_scattered;
     std::size_t nchannels0;
     auto dba_max = -std::numeric_limits<double>::infinity();
+    auto eaa_min = std::numeric_limits<double>::infinity();
+    sphere_max_.assign(group_ids.size(), -std::numeric_limits<double>::infinity());
     std::size_t repaired_spheres = 0;
     // Cycle through sphere groups and load data
     for (std::size_t i = 0; i < group_ids.size(); i++)
@@ -605,6 +607,14 @@ Database::Database(const std::string& datafile_path)
             {
                 dba_max = dBAs_scattered[c];
             }
+            if (dBAs_scattered[c] > sphere_max_[i])
+            {
+                sphere_max_[i] = dBAs_scattered[c];
+            }
+            if (EAAs_scattered[c] < eaa_min)
+            {
+                eaa_min = EAAs_scattered[c];
+            }
             for (std::size_t m = phi_match[0]; m < phi_match[1]; m++)
             {
                 for (std::size_t n = theta_match[0]; n < theta_match[1]; n++)
@@ -622,7 +632,9 @@ Database::Database(const std::string& datafile_path)
             " spheres.  Regenerate this database with a versioned builder to avoid the fix-up.");
     }
     max_level_ = dba_max;
+    min_excess_factor_ = eaa_min;
     info("Max level found in database is: ", max_level_);
+    info("Lowest excess attenuation factor is: ", min_excess_factor_);
     // Set sphere_radius to dimensional_radius
     sphere_radius_ = dimensional_radius;
     info("Sphere radius set to ", sphere_radius_);
@@ -742,6 +754,38 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     auto ground_level = sphere_level - spreading_loss - excess_attenuation;
     trace("Ground level: ", ground_level);
     return ground_level;
+}
+
+double Database::cull_range(const Blend& blend, double cutoff) const
+{
+    const double unbounded = std::numeric_limits<double>::infinity();
+    if (std::isnan(cutoff))
+        return unbounded;
+    // A level is sphere_level - 20*log10(r/r0) - 4*EAA*(r - r0)/1000.  Dropping
+    // the attenuation term bounds the level from above only if that term cannot
+    // be negative, i.e. if no excess factor in the database is.  The D original
+    // used to take abs() of the factor precisely because it could be; if this
+    // database is one of those, decline to bound anything.
+    if (!(min_excess_factor_ >= 0.0))
+        return unbounded;
+
+    // The blended sphere cannot exceed the loudest of the spheres it blends:
+    // the barycentric weights are a convex combination, and so are the bilinear
+    // weights applied on top of them.
+    double blended_max = -unbounded;
+    for (std::size_t k = 0; k < blend.weights.size(); k++)
+    {
+        // Skip the padding in a degenerate blend, where all the weight sits on
+        // one vertex and the other three indices are left at zero.
+        if (blend.weights[k] > 0.0)
+            blended_max = std::max(blended_max, sphere_max_[blend.indices[k]]);
+    }
+    if (!std::isfinite(blended_max))
+        return unbounded;
+
+    // Spherical spreading alone takes that peak below the cutoff at this range,
+    // and excess attenuation only takes it further down.
+    return sphere_radius_ * std::pow(10.0, 0.05 * (blended_max - cutoff));
 }
 
 double Database::level_at_observer(const Eigen::Vector3d& observer, const SourceState& state) const

@@ -179,6 +179,10 @@ public:
 
     void self_test(const std::string& datafile_path);
 
+    // Range beyond which a source at this operating condition provably falls
+    // below `cutoff` dBA, or infinity when no such bound can be established.
+    double cull_range(const Blend& blend, double cutoff) const;
+
     double sphere_radius() const
     {
         return sphere_radius_;
@@ -212,6 +216,11 @@ private:
     double flight_path_angle_min = 0.0, flight_path_angle_max = 0.0;
     double thrust_coefficient_min = 0.0, thrust_coefficient_max = 0.0;
     double max_level_ = 0.0;
+    // Highest dBA on each operating condition's sphere, and the lowest excess
+    // attenuation factor anywhere in the database.  Together they bound how
+    // loud a blended state can be at a given range.
+    std::vector<double> sphere_max_;
+    double min_excess_factor_ = 0.0;
 };
 
 } // namespace niceops

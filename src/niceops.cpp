@@ -5,6 +5,7 @@
 // output and optional matplotlib figures.
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -193,6 +194,7 @@ int main(int argc, char* argv[])
     bool qsam = true;
     bool self_test = false;
     unsigned thread_count = 0;
+    double db_cutoff = std::numeric_limits<double>::quiet_NaN();
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
     app.add_option("-d,--database", database_file, "netCDF noise database file.");
@@ -217,6 +219,8 @@ int main(int argc, char* argv[])
     app.add_flag("--self_test", self_test, "Run self tests.");
     app.add_option("-j,--threads", thread_count,
             "Worker threads for the observer loop (0 = one per hardware thread).");
+    app.add_option("--db_cutoff", db_cutoff,
+            "Skip evaluations that provably fall below this level, dB. Off by default.");
 
     try
     {
@@ -378,14 +382,52 @@ int main(int argc, char* argv[])
             std::filesystem::create_directories(directory);
     }
 
+    // With --db_cutoff, skip any (observer, state) pair whose level is provably
+    // below the cutoff.  The bound is per state, from the loudest sphere the
+    // state blends and spherical spreading alone, so it never discards a sample
+    // that could have been louder -- unlike the D original, which sorted
+    // observers by range and broke out of the loop at the first quiet one, a
+    // shortcut that ignores directivity and can drop a distant observer the
+    // rotor is pointed straight at.
+    //
+    // The threshold sits 10 dB below the cutoff, as the D original's did, and
+    // that margin is what makes the result exact where it matters: the sound
+    // exposure level integrates the window from the peak down to peak - 10, so
+    // for any observer whose peak reaches the cutoff, every sample in its window
+    // is at or above cutoff - 10 and none of them is ever culled.  Observers
+    // that never reach the cutoff are the only ones whose level changes, and
+    // they are precisely the ones the cutoff says are not of interest.
+    const bool culling = !std::isnan(db_cutoff);
+    const double cull_below = db_cutoff - 10.0;
+    // A culled sample contributes no acoustic energy.  Filling with the
+    // threshold instead would be far worse than useless -- thousands of samples
+    // at the floor integrate to well above it.
+    const double culled_level = -std::numeric_limits<double>::infinity();
+    std::vector<double> cull_range_squared(culling ? nt : 0);
+    for (std::size_t it = 0; it < cull_range_squared.size(); it++)
+    {
+        const double range = database.cull_range(source_states[it].blend, cull_below);
+        cull_range_squared[it] = range * range;
+    }
+    std::atomic<std::size_t> culled_samples {0};
+
     parallel_chunks(observers.size(), workers, [&](std::size_t begin, std::size_t end) {
         // One scratch history per worker rather than per observer.
         std::vector<double> levels(nt);
+        std::size_t culled_here = 0;
         for (std::size_t index = begin; index < end; index++)
         {
             const auto& observer = observers[index];
             for (std::size_t it = 0; it < nt; it++)
             {
+                if (culling
+                        && (observer - source_states[it].position).squaredNorm()
+                                > cull_range_squared[it])
+                {
+                    levels[it] = culled_level;
+                    culled_here++;
+                    continue;
+                }
                 double level = database.level_at_observer(observer, source_states[it]);
                 if (add_ambient)
                 {
@@ -403,7 +445,16 @@ int main(int argc, char* argv[])
                         time_history_filename);
             }
         }
+        culled_samples += culled_here;
     });
+
+    if (culling)
+    {
+        const auto total = observers.size() * nt;
+        log("Culled ", culled_samples.load(), " of ", total, " evaluations (",
+                100.0 * static_cast<double>(culled_samples.load()) / static_cast<double>(total),
+                "%) as provably below ", cull_below, " dB.");
+    }
 
     auto t2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
             - watch_start)
