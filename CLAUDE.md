@@ -152,6 +152,18 @@ The port swapped each D dependency for a small local equivalent; when a behavior
 | SPLINTER (vendored B-spline) | `src/smoothing_spline.{hpp,cpp}` |
 | `netcdf.d` | the netCDF C API directly |
 
+## Licensing
+
+MIT (`LICENSE`), cherry-picked from master, where it had been added after this branch forked.
+`THIRD_PARTY_NOTICES.md` carries the verbatim notices for netCDF, CLI11, nlohmann/json,
+pybind11 and Catch2 -- all BSD/MIT/BSL, none copyleft. Regenerate it from the fetched sources
+under `build/_deps` if a dependency is added, changed or dropped; the plotting packages in
+`build/pyenv` are invoked rather than linked and are covered by a summary paragraph rather than
+reproduced.
+
+The `Agg` backend choice in `plotting.cpp` is load-bearing for this: matplotlib's Qt backends
+would pull in PyQt, which is GPL or commercial.
+
 ## Code Conventions
 
 ### Porting pitfalls already hit (do not reintroduce)

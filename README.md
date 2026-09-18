@@ -218,6 +218,13 @@ difference anywhere is **1.05 dB**, 99% of cells are within 0.5 dB, and the peak
 0.07 dB. Contour levels now default to 65–100, the values the references were drawn with; the old
 45–90 put its top level below the peak of the demo case, leaving the loudest patch unfilled.
 
+## Licence
+
+NICE-OPS is under the MIT License; see `LICENSE`. Every third-party component it
+builds against is permissive — BSD, MIT or the Boost Software License — and none carries a
+reciprocal or source-disclosure obligation. `THIRD_PARTY_NOTICES.md` reproduces their notices,
+which a binary distribution needs to carry with it.
+
 ## Repository layout
 
 - `src/` — the implementation. Every `.cpp` lives here.
