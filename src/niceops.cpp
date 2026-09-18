@@ -735,7 +735,12 @@ int main(int argc, char* argv[])
                 }
                 plt::contourf(x_obs, y_obs, gridded_levels, clevels, "YlOrRd");
             }
-            //plt::plot(x, y, "k-");
+            // The flight track over the footprint.  This was commented out in the
+            // particular niceops.d the port was derived from, and the port
+            // copied the comment; it is live both in that file's own ancestor
+            // and on master, and every reference figure in figures/ has the
+            // track drawn on it.
+            plt::plot(x, y, "k-");
             plt::xlabel("X, ft", 14);
             plt::ylabel("Y, ft", 14);
             plt::axis("equal");

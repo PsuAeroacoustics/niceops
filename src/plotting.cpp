@@ -1,6 +1,10 @@
 #include "plotting.hpp"
 
 #include <pybind11/embed.h>
+// Supplies the std::vector <-> Python conversions.  Without it every call
+// taking a vector -- which is most of them -- throws pybind11::cast_error at
+// run time while still compiling cleanly, so the whole plotting path aborted.
+#include <pybind11/stl.h>
 
 namespace py = pybind11;
 

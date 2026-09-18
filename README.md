@@ -112,7 +112,7 @@ Input and output files use **feet**; the computation is metric internally.
 | `--export_aam` | The same sphere in AAM/RNM format. Needs a database with spectra. |
 | `--sphere_condition` | The operating condition for it: advance ratio, flight path angle, C<sub>T</sub>. |
 | `--self_test` | Validate every sphere in the database against its own stored levels. |
-| `-p`, `--plotting` | Plot the footprint; `--cmin`/`--cmax`/`--cstep` set the contour levels. |
+| `-p`, `--plotting` | Plot the footprint with the flight track over it; `--cmin`/`--cmax`/`--cstep` set the contour levels. |
 | `-f`, `--figfile`, `-F`, `--statefigfile` | Save the footprint and trajectory-state figures to files. |
 
 ## Notes on particular features
@@ -179,6 +179,20 @@ Altitude passes through as z, so this is a map projection with a height attached
 true ENU frame; over the few kilometres a footprint spans the difference is negligible.
 
 Nothing reads geodetic input yet — this is the transform the input paths will need.
+
+### Plotting
+
+Plotting embeds Python through pybind11, so matplotlib must be importable by the interpreter
+the build linked against (`PYTHON_EXECUTABLE` in the CMake cache) — not merely installed for
+some other Python on the machine. If it is somewhere else, point `PYTHONPATH` at that
+site-packages directory. Set `MPLBACKEND=Agg` when running headless.
+
+The reference figures under `figures/` date from June 2020 and were produced with a different
+configuration: contour levels 65–100 rather than the current 45–90, `watts_trim` enabled so the
+track starts at x = −6000 ft, and an observer grid sized to the trajectory rather than the fixed
+±1500 m one. Footprints agree in shape and level where the domains overlap — over the cells the
+reference contours at 65 dB and above, the median difference is 0.04 dB — but the figures are
+not pixel-comparable without matching those settings.
 
 ## Repository layout
 
