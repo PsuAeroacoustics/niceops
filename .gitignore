@@ -44,3 +44,4 @@ niceops_unit_tests
 
 # Local Claude Code settings (per-developer, not shared)
 .claude/settings.local.json
+wopwop2aam

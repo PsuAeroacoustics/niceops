@@ -70,28 +70,6 @@ double json_to_double(const nlohmann::json& value)
     return value.get<double>();
 }
 
-// Derive the non-dimensional flight parameters from a state's raw kinematics.
-// The trajectory constructor and adapt() both need exactly this, from different
-// sources, and previously each carried its own copy.  Expects nx/ny/nz to hold
-// the un-normalised load-factor components on entry.
-void derive_flight_parameters(State& now, const dimensional_data& vehicle)
-{
-    // Compute load factor
-    now.LF = std::hypot(now.nx, now.ny, now.nz);
-    // Normalize
-    now.nx /= now.LF;
-    now.ny /= now.LF;
-    now.nz /= now.LF;
-    // Non-dimensionalize
-    now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * PI
-            * vehicle.radius * vehicle.radius);
-    auto v = std::hypot(now.vx, now.vy, now.vz);
-    now.mu = v / vehicle.tip_speed;
-    auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
-    now.fpa_e = 180.0 / PI * std::asin(vn_hat);
-    now.fpa = 180.0 / PI * std::asin(now.vz / v);
-}
-
 dimensional_data configure_vehicle(const std::string& filename)
 {
     info("Reading vehicle configuration: ", filename);
@@ -110,6 +88,46 @@ dimensional_data configure_vehicle(const std::string& filename)
 }
 
 } // namespace
+
+namespace niceops {
+
+// Derive the non-dimensional flight parameters from a state's raw kinematics.
+// The trajectory constructor and adapt() both need exactly this, from different
+// sources, and previously each carried its own copy.  Expects nx/ny/nz to hold
+// the un-normalised load-factor components on entry.
+void derive_flight_parameters(State& now, const dimensional_data& vehicle)
+{
+    // Compute load factor
+    now.LF = std::hypot(now.nx, now.ny, now.nz);
+    // Normalize
+    now.nx /= now.LF;
+    now.ny /= now.LF;
+    now.nz /= now.LF;
+    // Non-dimensionalize
+    now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * PI
+            * vehicle.radius * vehicle.radius);
+    auto v = std::hypot(now.vx, now.vy, now.vz);
+    now.mu = v / vehicle.tip_speed;
+    if (v > 0.0)
+    {
+        auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
+        now.fpa_e = 180.0 / PI * std::asin(vn_hat);
+        now.fpa = 180.0 / PI * std::asin(now.vz / v);
+    }
+    else
+    {
+        // True hover: both flight path angles are undefined rather than
+        // infinite, and dividing by v would put a NaN into mu's sphere lookup
+        // and from there into every level.  Zero is the D original's answer
+        // (niceops commit 0b05d3a, "Fixed issue giving NaN flight path angles
+        // in hover"), and it is the right one -- a stationary aircraft is
+        // neither climbing nor descending.
+        now.fpa_e = 0.0;
+        now.fpa = 0.0;
+    }
+}
+
+} // namespace niceops
 
 Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename)
 {

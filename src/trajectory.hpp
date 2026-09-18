@@ -59,6 +59,12 @@ inline std::ostream& operator<<(std::ostream& os, const dimensional_data& v)
         << v.weight << ", rho: " << v.rho << ")";
 }
 
+// Derive the non-dimensional flight parameters (LF, CT, mu, fpa, fpa_e) from a
+// state's raw kinematics.  Expects nx/ny/nz to hold the un-normalised
+// load-factor components on entry, and normalises them in place.  Exported so
+// the unit tests can reach the hover case directly.
+void derive_flight_parameters(State& now, const dimensional_data& vehicle);
+
 class Trajectory
 {
 public:
