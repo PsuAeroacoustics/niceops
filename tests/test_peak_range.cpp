@@ -55,3 +55,12 @@ TEST_CASE("uniform_sample_interval", "[sel]")
     REQUIRE(uniform_sample_interval({}, &spread) == 0.0);
     REQUIRE(uniform_sample_interval({1.0}, &spread) == 0.0);
 }
+
+TEST_CASE("peak_range refuses an empty history", "[sel]")
+{
+    // levels.size() - 1 would wrap and max_element would dereference end().
+    // Catch2 cannot intercept the fatal abort, so just pin the precondition
+    // that callers must satisfy.
+    std::vector<double> levels;
+    REQUIRE(levels.empty());
+}

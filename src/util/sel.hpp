@@ -11,10 +11,18 @@
 #include <cstddef>
 #include <vector>
 
+#include "logger.hpp"
+
 namespace niceops {
 
 inline std::array<std::size_t, 2> peak_range(const std::vector<double>& levels, double down = 10.0)
 {
+    // An empty time history has no peak.  Guarding here rather than letting
+    // levels.size() - 1 wrap and max_element dereference end(): that crashed
+    // with a segfault well downstream of the real cause, an unparseable
+    // trajectory that yielded no states.
+    if (levels.empty())
+        fatal("peak_range: empty level history; the trajectory produced no states.");
     // Find the 10-dB down points
     std::array<std::size_t, 2> index = {0, levels.size() - 1};
     auto peak_position = static_cast<std::size_t>(std::max_element(levels.begin(), levels.end())

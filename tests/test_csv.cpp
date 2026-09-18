@@ -74,3 +74,15 @@ TEST_CASE("read_numeric_csv defaults to keeping every numeric record", "[csv]")
     TempCsv f("1.0,2.0\n3.0,4.0\n");
     REQUIRE(read_numeric_csv(f.path).size() == 2);
 }
+
+TEST_CASE("read_numeric_csv tolerates CRLF line endings", "[csv]")
+{
+    // A Windows-exported CSV used to parse as zero records: the trailing '\r'
+    // made each line's last field non-numeric, so every row was silently
+    // dropped and the crash surfaced much later, in the acoustics.
+    TempCsv f("x,y,z\r\n1.0,2.0,3.0\r\n4.0,5.0,6.0\r\n");
+    auto rows = read_numeric_csv(f.path, /*skip_first_record=*/true);
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows[0][2] == 3.0);
+    REQUIRE(rows[1][0] == 4.0);
+}

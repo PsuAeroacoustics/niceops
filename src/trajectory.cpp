@@ -160,6 +160,16 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
     {
         fatal("File extension ", extension, " not recognized.");
     }
+
+    // Fail where the cause is legible.  An empty trajectory used to surface as
+    // a segfault deep in the acoustics, when the level history turned out to
+    // have no peak to integrate around.
+    if (states.empty())
+    {
+        fatal("No usable states parsed from ", filename,
+                "; expected the 27-column NASA/FAA AC state format with a header row.");
+    }
+    info("Parsed ", states.size(), " trajectory states.");
 }
 
 void Trajectory::write_state(const std::string& state_file) const

@@ -29,6 +29,12 @@ inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path
     bool first = true;
     while (std::getline(in, line))
     {
+        // Strip a trailing carriage return so CRLF files parse.  Without this
+        // every row's last field carries a '\r', fails to convert, and the whole
+        // line is silently dropped as non-numeric -- a Windows-exported CSV
+        // would read as zero records rather than failing loudly.
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
         if (line.empty())
             continue;
         if (first && skip_first_record)
