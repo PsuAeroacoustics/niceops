@@ -150,30 +150,4 @@ void barycentric(double x1, double x2, double x3, double *weights, size_t *indic
         }
     }
 }
-
-double bilinear_interp(double q11, double q12, double q21, double q22,
-                       double x1, double x2, double y1, double y2, double x, double y) {
-    auto x2x1 = x2 - x1;
-    auto y2y1 = y2 - y1;
-    auto x2x = x2 - x;
-    auto y2y = y2 - y;
-    auto yy1 = y - y1;
-    auto xx1 = x - x1;
-    assert(x2x1 >= 0.0 && y2y1 >= 0.0);
-
-    if (x2x1 < 10 * std::numeric_limits<double>::epsilon()) {
-        x2x1 = 2.0;
-        x2x = 1.0;
-        xx1 = 1.0;
-    } else if (y2y1 < 10 * std::numeric_limits<double>::epsilon()) {
-        y2y1 = 2.0;
-        y2y = 1.0;
-        yy1 = 1.0;
-    }
-    return (q11 * x2x * y2y +
-            q21 * xx1 * y2y +
-            q12 * x2x * yy1 +
-            q22 * xx1 * yy1)
-           / (x2x1 * y2y1);
-}
 }

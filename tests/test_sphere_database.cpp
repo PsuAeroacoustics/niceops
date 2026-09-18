@@ -70,6 +70,42 @@ TEST_CASE("bracket", "[sphere_database]")
     REQUIRE((test_range[brack[0]] <= target && brack[1] == 0));
 }
 
+TEST_CASE("GridAxis::bracket matches the binary search", "[sphere_database]")
+{
+    // GridAxis short-circuits the binary search when the axis is uniform, and
+    // the whole optimisation rests on it giving an identical answer.  Sweep
+    // both a uniform axis (the shortcut) and a deliberately irregular one (the
+    // fall-back), including values on the knots, between them, and off both
+    // ends.
+    std::vector<double> uniform;
+    for (int i = -180; i < 180; i += 10)
+        uniform.push_back(static_cast<double>(i));
+
+    std::vector<double> irregular = {-180.0, -179.0, -100.0, -12.5, 0.0, 3.0, 61.25, 170.0};
+
+    for (const auto& values : {uniform, irregular})
+    {
+        GridAxis axis;
+        axis.reset(values);
+        for (int step = -2000; step <= 2000; step++)
+        {
+            const double val = 0.1 * static_cast<double>(step);
+            const auto expected = bracket(values, val);
+            const auto got = axis.bracket(val);
+            REQUIRE(got[0] == expected[0]);
+            REQUIRE(got[1] == expected[1]);
+        }
+        // Exactly on every knot, where an off-by-one would be easiest to miss.
+        for (auto val : values)
+        {
+            const auto expected = bracket(values, val);
+            const auto got = axis.bracket(val);
+            REQUIRE(got[0] == expected[0]);
+            REQUIRE(got[1] == expected[1]);
+        }
+    }
+}
+
 TEST_CASE("clamp", "[sphere_database]")
 {
     REQUIRE(clamp01(0.5) == 0.5);

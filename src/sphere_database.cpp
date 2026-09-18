@@ -147,11 +147,22 @@ void require_array(int ncid, const std::string& variable_name, std::size_t count
     }
 }
 
-double barycentric_interp(const std::vector<std::vector<std::vector<double>>>& metric, std::size_t i_phi,
-        std::size_t i_theta, const std::array<double, 4>& weights, const std::array<std::size_t, 4>& indicies)
+// The half-open sub-range of the sorted grid axis `a` whose entries are
+// approx_equal to `value`.  approx_equal accepts exactly
+// |x - value| <= max(1e-2*|value|, 1e-5), so the accepted entries are
+// contiguous; the binary search is given a slightly wider bound and every
+// surviving candidate is then re-tested with approx_equal itself, so the
+// accepted set is identical to what a full scan of the axis would give.
+std::array<std::size_t, 2> approx_equal_range(const std::vector<double>& a, double value)
 {
-    return weights[0] * metric[i_phi][i_theta][indicies[0]] + weights[1] * metric[i_phi][i_theta][indicies[1]]
-        + weights[2] * metric[i_phi][i_theta][indicies[2]] + weights[3] * metric[i_phi][i_theta][indicies[3]];
+    const double tol = std::max(1e-2 * std::fabs(value), 1e-5) * 1.001 + 1e-9;
+    auto lo = std::lower_bound(a.begin(), a.end(), value - tol);
+    auto hi = std::upper_bound(a.begin(), a.end(), value + tol);
+    while (lo != hi && !approx_equal(*lo, value))
+        ++lo;
+    while (hi != lo && !approx_equal(*(hi - 1), value))
+        --hi;
+    return {static_cast<std::size_t>(lo - a.begin()), static_cast<std::size_t>(hi - a.begin())};
 }
 
 } // namespace
@@ -222,37 +233,163 @@ bool repair_legacy_hover_directivity(std::vector<double>& phis_scattered)
     return true;
 }
 
-double periodic_bilinear_interp(double q11, double q12, double q21, double q22, double x1, double x2,
-        double y1, double y2, double x, double y)
+namespace {
+
+// The corner-independent half of a periodic bilinear interpolation: whether the
+// cell wraps around the sphere on either axis, and the deltas the corner
+// weights are built from.  eval() interpolates dBA and EAA over the very same
+// cell, so this is derived once and applied to both -- the corner values are
+// all that differ.
+struct BilinearCell
+{
+    bool swap_x;
+    bool swap_y;
+    double x2x, y2y, xx1, yy1, area;
+};
+
+// Expects the axes already in order; periodic_bilinear_cell puts them there.
+BilinearCell bilinear_cell(double x1, double x2, double y1, double y2, double x, double y)
+{
+    BilinearCell cell;
+    cell.swap_x = false;
+    cell.swap_y = false;
+
+    auto x2x1 = x2 - x1;
+    auto y2y1 = y2 - y1;
+    cell.x2x = x2 - x;
+    cell.y2y = y2 - y;
+    cell.yy1 = y - y1;
+    cell.xx1 = x - x1;
+    assert(x2x1 >= 0.0 && y2y1 >= 0.0);
+
+    if (x2x1 < 10 * std::numeric_limits<double>::epsilon())
+    {
+        x2x1 = 2.0;
+        cell.x2x = 1.0;
+        cell.xx1 = 1.0;
+    }
+    else if (y2y1 < 10 * std::numeric_limits<double>::epsilon())
+    {
+        y2y1 = 2.0;
+        cell.y2y = 1.0;
+        cell.yy1 = 1.0;
+    }
+    cell.area = x2x1 * y2y1;
+    return cell;
+}
+
+BilinearCell periodic_bilinear_cell(double x1, double x2, double y1, double y2, double x, double y)
 {
     // Check if points "wrap around" sphere, and swap inputs to bilinear
     // interpolation if necessary
-    if (x1 > x2)
-    {
+    const bool swap_x = x1 > x2;
+    if (swap_x)
         std::swap(x1, x2);
+    const bool swap_y = y1 > y2;
+    if (swap_y)
+        std::swap(y1, y2);
+    auto cell = bilinear_cell(x1, x2, y1, y2, x, y);
+    cell.swap_x = swap_x;
+    cell.swap_y = swap_y;
+    return cell;
+}
+
+double bilinear_apply(const BilinearCell& cell, double q11, double q12, double q21, double q22)
+{
+    if (cell.swap_x)
+    {
         std::swap(q11, q21);
         std::swap(q12, q22);
     }
-    if (y1 > y2)
+    if (cell.swap_y)
     {
-        std::swap(y1, y2);
         std::swap(q11, q12);
         std::swap(q21, q22);
     }
-    return bilinear_interp(q11, q12, q21, q22, x1, x2, y1, y2, x, y);
+    return (q11 * cell.x2x * cell.y2y + q21 * cell.xx1 * cell.y2y + q12 * cell.x2x * cell.yy1
+                   + q22 * cell.xx1 * cell.yy1)
+            / cell.area;
 }
+
+} // namespace
+
+double bilinear_interp(double q11, double q12, double q21, double q22,
+        double x1, double x2, double y1, double y2, double x, double y)
+{
+    return bilinear_apply(bilinear_cell(x1, x2, y1, y2, x, y), q11, q12, q21, q22);
+}
+
+double periodic_bilinear_interp(double q11, double q12, double q21, double q22, double x1, double x2,
+        double y1, double y2, double x, double y)
+{
+    return bilinear_apply(periodic_bilinear_cell(x1, x2, y1, y2, x, y), q11, q12, q21, q22);
+}
+
+namespace {
+
+// Turn an upper_bound-style index (the last entry not greater than the target,
+// or -1) into the bracketing pair, wrapping around the ends.
+std::array<std::size_t, 2> wrap_bracket(long index, std::size_t n)
+{
+    if (index < 0 || index >= static_cast<long>(n) - 1)
+        return {n - 1, 0};
+    return {static_cast<std::size_t>(index), static_cast<std::size_t>(index) + 1};
+}
+
+} // namespace
 
 std::array<std::size_t, 2> bracket(const std::vector<double>& a, double val)
 {
     // Grab the range up to target value (first element strictly greater than val)
     auto it = std::upper_bound(a.begin(), a.end(), val);
     // Index is one less the length of this range
-    long index = static_cast<long>(it - a.begin()) - 1;
+    return wrap_bracket(static_cast<long>(it - a.begin()) - 1, a.size());
+}
 
-    // Wrap around if the range of a is exceeded at either end.
-    if (index < 0 || index >= static_cast<long>(a.size()) - 1)
-        return {a.size() - 1, 0};
-    return {static_cast<std::size_t>(index), static_cast<std::size_t>(index) + 1};
+void GridAxis::reset(std::vector<double> values)
+{
+    values_ = std::move(values);
+    first_ = values_.empty() ? 0.0 : values_.front();
+    inv_step_ = 0.0;
+    if (values_.size() < 2)
+        return;
+    const double step = (values_.back() - first_) / static_cast<double>(values_.size() - 1);
+    if (!(step > 0.0))
+        return;
+    // Take the shortcut only if every entry sits within a tenth of a step of
+    // where a perfectly uniform axis would put it, so the fix-up in bracket()
+    // never has to walk more than one cell.
+    for (std::size_t i = 0; i < values_.size(); i++)
+    {
+        if (std::fabs(values_[i] - (first_ + step * static_cast<double>(i))) > 0.1 * step)
+            return;
+    }
+    inv_step_ = 1.0 / step;
+}
+
+std::array<std::size_t, 2> GridAxis::bracket(double val) const
+{
+    if (inv_step_ == 0.0)
+        return niceops::bracket(values_, val);
+
+    const long n = static_cast<long>(values_.size());
+    // Jump straight at the cell the uniform spacing implies...
+    const double estimate = (val - first_) * inv_step_;
+    long index;
+    if (!(estimate >= 0.0)) // also catches NaN, which upper_bound leaves at the low end
+        index = -1;
+    else if (estimate >= static_cast<double>(n))
+        index = n - 1;
+    else
+        index = static_cast<long>(estimate);
+    // ...then restore upper_bound's exact invariant.  Rounding in the estimate,
+    // or an axis that is uniform only to within the tolerance above, can leave
+    // it one cell out; otherwise neither loop runs.
+    while (index >= 0 && values_[index] > val)
+        --index;
+    while (index + 1 < n && values_[index + 1] <= val)
+        ++index;
+    return wrap_bracket(index, values_.size());
 }
 
 double clamp01(double x)
@@ -267,30 +404,34 @@ double acosc(double x)
     return std::acos(std::clamp(x, -1.0, 1.0));
 }
 
-std::array<double, 2> lookup_angles(const Eigen::Vector3d& source, const Eigen::Vector3d& velocity,
-        const Eigen::Vector3d& normal, const Eigen::Vector3d& observer)
+SphereFrame sphere_frame(const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal)
 {
-    Eigen::Vector3d r = (observer - source).normalized();
-    Eigen::Vector3d n = normal.normalized();
+    SphereFrame frame;
+    frame.normal = normal.normalized();
     // Project velocity vector onto TPP to get a "nose" vector
-    Eigen::Vector3d v = velocity.normalized();
-    Eigen::Vector3d vn = v - v.dot(n) * n;
-    vn.normalize();
-    // Sphere theta angle is relative to projection of velocity onto TPP
-    double theta = acosc(vn.dot(r));
+    const Eigen::Vector3d v = velocity.normalized();
+    frame.nose = v - v.dot(frame.normal) * frame.normal;
+    frame.nose.normalize();
     // Define starboard as the cross product of the "nose" and the TPP normal
-    Eigen::Vector3d pn = vn.cross(n);
+    frame.starboard = frame.nose.cross(frame.normal);
+    return frame;
+}
+
+std::array<double, 2> lookup_angles(const SphereFrame& frame, const Eigen::Vector3d& direction)
+{
+    // Sphere theta angle is relative to projection of velocity onto TPP
+    double theta = acosc(frame.nose.dot(direction));
     // Project the propagation vector onto the plane normal to the "nose"
-    Eigen::Vector3d rp = r - r.dot(vn) * vn;
+    Eigen::Vector3d rp = direction - direction.dot(frame.nose) * frame.nose;
     rp.normalize();
     // Then, we can get sphere phi by computing the angle of the propagation
     // vector in the plane
-    double phi = acosc(std::fabs(n.dot(rp)));
+    double phi = acosc(std::fabs(frame.normal.dot(rp)));
     // Sign is still uncertain, so check which side of starboard we are on.
     // acos is monotonically decreasing, so acos(t) > pi/2 is exactly t < 0 --
     // the comparison does not need the angle, only its sign, which saves an
     // acos, a divide and a norm on a path that runs tens of millions of times.
-    if (pn.dot(rp) < 0.0)
+    if (frame.starboard.dot(rp) < 0.0)
     {
         phi = -phi;
     }
@@ -298,6 +439,12 @@ std::array<double, 2> lookup_angles(const Eigen::Vector3d& source, const Eigen::
     phi *= 180.0 / PI;
     theta *= 180.0 / PI;
     return {phi, theta};
+}
+
+std::array<double, 2> lookup_angles(const Eigen::Vector3d& source, const Eigen::Vector3d& velocity,
+        const Eigen::Vector3d& normal, const Eigen::Vector3d& observer)
+{
+    return lookup_angles(sphere_frame(velocity, normal), (observer - source).normalized());
 }
 
 bool approx_equal(double value, double reference, double max_rel_diff, double max_abs_diff)
@@ -419,48 +566,52 @@ Database::Database(const std::string& datafile_path)
             // Sorting them in place collapsed them to the unique values, so
             // the match loop ran over 36 entries instead of 1406, left most
             // grid cells at 0, and indexed dBAs_scattered with the wrong c.
-            phis = phis_scattered;
-            std::sort(phis.begin(), phis.end());
-            phis.erase(std::unique(phis.begin(), phis.end()), phis.end());
-            thetas = thetas_scattered;
-            std::sort(thetas.begin(), thetas.end());
-            thetas.erase(std::unique(thetas.begin(), thetas.end()), thetas.end());
-            info("The ", phis.size(), " unique phi values are:\n", phis);
-            info("The ", thetas.size(), " unique theta values are:\n", thetas);
-            // Allocate noise level matrices
-            dBA.assign(phis.size(),
-                    std::vector<std::vector<double>>(thetas.size(),
-                            std::vector<double>(group_ids.size(), 0.0)));
-            EAA.assign(phis.size(),
-                    std::vector<std::vector<double>>(thetas.size(),
-                            std::vector<double>(group_ids.size(), 0.0)));
+            auto unique_sorted = [](std::vector<double> v) {
+                std::sort(v.begin(), v.end());
+                v.erase(std::unique(v.begin(), v.end()), v.end());
+                return v;
+            };
+            phis.reset(unique_sorted(phis_scattered));
+            thetas.reset(unique_sorted(thetas_scattered));
+            info("The ", phis.size(), " unique phi values are:\n", phis.values());
+            info("The ", thetas.size(), " unique theta values are:\n", thetas.values());
+            // Allocate the noise level grid
+            n_conditions = group_ids.size();
+            grid.assign(phis.size() * thetas.size() * n_conditions, Sample {0.0, 0.0});
         }
         // Fetch scattered acoustic data for each sphere
         dBAs_scattered.resize(nchannels);
         EAAs_scattered.resize(nchannels);
         require_array(group_id, "dBA", dBAs_scattered.size(), dBAs_scattered);
         require_array(group_id, "EAA", EAAs_scattered.size(), EAAs_scattered);
-        // Search through scattered data for grided values
-        for (std::size_t m = 0; m < phis.size(); m++)
+        // Place each channel into the grid cells it matches, rather than
+        // scanning every channel for every cell.  The original nesting cost
+        // n_phi * n_theta * n_channels approx_equal probes per sphere -- 2.5
+        // billion over the shipped database, most of the load time -- while
+        // each channel in practice lands in exactly one cell.  The acceptance
+        // test is unchanged; the search only skips candidates approx_equal
+        // could not accept.  Two semantics carry over: a later channel
+        // overwrites an earlier one in a shared cell (channels are still
+        // visited in file order), and dba_max covers matched channels only.
+        for (std::size_t c = 0; c < phis_scattered.size(); c++)
         {
-            auto phi_target = phis[m];
-            for (std::size_t n = 0; n < thetas.size(); n++)
+            const auto phi_match = approx_equal_range(phis.values(), phis_scattered[c]);
+            if (phi_match[0] == phi_match[1])
+                continue;
+            const auto theta_match = approx_equal_range(thetas.values(), thetas_scattered[c]);
+            if (theta_match[0] == theta_match[1])
+                continue;
+            if (dBAs_scattered[c] > dba_max)
             {
-                auto theta_target = thetas[n];
-                for (std::size_t c = 0; c < phis_scattered.size(); c++)
+                dba_max = dBAs_scattered[c];
+            }
+            for (std::size_t m = phi_match[0]; m < phi_match[1]; m++)
+            {
+                for (std::size_t n = theta_match[0]; n < theta_match[1]; n++)
                 {
-                    auto phi_val = phis_scattered[c];
-                    if (approx_equal(phi_target, phi_val)
-                            && approx_equal(theta_target, thetas_scattered[c]))
-                    {
-                        // Load sphere data into grid
-                        dBA[m][n][i] = dBAs_scattered[c];
-                        EAA[m][n][i] = EAAs_scattered[c];
-                        if (dBAs_scattered[c] > dba_max)
-                        {
-                            dba_max = dBAs_scattered[c];
-                        }
-                    }
+                    // Load sphere data into grid
+                    grid[(m * thetas.size() + n) * n_conditions + i]
+                            = {dBAs_scattered[c], EAAs_scattered[c]};
                 }
             }
         }
@@ -503,16 +654,9 @@ Database::Database(const std::string& datafile_path)
     }
 }
 
-double Database::eval(double range, double phi, double theta, double advance_ratio,
-        double flight_path_angle, double thrust_coefficient) const
+Database::Blend Database::blend_at(double advance_ratio, double flight_path_angle,
+        double thrust_coefficient) const
 {
-    // Find the sphere grid points bounding the desired phi, theta
-    auto phi_range = bracket(phis, phi);
-    auto theta_range = bracket(thetas, theta);
-    trace("Found phi (", phi, ") in range ", phis[phi_range[0]], " -- ", phis[phi_range[1]]);
-    trace("Found theta (", theta, ") in range ", thetas[theta_range[0]], " -- ",
-            thetas[theta_range[1]]);
-
     // Normalize flight condition and limit range to [0.0,1.0]
     advance_ratio = clamp01((advance_ratio - advance_ratio_min) / (advance_ratio_max - advance_ratio_min));
     flight_path_angle = clamp01(
@@ -523,11 +667,48 @@ double Database::eval(double range, double phi, double theta, double advance_rat
             ", CT = ", thrust_coefficient);
 
     // Get barycentric weights and indicies
-    std::array<std::size_t, 4> indicies;
-    std::array<double, 4> weights;
+    Blend blend;
+    barycentric(advance_ratio, flight_path_angle, thrust_coefficient, blend.weights.data(),
+            blend.indices.data());
+    trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+    return blend;
+}
 
-    barycentric(advance_ratio, flight_path_angle, thrust_coefficient, weights.data(), indicies.data());
-    trace("Barycentric weights: ", weights, " and indicies ", indicies);
+Database::SourceState Database::source_state(const Eigen::Vector3d& source,
+        const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal, double advance_ratio,
+        double flight_path_angle, double thrust_coefficient) const
+{
+    return {source, sphere_frame(velocity, normal),
+            blend_at(advance_ratio, flight_path_angle, thrust_coefficient)};
+}
+
+double Database::eval(double range, double phi, double theta, double advance_ratio,
+        double flight_path_angle, double thrust_coefficient) const
+{
+    return eval(range, phi, theta, blend_at(advance_ratio, flight_path_angle, thrust_coefficient));
+}
+
+Database::Sample Database::blend_cell(std::size_t i_phi, std::size_t i_theta,
+        const Blend& blend) const
+{
+    const Sample* cell = grid.data() + (i_phi * thetas.size() + i_theta) * n_conditions;
+    const Sample& s0 = cell[blend.indices[0]];
+    const Sample& s1 = cell[blend.indices[1]];
+    const Sample& s2 = cell[blend.indices[2]];
+    const Sample& s3 = cell[blend.indices[3]];
+    const auto& w = blend.weights;
+    return {w[0] * s0.dBA + w[1] * s1.dBA + w[2] * s2.dBA + w[3] * s3.dBA,
+            w[0] * s0.EAA + w[1] * s1.EAA + w[2] * s2.EAA + w[3] * s3.EAA};
+}
+
+double Database::eval(double range, double phi, double theta, const Blend& blend) const
+{
+    // Find the sphere grid points bounding the desired phi, theta
+    auto phi_range = phis.bracket(phi);
+    auto theta_range = thetas.bracket(theta);
+    trace("Found phi (", phi, ") in range ", phis[phi_range[0]], " -- ", phis[phi_range[1]]);
+    trace("Found theta (", theta, ") in range ", thetas[theta_range[0]], " -- ",
+            thetas[theta_range[1]]);
 
     // Barycentric interpolation between conditions at each gridpoint
     // Bilinear interpolation between gridpoints
@@ -536,19 +717,17 @@ double Database::eval(double range, double phi, double theta, double advance_rat
     const auto t1 = thetas[theta_range[0]];
     const auto t2 = thetas[theta_range[1]];
 
-    // Blend the four bracketing grid points of one metric.  Writing this once
-    // rather than twice over eight transcribed corner indices removes the main
-    // way this can go quietly wrong.
-    const auto interpolate = [&](const std::vector<std::vector<std::vector<double>>>& metric) {
-        return periodic_bilinear_interp(
-                barycentric_interp(metric, phi_range[0], theta_range[0], weights, indicies),
-                barycentric_interp(metric, phi_range[0], theta_range[1], weights, indicies),
-                barycentric_interp(metric, phi_range[1], theta_range[0], weights, indicies),
-                barycentric_interp(metric, phi_range[1], theta_range[1], weights, indicies),
-                p1, p2, t1, t2, phi, theta);
-    };
-    const auto sphere_level = interpolate(dBA);
-    const auto excess_factor = interpolate(EAA);
+    // Blend the operating conditions at each of the four bracketing grid
+    // points, then bilinearly interpolate between them.  Both metrics travel
+    // together: they are read from the same cells, so splitting them would
+    // touch every cache line twice.
+    const auto q11 = blend_cell(phi_range[0], theta_range[0], blend);
+    const auto q12 = blend_cell(phi_range[0], theta_range[1], blend);
+    const auto q21 = blend_cell(phi_range[1], theta_range[0], blend);
+    const auto q22 = blend_cell(phi_range[1], theta_range[1], blend);
+    const auto cell = periodic_bilinear_cell(p1, p2, t1, t2, phi, theta);
+    const auto sphere_level = bilinear_apply(cell, q11.dBA, q12.dBA, q21.dBA, q22.dBA);
+    const auto excess_factor = bilinear_apply(cell, q11.EAA, q12.EAA, q21.EAA, q22.EAA);
     trace("Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
     // Apply spherical spreading and excess atmospheric absorption to surface level
     // TODO Add ground effects
@@ -565,20 +744,34 @@ double Database::eval(double range, double phi, double theta, double advance_rat
     return ground_level;
 }
 
+double Database::level_at_observer(const Eigen::Vector3d& observer, const SourceState& state) const
+{
+    Eigen::Vector3d r = observer - state.position;
+    auto slant_range = r.norm();
+    trace("R = ", slant_range, " for r = ", r.transpose());
+    // Reuse the slant range as the normalization: Eigen's normalized() divides
+    // by this same sqrt(squaredNorm()) (returning the vector untouched when it
+    // is zero), so this is the identical direction without a second subtraction
+    // and square root.
+    if (slant_range > 0.0)
+    {
+        r /= slant_range;
+    }
+    auto angles = lookup_angles(state.frame, r);
+    trace("Looked up [phi,theta] = ", angles[0], ", ", angles[1]);
+    assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
+    auto level = eval(slant_range, angles[0], angles[1], state.blend);
+    assert(std::isfinite(level));
+    return level;
+}
+
 double Database::level_at_observer(const Eigen::Vector3d& observer, const Eigen::Vector3d& source,
         const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal, double advance_ratio,
         double flight_path_angle, double thrust_coefficient) const
 {
-    Eigen::Vector3d r = observer - source;
-    auto slant_range = r.norm();
-    trace("R = ", slant_range, " for r = ", r.transpose());
-    auto angles = lookup_angles(source, velocity, normal, observer);
-    trace("Looked up [phi,theta] = ", angles[0], ", ", angles[1]);
-    assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
-    auto level = eval(slant_range, angles[0], angles[1], advance_ratio, flight_path_angle,
-            thrust_coefficient);
-    assert(std::isfinite(level));
-    return level;
+    return level_at_observer(observer,
+            source_state(source, velocity, normal, advance_ratio, flight_path_angle,
+                    thrust_coefficient));
 }
 
 double Database::level_along_bearing(double range, double bearing, double altitude,
@@ -708,12 +901,16 @@ void Database::self_test(const std::string& datafile_path)
         std::vector<double> EAA_data(nchannels);
         require_array(group_id, "EAA", nchannels, EAA_data);
 
+        // Every channel of a sphere is queried at that sphere's own operating
+        // condition, so the blend is the same for all of them -- resolve it
+        // once instead of running a CGAL locate per channel.
+        const auto blend = blend_at(advance_ratio, flight_path_angle, thrust_coefficient);
+
         // Validate the database against the known data at sphere surface
         for (std::size_t ch = 0; ch < dBA_data.size(); ch++)
         {
             auto dBA = dBA_data[ch];
-            auto level = eval(dimensional_radius, phi_data[ch], theta_data[ch], advance_ratio,
-                    flight_path_angle, thrust_coefficient);
+            auto level = eval(dimensional_radius, phi_data[ch], theta_data[ch], blend);
             if (!approx_equal(dBA, level))
             {
                 log("Surface level disagreement of D:", dBA, " versus N:", level, " for φ = ",

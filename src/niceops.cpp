@@ -337,30 +337,37 @@ int main(int argc, char* argv[])
             }
         }
     }
+    // The source geometry and the blend of database operating conditions depend
+    // only on the trajectory state, so build them once here rather than once
+    // per (observer, state) pair.  The blend is a CGAL Delaunay locate() walk
+    // and was by far the largest single cost in the program; this turns
+    // observers*states of them into states of them.
+    std::vector<Database::SourceState> source_states;
+    source_states.reserve(nt);
+    for (const auto& state : trajectory.states)
+    {
+        source_states.push_back(database.source_state(Eigen::Vector3d(state.x, state.y, state.z),
+                Eigen::Vector3d(state.vx, state.vy, state.vz),
+                Eigen::Vector3d(state.nx, state.ny, state.nz), state.mu,
+                qsam ? state.fpa_e : state.fpa, state.CT));
+    }
+    // NOTE: ambient_level is zero-initialized rather than NaN (see the note on
+    // its declaration), so this guard is always true and a default run mixes in
+    // 0 dB of "ambient".  Faithful to the D original; the pressure it converts
+    // to is loop-invariant either way.
+    const bool add_ambient = !std::isnan(ambient_level);
+    const double ambient_pressure = std::pow(10.0, ambient_level / 20.);
+
     for (std::size_t index = 0; index < observers.size(); index++)
     {
         const auto& observer = observers[index];
         for (std::size_t it = 0; it < nt; it++)
         {
-            const auto& state = trajectory.states[it];
-            Eigen::Vector3d source(state.x, state.y, state.z);
-            Eigen::Vector3d velocity(state.vx, state.vy, state.vz);
-            Eigen::Vector3d normal(state.nx, state.ny, state.nz);
-            double level;
-            if (qsam)
-            {
-                level = database.level_at_observer(
-                        observer, source, velocity, normal, state.mu, state.fpa_e, state.CT);
-            }
-            else
-            {
-                level = database.level_at_observer(
-                        observer, source, velocity, normal, state.mu, state.fpa, state.CT);
-            }
-            if (!std::isnan(ambient_level))
+            double level = database.level_at_observer(observer, source_states[it]);
+            if (add_ambient)
             {
                 // Add ambient noise
-                level = 20.0 * std::log10(std::pow(10.0, level / 20.) + std::pow(10.0, ambient_level / 20.));
+                level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
             }
             time_history[it] = level;
         }
