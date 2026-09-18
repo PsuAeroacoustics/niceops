@@ -91,7 +91,8 @@ target_link_libraries(niceops_core PUBLIC interpolator)
 
 # Main executable
 add_executable(niceops src/niceops.cpp)
-target_link_libraries(niceops niceops_core CLI11::CLI11)
+find_package(Threads REQUIRED)
+target_link_libraries(niceops niceops_core CLI11::CLI11 Threads::Threads)
 
 # Unit tests (Catch2)
 add_executable(niceops_unit_tests

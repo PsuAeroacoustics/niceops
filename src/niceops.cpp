@@ -24,6 +24,7 @@
 #include "trajectory.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
+#include "util/parallel.hpp"
 #include "util/sel.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
@@ -191,6 +192,7 @@ int main(int argc, char* argv[])
     std::string metric_file = "";
     bool qsam = true;
     bool self_test = false;
+    unsigned thread_count = 0;
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
     app.add_option("-d,--database", database_file, "netCDF noise database file.");
@@ -213,6 +215,8 @@ int main(int argc, char* argv[])
     app.add_flag("-q,--qsam,!--no-qsam", qsam, "Extended QSAM (default on; --no-qsam disables)");
     app.add_option("-S,--state", state_file, "Filename to save state data");
     app.add_flag("--self_test", self_test, "Run self tests.");
+    app.add_option("-j,--threads", thread_count,
+            "Worker threads for the observer loop (0 = one per hardware thread).");
 
     try
     {
@@ -272,7 +276,6 @@ int main(int argc, char* argv[])
 
     // And time series data
     const std::size_t nt = trajectory.states.size();
-    std::vector<double> time_history(nt);
 
     // The sound exposure level integral weights each sample by the trajectory's
     // own time step, so take that from the states rather than from -s.  Those
@@ -357,28 +360,50 @@ int main(int argc, char* argv[])
     const bool add_ambient = !std::isnan(ambient_level);
     const double ambient_pressure = add_ambient ? std::pow(10.0, ambient_level / 20.) : 0.0;
 
-    for (std::size_t index = 0; index < observers.size(); index++)
+    // Observers are independent of one another: each reads the database and the
+    // source_states array, which are finished and const by now, and writes only
+    // its own level.  Nothing in here reaches the CGAL triangulation -- the
+    // blends were all resolved above -- so the loop splits with no locking.
+    const unsigned workers = thread_count > 0 ? thread_count : default_thread_count();
+    info("Evaluating ", observers.size(), " observers on ", workers,
+            workers == 1 ? " thread." : " threads.");
+
+    if (write_time_history)
     {
-        const auto& observer = observers[index];
-        for (std::size_t it = 0; it < nt; it++)
-        {
-            double level = database.level_at_observer(observer, source_states[it]);
-            if (add_ambient)
-            {
-                // Add ambient noise
-                level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
-            }
-            time_history[it] = level;
-        }
-        integrated_levels[index] = sound_exposure_level(time_history, integration_step);
-        if (write_time_history)
-        {
-            // Write out time history files
-            auto time_history_filename = time_history_prefix + "_i" + std::to_string(index) + ".csv";
-            write_time_history_file(time_history, integration_step, observer(0), observer(1),
-                    time_history_filename);
-        }
+        // Create the output directory once, here.  Left to the writers it would
+        // be a create_directories() race between workers, and a stat per file
+        // besides.
+        const auto directory = std::filesystem::path(time_history_prefix).parent_path();
+        if (!directory.empty())
+            std::filesystem::create_directories(directory);
     }
+
+    parallel_chunks(observers.size(), workers, [&](std::size_t begin, std::size_t end) {
+        // One scratch history per worker rather than per observer.
+        std::vector<double> levels(nt);
+        for (std::size_t index = begin; index < end; index++)
+        {
+            const auto& observer = observers[index];
+            for (std::size_t it = 0; it < nt; it++)
+            {
+                double level = database.level_at_observer(observer, source_states[it]);
+                if (add_ambient)
+                {
+                    // Add ambient noise
+                    level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
+                }
+                levels[it] = level;
+            }
+            integrated_levels[index] = sound_exposure_level(levels, integration_step);
+            if (write_time_history)
+            {
+                // Write out time history files
+                auto time_history_filename = time_history_prefix + "_i" + std::to_string(index) + ".csv";
+                write_time_history_file(levels, integration_step, observer(0), observer(1),
+                        time_history_filename);
+            }
+        }
+    });
 
     auto t2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
             - watch_start)
