@@ -16,7 +16,7 @@ When you add a C++ source, put it in `src/` and add it to the right target — a
 
 ## Build
 
-Requirements: a C++17 compiler, netCDF (shared library), CGAL, Eigen3, Boost, and Python 3 **with development headers** plus matplotlib (pybind11 embeds the interpreter for plotting). On Ubuntu, as CI does:
+Requirements: a C++17 compiler, netCDF (shared library), CGAL, Eigen3, and Python 3 **with development headers** plus matplotlib (pybind11 embeds the interpreter for plotting). Boost and GMP/MPFR come in transitively through CGAL -- nothing in `src/` includes them, and dropping `COMPONENTS Core` from the `find_package(CGAL)` does *not* shed them (tested: the binary still links libgmp, libgmpxx and libmpfr, because CGAL's own imported target carries them). On Ubuntu, as CI does:
 
 ```sh
 sudo apt-get install libcgal-dev libnetcdf-dev libeigen3-dev python3-dev python3-matplotlib

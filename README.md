@@ -10,8 +10,9 @@ units in the last place.
 
 ## Building
 
-Requirements: a C++17 compiler, netCDF, CGAL, Eigen3, Boost, and Python 3 with development
-headers plus matplotlib (pybind11 embeds the interpreter for plotting). On Ubuntu:
+Requirements: a C++17 compiler, netCDF, CGAL, Eigen3, and Python 3 with development headers
+plus matplotlib (pybind11 embeds the interpreter for plotting). Boost and GMP/MPFR are needed
+too, but only because CGAL pulls them in — nothing in `src/` includes them. On Ubuntu:
 
 ```sh
 sudo apt-get install libcgal-dev libnetcdf-dev libeigen3-dev python3-dev python3-matplotlib
