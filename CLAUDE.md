@@ -161,6 +161,8 @@ General rule: when a D construct looks obvious, check it against Phobos semantic
 
 
 - **Port fidelity outranks correctness.** Several `NOTE:` comments mark places that faithfully reproduce D quirks; leave them alone unless you are also regenerating the golden outputs, and say so explicitly:
+  - Contour defaults are 65/100, not c74bab3's 45/90: the older pair puts its top level below the demo case's 93.6 dB peak, leaving it unfilled, and the shipped reference figures use 65/100. Figures only -- the goldens are CSV.
+  - `watts_trim` and the observer grid extent are now CLI options (`--trim`, `--grid`), both defaulting to the port's behaviour so the goldens are untouched. With `--trim -6000 --grid -2000 1100 -1500 1600` the demo case reproduces the June 2020 reference figures to within 1.05 dB on every cell.
   - D's `iota` is EXCLUSIVE of the stop value; observer grids and contour levels reconstruct that off-by-one deliberately (`iota_exclusive` in `src/niceops.cpp`).
   - `write_levels` emits one extra trailing newline because the D original did.
   - `level_along_bearing` uses `heading[0]` twice where the second component wants `heading[1]`; that is the D original's latent bug, kept.

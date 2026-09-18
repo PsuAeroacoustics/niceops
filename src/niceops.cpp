@@ -181,6 +181,9 @@ int main(int argc, char* argv[])
     std::vector<std::string> state_files;
     std::string dnl_file = "";
     double utc_offset = 0.0;
+    double trim_start_ft = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> grid_bounds;
+    double grid_step = 25.0;
     std::string sphere_file = "";
     std::string aam_file = "";
     std::string power_file = "";
@@ -190,8 +193,12 @@ int main(int argc, char* argv[])
     bool plotting = false;
     std::string figure_file = "";
     std::string state_figure_file = "";
-    double contour_min = 45.0;
-    double contour_max = 90.0;
+    // 65 dB is the usual reporting threshold, and 100 clears the peak of a
+    // helicopter footprint.  The port inherited 45/90 from c74bab3, whose upper
+    // level sits *below* the peak of the demo case, leaving the loudest patch
+    // unfilled; the figures in figures/ were made with these.
+    double contour_min = 65.0;
+    double contour_max = 100.0;
     double contour_step = 5.0;
     bool scattered = false;
     std::string observer_file = "";
@@ -239,6 +246,12 @@ int main(int argc, char* argv[])
     app.add_flag("--self_test", self_test, "Run self tests.");
     app.add_option("-j,--threads", thread_count,
             "Worker threads for the observer loop (0 = one per hardware thread).");
+    app.add_option("--trim", trim_start_ft,
+            "Crop each trajectory from this x (ft) to its lowest/slowest point. Off by default.");
+    app.add_option("--grid", grid_bounds,
+            "Observer grid bounds in metres: xmin xmax ymin ymax. Default -1500 1500 -1500 1500.")
+            ->expected(4);
+    app.add_option("--gridstep", grid_step, "Observer grid spacing in metres (default 25).");
     app.add_option("-D,--dnlfile", dnl_file,
             "Write the day-night level, summed over every trajectory, to this file.");
     app.add_option("--utc_offset", utc_offset,
@@ -306,6 +319,19 @@ int main(int argc, char* argv[])
     expand_per_path(out_files, "output files");
     if (!state_files.empty())
         expand_per_path(state_files, "state files");
+
+    if (grid_bounds.empty())
+    {
+        grid_bounds = {-1500.0, 1500.0, -1500.0, 1500.0};
+    }
+    if (!(grid_step > 0.0))
+    {
+        fatal("--gridstep must be positive, got ", grid_step, ".");
+    }
+    if (grid_bounds[1] <= grid_bounds[0] || grid_bounds[3] <= grid_bounds[2])
+    {
+        fatal("--grid needs xmin < xmax and ymin < ymax.");
+    }
 
     if (!observer_file.empty())
     {
@@ -400,8 +426,8 @@ int main(int argc, char* argv[])
         // NOTE: D's iota(begin, end, step) is EXCLUSIVE of end -- it yields
         // ceil((end-begin)/step) values, so this is 120 points spanning
         // -1500..1475 m, NOT 121 points ending at 1500.  Verified against LDC.
-        x_obs = iota_exclusive(-1500.0, 1500.0, 25.0);
-        y_obs = iota_exclusive(-1500.0, 1500.0, 25.0);
+        x_obs = iota_exclusive(grid_bounds[0], grid_bounds[1], grid_step);
+        y_obs = iota_exclusive(grid_bounds[2], grid_bounds[3], grid_step);
         const std::size_t nx = x_obs.size();
         const std::size_t ny = y_obs.size();
         // Set corresponding length for levels
@@ -448,9 +474,13 @@ int main(int argc, char* argv[])
     trajectory_holder.emplace(path_file, vehicle_file);
     auto& trajectory = *trajectory_holder;
 
-    // Trim trajectory (per Mike)
-    //immutable double xstart_ft = -6000.;
-    //trajectory.watts_trim(xstart_ft);
+    // Trim trajectory (per Mike): crop from the given x to whichever comes
+    // first, the lowest or the slowest point.  Off unless asked for -- it
+    // changes which part of the flight is integrated, and so the levels.
+    if (!std::isnan(trim_start_ft))
+    {
+        trajectory.watts_trim(trim_start_ft);
+    }
 
     // Trajectory adaptation parameters, for the adapt() call below.  Both the
     // call and its arguments are disabled, matching the D original.

@@ -93,6 +93,8 @@ Input and output files use **feet**; the computation is metric internally.
 | `-a`, `--ambient` | Ambient level in dB, mixed into every sample. Off unless given. |
 | `-q`, `--qsam` / `--no-qsam` | Use the flight path angle relative to the tip-path-plane normal rather than the vertical. On by default. |
 | `-s`, `--step` | Resampling step for trajectory adaptation. **Not** the SEL integration step, which comes from the trajectory's own sampling. |
+| `--trim` | Crop each trajectory from this x (ft) to its lowest/slowest point. Off by default; it changes which part of the flight is integrated. |
+| `--grid`, `--gridstep` | Observer grid bounds and spacing, in **metres** (the grid is defined metrically). Default `-1500 1500 -1500 1500`, step 25. |
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
@@ -187,12 +189,18 @@ the build linked against (`PYTHON_EXECUTABLE` in the CMake cache) — not merely
 some other Python on the machine. If it is somewhere else, point `PYTHONPATH` at that
 site-packages directory. Set `MPLBACKEND=Agg` when running headless.
 
-The reference figures under `figures/` date from June 2020 and were produced with a different
-configuration: contour levels 65–100 rather than the current 45–90, `watts_trim` enabled so the
-track starts at x = −6000 ft, and an observer grid sized to the trajectory rather than the fixed
-±1500 m one. Footprints agree in shape and level where the domains overlap — over the cells the
-reference contours at 65 dB and above, the median difference is 0.04 dB — but the figures are
-not pixel-comparable without matching those settings.
+The reference figures under `figures/` date from June 2020 and were produced with three settings
+that differ from the defaults. All three are now reachable:
+
+```sh
+./build/niceops -t tracks/S-76D/197401AC.csv -v databases/S-76D.json -d databases/S-76D_M3.nod \
+        --trim -6000 --grid -2000 1100 -1500 1600 -o out.csv -f out.eps
+```
+
+Matched that way the two runs land on the same 124 × 124 grid and agree cell for cell: the largest
+difference anywhere is **1.05 dB**, 99% of cells are within 0.5 dB, and the peak levels differ by
+0.07 dB. Contour levels now default to 65–100, the values the references were drawn with; the old
+45–90 put its top level below the peak of the demo case, leaving the loudest patch unfilled.
 
 ## Repository layout
 
