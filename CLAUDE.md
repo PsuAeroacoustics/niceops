@@ -19,12 +19,17 @@ When you add a C++ source, put it in `src/` and add it to the right target — a
 Requirements: a C++17 compiler and netCDF (shared library). Plotting also needs Python 3 **with development headers**; matplotlib is installed by the build into `build/pyenv` rather than being a prerequisite. CGAL is gone (and Boost, GMP and MPFR with it, which were only ever CGAL's transitive dependencies), as is Eigen -- `src/vec3.hpp` covers what was actually used of it. On Ubuntu, as CI does:
 
 ```sh
-sudo apt-get install libnetcdf-dev python3-dev
+sudo apt-get install libnetcdf-dev python3-dev python3-venv
 ```
+
+`python3-venv` is easy to miss: Debian and Ubuntu package `python3 -m venv` and its
+ensurepip separately from `python3` itself, and without it the build's environment
+step only *warns* before falling back to the system interpreter's packages. That
+fallback is silent enough that CI checks the environment explicitly after building.
 
 With `-DNICEOPS_PLOTTING=OFF` the only prerequisite left is netCDF.
 
-`-DNICEOPS_PLOTTING=OFF` drops plotting and the whole Python dependency with it -- worth using in CI, where it also skips the matplotlib download. `-DNICEOPS_BUNDLE_PYTHON=OFF` keeps plotting but uses the interpreter's own packages instead of the build's environment.
+`-DNICEOPS_PLOTTING=OFF` drops plotting and the whole Python dependency with it; CI builds this configuration too, since nothing else compiles `src/plotting_disabled.cpp`. `-DNICEOPS_BUNDLE_PYTHON=OFF` keeps plotting but uses the interpreter's own packages instead of the build's environment.
 
 CLI11, nlohmann_json, Catch2, and pybind11 are pulled at configure time via `FetchContent`, so the first configure needs network access.
 
@@ -57,7 +62,7 @@ default output, hardcoded `/usr/local` paths) that otherwise make the result unu
 From the build directory:
 
 ```sh
-ctest -V -C Release                # what CI runs (no -E; the whole suite passes)
+ctest --output-on-failure -C Release   # what CI runs (no -E; the whole suite passes)
 ctest -R unit_test -V              # one CTest test
 ```
 
@@ -76,6 +81,14 @@ CTest defines five tests, all with the **source root** as their working director
 
 - `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All 7 cases pass (~26k assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
 - `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines.
+
+**No CTest case passes `-p`/`-f`/`-F`, so none of them executes the plotting path.**
+That is how `plotting.cpp` went years missing a `<pybind11/stl.h>` include: it
+compiled clean and threw `cast_error` on every call. CI covers the gap with a
+separate step that runs the demo for real figure output, after the golden
+comparisons -- it rewrites `integrated/197421_LAE.csv`, which `regression_golden`
+reads. Note the figure names come out as `state_CT_.png`: `niceops.cpp` builds them
+as `base + "_CT_" + ext`, so the separator lands before the extension.
 
 ### Legacy databases (`database_version` < 1)
 
