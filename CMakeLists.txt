@@ -69,6 +69,7 @@ FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2 pybind11)
 # Core library: noise database, trajectory, smoothing spline, plotting facade
 add_library(niceops_core STATIC
   src/sphere_database.cpp
+  src/geodetic.cpp
   src/trajectory.cpp
   src/plotting.cpp
   src/smoothing_spline.cpp
@@ -98,6 +99,7 @@ target_link_libraries(niceops niceops_core CLI11::CLI11 Threads::Threads)
 add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
   tests/test_sphere_database.cpp
+  tests/test_geodetic.cpp
   tests/test_trajectory.cpp
   tests/test_csv.cpp
   tests/test_legacy_repair.cpp

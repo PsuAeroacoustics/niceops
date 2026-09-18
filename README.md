@@ -168,6 +168,18 @@ because the top few bands of a measured sphere are usually noise-floor artifacts
 The observer loop runs on every core by default. Each observer is independent, so the output is
 deterministic: runs at `-j 1`, `-j 2` and `-j 32` are byte-for-byte identical.
 
+### Geodetic coordinates
+
+`src/geodetic.hpp` projects WGS84 positions onto the local Cartesian frame the rest of the
+tool works in. `LocalFrame(reference)` gives x east, y north;
+`LocalFrame::track_aligned(reference, bearing)` turns the axes so +x runs along a compass
+bearing, which is what the shipped AC tracks use — their x/y columns are rotated to follow the
+flight track, by about the heading in the file's own heading column, not aligned to east/north.
+Altitude passes through as z, so this is a map projection with a height attached rather than a
+true ENU frame; over the few kilometres a footprint spans the difference is negligible.
+
+Nothing reads geodetic input yet — this is the transform the input paths will need.
+
 ## Repository layout
 
 - `src/` — the implementation. Every `.cpp` lives here.
