@@ -66,7 +66,12 @@ public:
 
     void write_state(const std::string& state_file) const;
 
-    void adapt(double dt, int degree = 3, double alpha = 0.3);
+    // Resample onto a uniform dt grid, smoothing with a natural cubic spline.
+    // Pass a non-negative `tolerance` to bound how far the smoothed path may sit
+    // from the measured one (weighted sum of squared residuals, as MATLAB's
+    // spaps does); leave it negative to use `smoothing` as the penalty weight
+    // directly.
+    void adapt(double dt, double smoothing = 0.3, double tolerance = -1.0);
 
     // D's Get!(varname).get(): collect one field from every state
     std::vector<double> column(const std::string& varname) const;

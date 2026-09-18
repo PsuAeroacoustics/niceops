@@ -32,17 +32,13 @@ jobs:
       # access regardless of the host operating system
       shell: bash
       working-directory: ${{github.workspace}}/build
-      # EIGEN_DIRECTORY points vendored splinter at the system Eigen; its
-      # bundled Eigen 3.2.8 predates C++17 and fails to compile (std::binder1st).
-      run: cmake -S $GITHUB_WORKSPACE -B . -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DEIGEN_DIRECTORY=/usr/include/eigen3
+      run: cmake -S $GITHUB_WORKSPACE -B . -DCMAKE_BUILD_TYPE=$BUILD_TYPE
 
     - name: Build
       working-directory: ${{github.workspace}}/build
       shell: bash
       # Execute the build.  You can specify a specific target with "--target <NAME>"
-      # Build only our targets: splinter's own test binary uses
-      # std::random_shuffle, removed in C++17, and we don't need it.
-      run: cmake --build . --config $BUILD_TYPE --target niceops niceops_unit_tests golden_compare
+      run: cmake --build . --config $BUILD_TYPE
 
     - name: Test
       working-directory: ${{github.workspace}}/build

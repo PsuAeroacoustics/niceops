@@ -37,9 +37,7 @@ cmake --build build -j8
 Notes:
 - The repo root contains stale in-source build artifacts from the D era (CMakeCache.txt, Makefile, `libniceops*.a`, binaries) that are gitignored — do not build in-source.
 - **Never add `-DNDEBUG` to Release.** The D original ran with asserts live, and `sphere_database.cpp` relies on `assert(isFinite(...))` guards; matching that is part of the port contract. This is called out in CMakeLists.txt.
-- Vendored splinter bundles Eigen **3.2.8** (2015), which does not compile under C++17 (`std::binder1st`/`binder2nd` were removed). Point it at the system Eigen instead: `-DEIGEN_DIRECTORY=/path/to/eigen3` (e.g. `/opt/homebrew/include/eigen3`). This also avoids linking two different Eigen versions into one binary, since `niceops_core` uses `Eigen3::Eigen`.
-- Splinter's own test target (`splinter-test`) still won't build under C++17 — its bundled Catch uses `std::random_shuffle`. It isn't needed, so build just what you want: `cmake --build build --target niceops niceops_unit_tests golden_compare`.
-- If Xcode proper isn't installed (Command Line Tools only), pass `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`. No `-DCMAKE_POLICY_VERSION_MINIMUM` is needed: vendored splinter's `cmake_minimum_required` was bumped from 2.8 to `3.5...3.27`, which CMake 4 accepts.
+- If Xcode proper isn't installed (Command Line Tools only), pass `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`. No special flags are needed; the vendored SPLINTER library that used to require them is gone.
 - CGAL 5.0+ is header-only and exports `CGAL::CGAL`. Do **not** reintroduce `include(${CGAL_USE_FILE})` — `UseCGAL.cmake` was removed in CGAL 6, leaving `CGAL_USE_FILE` empty so the `include()` errors out.
 
 ### Golden reference files
@@ -117,10 +115,10 @@ The `niceops_core` static library (`sphere_database.cpp`, `trajectory.cpp`, `plo
 
 - `src/sphere_database.{hpp,cpp}` — `Database` class. Loads a netCDF noise database (`.nod`): one group per operating condition (μ advance ratio, γ flight path angle, CT thrust coefficient), each holding scattered (phi, θ) channels of dBA level and EAA excess-attenuation factor. `eval()` computes ground level: geometry → sphere angles (`lookup_angles`), barycentric interpolation between operating conditions, periodic bilinear interpolation on the sphere grid, then spherical spreading + excess attenuation (EAA × range) + a fixed 4 dB ground effect. Only `same_grid == true` databases are supported (the interpolation path is unimplemented). Free functions (`bracket`, `periodic_bilinear_interp`, `lookup_angles`, the geometry helpers) are exported in the header so the unit tests can reach them.
 - `src/interpolator.cpp` — C++/CGAL 3D Delaunay triangulation over the operating-condition space; exposes `set_interpolator3`/`barycentric`/`bilinear_interp` via `extern "C"` (declared in `sphere_database.hpp`). Built as its own `interpolator` library so CGAL's heavy headers compile once.
-- `src/splinter.cpp` — `extern "C"` wrapper over the vendored SPLINTER B-spline library, declared by `src/splines.hpp`, which wraps it back up in an RAII `Spline` class. `splinter-static` supplies SPLINTER itself but *not* these `create_spline`/`eval_spline`/… entry points, so this file must stay in `niceops_core`'s sources or `trajectory.cpp` fails to link.
+- `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `src/splines.hpp` wraps it as `Spline` for `trajectory.cpp`. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
-- `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` spline-smooths the trajectory via `src/splines.hpp` over vendored splinter (currently commented out in `main`), as is `watts_trim()`. Note `adapt()` is still *compiled* even though nothing calls it, which is why the splinter wrapper is a hard link-time dependency.
+- `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` resamples onto a uniform dt grid, smoothing via `src/splines.hpp` (currently commented out in `main`, as is `watts_trim()`). It takes either a smoothing parameter or a `tolerance` bounding how far the smoothed path may sit from the measured one.
 - `src/plotting.{hpp,cpp}` — `plt::` facade replacing the vendored matplotlib-d binding. Embeds Python via pybind11 and calls matplotlib directly; the interpreter is created lazily on first use, so non-plotting runs never pay the import cost.
 
 ### D standard-library replacements
@@ -138,6 +136,7 @@ The port swapped each D dependency for a small local equivalent; when a behavior
 | `unittest` blocks | Catch2 cases in `tests/` |
 | `scope(exit) nc_close` | `NcGuard` RAII in `sphere_database.cpp` |
 | matplotlib-d | pybind11-embedded matplotlib |
+| SPLINTER (vendored B-spline) | `src/smoothing_spline.{hpp,cpp}` |
 | `netcdf.d` | the netCDF C API directly |
 
 ## Code Conventions

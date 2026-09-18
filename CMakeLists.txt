@@ -39,9 +39,6 @@ endif()
 find_package(CGAL REQUIRED COMPONENTS Core)
 find_package(Eigen3 REQUIRED NO_MODULE)
 
-# Vendored B-spline library (C++)
-add_subdirectory(external/splinter)
-
 # Third-party dependencies, fetched at configure time
 include(FetchContent)
 
@@ -69,24 +66,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2 pybind11)
 
-# Core library: noise database, trajectory, plotting facade.
-# splinter.cpp is the extern "C" wrapper over the vendored SPLINTER library
-# that src/splines.hpp declares; without it niceops_core is missing
-# create_spline/eval_spline/... at link time.
+# Core library: noise database, trajectory, smoothing spline, plotting facade
 add_library(niceops_core STATIC
   src/sphere_database.cpp
   src/trajectory.cpp
   src/plotting.cpp
-  src/splinter.cpp
+  src/smoothing_spline.cpp
 )
 target_include_directories(niceops_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${NETCDF_INCLUDE_DIR}
-  external/splinter/include
 )
 target_link_libraries(niceops_core PUBLIC
   ${NETCDF_LIBRARY}
-  splinter-static
   Eigen3::Eigen
   nlohmann_json::nlohmann_json
   pybind11::embed
@@ -108,6 +100,7 @@ add_executable(niceops_unit_tests
   tests/test_trajectory.cpp
   tests/test_csv.cpp
   tests/test_legacy_repair.cpp
+  tests/test_smoothing_spline.cpp
 )
 target_link_libraries(niceops_unit_tests niceops_core Catch2::Catch2WithMain)
 

@@ -25,9 +25,12 @@ void diff(double dx, const std::vector<double>& f, std::vector<double>& df, std:
 
 void smoother(const std::vector<double>& x, const std::vector<double>& f,
         const std::vector<double>& xi, std::vector<double>& fi, std::vector<double>& dfi,
-        std::vector<double>& ddfi, int degree, double alpha)
+        std::vector<double>& ddfi, double smoothing, double tolerance)
 {
-    Spline spline(x, f, degree, alpha);
+    // A negative tolerance means "use the smoothing parameter"; otherwise the
+    // penalty is solved for so the fit stays within `tolerance` of the data.
+    auto spline = tolerance >= 0.0 ? Spline::within_tolerance(x, f, tolerance)
+                                   : Spline(x, f, smoothing);
     // Use spline for interpolation
     fi = spline.eval(xi);
     // Use finite differences to get velocity and acceleration
@@ -177,9 +180,12 @@ void Trajectory::write_state(const std::string& state_file) const
     }
 }
 
-void Trajectory::adapt(double dt, int degree, double alpha)
+void Trajectory::adapt(double dt, double smoothing, double tolerance)
 {
-    info("Adapting spline to dt ", dt, " with spline of degree ", degree, " and smoothing ", alpha);
+    if (tolerance >= 0.0)
+        info("Adapting trajectory to dt ", dt, ", smoothing to within a residual of ", tolerance);
+    else
+        info("Adapting trajectory to dt ", dt, " with smoothing parameter ", smoothing);
     assert(dt > 0.0);
 
     // Unpack states
@@ -207,19 +213,19 @@ void Trajectory::adapt(double dt, int degree, double alpha)
     std::vector<double> xi;
     std::vector<double> vxi;
     std::vector<double> axi;
-    smoother(t, x, ti, xi, vxi, axi, degree, alpha);
+    smoother(t, x, ti, xi, vxi, axi, smoothing, tolerance);
 
     trace("Smoothing y.");
     std::vector<double> yi;
     std::vector<double> vyi;
     std::vector<double> ayi;
-    smoother(t, y, ti, yi, vyi, ayi, degree, alpha);
+    smoother(t, y, ti, yi, vyi, ayi, smoothing, tolerance);
 
     trace("Smoothing z.");
     std::vector<double> zi;
     std::vector<double> vzi;
     std::vector<double> azi;
-    smoother(t, z, ti, zi, vzi, azi, degree, alpha);
+    smoother(t, z, ti, zi, vzi, azi, smoothing, tolerance);
 
     // Repack data into states
     states.clear();
