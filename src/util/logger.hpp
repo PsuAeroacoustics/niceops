@@ -73,6 +73,26 @@ enum class LogLevel
     fatal
 };
 
+namespace detail {
+
+// The active minimum level, mirrored out of the Logger so the free functions
+// below can gate on it without touching the singleton.  Logger::instance() is
+// a function-local static, so every call to it reloads and tests a guard
+// variable -- affordable once, but trace() runs hundreds of millions of times
+// inside the eval loop, where that guard and the argument formatting it
+// protects were together costing several percent of the run.
+inline LogLevel min_level = LogLevel::info;
+
+} // namespace detail
+
+// Whether a message at this level would be written at all.  Cheap enough to
+// put in front of a hot-path log call, and it lets the compiler drop the
+// argument evaluation when logging is off.
+inline bool log_enabled(LogLevel level)
+{
+    return level >= detail::min_level;
+}
+
 class Logger
 {
 public:
@@ -95,13 +115,21 @@ public:
 
     void set_level(LogLevel level)
     {
-        min_level_ = level;
+        detail::min_level = level;
     }
 
+    // Deliberately not inlined.  The formatting machinery below is large, and
+    // when it was inlined into trace() the compiler stopped inlining trace()
+    // itself -- leaving a real call, with its argument setup, at every hot-path
+    // trace site.  Out of line, trace() shrinks to the level test, which does
+    // fold into the caller.
     template <typename... Args>
+#if defined(__GNUC__) || defined(__clang__)
+    [[gnu::noinline]]
+#endif
     void write(LogLevel level, Args&&... args)
     {
-        if (level < min_level_)
+        if (!log_enabled(level))
             return;
         std::ostringstream oss;
         join(oss, std::forward<Args>(args)...);
@@ -167,12 +195,20 @@ private:
 
     std::ofstream file_;
     std::mutex mutex_;
-    LogLevel min_level_ = LogLevel::info;
 };
 
+// Forced inline so the level test folds into the caller and the argument setup
+// sinks into the branch that is not taken.  eval() and level_at_observer() make
+// roughly seven trace calls each and run tens of millions of times, so leaving
+// this as an ordinary call cost a sixth of the run doing nothing.
 template <typename... Args>
-void trace(Args&&... args)
+#if defined(__GNUC__) || defined(__clang__)
+[[gnu::always_inline]]
+#endif
+inline void trace(Args&&... args)
 {
+    if (!log_enabled(LogLevel::trace))
+        return;
     Logger::instance().write(LogLevel::trace, std::forward<Args>(args)...);
 }
 
