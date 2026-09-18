@@ -257,20 +257,14 @@ std::array<std::size_t, 2> bracket(const std::vector<double>& a, double val)
 
 double clamp01(double x)
 {
-    return x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x);
+    return std::clamp(x, 0.0, 1.0);
 }
 
 double acosc(double x)
 {
-    if (x > 1.0)
-    {
-        x = 1.0;
-    }
-    else if (x < -1.0)
-    {
-        x = -1.0;
-    }
-    return std::acos(x);
+    // Clamp first: round-off can push a dot product of unit vectors a hair
+    // past +/-1, where acos would return NaN.
+    return std::acos(std::clamp(x, -1.0, 1.0));
 }
 
 std::array<double, 2> lookup_angles(const Eigen::Vector3d& source, const Eigen::Vector3d& velocity,
@@ -292,10 +286,11 @@ std::array<double, 2> lookup_angles(const Eigen::Vector3d& source, const Eigen::
     // Then, we can get sphere phi by computing the angle of the propagation
     // vector in the plane
     double phi = acosc(std::fabs(n.dot(rp)));
-    // Sign is still uncertain, so check to see where we are in relation to starboard
-    double phi_p = acosc(pn.dot(rp) / pn.norm());
-    // If we're more than 90 degrees away, phi is defined negative
-    if (phi_p > 0.5 * PI)
+    // Sign is still uncertain, so check which side of starboard we are on.
+    // acos is monotonically decreasing, so acos(t) > pi/2 is exactly t < 0 --
+    // the comparison does not need the angle, only its sign, which saves an
+    // acos, a divide and a norm on a path that runs tens of millions of times.
+    if (pn.dot(rp) < 0.0)
     {
         phi = -phi;
     }

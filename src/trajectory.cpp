@@ -77,7 +77,7 @@ double json_to_double(const nlohmann::json& value)
 void derive_flight_parameters(State& now, const dimensional_data& vehicle)
 {
     // Compute load factor
-    now.LF = std::sqrt(now.nx * now.nx + now.ny * now.ny + now.nz * now.nz);
+    now.LF = std::hypot(now.nx, now.ny, now.nz);
     // Normalize
     now.nx /= now.LF;
     now.ny /= now.LF;
@@ -85,7 +85,7 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle)
     // Non-dimensionalize
     now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * PI
             * vehicle.radius * vehicle.radius);
-    auto v = std::sqrt(now.vx * now.vx + now.vy * now.vy + now.vz * now.vz);
+    auto v = std::hypot(now.vx, now.vy, now.vz);
     now.mu = v / vehicle.tip_speed;
     auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
     now.fpa_e = 180.0 / PI * std::asin(vn_hat);
