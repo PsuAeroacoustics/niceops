@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <utility>
 
@@ -756,6 +757,34 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     return ground_level;
 }
 
+Database::Sphere Database::interpolate_sphere(double advance_ratio, double flight_path_angle,
+        double thrust_coefficient) const
+{
+    Sphere sphere;
+    sphere.advance_ratio = advance_ratio;
+    sphere.flight_path_angle = flight_path_angle;
+    sphere.thrust_coefficient = thrust_coefficient;
+    sphere.radius = sphere_radius_;
+    sphere.phis = phis.values();
+    sphere.thetas = thetas.values();
+
+    // Same blend eval() applies at one direction, carried out at every cell, so
+    // a sphere exported at an operating condition the database already holds
+    // comes back bit-for-bit as that sphere's own data.
+    const auto blend = blend_at(advance_ratio, flight_path_angle, thrust_coefficient);
+    sphere.cells.resize(phis.size() * thetas.size());
+    for (std::size_t m = 0; m < phis.size(); m++)
+    {
+        for (std::size_t n = 0; n < thetas.size(); n++)
+        {
+            sphere.cells[m * thetas.size() + n] = blend_cell(m, n, blend);
+        }
+    }
+    info("Interpolated sphere at \u03bc = ", advance_ratio, ", \u03b3 = ", flight_path_angle,
+            ", CT = ", thrust_coefficient, " over ", sphere.cells.size(), " cells.");
+    return sphere;
+}
+
 double Database::cull_range(const Blend& blend, double cutoff) const
 {
     const double unbounded = std::numeric_limits<double>::infinity();
@@ -890,6 +919,107 @@ double Database::find_range(double contour_level, double bearing, double altitud
         }
     }
     return range;
+}
+
+namespace {
+
+// Small wrappers so the writer below reads as a list of what it writes rather
+// than a wall of status checks.
+void nc_check(int status, const std::string& what)
+{
+    if (status != NC_NOERR)
+        fatal("netCDF error while ", what, ": ", nc_strerror(status));
+}
+
+int define_scalar(int group, const char* name, int dimid)
+{
+    int varid = 0;
+    nc_check(nc_def_var(group, name, NC_DOUBLE, 1, &dimid, &varid), std::string("defining ") + name);
+    return varid;
+}
+
+} // namespace
+
+void write_sphere(const Database::Sphere& sphere, const std::string& path)
+{
+    const auto directory = std::filesystem::path(path).parent_path();
+    if (!directory.empty())
+        std::filesystem::create_directories(directory);
+
+    int file = 0;
+    nc_check(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file), "creating " + path);
+    NcGuard guard(file);
+
+    // Root: the flags Database's loader looks for.  Version 1 says the sphere
+    // was written by a versioned builder, so the legacy hover repair is not
+    // applied to it -- correct here, since the grid it came from was already
+    // repaired on load if it needed to be.
+    int scalar_dim = 0;
+    nc_check(nc_def_dim(file, "scalar", 1, &scalar_dim), "defining scalar dimension");
+    int same_grid_var = 0;
+    nc_check(nc_def_var(file, "same_grid", NC_SHORT, 1, &scalar_dim, &same_grid_var),
+            "defining same_grid");
+    int version_var = 0;
+    nc_check(nc_def_var(file, "database_version", NC_INT, 1, &scalar_dim, &version_var),
+            "defining database_version");
+
+    int group = 0;
+    nc_check(nc_def_grp(file, "sphere0", &group), "defining group sphere0");
+
+    const std::size_t n_channels = sphere.cells.size();
+    int radii_dim = 0, condition_dim = 0, channel_dim = 0;
+    nc_check(nc_def_dim(group, "radii", 1, &radii_dim), "defining radii dimension");
+    nc_check(nc_def_dim(group, "condition", 1, &condition_dim), "defining condition dimension");
+    nc_check(nc_def_dim(group, "channels", n_channels, &channel_dim), "defining channels dimension");
+
+    const int radius_var = define_scalar(group, "radius", radii_dim);
+    const int scale_var = define_scalar(group, "rotor_scale", condition_dim);
+    const int mu_var = define_scalar(group, "advance_ratio", condition_dim);
+    const int gamma_var = define_scalar(group, "flight_path_angle", condition_dim);
+    const int ct_var = define_scalar(group, "thrust_coefficient", condition_dim);
+    const int phi_var = define_scalar(group, "phi", channel_dim);
+    const int theta_var = define_scalar(group, "theta", channel_dim);
+    const int dba_var = define_scalar(group, "dBA", channel_dim);
+    const int eaa_var = define_scalar(group, "EAA", channel_dim);
+
+    nc_check(nc_enddef(file), "ending define mode");
+
+    const short same_grid = 1;
+    const int version = 1;
+    nc_check(nc_put_var_short(file, same_grid_var, &same_grid), "writing same_grid");
+    nc_check(nc_put_var_int(file, version_var, &version), "writing database_version");
+
+    // The loader multiplies radius by rotor_scale, so put the whole dimensional
+    // radius in the first and leave the second at unity.
+    const double scale = 1.0;
+    nc_check(nc_put_var_double(group, radius_var, &sphere.radius), "writing radius");
+    nc_check(nc_put_var_double(group, scale_var, &scale), "writing rotor_scale");
+    nc_check(nc_put_var_double(group, mu_var, &sphere.advance_ratio), "writing advance_ratio");
+    nc_check(nc_put_var_double(group, gamma_var, &sphere.flight_path_angle),
+            "writing flight_path_angle");
+    nc_check(nc_put_var_double(group, ct_var, &sphere.thrust_coefficient),
+            "writing thrust_coefficient");
+
+    // Flatten the grid back into the format's scattered channel lists.
+    std::vector<double> phi_channel(n_channels), theta_channel(n_channels);
+    std::vector<double> dba(n_channels), eaa(n_channels);
+    for (std::size_t m = 0; m < sphere.phis.size(); m++)
+    {
+        for (std::size_t n = 0; n < sphere.thetas.size(); n++)
+        {
+            const std::size_t c = m * sphere.thetas.size() + n;
+            phi_channel[c] = sphere.phis[m];
+            theta_channel[c] = sphere.thetas[n];
+            dba[c] = sphere.cells[c].dBA;
+            eaa[c] = sphere.cells[c].EAA;
+        }
+    }
+    nc_check(nc_put_var_double(group, phi_var, phi_channel.data()), "writing phi");
+    nc_check(nc_put_var_double(group, theta_var, theta_channel.data()), "writing theta");
+    nc_check(nc_put_var_double(group, dba_var, dba.data()), "writing dBA");
+    nc_check(nc_put_var_double(group, eaa_var, eaa.data()), "writing EAA");
+
+    log("Wrote interpolated sphere to ", path, " (", n_channels, " channels).");
 }
 
 void Database::self_test(const std::string& datafile_path)

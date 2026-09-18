@@ -180,6 +180,8 @@ int main(int argc, char* argv[])
     std::vector<std::string> state_files;
     std::string dnl_file = "";
     double utc_offset = 0.0;
+    std::string sphere_file = "";
+    std::vector<double> sphere_condition;
     bool write_state = false;
     bool plotting = false;
     std::string figure_file = "";
@@ -235,6 +237,11 @@ int main(int argc, char* argv[])
             "Write the day-night level, summed over every trajectory, to this file.");
     app.add_option("--utc_offset", utc_offset,
             "Hours from UTC to local time, for the 22:00-07:00 DNL night window.");
+    app.add_option("--export_sphere", sphere_file,
+            "Interpolate a whole noise sphere and write it as a one-group .nod database.");
+    app.add_option("--sphere_condition", sphere_condition,
+            "Operating condition for --export_sphere: advance ratio, flight path angle, CT.")
+            ->expected(3);
     app.add_option("--db_cutoff", db_cutoff,
             "Skip evaluations that provably fall below this level, dB. Off by default.");
 
@@ -245,6 +252,11 @@ int main(int argc, char* argv[])
     catch (const CLI::ParseError& e)
     {
         return app.exit(e);
+    }
+
+    if (!sphere_file.empty() && sphere_condition.size() != 3)
+    {
+        fatal("--export_sphere needs --sphere_condition <advance_ratio> <flight_path_angle> <CT>.");
     }
 
     // Each per-trajectory list is either one entry to share across every
@@ -314,6 +326,16 @@ int main(int argc, char* argv[])
             - watch_start)
                         .count();
     log("Database loaded in ", t1 / 1000.0, " seconds.");
+
+    if (!sphere_file.empty())
+    {
+        // A standalone job: interpolate the database down to one operating
+        // condition and write that sphere out.  No trajectory is involved.
+        write_sphere(database.interpolate_sphere(sphere_condition[0], sphere_condition[1],
+                             sphere_condition[2]),
+                sphere_file);
+        return 0;
+    }
 
     if (self_test)
     {

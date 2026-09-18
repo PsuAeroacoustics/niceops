@@ -179,6 +179,35 @@ public:
 
     void self_test(const std::string& datafile_path);
 
+    // The dBA level and EAA excess-attenuation factor of one (phi, theta) grid
+    // cell at one operating condition.  Kept adjacent because eval always reads
+    // the pair, so one cache line serves both.
+    struct Sample
+    {
+        double dBA;
+        double EAA;
+    };
+
+    // A whole noise sphere at one operating condition: the grid axes and the
+    // blended level and excess attenuation at every cell.  This is the same
+    // blend eval() applies at a single direction, carried out over the entire
+    // grid at once.
+    struct Sphere
+    {
+        double advance_ratio = 0.0;
+        double flight_path_angle = 0.0;
+        double thrust_coefficient = 0.0;
+        double radius = 0.0; // dimensional, metres
+        std::vector<double> phis;
+        std::vector<double> thetas;
+        // Row-major over (phi, theta): cells[i_phi * thetas.size() + i_theta].
+        std::vector<Sample> cells;
+    };
+
+    // Blend the database down to one operating condition over the whole grid.
+    Sphere interpolate_sphere(double advance_ratio, double flight_path_angle,
+            double thrust_coefficient) const;
+
     // Range beyond which a source at this operating condition provably falls
     // below `cutoff` dBA, or infinity when no such bound can be established.
     double cull_range(const Blend& blend, double cutoff) const;
@@ -190,15 +219,6 @@ public:
 
 
 private:
-    // The dBA level and EAA excess-attenuation factor of one (phi, theta) grid
-    // cell at one operating condition.  Kept adjacent because eval always reads
-    // the pair, so one cache line serves both.
-    struct Sample
-    {
-        double dBA;
-        double EAA;
-    };
-
     // Blend the four bracketing operating conditions at one grid cell.
     Sample blend_cell(std::size_t i_phi, std::size_t i_theta, const Blend& blend) const;
 
@@ -222,5 +242,9 @@ private:
     std::vector<double> sphere_max_;
     double min_excess_factor_ = 0.0;
 };
+
+// Write a single interpolated sphere as a one-group .nod database, the same
+// format Database reads, so an exported sphere can be loaded straight back.
+void write_sphere(const Database::Sphere& sphere, const std::string& path);
 
 } // namespace niceops
