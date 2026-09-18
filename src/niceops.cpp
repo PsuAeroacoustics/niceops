@@ -16,6 +16,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -56,7 +57,7 @@ std::ofstream open_output(const std::string& path, std::ios::openmode mode = std
     ensure_parent_directory(path);
     std::ofstream file(path, mode);
     if (!file)
-        fatal("Unable to open file for writing: ", path);
+        input_error("Unable to open file for writing: ", path);
     file << std::setprecision(17);
     return file;
 }
@@ -156,14 +157,16 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
         }
         else
         {
-            fatal("Observer file format unreadable.");
+            input_error("Observer file format unreadable.");
         }
     }
 }
 
 } // namespace
 
-int main(int argc, char* argv[])
+// Everything after the command line is parsed.  Wrapped by main below, which
+// owns the decision about what a failure costs: one trajectory, or the run.
+int run(int argc, char* argv[])
 {
     // Default to demo case
     std::string log_file = "log/niceops.log";
@@ -276,7 +279,7 @@ int main(int argc, char* argv[])
 
     if ((!sphere_file.empty() || !aam_file.empty()) && sphere_condition.size() != 3)
     {
-        fatal("--export_sphere/--export_aam need "
+        input_error("--export_sphere/--export_aam need "
               "--sphere_condition <advance_ratio> <flight_path_angle> <CT>.");
     }
 
@@ -284,7 +287,7 @@ int main(int argc, char* argv[])
     // trajectory, or one entry per trajectory.
     const std::size_t path_count = path_files.size();
     if (path_count == 0)
-        fatal("No trajectory file given.");
+        input_error("No trajectory file given.");
     auto expand_per_path = [path_count](std::vector<std::string>& list, const char* what) {
         if (list.size() == path_count)
             return;
@@ -296,7 +299,7 @@ int main(int argc, char* argv[])
             list.assign(path_count, shared);
             return;
         }
-        fatal("Got ", list.size(), " ", what, " for ", path_count,
+        input_error("Got ", list.size(), " ", what, " for ", path_count,
                 " trajectories; give one, or one per trajectory.");
     };
     if (out_files.size() == 1 && path_count > 1)
@@ -323,11 +326,11 @@ int main(int argc, char* argv[])
     }
     if (!(grid_step > 0.0))
     {
-        fatal("--gridstep must be positive, got ", grid_step, ".");
+        input_error("--gridstep must be positive, got ", grid_step, ".");
     }
     if (grid_bounds[1] <= grid_bounds[0] || grid_bounds[3] <= grid_bounds[2])
     {
-        fatal("--grid needs xmin < xmax and ymin < ymax.");
+        input_error("--grid needs xmin < xmax and ymin < ymax.");
     }
 
     if (!observer_file.empty())
@@ -461,9 +464,12 @@ int main(int argc, char* argv[])
     const auto& out_file = out_files[path_index];
     if (database_files[path_index] != loaded_database)
     {
+        log("Loading database ", database_files[path_index], " for ", path_file);
+        database = Database(database_files[path_index]);
+        // Only once it loaded.  Recording the name first would leave the cache
+        // claiming a database that failed to open, so a later trajectory naming
+        // the same file would skip the reload and quietly use the previous one.
         loaded_database = database_files[path_index];
-        log("Loading database ", loaded_database, " for ", path_file);
-        database = Database(loaded_database);
     }
 
     // Create trajectory from CSV data
@@ -712,7 +718,7 @@ int main(int argc, char* argv[])
     {
         // Say so up front rather than running the whole case and drawing
         // nothing at the end.
-        fatal("This build has no plotting support. Reconfigure with "
+        input_error("This build has no plotting support. Reconfigure with "
               "-DNICEOPS_PLOTTING=ON, or drop -p/-f/-F.");
     }
 
@@ -842,4 +848,24 @@ int main(int argc, char* argv[])
     }
     // Nonzero when any trajectory was skipped, so a batch script notices.
     return failed_paths > 0 ? 1 : 0;
+}
+
+int main(int argc, char* argv[])
+{
+    // An input that condemns the whole run -- an unreadable database named
+    // before any trajectory is processed, a malformed observer file, a bad
+    // combination of flags -- arrives here as an exception rather than an
+    // abort, so it is reported and the process exits cleanly.  Failures that
+    // cost only one trajectory are caught inside the loop instead.  That puts
+    // the decision about what a failure costs in one place, rather than having
+    // each call site guess it by choosing fatal() or input_error().
+    try
+    {
+        return run(argc, argv);
+    }
+    catch (const std::exception& problem)
+    {
+        error("Stopping: ", problem.what());
+        return 2;
+    }
 }

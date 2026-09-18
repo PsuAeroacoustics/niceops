@@ -108,23 +108,23 @@ void validate(const std::vector<double>& x, const std::vector<double>& y,
         const std::vector<double>& weights)
 {
     if (x.size() != y.size())
-        fatal("SmoothingSpline: x and y differ in length (", x.size(), " vs ", y.size(), ").");
+        input_error("SmoothingSpline: x and y differ in length (", x.size(), " vs ", y.size(), ").");
     if (x.size() < 2)
-        fatal("SmoothingSpline: need at least two points, got ", x.size(), ".");
+        input_error("SmoothingSpline: need at least two points, got ", x.size(), ".");
     for (std::size_t i = 1; i < x.size(); i++)
     {
         if (!(x[i] > x[i - 1]))
-            fatal("SmoothingSpline: x must be strictly increasing (x[", i - 1, "] = ", x[i - 1],
+            input_error("SmoothingSpline: x must be strictly increasing (x[", i - 1, "] = ", x[i - 1],
                     ", x[", i, "] = ", x[i], ").");
     }
     if (!weights.empty())
     {
         if (weights.size() != x.size())
-            fatal("SmoothingSpline: weights length ", weights.size(), " does not match ", x.size(), ".");
+            input_error("SmoothingSpline: weights length ", weights.size(), " does not match ", x.size(), ".");
         for (std::size_t i = 0; i < weights.size(); i++)
         {
             if (!(weights[i] > 0.0))
-                fatal("SmoothingSpline: weights must be positive (weight[", i, "] = ", weights[i], ").");
+                input_error("SmoothingSpline: weights must be positive (weight[", i, "] = ", weights[i], ").");
         }
     }
 }
@@ -235,7 +235,7 @@ public:
 
         if (!solve_pentadiagonal(bands_, lu_, gamma_))
         {
-            fatal("SmoothingSpline: penalised system is not positive definite; check that x is "
+            input_error("SmoothingSpline: penalised system is not positive definite; check that x is "
                   "strictly increasing and weights are positive.");
         }
 
@@ -288,7 +288,7 @@ SmoothingSpline SmoothingSpline::with_smoothing(const std::vector<double>& x,
 {
     validate(x, y, weights);
     if (!(lambda >= 0.0) || !std::isfinite(lambda))
-        fatal("SmoothingSpline: smoothing parameter must be finite and non-negative, got ", lambda, ".");
+        input_error("SmoothingSpline: smoothing parameter must be finite and non-negative, got ", lambda, ".");
 
     // Only materialize the unit weights when the caller gave none; binding a
     // reference otherwise avoids copying the caller's vector.
@@ -305,7 +305,7 @@ SmoothingSpline SmoothingSpline::within_tolerance(const std::vector<double>& x,
 {
     validate(x, y, weights);
     if (!(tolerance >= 0.0) || !std::isfinite(tolerance))
-        fatal("SmoothingSpline: tolerance must be finite and non-negative, got ", tolerance, ".");
+        input_error("SmoothingSpline: tolerance must be finite and non-negative, got ", tolerance, ".");
 
     std::vector<double> unit_weights;
     if (weights.empty())
@@ -392,7 +392,7 @@ std::size_t SmoothingSpline::interval_for(double xi) const
 double SmoothingSpline::derivative(double xi, int order) const
 {
     if (order < 0 || order > 2)
-        fatal("SmoothingSpline: derivative order must be 0, 1 or 2, got ", order, ".");
+        input_error("SmoothingSpline: derivative order must be 0, 1 or 2, got ", order, ".");
 
     // Outside the data, continue linearly.  A natural spline has zero curvature
     // at its ends, so the line tangent there IS the spline's continuation -- and

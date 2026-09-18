@@ -40,13 +40,13 @@ std::vector<int> get_group_ids(int ncid)
     int numgroups;
     if (NC_NOERR != nc_inq_grps(ncid, &numgroups, nullptr))
     {
-        fatal("Can't inquire netCDF groups.");
+        input_error("Can't inquire netCDF groups.");
     }
     // Get the group ids
     std::vector<int> group_ids(numgroups);
     if (NC_NOERR != nc_inq_grps(ncid, &numgroups, group_ids.data()))
     {
-        fatal("Cannot get number of netCDF groups.");
+        input_error("Cannot get number of netCDF groups.");
     }
     info("There are ", numgroups, " groups.");
     return group_ids;
@@ -69,12 +69,12 @@ std::size_t get_dim_length(const std::string& dimname, int group_id)
     int dim_id;
     if (NC_NOERR != nc_inq_dimid(group_id, dimname.c_str(), &dim_id))
     {
-        fatal("Unable to find ", dimname, "  dimension.");
+        input_error("Unable to find ", dimname, "  dimension.");
     }
     std::size_t dim_length;
     if (NC_NOERR != nc_inq_dimlen(group_id, dim_id, &dim_length))
     {
-        fatal("Unable to find length of ", dimname, "  dimension.");
+        input_error("Unable to find length of ", dimname, "  dimension.");
     }
     return dim_length;
 }
@@ -93,7 +93,7 @@ int get_scalar(int ncid, const std::string& variable_name, T* value)
         status = nc_get_var(ncid, varid, value);
         if (NC_NOERR != status)
         {
-            fatal("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
+            input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
         }
     }
     return status;
@@ -115,7 +115,7 @@ int get_int_scalar(int ncid, const std::string& variable_name, int fallback)
     int value = fallback;
     if (NC_NOERR != nc_get_var_int(ncid, varid, &value))
     {
-        fatal("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
+        input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
     }
     return value;
 }
@@ -125,7 +125,7 @@ void require_scalar(int ncid, const std::string& variable_name, T* value)
 {
     if (NC_NOERR != get_scalar(ncid, variable_name, value))
     {
-        fatal(variable_name, " required but not found.");
+        input_error(variable_name, " required but not found.");
     }
 }
 
@@ -145,7 +145,7 @@ int get_array(int ncid, const std::string& variable_name, std::size_t countp, st
         status = nc_get_vara(ncid, varid, &startp, &countp, values.data());
         if (NC_NOERR != status)
         {
-            fatal("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
+            input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
         }
     }
     return status;
@@ -156,7 +156,7 @@ void require_array(int ncid, const std::string& variable_name, std::size_t count
 {
     if (NC_NOERR != get_array(ncid, variable_name, countp, values))
     {
-        fatal(variable_name, " required but not found.");
+        input_error(variable_name, " required but not found.");
     }
 }
 
@@ -171,7 +171,7 @@ int open_database(const std::string& datafile_path)
     const int open_status = nc_open(datafile_path.c_str(), NC_NOWRITE, &file_ncid);
     if (NC_NOERR != open_status)
     {
-        fatal("Can't open netCDF file at ", datafile_path, ": ", nc_strerror(open_status));
+        input_error("Can't open netCDF file at ", datafile_path, ": ", nc_strerror(open_status));
     }
     return file_ncid;
 }
@@ -502,14 +502,14 @@ Database::Database(const std::string& datafile_path)
     const int same_grid_flag = get_int_scalar(file_ncid, "same_grid", -1);
     if (same_grid_flag < 0)
     {
-        fatal("Database error: required variable same_grid is missing.");
+        input_error("Database error: required variable same_grid is missing.");
     }
     const bool same_grid = same_grid_flag != 0;
     info("same_grid is set to: ", same_grid);
 
     // TODO: Enable interpolation when same_grid == false
     if (!same_grid)
-        fatal("same_grid == false not supported");
+        input_error("same_grid == false not supported");
 
     // Optional: builders since the versioned format record the rotor scale at
     // the root, which is enough to redimensionalize without a vehicle file.
@@ -557,7 +557,7 @@ Database::Database(const std::string& datafile_path)
         }
         else if (!approx_equal(radius * scale, dimensional_radius))
         {
-            fatal("Database error: sphere radius*scale not constant.");
+            input_error("Database error: sphere radius*scale not constant.");
         }
         // Shaft power, when the builder wrote it.  Optional: no shipped database
         // carries it, and a database without it simply has the feature off.
@@ -567,12 +567,12 @@ Database::Database(const std::string& datafile_path)
         if (NC_NOERR == get_scalar(group_id, "ShaftPower", &shaft_power_value))
         {
             if (i != 0 && shaft_power_.size() != i)
-                fatal("Database error: ShaftPower present on some spheres but not others.");
+                input_error("Database error: ShaftPower present on some spheres but not others.");
             shaft_power_.push_back(shaft_power_value);
         }
         else if (!shaft_power_.empty())
         {
-            fatal("Database error: ShaftPower present on some spheres but not others.");
+            input_error("Database error: ShaftPower present on some spheres but not others.");
         }
 
         auto nchannels = get_dim_length("channels", group_id);
@@ -584,7 +584,7 @@ Database::Database(const std::string& datafile_path)
         }
         else if (nchannels != nchannels0)
         {
-            fatal("Database error: number of channels is not constant.");
+            input_error("Database error: number of channels is not constant.");
         }
         // Read THIS sphere's own channel angles.  They are not identical across
         // spheres: in a pre-versioned database the hover spheres label their
@@ -646,19 +646,19 @@ Database::Database(const std::string& datafile_path)
             }
             else if (bands != frequencies_)
             {
-                fatal("Database error: frequency bands differ between spheres.");
+                input_error("Database error: frequency bands differ between spheres.");
             }
             int amplitude_id = 0;
             if (NC_NOERR != nc_inq_varid(group_id, "amplitude", &amplitude_id))
-                fatal("Database error: sphere has a frequency dimension but no amplitude.");
+                input_error("Database error: sphere has a frequency dimension but no amplitude.");
             if (NC_NOERR
                     != nc_get_var_double(group_id, amplitude_id,
                             spectra_.data() + i * phis.size() * thetas.size() * n_bands))
-                fatal("Database error: could not read amplitude for sphere ", i, ".");
+                input_error("Database error: could not read amplitude for sphere ", i, ".");
         }
         else if (!frequencies_.empty())
         {
-            fatal("Database error: spectra present on some spheres but not others.");
+            input_error("Database error: spectra present on some spheres but not others.");
         }
 
         // Place each channel into the grid cells it matches, rather than
@@ -1043,7 +1043,7 @@ namespace {
 void nc_check(int status, const std::string& what)
 {
     if (status != NC_NOERR)
-        fatal("netCDF error while ", what, ": ", nc_strerror(status));
+        input_error("netCDF error while ", what, ": ", nc_strerror(status));
 }
 
 int define_scalar(int group, const char* name, int dimid)
@@ -1168,7 +1168,7 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
 {
     if (sphere.frequencies.empty())
     {
-        fatal("Cannot write ", path,
+        input_error("Cannot write ", path,
                 " in AAM format: the database carries no spectra, and AMPLITUDE(PHI, THETA, "
                 "FREQUENCY) is the whole payload of the format.");
     }
@@ -1352,7 +1352,7 @@ void Database::self_test(const std::string& datafile_path)
     }
     else
     {
-        fatal("Self test failed on ", invalid, " of ", valid + invalid, " samples.");
+        input_error("Self test failed on ", invalid, " of ", valid + invalid, " samples.");
     }
 }
 
