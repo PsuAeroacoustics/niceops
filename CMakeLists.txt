@@ -107,6 +107,7 @@ add_executable(niceops_unit_tests
   tests/test_sphere_database.cpp
   tests/test_trajectory.cpp
   tests/test_csv.cpp
+  tests/test_legacy_repair.cpp
 )
 target_link_libraries(niceops_unit_tests niceops_core Catch2::Catch2WithMain)
 
@@ -117,7 +118,10 @@ add_executable(golden_compare tests/golden_compare.cpp)
 enable_testing()
 # One default run feeds both the LAE and state golden comparisons
 add_test(NAME regression_default COMMAND niceops -S state/ci_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME broken_self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# Validates every sphere in the database against its own stored levels
+# (1.8M samples).  Was "broken_self_test" and excluded from CI while legacy
+# hover directivity made it fail; it passes now and is a real test.
+add_test(NAME self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME state_golden COMMAND golden_compare state/ci_state.csv golden/state_197421.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

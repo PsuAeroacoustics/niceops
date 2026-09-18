@@ -50,6 +50,13 @@ std::array<double, 2> lookup_angles(const Eigen::Vector3d& source,
         const Eigen::Vector3d& velocity, const Eigen::Vector3d& normal,
         const Eigen::Vector3d& observer);
 
+// Repair the azimuth labels of a sphere written by a pre-versioned builder
+// (database_version < 1), whose upper surface was completed with `-phi` instead
+// of `180 - phi`.  Rewrites the mirrored half of `phis_scattered` in place and
+// returns true if the sphere needed repair.  Leaves anything that does not match
+// the broken shape untouched.
+bool repair_legacy_hover_directivity(std::vector<double>& phis_scattered);
+
 // Faithful port of D's std.math.approxEqual(value, reference, maxRelDiff,
 // maxAbsDiff): relative term is against `reference`, defaults 1e-2 / 1e-5.
 bool approx_equal(double value, double reference, double max_rel_diff = 1e-2,

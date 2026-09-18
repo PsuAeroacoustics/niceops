@@ -86,6 +86,27 @@ int get_scalar(int ncid, const std::string& variable_name, T* value)
     return status;
 }
 
+// Read an integer-valued scalar, converting from whatever numeric type the
+// file actually uses.  nc_get_var() reads the EXTERNAL type with no conversion,
+// so reading a byte or short variable through it into an int reads the wrong
+// width; nc_get_var_int() converts.  This matters because "same_grid" is stored
+// as short in older databases and as byte in newer ones.  Returns `fallback`
+// when the variable is absent.
+int get_int_scalar(int ncid, const std::string& variable_name, int fallback)
+{
+    int varid;
+    if (NC_NOERR != nc_inq_varid(ncid, variable_name.c_str(), &varid))
+    {
+        return fallback;
+    }
+    int value = fallback;
+    if (NC_NOERR != nc_get_var_int(ncid, varid, &value))
+    {
+        fatal("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
+    }
+    return value;
+}
+
 template <typename T>
 void require_scalar(int ncid, const std::string& variable_name, T* value)
 {
@@ -140,6 +161,66 @@ double barycentric_interp(const std::vector<std::vector<std::vector<double>>>& m
 // niceops::acosc & co. undefined (breaking the unit tests at link time) and
 // makes unqualified calls here ambiguous against the using-directive above.
 namespace niceops {
+
+// Repair the azimuth labels of a sphere written by a pre-versioned builder.
+//
+// Source spheres cover only the lower half of the roll circle, phi in [-90, 90]
+// with phi = 0 straight down; the upper half is the reflection through the
+// horizontal plane, phi -> 180 - phi.  Older builders completed the sphere with
+// `concatenate((phi, -phi))` instead.  Negation is a left/right flip *within*
+// the lower half and, because the source range is symmetric about zero, maps
+// [-90, 90] onto itself -- so the second half of the channels is a copy of the
+// lower hemisphere wearing lower-hemisphere labels, and the upper surface is
+// missing.  Forward-flight spheres in these files were completed correctly; only
+// the hover spheres are affected.
+//
+// The acoustic data is fine -- only the labels are wrong -- so this is
+// recoverable.  For a mirrored channel the file stores phi = -phi_source, hence
+//     phi_correct = wrap(180 - phi_source) = wrap(180 + phi_stored).
+// Returns true if the sphere was repaired.
+bool repair_legacy_hover_directivity(std::vector<double>& phis_scattered)
+{
+    const std::size_t n = phis_scattered.size();
+    // A correctly completed sphere spans the full circle.  One confined to
+    // [-90, 90] never received its upper surface.
+    for (auto phi : phis_scattered)
+    {
+        if (phi < -90.0 - 1e-9 || phi > 90.0 + 1e-9)
+        {
+            return false;
+        }
+    }
+    // The broken form emits [source, -source], so the halves must mirror.
+    // Refuse to touch anything that does not match that shape.
+    if (n < 2 || n % 2 != 0)
+    {
+        log("Sphere azimuths confined to [-90, 90] but channel count is odd; "
+            "leaving directivity untouched.");
+        return false;
+    }
+    const std::size_t half = n / 2;
+    for (std::size_t c = 0; c < half; c++)
+    {
+        if (std::fabs(phis_scattered[half + c] + phis_scattered[c]) > 1e-9)
+        {
+            log("Sphere azimuths confined to [-90, 90] but halves are not "
+                "mirrored; leaving directivity untouched.");
+            return false;
+        }
+    }
+    for (std::size_t c = half; c < n; c++)
+    {
+        double corrected = 180.0 + phis_scattered[c];
+        // Wrap into [-180, 180) to match the convention used elsewhere.
+        corrected = std::fmod(corrected + 180.0, 360.0);
+        if (corrected < 0.0)
+        {
+            corrected += 360.0;
+        }
+        phis_scattered[c] = corrected - 180.0;
+    }
+    return true;
+}
 
 double periodic_bilinear_interp(double q11, double q12, double q21, double q22, double x1, double x2,
         double y1, double y2, double x, double y)
@@ -284,11 +365,22 @@ Database::Database(const std::string& datafile_path)
     }
     NcGuard guard(file_ncid);
 
-    // Check for "same_grid" flag to determine if interpolation is required
-    bool same_grid = false;
-    int same_grid_flag;
-    get_scalar(file_ncid, "same_grid", &same_grid_flag);
-    same_grid = same_grid_flag ? true : false;
+    // Database format version.  Absent (or 0) means the file predates the
+    // versioned builder, and its hover spheres may carry the broken directivity
+    // described in repair_legacy_hover_directivity().
+    const int database_version = get_int_scalar(file_ncid, "database_version", 0);
+    info("Database format version: ", database_version);
+
+    // Check for "same_grid" flag to determine if interpolation is required.
+    // Missing is fatal rather than silently undefined -- it used to be read
+    // into an uninitialised int, so an older or hand-made file could take
+    // either branch at random.
+    const int same_grid_flag = get_int_scalar(file_ncid, "same_grid", -1);
+    if (same_grid_flag < 0)
+    {
+        fatal("Database error: required variable same_grid is missing.");
+    }
+    const bool same_grid = same_grid_flag != 0;
     info("same_grid is set to: ", same_grid);
 
     // TODO: Enable interpolation when same_grid == false
@@ -308,6 +400,7 @@ Database::Database(const std::string& datafile_path)
     std::vector<double> phis_scattered, thetas_scattered, dBAs_scattered, EAAs_scattered;
     std::size_t nchannels0;
     auto dba_max = -std::numeric_limits<double>::infinity();
+    std::size_t repaired_spheres = 0;
     // Cycle through sphere groups and load data
     for (std::size_t i = 0; i < group_ids.size(); i++)
     {
@@ -337,13 +430,27 @@ Database::Database(const std::string& datafile_path)
             // Record number of channels to check for changes
             nchannels0 = nchannels;
             info("First sphere contains ", nchannels, " channels.");
-            // Get scattered phi and theta
-            phis_scattered.resize(nchannels);
-            thetas_scattered.resize(nchannels);
-            require_array(group_id, "phi", phis_scattered.size(), phis_scattered);
-            trace("The original phi values are:\n", phis_scattered);
-            require_array(group_id, "theta", thetas_scattered.size(), thetas_scattered);
-            trace("The original theta values are:\n", thetas_scattered);
+        }
+        else if (nchannels != nchannels0)
+        {
+            fatal("Database error: number of channels is not constant.");
+        }
+        // Read THIS sphere's own channel angles.  They are not identical across
+        // spheres: in a pre-versioned database the hover spheres label their
+        // mirrored half differently from the forward-flight ones, so reusing
+        // sphere 0's arrays files their levels into the wrong grid cells.
+        phis_scattered.resize(nchannels);
+        thetas_scattered.resize(nchannels);
+        require_array(group_id, "phi", phis_scattered.size(), phis_scattered);
+        trace("The original phi values are:\n", phis_scattered);
+        require_array(group_id, "theta", thetas_scattered.size(), thetas_scattered);
+        trace("The original theta values are:\n", thetas_scattered);
+        if (database_version < 1 && repair_legacy_hover_directivity(phis_scattered))
+        {
+            repaired_spheres++;
+        }
+        if (i == 0)
+        {
             // Sort and identify unique elements.  D does
             //   phis = phis_scattered.dup.sort().uniq().array();
             // i.e. on a COPY.  phis_scattered/thetas_scattered must keep all
@@ -367,10 +474,6 @@ Database::Database(const std::string& datafile_path)
             EAA.assign(phis.size(),
                     std::vector<std::vector<double>>(thetas.size(),
                             std::vector<double>(group_ids.size(), 0.0)));
-        }
-        else if (nchannels != nchannels0)
-        {
-            fatal("Database error: number of channels is not constant.");
         }
         // Fetch scattered acoustic data for each sphere
         dBAs_scattered.resize(nchannels);
@@ -409,6 +512,11 @@ Database::Database(const std::string& datafile_path)
             // TODO: interpolation. Should be unreachable
             fatal("Not implemented");
         }
+    }
+    if (repaired_spheres > 0)
+    {
+        log("Repaired legacy hover directivity on ", repaired_spheres, " of ", group_ids.size(),
+            " spheres.  Regenerate this database with a versioned builder to avoid the fix-up.");
     }
     max_level_ = dba_max;
     info("Max level found in database is: ", max_level_);
@@ -606,6 +714,7 @@ void Database::self_test(const std::string& datafile_path)
     }
     NcGuard guard(file_ncid);
 
+    const int self_test_version = get_int_scalar(file_ncid, "database_version", 0);
     auto group_ids = get_group_ids(file_ncid);
     // Local operating parameters
     double advance_ratio, flight_path_angle, thrust_coefficient, radius, scale, dimensional_radius;
@@ -631,6 +740,12 @@ void Database::self_test(const std::string& datafile_path)
 
         std::vector<double> phi_data(nchannels);
         require_array(group_id, "phi", nchannels, phi_data);
+        // Interpret the file exactly as the loader did, or this compares the
+        // grid built from repaired labels against queries at the raw ones.
+        if (self_test_version < 1)
+        {
+            repair_legacy_hover_directivity(phi_data);
+        }
 
         std::vector<double> dBA_data(nchannels);
         require_array(group_id, "dBA", nchannels, dBA_data);

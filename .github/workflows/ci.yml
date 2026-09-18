@@ -49,10 +49,7 @@ jobs:
       shell: bash
       # Execute tests defined by the CMake configuration.
       # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-      # The broken_self_test is a known failure (see the TODO corner case in
-      # src/niceops.cpp) and is excluded by name; don't rename it without
-      # updating this regex.
-      run: ctest -V -C $BUILD_TYPE -E broken
+      run: ctest -V -C $BUILD_TYPE
 
     - name: Finalize
       uses: actions/upload-artifact@v4

@@ -82,20 +82,23 @@ The unit tests are a Catch2 binary, so you can run a single case or tag directly
 CTest defines five tests, all with the **source root** as their working directory (the demo case's relative paths resolve there):
 
 - `regression_default` — runs `niceops -S state/ci_state.csv`; one run feeds both golden comparisons.
-- `broken_self_test` — runs `niceops --self_test`; **known to fail, exactly as the D original does**. Both implementations fail on **7,788 of 1,844,672 samples (0.42%)** — the counts match exactly, so this is inherited behavior, not a port defect. The D-era TODO at `src/niceops.cpp:276` describes one such corner case. CI excludes it with `ctest -V -C Release -E broken`; don't rename it without updating `.github/workflows/ci.yml`.
-
-  Historical note: this test briefly failed on 99.8% of samples with `eval` returning exactly 0. That was the in-place `phis_scattered`/`thetas_scattered` sort bug (see Code Conventions), now fixed. If the failure count jumps far above 7,788 again, suspect the database grid fill first.
-
-  **Root cause of the remaining 7,788 (diagnosed, not yet fixed).** Every failure is at **μ = 0** — hover. All 24 hover groups in `S-76D_M3.nod` fail; no non-hover group fails. μ = 0 is the minimum of the advance-ratio range and is isolated by a large gap (next μ is 0.10617), so after normalization those points sit exactly on the convex-hull boundary of the operating-condition cloud that `interpolator.cpp` triangulates. `barycentric()` has an explicit branch for queries whose located cell is infinite (falling back to `nearest_vertex`), and a hull-boundary query is precisely where CGAL's `locate()` is ambiguous between that branch and the finite-cell volume-ratio path. Errors reach ±5.8 dB, median −0.85 dB, which is consistent with weights blending neighbouring conditions instead of returning the vertex's own value.
-
-  Two concrete defects to address when fixing this (both inherited — `interpolator.cpp` was shared with the D build, which is why D fails identically):
-  - `barycentric()` does not special-case a query that coincides with a triangulation vertex. Self-test queries always sit exactly on one, and should return weight 1 for it.
-  - `total_volume` in `barycentric()` is declared `float` (`auto total_volume = 0.0f;`) inside an otherwise double-precision computation, capping every barycentric weight at ~7 significant digits. This is independent of the hover problem and worth fixing regardless.
-
-  Fixing either changes numerical output and invalidates `golden/`, so it is deliberately staged after the faithful-port work.
+- `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion.
 
 - `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All 7 cases pass (~26k assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
 - `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines. See the caveat above: the golden files are missing.
+
+### Legacy databases (`database_version` < 1)
+
+Databases carry a root-level `database_version`. Absent or 0 means the file predates the versioned builder, and its **hover spheres have broken directivity**: the upper surface was completed with `-phi` instead of `180 - phi`. Since the source spheres span only phi in [-90, 90] (phi = 0 straight down), negating is a left/right flip *within* the lower half that maps the range onto itself — so the mirrored channels wear lower-hemisphere labels and the upper surface is missing. Forward-flight spheres in those files were completed correctly; only hover is affected (in `S-76D_M3.nod`, exactly the 24 spheres at mu = 0).
+
+Only the labels are wrong, so `Database::Database` repairs them on load via `repair_legacy_hover_directivity()`: for the mirrored half, `phi_correct = wrap(180 + phi_stored)`. It refuses to touch anything that does not match the broken shape (must be confined to [-90, 90], even channel count, halves actually mirrored) and logs how many spheres it fixed. `self_test` applies the same repair, or it would compare a grid built from repaired labels against queries at the raw ones.
+
+Two consequences worth knowing:
+
+- Channel angles are read **per sphere**, not once from sphere 0. Reusing sphere 0's array happened to give the right answer for `S-76D_M3.nod` — the repaired hover labels are byte-identical to sphere 0's — but only because every forward sphere there shares one layout. It would silently misfile data in any database with heterogeneous layouts.
+- The repair leaves the demo footprint bit-identical, for the same reason, so `golden/` did not need regenerating.
+
+Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERSION = 1`) makes the fix-up unnecessary; the loader then trusts the file as written.
 
 ## Running the Tool
 
