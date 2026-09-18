@@ -35,16 +35,27 @@ struct Bands
     std::vector<double> second_off; // size m-2
 };
 
+// L has unit diagonal; l1/l2 are its two subdiagonals, d the pivots.  Passed in
+// so a caller that solves repeatedly is not reallocating them every time.
+struct Factorization
+{
+    std::vector<double> d, l1, l2;
+};
+
 // Solve a symmetric positive-definite pentadiagonal system in place via LDL^T.
 // Returns false if the factorisation breaks down (non-positive pivot).
-bool solve_pentadiagonal(Bands bands, std::vector<double>& rhs)
+bool solve_pentadiagonal(const Bands& bands, Factorization& lu, std::vector<double>& rhs)
 {
     const std::size_t m = bands.diagonal.size();
     if (m == 0)
         return true;
 
-    // L has unit diagonal; l1/l2 are its two subdiagonals, d the pivots.
-    std::vector<double> d(m, 0.0), l1(m, 0.0), l2(m, 0.0);
+    lu.d.assign(m, 0.0);
+    lu.l1.assign(m, 0.0);
+    lu.l2.assign(m, 0.0);
+    auto& d = lu.d;
+    auto& l1 = lu.l1;
+    auto& l2 = lu.l2;
     for (std::size_t i = 0; i < m; i++)
     {
         double value = bands.diagonal[i];
@@ -131,79 +142,145 @@ double weighted_residual(const std::vector<double>& y, const std::vector<double>
     return total;
 }
 
+// Everything in Reinsch's construction that does not depend on lambda: the knot
+// spacings, the three nonzeros of each Q column, the Gram bands R, the penalty
+// bands Q^T W^-1 Q and the right-hand side Q^T y.  within_tolerance refits some
+// sixty-odd times hunting for its lambda, and each refit used to rebuild all of
+// this -- six divisions per interior knot among the rest -- when only the
+// scalar lambda had changed.  The scratch vectors are members too, so the
+// refits do not reallocate them either.
+//
+// Holds references to y and w; both factory functions keep them alive for the
+// lifetime of the system.
+class PenalizedSystem
+{
+public:
+    PenalizedSystem(const std::vector<double>& x, const std::vector<double>& y,
+            const std::vector<double>& w)
+        : y_(y)
+        , w_(w)
+        , n_(x.size())
+    {
+        if (n_ < 3)
+            return;
+        const std::size_t m = n_ - 2; // interior knots
+
+        std::vector<double> h(n_ - 1);
+        for (std::size_t i = 0; i + 1 < n_; i++)
+            h[i] = x[i + 1] - x[i];
+
+        // Column j of Q, rows j, j+1, j+2.
+        a_.resize(m);
+        b_.resize(m);
+        c_.resize(m);
+        for (std::size_t j = 0; j < m; j++)
+        {
+            a_[j] = 1.0 / h[j];
+            b_[j] = -1.0 / h[j] - 1.0 / h[j + 1];
+            c_[j] = 1.0 / h[j + 1];
+        }
+
+        r_diag_.resize(m);
+        r_off_.assign(m > 0 ? m - 1 : 0, 0.0);
+        p_diag_.resize(m);
+        p_off1_.assign(m > 0 ? m - 1 : 0, 0.0);
+        p_off2_.assign(m > 1 ? m - 2 : 0, 0.0);
+        qty_.resize(m);
+        for (std::size_t j = 0; j < m; j++)
+        {
+            const double a = a_[j], b = b_[j], c = c_[j];
+            r_diag_[j] = (h[j] + h[j + 1]) / 3.0;
+            p_diag_[j] = a * a / w[j] + b * b / w[j + 1] + c * c / w[j + 2];
+            if (j + 1 < m)
+            {
+                r_off_[j] = h[j + 1] / 6.0;
+                p_off1_[j] = b * a_[j + 1] / w[j + 1] + c * b_[j + 1] / w[j + 2];
+            }
+            if (j + 2 < m)
+            {
+                p_off2_[j] = c * a_[j + 2] / w[j + 2];
+            }
+            qty_[j] = a * y[j] + b * y[j + 1] + c * y[j + 2]; // (Q^T y)_j
+        }
+
+        bands_.diagonal.resize(m);
+        bands_.first_off.resize(m > 0 ? m - 1 : 0);
+        bands_.second_off.resize(m > 1 ? m - 2 : 0);
+        gamma_.resize(m);
+    }
+
+    // Fills `fitted` and `curvature` for this lambda.
+    void fit(double lambda, std::vector<double>& fitted, std::vector<double>& curvature)
+    {
+        fitted = y_;
+        curvature.assign(n_, 0.0);
+
+        // Fewer than three points, or no penalty weight, leaves nothing to
+        // smooth: two points are already a straight line, and lambda = 0
+        // interpolates.
+        if (n_ < 3 || lambda <= 0.0)
+            return;
+
+        const std::size_t m = n_ - 2;
+        for (std::size_t j = 0; j < m; j++)
+        {
+            // R + lambda * (Q^T W^-1 Q)
+            bands_.diagonal[j] = r_diag_[j] + lambda * p_diag_[j];
+            if (j + 1 < m)
+                bands_.first_off[j] = r_off_[j] + lambda * p_off1_[j];
+            if (j + 2 < m)
+                bands_.second_off[j] = lambda * p_off2_[j];
+        }
+        gamma_ = qty_;
+
+        if (!solve_pentadiagonal(bands_, lu_, gamma_))
+        {
+            fatal("SmoothingSpline: penalised system is not positive definite; check that x is "
+                  "strictly increasing and weights are positive.");
+        }
+
+        // f = y - lambda * W^-1 Q gamma, and f'' = gamma at the interior knots.
+        for (std::size_t i = 0; i < n_; i++)
+        {
+            double qg = 0.0;
+            if (i >= 2)
+                qg += c_[i - 2] * gamma_[i - 2];
+            if (i >= 1 && i - 1 < m)
+                qg += b_[i - 1] * gamma_[i - 1];
+            if (i < m)
+                qg += a_[i] * gamma_[i];
+            fitted[i] = y_[i] - lambda * qg / w_[i];
+        }
+        for (std::size_t j = 0; j < m; j++)
+            curvature[j + 1] = gamma_[j];
+    }
+
+private:
+    const std::vector<double>& y_;
+    const std::vector<double>& w_;
+    std::size_t n_;
+    std::vector<double> a_, b_, c_;                 // the nonzeros of Q's columns
+    std::vector<double> r_diag_, r_off_;            // R
+    std::vector<double> p_diag_, p_off1_, p_off2_;  // Q^T W^-1 Q
+    std::vector<double> qty_;
+    Bands bands_;                                   // scratch, rebuilt per lambda
+    Factorization lu_;
+    std::vector<double> gamma_;
+};
+
 } // namespace
 
 namespace niceops {
 
-// Core fit for a given lambda.  Fills `fitted` and `curvature`.
-static void fit_for_lambda(const std::vector<double>& x, const std::vector<double>& y,
-        const std::vector<double>& w, double lambda, std::vector<double>& fitted,
-        std::vector<double>& curvature)
+SmoothingSpline SmoothingSpline::fit(const std::vector<double>& x, const std::vector<double>& y,
+        const std::vector<double>& w, double lambda)
 {
-    const std::size_t n = x.size();
-    fitted = y;
-    curvature.assign(n, 0.0);
-
-    // Fewer than three points, or no penalty weight, leaves nothing to smooth:
-    // two points are already a straight line, and lambda = 0 interpolates.
-    if (n < 3 || lambda <= 0.0)
-        return;
-
-    std::vector<double> h(n - 1);
-    for (std::size_t i = 0; i + 1 < n; i++)
-        h[i] = x[i + 1] - x[i];
-
-    const std::size_t m = n - 2; // interior knots
-
-    // Column j of Q, rows j, j+1, j+2.
-    auto q_lower = [&](std::size_t j) { return 1.0 / h[j]; };
-    auto q_mid = [&](std::size_t j) { return -1.0 / h[j] - 1.0 / h[j + 1]; };
-    auto q_upper = [&](std::size_t j) { return 1.0 / h[j + 1]; };
-
-    Bands bands;
-    bands.diagonal.assign(m, 0.0);
-    bands.first_off.assign(m > 0 ? m - 1 : 0, 0.0);
-    bands.second_off.assign(m > 1 ? m - 2 : 0, 0.0);
-    std::vector<double> rhs(m, 0.0);
-
-    for (std::size_t j = 0; j < m; j++)
-    {
-        const double a = q_lower(j), b = q_mid(j), c = q_upper(j);
-        // R + lambda * (Q^T W^-1 Q), diagonal
-        bands.diagonal[j] = (h[j] + h[j + 1]) / 3.0
-                + lambda * (a * a / w[j] + b * b / w[j + 1] + c * c / w[j + 2]);
-        if (j + 1 < m)
-        {
-            bands.first_off[j] = h[j + 1] / 6.0
-                    + lambda * (b * q_lower(j + 1) / w[j + 1] + c * q_mid(j + 1) / w[j + 2]);
-        }
-        if (j + 2 < m)
-        {
-            bands.second_off[j] = lambda * (c * q_lower(j + 2) / w[j + 2]);
-        }
-        rhs[j] = a * y[j] + b * y[j + 1] + c * y[j + 2]; // (Q^T y)_j
-    }
-
-    if (!solve_pentadiagonal(bands, rhs))
-    {
-        fatal("SmoothingSpline: penalised system is not positive definite; check that x is "
-              "strictly increasing and weights are positive.");
-    }
-
-    // f = y - lambda * W^-1 Q gamma, and f'' = gamma at the interior knots.
-    for (std::size_t i = 0; i < n; i++)
-    {
-        double qg = 0.0;
-        if (i >= 2)
-            qg += q_upper(i - 2) * rhs[i - 2];
-        if (i >= 1 && i - 1 < m)
-            qg += q_mid(i - 1) * rhs[i - 1];
-        if (i < m)
-            qg += q_lower(i) * rhs[i];
-        fitted[i] = y[i] - lambda * qg / w[i];
-    }
-    for (std::size_t j = 0; j < m; j++)
-        curvature[j + 1] = rhs[j];
+    SmoothingSpline spline;
+    spline.knots_ = x;
+    spline.lambda_ = lambda;
+    PenalizedSystem(x, y, w).fit(lambda, spline.fitted_, spline.curvature_);
+    spline.residual_ = weighted_residual(y, spline.fitted_, w);
+    return spline;
 }
 
 SmoothingSpline SmoothingSpline::with_smoothing(const std::vector<double>& x,
@@ -213,14 +290,14 @@ SmoothingSpline SmoothingSpline::with_smoothing(const std::vector<double>& x,
     if (!(lambda >= 0.0) || !std::isfinite(lambda))
         fatal("SmoothingSpline: smoothing parameter must be finite and non-negative, got ", lambda, ".");
 
-    const std::vector<double> w = weights.empty() ? std::vector<double>(x.size(), 1.0) : weights;
+    // Only materialize the unit weights when the caller gave none; binding a
+    // reference otherwise avoids copying the caller's vector.
+    std::vector<double> unit_weights;
+    if (weights.empty())
+        unit_weights.assign(x.size(), 1.0);
+    const std::vector<double>& w = weights.empty() ? unit_weights : weights;
 
-    SmoothingSpline spline;
-    spline.knots_ = x;
-    spline.lambda_ = lambda;
-    fit_for_lambda(x, y, w, lambda, spline.fitted_, spline.curvature_);
-    spline.residual_ = weighted_residual(y, spline.fitted_, w);
-    return spline;
+    return fit(x, y, w, lambda);
 }
 
 SmoothingSpline SmoothingSpline::within_tolerance(const std::vector<double>& x,
@@ -230,19 +307,23 @@ SmoothingSpline SmoothingSpline::within_tolerance(const std::vector<double>& x,
     if (!(tolerance >= 0.0) || !std::isfinite(tolerance))
         fatal("SmoothingSpline: tolerance must be finite and non-negative, got ", tolerance, ".");
 
-    const std::vector<double> w = weights.empty() ? std::vector<double>(x.size(), 1.0) : weights;
+    std::vector<double> unit_weights;
+    if (weights.empty())
+        unit_weights.assign(x.size(), 1.0);
+    const std::vector<double>& w = weights.empty() ? unit_weights : weights;
 
     if (tolerance == 0.0 || x.size() < 3)
-        return with_smoothing(x, y, 0.0, weights);
+        return fit(x, y, w, 0.0);
 
     // The residual grows monotonically with lambda, from 0 (interpolation) to the
     // residual of the weighted least-squares line.  Bracket, then bisect on
     // log(lambda), which behaves far better than lambda itself: the useful range
     // spans many orders of magnitude and the response is roughly logarithmic.
     std::vector<double> fitted, curvature;
+    PenalizedSystem system(x, y, w);
 
     auto residual_at = [&](double lambda) {
-        fit_for_lambda(x, y, w, lambda, fitted, curvature);
+        system.fit(lambda, fitted, curvature);
         return weighted_residual(y, fitted, w);
     };
 
@@ -262,20 +343,21 @@ SmoothingSpline SmoothingSpline::within_tolerance(const std::vector<double>& x,
         // smoothest answer available, so take it.
         trace("SmoothingSpline: tolerance ", tolerance, " exceeds the least-squares residual; "
               "returning the straight-line fit.");
-        return with_smoothing(x, y, upper, weights);
+        return fit(x, y, w, upper);
     }
 
+    // Walk down if the first probe already overshot.  Keeping the residual in a
+    // variable matters here: evaluating it in the loop condition refits the very
+    // lambda that was just fitted, an entire wasted solve every pass.
     double lower = upper / 10.0;
-    if (residual_at(lower) > tolerance)
+    double lower_residual = residual_at(lower);
+    int reductions = 0;
+    while (lower_residual > tolerance && reductions < 200)
     {
-        // The first probe already overshot, so walk down instead.
-        int reductions = 0;
-        while (residual_at(lower) > tolerance && reductions < 200)
-        {
-            upper = lower;
-            lower /= 10.0;
-            reductions++;
-        }
+        upper = lower;
+        lower /= 10.0;
+        lower_residual = residual_at(lower);
+        reductions++;
     }
 
     // Bisect in log space.  Sixty halvings of a one-decade bracket is far below
@@ -291,7 +373,7 @@ SmoothingSpline SmoothingSpline::within_tolerance(const std::vector<double>& x,
     }
 
     // Take the lower end, so the constraint is satisfied rather than just missed.
-    return with_smoothing(x, y, std::exp(log_lower), weights);
+    return fit(x, y, w, std::exp(log_lower));
 }
 
 std::size_t SmoothingSpline::interval_for(double xi) const

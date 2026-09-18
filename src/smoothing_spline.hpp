@@ -88,6 +88,13 @@ private:
     double residual_ = 0.0;
 
     std::size_t interval_for(double xi) const;
+
+    // Build a spline for one lambda from already-validated inputs and an
+    // explicit weight vector.  Both factory functions go through this, so
+    // within_tolerance does not re-validate and re-copy the weights for the
+    // final fit it has already been holding all along.
+    static SmoothingSpline fit(const std::vector<double>& x, const std::vector<double>& y,
+            const std::vector<double>& w, double lambda);
 };
 
 } // namespace niceops
