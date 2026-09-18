@@ -256,6 +256,10 @@ private:
     double advance_ratio_min = 0.0, advance_ratio_max = 0.0;
     double flight_path_angle_min = 0.0, flight_path_angle_max = 0.0;
     double thrust_coefficient_min = 0.0, thrust_coefficient_max = 0.0;
+    // The triangulation over this database's own operating conditions.  Owning
+    // it makes several Databases independent; it used to be a file-scope global,
+    // so constructing a second one re-armed the interpolator under the first.
+    ConditionInterpolator interpolator_;
     double max_level_ = 0.0;
     // Highest dBA on each operating condition's sphere, and the lowest excess
     // attenuation factor anywhere in the database.  Together they bound how

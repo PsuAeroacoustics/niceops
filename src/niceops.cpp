@@ -354,11 +354,10 @@ int main(int argc, char* argv[])
 
     // Start stopwatch
     auto watch_start = std::chrono::steady_clock::now();
-    // interpolator.cpp keeps the CGAL triangulation in a file-scope global, so
-    // only one Database can be live at a time: constructing one re-arms the
-    // interpolator for its own operating conditions.  Trajectories are therefore
-    // walked in order and the database reloaded only when the next one differs,
-    // which for the usual case of one database shared by every path means once.
+    // Each Database owns its own triangulation, so several can be live at once;
+    // they are still loaded one at a time and reused across consecutive paths
+    // that name the same file, which for the usual case of one database shared
+    // by every path means loading once.
     std::string loaded_database = database_files.front();
     auto database = Database(loaded_database);
     auto t1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()

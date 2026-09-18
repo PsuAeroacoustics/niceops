@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <exception>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -14,40 +13,6 @@ using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the 
 
 namespace {
 
-// The triangulation, and the map from its vertices back to database spheres.
-// A vertex is not always a sphere: the domain extension below adds duplicates
-// that carry their original's index.
-std::unique_ptr<Delaunay> mesh;
-std::vector<std::size_t> vertex_to_point;
-// Vertex coordinates are kept alongside, so the nearest-condition fallback
-// works even when there is no triangulation to fall back from.
-std::vector<double> vertex_coordinates;
-std::size_t dimension = 0;
-
-// Only for the case with too few conditions to triangulate; when there is a
-// mesh, Delaunay::nearest_vertex searches the same points.
-std::size_t nearest(const double* query, std::size_t dim)
-{
-    std::size_t best = 0;
-    double best_distance = std::numeric_limits<double>::infinity();
-    const std::size_t count = dim ? vertex_coordinates.size() / dim : 0;
-    for (std::size_t i = 0; i < count; i++)
-    {
-        double distance = 0.0;
-        for (std::size_t j = 0; j < dim; j++)
-        {
-            const double delta = vertex_coordinates[i * dim + j] - query[j];
-            distance += delta * delta;
-        }
-        if (distance < best_distance)
-        {
-            best_distance = distance;
-            best = i;
-        }
-    }
-    return best;
-}
-
 bool approximately(double x, double y)
 {
     return std::fabs(x - y) < 10.0 * std::numeric_limits<double>::epsilon();
@@ -57,25 +22,34 @@ bool approximately(double x, double y)
 
 namespace niceops {
 
-int set_interpolator(std::size_t dim, std::size_t count, const double* points,
+// Out of line so the header can forward-declare Delaunay rather than include it.
+ConditionInterpolator::ConditionInterpolator() = default;
+ConditionInterpolator::~ConditionInterpolator() = default;
+ConditionInterpolator::ConditionInterpolator(ConditionInterpolator&&) noexcept = default;
+ConditionInterpolator& ConditionInterpolator::operator=(ConditionInterpolator&&) noexcept = default;
+
+void ConditionInterpolator::build(std::size_t dim, std::size_t count, const double* points,
         double extend_domain_by)
 {
     if (dim == 0 || count == 0)
-        return 1;
+    {
+        input_error("Cannot interpolate over ", count, " operating conditions in ", dim,
+                " dimensions.");
+    }
 
     const double high = 1.0 + extend_domain_by;
     const double low = 0.0 - extend_domain_by;
 
-    std::vector<double> vertices;
-    vertices.reserve(count * dim * 2);
-    vertex_to_point.clear();
-    vertex_to_point.reserve(count * 2);
+    vertex_coordinates_.clear();
+    vertex_coordinates_.reserve(count * dim * 2);
+    vertex_to_point_.clear();
+    vertex_to_point_.reserve(count * 2);
 
     for (std::size_t i = 0; i < count; i++)
     {
         const double* point = points + i * dim;
-        vertices.insert(vertices.end(), point, point + dim);
-        vertex_to_point.push_back(i);
+        vertex_coordinates_.insert(vertex_coordinates_.end(), point, point + dim);
+        vertex_to_point_.push_back(i);
 
         // A point on any face of the unit cube gets a copy pushed out to the
         // widened bound, so the edge of the operating envelope stays inside the
@@ -98,38 +72,44 @@ int set_interpolator(std::size_t dim, std::size_t count, const double* points,
                     value = high;
                 else if (approximately(value, 0.0))
                     value = low;
-                vertices.push_back(value);
+                vertex_coordinates_.push_back(value);
             }
-            vertex_to_point.push_back(i);
+            vertex_to_point_.push_back(i);
         }
     }
 
-    dimension = dim;
-    vertex_coordinates = vertices;
+    dimension_ = dim;
 
     // A database can hold too few conditions to triangulate at all -- a single
     // exported sphere is one point.  That is not an error: every query simply
     // takes the nearest condition, which for one sphere is the only answer
     // there is.
-    if (vertex_to_point.size() < dim + 1)
+    if (vertex_to_point_.size() < dim + 1)
     {
-        mesh.reset();
+        mesh_.reset();
         info("Only ", count, " operating condition", count == 1 ? "" : "s",
                 "; every query will take the nearest rather than a blend.");
-        return 0;
+        return;
     }
 
-    mesh = std::make_unique<Delaunay>(dim, vertex_to_point.size(), vertices.data());
+    mesh_ = std::make_unique<Delaunay>(dim, vertex_to_point_.size(), vertex_coordinates_.data());
     info("Triangulated ", count, " operating conditions in ", dim, " dimensions (",
-            vertex_to_point.size(), " vertices after extending the domain, ",
-            mesh->simplex_count(), " simplices).");
-    return 0;
+            vertex_to_point_.size(), " vertices after extending the domain, ",
+            mesh_->simplex_count(), " simplices).");
 }
 
-void barycentric_weights(const double* query, double* weights, std::size_t* indices)
+void ConditionInterpolator::barycentric(const double* query, double* weights,
+        std::size_t* indices) const
 {
-    const std::size_t dim = dimension;
-    std::vector<double> clamped(dim);
+    const std::size_t dim = dimension_;
+    // Scratch reused across calls; this runs once per trajectory state.
+    thread_local std::vector<double> clamped;
+    thread_local std::vector<double> raw;
+    thread_local std::vector<std::size_t> vertices;
+    clamped.resize(dim);
+    raw.assign(dim + 1, 0.0);
+    vertices.assign(dim + 1, 0);
+
     for (std::size_t j = 0; j < dim; j++)
         clamped[j] = std::clamp(query[j], 0.0, 1.0);
 
@@ -139,9 +119,7 @@ void barycentric_weights(const double* query, double* weights, std::size_t* indi
         indices[v] = 0;
     }
 
-    std::vector<double> raw(dim + 1, 0.0);
-    std::vector<std::size_t> vertices(dim + 1, 0);
-    if (mesh && mesh->barycentric(clamped.data(), raw.data(), vertices.data()))
+    if (mesh_ && mesh_->barycentric(clamped.data(), raw.data(), vertices.data()))
     {
         // A query sitting exactly on one of the database's own conditions takes
         // that sphere's data whole rather than a blend of its neighbours.  Hover
@@ -152,14 +130,14 @@ void barycentric_weights(const double* query, double* weights, std::size_t* indi
             if (raw[v] >= 1.0)
             {
                 weights[0] = 1.0;
-                indices[0] = vertex_to_point[vertices[v]];
+                indices[0] = vertex_to_point_[vertices[v]];
                 return;
             }
         }
         for (std::size_t v = 0; v <= dim; v++)
         {
             weights[v] = raw[v];
-            indices[v] = vertex_to_point[vertices[v]];
+            indices[v] = vertex_to_point_[vertices[v]];
         }
         return;
     }
@@ -167,12 +145,33 @@ void barycentric_weights(const double* query, double* weights, std::size_t* indi
     // Outside the hull even after the domain extension: fall back to the
     // nearest condition rather than extrapolating past the envelope.
     weights[0] = 1.0;
-    if (vertex_to_point.empty())
-        indices[0] = 0;
-    else if (mesh)
-        indices[0] = vertex_to_point[mesh->nearest_vertex(clamped.data())];
-    else
-        indices[0] = vertex_to_point[nearest(clamped.data(), dim)];
+    indices[0] = vertex_to_point_.empty() ? 0 : vertex_to_point_[nearest(clamped.data())];
+}
+
+std::size_t ConditionInterpolator::nearest(const double* query) const
+{
+    // Delaunay searches the same points, so defer to it when there is a mesh.
+    if (mesh_)
+        return mesh_->nearest_vertex(query);
+
+    std::size_t best = 0;
+    double best_distance = std::numeric_limits<double>::infinity();
+    const std::size_t count = dimension_ ? vertex_coordinates_.size() / dimension_ : 0;
+    for (std::size_t i = 0; i < count; i++)
+    {
+        double distance = 0.0;
+        for (std::size_t j = 0; j < dimension_; j++)
+        {
+            const double delta = vertex_coordinates_[i * dimension_ + j] - query[j];
+            distance += delta * delta;
+        }
+        if (distance < best_distance)
+        {
+            best_distance = distance;
+            best = i;
+        }
+    }
+    return best;
 }
 
 } // namespace niceops
