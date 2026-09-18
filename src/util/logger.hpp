@@ -176,6 +176,8 @@ void trace(Args&&... args)
     Logger::instance().write(LogLevel::trace, std::forward<Args>(args)...);
 }
 
+// NOTE: log() and info() are the same level.  Both names are in use across the
+// codebase; they are aliases, not a severity distinction.
 template <typename... Args>
 void log(Args&&... args)
 {

@@ -249,50 +249,15 @@ std::array<std::size_t, 2> bracket(const std::vector<double>& a, double val)
     // Index is one less the length of this range
     long index = static_cast<long>(it - a.begin()) - 1;
 
-    std::array<std::size_t, 2> brack;
-    // Wrap around if range of a exceeded
-    if (index < 0)
-    {
-        brack[0] = a.size() - 1;
-        brack[1] = 0;
-    }
-    else if (index >= static_cast<long>(a.size()) - 1)
-    {
-        brack[0] = a.size() - 1;
-        brack[1] = 0;
-    }
-    else
-    {
-        brack[0] = static_cast<std::size_t>(index);
-        brack[1] = static_cast<std::size_t>(index) + 1;
-    }
-    return brack;
+    // Wrap around if the range of a is exceeded at either end.
+    if (index < 0 || index >= static_cast<long>(a.size()) - 1)
+        return {a.size() - 1, 0};
+    return {static_cast<std::size_t>(index), static_cast<std::size_t>(index) + 1};
 }
 
 double clamp01(double x)
 {
     return x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x);
-}
-
-double dot(const Eigen::Vector3d& x, const Eigen::Vector3d& y)
-{
-    return x.dot(y);
-}
-
-double norm(const Eigen::Vector3d& x)
-{
-    return x.norm();
-}
-
-Eigen::Vector3d normalize(const Eigen::Vector3d& x)
-{
-    return x.normalized();
-}
-
-Eigen::Vector3d cross(const Eigen::Vector3d& x, const Eigen::Vector3d& y)
-{
-    assert(x.size() == 3 && y.size() == 3);
-    return x.cross(y);
 }
 
 double acosc(double x)
@@ -480,37 +445,29 @@ Database::Database(const std::string& datafile_path)
         EAAs_scattered.resize(nchannels);
         require_array(group_id, "dBA", dBAs_scattered.size(), dBAs_scattered);
         require_array(group_id, "EAA", EAAs_scattered.size(), EAAs_scattered);
-        if (same_grid)
+        // Search through scattered data for grided values
+        for (std::size_t m = 0; m < phis.size(); m++)
         {
-            // Search through scattered data for grided values
-            for (std::size_t m = 0; m < phis.size(); m++)
+            auto phi_target = phis[m];
+            for (std::size_t n = 0; n < thetas.size(); n++)
             {
-                auto phi_target = phis[m];
-                for (std::size_t n = 0; n < thetas.size(); n++)
+                auto theta_target = thetas[n];
+                for (std::size_t c = 0; c < phis_scattered.size(); c++)
                 {
-                    auto theta_target = thetas[n];
-                    for (std::size_t c = 0; c < phis_scattered.size(); c++)
+                    auto phi_val = phis_scattered[c];
+                    if (approx_equal(phi_target, phi_val)
+                            && approx_equal(theta_target, thetas_scattered[c]))
                     {
-                        auto phi_val = phis_scattered[c];
-                        if (approx_equal(phi_target, phi_val)
-                                && approx_equal(theta_target, thetas_scattered[c]))
+                        // Load sphere data into grid
+                        dBA[m][n][i] = dBAs_scattered[c];
+                        EAA[m][n][i] = EAAs_scattered[c];
+                        if (dBAs_scattered[c] > dba_max)
                         {
-                            // Load sphere data into grid
-                            dBA[m][n][i] = dBAs_scattered[c];
-                            EAA[m][n][i] = EAAs_scattered[c];
-                            if (dBAs_scattered[c] > dba_max)
-                            {
-                                dba_max = dBAs_scattered[c];
-                            }
+                            dba_max = dBAs_scattered[c];
                         }
                     }
                 }
             }
-        }
-        else
-        {
-            // TODO: interpolation. Should be unreachable
-            fatal("Not implemented");
         }
     }
     if (repaired_spheres > 0)
@@ -578,22 +535,25 @@ double Database::eval(double range, double phi, double theta, double advance_rat
     trace("Barycentric weights: ", weights, " and indicies ", indicies);
 
     // Barycentric interpolation between conditions at each gridpoint
-    auto d11 = barycentric_interp(dBA, phi_range[0], theta_range[0], weights, indicies);
-    auto d12 = barycentric_interp(dBA, phi_range[0], theta_range[1], weights, indicies);
-    auto d21 = barycentric_interp(dBA, phi_range[1], theta_range[0], weights, indicies);
-    auto d22 = barycentric_interp(dBA, phi_range[1], theta_range[1], weights, indicies);
-    auto e11 = barycentric_interp(EAA, phi_range[0], theta_range[0], weights, indicies);
-    auto e12 = barycentric_interp(EAA, phi_range[0], theta_range[1], weights, indicies);
-    auto e21 = barycentric_interp(EAA, phi_range[1], theta_range[0], weights, indicies);
-    auto e22 = barycentric_interp(EAA, phi_range[1], theta_range[1], weights, indicies);
     // Bilinear interpolation between gridpoints
-    auto p1 = phis[phi_range[0]];
-    auto p2 = phis[phi_range[1]];
-    auto t1 = thetas[theta_range[0]];
-    auto t2 = thetas[theta_range[1]];
+    const auto p1 = phis[phi_range[0]];
+    const auto p2 = phis[phi_range[1]];
+    const auto t1 = thetas[theta_range[0]];
+    const auto t2 = thetas[theta_range[1]];
 
-    auto sphere_level = periodic_bilinear_interp(d11, d12, d21, d22, p1, p2, t1, t2, phi, theta);
-    auto excess_factor = periodic_bilinear_interp(e11, e12, e21, e22, p1, p2, t1, t2, phi, theta);
+    // Blend the four bracketing grid points of one metric.  Writing this once
+    // rather than twice over eight transcribed corner indices removes the main
+    // way this can go quietly wrong.
+    const auto interpolate = [&](const std::vector<std::vector<std::vector<double>>>& metric) {
+        return periodic_bilinear_interp(
+                barycentric_interp(metric, phi_range[0], theta_range[0], weights, indicies),
+                barycentric_interp(metric, phi_range[0], theta_range[1], weights, indicies),
+                barycentric_interp(metric, phi_range[1], theta_range[0], weights, indicies),
+                barycentric_interp(metric, phi_range[1], theta_range[1], weights, indicies),
+                p1, p2, t1, t2, phi, theta);
+    };
+    const auto sphere_level = interpolate(dBA);
+    const auto excess_factor = interpolate(EAA);
     trace("Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
     // Apply spherical spreading and excess atmospheric absorption to surface level
     // TODO Add ground effects

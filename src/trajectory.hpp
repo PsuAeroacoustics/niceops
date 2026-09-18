@@ -78,9 +78,6 @@ public:
 
     void watts_trim(double xstart_ft);
 
-    // NOTE: D zero-initializes this, so the isNaN guard in the constructor is
-    // dead code (it never gets set from data[0]).  Kept for faithfulness.
-    double utcstart = 0.0;
     std::vector<State> states;
     dimensional_data vehicle;
 };

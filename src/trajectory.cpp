@@ -11,7 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "splines.hpp"
+#include "smoothing_spline.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
 
@@ -29,10 +29,10 @@ void smoother(const std::vector<double>& x, const std::vector<double>& f,
 {
     // A negative tolerance means "use the smoothing parameter"; otherwise the
     // penalty is solved for so the fit stays within `tolerance` of the data.
-    auto spline = tolerance >= 0.0 ? Spline::within_tolerance(x, f, tolerance)
-                                   : Spline(x, f, smoothing);
+    const auto spline = tolerance >= 0.0 ? SmoothingSpline::within_tolerance(x, f, tolerance)
+                                         : SmoothingSpline::with_smoothing(x, f, smoothing);
     // Use spline for interpolation
-    fi = spline.eval(xi);
+    fi = spline(xi);
     // Use finite differences to get velocity and acceleration
     const double dx = xi[1] - xi[0];
     diff(dx, fi, dfi, ddfi);
@@ -68,6 +68,28 @@ double json_to_double(const nlohmann::json& value)
     if (value.is_string())
         return std::stod(value.get<std::string>());
     return value.get<double>();
+}
+
+// Derive the non-dimensional flight parameters from a state's raw kinematics.
+// The trajectory constructor and adapt() both need exactly this, from different
+// sources, and previously each carried its own copy.  Expects nx/ny/nz to hold
+// the un-normalised load-factor components on entry.
+void derive_flight_parameters(State& now, const dimensional_data& vehicle)
+{
+    // Compute load factor
+    now.LF = std::sqrt(now.nx * now.nx + now.ny * now.ny + now.nz * now.nz);
+    // Normalize
+    now.nx /= now.LF;
+    now.ny /= now.LF;
+    now.nz /= now.LF;
+    // Non-dimensionalize
+    now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * PI
+            * vehicle.radius * vehicle.radius);
+    auto v = std::sqrt(now.vx * now.vx + now.vy * now.vy + now.vz * now.vz);
+    now.mu = v / vehicle.tip_speed;
+    auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
+    now.fpa_e = 180.0 / PI * std::asin(vn_hat);
+    now.fpa = 180.0 / PI * std::asin(now.vz / v);
 }
 
 dimensional_data configure_vehicle(const std::string& filename)
@@ -114,10 +136,6 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
             {
                 // Assume NASA/FAA AC state data format
                 State now {};
-                if (std::isnan(utcstart))
-                {
-                    utcstart = data[0];
-                }
                 // Convert to metric
                 now.t = data[1];
                 now.x = data[5] * ft2m;
@@ -130,19 +148,7 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                 now.nx = data[21] * fps2g;
                 now.ny = data[22] * fps2g;
                 now.nz = (data[23] * fps2g + 1.0);
-                // Compute load factor
-                now.LF = std::sqrt(now.nx * now.nx + now.ny * now.ny + now.nz * now.nz);
-                now.nx /= now.LF;
-                now.ny /= now.LF;
-                now.nz /= now.LF;
-                // Non-dimensionalize
-                now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed
-                        * PI * vehicle.radius * vehicle.radius);
-                auto v = std::sqrt(now.vx * now.vx + now.vy * now.vy + now.vz * now.vz);
-                now.mu = v / vehicle.tip_speed;
-                auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
-                now.fpa_e = 180.0 / PI * std::asin(vn_hat);
-                now.fpa = 180.0 / PI * std::asin(now.vz / v);
+                derive_flight_parameters(now, vehicle);
                 states.push_back(now);
                 trace("Parsed state: ", states.back());
             }
@@ -254,20 +260,7 @@ void Trajectory::adapt(double dt, double smoothing, double tolerance)
         now.nx = axi[i] * mps2g;
         now.ny = ayi[i] * mps2g;
         now.nz = azi[i] * mps2g + 1.0;
-        // Compute load factor
-        now.LF = std::sqrt(now.nx * now.nx + now.ny * now.ny + now.nz * now.nz);
-        // Normalize
-        now.nx /= now.LF;
-        now.ny /= now.LF;
-        now.nz /= now.LF;
-        // Non-dimensionalize
-        now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * PI
-                * vehicle.radius * vehicle.radius);
-        auto v = std::sqrt(now.vx * now.vx + now.vy * now.vy + now.vz * now.vz);
-        now.mu = v / vehicle.tip_speed;
-        auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
-        now.fpa_e = 180.0 / PI * std::asin(vn_hat);
-        now.fpa = 180.0 / PI * std::asin(now.vz / v);
+        derive_flight_parameters(now, vehicle);
         states.push_back(now);
         trace("Adapted state: ", states.back());
     }

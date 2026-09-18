@@ -77,18 +77,11 @@ TEST_CASE("clamp", "[sphere_database]")
     REQUIRE(clamp01(2.3) == 1.0);
 }
 
-TEST_CASE("geometry helpers", "[sphere_database]")
+TEST_CASE("acosc clamps its argument", "[sphere_database]")
 {
-    REQUIRE(dot({1, 2, 3}, {-1, 2, 1}) == 6);
-    REQUIRE(approx_equal(norm({1., 2., 3.}), std::sqrt(1. * 1 + 2. * 2 + 3. * 3)));
-    // The D original tested a 4-element array; the C++ port is 3D only
-    REQUIRE(approx_equal(norm(normalize({1., 2., 3.})), 1.0));
-
-    auto x = cross({1.0, 2.0, 3.0}, {3.0, 1.0, 2.0});
-    REQUIRE(approx_equal(x(0), 1.0));
-    REQUIRE(approx_equal(x(1), 7.0));
-    REQUIRE(approx_equal(x(2), -5.0));
-
+    // dot/norm/normalize/cross were one-line pass-throughs to Eigen and have
+    // been removed; testing them tested Eigen, not this project.  acosc is
+    // real: it clamps before acos so round-off past the ends is not NaN.
     REQUIRE(acosc(0.5) == std::acos(0.5));
     REQUIRE(acosc(10.0) == std::acos(1.0));
     REQUIRE(acosc(-10.0) == std::acos(-1.0));

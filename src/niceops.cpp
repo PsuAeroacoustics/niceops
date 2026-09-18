@@ -4,6 +4,7 @@
 // exposure level (SEL) using the 10-dB-down-from-peak window -> write CSV
 // output and optional matplotlib figures.
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -32,21 +33,38 @@ namespace {
 // ft2m comes from trajectory.hpp (niceops::ft2m); defining a second one
 // here made every use ambiguous under the using-directive above.
 
-void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y_obs,
-        const std::vector<double>& levels, const std::string& out_file, bool scattered)
+// D's iota(begin, end, step): evenly spaced values from `begin`, EXCLUSIVE of
+// `end`.  Counted by index rather than accumulated, so the spacing cannot drift.
+std::vector<double> iota_exclusive(double begin, double end, double step)
 {
-    // Check if directory exists;  if not, create it.
-    auto directory = std::filesystem::path(out_file).parent_path();
+    const auto count = static_cast<std::size_t>(std::ceil((end - begin) / step));
+    std::vector<double> values(count);
+    for (std::size_t i = 0; i < count; i++)
+        values[i] = begin + step * static_cast<double>(i);
+    return values;
+}
+
+// Open a file for writing, creating its parent directory first.  All three
+// writers below need exactly this, and Logger does the same for its log file.
+std::ofstream open_output(const std::string& path, std::ios::openmode mode = std::ios::out)
+{
+    const auto directory = std::filesystem::path(path).parent_path();
     if (!directory.empty() && !std::filesystem::exists(directory))
     {
         std::filesystem::create_directories(directory);
     }
-
-    info("Writing output to ", out_file);
-    std::ofstream file(out_file);
+    std::ofstream file(path, mode);
     if (!file)
-        fatal("Unable to open output file for writing: ", out_file);
+        fatal("Unable to open file for writing: ", path);
     file << std::setprecision(17);
+    return file;
+}
+
+void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y_obs,
+        const std::vector<double>& levels, const std::string& out_file, bool scattered)
+{
+    info("Writing output to ", out_file);
+    auto file = open_output(out_file);
 
     if (scattered)
     {
@@ -67,42 +85,17 @@ void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y
 
         // Write header
         file << "Line 1: x(ft), Line 2: y(ft),  Lines 3+ levels (x cols y rows)\n";
-        for (std::size_t i = 0; i < nx; i++)
-        {
-            file << x_obs[i] / ft2m;
-            if (i < (nx - 1))
-            {
-                file << ",";
-            }
-            else
-            {
-                file << "\n";
-            }
-        }
-        for (std::size_t i = 0; i < ny; i++)
-        {
-            file << y_obs[i] / ft2m;
-            if (i < (ny - 1))
-            {
-                file << ",";
-            }
-            else
-            {
-                file << "\n";
-            }
-        }
-        for (std::size_t i = 0; i < levels.size(); i++)
-        {
-            file << levels[i];
-            if ((i + 1) % nx)
-            {
-                file << ",";
-            }
-            else
-            {
-                file << "\n";
-            }
-        }
+        // Comma-separated, newline at the end of each row.
+        auto write_row = [&file](const std::vector<double>& values, std::size_t first,
+                                 std::size_t count, double scale) {
+            for (std::size_t i = 0; i < count; i++)
+                file << (i ? "," : "") << values[first + i] / scale;
+            file << "\n";
+        };
+        write_row(x_obs, 0, nx, ft2m);
+        write_row(y_obs, 0, ny, ft2m);
+        for (std::size_t row = 0; row * nx < levels.size(); row++)
+            write_row(levels, row * nx, nx, 1.0);
         // The D original writes one extra newline at the end; keep it.
         file << "\n";
     }
@@ -111,18 +104,8 @@ void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y
 void write_time_history_file(const std::vector<double>& time_history, double dt, double x, double y,
         const std::string& filename)
 {
-    // Check if directory exists;  if not, create it.
-    auto directory = std::filesystem::path(filename).parent_path();
-    if (!directory.empty() && !std::filesystem::exists(directory))
-    {
-        std::filesystem::create_directories(directory);
-    }
-
     info("Writing time history to ", filename);
-    std::ofstream file(filename);
-    if (!file)
-        fatal("Unable to open time history file for writing: ", filename);
-    file << std::setprecision(17);
+    auto file = open_output(filename);
     file << "Level time history. Next row [dt (s), x (ft), y(ft)], remaining rows, dB.\n";
     file << dt << "," << x / ft2m << "," << y / ft2m << "\n";
     for (auto level : time_history)
@@ -134,17 +117,7 @@ void write_time_history_file(const std::vector<double>& time_history, double dt,
 void append_metrics_file(const std::string& filename, const std::string& casename,
         const std::vector<double>& levels, double threshold = 65.0)
 {
-    // Check if directory exists;  if not, create it.
-    auto directory = std::filesystem::path(filename).parent_path();
-    if (!directory.empty() && !std::filesystem::exists(directory))
-    {
-        std::filesystem::create_directories(directory);
-    }
-
-    std::ofstream file(filename, std::ios::app);
-    if (!file)
-        fatal("Unable to open metrics file for appending: ", filename);
-    file << std::setprecision(17);
+    auto file = open_output(filename, std::ios::app);
     double average = 0;
     double maximum = -std::numeric_limits<double>::infinity();
     std::size_t count = 0;
@@ -152,7 +125,7 @@ void append_metrics_file(const std::string& filename, const std::string& casenam
     for (auto level : levels)
     {
         average += level;
-        maximum = level > maximum ? level : maximum;
+        maximum = std::max(maximum, level);
         if (level >= threshold)
         {
             count++;
@@ -349,23 +322,10 @@ int main(int argc, char* argv[])
         // NOTE: D's iota(begin, end, step) is EXCLUSIVE of end -- it yields
         // ceil((end-begin)/step) values, so this is 120 points spanning
         // -1500..1475 m, NOT 121 points ending at 1500.  Verified against LDC.
-        // Integer counter loop to avoid float accumulation.
-        const double x_start = -1500.0, x_stop = 1500.0, x_step = 25.0;
-        const std::size_t nx = static_cast<std::size_t>(
-                std::ceil((x_stop - x_start) / x_step));
-        x_obs.reserve(nx);
-        for (std::size_t i = 0; i < nx; i++)
-        {
-            x_obs.push_back(x_start + x_step * static_cast<double>(i));
-        }
-        const double y_start = -1500.0, y_stop = 1500.0, y_step = 25.0;
-        const std::size_t ny = static_cast<std::size_t>(
-                std::ceil((y_stop - y_start) / y_step));
-        y_obs.reserve(ny);
-        for (std::size_t i = 0; i < ny; i++)
-        {
-            y_obs.push_back(y_start + y_step * static_cast<double>(i));
-        }
+        x_obs = iota_exclusive(-1500.0, 1500.0, 25.0);
+        y_obs = iota_exclusive(-1500.0, 1500.0, 25.0);
+        const std::size_t nx = x_obs.size();
+        const std::size_t ny = y_obs.size();
         // Set corresponding length for levels
         integrated_levels.resize(nx * ny);
         observers.reserve(nx * ny);
@@ -456,13 +416,7 @@ int main(int argc, char* argv[])
             // iota(contour_min, contour_max + contour_step, contour_step).
             // iota's end is exclusive, so this runs contour_min..contour_max
             // inclusive -- one level fewer than an inclusive reading gives.
-            const std::size_t nc = static_cast<std::size_t>(std::ceil(
-                (contour_max + contour_step - contour_min) / contour_step));
-            std::vector<double> clevels(nc);
-            for (std::size_t i = 0; i < nc; i++)
-            {
-                clevels[i] = contour_min + contour_step * static_cast<double>(i);
-            }
+            const auto clevels = iota_exclusive(contour_min, contour_max + contour_step, contour_step);
             plt::figure();
             if (scattered)
             {

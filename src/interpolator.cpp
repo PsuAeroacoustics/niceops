@@ -105,27 +105,17 @@ void barycentric(double x1, double x2, double x3, double *weights, size_t *indic
     // the infinite-cell branch below and the finite-cell volume ratios, and
     // Database::self_test -- which queries every sphere at its own condition
     // -- disagreed by up to 5.8 dB on all 24 hover spheres.
-    if (locate_type == Triangulation::VERTEX) {
+    // Both degenerate cases put all the weight on a single vertex and differ
+    // only in which one: the query's own vertex when it lands exactly on one,
+    // otherwise the nearest, when locate() walked off the hull.
+    const bool on_a_vertex = locate_type == Triangulation::VERTEX;
+    if (on_a_vertex || triangles.is_infinite(tetrahedron)) {
         weights[0] = 1.0;
         weights[1] = 0.0;
         weights[2] = 0.0;
         weights[3] = 0.0;
-        indicies[0] = tetrahedron->vertex(li)->info();
-        indicies[1] = 0;
-        indicies[2] = 0;
-        indicies[3] = 0;
-        return;
-    }
-
-    //Check if cell is closed
-    if (triangles.is_infinite(tetrahedron)) {
-        //Use the nearest neighbor for an open cell
-        auto nearest = triangles.nearest_vertex(request);
-        weights[0] = 1.0;
-        weights[1] = 0.0;
-        weights[2] = 0.0;
-        weights[3] = 0.0;
-        indicies[0] = nearest->info();
+        indicies[0] = on_a_vertex ? tetrahedron->vertex(li)->info()
+                                  : triangles.nearest_vertex(request)->info();
         indicies[1] = 0;
         indicies[2] = 0;
         indicies[3] = 0;

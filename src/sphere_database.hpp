@@ -38,11 +38,8 @@ std::array<std::size_t, 2> bracket(const std::vector<double>& a, double val);
 
 double clamp01(double x);
 
-// Geometry helpers (3-vectors)
-double dot(const Eigen::Vector3d& x, const Eigen::Vector3d& y);
-double norm(const Eigen::Vector3d& x);
-Eigen::Vector3d normalize(const Eigen::Vector3d& x);
-Eigen::Vector3d cross(const Eigen::Vector3d& x, const Eigen::Vector3d& y);
+// acos with its argument clamped into [-1, 1], so round-off just past the ends
+// does not produce NaN.
 double acosc(double x);
 
 // Sphere angles (phi, theta in degrees) of the propagation direction
@@ -96,10 +93,6 @@ public:
         return sphere_radius_;
     }
 
-    double max_level() const
-    {
-        return max_level_;
-    }
 
 private:
     std::vector<double> phis;
