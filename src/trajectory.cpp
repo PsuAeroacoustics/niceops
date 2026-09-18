@@ -155,6 +155,7 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                 // Assume NASA/FAA AC state data format
                 State now {};
                 // Convert to metric
+                now.utcsec = data[0];
                 now.t = data[1];
                 now.x = data[5] * ft2m;
                 now.y = data[6] * ft2m;

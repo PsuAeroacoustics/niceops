@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -168,11 +169,17 @@ int main(int argc, char* argv[])
 {
     // Default to demo case
     std::string log_file = "log/niceops.log";
-    std::string database_file = "databases/S-76D_M3.nod";
-    std::string path_file = "tracks/S-76D/197421AC.csv";
-    std::string vehicle_file = "databases/S-76D.json";
-    std::string out_file = "integrated/197421_LAE.csv";
-    std::string state_file = "";
+    // Each of these may be given once, to apply to every trajectory, or once per
+    // trajectory.  Several trajectories in one run is what makes the day-night
+    // level meaningful: DNL sums the acoustic energy of a whole day's
+    // operations, not of one flight.
+    std::vector<std::string> database_files = {"databases/S-76D_M3.nod"};
+    std::vector<std::string> path_files = {"tracks/S-76D/197421AC.csv"};
+    std::vector<std::string> vehicle_files = {"databases/S-76D.json"};
+    std::vector<std::string> out_files = {"integrated/197421_LAE.csv"};
+    std::vector<std::string> state_files;
+    std::string dnl_file = "";
+    double utc_offset = 0.0;
     bool write_state = false;
     bool plotting = false;
     std::string figure_file = "";
@@ -197,11 +204,15 @@ int main(int argc, char* argv[])
     double db_cutoff = std::numeric_limits<double>::quiet_NaN();
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
-    app.add_option("-d,--database", database_file, "netCDF noise database file.");
+    app.add_option("-d,--database", database_files,
+            "netCDF noise database file. Once, or once per trajectory.");
     app.add_option("-l,--logfile", log_file, "Output log file.");
-    app.add_option("-t,--trajectoryfile", path_file, "CSV trajectory input file.");
-    app.add_option("-v,--vehicle", vehicle_file, "JSON vehicle definition file.");
-    app.add_option("-o,--output", out_file, "Output file name.");
+    app.add_option("-t,--trajectoryfile", path_files,
+            "CSV trajectory input file. Repeat for several flight paths.");
+    app.add_option("-v,--vehicle", vehicle_files,
+            "JSON vehicle definition file. Once, or once per trajectory.");
+    app.add_option("-o,--output", out_files,
+            "Output file name. Once per trajectory; derived from the track name if omitted.");
     app.add_flag("-p,--plotting", plotting, "Enable plotting.");
     app.add_option("-f,--figfile", figure_file, "Filename to save figure.");
     app.add_option("-F,--statefigfile", state_figure_file, "Filename to save state figures.");
@@ -215,10 +226,15 @@ int main(int argc, char* argv[])
     app.add_option("-m,--metricfile", metric_file, "File to append overall noise metrics.");
     app.add_option("-b,--observer", observer_file, "Observer file name.");
     app.add_flag("-q,--qsam,!--no-qsam", qsam, "Extended QSAM (default on; --no-qsam disables)");
-    app.add_option("-S,--state", state_file, "Filename to save state data");
+    app.add_option("-S,--state", state_files,
+            "Filename to save state data. Once per trajectory.");
     app.add_flag("--self_test", self_test, "Run self tests.");
     app.add_option("-j,--threads", thread_count,
             "Worker threads for the observer loop (0 = one per hardware thread).");
+    app.add_option("-D,--dnlfile", dnl_file,
+            "Write the day-night level, summed over every trajectory, to this file.");
+    app.add_option("--utc_offset", utc_offset,
+            "Hours from UTC to local time, for the 22:00-07:00 DNL night window.");
     app.add_option("--db_cutoff", db_cutoff,
             "Skip evaluations that provably fall below this level, dB. Off by default.");
 
@@ -231,6 +247,43 @@ int main(int argc, char* argv[])
         return app.exit(e);
     }
 
+    // Each per-trajectory list is either one entry to share across every
+    // trajectory, or one entry per trajectory.
+    const std::size_t path_count = path_files.size();
+    if (path_count == 0)
+        fatal("No trajectory file given.");
+    auto expand_per_path = [path_count](std::vector<std::string>& list, const char* what) {
+        if (list.size() == path_count)
+            return;
+        if (list.size() == 1)
+        {
+            // Copy first: assign() clears the vector before reading its
+            // argument, and list.front() points into the vector.
+            const std::string shared = list.front();
+            list.assign(path_count, shared);
+            return;
+        }
+        fatal("Got ", list.size(), " ", what, " for ", path_count,
+                " trajectories; give one, or one per trajectory.");
+    };
+    if (out_files.size() == 1 && path_count > 1)
+    {
+        // A single output name cannot serve several tracks, so name each after
+        // its own, next to where the given name pointed.
+        const auto directory = std::filesystem::path(out_files.front()).parent_path();
+        out_files.clear();
+        for (const auto& path : path_files)
+        {
+            const auto stem = std::filesystem::path(path).stem().string();
+            out_files.push_back((directory / (stem + "_LAE.csv")).string());
+        }
+    }
+    expand_per_path(database_files, "database files");
+    expand_per_path(vehicle_files, "vehicle files");
+    expand_per_path(out_files, "output files");
+    if (!state_files.empty())
+        expand_per_path(state_files, "state files");
+
     if (!observer_file.empty())
     {
         scattered = true;
@@ -239,7 +292,7 @@ int main(int argc, char* argv[])
     {
         write_time_history = true;
     }
-    if (!state_file.empty())
+    if (!state_files.empty())
     {
         write_state = true;
     }
@@ -250,7 +303,13 @@ int main(int argc, char* argv[])
 
     // Start stopwatch
     auto watch_start = std::chrono::steady_clock::now();
-    auto database = Database(database_file);
+    // interpolator.cpp keeps the CGAL triangulation in a file-scope global, so
+    // only one Database can be live at a time: constructing one re-arms the
+    // interpolator for its own operating conditions.  Trajectories are therefore
+    // walked in order and the database reloaded only when the next one differs,
+    // which for the usual case of one database shared by every path means once.
+    std::string loaded_database = database_files.front();
+    auto database = Database(loaded_database);
     auto t1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
             - watch_start)
                         .count();
@@ -262,46 +321,7 @@ int main(int argc, char* argv[])
         // one sample disagreeing by ~1.7 dB.  The cause was legacy hover
         // directivity (see repair_legacy_hover_directivity); with that repaired
         // the self test passes on every shipped database.
-        database.self_test(database_file);
-    }
-
-    // Create trajectory from CSV data
-    auto trajectory = Trajectory(path_file, vehicle_file);
-
-    // Trim trajectory (per Mike)
-    //immutable double xstart_ft = -6000.;
-    //trajectory.watts_trim(xstart_ft);
-
-    // Trajectory adaptation parameters, for the adapt() call below.  Both the
-    // call and its arguments are disabled, matching the D original.
-    //const int degree = 5;
-    //const double smooth = 1e6;
-    //trajectory.adapt(dt, degree, smooth);
-
-    // And time series data
-    const std::size_t nt = trajectory.states.size();
-
-    // The sound exposure level integral weights each sample by the trajectory's
-    // own time step, so take that from the states rather than from -s.  Those
-    // two coincide only when adapt() resamples onto the -s grid, and adapt() is
-    // disabled below; every shipped track is sampled at 0.02 s, so the 0.5 s
-    // default would overstate every level by 10*log10(0.5/0.02) = 14 dB.
-    double integration_step = dt;
-    if (nt >= 2)
-    {
-        std::vector<double> sample_times;
-        sample_times.reserve(nt);
-        for (const auto& state : trajectory.states)
-            sample_times.push_back(state.t);
-        double relative_spread = 0.0;
-        integration_step = uniform_sample_interval(sample_times, &relative_spread);
-        info("Integrating with the trajectory's sample interval of ", integration_step, " s.");
-        if (relative_spread > 1e-6)
-        {
-            log("Trajectory sampling is not uniform (worst interval deviates by ",
-                    100.0 * relative_spread, "% from the mean); the sound exposure level "
-                    "integral assumes the mean step.");
-        }
+        database.self_test(loaded_database);
     }
 
     std::vector<double> integrated_levels;
@@ -344,11 +364,78 @@ int main(int argc, char* argv[])
             }
         }
     }
+    // DNL is a property of the whole set of operations, not of one flight: each
+    // trajectory's day-night level is an energy, and they sum.
+    const bool want_dnl = !dnl_file.empty();
+    std::vector<double> dnl_energy(want_dnl ? observers.size() : 0, 0.0);
+
+    // Outlives the loop so the plotting block below, which only runs for a
+    // single trajectory, can still reach it.
+    std::optional<Trajectory> trajectory_holder;
+
+    for (std::size_t path_index = 0; path_index < path_count; path_index++)
+    {
+    const auto& path_file = path_files[path_index];
+    const auto& vehicle_file = vehicle_files[path_index];
+    const auto& out_file = out_files[path_index];
+    if (database_files[path_index] != loaded_database)
+    {
+        loaded_database = database_files[path_index];
+        log("Loading database ", loaded_database, " for ", path_file);
+        database = Database(loaded_database);
+    }
+
+    // Create trajectory from CSV data
+    trajectory_holder.emplace(path_file, vehicle_file);
+    auto& trajectory = *trajectory_holder;
+
+    // Trim trajectory (per Mike)
+    //immutable double xstart_ft = -6000.;
+    //trajectory.watts_trim(xstart_ft);
+
+    // Trajectory adaptation parameters, for the adapt() call below.  Both the
+    // call and its arguments are disabled, matching the D original.
+    //const int degree = 5;
+    //const double smooth = 1e6;
+    //trajectory.adapt(dt, degree, smooth);
+
+    // And time series data
+    const std::size_t nt = trajectory.states.size();
+
+    // The sound exposure level integral weights each sample by the trajectory's
+    // own time step, so take that from the states rather than from -s.  Those
+    // two coincide only when adapt() resamples onto the -s grid, and adapt() is
+    // disabled below; every shipped track is sampled at 0.02 s, so the 0.5 s
+    // default would overstate every level by 10*log10(0.5/0.02) = 14 dB.
+    double integration_step = dt;
+    if (nt >= 2)
+    {
+        std::vector<double> sample_times;
+        sample_times.reserve(nt);
+        for (const auto& state : trajectory.states)
+            sample_times.push_back(state.t);
+        double relative_spread = 0.0;
+        integration_step = uniform_sample_interval(sample_times, &relative_spread);
+        info("Integrating with the trajectory's sample interval of ", integration_step, " s.");
+        if (relative_spread > 1e-6)
+        {
+            log("Trajectory sampling is not uniform (worst interval deviates by ",
+                    100.0 * relative_spread, "% from the mean); the sound exposure level "
+                    "integral assumes the mean step.");
+        }
+    }
+
     // The source geometry and the blend of database operating conditions depend
     // only on the trajectory state, so build them once here rather than once
     // per (observer, state) pair.  The blend is a CGAL Delaunay locate() walk
     // and was by far the largest single cost in the program; this turns
     // observers*states of them into states of them.
+    // Night classification for the DNL penalty, from the AC format's UTC
+    // seconds column shifted into local time.
+    std::vector<char> night(want_dnl ? nt : 0);
+    for (std::size_t it = 0; it < night.size(); it++)
+        night[it] = is_night(trajectory.states[it].utcsec, utc_offset) ? 1 : 0;
+
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
@@ -414,6 +501,7 @@ int main(int argc, char* argv[])
     parallel_chunks(observers.size(), workers, [&](std::size_t begin, std::size_t end) {
         // One scratch history per worker rather than per observer.
         std::vector<double> levels(nt);
+        std::vector<double> penalized;
         std::size_t culled_here = 0;
         for (std::size_t index = begin; index < end; index++)
         {
@@ -437,6 +525,15 @@ int main(int argc, char* argv[])
                 levels[it] = level;
             }
             integrated_levels[index] = sound_exposure_level(levels, integration_step);
+            if (want_dnl)
+            {
+                // Energies add across operations; the logarithm comes at the
+                // end, once every trajectory has contributed.  Each observer
+                // index belongs to exactly one worker, and the trajectories run
+                // one after another, so this needs no synchronisation.
+                dnl_energy[index] += std::pow(
+                        10.0, 0.1 * day_night_level(levels, integration_step, night, penalized));
+            }
             if (write_time_history)
             {
                 // Write out time history files
@@ -470,11 +567,28 @@ int main(int argc, char* argv[])
 
     if (write_state)
     {
-        trajectory.write_state(state_file);
+        trajectory.write_state(state_files[path_index]);
+    }
+    } // per-trajectory loop
+
+    if (want_dnl)
+    {
+        std::vector<double> dnl(dnl_energy.size());
+        for (std::size_t i = 0; i < dnl_energy.size(); i++)
+            dnl[i] = 10.0 * std::log10(dnl_energy[i]);
+        log("Writing day-night level over ", path_count,
+                path_count == 1 ? " operation to " : " operations to ", dnl_file);
+        write_levels(x_obs, y_obs, dnl, dnl_file, scattered);
     }
 
-    if (plotting || !figure_file.empty() || !state_figure_file.empty())
+    if (path_count > 1 && (plotting || !figure_file.empty() || !state_figure_file.empty()))
     {
+        log("Plotting is skipped for multi-trajectory runs: one figure file cannot hold ",
+                path_count, " flight paths.");
+    }
+    else if (plotting || !figure_file.empty() || !state_figure_file.empty())
+    {
+        auto& trajectory = *trajectory_holder;
         auto x = trajectory.column("x");
         auto y = trajectory.column("y");
         auto z = trajectory.column("z");

@@ -21,6 +21,10 @@ constexpr double fps2g = mps2g * ft2m;
 struct State
 {
     double t;
+    // Seconds since UTC midnight, straight from the AC format's first column.
+    // Only the day/night classification behind the DNL metric uses it, so it is
+    // deliberately absent from write_state's column list.
+    double utcsec = 0.0;
     double x;
     double y;
     double z;

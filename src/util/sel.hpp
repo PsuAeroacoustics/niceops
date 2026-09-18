@@ -80,6 +80,17 @@ inline double uniform_sample_interval(const std::vector<double>& times, double* 
     return mean;
 }
 
+// Whether a sample falls in the night period.  DNL's night runs 22:00 to 07:00
+// local, so the UTC seconds from the trajectory need the local offset applied
+// before the window is tested.
+inline bool is_night(double utcsec, double utc_offset_hours)
+{
+    double local = std::fmod(utcsec + utc_offset_hours * 3600.0, 86400.0);
+    if (local < 0.0)
+        local += 86400.0;
+    return local < 7.0 * 3600.0 || local >= 22.0 * 3600.0;
+}
+
 inline double sound_exposure_level(const std::vector<double>& levels, double T)
 {
     auto index = peak_range(levels);
@@ -89,6 +100,22 @@ inline double sound_exposure_level(const std::vector<double>& levels, double T)
         sum += std::pow(10.0, 0.1 * levels[i]);
     }
     return 10.0 * std::log10(T * sum);
+}
+
+// Day-night level: the sound exposure level with a 10 dB penalty applied to
+// every sample taken at night, as the D original computes it.  The penalty goes
+// on before the peak window is found, so a night operation's window is located
+// on the penalized history exactly as SEL's is on the raw one.
+//
+// `scratch` holds the penalized copy; it is a parameter so a caller looping over
+// observers can reuse one buffer instead of allocating per observer.
+inline double day_night_level(const std::vector<double>& levels, double T,
+        const std::vector<char>& night, std::vector<double>& scratch)
+{
+    scratch.resize(levels.size());
+    for (std::size_t i = 0; i < levels.size(); i++)
+        scratch[i] = night[i] ? levels[i] + 10.0 : levels[i];
+    return sound_exposure_level(scratch, T);
 }
 
 } // namespace niceops
