@@ -478,9 +478,12 @@ Database::Database(const std::string& datafile_path)
     // Open netCDF file
     int file_ncid;
     info("Opening netCDF file: ", datafile_path);
-    if (NC_NOERR != nc_open(datafile_path.c_str(), NC_NOWRITE, &file_ncid))
+    const int open_status = nc_open(datafile_path.c_str(), NC_NOWRITE, &file_ncid);
+    if (NC_NOERR != open_status)
     {
-        fatal("Can't open netCDF file at ", datafile_path);
+        // Say why.  "Can't open" alone leaves no way to tell a missing file from
+        // a corrupt one or a permissions problem.
+        fatal("Can't open netCDF file at ", datafile_path, ": ", nc_strerror(open_status));
     }
     NcGuard guard(file_ncid);
 
@@ -1272,9 +1275,12 @@ void Database::self_test(const std::string& datafile_path)
     // Open netCDF file
     int file_ncid;
     info("Opening netCDF file: ", datafile_path);
-    if (NC_NOERR != nc_open(datafile_path.c_str(), NC_NOWRITE, &file_ncid))
+    const int open_status = nc_open(datafile_path.c_str(), NC_NOWRITE, &file_ncid);
+    if (NC_NOERR != open_status)
     {
-        fatal("Can't open netCDF file at ", datafile_path);
+        // Say why.  "Can't open" alone leaves no way to tell a missing file from
+        // a corrupt one or a permissions problem.
+        fatal("Can't open netCDF file at ", datafile_path, ": ", nc_strerror(open_status));
     }
     NcGuard guard(file_ncid);
 

@@ -20,6 +20,7 @@
 #include <iostream>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -193,6 +194,17 @@ private:
         join(oss, std::forward<Rest>(rest)...);
     }
 
+public:
+    // Same formatting, for callers that need the message as a string rather
+    // than a log line -- input_error builds its exception text with it.
+    template <typename... Args>
+    void join_public(std::ostringstream& oss, Args&&... args)
+    {
+        join(oss, std::forward<Args>(args)...);
+    }
+
+private:
+
     std::ofstream file_;
     std::mutex mutex_;
 };
@@ -236,6 +248,19 @@ template <typename... Args>
 void error(Args&&... args)
 {
     Logger::instance().write(LogLevel::error, std::forward<Args>(args)...);
+}
+
+// For a failure that condemns one input rather than the whole run: logs at
+// error level and throws, so a caller processing several trajectories can note
+// which one failed and carry on with the rest.  fatal() below still aborts, for
+// the cases where continuing makes no sense.
+template <typename... Args>
+[[noreturn]] void input_error(Args&&... args)
+{
+    Logger::instance().write(LogLevel::error, std::forward<Args>(args)...);
+    std::ostringstream oss;
+    Logger::instance().join_public(oss, std::forward<Args>(args)...);
+    throw std::runtime_error(oss.str());
 }
 
 template <typename... Args>

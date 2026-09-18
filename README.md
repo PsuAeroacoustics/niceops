@@ -133,6 +133,9 @@ With one daytime operation the DNL equals the SEL exactly.
 
 Plotting is skipped for multi-trajectory runs, since one figure file cannot hold several paths.
 
+A trajectory that cannot be read is logged and skipped rather than ending the run, so one bad
+file in a batch costs that file alone. The exit status is nonzero if anything was skipped.
+
 ### `--db_cutoff`
 
 On a large observer grid most of the work goes into observers that are never loud enough to

@@ -81,7 +81,7 @@ dimensional_data configure_vehicle(const std::string& filename)
     info("Reading vehicle configuration: ", filename);
     std::ifstream in(filename);
     if (!in)
-        fatal("Unable to open vehicle configuration file: ", filename);
+        input_error("Unable to open vehicle configuration file: ", filename);
     auto config = nlohmann::json::parse(in);
 
     dimensional_data vehicle;
@@ -175,17 +175,17 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
             }
             else
             {
-                fatal("Wrong number of columns.");
+                input_error("Wrong number of columns in ", filename, ".");
             }
         }
     }
     else if (extension == "nc")
     {
-        fatal("netCDF files not yet supported.");
+        input_error("netCDF trajectories not yet supported: ", filename);
     }
     else
     {
-        fatal("File extension ", extension, " not recognized.");
+        input_error("File extension ", extension, " not recognized: ", filename);
     }
 
     // Fail where the cause is legible.  An empty trajectory used to surface as
@@ -193,7 +193,7 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
     // have no peak to integrate around.
     if (states.empty())
     {
-        fatal("No usable states parsed from ", filename,
+        input_error("No usable states parsed from ", filename,
                 "; expected the 27-column NASA/FAA AC state format with a header row.");
     }
     info("Parsed ", states.size(), " trajectory states.");

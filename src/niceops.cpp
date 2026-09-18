@@ -424,7 +424,15 @@ int main(int argc, char* argv[])
     // single trajectory, can still reach it.
     std::optional<Trajectory> trajectory_holder;
 
+    std::size_t failed_paths = 0;
+
     for (std::size_t path_index = 0; path_index < path_count; path_index++)
+    {
+    // One unreadable track should cost that track, not the whole batch.  The D
+    // original wrapped its per-path work the same way (commit fbb3ab6); the
+    // failures that reach here are the ones that condemn a single input --
+    // trajectory and vehicle files -- rather than the run.
+    try
     {
     const auto& path_file = path_files[path_index];
     const auto& vehicle_file = vehicle_files[path_index];
@@ -650,7 +658,18 @@ int main(int argc, char* argv[])
     {
         trajectory.write_state(state_files[path_index]);
     }
+    }
+    catch (const std::exception& problem)
+    {
+        failed_paths++;
+        error("Skipping ", path_files[path_index], ": ", problem.what());
+    }
     } // per-trajectory loop
+
+    if (failed_paths > 0)
+    {
+        log(failed_paths, " of ", path_count, " trajectories could not be processed.");
+    }
 
     if (want_dnl)
     {
@@ -781,5 +800,6 @@ int main(int argc, char* argv[])
         }
         plt::clear();
     }
-    return 0;
+    // Nonzero when any trajectory was skipped, so a batch script notices.
+    return failed_paths > 0 ? 1 : 0;
 }
