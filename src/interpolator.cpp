@@ -24,6 +24,8 @@ std::vector<std::size_t> vertex_to_point;
 std::vector<double> vertex_coordinates;
 std::size_t dimension = 0;
 
+// Only for the case with too few conditions to triangulate; when there is a
+// mesh, Delaunay::nearest_vertex searches the same points.
 std::size_t nearest(const double* query, std::size_t dim)
 {
     std::size_t best = 0;
@@ -165,7 +167,12 @@ void barycentric_weights(const double* query, double* weights, std::size_t* indi
     // Outside the hull even after the domain extension: fall back to the
     // nearest condition rather than extrapolating past the envelope.
     weights[0] = 1.0;
-    indices[0] = vertex_to_point.empty() ? 0 : vertex_to_point[nearest(clamped.data(), dim)];
+    if (vertex_to_point.empty())
+        indices[0] = 0;
+    else if (mesh)
+        indices[0] = vertex_to_point[mesh->nearest_vertex(clamped.data())];
+    else
+        indices[0] = vertex_to_point[nearest(clamped.data(), dim)];
 }
 
 } // namespace niceops

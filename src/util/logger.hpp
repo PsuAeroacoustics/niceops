@@ -16,6 +16,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+
+#include "paths.hpp"
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -63,6 +65,24 @@ void print(std::ostream& os, const std::array<T, N>& values)
     os << "]";
 }
 
+// Build one message out of the argument pack, using the printers above.
+inline void join(std::ostringstream&) {}
+
+template <typename T, typename... Rest>
+void join(std::ostringstream& oss, T&& value, Rest&&... rest)
+{
+    print(oss, value);
+    join(oss, std::forward<Rest>(rest)...);
+}
+
+template <typename... Args>
+std::string format_message(Args&&... args)
+{
+    std::ostringstream oss;
+    join(oss, std::forward<Args>(args)...);
+    return oss.str();
+}
+
 } // namespace detail
 
 enum class LogLevel
@@ -108,9 +128,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         if (file_.is_open())
             file_.close();
-        auto parent = std::filesystem::path(path).parent_path();
-        if (!parent.empty())
-            std::filesystem::create_directories(parent);
+        ensure_parent_directory(path);
         file_.open(path, std::ios::app);
     }
 
@@ -132,10 +150,17 @@ public:
     {
         if (!log_enabled(level))
             return;
-        std::ostringstream oss;
-        join(oss, std::forward<Args>(args)...);
+        write_line(level, detail::format_message(std::forward<Args>(args)...));
+    }
+
+    // The formatted half, once the message is a string.  input_error needs both
+    // the log line and the same text for its exception.
+    void write_line(LogLevel level, const std::string& message)
+    {
+        if (!log_enabled(level))
+            return;
         std::lock_guard<std::mutex> lock(mutex_);
-        auto line = timestamp() + " [" + level_name(level) + "] " + oss.str() + "\n";
+        auto line = timestamp() + " [" + level_name(level) + "] " + message + "\n";
         if (file_.is_open())
         {
             file_ << line;
@@ -185,25 +210,6 @@ private:
         std::snprintf(msbuf, sizeof(msbuf), ".%03d", static_cast<int>(ms.count()));
         return std::string(buf) + msbuf;
     }
-
-    void join(std::ostringstream&) {}
-    template <typename T, typename... Rest>
-    void join(std::ostringstream& oss, T&& value, Rest&&... rest)
-    {
-        detail::print(oss, value);
-        join(oss, std::forward<Rest>(rest)...);
-    }
-
-public:
-    // Same formatting, for callers that need the message as a string rather
-    // than a log line -- input_error builds its exception text with it.
-    template <typename... Args>
-    void join_public(std::ostringstream& oss, Args&&... args)
-    {
-        join(oss, std::forward<Args>(args)...);
-    }
-
-private:
 
     std::ofstream file_;
     std::mutex mutex_;
@@ -257,10 +263,11 @@ void error(Args&&... args)
 template <typename... Args>
 [[noreturn]] void input_error(Args&&... args)
 {
-    Logger::instance().write(LogLevel::error, std::forward<Args>(args)...);
-    std::ostringstream oss;
-    Logger::instance().join_public(oss, std::forward<Args>(args)...);
-    throw std::runtime_error(oss.str());
+    // Formatted once and used twice: the log line and the exception text cannot
+    // drift apart.
+    const auto message = detail::format_message(std::forward<Args>(args)...);
+    Logger::instance().write(LogLevel::error, message);
+    throw std::runtime_error(message);
 }
 
 template <typename... Args>

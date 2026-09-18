@@ -15,6 +15,13 @@
 
 namespace niceops {
 
+// Dimension of the operating-condition space the database is indexed by
+// (advance ratio, flight path angle, thrust coefficient).  The triangulation
+// and predicates underneath are dimension-generic; this is where the caller
+// fixes it, and what Database::Blend is sized from.  Adding a fourth parameter
+// means changing this and the packing in Database::Database, not the geometry.
+inline constexpr std::size_t condition_dims = 3;
+
 // Build the interpolator over `count` points of `dim` coordinates, row-major.
 // Returns non-zero on failure.
 //

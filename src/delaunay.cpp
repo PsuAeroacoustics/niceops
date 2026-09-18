@@ -81,7 +81,11 @@ void Delaunay::build_enclosing_simplex()
 
 int Delaunay::simplex_orientation(const Simplex& simplex) const
 {
-    std::vector<double> points((dim_ + 1) * dim_);
+    // Scratch reused across calls: this runs on every facet test of every step
+    // of every walk, and a fresh vector each time put the allocator in the
+    // middle of the triangulation's hot loop.
+    thread_local std::vector<double> points;
+    points.resize((dim_ + 1) * dim_);
     for (std::size_t v = 0; v <= dim_; v++)
     {
         const double* source = coordinates(simplex.vertices[v]);
@@ -93,7 +97,8 @@ int Delaunay::simplex_orientation(const Simplex& simplex) const
 int Delaunay::orientation_against(const Simplex& simplex, std::size_t replaced,
         const double* query) const
 {
-    std::vector<double> points((dim_ + 1) * dim_);
+    thread_local std::vector<double> points;
+    points.resize((dim_ + 1) * dim_);
     for (std::size_t v = 0; v <= dim_; v++)
     {
         const double* source = (v == replaced) ? query : coordinates(simplex.vertices[v]);
@@ -356,9 +361,10 @@ bool Delaunay::barycentric(const double* query, double* weights, std::size_t* in
             row++;
         }
         // |det| of the edge vectors is the simplex volume up to a constant
-        // factor, and the constant cancels in the ratio below.
+        // factor, and the constant cancels in the ratio below.  The elimination
+        // runs in place: `facet` is rebuilt from scratch on the next vertex.
         double determinant = 1.0;
-        std::vector<double> matrix(facet);
+        std::vector<double>& matrix = facet;
         for (std::size_t column = 0; column < dim_; column++)
         {
             std::size_t pivot_row = column;

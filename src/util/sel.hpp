@@ -15,7 +15,12 @@
 
 namespace niceops {
 
-inline std::array<std::size_t, 2> peak_range(const std::vector<double>& levels, double down = 10.0)
+// The sound exposure level integrates the window from the peak down to this,
+// which is also what --db_cutoff's margin has to clear.
+inline constexpr double sel_window_db = 10.0;
+
+inline std::array<std::size_t, 2> peak_range(const std::vector<double>& levels,
+        double down = sel_window_db)
 {
     // An empty time history has no peak.  Guarding here rather than letting
     // levels.size() - 1 wrap and max_element dereference end(): that crashed

@@ -23,14 +23,6 @@
 namespace niceops {
 
 
-// Bilinear interpolation of q(x, y) over the rectangle [x1, x2] x [y1, y2].
-// It lived in interpolator.cpp behind the same "C" seam, but it is plain
-// arithmetic with no CGAL in it, and across that translation-unit boundary it
-// could not be inlined -- two out-of-line calls on every one of tens of
-// millions of evaluations.
-double bilinear_interp(double q11, double q12, double q21, double q22,
-        double x1, double x2, double y1, double y2, double x, double y);
-
 // Check if points "wrap around" sphere, and swap inputs to bilinear
 // interpolation if necessary
 double periodic_bilinear_interp(double q11, double q12, double q21, double q22,
@@ -125,8 +117,8 @@ public:
     // that holds the operating condition fixed.
     struct Blend
     {
-        std::array<double, 4> weights;
-        std::array<std::size_t, 4> indices;
+        std::array<double, condition_dims + 1> weights;
+        std::array<std::size_t, condition_dims + 1> indices;
     };
 
     // Everything about one trajectory state that every observer shares: where

@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include "util/logger.hpp"
+
 namespace niceops {
 
 namespace {
@@ -17,6 +19,11 @@ namespace {
 // ---------------------------------------------------------------------------
 
 using Expansion = std::vector<double>;
+
+// Upper bound on the matrix size these predicates are called with: an in-sphere
+// test in `dim` dimensions builds a (dim + 1) x (dim + 1) matrix, so this caps
+// the dimension at MAX_PREDICATE_SIZE - 1.  Checked at the entry points.
+constexpr std::size_t MAX_PREDICATE_SIZE = 8;
 
 // a + b = x + y exactly, for any a and b.  Knuth's two-sum.
 inline void two_sum(double a, double b, double& x, double& y)
@@ -156,7 +163,10 @@ void laplace(const double* matrix, std::size_t size, double& determinant, double
     }
     determinant = 0.0;
     permanent = 0.0;
-    std::vector<double> minor((size - 1) * (size - 1));
+    // Stack buffer, not a vector: this recursion is factorial in `size`, so an
+    // allocation per level put malloc at about a fifth of the whole database
+    // load.  MAX_PREDICATE_SIZE bounds the dimensions this is ever called with.
+    double minor[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
     for (std::size_t column = 0; column < size; column++)
     {
         std::size_t out = 0;
@@ -170,7 +180,7 @@ void laplace(const double* matrix, std::size_t size, double& determinant, double
         }
         double sub_determinant = 0.0;
         double sub_permanent = 0.0;
-        laplace(minor.data(), size - 1, sub_determinant, sub_permanent);
+        laplace(minor, size - 1, sub_determinant, sub_permanent);
         const double value = matrix[column] * sub_determinant;
         determinant += (column % 2 == 0) ? value : -value;
         permanent += std::fabs(matrix[column]) * sub_permanent;
@@ -205,6 +215,8 @@ int exact_determinant_sign(const double* matrix, std::size_t size)
 {
     if (size == 0)
         return 0;
+    if (size > MAX_PREDICATE_SIZE)
+        fatal("Predicates: matrix of size ", size, " exceeds MAX_PREDICATE_SIZE.");
     const int filtered = filtered_sign(matrix, size);
     if (filtered != 2)
         return filtered;
@@ -220,6 +232,8 @@ int exact_determinant_sign(const double* matrix, std::size_t size)
 
 int orientation(const double* points, std::size_t dim)
 {
+    if (dim > MAX_PREDICATE_SIZE)
+        fatal("Predicates: dimension ", dim, " exceeds MAX_PREDICATE_SIZE.");
     // Rows are the edge vectors from the last point.  The cheap path forms them
     // in plain double; only if that cannot settle the sign are they re-formed
     // exactly, because taking the difference in double rounds away precisely the
@@ -251,6 +265,8 @@ int in_sphere(const double* points, const double* query, std::size_t dim)
     // squared distance, so "inside the circumsphere" becomes an orientation test
     // one dimension up.
     const std::size_t size = dim + 1;
+    if (size > MAX_PREDICATE_SIZE)
+        fatal("Predicates: dimension ", dim, " exceeds MAX_PREDICATE_SIZE.");
     thread_local std::vector<double> approximate;
     approximate.resize(size * size);
     for (std::size_t row = 0; row < size; row++)

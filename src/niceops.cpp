@@ -27,6 +27,7 @@
 #include "trajectory.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
+#include "util/paths.hpp"
 #include "util/parallel.hpp"
 #include "util/sel.hpp"
 
@@ -52,11 +53,7 @@ std::vector<double> iota_exclusive(double begin, double end, double step)
 // writers below need exactly this, and Logger does the same for its log file.
 std::ofstream open_output(const std::string& path, std::ios::openmode mode = std::ios::out)
 {
-    const auto directory = std::filesystem::path(path).parent_path();
-    if (!directory.empty() && !std::filesystem::exists(directory))
-    {
-        std::filesystem::create_directories(directory);
-    }
+    ensure_parent_directory(path);
     std::ofstream file(path, mode);
     if (!file)
         fatal("Unable to open file for writing: ", path);
@@ -604,7 +601,7 @@ int main(int argc, char* argv[])
     // that never reach the cutoff are the only ones whose level changes, and
     // they are precisely the ones the cutoff says are not of interest.
     const bool culling = !std::isnan(db_cutoff);
-    const double cull_below = db_cutoff - 10.0;
+    const double cull_below = db_cutoff - sel_window_db;
     // A culled sample contributes no acoustic energy.  Filling with the
     // threshold instead would be far worse than useless -- thousands of samples
     // at the floor integrate to well above it.
@@ -711,7 +708,8 @@ int main(int argc, char* argv[])
         write_levels(x_obs, y_obs, dnl, dnl_file, scattered);
     }
 
-    if (!plt::available() && (plotting || !figure_file.empty() || !state_figure_file.empty()))
+    const bool want_plots = plotting || !figure_file.empty() || !state_figure_file.empty();
+    if (!plt::available() && want_plots)
     {
         // Say so up front rather than running the whole case and drawing
         // nothing at the end.
@@ -719,12 +717,12 @@ int main(int argc, char* argv[])
               "-DNICEOPS_PLOTTING=ON, or drop -p/-f/-F.");
     }
 
-    if (path_count > 1 && (plotting || !figure_file.empty() || !state_figure_file.empty()))
+    if (path_count > 1 && want_plots)
     {
         log("Plotting is skipped for multi-trajectory runs: one figure file cannot hold ",
                 path_count, " flight paths.");
     }
-    else if (plotting || !figure_file.empty() || !state_figure_file.empty())
+    else if (want_plots)
     {
         auto& trajectory = *trajectory_holder;
         auto x = trajectory.column("x");

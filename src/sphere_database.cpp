@@ -11,6 +11,7 @@
 #include <netcdf.h>
 
 #include "util/logger.hpp"
+#include "util/paths.hpp"
 #include "util/rootfind.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
@@ -157,6 +158,22 @@ void require_array(int ncid, const std::string& variable_name, std::size_t count
     {
         fatal(variable_name, " required but not found.");
     }
+}
+
+// Open a database, or say why it could not be opened.  "Can't open" alone
+// leaves no way to tell a missing file from a corrupt one or a permissions
+// problem.  Shared by the loader and the self test, which must agree on how the
+// file is read.
+int open_database(const std::string& datafile_path)
+{
+    int file_ncid = 0;
+    info("Opening netCDF file: ", datafile_path);
+    const int open_status = nc_open(datafile_path.c_str(), NC_NOWRITE, &file_ncid);
+    if (NC_NOERR != open_status)
+    {
+        fatal("Can't open netCDF file at ", datafile_path, ": ", nc_strerror(open_status));
+    }
+    return file_ncid;
 }
 
 // The half-open sub-range of the sorted grid axis `a` whose entries are
@@ -325,12 +342,6 @@ double bilinear_apply(const BilinearCell& cell, double q11, double q12, double q
 
 } // namespace
 
-double bilinear_interp(double q11, double q12, double q21, double q22,
-        double x1, double x2, double y1, double y2, double x, double y)
-{
-    return bilinear_apply(bilinear_cell(x1, x2, y1, y2, x, y), q11, q12, q21, q22);
-}
-
 double periodic_bilinear_interp(double q11, double q12, double q21, double q22, double x1, double x2,
         double y1, double y2, double x, double y)
 {
@@ -475,16 +486,7 @@ bool approx_equal(double value, double reference, double max_rel_diff, double ma
 
 Database::Database(const std::string& datafile_path)
 {
-    // Open netCDF file
-    int file_ncid;
-    info("Opening netCDF file: ", datafile_path);
-    const int open_status = nc_open(datafile_path.c_str(), NC_NOWRITE, &file_ncid);
-    if (NC_NOERR != open_status)
-    {
-        // Say why.  "Can't open" alone leaves no way to tell a missing file from
-        // a corrupt one or a permissions problem.
-        fatal("Can't open netCDF file at ", datafile_path, ": ", nc_strerror(open_status));
-    }
+    const int file_ncid = open_database(datafile_path);
     NcGuard guard(file_ncid);
 
     // Database format version.  Absent (or 0) means the file predates the
@@ -856,14 +858,15 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.flight_path_angle = flight_path_angle;
     sphere.thrust_coefficient = thrust_coefficient;
     sphere.radius = sphere_radius_;
-    sphere.shaft_power = shaft_power(blend_at(advance_ratio, flight_path_angle, thrust_coefficient));
     sphere.phis = phis.values();
     sphere.thetas = thetas.values();
 
     // Same blend eval() applies at one direction, carried out at every cell, so
     // a sphere exported at an operating condition the database already holds
-    // comes back bit-for-bit as that sphere's own data.
+    // comes back bit-for-bit as that sphere's own data.  Resolving it is a
+    // Delaunay locate walk, so it is done once and shared with the power lookup.
     const auto blend = blend_at(advance_ratio, flight_path_angle, thrust_coefficient);
+    sphere.shaft_power = shaft_power(blend);
     sphere.cells.resize(phis.size() * thetas.size());
     for (std::size_t m = 0; m < phis.size(); m++)
     {
@@ -1057,9 +1060,7 @@ int define_scalar(int group, const char* name, int dimid)
 
 void write_sphere(const Database::Sphere& sphere, const std::string& path)
 {
-    const auto directory = std::filesystem::path(path).parent_path();
-    if (!directory.empty())
-        std::filesystem::create_directories(directory);
+    ensure_parent_directory(path);
 
     int file = 0;
     nc_check(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file), "creating " + path);
@@ -1174,9 +1175,7 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
                 " in AAM format: the database carries no spectra, and AMPLITUDE(PHI, THETA, "
                 "FREQUENCY) is the whole payload of the format.");
     }
-    const auto directory = std::filesystem::path(path).parent_path();
-    if (!directory.empty())
-        std::filesystem::create_directories(directory);
+    ensure_parent_directory(path);
 
     const double m2ft = 1.0 / 0.3048;
     const double mps2kt = 1.94384;
@@ -1281,27 +1280,13 @@ void Database::self_test(const std::string& datafile_path)
     std::size_t invalid = 0;
     std::size_t valid = 0;
     log("Begin database self test against file: ", datafile_path);
-    // Open netCDF file
-    int file_ncid;
-    info("Opening netCDF file: ", datafile_path);
-    const int open_status = nc_open(datafile_path.c_str(), NC_NOWRITE, &file_ncid);
-    if (NC_NOERR != open_status)
-    {
-        // Say why.  "Can't open" alone leaves no way to tell a missing file from
-        // a corrupt one or a permissions problem.
-        fatal("Can't open netCDF file at ", datafile_path, ": ", nc_strerror(open_status));
-    }
+    const int file_ncid = open_database(datafile_path);
     NcGuard guard(file_ncid);
 
+    // Only the format version is re-read: the constructor has already taken
+    // everything else off this same file, and re-running its side effects here
+    // would corrupt the object under test rather than check it.
     const int self_test_version = get_int_scalar(file_ncid, "database_version", 0);
-    // Optional: builders since the versioned format record the rotor scale at
-    // the root, which is enough to redimensionalize without a vehicle file.
-    double tip_speed_value = 0.0;
-    if (NC_NOERR == get_scalar(file_ncid, "main_rotor_tip_speed_meters_per_sec", &tip_speed_value))
-    {
-        tip_speed_ = tip_speed_value;
-        info("Database records a main rotor tip speed of ", tip_speed_, " m/s.");
-    }
 
     auto group_ids = get_group_ids(file_ncid);
     // Local operating parameters
@@ -1322,22 +1307,6 @@ void Database::self_test(const std::string& datafile_path)
                 ",\t radius = ", radius);
 
         // Get the data for this sphere
-        // Shaft power, when the builder wrote it.  Optional: no shipped database
-        // carries it, and a database without it simply has the feature off.
-        // The D original (DRZ_edits) made it required, which would refuse every
-        // database in this repository.
-        double shaft_power_value = 0.0;
-        if (NC_NOERR == get_scalar(group_id, "ShaftPower", &shaft_power_value))
-        {
-            if (i != 0 && shaft_power_.size() != i)
-                fatal("Database error: ShaftPower present on some spheres but not others.");
-            shaft_power_.push_back(shaft_power_value);
-        }
-        else if (!shaft_power_.empty())
-        {
-            fatal("Database error: ShaftPower present on some spheres but not others.");
-        }
-
         auto nchannels = get_dim_length("channels", group_id);
         std::vector<double> theta_data(nchannels);
         require_array(group_id, "theta", nchannels, theta_data);
