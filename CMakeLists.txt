@@ -33,10 +33,9 @@ if(NOT NETCDF_INCLUDE_DIR)
   message(FATAL_ERROR "netcdf.h not found; install the netCDF development headers.")
 endif()
 
-# CGAL is header-only since 5.0 and exports the CGAL::CGAL imported target.
-# Don't include(${CGAL_USE_FILE}): UseCGAL.cmake was deprecated in CGAL 5 and
-# removed in CGAL 6, where CGAL_USE_FILE is empty and the include() errors out.
-find_package(CGAL REQUIRED COMPONENTS Core)
+# CGAL is gone: the Delaunay triangulation is now src/delaunay.cpp on the exact
+# predicates in src/predicates.cpp, which also sheds the Boost, GMP and MPFR
+# that CGAL pulled in behind it.
 find_package(Eigen3 REQUIRED NO_MODULE)
 
 # Third-party dependencies, fetched at configure time
@@ -71,6 +70,7 @@ add_library(niceops_core STATIC
   src/sphere_database.cpp
   src/geodetic.cpp
   src/predicates.cpp
+  src/delaunay.cpp
   src/trajectory.cpp
   src/plotting.cpp
   src/smoothing_spline.cpp
@@ -86,9 +86,12 @@ target_link_libraries(niceops_core PUBLIC
   pybind11::embed
 )
 
-# CGAL 3D Delaunay interpolator over the operating-condition space
+# Delaunay interpolator over the operating-condition space.  Kept a separate
+# library from the D era, when it walled off CGAL's heavy headers; it has no
+# third-party dependency now, but the seam is harmless and keeps the geometry
+# separable from the acoustics.
 add_library(interpolator STATIC src/interpolator.cpp)
-target_link_libraries(interpolator CGAL::CGAL)
+target_include_directories(interpolator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(niceops_core PUBLIC interpolator)
 
 # Main executable
@@ -102,6 +105,7 @@ add_executable(niceops_unit_tests
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
   tests/test_predicates.cpp
+  tests/test_delaunay.cpp
   tests/test_trajectory.cpp
   tests/test_csv.cpp
   tests/test_legacy_repair.cpp

@@ -18,14 +18,10 @@
 
 #include <Eigen/Dense>
 
+#include "interpolator.hpp"
+
 namespace niceops {
 
-// Declare "C" functions from interpolator
-extern "C"
-{
-int set_interpolator3(std::size_t n, const double* x1, const double* x2, const double* x3);
-void barycentric(double x1, double x2, double x3, double* weights, std::size_t* indicies);
-}
 
 // Bilinear interpolation of q(x, y) over the rectangle [x1, x2] x [y1, y2].
 // It lived in interpolator.cpp behind the same "C" seam, but it is plain

@@ -177,38 +177,26 @@ void laplace(const double* matrix, std::size_t size, double& determinant, double
     }
 }
 
-// Sign of the determinant of a matrix whose entries are exact expansions.
-// `approximate` holds the same matrix collapsed to doubles, for the filter.
-int determinant_sign(const std::vector<Expansion>& exact, const std::vector<double>& approximate,
-        std::size_t size)
+// Does the filtered double evaluation settle the sign on its own?  Returns 2
+// when it cannot tell, which is not a sign any caller can mistake.
+//
+// The permanent bounds the round-off: a Laplace expansion of this size cannot
+// accumulate more than a small multiple of eps times it.  The bound also has to
+// cover the error already in the entries, since the callers form them by
+// subtracting in plain double, and the determinant is multilinear so a relative
+// eps on every entry moves it by about size * eps * permanent.  The constant
+// below is comfortably above both terms; being generous only costs an occasional
+// unnecessary trip through the exact path.
+int filtered_sign(const double* approximate, std::size_t size)
 {
     double determinant = 0.0;
     double permanent = 0.0;
-    laplace(approximate.data(), size, determinant, permanent);
-
-    // Round-off in a Laplace expansion of this size cannot exceed a small
-    // multiple of eps times the permanent.  Outside that band the sign is
-    // certain and the exact path is not needed.
+    laplace(approximate, size, determinant, permanent);
     const double epsilon = 2.220446049250313e-16;
-    const double bound = static_cast<double>(size + 2) * epsilon * permanent;
+    const double bound = static_cast<double>(4 * size + 8) * epsilon * permanent;
     if (std::fabs(determinant) > bound)
         return determinant > 0.0 ? 1 : -1;
-
-    return sign_of(exact_determinant(exact, size));
-}
-
-// Collapse an expansion matrix to doubles for the filter.
-std::vector<double> to_double(const std::vector<Expansion>& matrix)
-{
-    std::vector<double> result(matrix.size(), 0.0);
-    for (std::size_t i = 0; i < matrix.size(); i++)
-    {
-        double sum = 0.0;
-        for (double component : matrix[i])
-            sum += component;
-        result[i] = sum;
-    }
-    return result;
+    return 2;
 }
 
 } // namespace
@@ -217,50 +205,85 @@ int exact_determinant_sign(const double* matrix, std::size_t size)
 {
     if (size == 0)
         return 0;
+    const int filtered = filtered_sign(matrix, size);
+    if (filtered != 2)
+        return filtered;
+
     std::vector<Expansion> exact(size * size);
     for (std::size_t i = 0; i < size * size; i++)
     {
         if (matrix[i] != 0.0)
             exact[i] = Expansion {matrix[i]};
     }
-    std::vector<double> approximate(matrix, matrix + size * size);
-    return determinant_sign(exact, approximate, size);
+    return sign_of(exact_determinant(exact, size));
 }
 
 int orientation(const double* points, std::size_t dim)
 {
-    // Rows are the edge vectors from the last point.  The differences are formed
-    // exactly -- taking them in plain double first would round away precisely the
+    // Rows are the edge vectors from the last point.  The cheap path forms them
+    // in plain double; only if that cannot settle the sign are they re-formed
+    // exactly, because taking the difference in double rounds away precisely the
     // information the exact determinant exists to use.
     const double* base = points + dim * dim;
+    thread_local std::vector<double> approximate;
+    approximate.resize(dim * dim);
+    for (std::size_t row = 0; row < dim; row++)
+    {
+        for (std::size_t column = 0; column < dim; column++)
+            approximate[row * dim + column] = points[row * dim + column] - base[column];
+    }
+    const int filtered = filtered_sign(approximate.data(), dim);
+    if (filtered != 2)
+        return filtered;
+
     std::vector<Expansion> exact(dim * dim);
     for (std::size_t row = 0; row < dim; row++)
     {
         for (std::size_t column = 0; column < dim; column++)
             exact[row * dim + column] = exact_difference(points[row * dim + column], base[column]);
     }
-    return determinant_sign(exact, to_double(exact), dim);
+    return sign_of(exact_determinant(exact, dim));
 }
 
 int in_sphere(const double* points, const double* query, std::size_t dim)
 {
     // Lift to the paraboloid about the query point: the extra column is the
     // squared distance, so "inside the circumsphere" becomes an orientation test
-    // one dimension up.  Both the differences and their squares are exact.
+    // one dimension up.
     const std::size_t size = dim + 1;
-    std::vector<Expansion> exact(size * size);
+    thread_local std::vector<double> approximate;
+    approximate.resize(size * size);
     for (std::size_t row = 0; row < size; row++)
     {
-        Expansion lifted;
+        double lifted = 0.0;
         for (std::size_t column = 0; column < dim; column++)
         {
-            Expansion delta = exact_difference(points[row * dim + column], query[column]);
-            add_expansion(lifted, multiply(delta, delta));
-            exact[row * size + column] = std::move(delta);
+            const double delta = points[row * dim + column] - query[column];
+            approximate[row * size + column] = delta;
+            lifted += delta * delta;
         }
-        exact[row * size + dim] = std::move(lifted);
+        approximate[row * size + dim] = lifted;
     }
-    const int sign = determinant_sign(exact, to_double(exact), size);
+
+    int sign = filtered_sign(approximate.data(), size);
+    if (sign == 2)
+    {
+        // Exact path: both the differences and their squares are formed without
+        // rounding.
+        std::vector<Expansion> exact(size * size);
+        for (std::size_t row = 0; row < size; row++)
+        {
+            Expansion lifted;
+            for (std::size_t column = 0; column < dim; column++)
+            {
+                Expansion delta = exact_difference(points[row * dim + column], query[column]);
+                add_expansion(lifted, multiply(delta, delta));
+                exact[row * size + column] = std::move(delta);
+            }
+            exact[row * size + dim] = std::move(lifted);
+        }
+        sign = sign_of(exact_determinant(exact, size));
+    }
 
     // Normalise out the simplex's own orientation, so the answer means "inside"
     // however the vertices happen to be ordered.

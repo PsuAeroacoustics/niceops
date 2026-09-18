@@ -1,161 +1,171 @@
+#include "interpolator.hpp"
+
 #include <algorithm>
-#include <array>
-#include <cassert>
-#include <cstddef>
 #include <cmath>
-#include <utility>
+#include <exception>
+#include <limits>
+#include <memory>
 #include <vector>
-#include <numeric>
-#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
-#include <CGAL/Delaunay_triangulation_3.h>
-#include <CGAL/Triangulation_vertex_base_with_info_3.h>
-//#include <iostream>
 
+#include "delaunay.hpp"
+#include "util/logger.hpp"
 
-// Hide CGAL triangulation in an anonymous namespace
+using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
+
 namespace {
-    // Define kernel
-    typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
-    typedef CGAL::Triangulation_vertex_base_with_info_3<size_t, K> Vb;
-    typedef CGAL::Delaunay_triangulation_cell_base_3<K> Cb;
-    typedef CGAL::Triangulation_data_structure_3<Vb, Cb> Tds;
-    // Define 3D triangulation
-    typedef CGAL::Delaunay_triangulation_3<K, Tds, CGAL::Fast_location> Triangulation;
-    // Handy typedefs for CGAL cell handles and points
-    typedef Triangulation::Cell_handle Cell_handle;
-    typedef Triangulation::Point Point;
-    // Instantiate triangulation
-    Triangulation triangles = {};
 
-    // Walk hint for locate().  A Cell_handle points into the triangulation, so
-    // rebuilding `triangles` invalidates it and it MUST be cleared alongside --
-    // otherwise the next locate() walks into freed cells.  Loading a second
-    // database in one run does exactly that.  Only the calling thread's hint is
-    // reset, which is sufficient: set_interpolator3 runs during Database
-    // construction, before any worker threads exist, and the observer loop
-    // never calls barycentric().
-    thread_local Cell_handle locate_hint = {};
+// The triangulation, and the map from its vertices back to database spheres.
+// A vertex is not always a sphere: the domain extension below adds duplicates
+// that carry their original's index.
+std::unique_ptr<Delaunay> mesh;
+std::vector<std::size_t> vertex_to_point;
+// Vertex coordinates are kept alongside, so the nearest-condition fallback
+// works even when there is no triangulation to fall back from.
+std::vector<double> vertex_coordinates;
+std::size_t dimension = 0;
 
-    template<typename T>
-    bool approx(T x, T y, T epsilon = 10 * std::numeric_limits<T>::epsilon()) {
-        static_assert(std::is_floating_point<T>::value, "Only valid for floating point types.");
-        return std::fabs(x - y) < epsilon;
-    }
-
-    template<typename T>
-    T extend(T x, T dmin, T dmax) {
-        return approx(x, 1.0) ? dmax : (approx(x, 0.0) ? dmin : x);
-    }
-
-    template<typename T>
-    T clamp(T x) {
-        return std::clamp(x, T(0), T(1));
-    }
-
-    template<typename T>
-    std::array<T, 3> cross(std::array<T, 3> a, std::array<T, 3> b) {
-        return std::array<T, 3>{a[1] * b[2] - a[2] * b[1],
-                                a[2] * b[0] - a[0] * b[2],
-                                a[0] * b[1] - a[1] * b[0]};
-    }
-
-    template<typename T>
-    T dot(std::array<T, 3> a, std::array<T, 3> b) {
-        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    }
-
-}
-
-extern "C"
+std::size_t nearest(const double* query, std::size_t dim)
 {
-int set_interpolator3(size_t n, const double *x1, const double *x2, const double *x3, double extend_domain_by = 0.1) {
-    std::vector<std::pair<Point, size_t>> points = {};
-    points.reserve(n);
-    auto dmax = 1.0 + extend_domain_by;
-    auto dmin = 0.0 - extend_domain_by;
-
-    for (size_t i = 0; i < n; i++) {
-        auto xx1 = x1[i];
-        auto xx2 = x2[i];
-        auto xx3 = x3[i];
-        points.push_back(std::make_pair(Point(xx1, xx2, xx3), i));
-        //If point is on edge of data range, then add another extended point
-        //at the domain limits with the same data index
-
-        if (approx(xx1, 0.0) || approx(xx2, 0.0) || approx(xx3, 0.0) ||
-            approx(xx1, 1.0) || approx(xx2, 1.0) || approx(xx3, 1.0)) {
-            auto extended_point = Point(extend(xx1, dmin, dmax), extend(xx2, dmin, dmax), extend(xx3, dmin, dmax));
-            points.push_back(std::make_pair(extended_point, i));
+    std::size_t best = 0;
+    double best_distance = std::numeric_limits<double>::infinity();
+    const std::size_t count = dim ? vertex_coordinates.size() / dim : 0;
+    for (std::size_t i = 0; i < count; i++)
+    {
+        double distance = 0.0;
+        for (std::size_t j = 0; j < dim; j++)
+        {
+            const double delta = vertex_coordinates[i * dim + j] - query[j];
+            distance += delta * delta;
+        }
+        if (distance < best_distance)
+        {
+            best_distance = distance;
+            best = i;
         }
     }
-    triangles = Triangulation(points.begin(), points.end());
-    locate_hint = Cell_handle();
-    return !triangles.is_valid();
+    return best;
 }
 
-void barycentric(double x1, double x2, double x3, double *weights, size_t *indicies) {
-    // Clamp values between 0.0 and 1.0
-    x1 = clamp(x1);
-    x2 = clamp(x2);
-    x3 = clamp(x3);
+bool approximately(double x, double y)
+{
+    return std::fabs(x - y) < 10.0 * std::numeric_limits<double>::epsilon();
+}
 
-    auto request = Point{x1, x2, x3};
-    //Find tetrahedron that encloses (x1,x2,x3)
-    Triangulation::Locate_type locate_type;
-    int li = 0, lj = 0;
-    auto tetrahedron = triangles.locate(request, locate_type, li, lj, locate_hint);
-    assert(tetrahedron->is_valid());
-    locate_hint = tetrahedron;
+} // namespace
 
-    // The query coincides exactly with an existing vertex, i.e. with one of
-    // the database's own operating conditions.  Return that sphere's data
-    // rather than a blend of its neighbours.  Without this, hover (mu = 0)
-    // sits on the convex hull boundary where locate() is ambiguous between
-    // the infinite-cell branch below and the finite-cell volume ratios, and
-    // Database::self_test -- which queries every sphere at its own condition
-    // -- disagreed by up to 5.8 dB on all 24 hover spheres.
-    // Both degenerate cases put all the weight on a single vertex and differ
-    // only in which one: the query's own vertex when it lands exactly on one,
-    // otherwise the nearest, when locate() walked off the hull.
-    const bool on_a_vertex = locate_type == Triangulation::VERTEX;
-    if (on_a_vertex || triangles.is_infinite(tetrahedron)) {
-        weights[0] = 1.0;
-        weights[1] = 0.0;
-        weights[2] = 0.0;
-        weights[3] = 0.0;
-        indicies[0] = on_a_vertex ? tetrahedron->vertex(li)->info()
-                                  : triangles.nearest_vertex(request)->info();
-        indicies[1] = 0;
-        indicies[2] = 0;
-        indicies[3] = 0;
-    } else {
-        // Compute the barycentric weights from surrounding verticies
-        auto x = std::array<Point, 4>{};
-        for (size_t i = 0; i < 4; i++) {
-            x[i] = tetrahedron->vertex(i)->point();
-        }
-        auto volume = std::array<double, 4>{};
-        // NB: double, not float -- a float accumulator here capped every
-        // barycentric weight at ~7 significant digits.
-        auto total_volume = 0.0;
-        for (size_t i = 0; i < 4; i++) {
-            auto facet = triangles.triangle(Triangulation::Facet(tetrahedron, i));
-            auto pr = std::array<std::array<double, 3>, 3>{};
-            for (size_t j = 0; j < 3; j++) {
-                pr[j][0] = facet[j].x() - request.x();
-                pr[j][1] = facet[j].y() - request.y();
-                pr[j][2] = facet[j].z() - request.z();
+namespace niceops {
+
+int set_interpolator(std::size_t dim, std::size_t count, const double* points,
+        double extend_domain_by)
+{
+    if (dim == 0 || count == 0)
+        return 1;
+
+    const double high = 1.0 + extend_domain_by;
+    const double low = 0.0 - extend_domain_by;
+
+    std::vector<double> vertices;
+    vertices.reserve(count * dim * 2);
+    vertex_to_point.clear();
+    vertex_to_point.reserve(count * 2);
+
+    for (std::size_t i = 0; i < count; i++)
+    {
+        const double* point = points + i * dim;
+        vertices.insert(vertices.end(), point, point + dim);
+        vertex_to_point.push_back(i);
+
+        // A point on any face of the unit cube gets a copy pushed out to the
+        // widened bound, so the edge of the operating envelope stays inside the
+        // hull instead of falling off it.
+        bool on_boundary = false;
+        for (std::size_t j = 0; j < dim; j++)
+        {
+            if (approximately(point[j], 0.0) || approximately(point[j], 1.0))
+            {
+                on_boundary = true;
+                break;
             }
-            // Volume of tetra formed by point and facet
-            volume[i] = std::fabs(1. / 6. * dot(pr[0], cross(pr[1], pr[2])));
-            // Accumulate volume
-            total_volume += volume[i];
         }
-        for (size_t i = 0; i < 4; i++) {
-            //Calculate barycentric weights and add indicies
-            weights[i] = volume[i] / total_volume;
-            indicies[i] = tetrahedron->vertex(i)->info();
+        if (on_boundary)
+        {
+            for (std::size_t j = 0; j < dim; j++)
+            {
+                double value = point[j];
+                if (approximately(value, 1.0))
+                    value = high;
+                else if (approximately(value, 0.0))
+                    value = low;
+                vertices.push_back(value);
+            }
+            vertex_to_point.push_back(i);
         }
     }
+
+    dimension = dim;
+    vertex_coordinates = vertices;
+
+    // A database can hold too few conditions to triangulate at all -- a single
+    // exported sphere is one point.  That is not an error: every query simply
+    // takes the nearest condition, which for one sphere is the only answer
+    // there is.
+    if (vertex_to_point.size() < dim + 1)
+    {
+        mesh.reset();
+        info("Only ", count, " operating condition", count == 1 ? "" : "s",
+                "; every query will take the nearest rather than a blend.");
+        return 0;
+    }
+
+    mesh = std::make_unique<Delaunay>(dim, vertex_to_point.size(), vertices.data());
+    info("Triangulated ", count, " operating conditions in ", dim, " dimensions (",
+            vertex_to_point.size(), " vertices after extending the domain, ",
+            mesh->simplex_count(), " simplices).");
+    return 0;
 }
+
+void barycentric_weights(const double* query, double* weights, std::size_t* indices)
+{
+    const std::size_t dim = dimension;
+    std::vector<double> clamped(dim);
+    for (std::size_t j = 0; j < dim; j++)
+        clamped[j] = std::clamp(query[j], 0.0, 1.0);
+
+    for (std::size_t v = 0; v <= dim; v++)
+    {
+        weights[v] = 0.0;
+        indices[v] = 0;
+    }
+
+    std::vector<double> raw(dim + 1, 0.0);
+    std::vector<std::size_t> vertices(dim + 1, 0);
+    if (mesh && mesh->barycentric(clamped.data(), raw.data(), vertices.data()))
+    {
+        // A query sitting exactly on one of the database's own conditions takes
+        // that sphere's data whole rather than a blend of its neighbours.  Hover
+        // at mu = 0 lands here, on the boundary of the envelope, and blending it
+        // with anything disagreed with the stored levels by up to 5.8 dB.
+        for (std::size_t v = 0; v <= dim; v++)
+        {
+            if (raw[v] >= 1.0)
+            {
+                weights[0] = 1.0;
+                indices[0] = vertex_to_point[vertices[v]];
+                return;
+            }
+        }
+        for (std::size_t v = 0; v <= dim; v++)
+        {
+            weights[v] = raw[v];
+            indices[v] = vertex_to_point[vertices[v]];
+        }
+        return;
+    }
+
+    // Outside the hull even after the domain extension: fall back to the
+    // nearest condition rather than extrapolating past the envelope.
+    weights[0] = 1.0;
+    indices[0] = vertex_to_point.empty() ? 0 : vertex_to_point[nearest(clamped.data(), dim)];
 }
+
+} // namespace niceops

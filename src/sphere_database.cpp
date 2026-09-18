@@ -732,8 +732,17 @@ Database::Database(const std::string& datafile_path)
         x = (x - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min);
     trace("Normalized CT  = ", thrust_coefficients);
 
-    if (set_interpolator3(advance_ratios.size(), advance_ratios.data(), flight_path_angles.data(),
-                thrust_coefficients.data()))
+    // Pack the three normalized axes into the row-major point array the
+    // interpolator takes.  A fourth operating parameter would be another column
+    // here and nothing else.
+    std::vector<double> conditions(advance_ratios.size() * 3);
+    for (std::size_t i = 0; i < advance_ratios.size(); i++)
+    {
+        conditions[i * 3 + 0] = advance_ratios[i];
+        conditions[i * 3 + 1] = flight_path_angles[i];
+        conditions[i * 3 + 2] = thrust_coefficients[i];
+    }
+    if (set_interpolator(3, advance_ratios.size(), conditions.data()))
     {
         fatal("Could not set interpolator.");
     }
@@ -753,8 +762,8 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
 
     // Get barycentric weights and indicies
     Blend blend;
-    barycentric(advance_ratio, flight_path_angle, thrust_coefficient, blend.weights.data(),
-            blend.indices.data());
+    const double condition[3] = {advance_ratio, flight_path_angle, thrust_coefficient};
+    barycentric_weights(condition, blend.weights.data(), blend.indices.data());
     trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
     return blend;
 }

@@ -23,6 +23,13 @@
 // and only fall back to the exact path when the bound admits zero.  For points
 // in general position the fast path settles it.
 //
+// PRECONDITION: coordinates must be normal floating-point numbers, not
+// subnormals.  two_product is exact only while the product stays in the normal
+// range -- an FMA that underflows loses the low half, and with it the
+// exactness the whole construction rests on.  NICE-OPS normalises every
+// operating condition into [0, 1] before it gets here, so the smallest
+// magnitudes in play are around 1e-3; subnormals begin below 1e-308.
+//
 // NOTE: these routines depend on strict IEEE-754 semantics.  Do not build this
 // file with -ffast-math or -funsafe-math-optimizations; the two_sum trick relies
 // on the compiler not "simplifying" (x - a) + (a - x) to zero.

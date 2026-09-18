@@ -5,7 +5,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <random>
 #include <vector>
 
 #include "predicates.hpp"
@@ -135,4 +137,43 @@ TEST_CASE("The prism structure of the database is exactly cospherical", "[predic
     const double flat[12] = {a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2],
             d[0], d[1], d[2]};
     REQUIRE(orientation(flat, 3) == 0);
+}
+
+TEST_CASE("Predicates stay self-consistent near degeneracy", "[predicates]")
+{
+    // The filtered fast path must never disagree with the exact one.  Swapping
+    // two vertices reverses a simplex's orientation exactly, so orientation and
+    // its swap must be exact negatives -- including for configurations chosen to
+    // sit right on the edge of what double precision can resolve.
+    std::mt19937 rng(20260918);
+    std::uniform_int_distribution<int> small(-3, 3);
+
+    for (int trial = 0; trial < 3000; trial++)
+    {
+        // Points on the plane z = x + y + 1, then one coordinate nudged by a
+        // few ulps, so the true determinant is tiny but definite.  The offset
+        // keeps every coordinate a normal number: the exact arithmetic assumes
+        // no underflow, and nudging an exact zero lands in the subnormals where
+        // that assumption does not hold.
+        double points[12];
+        for (int i = 0; i < 4; i++)
+        {
+            points[i * 3 + 0] = 0.1 * small(rng);
+            points[i * 3 + 1] = 0.1 * small(rng);
+            points[i * 3 + 2] = points[i * 3 + 0] + points[i * 3 + 1] + 1.0;
+        }
+        const int nudges = small(rng);
+        for (int n = 0; n < std::abs(nudges); n++)
+            points[11] = std::nextafter(points[11], nudges > 0 ? 1e9 : -1e9);
+
+        const int direct = orientation(points, 3);
+
+        double swapped[12];
+        std::copy(std::begin(points), std::end(points), std::begin(swapped));
+        for (int j = 0; j < 3; j++)
+            std::swap(swapped[j], swapped[3 + j]);
+        const int reversed = orientation(swapped, 3);
+
+        REQUIRE(direct == -reversed);
+    }
 }
