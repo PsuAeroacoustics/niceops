@@ -164,6 +164,291 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
 
 } // namespace
 
+namespace {
+
+// Everything about a run that does not vary between trajectories.
+struct RunOptions
+{
+    bool qsam = true;
+    double dt = 0.5;
+    double ambient_level = 0.0;
+    unsigned thread_count = 0;
+    double db_cutoff = 0.0;
+    double trim_start_ft = 0.0;
+    double utc_offset = 0.0;
+    bool scattered = false;
+    bool want_dnl = false;
+    bool write_time_history = false;
+    bool write_state = false;
+    std::string time_history_prefix;
+    std::string metric_file;
+    std::string power_file;
+};
+
+// The files one trajectory is computed from and written to, and where it sits
+// in the run.
+struct PathJob
+{
+    std::string trajectory;
+    std::string vehicle;
+    std::string output;
+    std::string state;
+    std::size_t count = 1;
+};
+
+// Compute one trajectory's footprint and write its outputs, returning the
+// trajectory itself for the single-path plotting block.  Anything that throws
+// in here condemns this trajectory alone; the caller catches and moves on.
+Trajectory process_trajectory(const Database& database, const PathJob& job,
+        const RunOptions& options, const std::vector<Vec3>& observers,
+        const std::vector<double>& x_obs, const std::vector<double>& y_obs,
+        std::vector<double>& integrated_levels, std::vector<double>& dnl_energy)
+{
+    // Named so the body below reads as it did when it was inline in main.
+    const auto& path_file = job.trajectory;
+    const auto& vehicle_file = job.vehicle;
+    const auto& out_file = job.output;
+    const std::size_t path_count = job.count;
+    const bool qsam = options.qsam;
+    const double dt = options.dt;
+    const double ambient_level = options.ambient_level;
+    const unsigned thread_count = options.thread_count;
+    const double db_cutoff = options.db_cutoff;
+    const double trim_start_ft = options.trim_start_ft;
+    const double utc_offset = options.utc_offset;
+    const bool scattered = options.scattered;
+    const bool want_dnl = options.want_dnl;
+    const bool write_time_history = options.write_time_history;
+    const bool write_state = options.write_state;
+    const auto& time_history_prefix = options.time_history_prefix;
+    const auto& metric_file = options.metric_file;
+    const auto& power_file = options.power_file;
+
+
+    // Create trajectory from CSV data
+    Trajectory trajectory(path_file, vehicle_file);
+
+    // Trim trajectory (per Mike): crop from the given x to whichever comes
+    // first, the lowest or the slowest point.  Off unless asked for -- it
+    // changes which part of the flight is integrated, and so the levels.
+    if (!std::isnan(trim_start_ft))
+    {
+        trajectory.watts_trim(trim_start_ft);
+    }
+
+    // Trajectory adaptation parameters, for the adapt() call below.  Both the
+    // call and its arguments are disabled, matching the D original.
+    //const int degree = 5;
+    //const double smooth = 1e6;
+    //trajectory.adapt(dt, degree, smooth);
+
+    // And time series data
+    const std::size_t nt = trajectory.states.size();
+
+    // The sound exposure level integral weights each sample by the trajectory's
+    // own time step, so take that from the states rather than from -s.  Those
+    // two coincide only when adapt() resamples onto the -s grid, and adapt() is
+    // disabled below; every shipped track is sampled at 0.02 s, so the 0.5 s
+    // default would overstate every level by 10*log10(0.5/0.02) = 14 dB.
+    double integration_step = dt;
+    if (nt >= 2)
+    {
+        std::vector<double> sample_times;
+        sample_times.reserve(nt);
+        for (const auto& state : trajectory.states)
+            sample_times.push_back(state.t);
+        double relative_spread = 0.0;
+        integration_step = uniform_sample_interval(sample_times, &relative_spread);
+        info("Integrating with the trajectory's sample interval of ", integration_step, " s.");
+        if (relative_spread > 1e-6)
+        {
+            log("Trajectory sampling is not uniform (worst interval deviates by ",
+                    100.0 * relative_spread, "% from the mean); the sound exposure level "
+                    "integral assumes the mean step.");
+        }
+    }
+
+    // The source geometry and the blend of database operating conditions depend
+    // only on the trajectory state, so build them once here rather than once
+    // per (observer, state) pair.  The blend is a CGAL Delaunay locate() walk
+    // and was by far the largest single cost in the program; this turns
+    // observers*states of them into states of them.
+    // Night classification for the DNL penalty, from the AC format's UTC
+    // seconds column shifted into local time.
+    std::vector<char> night(want_dnl ? nt : 0);
+    for (std::size_t it = 0; it < night.size(); it++)
+        night[it] = is_night(trajectory.states[it].utcsec, utc_offset) ? 1 : 0;
+
+    std::vector<Database::SourceState> source_states;
+    source_states.reserve(nt);
+    for (const auto& state : trajectory.states)
+    {
+        source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
+                Vec3(state.vx, state.vy, state.vz),
+                Vec3(state.nx, state.ny, state.nz), state.mu,
+                qsam ? state.fpa_e : state.fpa, state.CT));
+    }
+
+    if (!power_file.empty())
+    {
+        // Shaft power is a property of the flight condition, so it falls out of
+        // the per-state blends with no extra geometry.  It is written per
+        // trajectory rather than mixed into the state file, whose columns are
+        // pinned by the state golden.
+        if (!database.has_shaft_power())
+        {
+            log("--powerfile given but this database carries no ShaftPower; skipping ",
+                    path_file, ".");
+        }
+        else
+        {
+            const auto name = path_count == 1
+                    ? power_file
+                    : (std::filesystem::path(power_file).parent_path()
+                              / (std::filesystem::path(path_file).stem().string() + "_power.csv"))
+                              .string();
+            auto file = open_output(name);
+            info("Writing shaft power to ", name);
+            file << "t(s),advance_ratio,flight_path_angle(deg),CT,shaft_power\n";
+            for (std::size_t it = 0; it < nt; it++)
+            {
+                const auto& state = trajectory.states[it];
+                file << state.t << "," << state.mu << "," << (qsam ? state.fpa_e : state.fpa) << ","
+                     << state.CT << "," << database.shaft_power(source_states[it].blend) << "\n";
+            }
+        }
+    }
+    // ambient_level stays NaN unless -a was given, which is how D's default-NaN
+    // double suppressed the ambient mix-in.  The reference pressure it converts
+    // to is loop-invariant; it used to be a pow() per evaluation.
+    const bool add_ambient = !std::isnan(ambient_level);
+    const double ambient_pressure = add_ambient ? std::pow(10.0, ambient_level / 20.) : 0.0;
+
+    // Observers are independent of one another: each reads the database and the
+    // source_states array, which are finished and const by now, and writes only
+    // its own level.  Nothing in here reaches the CGAL triangulation -- the
+    // blends were all resolved above -- so the loop splits with no locking.
+    const unsigned workers = thread_count > 0 ? thread_count : default_thread_count();
+    info("Evaluating ", observers.size(), " observers on ", workers,
+            workers == 1 ? " thread." : " threads.");
+
+    if (write_time_history)
+    {
+        // Create the output directory once, here.  Left to the writers it would
+        // be a create_directories() race between workers, and a stat per file
+        // besides.
+        const auto directory = std::filesystem::path(time_history_prefix).parent_path();
+        if (!directory.empty())
+            std::filesystem::create_directories(directory);
+    }
+
+    // With --db_cutoff, skip any (observer, state) pair whose level is provably
+    // below the cutoff.  The bound is per state, from the loudest sphere the
+    // state blends and spherical spreading alone, so it never discards a sample
+    // that could have been louder -- unlike the D original, which sorted
+    // observers by range and broke out of the loop at the first quiet one, a
+    // shortcut that ignores directivity and can drop a distant observer the
+    // rotor is pointed straight at.
+    //
+    // The threshold sits 10 dB below the cutoff, as the D original's did, and
+    // that margin is what makes the result exact where it matters: the sound
+    // exposure level integrates the window from the peak down to peak - 10, so
+    // for any observer whose peak reaches the cutoff, every sample in its window
+    // is at or above cutoff - 10 and none of them is ever culled.  Observers
+    // that never reach the cutoff are the only ones whose level changes, and
+    // they are precisely the ones the cutoff says are not of interest.
+    const bool culling = !std::isnan(db_cutoff);
+    const double cull_below = db_cutoff - sel_window_db;
+    // A culled sample contributes no acoustic energy.  Filling with the
+    // threshold instead would be far worse than useless -- thousands of samples
+    // at the floor integrate to well above it.
+    const double culled_level = -std::numeric_limits<double>::infinity();
+    std::vector<double> cull_range_squared(culling ? nt : 0);
+    for (std::size_t it = 0; it < cull_range_squared.size(); it++)
+    {
+        const double range = database.cull_range(source_states[it].blend, cull_below);
+        cull_range_squared[it] = range * range;
+    }
+    std::atomic<std::size_t> culled_samples {0};
+    const auto acoustics_start = std::chrono::steady_clock::now();
+
+    parallel_chunks(observers.size(), workers, [&](std::size_t begin, std::size_t end) {
+        // One scratch history per worker rather than per observer.
+        std::vector<double> levels(nt);
+        std::vector<double> penalized;
+        std::size_t culled_here = 0;
+        for (std::size_t index = begin; index < end; index++)
+        {
+            const auto& observer = observers[index];
+            for (std::size_t it = 0; it < nt; it++)
+            {
+                if (culling
+                        && (observer - source_states[it].position).squaredNorm()
+                                > cull_range_squared[it])
+                {
+                    levels[it] = culled_level;
+                    culled_here++;
+                    continue;
+                }
+                double level = database.level_at_observer(observer, source_states[it]);
+                if (add_ambient)
+                {
+                    // Add ambient noise
+                    level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
+                }
+                levels[it] = level;
+            }
+            integrated_levels[index] = sound_exposure_level(levels, integration_step);
+            if (want_dnl)
+            {
+                // Energies add across operations; the logarithm comes at the
+                // end, once every trajectory has contributed.  Each observer
+                // index belongs to exactly one worker, and the trajectories run
+                // one after another, so this needs no synchronisation.
+                dnl_energy[index] += std::pow(
+                        10.0, 0.1 * day_night_level(levels, integration_step, night, penalized));
+            }
+            if (write_time_history)
+            {
+                // Write out time history files
+                auto time_history_filename = time_history_prefix + "_i" + std::to_string(index) + ".csv";
+                write_time_history_file(levels, integration_step, observer(0), observer(1),
+                        time_history_filename);
+            }
+        }
+        culled_samples += culled_here;
+    });
+
+    if (culling)
+    {
+        const auto total = observers.size() * nt;
+        log("Culled ", culled_samples.load(), " of ", total, " evaluations (",
+                100.0 * static_cast<double>(culled_samples.load()) / static_cast<double>(total),
+                "%) as provably below ", cull_below, " dB.");
+    }
+
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - acoustics_start)
+                                 .count();
+    log("Acoustic calculations completed in ", elapsed / 1000.0, " seconds.");
+    write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
+
+    if (!metric_file.empty())
+    {
+        auto casename = std::filesystem::path(path_file).stem().string();
+        append_metrics_file(metric_file, casename, integrated_levels);
+    }
+
+    if (write_state)
+    {
+        trajectory.write_state(job.state);
+    }
+
+    return trajectory;
+}
+
+} // namespace
+
 // Everything after the command line is parsed.  Wrapped by main below, which
 // owns the decision about what a failure costs: one trajectory, or the run.
 int run(int argc, char* argv[])
@@ -449,254 +734,53 @@ int run(int argc, char* argv[])
     // single trajectory, can still reach it.
     std::optional<Trajectory> trajectory_holder;
 
+    RunOptions options;
+    options.qsam = qsam;
+    options.dt = dt;
+    options.ambient_level = ambient_level;
+    options.db_cutoff = db_cutoff;
+    options.trim_start_ft = trim_start_ft;
+    options.utc_offset = utc_offset;
+    options.thread_count = thread_count;
+    options.scattered = scattered;
+    options.want_dnl = want_dnl;
+    options.write_time_history = write_time_history;
+    options.write_state = write_state;
+    options.time_history_prefix = time_history_prefix;
+    options.metric_file = metric_file;
+    options.power_file = power_file;
+
     std::size_t failed_paths = 0;
 
     for (std::size_t path_index = 0; path_index < path_count; path_index++)
     {
-    // One unreadable track should cost that track, not the whole batch.  The D
-    // original wrapped its per-path work the same way (commit fbb3ab6); the
-    // failures that reach here are the ones that condemn a single input --
-    // trajectory and vehicle files -- rather than the run.
-    try
-    {
-    const auto& path_file = path_files[path_index];
-    const auto& vehicle_file = vehicle_files[path_index];
-    const auto& out_file = out_files[path_index];
-    if (database_files[path_index] != loaded_database)
-    {
-        log("Loading database ", database_files[path_index], " for ", path_file);
-        database = Database(database_files[path_index]);
-        // Only once it loaded.  Recording the name first would leave the cache
-        // claiming a database that failed to open, so a later trajectory naming
-        // the same file would skip the reload and quietly use the previous one.
-        loaded_database = database_files[path_index];
-    }
-
-    // Create trajectory from CSV data
-    trajectory_holder.emplace(path_file, vehicle_file);
-    auto& trajectory = *trajectory_holder;
-
-    // Trim trajectory (per Mike): crop from the given x to whichever comes
-    // first, the lowest or the slowest point.  Off unless asked for -- it
-    // changes which part of the flight is integrated, and so the levels.
-    if (!std::isnan(trim_start_ft))
-    {
-        trajectory.watts_trim(trim_start_ft);
-    }
-
-    // Trajectory adaptation parameters, for the adapt() call below.  Both the
-    // call and its arguments are disabled, matching the D original.
-    //const int degree = 5;
-    //const double smooth = 1e6;
-    //trajectory.adapt(dt, degree, smooth);
-
-    // And time series data
-    const std::size_t nt = trajectory.states.size();
-
-    // The sound exposure level integral weights each sample by the trajectory's
-    // own time step, so take that from the states rather than from -s.  Those
-    // two coincide only when adapt() resamples onto the -s grid, and adapt() is
-    // disabled below; every shipped track is sampled at 0.02 s, so the 0.5 s
-    // default would overstate every level by 10*log10(0.5/0.02) = 14 dB.
-    double integration_step = dt;
-    if (nt >= 2)
-    {
-        std::vector<double> sample_times;
-        sample_times.reserve(nt);
-        for (const auto& state : trajectory.states)
-            sample_times.push_back(state.t);
-        double relative_spread = 0.0;
-        integration_step = uniform_sample_interval(sample_times, &relative_spread);
-        info("Integrating with the trajectory's sample interval of ", integration_step, " s.");
-        if (relative_spread > 1e-6)
+        try
         {
-            log("Trajectory sampling is not uniform (worst interval deviates by ",
-                    100.0 * relative_spread, "% from the mean); the sound exposure level "
-                    "integral assumes the mean step.");
+        if (database_files[path_index] != loaded_database)
+        {
+            log("Loading database ", database_files[path_index], " for ",
+                    path_files[path_index]);
+            database = Database(database_files[path_index]);
+            // Only once it loaded.  Recording the name first would leave the cache
+            // claiming a database that failed to open, so a later trajectory naming
+            // the same file would skip the reload and quietly use the previous one.
+            loaded_database = database_files[path_index];
+        }
+            PathJob job;
+            job.trajectory = path_files[path_index];
+            job.vehicle = vehicle_files[path_index];
+            job.output = out_files[path_index];
+            job.state = state_files.empty() ? std::string() : state_files[path_index];
+            job.count = path_count;
+            trajectory_holder = process_trajectory(database, job, options, observers,
+                    x_obs, y_obs, integrated_levels, dnl_energy);
+        }
+        catch (const std::exception& problem)
+        {
+            failed_paths++;
+            error("Skipping ", path_files[path_index], ": ", problem.what());
         }
     }
-
-    // The source geometry and the blend of database operating conditions depend
-    // only on the trajectory state, so build them once here rather than once
-    // per (observer, state) pair.  The blend is a CGAL Delaunay locate() walk
-    // and was by far the largest single cost in the program; this turns
-    // observers*states of them into states of them.
-    // Night classification for the DNL penalty, from the AC format's UTC
-    // seconds column shifted into local time.
-    std::vector<char> night(want_dnl ? nt : 0);
-    for (std::size_t it = 0; it < night.size(); it++)
-        night[it] = is_night(trajectory.states[it].utcsec, utc_offset) ? 1 : 0;
-
-    std::vector<Database::SourceState> source_states;
-    source_states.reserve(nt);
-    for (const auto& state : trajectory.states)
-    {
-        source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
-                Vec3(state.vx, state.vy, state.vz),
-                Vec3(state.nx, state.ny, state.nz), state.mu,
-                qsam ? state.fpa_e : state.fpa, state.CT));
-    }
-
-    if (!power_file.empty())
-    {
-        // Shaft power is a property of the flight condition, so it falls out of
-        // the per-state blends with no extra geometry.  It is written per
-        // trajectory rather than mixed into the state file, whose columns are
-        // pinned by the state golden.
-        if (!database.has_shaft_power())
-        {
-            log("--powerfile given but ", loaded_database,
-                    " carries no ShaftPower; skipping ", path_file, ".");
-        }
-        else
-        {
-            const auto name = path_count == 1
-                    ? power_file
-                    : (std::filesystem::path(power_file).parent_path()
-                              / (std::filesystem::path(path_file).stem().string() + "_power.csv"))
-                              .string();
-            auto file = open_output(name);
-            info("Writing shaft power to ", name);
-            file << "t(s),advance_ratio,flight_path_angle(deg),CT,shaft_power\n";
-            for (std::size_t it = 0; it < nt; it++)
-            {
-                const auto& state = trajectory.states[it];
-                file << state.t << "," << state.mu << "," << (qsam ? state.fpa_e : state.fpa) << ","
-                     << state.CT << "," << database.shaft_power(source_states[it].blend) << "\n";
-            }
-        }
-    }
-    // ambient_level stays NaN unless -a was given, which is how D's default-NaN
-    // double suppressed the ambient mix-in.  The reference pressure it converts
-    // to is loop-invariant; it used to be a pow() per evaluation.
-    const bool add_ambient = !std::isnan(ambient_level);
-    const double ambient_pressure = add_ambient ? std::pow(10.0, ambient_level / 20.) : 0.0;
-
-    // Observers are independent of one another: each reads the database and the
-    // source_states array, which are finished and const by now, and writes only
-    // its own level.  Nothing in here reaches the CGAL triangulation -- the
-    // blends were all resolved above -- so the loop splits with no locking.
-    const unsigned workers = thread_count > 0 ? thread_count : default_thread_count();
-    info("Evaluating ", observers.size(), " observers on ", workers,
-            workers == 1 ? " thread." : " threads.");
-
-    if (write_time_history)
-    {
-        // Create the output directory once, here.  Left to the writers it would
-        // be a create_directories() race between workers, and a stat per file
-        // besides.
-        const auto directory = std::filesystem::path(time_history_prefix).parent_path();
-        if (!directory.empty())
-            std::filesystem::create_directories(directory);
-    }
-
-    // With --db_cutoff, skip any (observer, state) pair whose level is provably
-    // below the cutoff.  The bound is per state, from the loudest sphere the
-    // state blends and spherical spreading alone, so it never discards a sample
-    // that could have been louder -- unlike the D original, which sorted
-    // observers by range and broke out of the loop at the first quiet one, a
-    // shortcut that ignores directivity and can drop a distant observer the
-    // rotor is pointed straight at.
-    //
-    // The threshold sits 10 dB below the cutoff, as the D original's did, and
-    // that margin is what makes the result exact where it matters: the sound
-    // exposure level integrates the window from the peak down to peak - 10, so
-    // for any observer whose peak reaches the cutoff, every sample in its window
-    // is at or above cutoff - 10 and none of them is ever culled.  Observers
-    // that never reach the cutoff are the only ones whose level changes, and
-    // they are precisely the ones the cutoff says are not of interest.
-    const bool culling = !std::isnan(db_cutoff);
-    const double cull_below = db_cutoff - sel_window_db;
-    // A culled sample contributes no acoustic energy.  Filling with the
-    // threshold instead would be far worse than useless -- thousands of samples
-    // at the floor integrate to well above it.
-    const double culled_level = -std::numeric_limits<double>::infinity();
-    std::vector<double> cull_range_squared(culling ? nt : 0);
-    for (std::size_t it = 0; it < cull_range_squared.size(); it++)
-    {
-        const double range = database.cull_range(source_states[it].blend, cull_below);
-        cull_range_squared[it] = range * range;
-    }
-    std::atomic<std::size_t> culled_samples {0};
-
-    parallel_chunks(observers.size(), workers, [&](std::size_t begin, std::size_t end) {
-        // One scratch history per worker rather than per observer.
-        std::vector<double> levels(nt);
-        std::vector<double> penalized;
-        std::size_t culled_here = 0;
-        for (std::size_t index = begin; index < end; index++)
-        {
-            const auto& observer = observers[index];
-            for (std::size_t it = 0; it < nt; it++)
-            {
-                if (culling
-                        && (observer - source_states[it].position).squaredNorm()
-                                > cull_range_squared[it])
-                {
-                    levels[it] = culled_level;
-                    culled_here++;
-                    continue;
-                }
-                double level = database.level_at_observer(observer, source_states[it]);
-                if (add_ambient)
-                {
-                    // Add ambient noise
-                    level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
-                }
-                levels[it] = level;
-            }
-            integrated_levels[index] = sound_exposure_level(levels, integration_step);
-            if (want_dnl)
-            {
-                // Energies add across operations; the logarithm comes at the
-                // end, once every trajectory has contributed.  Each observer
-                // index belongs to exactly one worker, and the trajectories run
-                // one after another, so this needs no synchronisation.
-                dnl_energy[index] += std::pow(
-                        10.0, 0.1 * day_night_level(levels, integration_step, night, penalized));
-            }
-            if (write_time_history)
-            {
-                // Write out time history files
-                auto time_history_filename = time_history_prefix + "_i" + std::to_string(index) + ".csv";
-                write_time_history_file(levels, integration_step, observer(0), observer(1),
-                        time_history_filename);
-            }
-        }
-        culled_samples += culled_here;
-    });
-
-    if (culling)
-    {
-        const auto total = observers.size() * nt;
-        log("Culled ", culled_samples.load(), " of ", total, " evaluations (",
-                100.0 * static_cast<double>(culled_samples.load()) / static_cast<double>(total),
-                "%) as provably below ", cull_below, " dB.");
-    }
-
-    auto t2 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
-            - watch_start)
-                        .count();
-    log("Acoustic calculations completed in ", (t2 - t1) / 1000.0, " seconds.");
-    write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
-
-    if (!metric_file.empty())
-    {
-        auto casename = std::filesystem::path(path_file).stem().string();
-        append_metrics_file(metric_file, casename, integrated_levels);
-    }
-
-    if (write_state)
-    {
-        trajectory.write_state(state_files[path_index]);
-    }
-    }
-    catch (const std::exception& problem)
-    {
-        failed_paths++;
-        error("Skipping ", path_files[path_index], ": ", problem.what());
-    }
-    } // per-trajectory loop
 
     if (failed_paths > 0)
     {
