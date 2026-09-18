@@ -11,8 +11,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
+#include <unistd.h>
 
 #include "util/csv.hpp"
 
@@ -25,8 +27,13 @@ struct TempCsv
 {
     std::string path;
     explicit TempCsv(const std::string& contents)
-        : path(std::string(std::tmpnam(nullptr)) + "_niceops_test.csv")
     {
+        // mkstemp rather than tmpnam: tmpnam is deprecated and races.
+        char pattern[] = "/tmp/niceops_test_XXXXXX";
+        const int fd = ::mkstemp(pattern);
+        REQUIRE(fd != -1);
+        ::close(fd);
+        path = pattern;
         std::ofstream out(path);
         out << contents;
     }

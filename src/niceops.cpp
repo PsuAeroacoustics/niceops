@@ -276,10 +276,10 @@ int main(int argc, char* argv[])
 
     if (self_test)
     {
-        // TODO: Check out this literal corner case
-        //2020-05-25T16:02:22.223 [all] sphere_database.d:740:self_test Surface level disagreement of D:83.6494 versus N:85.3316 for φ = -90, θ = 180, μ  = 0.164848,γ  =  -4.25762, CT = 0
-        //        database.eval(database.sphere_radius, -90., 180.,0.164848, -4.25762, 0.);
-        //        exit(0);
+        // Historical note: this used to fail, and a D-era comment here recorded
+        // one sample disagreeing by ~1.7 dB.  The cause was legacy hover
+        // directivity (see repair_legacy_hover_directivity); with that repaired
+        // the self test passes on every shipped database.
         database.self_test(database_file);
     }
 
@@ -290,9 +290,10 @@ int main(int argc, char* argv[])
     //immutable double xstart_ft = -6000.;
     //trajectory.watts_trim(xstart_ft);
 
-    // Trajectory adaptation parameters
-    const int degree = 5;
-    const double smooth = 1e6;
+    // Trajectory adaptation parameters, for the adapt() call below.  Both the
+    // call and its arguments are disabled, matching the D original.
+    //const int degree = 5;
+    //const double smooth = 1e6;
     //trajectory.adapt(dt, degree, smooth);
 
     // And time series data
