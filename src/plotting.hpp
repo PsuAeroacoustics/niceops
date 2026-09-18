@@ -10,6 +10,11 @@
 
 namespace plt {
 
+// Whether this build has plotting compiled in.  Building with
+// -DNICEOPS_PLOTTING=OFF drops Python, pybind11 and matplotlib from the
+// dependency list entirely, and every call below becomes a no-op that says so.
+bool available();
+
 void figure();
 
 void contourf(const std::vector<double>& x, const std::vector<double>& y,

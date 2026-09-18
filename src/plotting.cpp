@@ -10,6 +10,12 @@ namespace py = pybind11;
 
 namespace plt {
 
+bool available()
+{
+    return true;
+}
+
+
 namespace {
 
 // Lazily start the embedded interpreter and import pyplot with a non-interactive
@@ -18,6 +24,13 @@ py::module_& pyplot()
 {
     static py::scoped_interpreter guard {};
     static py::module_ module = [] {
+#ifdef NICEOPS_VENV_SITE_PACKAGES
+        // Look in the virtual environment the build made for us before anything
+        // the ambient environment happens to offer, so a run does not depend on
+        // what is installed for the system interpreter.
+        py::module_::import("sys").attr("path").attr("insert")(
+                0, NICEOPS_VENV_SITE_PACKAGES);
+#endif
         py::module_::import("matplotlib").attr("use")("Agg");
         return py::module_::import("matplotlib.pyplot");
     }();

@@ -10,11 +10,17 @@ units in the last place.
 
 ## Building
 
-Requirements: a C++17 compiler, netCDF, Eigen3, and Python 3 with development headers plus
-matplotlib (pybind11 embeds the interpreter for plotting). On Ubuntu:
+Requirements: a C++17 compiler, netCDF, and Eigen3. Plotting additionally needs Python 3 with
+development headers; matplotlib itself is installed by the build, not by you. On Ubuntu:
 
 ```sh
-sudo apt-get install libnetcdf-dev libeigen3-dev python3-dev python3-matplotlib
+sudo apt-get install libnetcdf-dev libeigen3-dev python3-dev
+```
+
+Plotting can be dropped entirely, which removes the Python requirement with it:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNICEOPS_PLOTTING=OFF
 ```
 
 CLI11, nlohmann_json, Catch2 and pybind11 are fetched at configure time, so the first configure
@@ -184,10 +190,20 @@ Nothing reads geodetic input yet — this is the transform the input paths will 
 
 ### Plotting
 
-Plotting embeds Python through pybind11, so matplotlib must be importable by the interpreter
-the build linked against (`PYTHON_EXECUTABLE` in the CMake cache) — not merely installed for
-some other Python on the machine. If it is somewhere else, point `PYTHONPATH` at that
-site-packages directory. Set `MPLBACKEND=Agg` when running headless.
+Plotting embeds Python through pybind11. The first configure creates a virtual environment at
+`build/pyenv` and installs matplotlib into it, and the embedded interpreter puts that directory
+at the front of `sys.path` — so a run depends on what the build made rather than on whatever
+happens to be installed for the system interpreter, and needs no `PYTHONPATH`. The install
+happens once per build directory and needs network access; afterwards configures are offline.
+
+Two options control this:
+
+| Option | Meaning |
+| --- | --- |
+| `-DNICEOPS_PLOTTING=OFF` | Drop plotting, and Python, pybind11 and matplotlib with it. The acoustics need none of them. `-p`, `-f` and `-F` are then refused with a message rather than silently doing nothing. |
+| `-DNICEOPS_BUNDLE_PYTHON=OFF` | Keep plotting but skip the virtual environment, using the interpreter's own packages instead. |
+
+Headless is handled: the facade selects the `Agg` backend itself.
 
 The reference figures under `figures/` date from June 2020 and were produced with three settings
 that differ from the defaults. All three are now reachable:

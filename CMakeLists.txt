@@ -56,14 +56,88 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
   GIT_TAG v3.5.4
 )
-# Python interpreter for the embedded matplotlib plotting facade
-find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
-FetchContent_Declare(
-  pybind11
-  GIT_REPOSITORY https://github.com/pybind/pybind11.git
-  GIT_TAG v2.13.6
-)
-FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2 pybind11)
+# Plotting is the only thing that needs Python.  Turning it off drops Python,
+# pybind11 and matplotlib from the build entirely; the acoustics need none of
+# them.
+option(NICEOPS_PLOTTING "Build the matplotlib plotting facade" ON)
+# The packages plotting needs are installed into a virtual environment under the
+# build tree, so a run depends on what this build made rather than on whatever
+# happens to be installed for the system interpreter.  Turn off to use the
+# interpreter's own packages instead.
+option(NICEOPS_BUNDLE_PYTHON "Create a virtual environment for matplotlib" ON)
+
+if(NICEOPS_PLOTTING)
+  find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+  FetchContent_Declare(
+    pybind11
+    GIT_REPOSITORY https://github.com/pybind/pybind11.git
+    GIT_TAG v2.13.6
+  )
+  FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2 pybind11)
+else()
+  FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2)
+endif()
+
+# Build the virtual environment, once, and remember where its packages live.
+# The embedded interpreter puts this directory at the front of sys.path.
+set(NICEOPS_VENV_SITE_PACKAGES "")
+if(NICEOPS_PLOTTING AND NICEOPS_BUNDLE_PYTHON)
+  set(NICEOPS_VENV "${CMAKE_BINARY_DIR}/pyenv")
+  if(WIN32)
+    set(NICEOPS_VENV_PYTHON "${NICEOPS_VENV}/Scripts/python.exe")
+  else()
+    set(NICEOPS_VENV_PYTHON "${NICEOPS_VENV}/bin/python")
+  endif()
+
+  if(NOT EXISTS "${NICEOPS_VENV_PYTHON}")
+    message(STATUS "Creating Python environment for plotting in ${NICEOPS_VENV}")
+    execute_process(
+      COMMAND "${Python3_EXECUTABLE}" -m venv "${NICEOPS_VENV}"
+      RESULT_VARIABLE NICEOPS_VENV_RESULT
+      OUTPUT_QUIET
+    )
+    if(NOT NICEOPS_VENV_RESULT EQUAL 0)
+      message(WARNING "Could not create the plotting environment; falling back to the "
+                      "system interpreter's packages.")
+    endif()
+  endif()
+
+  if(EXISTS "${NICEOPS_VENV_PYTHON}")
+    # Only reach the network when matplotlib is not already there, so repeat
+    # configures stay offline and fast.
+    execute_process(
+      COMMAND "${NICEOPS_VENV_PYTHON}" -c "import matplotlib"
+      RESULT_VARIABLE NICEOPS_HAVE_MATPLOTLIB
+      OUTPUT_QUIET ERROR_QUIET
+    )
+    if(NOT NICEOPS_HAVE_MATPLOTLIB EQUAL 0)
+      message(STATUS "Installing matplotlib into ${NICEOPS_VENV} (first configure only)")
+      execute_process(
+        COMMAND "${NICEOPS_VENV_PYTHON}" -m pip install --quiet --disable-pip-version-check
+                matplotlib
+        RESULT_VARIABLE NICEOPS_PIP_RESULT
+      )
+      if(NOT NICEOPS_PIP_RESULT EQUAL 0)
+        message(WARNING "Could not install matplotlib. Plotting will report the failure at "
+                        "run time; everything else is unaffected.")
+      endif()
+    endif()
+    execute_process(
+      COMMAND "${NICEOPS_VENV_PYTHON}" -c
+              "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+      OUTPUT_VARIABLE NICEOPS_VENV_SITE_PACKAGES
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+    message(STATUS "Plotting packages: ${NICEOPS_VENV_SITE_PACKAGES}")
+  endif()
+endif()
+
+if(NICEOPS_PLOTTING)
+  set(NICEOPS_PLOTTING_SOURCE src/plotting.cpp)
+else()
+  set(NICEOPS_PLOTTING_SOURCE src/plotting_disabled.cpp)
+endif()
 
 # Core library: noise database, trajectory, smoothing spline, plotting facade
 add_library(niceops_core STATIC
@@ -72,7 +146,7 @@ add_library(niceops_core STATIC
   src/predicates.cpp
   src/delaunay.cpp
   src/trajectory.cpp
-  src/plotting.cpp
+  ${NICEOPS_PLOTTING_SOURCE}
   src/smoothing_spline.cpp
 )
 target_include_directories(niceops_core PUBLIC
@@ -83,8 +157,14 @@ target_link_libraries(niceops_core PUBLIC
   ${NETCDF_LIBRARY}
   Eigen3::Eigen
   nlohmann_json::nlohmann_json
-  pybind11::embed
 )
+if(NICEOPS_PLOTTING)
+  target_link_libraries(niceops_core PUBLIC pybind11::embed)
+  if(NICEOPS_VENV_SITE_PACKAGES)
+    set_source_files_properties(src/plotting.cpp PROPERTIES COMPILE_DEFINITIONS
+      "NICEOPS_VENV_SITE_PACKAGES=\"${NICEOPS_VENV_SITE_PACKAGES}\"")
+  endif()
+endif()
 
 # Delaunay interpolator over the operating-condition space.  Kept a separate
 # library from the D era, when it walled off CGAL's heavy headers; it has no

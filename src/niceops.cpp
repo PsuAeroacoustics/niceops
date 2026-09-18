@@ -711,6 +711,14 @@ int main(int argc, char* argv[])
         write_levels(x_obs, y_obs, dnl, dnl_file, scattered);
     }
 
+    if (!plt::available() && (plotting || !figure_file.empty() || !state_figure_file.empty()))
+    {
+        // Say so up front rather than running the whole case and drawing
+        // nothing at the end.
+        fatal("This build has no plotting support. Reconfigure with "
+              "-DNICEOPS_PLOTTING=ON, or drop -p/-f/-F.");
+    }
+
     if (path_count > 1 && (plotting || !figure_file.empty() || !state_figure_file.empty()))
     {
         log("Plotting is skipped for multi-trajectory runs: one figure file cannot hold ",
