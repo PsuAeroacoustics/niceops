@@ -88,7 +88,7 @@ Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERS
 
 ## Running the Tool
 
-Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. For the full option set, see the CLI11 setup in `src/niceops.cpp`.
+Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. For the full option set see `README.md`, which documents every flag, or the CLI11 setup in `src/niceops.cpp`.
 
 Input/output files use **feet**; internal computation is metric (`ft2m = 0.3048`). Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
 

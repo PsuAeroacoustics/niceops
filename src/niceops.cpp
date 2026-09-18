@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -182,6 +183,7 @@ int main(int argc, char* argv[])
     double utc_offset = 0.0;
     std::string sphere_file = "";
     std::string power_file = "";
+    std::string log_level = "info";
     std::vector<double> sphere_condition;
     bool write_state = false;
     bool plotting = false;
@@ -210,6 +212,8 @@ int main(int argc, char* argv[])
     app.add_option("-d,--database", database_files,
             "netCDF noise database file. Once, or once per trajectory.");
     app.add_option("-l,--logfile", log_file, "Output log file.");
+    app.add_option("-L,--loglevel", log_level, "Log verbosity: trace, info, warn, error, fatal.")
+            ->check(CLI::IsMember({"trace", "info", "warn", "error", "fatal"}));
     app.add_option("-t,--trajectoryfile", path_files,
             "CSV trajectory input file. Repeat for several flight paths.");
     app.add_option("-v,--vehicle", vehicle_files,
@@ -314,7 +318,12 @@ int main(int argc, char* argv[])
 
     // Set default logging to file
     Logger::instance().set_file(log_file);
-    Logger::instance().set_level(LogLevel::info);
+    // The eval loop's trace() calls are gated so they cost nothing at info, but
+    // they are there to be turned on when something needs explaining.
+    const std::map<std::string, LogLevel> levels {{"trace", LogLevel::trace},
+            {"info", LogLevel::info}, {"warn", LogLevel::warn}, {"error", LogLevel::error},
+            {"fatal", LogLevel::fatal}};
+    Logger::instance().set_level(levels.at(log_level));
 
     // Start stopwatch
     auto watch_start = std::chrono::steady_clock::now();
