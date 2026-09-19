@@ -91,7 +91,19 @@ Notes:
 
 ### Golden reference files
 
-`golden/197421_LAE.csv` and `golden/state_197421.csv` are captured from the **D reference implementation** and the C++ port matches them to **1e-9** (actual max relative difference ~1e-14, i.e. a few ULPs of LDC-vs-clang round-off). `regression_golden` and `state_golden` both pass.
+`golden/state_197421.csv` is captured from the **D reference implementation**; the C++ port
+matched it to **1e-9** (actual max relative difference ~1e-14, a few ULPs of LDC-vs-clang
+round-off). It is trajectory state, which no propagation change touches, so it still stands as
+the D-derived oracle.
+
+`golden/197421_LAE.csv` **no longer comes from D.** Removing the spurious 4x EAA multiplier
+(see below) deliberately departs from the D original, so the D binary can no longer produce
+this file and regenerating it from D would only restore the bug. It was regenerated from the
+C++ build at the commit that removed the multiplier. The port's agreement with D was verified
+before that change and that verification stands on its own; D is retired as an oracle for the
+propagation path.
+
+`regression_golden` and `state_golden` both pass.
 
 To regenerate them, follow the `regenerate-goldens` skill
 (`.claude/skills/regenerate-goldens/SKILL.md`) — it builds the D original in a scratch
@@ -178,7 +190,9 @@ The reason the intuition fails is worth keeping: observers sweep a 120×120 grou
 
 **The SEL integral takes its time step from the trajectory, not from `-s`.** `sound_exposure_level` weights every sample by a time step, and `-s` is only the resampling step for `adapt()` — the two coincide *only* when `adapt()` actually resamples onto that grid, and it is commented out in `main`. Every shipped track is sampled at 0.02 s, so using the 0.5 s default as the weight overstated every level by exactly `10*log10(0.5/0.02) = 13.98 dB`. `main` now derives the step via `uniform_sample_interval()` and logs it, warning if the sampling is not uniform. If you re-enable `adapt()`, it resamples to `-s` and the derived step follows automatically.
 
-- `src/sphere_database.{hpp,cpp}` — `Database` class. Loads a netCDF noise database (`.nod`): one group per operating condition (μ advance ratio, γ flight path angle, CT thrust coefficient), each holding scattered (phi, θ) channels of dBA level and EAA excess-attenuation factor. `eval()` computes ground level: geometry → sphere angles (`lookup_angles`), barycentric interpolation between operating conditions, periodic bilinear interpolation on the sphere grid, then spherical spreading + excess attenuation (EAA × range) + a fixed 4 dB ground effect. Only `same_grid == true` databases are supported (the interpolation path is unimplemented). Free functions (`bracket`, `periodic_bilinear_interp`, `lookup_angles`, the geometry helpers) are exported in the header so the unit tests can reach them.
+- `src/sphere_database.{hpp,cpp}` — `Database` class. Loads a netCDF noise database (`.nod`): one group per operating condition (μ advance ratio, γ flight path angle, CT thrust coefficient), each holding scattered (phi, θ) channels of dBA level and EAA excess-attenuation factor. `eval()` computes ground level: geometry → sphere angles (`lookup_angles`), barycentric interpolation between operating conditions, periodic bilinear interpolation on the sphere grid, then spherical spreading + excess attenuation, `EAA * (range - r_sphere) / 1000` — EAA being
+the total A-weighted attenuation over the 1000 m reference distance the database was built at,
+which is exactly how panam writes and consumes it. No ground effect: see `--ground_effect`. Only `same_grid == true` databases are supported (the interpolation path is unimplemented). Free functions (`bracket`, `periodic_bilinear_interp`, `lookup_angles`, the geometry helpers) are exported in the header so the unit tests can reach them.
 - `src/predicates.{hpp,cpp}` — exact orientation and in-sphere tests via Shewchuk expansions, with a filtered double fast path. **The exactness is not optional**: the operating conditions are a prism (164 flight conditions x 8 thrust coefficients), so whole families of points are *exactly* cospherical and a rounded in-sphere test answers the same question two different ways, which leaves Bowyer-Watson's cavity non-star-shaped. Assumes normal (non-subnormal) coordinates; conditions are normalized into [0, 1] first.
 - `src/delaunay.{hpp,cpp}` — Delaunay triangulation in arbitrary dimension, Bowyer-Watson on those predicates. Dimension is a constructor argument, not a template parameter, so a fourth operating parameter costs nothing here. A simplex whose circumsphere passes exactly through the new point is left standing: a point *on* a circumsphere does not violate the Delaunay condition, and leaving it is what keeps the choice consistent under mass degeneracy.
 - `src/interpolator.{hpp,cpp}` — barycentric weights over the operating-condition space, on top of `delaunay.hpp`. Replaced CGAL's `Delaunay_triangulation_3`, and Boost/GMP/MPFR went with it. Databases with fewer than `dim + 1` conditions (a single exported sphere) skip the triangulation and take the nearest condition.
@@ -206,13 +220,16 @@ The reason the intuition fails is worth keeping: observers sweep a 120×120 grou
   receiver on the surface. `ground_impedance()` is hoisted out of the observer loop and the
   allocation-free overload is what the loop calls; returning a vector there allocated 94 million
   times and cost 20% of the run.
-- **`ground_effect = 4.0` in `eval` is not a ground effect.** It multiplies the database's EAA,
-  and panam — which *writes* that EAA, as `SPLA - SPLAa` over a 1000 m reference — consumes it as
-  `EAA / distance * (slant_range - radius)` with no such factor. So the broadband path overstates
-  atmospheric absorption fourfold: 168 dB at 6 km where the physical value is 14. It is inherited
-  verbatim from the D original (`c74bab3`, same `//TODO Add ground effects`), so the port is
-  faithful and **the goldens encode it**. Do not fix it without regenerating them and saying so.
-  `--ground_effect` is what that TODO was asking for.
+- **The 4x EAA multiplier is gone, and the goldens moved with it.** `eval` used to compute
+  `4.0 * EAA * (range - r)/1000` under a `//TODO Add ground effects`, inherited verbatim from
+  the D original (`c74bab3`). panam *writes* that EAA as `SPLA - SPLAa` over a 1000 m reference
+  and consumes it as `EAA / distance * (slant_range - radius)`, with no such factor, so the
+  multiplier overstated atmospheric absorption fourfold — 168 dB at 6 km where the physical
+  value is 14. It was not a ground effect either: measured against the model it stood in for,
+  soft ground costs a roughly range-independent 2–4 dB, where the factor removed 7 dB at 250 m
+  rising to 38 dB at 2 km. Removing it raised the demo footprint by **9.93 dB mean, up to
+  22.7 dB**. `golden/197421_LAE.csv` was regenerated; `golden/state_197421.csv` was not, being
+  trajectory state.
 - **Two propagation paths, and they do not agree.** The default carries one broadband dBA and
   attenuates it with the database's `EAA` factor; `--spectral` carries the per-band spectrum
   and attenuates each band at its own ISO 9613-1 coefficient. `Database::eval_spectrum` mirrors
@@ -272,7 +289,13 @@ The port was validated against the D reference and these four bugs were found an
 General rule: when a D construct looks obvious, check it against Phobos semantics rather than intuition — and prefer verifying with a throwaway `ldc2` program, which is how the `iota` question was settled.
 
 
-- **Port fidelity outranks correctness.** Several `NOTE:` comments mark places that faithfully reproduce D quirks; leave them alone unless you are also regenerating the golden outputs, and say so explicitly:
+- **Port fidelity outranks correctness, with one deliberate exception.** Several `NOTE:`
+  comments mark places that faithfully reproduce D quirks; leave them alone unless you are also
+  regenerating the golden outputs, and say so explicitly. The exception is the 4x EAA multiplier,
+  removed above: it was a physics error rather than a quirk, it was measured against the model it
+  stood in for before being removed, and `golden/197421_LAE.csv` was regenerated from the C++.
+  That is the bar for departing from D — a measured case that the D behaviour is wrong, not a
+  reading that it looks wrong.
   - Contour defaults are 65/100, not c74bab3's 45/90: the older pair puts its top level below the demo case's 93.6 dB peak, leaving it unfilled, and the shipped reference figures use 65/100. Figures only -- the goldens are CSV.
   - `watts_trim` and the observer grid extent are now CLI options (`--trim`, `--grid`), both defaulting to the port's behaviour so the goldens are untouched. With `--trim -6000 --grid -2000 1100 -1500 1600` the demo case reproduces the June 2020 reference figures to within 1.05 dB on every cell.
   - D's `iota` is EXCLUSIVE of the stop value; observer grids and contour levels reconstruct that off-by-one deliberately (`iota_exclusive` in `src/niceops.cpp`).

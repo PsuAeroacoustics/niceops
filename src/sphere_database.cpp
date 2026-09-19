@@ -823,10 +823,23 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     const auto sphere_level = bilinear_apply(cell, q11.dBA, q12.dBA, q21.dBA, q22.dBA);
     const auto excess_factor = bilinear_apply(cell, q11.EAA, q12.EAA, q21.EAA, q22.EAA);
     trace("Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
-    // Apply spherical spreading and excess atmospheric absorption to surface level
-    // TODO Add ground effects
-    const double ground_effect = 4.0;
-    auto excess_attenuation = ground_effect * excess_factor * (range - sphere_radius()) / 1000.0;
+    // Apply spherical spreading and excess atmospheric absorption to surface level.
+    //
+    // EAA is the total A-weighted attenuation over the 1000 m reference distance
+    // the database was built at: panam writes it as SPLA - SPLAa, the level at
+    // the sphere less the level after 1000 m of ISO 9613-1 absorption, and
+    // consumes it as EAA / distance * (slant_range - radius).  This is that
+    // formula.
+    //
+    // The D original multiplied it by a further 4.0 under a "TODO Add ground
+    // effects" (c74bab3).  That is not a ground effect: it is a fourfold
+    // overstatement of atmospheric absorption, unbounded in range -- 168 dB at
+    // 6 km where the physical value is 14 -- where a real ground effect is
+    // bounded by the surface impedance and roughly range-independent.  Measured
+    // against the model it was standing in for, soft ground costs 2 to 4 dB
+    // across the whole footprint while the factor removed 7 dB at 250 m rising
+    // to 38 dB at 2 km.  See --ground_effect for the real thing.
+    auto excess_attenuation = excess_factor * (range - sphere_radius()) / 1000.0;
     auto spreading_loss = 20.0 * std::log10(range / sphere_radius());
     trace("Spreading Loss (dB): ", spreading_loss, "\tExcess Attenuation (dB): ", excess_attenuation);
     assert(std::isfinite(sphere_level));
@@ -1002,7 +1015,7 @@ double Database::cull_range(const Blend& blend, double cutoff) const
     const double unbounded = std::numeric_limits<double>::infinity();
     if (std::isnan(cutoff))
         return unbounded;
-    // A level is sphere_level - 20*log10(r/r0) - 4*EAA*(r - r0)/1000.  Dropping
+    // A level is sphere_level - 20*log10(r/r0) - EAA*(r - r0)/1000.  Dropping
     // the attenuation term bounds the level from above only if that term cannot
     // be negative, i.e. if no excess factor in the database is.  The D original
     // used to take abs() of the factor precisely because it could be; if this

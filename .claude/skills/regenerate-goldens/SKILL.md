@@ -5,7 +5,14 @@ description: Rebuild golden/197421_LAE.csv and golden/state_197421.csv from the 
 
 # Regenerating the golden reference files
 
-`golden/197421_LAE.csv` and `golden/state_197421.csv` come from the **D reference
+> **`golden/197421_LAE.csv` no longer comes from D.** Removing the spurious 4x EAA multiplier
+> deliberately departed from the D original, so a D build now reproduces the bug rather than the
+> reference. Regenerate that file by running the current `niceops` on the demo case and copying
+> `integrated/197421_LAE.csv` over it. Everything below still applies to
+> `golden/state_197421.csv`, which is trajectory state and untouched by propagation, and to using
+> D to adjudicate a discrepancy in any path other than the EAA attenuation.
+
+`golden/state_197421.csv` comes from the **D reference
 implementation**, which was removed from the tree once the port was verified. The
 C++ port matches them to **1e-9** (actual max relative difference ~1e-14, a few ULPs
 of LDC-vs-clang round-off).

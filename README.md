@@ -183,6 +183,24 @@ R-66, SH-60B), each with its own `vehicle.cfg` and `vehicle.json`. `Be407_spectr
 beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. Databases are not tracked in
 this repository; they are far too large and are derived products.
 
+#### A note on levels changing
+
+**Results from before September 2026 are not comparable to results after.** `eval` used to
+multiply the database's `EAA` by a constant 4.0, under a `//TODO Add ground effects` inherited
+from the D original. That is not a ground effect, and it overstated atmospheric absorption
+fourfold — 168 dB at 6 km where the physical value is 14. panam *writes* that `EAA` as
+`SPLA - SPLAa` over a 1000 m reference and consumes it as `EAA / distance * (slant_range -
+radius)`; the tool now does the same.
+
+Removing it raised the demo footprint by **9.93 dB mean, up to 22.7 dB**, most of it far from
+the track where the old factor was removing the most. `golden/197421_LAE.csv` was regenerated;
+`golden/state_197421.csv` is trajectory state and unaffected.
+
+It was measured against `--ground_effect`, the model it was standing in for, before being
+removed: soft ground costs a roughly range-independent 2–4 dB relative to a rigid surface,
+where the factor removed 7 dB at 250 m rising to 38 dB at 2 km. A real ground effect is bounded
+by the surface impedance; a multiplier on a distance-proportional absorption is not.
+
 #### Propagating them to the ground
 
 `--spectral` carries the spectrum itself to the observer instead of a single number. Each
