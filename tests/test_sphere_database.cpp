@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <vector>
 
 #include "sphere_database.hpp"
@@ -119,9 +120,23 @@ TEST_CASE("acosc clamps its argument", "[sphere_database]")
     // dot/norm/normalize/cross are one-line vector helpers and are not tested
     // here; testing them would test vec3.hpp, not this file.  acosc is
     // real: it clamps before acos so round-off past the ends is not NaN.
-    REQUIRE(acosc(0.5) == std::acos(0.5));
-    REQUIRE(acosc(10.0) == std::acos(1.0));
-    REQUIRE(acosc(-10.0) == std::acos(-1.0));
+    //
+    // Do not assert bit-identity against std::acos on a literal.  acosc is a
+    // cross-TU call that reaches libm at run time, while std::acos(0.5) here
+    // is folded by the compiler at build time -- GCC folds via MPFR, correctly
+    // rounded, and the two answers differ by an ULP.  The contract is the
+    // clamping, not agreement with whichever libm the build happens to link,
+    // so compare acosc against itself at the clamp points and allow a few ULP
+    // in between.
+    REQUIRE(std::fabs(acosc(0.5) - std::acos(0.5))
+            <= 4.0 * std::numeric_limits<double>::epsilon());
+    REQUIRE(acosc(10.0) == acosc(1.0));
+    REQUIRE(acosc(-10.0) == acosc(-1.0));
+
+    // The reason it exists: a dot product of unit vectors can land a hair
+    // outside [-1, 1], where a bare acos returns NaN.
+    REQUIRE(!std::isnan(acosc(1.0 + 1e-15)));
+    REQUIRE(!std::isnan(acosc(-1.0 - 1e-15)));
 }
 
 TEST_CASE("lookup_angles", "[sphere_database]")
