@@ -177,6 +177,12 @@ None of the databases in `databases/` carries spectra. Build one with panam's
 amplitudes through from the source spheres. Band-limit it — `infreqs=(10.0, 3500.0)` —
 because the top few bands of a measured sphere are usually noise-floor artifacts.
 
+The AAM/RNM source spheres live in the group's OneDrive under `Data/Sphere_Database`, one
+directory of `.nc` files per aircraft (AS350, Be206L3, Be407, Be430, EC130, MD-902, Mi-8, R-44,
+R-66, SH-60B), each with its own `vehicle.cfg` and `vehicle.json`. `Be407_spectral.nod` sits
+beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. Databases are not tracked in
+this repository; they are far too large and are derived products.
+
 #### Propagating them to the ground
 
 `--spectral` carries the spectrum itself to the observer instead of a single number. Each
