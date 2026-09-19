@@ -228,6 +228,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Create trajectory from CSV data
     Trajectory trajectory(path_file, vehicle_file);
 
+    // mu and CT are non-dimensionalised by the vehicle JSON's tip speed, and
+    // they index the database's operating conditions -- which were generated at
+    // whatever tip speed the database records.  Disagree, and every lookup lands
+    // at the wrong condition with nothing downstream able to notice.  Worth
+    // checking because the two are easy to state in different units:
+    // S-76D_M3.nod was built at 220 m/s, and 600 is that same figure read as
+    // ft/s, which puts the tip at Mach 1.7.
+    if (!std::isnan(database.tip_speed())
+            && !approx_equal(trajectory.vehicle.tip_speed, database.tip_speed()))
+    {
+        log("Main rotor tip speed disagrees: ", vehicle_file, " gives ",
+                trajectory.vehicle.tip_speed, " m/s but the database was built at ",
+                database.tip_speed(), " m/s. mu and CT will index the wrong conditions.");
+    }
+
     // Trim trajectory (per Mike): crop from the given x to whichever comes
     // first, the lowest or the slowest point.  Off unless asked for -- it
     // changes which part of the flight is integrated, and so the levels.
