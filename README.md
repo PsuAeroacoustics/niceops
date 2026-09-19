@@ -266,9 +266,9 @@ to it, so name the surface rather than guessing.
 `--turbulence` decorrelates the two paths and fills the nulls in; leaving it at zero gives
 unrealistically deep interference dips.
 
-**It is expensive.** Acoustic loop on the Be407 case (94.3 M evaluations, 26 bands, 14 threads):
-broadband 0.33 s, `--spectral` 1.37 s, `--spectral --ground_effect` 16.8 s. So carrying the
-spectrum costs about 4x, and the ground effect about 50x — a complex reflection coefficient and
+**It is expensive.** Acoustic loop on the Be407 case (94.3 M evaluations, 26 bands, 14 threads,
+default band limits): broadband 0.34 s, `--spectral` 1.44 s, `--spectral --ground_effect`
+10.9 s. So carrying the spectrum costs about 4x, and the ground effect about 32x — a complex reflection coefficient and
 a Faddeeva evaluation per band per observer per state, none of which can be hoisted because it
 all depends on the geometry.
 

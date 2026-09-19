@@ -82,7 +82,8 @@ std::vector<std::complex<double>> ground_impedance(const GroundModel& ground,
 void excess_ground_attenuation(const GroundModel& ground,
         const std::vector<std::complex<double>>& impedance, double source_height,
         double ground_distance, double sound_speed, const std::vector<double>& frequencies,
-        double* attenuation);
+        double* attenuation, std::size_t first_band = 0,
+        std::size_t last_band = static_cast<std::size_t>(-1));
 
 // Excess ground attenuation in dB for each band centre, for a source at
 // `source_height` metres and a receiver `ground_distance` metres away

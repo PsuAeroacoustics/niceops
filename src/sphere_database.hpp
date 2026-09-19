@@ -171,7 +171,8 @@ public:
     // which must have room for band_count() entries.  `absorption` is the
     // dB/m coefficient for each band, from absorption_coefficients().
     void eval_spectrum(double range, double phi, double theta, const Blend& blend,
-            const double* absorption, double* levels) const;
+            const double* absorption, double* levels, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1)) const;
 
     // A-weighted, band-limited ground level at an observer, propagated per
     // band.  `gains` comes from a_weighting_gains() and must match the band
@@ -180,7 +181,8 @@ public:
             const double* absorption, const std::vector<double>& gains,
             const GroundModel* ground = nullptr,
             const std::vector<std::complex<double>>* impedance = nullptr,
-            double sound_speed = 343.2) const;
+            double sound_speed = 343.2, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1)) const;
 
     // Band centres carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centres() const

@@ -399,6 +399,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     const GroundModel* ground_model = nullptr;
     std::vector<std::complex<double>> ground_impedance_bands;
     double sound_speed = 343.2;
+    // The contiguous run of bands inside the metric's limits. Band centres are
+    // sorted, so the limits always select a range rather than a scattered set.
+    std::size_t first_band = 0;
+    std::size_t last_band = 0;
     if (options.spectral)
     {
         if (!database.has_spectra())
@@ -427,6 +431,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
         absorption = absorption_coefficients(air, bands);
         band_gains = a_weighting_gains(bands, options.band_limits);
+        while (first_band < bands.size() && band_gains[first_band] == 0.0)
+            first_band++;
+        last_band = bands.size();
+        while (last_band > first_band && band_gains[last_band - 1] == 0.0)
+            last_band--;
 
         log("Propagating spectra: ", retained, " of ", bands.size(), " bands within ",
                 options.band_limits.low, " to ", options.band_limits.high, " Hz, at ",
@@ -484,7 +493,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 double level = options.spectral
                         ? database.spectral_level_at_observer(observer, source_states[it],
                                 absorption.data(), band_gains, ground_model,
-                                &ground_impedance_bands, sound_speed)
+                                &ground_impedance_bands, sound_speed, first_band, last_band)
                         : database.level_at_observer(observer, source_states[it]);
                 if (add_ambient)
                 {

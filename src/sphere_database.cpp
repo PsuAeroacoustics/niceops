@@ -861,10 +861,15 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
 }
 
 void Database::eval_spectrum(double range, double phi, double theta, const Blend& blend,
-        const double* absorption, double* levels) const
+        const double* absorption, double* levels, std::size_t first_band,
+        std::size_t last_band) const
 {
     const std::size_t n_bands = frequencies_.size();
     assert(n_bands > 0);
+    // Bands the metric excludes are never read; skip them rather than blend and
+    // propagate values that weighted_level will multiply by a zero gain.
+    if (last_band > n_bands)
+        last_band = n_bands;
 
     // Same bracketing and the same bilinear cell as eval(): the spectral path
     // must land on the identical geometry, or a disagreement between the two
@@ -891,7 +896,7 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
     const double spreading_loss = 20.0 * std::log10(range / sphere_radius());
     const double path_length = range - sphere_radius();
 
-    for (std::size_t band = 0; band < n_bands; band++)
+    for (std::size_t band = first_band; band < last_band; band++)
     {
         double corner_level[4];
         for (std::size_t corner = 0; corner < 4; corner++)
@@ -919,7 +924,8 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
 
 double Database::spectral_level_at_observer(const Vec3& observer, const SourceState& state,
         const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
-        const std::vector<std::complex<double>>* impedance, double sound_speed) const
+        const std::vector<std::complex<double>>* impedance, double sound_speed,
+        std::size_t first_band, std::size_t last_band) const
 {
     // Reused across calls: this runs once per observer per trajectory state,
     // and the band count is fixed for the life of the database.
@@ -933,7 +939,8 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
     const auto angles = lookup_angles(state.frame, r);
     assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
 
-    eval_spectrum(slant_range, angles[0], angles[1], state.blend, absorption, levels.data());
+    eval_spectrum(slant_range, angles[0], angles[1], state.blend, absorption, levels.data(),
+            first_band, last_band);
 
     if (ground != nullptr)
     {
@@ -949,8 +956,9 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
         thread_local std::vector<double> correction;
         correction.resize(frequencies_.size());
         excess_ground_attenuation(*ground, *impedance, source_height, ground_distance,
-                sound_speed, frequencies_, correction.data());
-        for (std::size_t band = 0; band < levels.size(); band++)
+                sound_speed, frequencies_, correction.data(), first_band, last_band);
+        const std::size_t end = std::min(last_band, levels.size());
+        for (std::size_t band = first_band; band < end; band++)
             levels[band] += correction[band];
     }
 

@@ -234,9 +234,21 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     Its two trailing divides are folded into one: `2p/d^2 + c/d == (2p + c d)/d^2`.
   - `spectra_` is condition-innermost, matching `grid`. The netCDF file stores it the other way
     and the loader transposes once.
+  - The whole band loop in `excess_ground_attenuation` is real arithmetic for the same reason,
+    and its band-invariant branches (boundary loss on/off, the sinc, turbulence) are hoisted so
+    the body stays straight-line.
+  - Bands outside the metric's limits are not computed at all. `first_band`/`last_band` bound a
+    contiguous run, which is always what the limits select because band centres are sorted.
   All of it is exact: the footprint moved by 2.8e-14 dB end to end, and the EGA tests still pin
-  to panam at 1e-9 dB. Acoustic loop on the Be407 case: broadband 0.33 s, `--spectral` 1.37 s,
-  `--spectral --ground_effect` 16.8 s (was 41.4).
+  to panam at 1e-9 dB. Acoustic loop on the Be407 case, default band limits: broadband 0.34 s,
+  `--spectral` 1.44 s, `--spectral --ground_effect` 10.9 s (was 41.4).
+
+  **The asymptotic boundary loss was tried and rejected.** For large `|w|` the term tends to
+  `-(1/2w + 3/4w^2 + ...)`, which would skip `faddeeva` on ~20% of bands. It does not converge
+  to the exact value -- the error plateaus at 1.6e-5 at `|w| >= 50` and 1.9e-6 at `|w| >= 100`
+  no matter how many terms are taken -- so it cannot hold the 1e-9 dB pinning against panam at
+  any cutoff in range. Roughly 9% of the ground path, for the loss of the property that proves
+  the port. Not worth it; do not re-derive it.
 - **The 4x EAA multiplier is gone, and the goldens moved with it.** `eval` used to compute
   `4.0 * EAA * (range - r)/1000` under a `//TODO Add ground effects`, inherited verbatim from
   the D original (`c74bab3`). panam *writes* that EAA as `SPLA - SPLAa` over a 1000 m reference
