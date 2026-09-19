@@ -44,12 +44,17 @@ std::vector<double> a_weighting_gains(const std::vector<double>& frequencies, Ba
 
 double weighted_level(const double* band_levels, const std::vector<double>& gains)
 {
+    // exp(x * ln10/10) rather than pow(10, x/10).  They are the same number to
+    // within rounding, but pow() is a general two-argument routine that has to
+    // handle a variable base; this runs 26 times per evaluation and ~94M
+    // evaluations per run, so the difference is not academic.
+    constexpr double ln10_over_10 = 0.23025850929940456840; // ln(10)/10
     double total = 0.0;
     for (std::size_t band = 0; band < gains.size(); band++)
     {
         if (gains[band] == 0.0)
             continue;
-        total += gains[band] * std::pow(10.0, band_levels[band] / 10.0);
+        total += gains[band] * std::exp(band_levels[band] * ln10_over_10);
     }
     if (total <= 0.0)
         return -std::numeric_limits<double>::infinity();

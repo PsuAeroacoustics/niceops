@@ -220,6 +220,23 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   receiver on the surface. `ground_impedance()` is hoisted out of the observer loop and the
   allocation-free overload is what the loop calls; returning a vector there allocated 94 million
   times and cost 20% of the run.
+- **The spectral and ground paths were profiled, not guessed at.** Two rounds of intuition
+  (cache layout, then `pow`) bought 14% between them; `sample` on a running process then showed
+  the real costs and the same effort bought 2.5x. What it found, and what not to undo:
+  - `std::sqrt` on a `std::complex` costs an **atan2**, because libc++ evaluates it in polar
+    form. `ground_effect.cpp` called it three times per band; two were provably redundant
+    (`sqrt(w)` *is* the numerical-distance parameter, verified over the whole domain) and the
+    third is now `fast_sqrt`, which is algebraic. `std::abs`/`std::arg` on a complex cost a
+    hypot and an atan2 and are gone the same way -- `|Q|cos(p + arg Q)` is
+    `Re(Q)cos p - Im(Q)sin p`, and `|w| <= 500` is `norm(parameter) <= 500`.
+  - `faddeeva` is written in real arithmetic. Every `std::complex` multiply carries a branch to
+    recover NaN/infinity cases that cannot arise here, and the Horner loop does 31 of them.
+    Its two trailing divides are folded into one: `2p/d^2 + c/d == (2p + c d)/d^2`.
+  - `spectra_` is condition-innermost, matching `grid`. The netCDF file stores it the other way
+    and the loader transposes once.
+  All of it is exact: the footprint moved by 2.8e-14 dB end to end, and the EGA tests still pin
+  to panam at 1e-9 dB. Acoustic loop on the Be407 case: broadband 0.33 s, `--spectral` 1.37 s,
+  `--spectral --ground_effect` 16.8 s (was 41.4).
 - **The 4x EAA multiplier is gone, and the goldens moved with it.** `eval` used to compute
   `4.0 * EAA * (range - r)/1000` under a `//TODO Add ground effects`, inherited verbatim from
   the D original (`c74bab3`). panam *writes* that EAA as `SPLA - SPLAa` over a 1000 m reference

@@ -266,10 +266,11 @@ to it, so name the surface rather than guessing.
 `--turbulence` decorrelates the two paths and fills the nulls in; leaving it at zero gives
 unrealistically deep interference dips.
 
-**It is expensive.** On the demo case the broadband path is 0.8 s, `--spectral` 1.6 s, and
-`--spectral --ground_effect` 40 s — a complex reflection coefficient and a Faddeeva evaluation
-per band per observer per state. The frequency-only parts (the Delany–Bazley impedance) are
-hoisted out of the loop; what remains depends on the geometry and cannot be.
+**It is expensive.** Acoustic loop on the Be407 case (94.3 M evaluations, 26 bands, 14 threads):
+broadband 0.33 s, `--spectral` 1.37 s, `--spectral --ground_effect` 16.8 s. So carrying the
+spectrum costs about 4x, and the ground effect about 50x — a complex reflection coefficient and
+a Faddeeva evaluation per band per observer per state, none of which can be hoisted because it
+all depends on the geometry.
 
 `--spectral` cannot be combined with `--db_cutoff`: the cutoff's range bound is derived
 from the broadband level and is not a bound on the band-limited weighted one.

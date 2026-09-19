@@ -652,10 +652,19 @@ Database::Database(const std::string& datafile_path)
             int amplitude_id = 0;
             if (NC_NOERR != nc_inq_varid(group_id, "amplitude", &amplitude_id))
                 input_error("Database error: sphere has a frequency dimension but no amplitude.");
+            // netCDF stores amplitude(phi, theta, frequency), so it arrives
+            // cell-major with the bands innermost.  Read it as it lies, then
+            // scatter into the condition-innermost layout the observer loop
+            // wants -- see the note on spectra_ in the header.  This costs one
+            // pass over the sphere at load time and saves a cache miss per
+            // condition per band on every one of ~94M evaluations.
+            std::vector<double> sphere_amplitudes(phis.size() * thetas.size() * n_bands);
             if (NC_NOERR
-                    != nc_get_var_double(group_id, amplitude_id,
-                            spectra_.data() + i * phis.size() * thetas.size() * n_bands))
+                    != nc_get_var_double(group_id, amplitude_id, sphere_amplitudes.data()))
                 input_error("Database error: could not read amplitude for sphere ", i, ".");
+            const std::size_t n_conditions_total = group_ids.size();
+            for (std::size_t slot = 0; slot < sphere_amplitudes.size(); slot++)
+                spectra_[slot * n_conditions_total + i] = sphere_amplitudes[slot];
         }
         else if (!frequencies_.empty())
         {
@@ -891,13 +900,14 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
             // are a long stride apart.  That is the wrong layout for this loop
             // and the right one for interpolate_sphere; this path is opt-in and
             // pays for it rather than making the sphere export pay.
-            double blended = 0.0;
-            for (std::size_t k = 0; k < 4; k++)
-            {
-                blended += blend.weights[k]
-                        * spectra_[(blend.indices[k] * cells + corners[corner]) * n_bands + band];
-            }
-            corner_level[corner] = blended;
+            // The four conditions of one (cell, band) are adjacent now, so
+            // this is one cache line rather than four misses.
+            const double* conditions
+                    = spectra_.data() + (corners[corner] * n_bands + band) * n_conditions;
+            corner_level[corner] = blend.weights[0] * conditions[blend.indices[0]]
+                    + blend.weights[1] * conditions[blend.indices[1]]
+                    + blend.weights[2] * conditions[blend.indices[2]]
+                    + blend.weights[3] * conditions[blend.indices[3]];
         }
 
         const double sphere_level = bilinear_apply(cell_weights, corner_level[0],
@@ -999,7 +1009,8 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
                 for (std::size_t k = 0; k < 4; k++)
                 {
                     value += w[k]
-                            * spectra_[(blend.indices[k] * cells + cell) * n_bands + band];
+                            * spectra_[(cell * n_bands + band) * n_conditions
+                                    + blend.indices[k]];
                 }
                 sphere.amplitudes[cell * n_bands + band] = value;
             }

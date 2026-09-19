@@ -302,8 +302,13 @@ private:
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
     // Band centres shared by every sphere, and the per-band levels laid out as
-    // spectra_[(condition * cell_count + cell) * frequencies_.size() + band].
-    // Both empty unless the database carries spectra.
+    // spectra_[(cell * frequencies_.size() + band) * n_conditions + condition].
+    //
+    // Condition innermost, matching grid above and for the same reason: the
+    // observer loop blends four conditions at one (cell, band), so they want to
+    // be on one cache line.  The netCDF file stores them the other way round and
+    // the loader transposes once.  Both empty unless the database carries
+    // spectra.
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
     std::vector<double> frequencies_;
     std::vector<double> spectra_;

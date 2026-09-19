@@ -35,17 +35,45 @@ constexpr double weideman_a[32] = {
 const double one_over_sqrt_pi = 1.0 / std::sqrt(M_PI);
 
 // The series proper, valid for Im(z) >= 0.
+//
+// Written in real arithmetic rather than std::complex.  Every std::complex
+// multiply carries a branch to recover the NaN/infinity cases the standard
+// requires, and the Horner loop below does 31 of them per call; the recovery
+// path cannot trigger here, because the argument is bounded by construction.
+// The two divides at the end are also folded into one:
+//   2p/d^2 + c/d  ==  (2p + c d)/d^2.
 std::complex<double> weideman(std::complex<double> z)
 {
-    const std::complex<double> i_z(-z.imag(), z.real()); // i * z
-    const std::complex<double> denominator = weideman_L - i_z;
-    const std::complex<double> transformed = (weideman_L + i_z) / denominator;
+    // denominator d = L - i z, numerator n = L + i z.
+    const double dr = weideman_L + z.imag();
+    const double di = -z.real();
+    const double nr = weideman_L - z.imag();
+    const double ni = z.real();
 
-    std::complex<double> polynomial = weideman_a[0];
+    // t = n / d, the Moebius transform the series is a polynomial in.
+    const double d_norm = dr * dr + di * di;
+    const double tr = (nr * dr + ni * di) / d_norm;
+    const double ti = (ni * dr - nr * di) / d_norm;
+
+    double pr = weideman_a[0];
+    double pi_ = 0.0;
     for (std::size_t term = 1; term < 32; term++)
-        polynomial = polynomial * transformed + weideman_a[term];
+    {
+        const double next_r = pr * tr - pi_ * ti + weideman_a[term];
+        pi_ = pr * ti + pi_ * tr;
+        pr = next_r;
+    }
 
-    return 2.0 * polynomial / (denominator * denominator) + one_over_sqrt_pi / denominator;
+    // numerator = 2p + (1/sqrt(pi)) d
+    const double num_r = 2.0 * pr + one_over_sqrt_pi * dr;
+    const double num_i = 2.0 * pi_ + one_over_sqrt_pi * di;
+
+    // d^2
+    const double d2r = dr * dr - di * di;
+    const double d2i = 2.0 * dr * di;
+
+    const double d2_norm = d2r * d2r + d2i * d2i;
+    return {(num_r * d2r + num_i * d2i) / d2_norm, (num_i * d2r - num_r * d2i) / d2_norm};
 }
 
 } // namespace

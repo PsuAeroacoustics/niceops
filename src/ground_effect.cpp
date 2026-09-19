@@ -14,6 +14,33 @@ namespace {
 constexpr double spherical_spreading_coefficient = 0.727477;
 constexpr double ground_reflection_coefficient = 6.325159;
 
+// Square root of a complex number, algebraically rather than in polar form.
+//
+// libc++'s std::sqrt for complex goes through abs() and arg(), costing a hypot
+// and an atan2; this costs three real square roots and no transcendental at
+// all. The branch is the standard one that avoids cancellation: take whichever
+// of the two components does not subtract nearly-equal quantities, and recover
+// the other by division.
+//
+// Values here are bounded well inside the exponent range, so squaring the
+// components directly is safe and hypot's overflow guard is not needed.
+inline std::complex<double> fast_sqrt(std::complex<double> z)
+{
+    const double x = z.real();
+    const double y = z.imag();
+    if (x == 0.0 && y == 0.0)
+        return {0.0, 0.0};
+
+    const double magnitude = std::sqrt(x * x + y * y);
+    if (x >= 0.0)
+    {
+        const double real = std::sqrt(0.5 * (magnitude + x));
+        return {real, y / (2.0 * real)};
+    }
+    const double imag = std::copysign(std::sqrt(0.5 * (magnitude - x)), y);
+    return {y / (2.0 * imag), imag};
+}
+
 // Beyond this the boundary-loss term is negligible and its series is not worth
 // evaluating; panam uses the same cut, leaving the term at zero above it.
 constexpr double boundary_loss_cutoff = 500.0;
@@ -60,6 +87,12 @@ void excess_ground_attenuation(const GroundModel& ground,
     const double path_delay = (image_range - direct_range) / sound_speed;
     const double range_ratio = direct_range > 0.0 ? image_range / direct_range : 1.0;
 
+    // Hoisted: the turbulence factor's only per-band term is the frequency.
+    const double turbulence_scale
+            = ground.turbulence > 0.0 ? 0.5 * ground.turbulence * std::sqrt(direct_range) : 0.0;
+    const double inverse_range_ratio = 1.0 / range_ratio;
+    const double root_pi = std::sqrt(M_PI);
+
     for (std::size_t band = 0; band < frequencies.size(); band++)
     {
         const double frequency = frequencies[band];
@@ -71,57 +104,57 @@ void excess_ground_attenuation(const GroundModel& ground,
         complex image_coefficient = plane_wave;
         if (ground.boundary_loss_correction)
         {
-            // Numerical distance.
-            const complex parameter = std::sqrt(i * M_PI * frequency * image_range / sound_speed
+            // Numerical distance.  panam squares this to get w, then takes
+            // sqrt(w) again inside the boundary loss; but sqrt(w) is exactly
+            // this parameter -- its real part is positive throughout the domain
+            // the model reaches -- so the round trip is skipped.  Each complex
+            // sqrt costs an atan2, because libc++ evaluates it in polar form,
+            // and this loop runs 26 times per observer per state.
+            const complex parameter = fast_sqrt(i * M_PI * frequency * image_range / sound_speed
                                               / (1.0 + impedance_ratio * cos_grazing))
                     * (cos_grazing + impedance_ratio);
-            const complex w = parameter * parameter;
 
+            // |w| <= 500 is |parameter|^2 <= 500, and norm() is that without a
+            // square root.
             complex boundary_loss = 0.0;
-            if (std::abs(w) <= boundary_loss_cutoff)
+            if (std::norm(parameter) <= boundary_loss_cutoff)
             {
                 // panam writes this as 1 + i sqrt(pi w) exp(-w)(1 - erf(-i sqrt w)).
-                // The trailing product is the Faddeeva function at sqrt(w),
-                // which is the numerically stable way to evaluate it.
-                boundary_loss = 1.0 + i * std::sqrt(M_PI * w) * faddeeva(std::sqrt(w));
+                // sqrt(pi w) = sqrt(pi) * parameter, and the trailing product is
+                // the Faddeeva function -- the numerically stable form.
+                boundary_loss = 1.0 + i * root_pi * parameter * faddeeva(parameter);
             }
             image_coefficient = plane_wave + boundary_loss * (1.0 - plane_wave);
         }
 
-        const double image_magnitude = std::abs(image_coefficient);
-        const double image_phase = std::arg(image_coefficient);
-
         // Chessell equations 20 and 21: the band-averaged combination of the
         // direct and reflected paths, rather than the pure-tone interference.
         const double frequency_delay = frequency * path_delay;
-        const double normalized = image_magnitude / range_ratio;
-        const double normalized_squared = normalized * normalized;
+        // |Q|^2 without the square root, and |Q|cos(phase + arg Q) expanded as
+        // Re(Q)cos(phase) - Im(Q)sin(phase) -- which is the same number without
+        // the arg() (an atan2) or the abs() (a hypot) that reach it the long way.
+        const double image_norm = std::norm(image_coefficient);
+        const double ground_phase = ground_reflection_coefficient * frequency_delay;
+        const double coherent = image_coefficient.real() * std::cos(ground_phase)
+                - image_coefficient.imag() * std::sin(ground_phase);
 
         // Turbulence decorrelates the two paths, which fills in the nulls.
-        const double turbulence_factor = ground.turbulence > 0.0
-                ? std::exp(-std::pow(
-                          0.5 * ground.turbulence * frequency * std::sqrt(direct_range), 2.0))
+        const double turbulence_factor = turbulence_scale > 0.0
+                ? std::exp(-(turbulence_scale * frequency) * (turbulence_scale * frequency))
                 : 1.0;
 
-        const double ground_phase
-                = ground_reflection_coefficient * frequency_delay + image_phase;
         const double spherical_phase = spherical_spreading_coefficient * frequency_delay;
-        const double cosine_factor = std::cos(ground_phase) * turbulence_factor;
-
-        double magnitude;
+        double cross = 2.0 * inverse_range_ratio * coherent * turbulence_factor;
         if (path_delay > 0.0)
         {
             // sin(x)/x, the band-averaging factor. It is the reason the delay
             // has to be strictly positive: at zero delay the two paths are the
             // same path and the ratio is 0/0.
-            magnitude = 1.0 + normalized_squared
-                    + 2.0 * normalized * std::sin(spherical_phase) * cosine_factor
-                            / spherical_phase;
+            cross *= std::sin(spherical_phase) / spherical_phase;
         }
-        else
-        {
-            magnitude = 1.0 + normalized_squared + 2.0 * normalized * cosine_factor;
-        }
+
+        const double magnitude
+                = 1.0 + image_norm * inverse_range_ratio * inverse_range_ratio + cross;
 
         if (!(magnitude > 0.0))
         {
