@@ -1,12 +1,33 @@
 name: Build and Test
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+
+# A branch in this repo with a PR open fires both events, so every commit built
+# twice -- four jobs with the matrix, and the pull_request pair was an exact
+# rerun of the push pair on the same SHA.
+#
+# The push run is the one to keep: it covers branches with no PR open yet, which
+# is how this repo is usually worked, and its checks still show on the PR. That
+# leaves the pull_request run for the one case a push event cannot see at all --
+# a PR opened from a fork, whose commits never land in this repo.
+concurrency:
+  # Supersede rather than pile up: pushing a fixup while the previous build is
+  # still going should cancel it. Never cancel on master, where each run is the
+  # record for a commit that is already merged.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 env:
   BUILD_TYPE: Release
 
 jobs:
   build:
+    # Skip the duplicate: same-repo PRs are already covered by their push run.
+    if: >-
+      github.event_name == 'push'
+      || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
 
     strategy:
