@@ -144,6 +144,12 @@ add_library(niceops_core STATIC
   src/geodetic.cpp
   src/predicates.cpp
   src/delaunay.cpp
+  # interpolator.cpp was its own library in the D era, to wall off CGAL's heavy
+  # headers.  CGAL is gone, and the split had become a link cycle: interpolator
+  # calls into Delaunay here, while niceops_core linked interpolator.  GNU ld
+  # resolves archives in a single pass and failed on it; ld64 did not, so it
+  # only ever broke Linux.
+  src/interpolator.cpp
   src/trajectory.cpp
   ${NICEOPS_PLOTTING_SOURCE}
   src/smoothing_spline.cpp
@@ -163,14 +169,6 @@ if(NICEOPS_PLOTTING)
       "NICEOPS_VENV_SITE_PACKAGES=\"${NICEOPS_VENV_SITE_PACKAGES}\"")
   endif()
 endif()
-
-# Delaunay interpolator over the operating-condition space.  Kept a separate
-# library from the D era, when it walled off CGAL's heavy headers; it has no
-# third-party dependency now, but the seam is harmless and keeps the geometry
-# separable from the acoustics.
-add_library(interpolator STATIC src/interpolator.cpp)
-target_include_directories(interpolator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(niceops_core PUBLIC interpolator)
 
 # Main executable
 add_executable(niceops src/niceops.cpp)
