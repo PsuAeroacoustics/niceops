@@ -18,7 +18,8 @@ niceops
 *.dSYM
 *.nc
 *_LAE.csv
-/external/matplotlibd/examples/
+# ...but keep the golden reference outputs tracked for regression comparison
+!golden/*_LAE.csv
 splinter-test
 /figures/
 /integrated/
@@ -40,3 +41,7 @@ Testing/
 CTestTestfile.cmake
 
 niceops_unit_tests
+
+# Local Claude Code settings (per-developer, not shared)
+.claude/settings.local.json
+wopwop2aam

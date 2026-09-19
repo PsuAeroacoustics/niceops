@@ -1,50 +1,16 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.16)
 
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake-d)
-#list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
-#list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3/cmake)
+project(NICEOPS VERSION 1.0 LANGUAGES CXX)
 
-#include(BuildDExecutable)
-
-
-project(NICEOPS VERSION 1.0 LANGUAGES C CXX D)
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-  set(CMAKE_INSTALL_PREFIX
-    "build" CACHE PATH "default install prefix" FORCE
-    )
-endif(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-
-#list(APPEND DFLAGS_BASE "-m64")
-#include(ExtractDMDSystemLinker)
-
-if("${CMAKE_CL_64}" STREQUAL "1")
-  message(NOTICE "64 bit!")
-  set(CMAKE_D_FLAGS "${CMAKE_D_FLAGS}-m64")
-  set(CMAKE_D_LINK_FLAGS "${CMAKE_D_LINK_FLAGS}-m64")
-  set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS}-m64")
-  set(CMAKE_STATIC_LIBRARY_CREATE_D_FLAGS "${CMAKE_STATIC_LIBRARY_CREATE_D_FLAGS}-m64")
-  set(CMAKE_SHARED_LIBRARY_D_FLAGS "${CMAKE_SHARED_LIBRARY_D_FLAGS}-m64")
-  set(CMAKE_STATIC_LIBRARY_CREATE_D_FLAGS "${CMAKE_STATIC_LIBRARY_CREATE_D_FLAGS}-m64")
-  
-endif()
-
-
-#Set dylib paths relative to executable path under OSX
+# Set dylib paths relative to executable path under OSX
 set(CMAKE_MACOSX_RPATH 0)
 set(CMAKE_INSTALL_NAME_DIR @executable_path)
-#Set attributes for Xcode project
+# Set attributes for Xcode project
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++17")
 set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-
-
-#include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3 external/numd/source)
-include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source /usr/local/include/eigen3 /usr/include/eigen3 external/eigen3 external/numd/source)
-#include_directories(SYSTEM /usr/local/include /opt/local/include /sw/include /usr/include external/splinter/include external/matplotlibd/source external/numd/source)
-
-# Including the source directory is apparently required to support out of source builds of D modules
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 add_definitions(-D_THREAD_SAFE)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -53,172 +19,187 @@ if(NOT CMAKE_BUILD_TYPE)
           FORCE)
 endif (NOT CMAKE_BUILD_TYPE)
 
-find_package(netCDF)
-message(NOTICE ${netCDF_VERSION})
+# NOTE: do NOT add -DNDEBUG to Release.  The D original ran with asserts live
+# in release builds, and sphere_database.cpp relies on assert(isFinite(...))
+# guards; matching that behavior is part of the port contract.
 
-# Force shared version to be used to ensure good linking . (Some systems like Homebrew install static and shared in the same place). Keeping windows static for now.
-find_file(NCDF NAMES libnetcdf.dylib libnetcdf.so netcdf.lib PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu/netcdf/mpi "C:\\Program Files\\netCDF ${NetCDF_VERSION}\\lib" "C:\\Program Files (x86)\\netCDF ${NetCDF_VERSION}\\lib")
-
-find_package(Boost)
-find_package(CGAL COMPONENTS Core)
-include(${CGAL_USE_FILE})
-
-if(NOT ${GMP_INCLUDES} STREQUAL "")
-  include_directories(${GMP_INCLUDES})
+# netCDF shared library (some systems like Homebrew install static and shared
+# in the same place, so force the shared version)
+find_library(NETCDF_LIBRARY NAMES netcdf
+  PATHS /usr/local/lib/ /opt/local/lib/ /sw/lib/ /usr/lib64/ /usr/lib/ /usr/lib/x86_64-linux-gnu/)
+find_path(NETCDF_INCLUDE_DIR NAMES netcdf.h
+  PATHS /usr/local/include/ /opt/local/include/ /sw/include/ /usr/include/ /usr/include/x86_64-linux-gnu/)
+if(NOT NETCDF_INCLUDE_DIR)
+  message(FATAL_ERROR "netcdf.h not found; install the netCDF development headers.")
 endif()
 
-if(NOT ${MPFR_INCLUDES} STREQUAL "")
-  include_directories(${MPFR_INCLUDES})
-endif()
+# CGAL is gone: the Delaunay triangulation is now src/delaunay.cpp on the exact
+# predicates in src/predicates.cpp, which also sheds the Boost, GMP and MPFR
+# that CGAL pulled in behind it.
 
-add_library(sphere_database sphere_database.d netcdf.d)
-target_link_libraries(sphere_database ${NCDF})
-set_target_properties(
-  sphere_database PROPERTIES
-    #RUNTIME_OUTPUT_DIRECTORY ./
-    #LIBRARY_OUTPUT_DIRECTORY ./
-    #ARCHIVE_OUTPUT_DIRECTORY ./
-    #ARCHIVE_OUTPUT_NAME sphere_database
-    #LIBRARY_OUTPUT_NAME sphere_database
-    #RUNTIME_OUTPUT_NAME sphere_database
-    #COMPILE_FLAGS ""
-    LINKER_LANGUAGE CXX
-    #LINK_FLAGS ""
-    # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-    #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+# Third-party dependencies, fetched at configure time
+include(FetchContent)
+
+FetchContent_Declare(
+  CLI11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG v2.4.2
 )
-#set_target_properties(
-#  sphere_database PROPERTIES
-#    RUNTIME_OUTPUT_DIRECTORY ./
-#    LIBRARY_OUTPUT_DIRECTORY ./
-#    ARCHIVE_OUTPUT_DIRECTORY ./
-#    ARCHIVE_OUTPUT_NAME sphere_database
-#    LIBRARY_OUTPUT_NAME sphere_database
-#    RUNTIME_OUTPUT_NAME sphere_database
-#    COMPILE_FLAGS ""
-#    LINKER_LANGUAGE CXX
-#    LINK_FLAGS "${SANITIZE_LDFLAGS}"
-#    # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-#    VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
-#)
-
-add_library(interpolator interpolator.cpp)
-target_link_libraries(interpolator ${CGAL})
-
-add_subdirectory(external/splinter)
-
-#if(MSVC_IDE) # Visual Studio generator
-#    # Add the .d files as (Visual D) source files to this lib, so that they show up somewhere.
-#    #set(LDC_LIB_EXTRA_SOURCES ${LDC_D_SOURCE_FILES})
-#    message(NOTICE "Setting D")
-#    set_property(SOURCE ${CMAKE_CURRENT_LIST_DIR}/trajectory.d PROPERTY VS_TOOL_OVERRIDE "DCompile")
-#    # 'Clear' the original list for the custom commands below, producing ldc2.exe and ldc2-unittest.exe -
-#    # we still need a dummy .d file.
-#    #set(LDC_D_SOURCE_FILES "${PROJECT_SOURCE_DIR}/dmd/root/man.d")
-#    # Mark this main library target as (bold) startup project for the generated Visual Studio solution.
-#    #set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${LDC_LIB})
-#endif()
-
-add_library(trajectory ${CMAKE_CURRENT_LIST_DIR}/trajectory.d wgs84tocartesian.d worldtransforms.d splines.d splinter.cpp)
-set_property(TARGET trajectory PROPERTY CXX_STANDARD 17)
-#Qadd_library(trajectory splinter.cpp)
-
-set_target_properties(
-    trajectory PROPERTIES
-    #RUNTIME_OUTPUT_DIRECTORY ./
-    #LIBRARY_OUTPUT_DIRECTORY ./
-    #ARCHIVE_OUTPUT_DIRECTORY ./
-    #ARCHIVE_OUTPUT_NAME trajectory
-    #LIBRARY_OUTPUT_NAME trajectory
-    #RUNTIME_OUTPUT_NAME trajectory
-    #COMPILE_FLAGS ""
-    LINKER_LANGUAGE CXX
-    #LINK_FLAGS ""
-    # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-    #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.3
 )
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG v3.5.4
+)
+# Plotting is the only thing that needs Python.  Turning it off drops Python,
+# pybind11 and matplotlib from the build entirely; the acoustics need none of
+# them.
+option(NICEOPS_PLOTTING "Build the matplotlib plotting facade" ON)
+# The packages plotting needs are installed into a virtual environment under the
+# build tree, so a run depends on what this build made rather than on whatever
+# happens to be installed for the system interpreter.  Turn off to use the
+# interpreter's own packages instead.
+option(NICEOPS_BUNDLE_PYTHON "Create a virtual environment for matplotlib" ON)
 
-target_link_libraries(trajectory splinter-static)
-
-add_subdirectory(external/numd)
-
-add_subdirectory(external/matplotlibd)
-#function(build_d_executable target_name output_exe d_src_files compiler_args linker_args extra_compile_deps link_deps compile_separately)
-#build_d_executable(
-#    "${LDMD_EXE}"
-#    "${LDMD_EXE_FULL}"
-#    "${LDMD_D_SOURCE_FILES}"
-#    "${DFLAGS_BUILD_TYPE}"
-#    "${LDC_LINKERFLAG_LIST}"
-#    ""
-#    "LDMD_CXX_LIB"
-#    ${COMPILE_D_MODULES_SEPARATELY}
-#)
-#set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
-#set(LDC_LINK_MANUALLY TRUE)
-
-#build_d_executable(
-#  niceops
-#  ./niceops
-#  ${CMAKE_CURRENT_SOURCE_DIR}/niceops.d
-#  "-J${views_dir} -Iexternal/matplotlibd/source -Iexternal/numd/source"
-#  "-Wl,--copy-dt-needed-entries"
-#  ""
-#  ""
-#  "sphere_database;interpolator;trajectory;matplotlib-d;numd"
-#  TRUE
-#)
-add_executable(niceops niceops.d)
-target_link_libraries(niceops sphere_database interpolator trajectory matplotlib-d numd)
-
-add_executable(wopwop2aam wopwop2aam.d)
-target_link_libraries(wopwop2aam sphere_database interpolator trajectory matplotlib-d numd)
-
-set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
-target_compile_options(niceops PRIVATE "-J ${views_dir}")
-
-#set(views_dir ${CMAKE_CURRENT_SOURCE_DIR}/external/matplotlibd/views)
-target_compile_options(wopwop2aam PRIVATE "-J ${views_dir}")
-
-if(MSVC)
-  set_target_properties(
-    niceops PROPERTIES
-      #RUNTIME_OUTPUT_DIRECTORY ./
-      #LIBRARY_OUTPUT_DIRECTORY ./
-      #ARCHIVE_OUTPUT_DIRECTORY ./
-      #ARCHIVE_OUTPUT_NAME sphere_database
-      #LIBRARY_OUTPUT_NAME sphere_database
-      #RUNTIME_OUTPUT_NAME sphere_database
-      #COMPILE_FLAGS ""
-      LINKER_LANGUAGE D
-      LINK_FLAGS "-L/NODEFAULTLIB:MSVCRT -L/NODEFAULTLIB:libucrt ucrt.lib"
-      # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-      #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
+if(NICEOPS_PLOTTING)
+  find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+  FetchContent_Declare(
+    pybind11
+    GIT_REPOSITORY https://github.com/pybind/pybind11.git
+    GIT_TAG v2.13.6
   )
+  FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2 pybind11)
 else()
-  set_target_properties(
-    niceops PROPERTIES
-      #RUNTIME_OUTPUT_DIRECTORY ./
-      #LIBRARY_OUTPUT_DIRECTORY ./
-      #ARCHIVE_OUTPUT_DIRECTORY ./
-      #ARCHIVE_OUTPUT_NAME sphere_database
-      #LIBRARY_OUTPUT_NAME sphere_database
-      #RUNTIME_OUTPUT_NAME sphere_database
-      #COMPILE_FLAGS ""
-      LINKER_LANGUAGE D
-      LINK_FLAGS ""
-      # Use a custom .props file to set up Visual D (import paths, predefined versions...).
-      #VS_USER_PROPS "${PROJECT_SOURCE_DIR}/cmake-d/VisualD.props"
-  )
+  FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2)
 endif()
-add_executable(niceops_unit_tests niceops.d sphere_database.d trajectory.d splines.d)
-target_link_libraries(niceops_unit_tests sphere_database interpolator trajectory matplotlib-d numd)
-target_compile_options(niceops_unit_tests PRIVATE "-J ${views_dir}" )
-target_compile_options(niceops_unit_tests PRIVATE "-unittest" )
 
+# Build the virtual environment, once, and remember where its packages live.
+# The embedded interpreter puts this directory at the front of sys.path.
+set(NICEOPS_VENV_SITE_PACKAGES "")
+if(NICEOPS_PLOTTING AND NICEOPS_BUNDLE_PYTHON)
+  set(NICEOPS_VENV "${CMAKE_BINARY_DIR}/pyenv")
+  if(WIN32)
+    set(NICEOPS_VENV_PYTHON "${NICEOPS_VENV}/Scripts/python.exe")
+  else()
+    set(NICEOPS_VENV_PYTHON "${NICEOPS_VENV}/bin/python")
+  endif()
+
+  if(NOT EXISTS "${NICEOPS_VENV_PYTHON}")
+    message(STATUS "Creating Python environment for plotting in ${NICEOPS_VENV}")
+    execute_process(
+      COMMAND "${Python3_EXECUTABLE}" -m venv "${NICEOPS_VENV}"
+      RESULT_VARIABLE NICEOPS_VENV_RESULT
+      OUTPUT_QUIET
+    )
+    if(NOT NICEOPS_VENV_RESULT EQUAL 0)
+      message(WARNING "Could not create the plotting environment; falling back to the "
+                      "system interpreter's packages.")
+    endif()
+  endif()
+
+  if(EXISTS "${NICEOPS_VENV_PYTHON}")
+    # Only reach the network when matplotlib is not already there, so repeat
+    # configures stay offline and fast.
+    execute_process(
+      COMMAND "${NICEOPS_VENV_PYTHON}" -c "import matplotlib"
+      RESULT_VARIABLE NICEOPS_HAVE_MATPLOTLIB
+      OUTPUT_QUIET ERROR_QUIET
+    )
+    if(NOT NICEOPS_HAVE_MATPLOTLIB EQUAL 0)
+      message(STATUS "Installing matplotlib into ${NICEOPS_VENV} (first configure only)")
+      execute_process(
+        COMMAND "${NICEOPS_VENV_PYTHON}" -m pip install --quiet --disable-pip-version-check
+                matplotlib
+        RESULT_VARIABLE NICEOPS_PIP_RESULT
+      )
+      if(NOT NICEOPS_PIP_RESULT EQUAL 0)
+        message(WARNING "Could not install matplotlib. Plotting will report the failure at "
+                        "run time; everything else is unaffected.")
+      endif()
+    endif()
+    execute_process(
+      COMMAND "${NICEOPS_VENV_PYTHON}" -c
+              "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+      OUTPUT_VARIABLE NICEOPS_VENV_SITE_PACKAGES
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+    message(STATUS "Plotting packages: ${NICEOPS_VENV_SITE_PACKAGES}")
+  endif()
+endif()
+
+if(NICEOPS_PLOTTING)
+  set(NICEOPS_PLOTTING_SOURCE src/plotting.cpp)
+else()
+  set(NICEOPS_PLOTTING_SOURCE src/plotting_disabled.cpp)
+endif()
+
+# Core library: noise database, trajectory, smoothing spline, plotting facade
+add_library(niceops_core STATIC
+  src/sphere_database.cpp
+  src/geodetic.cpp
+  src/predicates.cpp
+  src/delaunay.cpp
+  # interpolator.cpp was its own library in the D era, to wall off CGAL's heavy
+  # headers.  CGAL is gone, and the split had become a link cycle: interpolator
+  # calls into Delaunay here, while niceops_core linked interpolator.  GNU ld
+  # resolves archives in a single pass and failed on it; ld64 did not, so it
+  # only ever broke Linux.
+  src/interpolator.cpp
+  src/trajectory.cpp
+  ${NICEOPS_PLOTTING_SOURCE}
+  src/smoothing_spline.cpp
+)
+target_include_directories(niceops_core PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${NETCDF_INCLUDE_DIR}
+)
+target_link_libraries(niceops_core PUBLIC
+  ${NETCDF_LIBRARY}
+  nlohmann_json::nlohmann_json
+)
+if(NICEOPS_PLOTTING)
+  target_link_libraries(niceops_core PUBLIC pybind11::embed)
+  if(NICEOPS_VENV_SITE_PACKAGES)
+    set_source_files_properties(src/plotting.cpp PROPERTIES COMPILE_DEFINITIONS
+      "NICEOPS_VENV_SITE_PACKAGES=\"${NICEOPS_VENV_SITE_PACKAGES}\"")
+  endif()
+endif()
+
+# Main executable
+add_executable(niceops src/niceops.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(niceops niceops_core CLI11::CLI11 Threads::Threads)
+
+# Unit tests (Catch2)
+add_executable(niceops_unit_tests
+  tests/test_peak_range.cpp
+  tests/test_sphere_database.cpp
+  tests/test_geodetic.cpp
+  tests/test_predicates.cpp
+  tests/test_delaunay.cpp
+  tests/test_trajectory.cpp
+  tests/test_csv.cpp
+  tests/test_legacy_repair.cpp
+  tests/test_smoothing_spline.cpp
+)
+target_link_libraries(niceops_unit_tests niceops_core Catch2::Catch2WithMain)
+
+# Golden output comparison tool (numeric, elementwise)
+add_executable(golden_compare tests/golden_compare.cpp)
 
 # Add testing with CTest
 enable_testing()
-add_test(NAME regression_default COMMAND niceops  "-h" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME broken_self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# One default run feeds both the LAE and state golden comparisons
+add_test(NAME regression_default COMMAND niceops -S state/ci_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# Validates every sphere in the database against its own stored levels
+# (1.8M samples).  Was "broken_self_test" and excluded from CI while legacy
+# hover directivity made it fail; it passes now and is a real test.
+add_test(NAME self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME state_golden COMMAND golden_compare state/ci_state.csv golden/state_197421.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
