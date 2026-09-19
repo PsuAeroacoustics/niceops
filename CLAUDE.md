@@ -47,6 +47,23 @@ Notes:
 - **Never add `-DNDEBUG` to Release.** The D original ran with asserts live, and `sphere_database.cpp` relies on `assert(isFinite(...))` guards; matching that is part of the port contract. This is called out in CMakeLists.txt.
 - If Xcode proper isn't installed (Command Line Tools only), pass `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`. No special flags are needed; the vendored SPLINTER library that used to require them is gone.
 - CGAL 5.0+ is header-only and exports `CGAL::CGAL`. Do **not** reintroduce `include(${CGAL_USE_FILE})` — `UseCGAL.cmake` was removed in CGAL 6, leaving `CGAL_USE_FILE` empty so the `include()` errors out.
+- **CI builds on GCC/libstdc++; a macOS clang build will not catch what that finds.**
+  Two classes of bug are invisible here and fatal there: headers libc++ drags in
+  transitively but libstdc++ does not (`<algorithm>` is the usual one), and static-library
+  link cycles, which ld64 resolves and GNU ld does not. Before pushing anything structural,
+  build the tree with Homebrew GCC rather than waiting for a CI round-trip:
+
+  ```sh
+  cmake -S . -B build-gcc -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_COMPILER=$(brew --prefix)/bin/g++-16 -DNICEOPS_PLOTTING=OFF
+  cmake --build build-gcc -j8 && ctest --test-dir build-gcc --output-on-failure
+  ```
+
+  The goldens pass under GCC too, so a compiler change does not move the 1e-9 comparison
+  despite the different FMA contraction. **Do not assert bit-identity against a libm call
+  on a literal argument** in a test: the literal gets constant-folded at build time (GCC
+  folds via MPFR, correctly rounded) while the function under test reaches libm at run
+  time, and the two differ by an ULP. `acosc` was written that way and only GCC noticed.
 - **Keep the C++ sources in one static library.** `interpolator.cpp` used to be its own
   `interpolator` target, a D-era seam that walled off CGAL's heavy headers. Once CGAL went,
   that split was a *cycle*: `interpolator.cpp` calls into `Delaunay`, which lives in
