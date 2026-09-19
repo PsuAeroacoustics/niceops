@@ -77,6 +77,18 @@ jobs:
         test -s ci-figures/footprint.png
         test -s ci-figures/state_CT_.png
 
+    - name: Show the log on failure
+      # fatal() writes its reason to log/niceops.log and calls abort(), so a
+      # failed run prints nothing at all to stdout or stderr -- ctest reports
+      # only "Subprocess aborted" and an empty output block. Surface the log
+      # inline so a red build says why without downloading the artifact.
+      if: failure()
+      run: |
+        echo "--- last 40 lines of log/niceops.log ---"
+        tail -40 log/niceops.log || echo "(no log written)"
+        echo "--- any fatal or error lines ---"
+        grep -E '\[(fatal|error)\]' log/niceops.log || echo "(none)"
+
     - name: Upload log
       # Named per job: upload-artifact v4 refuses two uploads under one name.
       if: always()

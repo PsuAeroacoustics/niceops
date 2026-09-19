@@ -14,6 +14,7 @@
 #include "smoothing_spline.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
+#include "util/paths.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
 
@@ -202,6 +203,11 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
 void Trajectory::write_state(const std::string& state_file) const
 {
     info("Writing state data to ", state_file);
+    // Create the directory first, as every other writer here does.  state/ is
+    // not tracked, so on a fresh checkout `-S state/ci_state.csv` had nowhere
+    // to write and fatal()'d -- which aborts silently, since the message goes
+    // to the log file and not to stderr.
+    ensure_parent_directory(state_file);
     std::ofstream file(state_file);
     if (!file)
         fatal("Unable to open state file for writing: ", state_file);
