@@ -104,6 +104,9 @@ Input and output files use **feet**; the computation is metric internally.
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
+| `--spectral` | Propagate the database's per-band spectra to the ground with ISO 9613-1 absorption, instead of one broadband level with the database's EAA factor. Needs a database carrying spectra. |
+| `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
+| `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
 
 ### Performance
 
@@ -170,6 +173,49 @@ None of the databases in `databases/` carries spectra. Build one with panam's
 `build_empirical_database(..., include_spectra=True)`, which now carries the per-band
 amplitudes through from the source spheres. Band-limit it — `infreqs=(10.0, 3500.0)` —
 because the top few bands of a measured sphere are usually noise-floor artifacts.
+
+#### Propagating them to the ground
+
+`--spectral` carries the spectrum itself to the observer instead of a single number. Each
+band is spread by the same `20 log10(r/r_sphere)` and absorbed at its own ISO 9613-1
+coefficient over `r - r_sphere`, and only then are the bands A-weighted and summed into a
+level. The two paths answer different questions and will not agree:
+
+| | default | `--spectral` |
+| --- | --- | --- |
+| Attenuation | database's `EAA`, one dB/km factor | ISO 9613-1 α(f), per band |
+| Fitted for | the spectrum the source happened to have | the atmosphere you state |
+| Atmosphere | none — `EAA` is baked in | temperature, pressure, humidity |
+| Needs | any database | one carrying spectra |
+
+The absorption model is ported from panam's `panam_acoustics/iso_9613_1_1993.py` and pinned
+against it in `tests/test_atmosphere.cpp`; the A-weighting is panam's `dBAw`, pinned in
+`tests/test_weighting.cpp`.
+
+**Band-limit deliberately.** Summing whatever bands a database happens to carry quietly
+makes the answer a property of that database's bandwidth, so two databases are not
+comparable. `--band_limits low high` states the range; bands outside it contribute exactly
+nothing, and the run logs how many of the database's bands survived. A limit that excludes
+every band is an error rather than silence.
+
+The atmosphere comes from the vehicle JSON's `Atmosphere` section:
+
+```json
+"Atmosphere": {
+    "density": "1.225",
+    "temperature": "300.71",
+    "pressure": "105.74",        // optional; else derived as rho*R*T
+    "relative humidity": "20"    // optional; else 20%, panam's default
+}
+```
+
+Only `density` is required, as before. Pressure defaults to the one implied by that file's
+own density and temperature rather than to a standard day — `S-76D.json` pairs 1.225 kg/m³
+with 300.71 K, which is not an ISA point, so assuming 101.325 kPa would contradict its own
+numbers. `--humidity`, `--temperature` and `--pressure` override all of it.
+
+`--spectral` cannot be combined with `--db_cutoff`: the cutoff's range bound is derived
+from the broadband level and is not a bound on the band-limited weighted one.
 
 ### Threads
 

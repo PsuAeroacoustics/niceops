@@ -141,6 +141,8 @@ endif()
 # Core library: noise database, trajectory, smoothing spline, plotting facade
 add_library(niceops_core STATIC
   src/sphere_database.cpp
+  src/atmosphere.cpp
+  src/weighting.cpp
   src/geodetic.cpp
   src/predicates.cpp
   src/delaunay.cpp
@@ -180,6 +182,9 @@ add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
+  tests/test_atmosphere.cpp
+  tests/test_weighting.cpp
+  tests/test_spectral_propagation.cpp
   tests/test_predicates.cpp
   tests/test_delaunay.cpp
   tests/test_trajectory.cpp

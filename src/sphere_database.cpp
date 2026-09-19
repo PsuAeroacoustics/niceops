@@ -11,6 +11,7 @@
 #include <netcdf.h>
 
 #include "util/logger.hpp"
+#include "weighting.hpp"
 #include "util/paths.hpp"
 #include "util/rootfind.hpp"
 
@@ -835,6 +836,81 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     auto ground_level = sphere_level - spreading_loss - excess_attenuation;
     trace("Ground level: ", ground_level);
     return ground_level;
+}
+
+void Database::eval_spectrum(double range, double phi, double theta, const Blend& blend,
+        const double* absorption, double* levels) const
+{
+    const std::size_t n_bands = frequencies_.size();
+    assert(n_bands > 0);
+
+    // Same bracketing and the same bilinear cell as eval(): the spectral path
+    // must land on the identical geometry, or a disagreement between the two
+    // could be the interpolation rather than the physics.
+    const auto phi_range = phis.bracket(phi);
+    const auto theta_range = thetas.bracket(theta);
+    const auto p1 = phis[phi_range[0]];
+    const auto p2 = phis[phi_range[1]];
+    const auto t1 = thetas[theta_range[0]];
+    const auto t2 = thetas[theta_range[1]];
+    const auto cell_weights = periodic_bilinear_cell(p1, p2, t1, t2, phi, theta);
+
+    const std::size_t n_thetas = thetas.size();
+    const std::size_t cells = phis.size() * n_thetas;
+    const std::size_t corners[4] = {
+        phi_range[0] * n_thetas + theta_range[0],
+        phi_range[0] * n_thetas + theta_range[1],
+        phi_range[1] * n_thetas + theta_range[0],
+        phi_range[1] * n_thetas + theta_range[1],
+    };
+
+    // Spreading is geometry, so it is the same for every band; absorption is
+    // not, which is the whole point of propagating the spectrum.
+    const double spreading_loss = 20.0 * std::log10(range / sphere_radius());
+    const double path_length = range - sphere_radius();
+
+    for (std::size_t band = 0; band < n_bands; band++)
+    {
+        double corner_level[4];
+        for (std::size_t corner = 0; corner < 4; corner++)
+        {
+            // spectra_ is condition-major, so the four conditions of one cell
+            // are a long stride apart.  That is the wrong layout for this loop
+            // and the right one for interpolate_sphere; this path is opt-in and
+            // pays for it rather than making the sphere export pay.
+            double blended = 0.0;
+            for (std::size_t k = 0; k < 4; k++)
+            {
+                blended += blend.weights[k]
+                        * spectra_[(blend.indices[k] * cells + corners[corner]) * n_bands + band];
+            }
+            corner_level[corner] = blended;
+        }
+
+        const double sphere_level = bilinear_apply(cell_weights, corner_level[0],
+                corner_level[1], corner_level[2], corner_level[3]);
+        levels[band] = sphere_level - spreading_loss - absorption[band] * path_length;
+        assert(std::isfinite(levels[band]));
+    }
+}
+
+double Database::spectral_level_at_observer(const Vec3& observer, const SourceState& state,
+        const double* absorption, const std::vector<double>& gains) const
+{
+    // Reused across calls: this runs once per observer per trajectory state,
+    // and the band count is fixed for the life of the database.
+    thread_local std::vector<double> levels;
+    levels.resize(frequencies_.size());
+
+    Vec3 r = observer - state.position;
+    const auto slant_range = r.norm();
+    if (slant_range > 0.0)
+        r /= slant_range;
+    const auto angles = lookup_angles(state.frame, r);
+    assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
+
+    eval_spectrum(slant_range, angles[0], angles[1], state.blend, absorption, levels.data());
+    return weighted_level(levels.data(), gains);
 }
 
 double Database::shaft_power(const Blend& blend) const

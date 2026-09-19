@@ -24,6 +24,8 @@
 #include "vec3.hpp"
 
 #include "plotting.hpp"
+#include "atmosphere.hpp"
+#include "weighting.hpp"
 #include "sphere_database.hpp"
 #include "trajectory.hpp"
 #include "util/csv.hpp"
@@ -174,6 +176,16 @@ struct RunOptions
     double ambient_level = 0.0;
     unsigned thread_count = 0;
     double db_cutoff = 0.0;
+    // Spectral propagation: carry the database's per-band spectra to the ground
+    // and integrate a metric from them, rather than propagating one broadband
+    // dBA with the database's fitted EAA factor.
+    bool spectral = false;
+    BandLimits band_limits;
+    // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
+    // whatever the file said".
+    double humidity_override = std::numeric_limits<double>::quiet_NaN();
+    double temperature_override = std::numeric_limits<double>::quiet_NaN();
+    double pressure_override = std::numeric_limits<double>::quiet_NaN();
     double trim_start_ft = 0.0;
     double utc_offset = 0.0;
     bool scattered = false;
@@ -372,6 +384,50 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // is at or above cutoff - 10 and none of them is ever culled.  Observers
     // that never reach the cutoff are the only ones whose level changes, and
     // they are precisely the ones the cutoff says are not of interest.
+    // Spectral propagation setup.  Both of these depend only on the atmosphere
+    // and the database's band centres, so they are computed once here rather
+    // than per observer: the coefficients cost a pow() and two exp() per band.
+    std::vector<double> absorption;
+    std::vector<double> band_gains;
+    if (options.spectral)
+    {
+        if (!database.has_spectra())
+        {
+            input_error("--spectral needs a database carrying per-band spectra; this one "
+                    "has none. Rebuild it with spectra, or drop --spectral to propagate the "
+                    "broadband level.");
+        }
+
+        Atmosphere air = trajectory.vehicle.atmosphere;
+        if (!std::isnan(options.temperature_override))
+            air.temperature = options.temperature_override;
+        if (!std::isnan(options.pressure_override))
+            air.pressure = options.pressure_override;
+        if (!std::isnan(options.humidity_override))
+            air.relative_humidity = options.humidity_override;
+
+        const auto& bands = database.band_centres();
+        const auto retained = bands_in_range(bands, options.band_limits);
+        if (retained == 0)
+        {
+            input_error("--band_limits ", options.band_limits.low, " to ",
+                    options.band_limits.high, " Hz excludes every one of the database's ",
+                    bands.size(), " bands (", bands.front(), " to ", bands.back(), " Hz).");
+        }
+
+        absorption = absorption_coefficients(air, bands);
+        band_gains = a_weighting_gains(bands, options.band_limits);
+
+        log("Propagating spectra: ", retained, " of ", bands.size(), " bands within ",
+                options.band_limits.low, " to ", options.band_limits.high, " Hz, at ",
+                air.temperature, " K, ", air.pressure, " kPa, ", air.relative_humidity,
+                "% RH.");
+        // Say what that atmosphere costs at the extremes actually in play, so a
+        // wrong humidity is visible in the log rather than only in the answer.
+        log("  absorption spans ", absorption.front(), " dB/m at ", bands.front(), " Hz to ",
+                absorption.back(), " dB/m at ", bands.back(), " Hz.");
+    }
+
     const bool culling = !std::isnan(db_cutoff);
     const double cull_below = db_cutoff - sel_window_db;
     // A culled sample contributes no acoustic energy.  Filling with the
@@ -405,7 +461,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     culled_here++;
                     continue;
                 }
-                double level = database.level_at_observer(observer, source_states[it]);
+                double level = options.spectral
+                        ? database.spectral_level_at_observer(observer, source_states[it],
+                                absorption.data(), band_gains)
+                        : database.level_at_observer(observer, source_states[it]);
                 if (add_ambient)
                 {
                     // Add ambient noise
@@ -515,6 +574,11 @@ int run(int argc, char* argv[])
     bool self_test = false;
     unsigned thread_count = 0;
     double db_cutoff = std::numeric_limits<double>::quiet_NaN();
+    bool spectral = false;
+    std::vector<double> band_limits;
+    double humidity_override = std::numeric_limits<double>::quiet_NaN();
+    double temperature_override = std::numeric_limits<double>::quiet_NaN();
+    double pressure_override = std::numeric_limits<double>::quiet_NaN();
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
     app.add_option("-d,--database", database_files,
@@ -567,6 +631,19 @@ int run(int argc, char* argv[])
             ->expected(3);
     app.add_option("--db_cutoff", db_cutoff,
             "Skip evaluations that provably fall below this level, dB. Off by default.");
+    app.add_flag("--spectral", spectral,
+            "Propagate the database's per-band spectra to the ground with ISO 9613-1 "
+            "absorption, instead of one broadband level with the database's EAA factor. "
+            "Requires a database carrying spectra.");
+    app.add_option("--band_limits", band_limits,
+            "Frequency range integrated into the metric, Hz: low high. Default 20 20000.")
+            ->expected(2);
+    app.add_option("--humidity", humidity_override,
+            "Relative humidity in percent, overriding the vehicle file.");
+    app.add_option("--temperature", temperature_override,
+            "Temperature in K, overriding the vehicle file.");
+    app.add_option("--pressure", pressure_override,
+            "Ambient pressure in kPa, overriding the vehicle file.");
 
     try
     {
@@ -754,6 +831,29 @@ int run(int argc, char* argv[])
     options.dt = dt;
     options.ambient_level = ambient_level;
     options.db_cutoff = db_cutoff;
+    options.spectral = spectral;
+    if (spectral && !std::isnan(db_cutoff))
+    {
+        // cull_range bounds the broadband level from the loudest sphere in the
+        // blend; it says nothing about the A-weighted, band-limited level the
+        // spectral path produces, so the two together could silently discard
+        // samples that mattered.
+        input_error("--spectral cannot be combined with --db_cutoff: the cutoff's range "
+                    "bound is derived from the broadband level, not the band-limited one.");
+    }
+    if (band_limits.size() == 2)
+    {
+        options.band_limits.low = band_limits[0];
+        options.band_limits.high = band_limits[1];
+        if (!(options.band_limits.low < options.band_limits.high))
+        {
+            input_error("--band_limits needs low < high, got ", options.band_limits.low, " and ",
+                    options.band_limits.high, ".");
+        }
+    }
+    options.humidity_override = humidity_override;
+    options.temperature_override = temperature_override;
+    options.pressure_override = pressure_override;
     options.trim_start_ft = trim_start_ft;
     options.utc_offset = utc_offset;
     options.thread_count = thread_count;

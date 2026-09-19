@@ -152,6 +152,36 @@ public:
             const Vec3& normal, double advance_ratio,
             double flight_path_angle, double thrust_coefficient) const;
 
+    // ---- Spectral propagation -------------------------------------------
+    //
+    // The path above carries one broadband dBA from the sphere to the ground
+    // and attenuates it with the database's own EAA factor, which was fitted
+    // for whatever spectrum the source had.  These carry the spectrum itself:
+    // each band is spread and absorbed at its own rate, and only then summed
+    // into a metric.  The two answer different questions and will not agree --
+    // see SpectralSetup in weighting.hpp for what the difference is made of.
+    //
+    // Both require has_spectra(); a database without spectra cannot use this
+    // path at all.
+
+    // Per-band ground levels in dB at one direction, written into `levels`,
+    // which must have room for band_count() entries.  `absorption` is the
+    // dB/m coefficient for each band, from absorption_coefficients().
+    void eval_spectrum(double range, double phi, double theta, const Blend& blend,
+            const double* absorption, double* levels) const;
+
+    // A-weighted, band-limited ground level at an observer, propagated per
+    // band.  `gains` comes from a_weighting_gains() and must match the band
+    // count.  Returns -infinity when no band is inside the limits.
+    double spectral_level_at_observer(const Vec3& observer, const SourceState& state,
+            const double* absorption, const std::vector<double>& gains) const;
+
+    // Band centres carried by the database, empty when it has no spectra.
+    const std::vector<double>& band_centres() const
+    {
+        return frequencies_;
+    }
+
     double level_along_bearing(double range, double bearing, double altitude,
             const Vec3& velocity, const Vec3& normal,
             double advance_ratio, double flight_path_angle,
