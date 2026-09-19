@@ -64,6 +64,23 @@ Notes:
   on a literal argument** in a test: the literal gets constant-folded at build time (GCC
   folds via MPFR, correctly rounded) while the function under test reaches libm at run
   time, and the two differ by an ULP. `acosc` was written that way and only GCC noticed.
+- **`state/`, `integrated/`, `log/` and `figures/` are not tracked**, so a fresh checkout
+  has none of them and every writer must create its own parent directory
+  (`ensure_parent_directory` in `src/util/paths.hpp`). `Trajectory::write_state` once
+  opened its ofstream directly and so aborted on a clean CI checkout while passing on any
+  working tree that had run the tool before. A working tree is therefore *not* a faithful
+  test of a checkout — verify against a clone:
+
+  ```sh
+  git clone --no-hardlinks . /tmp/fresh && cd /tmp/fresh
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j8
+  ctest --test-dir build --output-on-failure
+  ```
+
+  Note what such a failure looks like: `fatal()` logs its reason to `log/niceops.log` and
+  calls `abort()`, so **nothing reaches stdout or stderr**. CTest reports only
+  `Subprocess aborted` with an empty output block, and the reason is in the log alone.
+  CI dumps the log on failure for this reason.
 - **Keep the C++ sources in one static library.** `interpolator.cpp` used to be its own
   `interpolator` target, a D-era seam that walled off CGAL's heavy headers. Once CGAL went,
   that split was a *cycle*: `interpolator.cpp` calls into `Delaunay`, which lives in
