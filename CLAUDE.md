@@ -47,6 +47,13 @@ Notes:
 - **Never add `-DNDEBUG` to Release.** The D original ran with asserts live, and `sphere_database.cpp` relies on `assert(isFinite(...))` guards; matching that is part of the port contract. This is called out in CMakeLists.txt.
 - If Xcode proper isn't installed (Command Line Tools only), pass `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`. No special flags are needed; the vendored SPLINTER library that used to require them is gone.
 - CGAL 5.0+ is header-only and exports `CGAL::CGAL`. Do **not** reintroduce `include(${CGAL_USE_FILE})` — `UseCGAL.cmake` was removed in CGAL 6, leaving `CGAL_USE_FILE` empty so the `include()` errors out.
+- **Keep the C++ sources in one static library.** `interpolator.cpp` used to be its own
+  `interpolator` target, a D-era seam that walled off CGAL's heavy headers. Once CGAL went,
+  that split was a *cycle*: `interpolator.cpp` calls into `Delaunay`, which lives in
+  `niceops_core`, while `niceops_core` linked `interpolator`. GNU ld walks archives in a
+  single pass and fails (`undefined reference to niceops::Delaunay::barycentric`); ld64
+  resolves it either way, **so this breaks Linux only and a macOS build will not show it**.
+  If you add a target, check that its dependencies point one direction.
 
 ### Golden reference files
 
