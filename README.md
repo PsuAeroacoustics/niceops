@@ -107,6 +107,9 @@ Input and output files use **feet**; the computation is metric internally.
 | `--spectral` | Propagate the database's per-band spectra to the ground with ISO 9613-1 absorption, instead of one broadband level with the database's EAA factor. Needs a database carrying spectra. |
 | `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
 | `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
+| `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
+| `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
+| `--receiver_height`, `--turbulence` | Receiver height (m, default 1.2) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
 
 ### Performance
 
@@ -213,6 +216,36 @@ Only `density` is required, as before. Pressure defaults to the one implied by t
 own density and temperature rather than to a standard day — `S-76D.json` pairs 1.225 kg/m³
 with 300.71 K, which is not an ISA point, so assuming 101.325 kPa would contradict its own
 numbers. `--humidity`, `--temperature` and `--pressure` override all of it.
+
+#### Ground effect
+
+`--ground_effect` adds the interference between the direct ray and the one reflected off the
+ground — Chien–Soroka over a Delany–Bazley impedance, with Chessell's boundary-loss correction
+and band averaging, ported from panam's `ega()` and pinned against it in
+`tests/test_ground_effect.cpp`.
+
+**It is a gain, not a loss**, despite the name: over rigid ground with the receiver on the
+surface it tends to +6 dB, the pressure doubling of a perfect reflector. It goes sharply
+negative only in the interference dip, where the reflected path arrives out of phase. On the
+Be407 demo case:
+
+| | mean | max |
+| --- | --- | --- |
+| spectral, no ground | 65.10 | 96.38 |
+| + concrete (10000) | 68.45 (**+3.35**) | 99.00 |
+| + grass (225) | 64.73 (**−0.36**) | 97.89 |
+
+Hard ground is 3.7 dB louder than soft, and grass roughly cancels its own reflection gain
+against the dip. `--flow_resistance` spans five orders of magnitude and the answer is sensitive
+to it, so name the surface rather than guessing.
+
+`--turbulence` decorrelates the two paths and fills the nulls in; leaving it at zero gives
+unrealistically deep interference dips.
+
+**It is expensive.** On the demo case the broadband path is 0.8 s, `--spectral` 1.6 s, and
+`--spectral --ground_effect` 40 s — a complex reflection coefficient and a Faddeeva evaluation
+per band per observer per state. The frequency-only parts (the Delany–Bazley impedance) are
+hoisted out of the loop; what remains depends on the geometry and cannot be.
 
 `--spectral` cannot be combined with `--db_cutoff`: the cutoff's range bound is derived
 from the broadband level and is not a bound on the band-limited weighted one.

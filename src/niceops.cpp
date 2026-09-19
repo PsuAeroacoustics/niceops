@@ -24,7 +24,10 @@
 #include "vec3.hpp"
 
 #include "plotting.hpp"
+#include <complex>
+
 #include "atmosphere.hpp"
+#include "ground_effect.hpp"
 #include "weighting.hpp"
 #include "sphere_database.hpp"
 #include "trajectory.hpp"
@@ -181,6 +184,10 @@ struct RunOptions
     // dBA with the database's fitted EAA factor.
     bool spectral = false;
     BandLimits band_limits;
+    // Excess ground attenuation, off unless asked for: it is the single most
+    // expensive thing in the evaluation.
+    bool ground_effect = false;
+    GroundModel ground;
     // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
     // whatever the file said".
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -389,6 +396,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // than per observer: the coefficients cost a pow() and two exp() per band.
     std::vector<double> absorption;
     std::vector<double> band_gains;
+    const GroundModel* ground_model = nullptr;
+    std::vector<std::complex<double>> ground_impedance_bands;
+    double sound_speed = 343.2;
     if (options.spectral)
     {
         if (!database.has_spectra())
@@ -426,6 +436,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // wrong humidity is visible in the log rather than only in the answer.
         log("  absorption spans ", absorption.front(), " dB/m at ", bands.front(), " Hz to ",
                 absorption.back(), " dB/m at ", bands.back(), " Hz.");
+
+        sound_speed = air.sound_speed();
+        if (options.ground_effect)
+        {
+            ground_model = &options.ground;
+            ground_impedance_bands = ground_impedance(options.ground, bands);
+            log("  ground effect on: flow resistance ", options.ground.flow_resistance,
+                    " kPa s/m^2, receiver ", options.ground.receiver_height, " m up, turbulence ",
+                    options.ground.turbulence, ", sound speed ", sound_speed, " m/s.");
+        }
     }
 
     const bool culling = !std::isnan(db_cutoff);
@@ -463,7 +483,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 double level = options.spectral
                         ? database.spectral_level_at_observer(observer, source_states[it],
-                                absorption.data(), band_gains)
+                                absorption.data(), band_gains, ground_model,
+                                &ground_impedance_bands, sound_speed)
                         : database.level_at_observer(observer, source_states[it]);
                 if (add_ambient)
                 {
@@ -576,6 +597,10 @@ int run(int argc, char* argv[])
     double db_cutoff = std::numeric_limits<double>::quiet_NaN();
     bool spectral = false;
     std::vector<double> band_limits;
+    bool ground_effect = false;
+    double flow_resistance = flow_resistance::grassy_field;
+    double receiver_height = 1.2;
+    double turbulence = 0.0;
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
@@ -644,6 +669,17 @@ int run(int argc, char* argv[])
             "Temperature in K, overriding the vehicle file.");
     app.add_option("--pressure", pressure_override,
             "Ambient pressure in kPa, overriding the vehicle file.");
+    app.add_flag("--ground_effect", ground_effect,
+            "Add excess ground attenuation (Chien-Soroka over a Delany-Bazley impedance) to "
+            "the spectral path. Needs --spectral.");
+    app.add_option("--flow_resistance", flow_resistance,
+            "Specific flow resistance of the ground, kPa s/m^2. 30 snow, 225 grass (default), "
+            "650 soil, 3000 dirt, 10000 concrete, 50000 asphalt.");
+    app.add_option("--receiver_height", receiver_height,
+            "Receiver height above ground for --ground_effect, m (default 1.2).");
+    app.add_option("--turbulence", turbulence,
+            "Turbulence parameter for --ground_effect, rad s/sqrt(m); 0 to 16e-4. "
+            "Zero gives unrealistically deep interference nulls.");
 
     try
     {
@@ -851,6 +887,15 @@ int run(int argc, char* argv[])
                     options.band_limits.high, ".");
         }
     }
+    if (ground_effect && !spectral)
+    {
+        input_error("--ground_effect needs --spectral: the ground effect is a function of "
+                    "frequency, and the broadband path has no spectrum to apply it to.");
+    }
+    options.ground_effect = ground_effect;
+    options.ground.flow_resistance = flow_resistance;
+    options.ground.receiver_height = receiver_height;
+    options.ground.turbulence = turbulence;
     options.humidity_override = humidity_override;
     options.temperature_override = temperature_override;
     options.pressure_override = pressure_override;

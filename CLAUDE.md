@@ -195,6 +195,24 @@ The reason the intuition fails is worth keeping: observers sweep a 120×120 grou
   weighting and the band limit into one per-band multiply, with excluded bands exactly zero.
   `weighted_level()` returns -infinity for silence, not 0 dB, so an excluded spectrum cannot
   survive an energy sum as a quiet-but-real level.
+- `src/faddeeva.{hpp,cpp}` — the Faddeeva function w(z) = exp(-z²)erfc(-iz), Weideman's 32-term
+  rational approximation. It exists solely for the ground model's boundary-loss term, which panam
+  writes as `exp(-w)(1 - erf(-i sqrt w))` using SciPy's complex `erf`; with z = sqrt(w) that *is*
+  w(z), and evaluating it as written overflows. Max relative error 3e-13 over the domain the
+  ground model reaches (Re z ∈ [0.09, 22.3], Im z ∈ [-1.2, 15.6]), measured against SciPy's `wofz`.
+  The lower-half-plane reflection `w(z) = 2exp(-z²) - w(-z)` is safe **only** in that domain.
+- `src/ground_effect.{hpp,cpp}` — excess ground attenuation, ported from panam's `ega()` and pinned
+  against it to 1e-9 dB. **It returns a gain, not a loss** — +6 dB over rigid ground with the
+  receiver on the surface. `ground_impedance()` is hoisted out of the observer loop and the
+  allocation-free overload is what the loop calls; returning a vector there allocated 94 million
+  times and cost 20% of the run.
+- **`ground_effect = 4.0` in `eval` is not a ground effect.** It multiplies the database's EAA,
+  and panam — which *writes* that EAA, as `SPLA - SPLAa` over a 1000 m reference — consumes it as
+  `EAA / distance * (slant_range - radius)` with no such factor. So the broadband path overstates
+  atmospheric absorption fourfold: 168 dB at 6 km where the physical value is 14. It is inherited
+  verbatim from the D original (`c74bab3`, same `//TODO Add ground effects`), so the port is
+  faithful and **the goldens encode it**. Do not fix it without regenerating them and saying so.
+  `--ground_effect` is what that TODO was asking for.
 - **Two propagation paths, and they do not agree.** The default carries one broadband dBA and
   attenuates it with the database's `EAA` factor; `--spectral` carries the per-band spectrum
   and attenuates each band at its own ISO 9613-1 coefficient. `Database::eval_spectrum` mirrors

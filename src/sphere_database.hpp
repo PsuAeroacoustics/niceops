@@ -16,6 +16,9 @@
 #include <string>
 #include <vector>
 
+#include <complex>
+
+#include "ground_effect.hpp"
 #include "vec3.hpp"
 
 #include "interpolator.hpp"
@@ -174,7 +177,10 @@ public:
     // band.  `gains` comes from a_weighting_gains() and must match the band
     // count.  Returns -infinity when no band is inside the limits.
     double spectral_level_at_observer(const Vec3& observer, const SourceState& state,
-            const double* absorption, const std::vector<double>& gains) const;
+            const double* absorption, const std::vector<double>& gains,
+            const GroundModel* ground = nullptr,
+            const std::vector<std::complex<double>>* impedance = nullptr,
+            double sound_speed = 343.2) const;
 
     // Band centres carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centres() const

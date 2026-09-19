@@ -895,7 +895,8 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
 }
 
 double Database::spectral_level_at_observer(const Vec3& observer, const SourceState& state,
-        const double* absorption, const std::vector<double>& gains) const
+        const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
+        const std::vector<std::complex<double>>* impedance, double sound_speed) const
 {
     // Reused across calls: this runs once per observer per trajectory state,
     // and the band count is fixed for the life of the database.
@@ -910,6 +911,26 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
     assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
 
     eval_spectrum(slant_range, angles[0], angles[1], state.blend, absorption, levels.data());
+
+    if (ground != nullptr)
+    {
+        // The ground effect is interference between the direct ray and the one
+        // reflected off the surface, so it needs the geometry in the vertical
+        // plane -- source height and horizontal separation -- not the slant
+        // range the rest of the propagation works in.
+        const Vec3 separation = observer - state.position;
+        const double ground_distance = separation.horizontal_norm();
+        const double source_height = state.position.z;
+        // Scratch, like levels above: this is the innermost loop of the whole
+        // run and returning a vector here allocated 94 million times.
+        thread_local std::vector<double> correction;
+        correction.resize(frequencies_.size());
+        excess_ground_attenuation(*ground, *impedance, source_height, ground_distance,
+                sound_speed, frequencies_, correction.data());
+        for (std::size_t band = 0; band < levels.size(); band++)
+            levels[band] += correction[band];
+    }
+
     return weighted_level(levels.data(), gains);
 }
 
