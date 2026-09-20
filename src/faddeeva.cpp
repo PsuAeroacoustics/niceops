@@ -55,14 +55,49 @@ std::complex<double> weideman(std::complex<double> z)
     const double tr = (nr * dr + ni * di) / d_norm;
     const double ti = (ni * dr - nr * di) / d_norm;
 
-    double pr = weideman_a[0];
-    double pi_ = 0.0;
-    for (std::size_t term = 1; term < 32; term++)
+    // Four interleaved Horner chains over v = t^4 rather than one over t.
+    //
+    // The series is 31 complex multiply-adds deep and every one of them needs
+    // the previous result, so the loop is bound by the latency of that chain
+    // rather than by how many operations the core can issue -- it was running
+    // at about a quarter of the machine's floating-point throughput.  Splitting
+    // the polynomial by the power of t modulo four gives four chains a quarter
+    // as deep that all run at once:
+    //
+    //     P(t) = C0(v) + t C1(v) + t^2 C2(v) + t^3 C3(v),    v = t^4
+    //
+    // where Cp collects the coefficients of the powers congruent to p.  The
+    // table is left exactly as Weideman's construction produced it and indexed
+    // by stride instead, so it stays checkable against the source: the chain
+    // for t^p starts at a[3 - p] and steps by four from there.
+    //
+    // Same operations, regrouped, so the result moves by rounding only -- the
+    // reference values in tests/test_ground_effect.cpp still hold to 1e-11.
+    const double ur = tr * tr - ti * ti; // u = t^2
+    const double ui = 2.0 * tr * ti;
+    const double vr = ur * ur - ui * ui; // v = t^4
+    const double vi = 2.0 * ur * ui;
+
+    double chain_r[4] = {weideman_a[3], weideman_a[2], weideman_a[1], weideman_a[0]};
+    double chain_i[4] = {0.0, 0.0, 0.0, 0.0};
+    for (std::size_t term = 4; term < 32; term += 4)
     {
-        const double next_r = pr * tr - pi_ * ti + weideman_a[term];
-        pi_ = pr * ti + pi_ * tr;
-        pr = next_r;
+        for (std::size_t power = 0; power < 4; power++)
+        {
+            const double next
+                    = chain_r[power] * vr - chain_i[power] * vi + weideman_a[term + 3 - power];
+            chain_i[power] = chain_r[power] * vi + chain_i[power] * vr;
+            chain_r[power] = next;
+        }
     }
+
+    // Recombine: (C0 + t C1) + u (C2 + t C3).
+    const double lo_r = chain_r[0] + (tr * chain_r[1] - ti * chain_i[1]);
+    const double lo_i = chain_i[0] + (tr * chain_i[1] + ti * chain_r[1]);
+    const double hi_r = chain_r[2] + (tr * chain_r[3] - ti * chain_i[3]);
+    const double hi_i = chain_i[2] + (tr * chain_i[3] + ti * chain_r[3]);
+    const double pr = lo_r + (ur * hi_r - ui * hi_i);
+    const double pi_ = lo_i + (ur * hi_i + ui * hi_r);
 
     // numerator = 2p + (1/sqrt(pi)) d
     const double num_r = 2.0 * pr + one_over_sqrt_pi * dr;

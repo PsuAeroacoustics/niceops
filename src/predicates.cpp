@@ -83,6 +83,10 @@ Expansion exact_difference(double a, double b)
 Expansion multiply(const Expansion& a, const Expansion& b)
 {
     Expansion result;
+    // Two components per product pair is the bound the expansion can reach
+    // before cancellation shortens it, so this reserve is the last allocation
+    // the loop needs rather than one per growth step.
+    result.reserve(2 * a.size() * b.size());
     for (double x : a)
     {
         for (double y : b)
@@ -117,16 +121,23 @@ int sign_of(const Expansion& e)
 // Exact determinant of a small matrix of expansions, by Laplace expansion along
 // the first row.  Factorial in `size`, which is why the filtered path below runs
 // first; for the dimensions in play this is at most a few dozen terms.
-Expansion exact_determinant(const std::vector<Expansion>& matrix, std::size_t size)
+//
+// The matrix arrives as an array of pointers and the minors are built the same
+// way, rather than as copies.  Each entry is an expansion -- a heap-allocated
+// vector -- and copying (size-1)^2 of them at every level of a factorial
+// recursion put malloc and free at the top of the database load profile; with
+// pointers the recursion allocates nothing but the expansions it actually
+// computes.  `minor` is a stack array for the same reason `laplace` uses one.
+Expansion exact_determinant(const Expansion* const* matrix, std::size_t size)
 {
     if (size == 1)
-        return matrix[0];
+        return *matrix[0];
 
     Expansion total;
-    std::vector<Expansion> minor((size - 1) * (size - 1));
+    const Expansion* minor[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
     for (std::size_t column = 0; column < size; column++)
     {
-        const Expansion& pivot = matrix[column];
+        const Expansion& pivot = *matrix[column];
         if (pivot.empty())
             continue;
         std::size_t out = 0;
@@ -222,12 +233,14 @@ int exact_determinant_sign(const double* matrix, std::size_t size)
         return filtered;
 
     std::vector<Expansion> exact(size * size);
+    const Expansion* rows[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
     for (std::size_t i = 0; i < size * size; i++)
     {
         if (matrix[i] != 0.0)
             exact[i] = Expansion {matrix[i]};
+        rows[i] = &exact[i];
     }
-    return sign_of(exact_determinant(exact, size));
+    return sign_of(exact_determinant(rows, size));
 }
 
 int orientation(const double* points, std::size_t dim)
@@ -251,12 +264,16 @@ int orientation(const double* points, std::size_t dim)
         return filtered;
 
     std::vector<Expansion> exact(dim * dim);
+    const Expansion* rows[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
     for (std::size_t row = 0; row < dim; row++)
     {
         for (std::size_t column = 0; column < dim; column++)
+        {
             exact[row * dim + column] = exact_difference(points[row * dim + column], base[column]);
+            rows[row * dim + column] = &exact[row * dim + column];
+        }
     }
-    return sign_of(exact_determinant(exact, dim));
+    return sign_of(exact_determinant(rows, dim));
 }
 
 int in_sphere(const double* points, const double* query, std::size_t dim)
@@ -287,6 +304,7 @@ int in_sphere(const double* points, const double* query, std::size_t dim)
         // Exact path: both the differences and their squares are formed without
         // rounding.
         std::vector<Expansion> exact(size * size);
+        const Expansion* rows[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
         for (std::size_t row = 0; row < size; row++)
         {
             Expansion lifted;
@@ -298,7 +316,9 @@ int in_sphere(const double* points, const double* query, std::size_t dim)
             }
             exact[row * size + dim] = std::move(lifted);
         }
-        sign = sign_of(exact_determinant(exact, size));
+        for (std::size_t i = 0; i < size * size; i++)
+            rows[i] = &exact[i];
+        sign = sign_of(exact_determinant(rows, size));
     }
 
     // Normalise out the simplex's own orientation, so the answer means "inside"

@@ -62,12 +62,39 @@ public:
     // Identical in every case to bracket(values(), val).
     std::array<std::size_t, 2> bracket(double val) const;
 
+    // Where `val` sits on the axis: the same bracketing pair bracket() returns,
+    // plus how far along the cell it lies.  `fraction` is the weight the
+    // bilinear interpolation puts on `hi`, so the weight on `lo` is 1 -
+    // fraction; that is exactly what periodic_bilinear_cell() derives from the
+    // two knot values, wrap-around included, and tests/test_sphere_database.cpp
+    // sweeps the two against each other.
+    //
+    // It exists because eval() wants the weights, not the knots: on a uniform
+    // axis both indices and the fraction fall out of one multiply, where going
+    // through bracket() meant four more loads from values_, four subtractions
+    // and a divide by the cell area.
+    struct Cell
+    {
+        std::size_t lo;
+        std::size_t hi;
+        double fraction;
+    };
+
+    Cell locate(double val) const;
+
 private:
     std::vector<double> values_;
     double first_ = 0.0;
     // Reciprocal of the uniform spacing, or 0 when the axis is not uniform and
     // the binary search has to be used after all.
     double inv_step_ = 0.0;
+    // Set only when every knot sits within a few ULP of where a perfectly
+    // uniform axis would put it -- tighter than inv_step_'s tolerance, because
+    // locate() derives the interpolation weight from the spacing rather than
+    // from the knots and so has no chance to correct for a knot that is merely
+    // close.  Every shipped database's axes are exact multiples of 10 and 5
+    // degrees and take this path.
+    bool exactly_uniform_ = false;
 };
 
 double clamp01(double x);
@@ -110,6 +137,66 @@ bool repair_legacy_hover_directivity(std::vector<double>& phis_scattered);
 bool approx_equal(double value, double reference, double max_rel_diff = 1e-2,
         double max_abs_diff = 1e-5);
 
+// An upper bound on the ground level a trajectory state can produce at an
+// observer, good enough to prove that the state cannot hold the peak of that
+// observer's time history -- without evaluating it.
+//
+// This is what lets the observer loop find the peak and then expand out to the
+// 10-dB-down points, instead of marching through every emission time.  The SEL
+// window is contiguous by construction (peak_range walks out from the peak and
+// stops at the first sample below the threshold), so nothing outside it needs
+// a bound at all; the bound is needed only to be sure the walk started on the
+// right peak.
+//
+// The bound is `max sphere level in this direction - spherical spreading`.
+// Dropping the excess attenuation is what makes it an upper bound, and that is
+// only true when no excess attenuation factor in the database is negative --
+// `usable` is false when one is, and the caller must then evaluate everything.
+//
+// Binning by direction is what makes it tight enough to be worth having.  The
+// whole-sphere maximum is 11.4 dB above the level actually seen, at the median,
+// which is *wider than the 10 dB window*: the peak search would then reach
+// outside the window and there would be nothing to save.  Splitting the sphere
+// into bins of (theta, azimuth) brings the median slack to 8.6 dB, under the
+// window, and the peak search collapses inside it.
+class DirectionBounds
+{
+public:
+    // Bins along the sphere's theta axis, and azimuth sectors across it.
+    static constexpr int theta_bins = 16;
+    static constexpr int azimuth_bins = 8;
+    static constexpr int bin_count = theta_bins * azimuth_bins;
+
+    // Which bin a propagation direction falls in, from the *unnormalised* dot
+    // products with the sphere frame and the squared range.
+    //
+    // Deliberately free of both a square root and any inverse trig: a state
+    // this rejects is never evaluated, so everything spent here is overhead on
+    // the rejection.  The azimuth test is scale-free already, and the theta bin
+    // uses along^2/r^2, which needs one divide where the angle would need a
+    // root and an acos.
+    static int bin(double along, double up, double across, double squared_range);
+
+    bool usable() const
+    {
+        return usable_;
+    }
+
+    // 10^(bound/10) * r_sphere^2 for the state's blend in this direction, so
+    // the test "bound >= level" is "numerator >= 10^(level/10) * range^2" and
+    // the hot path needs no logarithm.
+    double numerator(std::size_t state, int bin_index) const
+    {
+        return numerators_[blend_of_state_[state] * bin_count + bin_index];
+    }
+
+private:
+    friend class Database;
+    std::vector<double> numerators_;
+    std::vector<std::size_t> blend_of_state_;
+    bool usable_ = false;
+};
+
 class Database
 {
 public:
@@ -149,6 +236,14 @@ public:
             double flight_path_angle, double thrust_coefficient) const;
 
     double level_at_observer(const Vec3& observer, const SourceState& state) const;
+
+    // Ground level from geometry that has already been formed: the squared
+    // range, and the three *unnormalised* dot products of the displacement with
+    // the sphere frame.  The observer loop's bound test computes exactly these,
+    // so sharing them is what makes skipping states pay -- a state that
+    // survives the test costs no more than it would have without one.
+    double level_from_geometry(double squared_range, double along, double up, double across,
+            const Blend& blend) const;
 
     double level_at_observer(const Vec3& observer,
             const Vec3& source, const Vec3& velocity,
@@ -271,6 +366,12 @@ public:
     // below `cutoff` dBA, or infinity when no such bound can be established.
     double cull_range(const Blend& blend, double cutoff) const;
 
+    // Directional level bounds for a trajectory's states.  One table per
+    // *distinct* blend rather than per state -- a shipped track resolves to a
+    // few dozen tetrahedra over thousands of states -- so the whole thing is a
+    // few tens of kilobytes and stays in cache under the observer loop.
+    DirectionBounds direction_bounds(const std::vector<SourceState>& states) const;
+
     double sphere_radius() const
     {
         return sphere_radius_;
@@ -291,6 +392,8 @@ private:
     std::vector<Sample> grid;
     std::size_t n_conditions = 0;
     double sphere_radius_ = 0.0;
+    // 1 / sphere_radius_, so eval's spherical spreading term is a multiply.
+    double inv_sphere_radius_ = 0.0;
     double advance_ratio_min = 0.0, advance_ratio_max = 0.0;
     double flight_path_angle_min = 0.0, flight_path_angle_max = 0.0;
     double thrust_coefficient_min = 0.0, thrust_coefficient_max = 0.0;

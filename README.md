@@ -36,6 +36,10 @@ cmake --build build -j8
 On macOS with Command Line Tools but no full Xcode, add
 `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`.
 
+Link-time optimization is on wherever the toolchain supports it, since the acoustic loop and
+the database it calls live in different translation units; `-DNICEOPS_LTO=OFF` turns it off if
+a build needs to be faster to produce than to run.
+
 Run the tests with `ctest --test-dir build -C Release`.
 
 ## Running
@@ -268,17 +272,55 @@ unrealistically deep interference dips.
 
 **It is expensive.** Acoustic loop on the Be407 case (94.3 M evaluations, 26 bands, 14 threads,
 default band limits): broadband 0.34 s, `--spectral` 1.44 s, `--spectral --ground_effect`
-10.9 s. So carrying the spectrum costs about 4x, and the ground effect about 32x — a complex reflection coefficient and
-a Faddeeva evaluation per band per observer per state, none of which can be hoisted because it
-all depends on the geometry.
+10.9 s. So carrying the spectrum costs about 4x, and the ground effect about 32x — a complex
+reflection coefficient and a Faddeeva evaluation per band per observer per state, none of
+which can be hoisted because it all depends on the geometry. The Faddeeva evaluation is about
+half of the ground path on its own.
+
+Those three are from before the September 2026 optimization round and all of them are now
+lower. Measured against the same build on the S-76D demo track (94.3 M evaluations, 14
+threads), over a synthetic single-condition 24-band database built the way
+`write_flat_spectral_database` in `tests/test_spectral_propagation.cpp` builds one:
+
+| | before | after |
+| --- | --- | --- |
+| broadband | 0.32 s | 0.16 s |
+| `--spectral` | 1.36 s | 1.16 s |
+| `--spectral --ground_effect` | 8.95 s | 7.81 s |
+
+A single condition makes the operating-condition blend degenerate, so those two spectral
+figures are optimistic against a real multi-condition database like the Be407 one in the row
+above; the ground-effect term, which is most of the last row, does not depend on the condition
+count. All three outputs agree with the previous build to 1.4e-12 dB.
 
 `--spectral` cannot be combined with `--db_cutoff`: the cutoff's range bound is derived
 from the broadband level and is not a bound on the band-limited weighted one.
+
+### How much gets evaluated
+
+The sound exposure integral only uses the window from each observer's peak down to 10 dB below
+it, which on a shipped case is a little over half the track. The observer loop therefore finds
+the peak and walks out to the 10-dB-down points rather than marching every emission time, and
+the run logs how much that skipped:
+
+```
+Evaluated 66041828 of 94334400 (70.0%); the rest is provably outside every observer's 10 dB window.
+```
+
+It is exact, not an approximation — the output is byte-identical to evaluating every state.
+The path is skipped, and every state evaluated, with `--spectral`, `-a`, `-i`, `-D` or
+`--db_cutoff`; see CLAUDE.md for why each one cannot use it.
 
 ### Threads
 
 The observer loop runs on every core by default. Each observer is independent, so the output is
 deterministic: runs at `-j 1`, `-j 2` and `-j 32` are byte-for-byte identical.
+
+Observers are dealt out to the workers in chunks as they finish rather than split evenly up
+front, because on a machine with both performance and efficiency cores — every Apple silicon
+part, and most recent x86 laptops — an even split makes the slowest core the critical path.
+On an M4 Pro the even split ran the demo case no faster on all 14 threads than on its 10
+performance cores; pulling chunks recovers about 10%.
 
 ### Geodetic coordinates
 

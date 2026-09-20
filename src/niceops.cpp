@@ -143,6 +143,125 @@ void append_metrics_file(const std::string& filename, const std::string& casenam
     file << casename << "," << average << "," << maximum << "," << area << "\n";
 }
 
+// Sound exposure level at one observer without marching every emission time.
+//
+// The integral only ever uses the window from the peak down to 10 dB below it,
+// which on a shipped case is a little over half the track -- the rest is
+// computed and thrown away.  peak_range's window is *contiguous by
+// construction*: it walks out from the peak and stops at the first sample below
+// the threshold.  So nothing outside the window needs a bound at all; the walk
+// stops there by definition.  A bound is needed for one thing only -- to be
+// sure the walk started on the right peak -- and DirectionBounds is tight
+// enough (median slack 8.6 dB, inside the 10 dB window) that proving that costs
+// almost nothing beyond the window itself.
+//
+// The result is identical to evaluating every state, not an approximation: a
+// skipped state is provably neither the peak nor inside the window.
+double windowed_sound_exposure_level(const Database& database,
+        const std::vector<Database::SourceState>& states, const DirectionBounds& bounds,
+        const Vec3& observer, double step, std::size_t seed_stride,
+        std::vector<double>& levels, std::vector<unsigned>& visited, unsigned generation,
+        std::size_t& evaluated)
+{
+    const std::size_t nt = states.size();
+    const double sphere_radius_squared = database.sphere_radius() * database.sphere_radius();
+
+    auto geometry_of = [&](std::size_t it, double& squared_range, double& along, double& up,
+                               double& across) {
+        const Vec3 delta = observer - states[it].position;
+        squared_range = delta.squaredNorm();
+        along = states[it].frame.nose.dot(delta);
+        up = states[it].frame.normal.dot(delta);
+        across = states[it].frame.starboard.dot(delta);
+    };
+    auto evaluate = [&](std::size_t it) {
+        if (visited[it] == generation)
+            return levels[it];
+        visited[it] = generation;
+        evaluated++;
+        double squared_range, along, up, across;
+        geometry_of(it, squared_range, along, up, across);
+        return levels[it] = database.level_from_geometry(squared_range, along, up, across,
+                       states[it].blend);
+    };
+
+    // Seed with a coarse sweep so the bound has something to beat from the
+    // first state onwards.  The stride barely matters -- 16 and 1024 land
+    // within a couple of percent of each other -- because the level history has
+    // one dominant peak and any coarse sample near it is enough.
+    double best = -std::numeric_limits<double>::infinity();
+    std::size_t peak = 0;
+    for (std::size_t it = 0; it < nt; it += seed_stride)
+    {
+        const double level = evaluate(it);
+        if (level > best)
+        {
+            best = level;
+            peak = it;
+        }
+    }
+    double best_energy = std::pow(10.0, 0.1 * best);
+
+    // One pass: form the geometry, test the bound against the best level so far,
+    // and evaluate whatever it cannot rule out -- handing that same geometry
+    // straight to the evaluation, so a state that survives pays nothing for the
+    // test.  `best` only rises, so a state skipped early stays correctly
+    // skipped, and no second pass is needed.
+    for (std::size_t it = 0; it < nt; it++)
+    {
+        if (visited[it] == generation)
+            continue;
+        double squared_range, along, up, across;
+        geometry_of(it, squared_range, along, up, across);
+        // The bound subtracts spherical spreading, which is only a loss outside
+        // the sphere; inside it, evaluate rather than trust it.
+        if (squared_range > sphere_radius_squared
+                && bounds.numerator(it, DirectionBounds::bin(along, up, across, squared_range))
+                        < best_energy * squared_range)
+            continue;
+        visited[it] = generation;
+        evaluated++;
+        const double level = levels[it] = database.level_from_geometry(squared_range, along, up,
+                across, states[it].blend);
+        if (level > best)
+        {
+            best = level;
+            peak = it;
+            best_energy = std::pow(10.0, 0.1 * best);
+        }
+    }
+
+    // `best` is now provably the peak of the whole history.  Walk out to the
+    // 10-dB-down points exactly as peak_range does, including its treatment of
+    // a sample sitting exactly on the threshold.
+    const double threshold = best - sel_window_db;
+    std::size_t last = nt - 1;
+    for (std::size_t it = peak; it < nt; it++)
+    {
+        if (evaluate(it) < threshold)
+        {
+            last = it - 1;
+            break;
+        }
+    }
+    std::size_t first = 0;
+    for (long it = static_cast<long>(peak); it > 0; it--)
+    {
+        const double level = evaluate(static_cast<std::size_t>(it));
+        if (level <= threshold)
+        {
+            first = (level == threshold) ? static_cast<std::size_t>(it)
+                                         : static_cast<std::size_t>(it) + 1;
+            break;
+        }
+    }
+
+    double sum = 0.0;
+    for (std::size_t it = first; it <= last; it++)
+        sum += std::pow(10.0, 0.1 * evaluate(it));
+    return 10.0 * std::log10(step * sum);
+}
+
 void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers)
 {
     trace("Reading observers from ", observer_file, ".");
@@ -470,16 +589,60 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         cull_range_squared[it] = range * range;
     }
     std::atomic<std::size_t> culled_samples {0};
+
+    // Find each observer's peak and expand out to the 10-dB-down points, rather
+    // than marching every emission time -- see windowed_sound_exposure_level.
+    // It is exact, so it is on whenever it applies, which is the plain
+    // broadband run.  Everything else marches:
+    //
+    //   --spectral       the bound is on the broadband dBA, which is not a
+    //                    bound on the band-limited weighted level (the same
+    //                    reason --db_cutoff is refused with --spectral)
+    //   -a / --ambient   the level is transformed after eval, so the bound
+    //                    would have to be transformed with it
+    //   -i / --history   writes the whole time history, skipped states included
+    //   -D / --dnlfile   the day-night window is found on a penalized history,
+    //                    which a window found on the raw one does not cover
+    //   --db_cutoff      already culls, on its own terms; leave it alone
+    DirectionBounds direction_bounds;
+    if (!options.spectral && !add_ambient && !write_time_history && !want_dnl && !culling
+            && nt > 0)
+    {
+        direction_bounds = database.direction_bounds(source_states);
+    }
+    const bool expand_from_peak = direction_bounds.usable();
+    // A coarse sweep seeds the peak search; the stride is not sensitive.
+    const std::size_t seed_stride = std::max<std::size_t>(1, nt / 128);
+    std::atomic<std::size_t> evaluated_samples {0};
+
     const auto acoustics_start = std::chrono::steady_clock::now();
 
     parallel_chunks(observers.size(), workers, [&](std::size_t begin, std::size_t end) {
         // One scratch history per worker rather than per observer.
         std::vector<double> levels(nt);
         std::vector<double> penalized;
+        // Which states of `levels` this observer has filled, stamped by a
+        // counter so the array does not have to be cleared per observer.
+        std::vector<unsigned> visited(expand_from_peak ? nt : 0, 0u);
+        unsigned generation = 0;
         std::size_t culled_here = 0;
+        std::size_t evaluated_here = 0;
         for (std::size_t index = begin; index < end; index++)
         {
             const auto& observer = observers[index];
+            if (expand_from_peak)
+            {
+                if (++generation == 0)
+                {
+                    // Wrapped, so old stamps could be mistaken for this pass.
+                    std::fill(visited.begin(), visited.end(), 0u);
+                    generation = 1;
+                }
+                integrated_levels[index] = windowed_sound_exposure_level(database, source_states,
+                        direction_bounds, observer, integration_step, seed_stride, levels,
+                        visited, generation, evaluated_here);
+                continue;
+            }
             for (std::size_t it = 0; it < nt; it++)
             {
                 if (culling
@@ -521,7 +684,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
         }
         culled_samples += culled_here;
+        evaluated_samples += evaluated_here;
     });
+
+    if (expand_from_peak)
+    {
+        const auto total = observers.size() * nt;
+        log("Evaluated ", evaluated_samples.load(), " of ", total, " (",
+                100.0 * static_cast<double>(evaluated_samples.load())
+                        / static_cast<double>(total),
+                "%); the rest is provably outside every observer's 10 dB window.");
+    }
 
     if (culling)
     {
