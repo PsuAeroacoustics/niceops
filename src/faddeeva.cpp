@@ -1,6 +1,7 @@
 #include "faddeeva.hpp"
 
 #include <cmath>
+#include <iterator>
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
 
@@ -78,9 +79,12 @@ std::complex<double> weideman(std::complex<double> z)
     const double vr = ur * ur - ui * ui; // v = t^4
     const double vi = 2.0 * ur * ui;
 
+    // The four chains only tile the table if its length is a multiple of four.
+    static_assert(std::size(weideman_a) % 4 == 0,
+            "the interleaved Horner chains tile weideman_a four at a time");
     double chain_r[4] = {weideman_a[3], weideman_a[2], weideman_a[1], weideman_a[0]};
     double chain_i[4] = {0.0, 0.0, 0.0, 0.0};
-    for (std::size_t term = 4; term < 32; term += 4)
+    for (std::size_t term = 4; term < std::size(weideman_a); term += 4)
     {
         for (std::size_t power = 0; power < 4; power++)
         {

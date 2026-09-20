@@ -64,10 +64,10 @@ void parallel_chunks(std::size_t count, unsigned threads, Body body)
     }
 
     const std::size_t workers = std::min<std::size_t>(threads, count);
+    const std::size_t slices = workers * chunks_per_worker;
     // Round up, so the chunks cover `count` and the last one is the short one.
-    const std::size_t chunk
-            = std::max<std::size_t>(1, (count + workers * chunks_per_worker - 1)
-                            / (workers * chunks_per_worker));
+    // count >= 1 here, so the ceiling is already at least 1.
+    const std::size_t chunk = (count + slices - 1) / slices;
 
     std::atomic<std::size_t> next {0};
     auto pull = [&body, &next, count, chunk] {

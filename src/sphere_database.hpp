@@ -11,6 +11,7 @@
 // (interpolation path is unimplemented).
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <string>
@@ -65,9 +66,9 @@ public:
     // Where `val` sits on the axis: the same bracketing pair bracket() returns,
     // plus how far along the cell it lies.  `fraction` is the weight the
     // bilinear interpolation puts on `hi`, so the weight on `lo` is 1 -
-    // fraction; that is exactly what periodic_bilinear_cell() derives from the
-    // two knot values, wrap-around included, and tests/test_sphere_database.cpp
-    // sweeps the two against each other.
+    // fraction; that is exactly what periodic_bilinear_interp() derives from
+    // the two knot values, wrap-around included, and
+    // tests/test_sphere_database.cpp sweeps the two against each other.
     //
     // It exists because eval() wants the weights, not the knots: on a uniform
     // axis both indices and the fraction fall out of one multiply, where going
@@ -177,6 +178,16 @@ public:
     // root and an acos.
     static int bin(double along, double up, double across, double squared_range);
 
+    // The narrowest theta bin and the azimuth sector width, both in degrees --
+    // what Database::direction_bounds pads the stencil by.  They live here with
+    // bin() so that changing the binning scheme is one edit rather than three.
+    static double narrowest_theta_bin_degrees();
+
+    static constexpr double azimuth_bin_degrees()
+    {
+        return 180.0 / azimuth_bins;
+    }
+
     bool usable() const
     {
         return usable_;
@@ -196,6 +207,49 @@ private:
     std::vector<std::size_t> blend_of_state_;
     bool usable_ = false;
 };
+
+namespace detail {
+
+// tan of each azimuth sector edge, so the sector test in bin() is a multiply
+// and a compare rather than an atan2.  An inline variable rather than a
+// function-local static: bin() runs ~94 million times a run and a function
+// static would test its guard on every one of them.
+inline const std::array<double, DirectionBounds::azimuth_bins / 2 - 1> azimuth_edge_tangents = [] {
+    constexpr double pi = 3.14159265358979323846;
+    std::array<double, DirectionBounds::azimuth_bins / 2 - 1> edges {};
+    for (std::size_t k = 0; k < edges.size(); k++)
+        edges[k] = std::tan(pi * static_cast<double>(k + 1) / DirectionBounds::azimuth_bins);
+    return edges;
+}();
+
+} // namespace detail
+
+// Defined here rather than in the .cpp because the observer loop calls it ~94
+// million times from another translation unit: out of line it inlines only when
+// NICEOPS_LTO is on and the toolchain supports it, and it is fifteen
+// instructions that should never depend on a build option.
+inline int DirectionBounds::bin(double along, double up, double across, double squared_range)
+{
+    // Theta: uniform in along^2, which is the square of the cosine, so no root.
+    // The sign of `along` picks the hemisphere.
+    constexpr int half_theta = theta_bins / 2;
+    int theta_index = static_cast<int>((along * along / squared_range) * half_theta);
+    if (theta_index > half_theta - 1)
+        theta_index = half_theta - 1;
+    theta_index = along >= 0.0 ? half_theta + theta_index : half_theta - 1 - theta_index;
+
+    // Azimuth: |across| against |up| scaled by tan of each sector edge, which
+    // needs neither the angle nor a normalised direction.
+    constexpr int half_azimuth = azimuth_bins / 2;
+    const double magnitude = std::fabs(across);
+    const double reference = std::fabs(up);
+    int sector = 0;
+    while (sector < half_azimuth - 1
+            && magnitude > reference * detail::azimuth_edge_tangents[sector])
+        sector++;
+    return theta_index * azimuth_bins
+            + (across >= 0.0 ? half_azimuth + sector : half_azimuth - 1 - sector);
+}
 
 class Database
 {
@@ -394,6 +448,18 @@ private:
     double sphere_radius_ = 0.0;
     // 1 / sphere_radius_, so eval's spherical spreading term is a multiply.
     double inv_sphere_radius_ = 0.0;
+
+    // Whether dropping the excess attenuation term bounds a level from above.
+    // A level is sphere_level - 20*log10(r/r0) - EAA*(r - r0)/1000, so dropping
+    // that term is conservative only if no excess factor in the database is
+    // negative.  The D original took abs() of the factor precisely because it
+    // could be.  Both cull_range() and direction_bounds() rest on this, so it
+    // is asked in one place.
+    bool excess_attenuation_is_a_loss() const
+    {
+        return min_excess_factor_ >= 0.0;
+    }
+
     double advance_ratio_min = 0.0, advance_ratio_max = 0.0;
     double flight_path_angle_min = 0.0, flight_path_angle_max = 0.0;
     double thrust_coefficient_min = 0.0, thrust_coefficient_max = 0.0;

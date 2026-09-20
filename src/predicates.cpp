@@ -1,6 +1,7 @@
 #include "predicates.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <vector>
 
@@ -128,8 +129,12 @@ int sign_of(const Expansion& e)
 // recursion put malloc and free at the top of the database load profile; with
 // pointers the recursion allocates nothing but the expansions it actually
 // computes.  `minor` is a stack array for the same reason `laplace` uses one.
-Expansion exact_determinant(const Expansion* const* matrix, std::size_t size)
+//
+// Callers go through the std::vector overload below, which adapts to this once;
+// the pointer form is what the recursion passes to itself.
+Expansion exact_determinant_recurse(const Expansion* const* matrix, std::size_t size)
 {
+    assert(size <= MAX_PREDICATE_SIZE);
     if (size == 1)
         return *matrix[0];
 
@@ -149,7 +154,7 @@ Expansion exact_determinant(const Expansion* const* matrix, std::size_t size)
                     minor[out++] = matrix[row * size + c];
             }
         }
-        Expansion term = multiply(pivot, exact_determinant(minor, size - 1));
+        Expansion term = multiply(pivot, exact_determinant_recurse(minor, size - 1));
         if (column % 2 == 1)
         {
             for (double& component : term)
@@ -158,6 +163,19 @@ Expansion exact_determinant(const Expansion* const* matrix, std::size_t size)
         add_expansion(total, term);
     }
     return total;
+}
+
+// Exact determinant of a matrix held as expansions, which is how all three
+// predicates build theirs.  Adapting to the pointer form once, here, keeps that
+// four-line dance out of every call site while leaving the recursion itself
+// allocation-free.
+Expansion exact_determinant(const std::vector<Expansion>& matrix, std::size_t size)
+{
+    assert(size <= MAX_PREDICATE_SIZE);
+    const Expansion* rows[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
+    for (std::size_t i = 0; i < size * size; i++)
+        rows[i] = &matrix[i];
+    return exact_determinant_recurse(rows, size);
 }
 
 // Determinant and permanent (the same expansion with every sign made positive)
@@ -233,14 +251,12 @@ int exact_determinant_sign(const double* matrix, std::size_t size)
         return filtered;
 
     std::vector<Expansion> exact(size * size);
-    const Expansion* rows[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
     for (std::size_t i = 0; i < size * size; i++)
     {
         if (matrix[i] != 0.0)
             exact[i] = Expansion {matrix[i]};
-        rows[i] = &exact[i];
     }
-    return sign_of(exact_determinant(rows, size));
+    return sign_of(exact_determinant(exact, size));
 }
 
 int orientation(const double* points, std::size_t dim)
@@ -264,16 +280,12 @@ int orientation(const double* points, std::size_t dim)
         return filtered;
 
     std::vector<Expansion> exact(dim * dim);
-    const Expansion* rows[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
     for (std::size_t row = 0; row < dim; row++)
     {
         for (std::size_t column = 0; column < dim; column++)
-        {
             exact[row * dim + column] = exact_difference(points[row * dim + column], base[column]);
-            rows[row * dim + column] = &exact[row * dim + column];
-        }
     }
-    return sign_of(exact_determinant(rows, dim));
+    return sign_of(exact_determinant(exact, dim));
 }
 
 int in_sphere(const double* points, const double* query, std::size_t dim)
@@ -304,7 +316,6 @@ int in_sphere(const double* points, const double* query, std::size_t dim)
         // Exact path: both the differences and their squares are formed without
         // rounding.
         std::vector<Expansion> exact(size * size);
-        const Expansion* rows[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
         for (std::size_t row = 0; row < size; row++)
         {
             Expansion lifted;
@@ -316,9 +327,7 @@ int in_sphere(const double* points, const double* query, std::size_t dim)
             }
             exact[row * size + dim] = std::move(lifted);
         }
-        for (std::size_t i = 0; i < size * size; i++)
-            rows[i] = &exact[i];
-        sign = sign_of(exact_determinant(rows, size));
+        sign = sign_of(exact_determinant(exact, size));
     }
 
     // Normalise out the simplex's own orientation, so the answer means "inside"

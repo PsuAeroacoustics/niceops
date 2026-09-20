@@ -19,24 +19,26 @@ namespace niceops {
 // which is also what --db_cutoff's margin has to clear.
 inline constexpr double sel_window_db = 10.0;
 
-inline std::array<std::size_t, 2> peak_range(const std::vector<double>& levels,
-        double down = sel_window_db)
+// Walk out from a known peak to the 10-dB-down points, reading levels through
+// `level_at(i)` rather than from an array.
+//
+// The accessor is what lets niceops.cpp's peak-expanding path share this: there
+// the history is computed lazily, so most indices have no value until the walk
+// asks for one.  It is a template rather than a std::function so it inlines
+// away completely -- the comparisons, and their order, are the same either way.
+//
+// The asymmetry between the two loops is the D original's and is load-bearing:
+// forward stops on `< threshold`, backward on `<= threshold` and splits on the
+// exact tie.  Roughly 0.7% of observers' SEL depends on that tie rule, so it
+// lives here once rather than in each caller.
+template <typename LevelAt>
+inline std::array<std::size_t, 2> expand_window(std::size_t peak_position, std::size_t count,
+        double threshold, LevelAt&& level_at)
 {
-    // An empty time history has no peak.  Guarding here rather than letting
-    // levels.size() - 1 wrap and max_element dereference end(): that crashed
-    // with a segfault well downstream of the real cause, an unparseable
-    // trajectory that yielded no states.
-    if (levels.empty())
-        fatal("peak_range: empty level history; the trajectory produced no states.");
-    // Find the 10-dB down points
-    std::array<std::size_t, 2> index = {0, levels.size() - 1};
-    auto peak_position = static_cast<std::size_t>(std::max_element(levels.begin(), levels.end())
-            - levels.begin());
-    const double threshold = levels[peak_position] - down;
-
-    for (std::size_t i = peak_position; i < levels.size(); i++)
+    std::array<std::size_t, 2> index = {0, count - 1};
+    for (std::size_t i = peak_position; i < count; i++)
     {
-        if (levels[i] < threshold)
+        if (level_at(i) < threshold)
         {
             index[1] = i - 1;
             break;
@@ -44,9 +46,10 @@ inline std::array<std::size_t, 2> peak_range(const std::vector<double>& levels,
     }
     for (long i = static_cast<long>(peak_position); i > 0; i--)
     {
-        if (levels[i] <= threshold)
+        const double level = level_at(static_cast<std::size_t>(i));
+        if (level <= threshold)
         {
-            if (levels[i] == threshold)
+            if (level == threshold)
             {
                 index[0] = static_cast<std::size_t>(i);
             }
@@ -58,6 +61,22 @@ inline std::array<std::size_t, 2> peak_range(const std::vector<double>& levels,
         }
     }
     return index;
+}
+
+inline std::array<std::size_t, 2> peak_range(const std::vector<double>& levels,
+        double down = sel_window_db)
+{
+    // An empty time history has no peak.  Guarding here rather than letting
+    // levels.size() - 1 wrap and max_element dereference end(): that crashed
+    // with a segfault well downstream of the real cause, an unparseable
+    // trajectory that yielded no states.
+    if (levels.empty())
+        fatal("peak_range: empty level history; the trajectory produced no states.");
+    // Find the 10-dB down points
+    const auto peak_position = static_cast<std::size_t>(
+            std::max_element(levels.begin(), levels.end()) - levels.begin());
+    return expand_window(peak_position, levels.size(), levels[peak_position] - down,
+            [&levels](std::size_t i) { return levels[i]; });
 }
 
 // Mean spacing of a monotonically increasing time series, and how far the worst
@@ -96,15 +115,23 @@ inline bool is_night(double utcsec, double utc_offset_hours)
     return local < 7.0 * 3600.0 || local >= 22.0 * 3600.0;
 }
 
+// Integrate an already-located window into a sound exposure level.  Ascending
+// order, because the accumulation order is part of the answer at 1e-9.
+template <typename LevelAt>
+inline double sel_over_window(std::size_t first, std::size_t last, double T, LevelAt&& level_at)
+{
+    double sum = 0.0;
+    for (std::size_t i = first; i <= last; i++)
+    {
+        sum += std::pow(10.0, 0.1 * level_at(i));
+    }
+    return 10.0 * std::log10(T * sum);
+}
+
 inline double sound_exposure_level(const std::vector<double>& levels, double T)
 {
     auto index = peak_range(levels);
-    double sum = 0.0;
-    for (std::size_t i = index[0]; i <= index[1]; i++)
-    {
-        sum += std::pow(10.0, 0.1 * levels[i]);
-    }
-    return 10.0 * std::log10(T * sum);
+    return sel_over_window(index[0], index[1], T, [&levels](std::size_t i) { return levels[i]; });
 }
 
 // Day-night level: the sound exposure level with a 10 dB penalty applied to
