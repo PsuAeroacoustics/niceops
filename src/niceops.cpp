@@ -324,6 +324,46 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
     }
 }
 
+// The observers a run evaluates, and their coordinates as the CSV writers want
+// them: for a grid, the two axes; for a scattered set, one entry per observer.
+struct ObserverSet
+{
+    std::vector<Vec3> observers;
+    std::vector<double> x;
+    std::vector<double> y;
+};
+
+ObserverSet scattered_observers(const std::string& observer_file)
+{
+    ObserverSet set;
+    read_observer_file(observer_file, set.observers);
+    set.x.reserve(set.observers.size());
+    set.y.reserve(set.observers.size());
+    for (const auto& observer : set.observers)
+    {
+        set.x.push_back(observer(0));
+        set.y.push_back(observer(1));
+    }
+    return set;
+}
+
+ObserverSet gridded_observers(const std::vector<double>& bounds, double step)
+{
+    // Mirrors D's iota(-1500.0, 1500.0, 25.0).
+    // NOTE: D's iota(begin, end, step) is EXCLUSIVE of end -- it yields
+    // ceil((end-begin)/step) values, so the default is 120 points spanning
+    // -1500..1475 m, NOT 121 points ending at 1500.  Verified against LDC.
+    ObserverSet set;
+    set.x = iota_exclusive(bounds[0], bounds[1], step);
+    set.y = iota_exclusive(bounds[2], bounds[3], step);
+    // Row-major over (y, x), which is the order write_levels reads back.
+    set.observers.reserve(set.x.size() * set.y.size());
+    for (const double y : set.y)
+        for (const double x : set.x)
+            set.observers.push_back(Vec3(x, y, 0.0));
+    return set;
+}
+
 } // namespace
 
 namespace {
@@ -387,29 +427,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const std::vector<double>& x_obs, const std::vector<double>& y_obs,
         std::vector<double>& integrated_levels, std::vector<double>& dnl_energy)
 {
-    // Named so the body below reads as it did when it was inline in main.
-    const auto& path_file = job.trajectory;
-    const auto& vehicle_file = job.vehicle;
-    const auto& out_file = job.output;
-    const std::size_t path_count = job.count;
-    const bool qsam = options.qsam;
-    const double dt = options.dt;
-    const double ambient_level = options.ambient_level;
-    const unsigned thread_count = options.thread_count;
-    const double db_cutoff = options.db_cutoff;
-    const double trim_start_ft = options.trim_start_ft;
-    const double utc_offset = options.utc_offset;
-    const bool scattered = options.scattered;
-    const bool want_dnl = options.want_dnl;
-    const bool write_time_history = options.write_time_history;
-    const bool write_state = options.write_state;
-    const auto& time_history_prefix = options.time_history_prefix;
-    const auto& metric_file = options.metric_file;
-    const auto& power_file = options.power_file;
-
-
     // Create trajectory from CSV data
-    Trajectory trajectory(path_file, vehicle_file, options.geodetic);
+    Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic);
 
     // mu and CT are non-dimensionalised by the vehicle JSON's tip speed, and
     // they index the database's operating conditions -- which were generated at
@@ -421,7 +440,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (!std::isnan(database.tip_speed())
             && !approx_equal(trajectory.vehicle.tip_speed, database.tip_speed()))
     {
-        log("Main rotor tip speed disagrees: ", vehicle_file, " gives ",
+        log("Main rotor tip speed disagrees: ", job.vehicle, " gives ",
                 trajectory.vehicle.tip_speed, " m/s but the database was built at ",
                 database.tip_speed(), " m/s. mu and CT will index the wrong conditions.");
     }
@@ -429,20 +448,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Trim trajectory (per Mike): crop from the given x to whichever comes
     // first, the lowest or the slowest point.  Off unless asked for -- it
     // changes which part of the flight is integrated, and so the levels.
-    if (!std::isnan(trim_start_ft))
+    if (!std::isnan(options.trim_start_ft))
     {
-        trajectory.watts_trim(trim_start_ft);
+        trajectory.watts_trim(options.trim_start_ft);
     }
 
     // Resample onto the -s grid, smoothing the path first.  Disabled, matching
     // the D original; --path_smoothing covers the geodetic input that needs it.
-    // The arguments are (dt, smoothing, tolerance): a negative tolerance uses
+    // The arguments are (options.dt, smoothing, tolerance): a negative tolerance uses
     // `smoothing` as the penalty weight directly, and a non-negative one solves
     // for the weight instead.  The D-era pair here was (degree, smooth) from
     // the vendored B-spline library, whose second and third arguments meant
     // something else entirely -- uncommented as it stood, it asked for a fit
     // allowed to sit 1e6 away from the measured path.
-    //trajectory.adapt(dt, /*smoothing=*/0.3);
+    //trajectory.adapt(options.dt, /*smoothing=*/0.3);
 
     // And time series data
     const std::size_t nt = trajectory.states.size();
@@ -452,7 +471,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // two coincide only when adapt() resamples onto the -s grid, and adapt() is
     // disabled below; every shipped track is sampled at 0.02 s, so the 0.5 s
     // default would overstate every level by 10*log10(0.5/0.02) = 14 dB.
-    double integration_step = dt;
+    double integration_step = options.dt;
     if (nt >= 2)
     {
         std::vector<double> sample_times;
@@ -477,9 +496,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // observers*states of them into states of them.
     // Night classification for the DNL penalty, from the AC format's UTC
     // seconds column shifted into local time.
-    std::vector<char> night(want_dnl ? nt : 0);
+    std::vector<char> night(options.want_dnl ? nt : 0);
     for (std::size_t it = 0; it < night.size(); it++)
-        night[it] = is_night(trajectory.states[it].utcsec, utc_offset) ? 1 : 0;
+        night[it] = is_night(trajectory.states[it].utcsec, options.utc_offset) ? 1 : 0;
 
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
@@ -488,10 +507,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
                 Vec3(state.vx, state.vy, state.vz),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
-                qsam ? state.fpa_e : state.fpa, state.CT));
+                options.qsam ? state.fpa_e : state.fpa, state.CT));
     }
 
-    if (!power_file.empty())
+    if (!options.power_file.empty())
     {
         // Shaft power is a property of the flight condition, so it falls out of
         // the per-state blends with no extra geometry.  It is written per
@@ -500,14 +519,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (!database.has_shaft_power())
         {
             log("--powerfile given but this database carries no ShaftPower; skipping ",
-                    path_file, ".");
+                    job.trajectory, ".");
         }
         else
         {
-            const auto name = path_count == 1
-                    ? power_file
-                    : (std::filesystem::path(power_file).parent_path()
-                              / (std::filesystem::path(path_file).stem().string() + "_power.csv"))
+            const auto name = job.count == 1
+                    ? options.power_file
+                    : (std::filesystem::path(options.power_file).parent_path()
+                              / (std::filesystem::path(job.trajectory).stem().string() + "_power.csv"))
                               .string();
             auto file = open_output(name);
             info("Writing shaft power to ", name);
@@ -515,36 +534,36 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             for (std::size_t it = 0; it < nt; it++)
             {
                 const auto& state = trajectory.states[it];
-                file << state.t << "," << state.mu << "," << (qsam ? state.fpa_e : state.fpa) << ","
+                file << state.t << "," << state.mu << "," << (options.qsam ? state.fpa_e : state.fpa) << ","
                      << state.CT << "," << database.shaft_power(source_states[it].blend) << "\n";
             }
         }
     }
-    // ambient_level stays NaN unless -a was given, which is how D's default-NaN
+    // options.ambient_level stays NaN unless -a was given, which is how D's default-NaN
     // double suppressed the ambient mix-in.  The reference pressure it converts
     // to is loop-invariant; it used to be a pow() per evaluation.
-    const bool add_ambient = !std::isnan(ambient_level);
-    const double ambient_pressure = add_ambient ? std::pow(10.0, ambient_level / 20.) : 0.0;
+    const bool add_ambient = !std::isnan(options.ambient_level);
+    const double ambient_pressure = add_ambient ? std::pow(10.0, options.ambient_level / 20.) : 0.0;
 
     // Observers are independent of one another: each reads the database and the
     // source_states array, which are finished and const by now, and writes only
     // its own level.  Nothing in here reaches the CGAL triangulation -- the
     // blends were all resolved above -- so the loop splits with no locking.
-    const unsigned workers = thread_count > 0 ? thread_count : default_thread_count();
+    const unsigned workers = options.thread_count > 0 ? options.thread_count : default_thread_count();
     info("Evaluating ", observers.size(), " observers on ", workers,
             workers == 1 ? " thread." : " threads.");
 
-    if (write_time_history)
+    if (options.write_time_history)
     {
         // Create the output directory once, here.  Left to the writers it would
         // be a create_directories() race between workers, and a stat per file
         // besides.
-        const auto directory = std::filesystem::path(time_history_prefix).parent_path();
+        const auto directory = std::filesystem::path(options.time_history_prefix).parent_path();
         if (!directory.empty())
             std::filesystem::create_directories(directory);
     }
 
-    // With --db_cutoff, skip any (observer, state) pair whose level is provably
+    // With --options.db_cutoff, skip any (observer, state) pair whose level is provably
     // below the cutoff.  The bound is per state, from the loudest sphere the
     // state blends and spherical spreading alone, so it never discards a sample
     // that could have been louder -- unlike the D original, which sorted
@@ -568,7 +587,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<std::complex<double>> ground_impedance_bands;
     double sound_speed = 343.2;
     // The contiguous run of bands inside the metric's limits. Band centres are
-    // sorted, so the limits always select a range rather than a scattered set.
+    // sorted, so the limits always select a range rather than a options.scattered set.
     std::size_t first_band = 0;
     std::size_t last_band = 0;
     if (options.spectral)
@@ -625,8 +644,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
     }
 
-    const bool culling = !std::isnan(db_cutoff);
-    const double cull_below = db_cutoff - sel_window_db;
+    const bool culling = !std::isnan(options.db_cutoff);
+    const double cull_below = options.db_cutoff - sel_window_db;
     // A culled sample contributes no acoustic energy.  Filling with the
     // threshold instead would be far worse than useless -- thousands of samples
     // at the floor integrate to well above it.
@@ -648,7 +667,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     //   eval returns -- would have to be transformed with it:
     //     --spectral     the bound is on the broadband dBA, which is not a
     //                    bound on the band-limited weighted level (the same
-    //                    reason --db_cutoff is refused with --spectral)
+    //                    reason --options.db_cutoff is refused with --spectral)
     //     -a / --ambient
     //
     //   every sample is wanted, not just the window's:
@@ -657,11 +676,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     //                    which a window found on the raw one does not cover
     //
     // A new option that does either belongs in the matching term below.
-    // --db_cutoff stands apart: it already culls on its own terms, and its
+    // --options.db_cutoff stands apart: it already culls on its own terms, and its
     // culling is a deliberate metric change, so leave the two mechanisms
     // separate rather than layering this one on top.
     const bool level_is_transformed = options.spectral || add_ambient;
-    const bool needs_full_history = write_time_history || want_dnl;
+    const bool needs_full_history = options.write_time_history || options.want_dnl;
     DirectionBounds direction_bounds;
     if (!level_is_transformed && !needs_full_history && !culling)
     {
@@ -725,7 +744,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 levels[it] = level;
             }
             integrated_levels[index] = sound_exposure_level(levels, integration_step);
-            if (want_dnl)
+            if (options.want_dnl)
             {
                 // Energies add across operations; the logarithm comes at the
                 // end, once every trajectory has contributed.  Each observer
@@ -734,10 +753,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 dnl_energy[index] += std::pow(
                         10.0, 0.1 * day_night_level(levels, integration_step, night, penalized));
             }
-            if (write_time_history)
+            if (options.write_time_history)
             {
                 // Write out time history files
-                auto time_history_filename = time_history_prefix + "_i" + std::to_string(index) + ".csv";
+                auto time_history_filename = options.time_history_prefix + "_i" + std::to_string(index) + ".csv";
                 write_time_history_file(levels, integration_step, observer(0), observer(1),
                         time_history_filename);
             }
@@ -767,25 +786,143 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::chrono::steady_clock::now() - acoustics_start)
                                  .count();
     log("Acoustic calculations completed in ", elapsed / 1000.0, " seconds.");
-    write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
+    write_levels(x_obs, y_obs, integrated_levels, job.output, options.scattered);
     if (options.latlon)
     {
         write_geodetic_levels(x_obs, y_obs, integrated_levels, *options.geodetic.frame,
-                latlon_companion(out_file), scattered);
+                latlon_companion(job.output), options.scattered);
     }
 
-    if (!metric_file.empty())
+    if (!options.metric_file.empty())
     {
-        auto casename = std::filesystem::path(path_file).stem().string();
-        append_metrics_file(metric_file, casename, integrated_levels);
+        auto casename = std::filesystem::path(job.trajectory).stem().string();
+        append_metrics_file(options.metric_file, casename, integrated_levels);
     }
 
-    if (write_state)
+    if (options.write_state)
     {
         trajectory.write_state(job.state);
     }
 
     return trajectory;
+}
+
+// Draw the footprint and the state figures for a single-trajectory run.
+//
+// Lifted out of run() unchanged.  It takes x_obs/y_obs by value because the
+// first thing it does is convert them to feet, and run() still holds the metric
+// copies -- in place, that conversion used to run over the caller's arrays.
+void draw_figures(const Trajectory& trajectory, const std::vector<double>& integrated_levels,
+        std::vector<double> x_obs, std::vector<double> y_obs, bool scattered, bool plotting,
+        const std::string& figure_file, const std::string& state_figure_file,
+        double contour_min, double contour_max, double contour_step)
+{
+    auto x = trajectory.column("x");
+    auto y = trajectory.column("y");
+    auto z = trajectory.column("z");
+
+    // Convert to ft for plotting
+    // TODO add units throughout
+    for (auto& v : x_obs)
+        v *= 1.0 / ft2m;
+    for (auto& v : y_obs)
+        v *= 1.0 / ft2m;
+    for (auto& v : x)
+        v *= 1.0 / ft2m;
+    for (auto& v : y)
+        v *= 1.0 / ft2m;
+    for (auto& v : z)
+        v *= 1.0 / ft2m;
+
+    if (plotting || !figure_file.empty())
+    {
+        // Set contour levels, mirroring D's
+        // iota(contour_min, contour_max + contour_step, contour_step).
+        // iota's end is exclusive, so this runs contour_min..contour_max
+        // inclusive -- one level fewer than an inclusive reading gives.
+        const auto clevels = iota_exclusive(contour_min, contour_max + contour_step, contour_step);
+        plt::figure();
+        if (scattered)
+        {
+            plt::tricontourf(x_obs, y_obs, integrated_levels, clevels, "YlOrRd");
+            plt::plot(x_obs, y_obs, "ko");
+        }
+        else
+        {
+            std::vector<std::vector<double>> gridded_levels;
+            const std::size_t nx = x_obs.size();
+            const std::size_t ny = y_obs.size();
+            gridded_levels.resize(ny);
+            for (std::size_t iy = 0; iy < ny; iy++)
+            {
+                gridded_levels[iy].resize(nx);
+                for (std::size_t ix = 0; ix < nx; ix++)
+                {
+                    gridded_levels[iy][ix] = integrated_levels[ix + iy * nx];
+                }
+            }
+            plt::contourf(x_obs, y_obs, gridded_levels, clevels, "YlOrRd");
+        }
+        // The flight track over the footprint.  This was commented out in the
+        // particular niceops.d the port was derived from, and the port
+        // copied the comment; it is live both in that file's own ancestor
+        // and on master, and every reference figure in figures/ has the
+        // track drawn on it.
+        plt::plot(x, y, "k-");
+        plt::xlabel("X, ft", 14);
+        plt::ylabel("Y, ft", 14);
+        plt::axis("equal");
+        plt::colorbar();
+        plt::tight_layout();
+
+        if (!figure_file.empty())
+        {
+            plt::savefig(figure_file);
+        }
+    }
+    if (plotting || !state_figure_file.empty())
+    {
+        auto CT = trajectory.column("CT");
+        auto mu = trajectory.column("mu");
+        auto gamma = trajectory.column("fpa");
+        auto gamma_e = trajectory.column("fpa_e");
+
+        auto p = std::filesystem::path(state_figure_file);
+        const std::string ext = p.extension().string();
+        const std::string base = p.replace_extension().string();
+
+        // One figure per state variable against x, all four identical but
+        // for the series and the y label.  NOTE: the separator lands before
+        // the extension, so these come out as "state_CT_.png" -- the D
+        // original's naming, which the reference figures carry.
+        auto state_figure = [&](const char* name, const char* label,
+                                    const std::vector<double>& series) {
+            plt::figure();
+            plt::plot(x, series);
+            plt::xlabel("X, ft", 14);
+            plt::ylabel(label, 14);
+            if (!state_figure_file.empty())
+                plt::savefig(base + "_" + name + "_" + ext);
+        };
+
+        state_figure("CT", "$C_T$", CT);
+        state_figure("mu", "$\\mu$", mu);
+        // The one exception: both flight path angles on the same axes.
+        plt::figure();
+        plt::plot(x, gamma, x, gamma_e);
+        plt::xlabel("X, ft", 14);
+        plt::ylabel("$\\gamma$", 14);
+        if (!state_figure_file.empty())
+        {
+            plt::savefig(base + "_gamma_" + ext);
+        }
+        state_figure("z", "Z, ft", z);
+    }
+    if (plotting)
+    {
+        plt::show();
+    }
+    plt::clear();
 }
 
 } // namespace
@@ -1133,46 +1270,13 @@ int run(int argc, char* argv[])
         database.self_test(loaded_database);
     }
 
-    std::vector<double> integrated_levels;
-    std::vector<double> x_obs;
-    std::vector<double> y_obs;
-    std::vector<Vec3> observers;
-    if (scattered)
-    {
-        // Read in scattered observer data
-        read_observer_file(observer_file, observers);
-        // Set length for levels and observer x, y arrays
-        integrated_levels.resize(observers.size());
-        x_obs.reserve(observers.size());
-        y_obs.reserve(observers.size());
-        // Deal observers out to x_obs and y_obs arrays
-        for (const auto& observer : observers)
-        {
-            x_obs.push_back(observer(0));
-            y_obs.push_back(observer(1));
-        }
-    }
-    else
-    {
-        // Set up observer array, mirroring D's iota(-1500.0, 1500.0, 25.0).
-        // NOTE: D's iota(begin, end, step) is EXCLUSIVE of end -- it yields
-        // ceil((end-begin)/step) values, so this is 120 points spanning
-        // -1500..1475 m, NOT 121 points ending at 1500.  Verified against LDC.
-        x_obs = iota_exclusive(grid_bounds[0], grid_bounds[1], grid_step);
-        y_obs = iota_exclusive(grid_bounds[2], grid_bounds[3], grid_step);
-        const std::size_t nx = x_obs.size();
-        const std::size_t ny = y_obs.size();
-        // Set corresponding length for levels
-        integrated_levels.resize(nx * ny);
-        observers.reserve(nx * ny);
-        for (std::size_t iy = 0; iy < ny; iy++)
-        {
-            for (std::size_t ix = 0; ix < nx; ix++)
-            {
-                observers.push_back(Vec3(x_obs[ix], y_obs[iy], 0.0));
-            }
-        }
-    }
+    ObserverSet observer_set = scattered
+            ? scattered_observers(observer_file)
+            : gridded_observers(grid_bounds, grid_step);
+    auto& observers = observer_set.observers;
+    auto& x_obs = observer_set.x;
+    auto& y_obs = observer_set.y;
+    std::vector<double> integrated_levels(observers.size());
     // DNL is a property of the whole set of operations, not of one flight: each
     // trajectory's day-night level is an energy, and they sum.
     const bool want_dnl = !dnl_file.empty();
@@ -1182,12 +1286,8 @@ int run(int argc, char* argv[])
     // single trajectory, can still reach it.
     std::optional<Trajectory> trajectory_holder;
 
-    RunOptions options;
-    options.qsam = qsam;
-    options.dt = dt;
-    options.ambient_level = ambient_level;
-    options.db_cutoff = db_cutoff;
-    options.spectral = spectral;
+    // The flag combinations that cannot be served, checked before anything is
+    // built from them.
     if (spectral && !std::isnan(db_cutoff))
     {
         // cull_range bounds the broadband level from the loudest sphere in the
@@ -1197,21 +1297,30 @@ int run(int argc, char* argv[])
         input_error("--spectral cannot be combined with --db_cutoff: the cutoff's range "
                     "bound is derived from the broadband level, not the band-limited one.");
     }
-    if (band_limits.size() == 2)
-    {
-        options.band_limits.low = band_limits[0];
-        options.band_limits.high = band_limits[1];
-        if (!(options.band_limits.low < options.band_limits.high))
-        {
-            input_error("--band_limits needs low < high, got ", options.band_limits.low, " and ",
-                    options.band_limits.high, ".");
-        }
-    }
     if (ground_effect && !spectral)
     {
         input_error("--ground_effect needs --spectral: the ground effect is a function of "
                     "frequency, and the broadband path has no spectrum to apply it to.");
     }
+    if (band_limits.size() == 2 && !(band_limits[0] < band_limits[1]))
+    {
+        input_error("--band_limits needs low < high, got ", band_limits[0], " and ",
+                band_limits[1], ".");
+    }
+
+    // Everything the trajectory loop needs that does not vary between
+    // trajectories, named once.  Written as an initialiser rather than thirty
+    // assignments so a field added to RunOptions and forgotten here reads as
+    // its declared default rather than as whatever the struct was left holding.
+    RunOptions options {};
+    options.qsam = qsam;
+    options.dt = dt;
+    options.ambient_level = ambient_level;
+    options.thread_count = thread_count;
+    options.db_cutoff = db_cutoff;
+    options.spectral = spectral;
+    if (band_limits.size() == 2)
+        options.band_limits = BandLimits {band_limits[0], band_limits[1]};
     options.ground_effect = ground_effect;
     options.ground.flow_resistance = flow_resistance;
     options.ground.receiver_height = receiver_height;
@@ -1221,7 +1330,6 @@ int run(int argc, char* argv[])
     options.pressure_override = pressure_override;
     options.trim_start_ft = trim_start_ft;
     options.utc_offset = utc_offset;
-    options.thread_count = thread_count;
     options.scattered = scattered;
     options.want_dnl = want_dnl;
     options.write_time_history = write_time_history;
@@ -1229,6 +1337,7 @@ int run(int argc, char* argv[])
     options.time_history_prefix = time_history_prefix;
     options.metric_file = metric_file;
     options.power_file = power_file;
+    options.latlon = latlon;
     options.geodetic.frame = frame;
     options.geodetic.ground_elevation_ft = ground_elevation;
     options.geodetic.start_utc = start_utc;
@@ -1236,7 +1345,6 @@ int run(int argc, char* argv[])
     // needs resampling; neither ever coarsens a track that is already finer.
     options.geodetic.resample_dt = dt;
     options.geodetic.path_smoothing = path_smoothing;
-    options.latlon = latlon;
 
     std::size_t failed_paths = 0;
 
@@ -1303,113 +1411,9 @@ int run(int argc, char* argv[])
     }
     else if (want_plots)
     {
-        auto& trajectory = *trajectory_holder;
-        auto x = trajectory.column("x");
-        auto y = trajectory.column("y");
-        auto z = trajectory.column("z");
-
-        // Convert to ft for plotting
-        // TODO add units throughout
-        for (auto& v : x_obs)
-            v *= 1.0 / ft2m;
-        for (auto& v : y_obs)
-            v *= 1.0 / ft2m;
-        for (auto& v : x)
-            v *= 1.0 / ft2m;
-        for (auto& v : y)
-            v *= 1.0 / ft2m;
-        for (auto& v : z)
-            v *= 1.0 / ft2m;
-
-        if (plotting || !figure_file.empty())
-        {
-            // Set contour levels, mirroring D's
-            // iota(contour_min, contour_max + contour_step, contour_step).
-            // iota's end is exclusive, so this runs contour_min..contour_max
-            // inclusive -- one level fewer than an inclusive reading gives.
-            const auto clevels = iota_exclusive(contour_min, contour_max + contour_step, contour_step);
-            plt::figure();
-            if (scattered)
-            {
-                plt::tricontourf(x_obs, y_obs, integrated_levels, clevels, "YlOrRd");
-                plt::plot(x_obs, y_obs, "ko");
-            }
-            else
-            {
-                std::vector<std::vector<double>> gridded_levels;
-                const std::size_t nx = x_obs.size();
-                const std::size_t ny = y_obs.size();
-                gridded_levels.resize(ny);
-                for (std::size_t iy = 0; iy < ny; iy++)
-                {
-                    gridded_levels[iy].resize(nx);
-                    for (std::size_t ix = 0; ix < nx; ix++)
-                    {
-                        gridded_levels[iy][ix] = integrated_levels[ix + iy * nx];
-                    }
-                }
-                plt::contourf(x_obs, y_obs, gridded_levels, clevels, "YlOrRd");
-            }
-            // The flight track over the footprint.  This was commented out in the
-            // particular niceops.d the port was derived from, and the port
-            // copied the comment; it is live both in that file's own ancestor
-            // and on master, and every reference figure in figures/ has the
-            // track drawn on it.
-            plt::plot(x, y, "k-");
-            plt::xlabel("X, ft", 14);
-            plt::ylabel("Y, ft", 14);
-            plt::axis("equal");
-            plt::colorbar();
-            plt::tight_layout();
-
-            if (!figure_file.empty())
-            {
-                plt::savefig(figure_file);
-            }
-        }
-        if (plotting || !state_figure_file.empty())
-        {
-            auto CT = trajectory.column("CT");
-            auto mu = trajectory.column("mu");
-            auto gamma = trajectory.column("fpa");
-            auto gamma_e = trajectory.column("fpa_e");
-
-            auto p = std::filesystem::path(state_figure_file);
-            const std::string ext = p.extension().string();
-            const std::string base = p.replace_extension().string();
-
-            // One figure per state variable against x, all four identical but
-            // for the series and the y label.  NOTE: the separator lands before
-            // the extension, so these come out as "state_CT_.png" -- the D
-            // original's naming, which the reference figures carry.
-            auto state_figure = [&](const char* name, const char* label,
-                                        const std::vector<double>& series) {
-                plt::figure();
-                plt::plot(x, series);
-                plt::xlabel("X, ft", 14);
-                plt::ylabel(label, 14);
-                if (!state_figure_file.empty())
-                    plt::savefig(base + "_" + name + "_" + ext);
-            };
-
-            state_figure("CT", "$C_T$", CT);
-            state_figure("mu", "$\\mu$", mu);
-            // The one exception: both flight path angles on the same axes.
-            plt::figure();
-            plt::plot(x, gamma, x, gamma_e);
-            plt::xlabel("X, ft", 14);
-            plt::ylabel("$\\gamma$", 14);
-            if (!state_figure_file.empty())
-            {
-                plt::savefig(base + "_gamma_" + ext);
-            }
-            state_figure("z", "Z, ft", z);
-        }
-        if (plotting)
-        {
-            plt::show();
-        }
-        plt::clear();
+        draw_figures(*trajectory_holder, integrated_levels, x_obs, y_obs,
+                scattered, plotting, figure_file, state_figure_file,
+                contour_min, contour_max, contour_step);
     }
     // Nonzero when any trajectory was skipped, so a batch script notices.
     return failed_paths > 0 ? 1 : 0;
