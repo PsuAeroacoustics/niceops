@@ -58,6 +58,11 @@ public:
     // which silently teleports a bad coordinate to the reference point.
     Vec3 to_local(const Geodetic& position) const;
 
+    // Rotate an east/north/up vector -- a velocity, say -- into the frame's
+    // axes.  A direction has no origin to be projected about, so this is the
+    // rotation alone; to_local's projection applies to positions only.
+    Vec3 from_east_north_up(const Vec3& enu) const;
+
     // ...and back.  Newton iteration on the forward projection, which converges
     // to the last bit in a handful of steps.  The D original walked latitude
     // and then longitude in fixed 1e-5 degree increments until the error

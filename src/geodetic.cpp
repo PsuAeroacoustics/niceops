@@ -131,6 +131,16 @@ Vec3 LocalFrame::to_local(const Geodetic& position) const
             -east * sin_rotation_ + north * cos_rotation_, position.altitude};
 }
 
+Vec3 LocalFrame::from_east_north_up(const Vec3& enu) const
+{
+    // The same rotation to_local applies to a projected position, without the
+    // projection: over a footprint's few kilometres the convergence of the
+    // meridians is far below the accuracy of any velocity a trajectory file
+    // carries, so one rotation serves the whole frame.
+    return {enu(0) * cos_rotation_ + enu(1) * sin_rotation_,
+            -enu(0) * sin_rotation_ + enu(1) * cos_rotation_, enu(2)};
+}
+
 Geodetic LocalFrame::to_geodetic(const Vec3& local) const
 {
     // Newton on the 2x2 forward map, from the reference point.  The projection

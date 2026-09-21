@@ -2,8 +2,11 @@
 // worldtransforms.d / wgs84tocartesian.d pair.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <vector>
 
 #include "geodetic.hpp"
@@ -129,4 +132,70 @@ TEST_CASE("Projection matches the shipped tracks' own geometry", "[geodetic]")
     }
     REQUIRE(longest > 100.0);
     REQUIRE(worst < 0.5);
+}
+
+TEST_CASE("The shipped tracks' frame runs along a bearing of 210 degrees", "[geodetic]")
+{
+    // The test above compares distances between samples, which no rotation or
+    // translation can change -- so it says nothing about which way the axes
+    // point.  The orientation is recoverable too, and it is a round number:
+    // +x runs along a compass bearing of 210, the approach heading, not along
+    // the instantaneous heading in column 8, which wanders over 25 degrees.
+    // Match that and the only freedom left is the origin the file does not
+    // record, which is one constant offset for the whole track.
+    const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
+    const double ft2m = 0.3048;
+    const Geodetic reference {records.front()[2], records.front()[3], 0.0};
+
+    auto worst_residual = [&](double bearing) {
+        const auto frame = LocalFrame::track_aligned(reference, bearing);
+        // to_local is zero at the reference, so the offset is the file's own
+        // coordinate for its first sample.
+        const double offset_x = records.front()[5] * ft2m;
+        const double offset_y = records.front()[6] * ft2m;
+        double worst = 0.0;
+        for (std::size_t i = 0; i < records.size(); i += 250)
+        {
+            const auto local = frame.to_local({records[i][2], records[i][3], 0.0});
+            worst = std::max(worst, std::hypot(local(0) + offset_x - records[i][5] * ft2m,
+                                            local(1) + offset_y - records[i][6] * ft2m));
+        }
+        return worst;
+    };
+
+    // Sub-metre over 3.2 km of track: this projection is the one that file was
+    // built with.
+    REQUIRE(worst_residual(210.0) < 1.0);
+    // And the fit is tight enough to pin the bearing rather than merely allow
+    // it -- five degrees out is hundreds of metres by the end.
+    REQUIRE(worst_residual(215.0) > 100.0);
+    REQUIRE(worst_residual(205.0) > 100.0);
+}
+
+TEST_CASE("An east/north/up vector takes the frame's rotation only", "[geodetic]")
+{
+    // A velocity has no origin to be projected about, so it rotates with the
+    // axes but is not translated.  Comparing it against the projection of a
+    // small displacement is what says both use the same rotation -- a sign slip
+    // in one of them would put a trajectory's velocity across its own path.
+    const Geodetic reference {40.0, -75.0, 0.0};
+    for (const double bearing : {0.0, 37.0, 90.0, 210.0, 355.0})
+    {
+        const auto frame = LocalFrame::track_aligned(reference, bearing);
+        const auto north_of_it = frame.to_local({40.001, -75.0, 0.0});
+        // 0.001 degrees of latitude is about 111 m due north.
+        const auto rotated = frame.from_east_north_up(Vec3(0.0, north_of_it.horizontal_norm(), 0.0));
+        REQUIRE(std::fabs(rotated(0) - north_of_it(0)) < 1e-3);
+        REQUIRE(std::fabs(rotated(1) - north_of_it(1)) < 1e-3);
+        // Lengths survive a rotation, and the vertical is untouched.
+        const Vec3 velocity(12.0, -34.0, 5.0);
+        const auto turned = frame.from_east_north_up(velocity);
+        REQUIRE(std::fabs(turned.horizontal_norm() - velocity.horizontal_norm()) < 1e-9);
+        REQUIRE(turned(2) == velocity(2));
+    }
+    // An unrotated frame is east/north, so it leaves an ENU vector alone.
+    const auto plain = LocalFrame(reference).from_east_north_up(Vec3(3.0, 4.0, 5.0));
+    REQUIRE(plain(0) == Catch::Approx(3.0));
+    REQUIRE(plain(1) == Catch::Approx(4.0));
+    REQUIRE(plain(2) == Catch::Approx(5.0));
 }

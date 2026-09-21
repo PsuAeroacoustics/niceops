@@ -8,10 +8,19 @@
 // (vertical) vs fpa_e (relative to the TPP normal).  adapt() spline-smooths
 // the trajectory on a uniform dt grid; watts_trim() crops it to the region
 // of interest.
+//
+// It also reads a simpler, labelled format in WGS84 coordinates -- latitude,
+// longitude and altitude against time -- which is what a mission planner has
+// rather than a flight-test state file.  That path projects the positions onto
+// the run's local frame (see geodetic.hpp) and derives the velocity and load
+// factor the flight parameters need from the path itself.
 
+#include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
+
+#include "geodetic.hpp"
 
 namespace niceops {
 
@@ -68,6 +77,42 @@ inline std::ostream& operator<<(std::ostream& os, const dimensional_data& v)
         << v.weight << ", rho: " << v.rho << ")";
 }
 
+// How a geodetic trajectory file is turned into the local Cartesian states the
+// rest of the tool works in.
+struct GeodeticInput
+{
+    // The frame every geodetic position is projected onto.  One run shares one
+    // frame across all of its trajectories -- the observers are common to them
+    // all -- so it is settled before any file is read and handed in here.
+    // Unset lets a lone trajectory centre its own frame on its first position.
+    std::optional<LocalFrame> frame;
+    // Elevation of the observer plane above the WGS84 datum, in feet.  An
+    // altitude column is height above mean sea level, while z is height above
+    // the ground the observers stand on: in the shipped AC tracks the two
+    // differ by a constant 54.2651 ft, the terrain under that particular
+    // flight.  Leaving it at zero reads altitudes as height above the
+    // observers, which is what a planner working in AGL already means.
+    double ground_elevation_ft = 0.0;
+    // Seconds since UTC midnight at t = 0.  Only the day-night window reads it,
+    // and a file carrying its own utcsec column supplies it instead.
+    double start_utc = 0.0;
+    // Resampling step in seconds, used when the samples are unevenly spaced or
+    // coarser than this.  It never coarsens -- a 50 Hz file keeps its own
+    // sample times -- because the sound exposure integral is a Riemann sum over
+    // whatever step the states end up with.
+    double resample_dt = 0.5;
+    // How far, in metres RMS, the fitted path may sit from the given positions.
+    // Zero interpolates, which is what waypoints want; measured positions want
+    // enough slack to keep the second derivative out of the noise, since that
+    // second derivative is the load factor and so CT.
+    double path_smoothing = 0.0;
+};
+
+// The first WGS84 position in a labelled geodetic trajectory file, or nullopt
+// when `filename` is not one.  Reads the header and one row, so a run can
+// settle its frame before committing to loading anything.
+std::optional<Geodetic> first_geodetic_position(const std::string& filename);
+
 // Read the vehicle JSON into its dimensional parameters.  Exported because the
 // sphere export needs the tip speed to turn an advance ratio back into an
 // airspeed, without building a whole Trajectory to get at it.
@@ -82,7 +127,16 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle);
 class Trajectory
 {
 public:
-    Trajectory(const std::string& filename, const std::string& vehicle_filename);
+    Trajectory(const std::string& filename, const std::string& vehicle_filename,
+            const GeodeticInput& geodetic = {});
+
+    // The frame a geodetic file was projected through, or nullopt when the
+    // trajectory was already Cartesian.  Lets a run adopt the frame its first
+    // geodetic trajectory settled on, and invert it for geodetic output.
+    const std::optional<LocalFrame>& frame() const
+    {
+        return frame_;
+    }
 
     void write_state(const std::string& state_file) const;
 
@@ -100,6 +154,9 @@ public:
 
     std::vector<State> states;
     dimensional_data vehicle;
+
+private:
+    std::optional<LocalFrame> frame_;
 };
 
 } // namespace niceops

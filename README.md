@@ -62,6 +62,7 @@ shipped data.
 | What | Format |
 | --- | --- |
 | Trajectory (`-t`) | 27-column NASA/FAA AC state CSV. Column 0 is UTC seconds, column 1 elapsed time; positions and velocities are in **feet**. |
+| Trajectory (`-t`), WGS84 | A CSV whose header names `time`, `lat`, `lon` and `alt` columns — see [Geodetic coordinates](#geodetic-coordinates). Any column order, and optional `vE`/`vN`/`vUp`. |
 | Database (`-d`) | netCDF `.nod`: one group per operating condition (advance ratio μ, flight path angle γ, thrust coefficient C<sub>T</sub>), each holding scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor. |
 | Vehicle (`-v`) | JSON with `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg) and `Atmosphere.density`. |
 | Observers (`-b`) | CSV of scattered observer positions, in feet. Without it, a 120×120 grid spanning −1500…1475 m is used. |
@@ -77,6 +78,7 @@ Input and output files use **feet**; the computation is metric internally.
 - `-m` — appends average, maximum and above-threshold counts for the case.
 - `-S` — the derived trajectory state (t, position, velocity, load factor, C<sub>T</sub>, μ, flight path angles).
 - `--powerfile` — per-state shaft power, if the database carries any.
+- `--latlon` — writes a `_latlon` companion beside every level file above, as latitude, longitude, level.
 - `--export_sphere` — a whole interpolated noise sphere, written as a one-group `.nod`.
 
 ## Command line arguments
@@ -93,6 +95,12 @@ Input and output files use **feet**; the computation is metric internally.
 | `-S`, `--state` | Save the derived trajectory state. |
 | `-i`, `--history` | Prefix for per-observer time history files. |
 | `-m`, `--metricfile` | Append overall noise metrics to this file. |
+| `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
+| `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
+| `--ground_elevation` | Elevation of the observer plane above mean sea level, ft. Subtracted from a WGS84 track's altitude column. |
+| `--path_smoothing` | How far, metres RMS, the path fitted through a WGS84 track may sit from the given positions. Default 0. |
+| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. |
+| `--latlon` | Also write each level file as latitude, longitude, level. |
 | `-l`, `--logfile` | Log file (default `log/niceops.log`). |
 | `-L`, `--loglevel` | `trace`, `info`, `warn`, `error` or `fatal` (default `info`). |
 
@@ -324,15 +332,81 @@ performance cores; pulling chunks recovers about 10%.
 
 ### Geodetic coordinates
 
-`src/geodetic.hpp` projects WGS84 positions onto the local Cartesian frame the rest of the
-tool works in. `LocalFrame(reference)` gives x east, y north;
-`LocalFrame::track_aligned(reference, bearing)` turns the axes so +x runs along a compass
-bearing, which is what the shipped AC tracks use — their x/y columns are rotated to follow the
-flight track, by about the heading in the file's own heading column, not aligned to east/north.
-Altitude passes through as z, so this is a map projection with a height attached rather than a
-true ENU frame; over the few kilometres a footprint spans the difference is negligible.
+A trajectory can be given in WGS84 coordinates — latitude, longitude and altitude — instead of
+the 27-column AC state format. That is what a mission planner has: a route, not a flight-test
+record.
 
-Nothing reads geodetic input yet — this is the transform the input paths will need.
+```
+time,lat,lon,alt
+0.0,39.82914323,-74.40996141,1134.60
+0.5,39.82903000,-74.41007000,1133.80
+...
+```
+
+Both formats are read by `-t`, and which one a file is is decided by its width: 27 columns is
+the positional AC format, anything else is read by the names in its header. Column order does
+not matter and unrecognised headers are an error rather than a guess.
+
+| Column | Meaning |
+| --- | --- |
+| `time` | Seconds from the start of the track. `utcsec` (seconds since UTC midnight) serves instead, and sets the clock for `-D`. |
+| `lat`, `lon` | Degrees. |
+| `alt` | **Feet above mean sea level.** `--ground_elevation` gives the elevation of the ground the observers stand on, which is subtracted to get height above them. |
+| `vE`, `vN`, `vUp` | Optional, ft/s. Used when all three are present; otherwise velocity is differentiated from the path. |
+
+Names are matched case-insensitively, ignoring punctuation and a parenthesised unit, so
+`Latitude`, `LAT` and `lat (deg)` are one column. `alt_ft` is recognised and `alt_m` is
+deliberately *not*: a file naming metres fails to load rather than being read as feet.
+
+**Where the frame sits.** `--origin <lat> <lon>` fixes the local x/y origin; without it, the
+first position of the first geodetic track is used. `--frame_bearing` turns the axes so +x runs
+along a compass bearing — the default leaves them east/north, which is what a map wants. One
+frame serves the whole run, because every trajectory in it shares the observers.
+
+**What is derived, and how well.** A WGS84 track gives position only, so the velocity and the
+load factor behind C<sub>T</sub> come from the first and second derivatives of a smoothing
+spline through the path. `--path_smoothing` says how far, in metres RMS, that fit may sit from
+the given positions; zero — the default — flies through them exactly, which is what waypoints
+mean.
+
+Feeding the demo track's own lat/lon/alt columns back in, against the footprint computed from
+its full inertial state:
+
+| Input | Median | 99th pct | Max | Cells over 1 dB (of 14400) |
+| --- | --- | --- | --- | --- |
+| 50 Hz positions, `--path_smoothing 0.02` | 0.028 dB | 0.64 | 2.44 | 37 |
+| 50 Hz positions, interpolated exactly | 0.196 dB | 1.32 | 3.00 | 369 |
+| 50 Hz positions and velocity columns | 0.011 dB | 0.31 | 1.88 | 15 |
+| Waypoints 10 s apart, resampled to 0.1 s | 0.180 dB | 1.26 | 2.31 | 347 |
+
+The projection itself is not the lossy part: it reproduces that file's own x/y to under a metre
+over 3.2 km, and altitude passes through exactly. What costs is differentiating twice.
+Interpolating a *dense* track exactly is the worst of the four, because the second derivative
+amplifies the coordinates' 1e-8 degree rounding by 1/step²; the tool says so when it sees that
+combination. Sparse waypoints are resampled onto the `-s` grid first — never coarsened — and
+their load factor is an artefact of the interpolant, which is also logged.
+
+**Output.** `--latlon` writes a companion beside every level file (`out.csv` →
+`out_latlon.csv`) holding latitude, longitude and level, one row per observer, for dropping a
+footprint onto a map. It needs a frame: either a geodetic track, which carries one, or
+`--origin`. A grid regular in the local frame is not regular in latitude and longitude, so this
+file is always scattered, never gridded.
+
+**The transform.** `src/geodetic.hpp` is a transverse Mercator about the reference point, with
+altitude carried through as z — a map projection with a height attached rather than a true ENU
+frame. Over the few kilometres a footprint spans the difference is far below the modelling
+error. `from_east_north_up` applies the frame's rotation without its translation, for
+velocities; `to_geodetic` inverts the projection by Newton iteration, and is what `--latlon`
+uses.
+
+The shipped AC tracks are the case where the axes are not east/north: their x/y run along a
+compass bearing of **210°**, the approach heading, not along the wandering heading in the
+file's own column 8. Their ground plane sits 54.2651 ft below their altitude column. So
+```sh
+./build/niceops -t track.csv --origin 39.8104276 -74.4263086 --frame_bearing 210 \
+                --ground_elevation 54.2651 --path_smoothing 0.02
+```
+is the demo case restated in WGS84, and is what the table above measures.
 
 ### Plotting
 

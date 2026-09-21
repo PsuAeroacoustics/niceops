@@ -108,6 +108,52 @@ void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y
     }
 }
 
+// Observer positions back as WGS84, so a footprint can be put on a map.  One
+// row per observer whatever the observer set is: a grid that is regular in the
+// local frame is not regular in latitude and longitude, so there is no gridded
+// form of this file.
+void write_geodetic_levels(const std::vector<double>& x_obs, const std::vector<double>& y_obs,
+        const std::vector<double>& levels, const LocalFrame& frame, const std::string& out_file,
+        bool scattered)
+{
+    info("Writing geodetic output to ", out_file);
+    auto file = open_output(out_file);
+    file << "latitude(deg), longitude(deg), Level(dB)\n";
+    // Observers sit on the ground plane, so the altitude that comes back is the
+    // ground's own and the level is what an observer standing there hears.
+    auto write_observer = [&file, &frame](double x, double y, double level) {
+        const auto position = frame.to_geodetic(Vec3(x, y, 0.0));
+        file << position.latitude << "," << position.longitude << "," << level << "\n";
+    };
+    if (scattered)
+    {
+        assert(levels.size() == x_obs.size() && levels.size() == y_obs.size());
+        for (std::size_t i = 0; i < levels.size(); i++)
+            write_observer(x_obs[i], y_obs[i], levels[i]);
+    }
+    else
+    {
+        const std::size_t nx = x_obs.size();
+        const std::size_t ny = y_obs.size();
+        assert(nx * ny == levels.size());
+        for (std::size_t iy = 0; iy < ny; iy++)
+            for (std::size_t ix = 0; ix < nx; ix++)
+                write_observer(x_obs[ix], y_obs[iy], levels[ix + iy * nx]);
+    }
+}
+
+// Where a level file's WGS84 companion goes: alongside it, under the same name
+// with "_latlon" on the end.  Derived rather than asked for, so --latlon needs
+// no second output name per trajectory and cannot fall out of step with -o.
+std::string latlon_companion(const std::string& level_file)
+{
+    const std::filesystem::path path(level_file);
+    const std::string extension = path.extension().string();
+    return (path.parent_path()
+            / (path.stem().string() + "_latlon" + (extension.empty() ? ".csv" : extension)))
+            .string();
+}
+
 void write_time_history_file(const std::vector<double>& time_history, double dt, double x, double y,
         const std::string& filename)
 {
@@ -303,6 +349,13 @@ struct RunOptions
     std::string time_history_prefix;
     std::string metric_file;
     std::string power_file;
+    // How WGS84 trajectory input is projected, and the frame it is projected
+    // onto.  The frame is settled once for the whole run: the observers are
+    // common to every trajectory in it, so their coordinates have to mean the
+    // same thing in all of them.
+    GeodeticInput geodetic;
+    // Write a WGS84 companion beside every level file.
+    bool latlon = false;
 };
 
 // The files one trajectory is computed from and written to, and where it sits
@@ -346,7 +399,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
 
     // Create trajectory from CSV data
-    Trajectory trajectory(path_file, vehicle_file);
+    Trajectory trajectory(path_file, vehicle_file, options.geodetic);
 
     // mu and CT are non-dimensionalised by the vehicle JSON's tip speed, and
     // they index the database's operating conditions -- which were generated at
@@ -701,6 +754,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                  .count();
     log("Acoustic calculations completed in ", elapsed / 1000.0, " seconds.");
     write_levels(x_obs, y_obs, integrated_levels, out_file, scattered);
+    if (options.latlon)
+    {
+        write_geodetic_levels(x_obs, y_obs, integrated_levels, *options.geodetic.frame,
+                latlon_companion(out_file), scattered);
+    }
 
     if (!metric_file.empty())
     {
@@ -778,6 +836,16 @@ int run(int argc, char* argv[])
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
+    // WGS84 input and output.  An unset origin is taken from the first geodetic
+    // trajectory; an unset bearing leaves the axes east/north, which is what a
+    // map wants -- the shipped AC tracks are the other case, their +x running
+    // along the flight track.
+    std::vector<double> origin;
+    double frame_bearing = std::numeric_limits<double>::quiet_NaN();
+    double ground_elevation = 0.0;
+    double start_utc = 0.0;
+    double path_smoothing = 0.0;
+    bool latlon = false;
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
     app.add_option("-d,--database", database_files,
@@ -851,6 +919,25 @@ int run(int argc, char* argv[])
             "650 soil, 3000 dirt, 10000 concrete, 50000 asphalt.");
     app.add_option("--receiver_height", receiver_height,
             "Receiver height above ground for --ground_effect, m (default 1.2).");
+    app.add_option("--origin", origin,
+            "WGS84 reference for the local frame: latitude longitude, in degrees. "
+            "Defaults to the first position of the first geodetic trajectory.")
+            ->expected(2);
+    app.add_option("--frame_bearing", frame_bearing,
+            "Compass bearing, degrees, of the local +x axis. Default: x east, y north. "
+            "The shipped AC tracks use 210.");
+    app.add_option("--ground_elevation", ground_elevation,
+            "Elevation of the observer plane above mean sea level, ft. Subtracted from a "
+            "geodetic track's altitude column to give height above the observers (default 0).");
+    app.add_option("--start_utc", start_utc,
+            "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
+            "window. Ignored when the file carries its own utcsec column.");
+    app.add_option("--path_smoothing", path_smoothing,
+            "How far, in metres RMS, the path fitted through a geodetic track may sit from "
+            "the given positions. Default 0, which flies through them exactly.");
+    app.add_flag("--latlon", latlon,
+            "Also write each level file as latitude, longitude, level. Needs --origin unless "
+            "the trajectory is itself geodetic.");
     app.add_option("--turbulence", turbulence,
             "Turbulence parameter for --ground_effect, rad s/sqrt(m); 0 to 16e-4. "
             "Zero gives unrealistically deep interference nulls.");
@@ -941,6 +1028,51 @@ int run(int argc, char* argv[])
             {"info", LogLevel::info}, {"warn", LogLevel::warn}, {"error", LogLevel::error},
             {"fatal", LogLevel::fatal}};
     Logger::instance().set_level(levels.at(log_level));
+
+    // Settle the local frame before anything is loaded.  Every trajectory in a
+    // run shares the observers, so a position in one has to mean the same place
+    // as the same position in another; one frame for the whole run is what
+    // makes that true.
+    if (!(path_smoothing >= 0.0))
+        input_error("--path_smoothing must not be negative, got ", path_smoothing, ".");
+    std::optional<LocalFrame> frame;
+    std::optional<Geodetic> reference;
+    if (!origin.empty())
+    {
+        if (!(std::fabs(origin[0]) <= 90.0) || !(std::fabs(origin[1]) <= 180.0))
+        {
+            input_error("--origin is not a WGS84 position: latitude ", origin[0],
+                    ", longitude ", origin[1], ". Both are in degrees.");
+        }
+        reference = Geodetic {origin[0], origin[1], 0.0};
+    }
+    else
+    {
+        // No origin given: the first geodetic trajectory names one.  A run of
+        // AC-format tracks finds none, and needs none -- those are already
+        // Cartesian.
+        for (const auto& path : path_files)
+        {
+            if (auto first = first_geodetic_position(path))
+            {
+                reference = *first;
+                log("Taking the local origin from the first position of ", path, ": ",
+                        reference->latitude, ", ", reference->longitude, ".");
+                break;
+            }
+        }
+    }
+    if (reference)
+    {
+        frame = std::isnan(frame_bearing) ? LocalFrame(*reference)
+                                          : LocalFrame::track_aligned(*reference, frame_bearing);
+    }
+    if (latlon && !frame)
+    {
+        input_error("--latlon has no frame to invert: give --origin <latitude> <longitude> "
+                    "(and usually --frame_bearing) saying where this run's x/y origin sits, "
+                    "or use a geodetic trajectory, which carries one.");
+    }
 
     // Start stopwatch
     auto watch_start = std::chrono::steady_clock::now();
@@ -1083,6 +1215,14 @@ int run(int argc, char* argv[])
     options.time_history_prefix = time_history_prefix;
     options.metric_file = metric_file;
     options.power_file = power_file;
+    options.geodetic.frame = frame;
+    options.geodetic.ground_elevation_ft = ground_elevation;
+    options.geodetic.start_utc = start_utc;
+    // -s is the resampling step for both adapt() and a geodetic track that
+    // needs resampling; neither ever coarsens a track that is already finer.
+    options.geodetic.resample_dt = dt;
+    options.geodetic.path_smoothing = path_smoothing;
+    options.latlon = latlon;
 
     std::size_t failed_paths = 0;
 
@@ -1129,6 +1269,8 @@ int run(int argc, char* argv[])
         log("Writing day-night level over ", path_count,
                 path_count == 1 ? " operation to " : " operations to ", dnl_file);
         write_levels(x_obs, y_obs, dnl, dnl_file, scattered);
+        if (latlon)
+            write_geodetic_levels(x_obs, y_obs, dnl, *frame, latlon_companion(dnl_file), scattered);
     }
 
     const bool want_plots = plotting || !figure_file.empty() || !state_figure_file.empty();

@@ -455,9 +455,57 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   spectral path pays a long stride per band rather than making the sphere export pay.
   It is rejected together with `--db_cutoff`, whose range bound is derived from the broadband
   level and does not bound the band-limited one.
+- `src/geodetic.{hpp,cpp}` — the WGS84 transform: a transverse Mercator about a reference point
+  with altitude carried through as z. `LocalFrame(reference)` is east/north;
+  `track_aligned(reference, bearing)` turns +x onto a compass bearing;
+  `from_east_north_up` applies that rotation without the translation, for velocities; and
+  `to_geodetic` inverts the projection by Newton iteration, which is what `--latlon` output
+  uses. Ported from the D `worldtransforms.d`/`wgs84tocartesian.d` pair, which had no notion of
+  a rotated frame and whose inverse walked fixed 1e-5 degree increments.
 - `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `src/splines.hpp` wraps it as `Spline` for `trajectory.cpp`. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
+### Geodetic trajectory input
+
+A trajectory may be given in WGS84 (latitude, longitude, altitude) instead of the 27-column AC
+state format; `README.md` documents the format and the options. Things worth knowing before
+touching it:
+
+- **The format is decided by width, not by the header.** 27 columns is the positional AC
+  format; anything else is read by the names in its header (`read_labelled_csv` in
+  `src/util/csv.hpp`). That order is load-bearing: the AC format's *own* header names `lat`,
+  `lon` and `alt` columns, so a reader dispatching on the header alone takes a state file for a
+  WGS84 track — and its x/y origin, which the file does not record, is about 2.5 km back along
+  the track. `first_geodetic_position` applies the same width test, and a test pins it.
+- **The AC path is byte-identical.** `read_labelled_csv` keeps the first record as the header
+  instead of discarding it, but drops exactly the rows `read_numeric_csv(path, true)` dropped,
+  so the goldens are untouched. Verified.
+- **`alt_m` is deliberately not a recognised altitude spelling.** Altitude is read in feet;
+  matching a metre spelling would read metres as feet and fly the aircraft three times too
+  high, where leaving it unmatched fails the file with a message naming the units.
+- **Altitude is MSL and z is height above the observers.** `--ground_elevation` is the
+  difference. In `tracks/S-76D/197421AC.csv` it is a constant 54.2651 ft, which is how that
+  file's own alt and z columns relate.
+- **The shipped AC tracks' local frame runs +x along a compass bearing of 210°** — the approach
+  heading, not the instantaneous heading in column 8, which wanders over 25°. With that bearing
+  the projection reproduces that file's own x/y to under a metre over 3.2 km, which is the
+  check that the port of the transform is the one its producer used.
+- **One frame per run, settled before anything loads.** Every trajectory in a run shares the
+  observers, so a position in one has to mean the same place as in another. `run()` resolves it
+  from `--origin` or from the first geodetic track and hands it to each `Trajectory`.
+- **Velocity and load factor are derived, and that is the whole accuracy story.** The
+  projection is not the lossy part: altitude passes through exactly and x/y to under a metre.
+  Differentiating a spline twice for the load factor is. Interpolating a *dense* track exactly
+  (`--path_smoothing 0`, the default) amplifies the coordinates' 1e-8 degree rounding by
+  1/step², which on the 0.02 s demo track moves CT by 17% and the footprint by 3 dB in the
+  worst cell; `--path_smoothing 0.02` takes that to 0.028 dB median and 2.4 dB worst. The
+  default stays at zero because a planner's waypoints are exact intent rather than
+  measurements, and the reader logs a warning when it sees dense input with no smoothing.
+  README carries the measured table for all four input shapes; do not re-derive it.
+- **Resampling never coarsens.** The sound exposure integral is a Riemann sum over whatever
+  step the states end up with, so a 50 Hz file keeps its own sample times and only sparse or
+  unevenly spaced input is refitted onto the `-s` grid.
+
 - `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` resamples onto a uniform dt grid, smoothing via `src/splines.hpp` (currently commented out in `main`, as is `watts_trim()`). It takes either a smoothing parameter or a `tolerance` bounding how far the smoothed path may sit from the measured one.
 - `src/plotting.{hpp,cpp}` — `plt::` facade replacing the vendored matplotlib-d binding. Embeds Python via pybind11 and calls matplotlib directly; the interpreter is created lazily on first use, so non-plotting runs never pay the import cost.
 
@@ -469,7 +517,7 @@ The port swapped each D dependency for a small local equivalent; when a behavior
 | --- | --- |
 | `std.getopt` | CLI11 |
 | `std.json` | nlohmann_json |
-| `std.csv` `csvReader!(double)` | `src/util/csv.hpp` |
+| `std.csv` `csvReader!(double)` | `src/util/csv.hpp` (`read_numeric_csv`, plus `read_labelled_csv` for the header-named formats, which have no D original) |
 | `std.experimental.logger` | `src/util/logger.hpp` (`log`/`info`/`trace`/`fatal`) |
 | `std.numeric.findRoot` | `src/util/rootfind.hpp` (bisection) |
 | `std.math.approxEqual` | `approx_equal()` in `sphere_database.hpp` |

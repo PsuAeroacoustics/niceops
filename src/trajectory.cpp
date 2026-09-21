@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <initializer_list>
 #include <map>
 #include <sstream>
 
@@ -71,11 +72,336 @@ double json_to_double(const nlohmann::json& value)
     return value.get<double>();
 }
 
+// Where the labelled WGS84 format's columns sit in a particular file.  That
+// format is read by column name rather than by position, so whatever a planner
+// already exports can be used without being reordered first, and a file carries
+// only the columns it actually has.
+struct GeodeticColumns
+{
+    std::size_t time = LabelledCsv::npos;
+    std::size_t utc = LabelledCsv::npos;
+    std::size_t latitude = LabelledCsv::npos;
+    std::size_t longitude = LabelledCsv::npos;
+    std::size_t altitude = LabelledCsv::npos;
+    std::size_t east_speed = LabelledCsv::npos;
+    std::size_t north_speed = LabelledCsv::npos;
+    std::size_t up_speed = LabelledCsv::npos;
 
+    // A file is a WGS84 track when it says where the aircraft is.  Time can
+    // come from either of two columns and velocity is optional, so neither of
+    // those decides it.
+    bool positioned() const
+    {
+        return latitude != LabelledCsv::npos && longitude != LabelledCsv::npos
+                && altitude != LabelledCsv::npos;
+    }
+
+    // Velocity is taken from the file only when all three components are there;
+    // two of them plus a differentiated third would mix two different estimates
+    // of the same vector.
+    bool velocity_given() const
+    {
+        return east_speed != LabelledCsv::npos && north_speed != LabelledCsv::npos
+                && up_speed != LabelledCsv::npos;
+    }
+
+    // The widest index this file will be read at, so a short row is caught
+    // where it can be named rather than as an out-of-range read.
+    std::size_t width() const
+    {
+        std::size_t widest = 0;
+        for (std::size_t index : {time, utc, latitude, longitude, altitude, east_speed,
+                     north_speed, up_speed})
+        {
+            if (index != LabelledCsv::npos)
+                widest = std::max(widest, index + 1);
+        }
+        return widest;
+    }
+};
+
+GeodeticColumns find_geodetic_columns(const LabelledCsv& csv)
+{
+    // Aliases are matched after LabelledCsv::normalise, which lower-cases,
+    // drops a parenthesised unit and removes punctuation -- so "Alt (ft)",
+    // "alt_ft" and "ALT" are all the one name, and a spelling here needs no
+    // punctuation variants of its own.
+    GeodeticColumns columns;
+    columns.time = csv.column({"t", "time", "elapsed", "elapsed time", "seconds", "sec"});
+    columns.utc = csv.column({"utcsec", "utc", "utc seconds", "utc time"});
+    columns.latitude = csv.column({"lat", "latitude", "lat deg", "latitude deg"});
+    columns.longitude = csv.column({"lon", "long", "longitude", "lon deg", "longitude deg"});
+    // Only the spellings that agree with the unit actually read.  "alt_ft" is
+    // matched and "alt_m" deliberately is not: an unmatched altitude column
+    // makes the file fail to parse at all, which is the right answer, where
+    // matching it would read metres as feet and quietly fly the aircraft three
+    // times too high.
+    columns.altitude = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height",
+            "alt ft", "altitude ft", "alt msl ft"});
+    columns.east_speed = csv.column({"ve", "v east", "veast", "east velocity"});
+    columns.north_speed = csv.column({"vn", "v north", "vnorth", "north velocity"});
+    columns.up_speed = csv.column({"vu", "vup", "v up", "up velocity", "climb rate", "climb"});
+    return columns;
+}
+
+// Fit one coordinate against time.  within_tolerance bounds the *summed*
+// squared residual, so an RMS bound in metres is scaled by the sample count to
+// mean the same thing whatever the sample rate; zero interpolates, which is
+// what a list of waypoints wants.
+SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>& f, double rms_metres)
+{
+    return SmoothingSpline::within_tolerance(
+            t, f, rms_metres * rms_metres * static_cast<double>(t.size()));
+}
+
+// Read a labelled WGS84 trajectory into local Cartesian states.  The file gives
+// position against time; the velocity and the load factor that sets CT come
+// from differentiating the fitted path, unless the file carries velocity
+// columns of its own.
+void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
+        const GeodeticColumns& columns, const dimensional_data& vehicle,
+        const GeodeticInput& input, std::optional<LocalFrame>& frame,
+        std::vector<State>& states)
+{
+    const std::size_t rows = csv.rows.size();
+    if (rows < 3)
+    {
+        input_error("Geodetic trajectory ", filename, " holds ", rows,
+                " rows; three is the fewest a path and its curvature can be fitted to.");
+    }
+    if (!(input.resample_dt > 0.0))
+        input_error("Resampling step must be positive, got ", input.resample_dt, " s.");
+
+    const bool have_utc = columns.utc != LabelledCsv::npos;
+    const bool from_utc = columns.time == LabelledCsv::npos;
+    if (from_utc && !have_utc)
+    {
+        input_error("Geodetic trajectory ", filename, " names no time column. Add \"time\" "
+                "(seconds from the start of the track) or \"utcsec\" (seconds since UTC "
+                "midnight).");
+    }
+    const std::size_t time_column = from_utc ? columns.utc : columns.time;
+    const std::size_t needed = columns.width();
+    const bool velocity_given = columns.velocity_given();
+
+    std::vector<double> time;
+    std::vector<double> x;
+    std::vector<double> y;
+    std::vector<double> z;
+    std::vector<double> vx;
+    std::vector<double> vy;
+    std::vector<double> vz;
+    time.reserve(rows);
+    x.reserve(rows);
+    y.reserve(rows);
+    z.reserve(rows);
+
+    double first_time = 0.0;
+    for (std::size_t row = 0; row < rows; row++)
+    {
+        const auto& data = csv.rows[row];
+        if (data.size() < needed)
+        {
+            input_error("Data row ", row + 1, " of ", filename, " has ", data.size(),
+                    " fields, too few for the columns its header names.");
+        }
+        const double latitude = data[columns.latitude];
+        const double longitude = data[columns.longitude];
+        if (!(std::fabs(latitude) <= 90.0) || !(std::fabs(longitude) <= 180.0))
+        {
+            input_error("Data row ", row + 1, " of ", filename,
+                    " is not a WGS84 position: latitude ", latitude, ", longitude ", longitude,
+                    ". Latitude and longitude are read in degrees.");
+        }
+        if (!frame)
+        {
+            // Nothing settled the frame for us, so this lone trajectory centres
+            // one on its own first position, x east and y north.  A run with
+            // several trajectories settles it up front instead -- they share
+            // the observers, so they have to share the frame.
+            frame = LocalFrame(Geodetic {latitude, longitude, 0.0});
+            info("Projecting ", filename, " about its first position, ", latitude, ", ",
+                    longitude, ", with x east and y north.");
+        }
+
+        const double raw_time = data[time_column];
+        if (row == 0)
+            first_time = raw_time;
+        time.push_back(from_utc ? raw_time - first_time : raw_time);
+
+        // Altitude is above mean sea level while z is height above the plane
+        // the observers stand on, so the ground's elevation comes off first.
+        const double height = (data[columns.altitude] - input.ground_elevation_ft) * ft2m;
+        const Vec3 local = frame->to_local(Geodetic {latitude, longitude, height});
+        x.push_back(local(0));
+        y.push_back(local(1));
+        z.push_back(local(2));
+
+        if (velocity_given)
+        {
+            // East/north/up in ft/s, turned onto the frame's axes.  A velocity
+            // is a direction, so only the rotation applies to it.
+            const Vec3 enu(data[columns.east_speed] * ft2m, data[columns.north_speed] * ft2m,
+                    data[columns.up_speed] * ft2m);
+            const Vec3 velocity = frame->from_east_north_up(enu);
+            vx.push_back(velocity(0));
+            vy.push_back(velocity(1));
+            vz.push_back(velocity(2));
+        }
+    }
+
+    for (std::size_t row = 1; row < rows; row++)
+    {
+        if (!(time[row] > time[row - 1]))
+        {
+            input_error("Time does not increase between data rows ", row, " and ", row + 1,
+                    " of ", filename, ": ", time[row - 1], " then ", time[row], ".");
+        }
+    }
+
+    const double span = time.back() - time.front();
+    const double mean_step = span / static_cast<double>(rows - 1);
+    double worst = 0.0;
+    for (std::size_t row = 1; row < rows; row++)
+        worst = std::max(worst, std::fabs((time[row] - time[row - 1]) - mean_step));
+    const bool uniform = worst <= 1e-6 * mean_step;
+
+    // Never coarsen.  The sound exposure integral is a Riemann sum over
+    // whatever step the states end up with, so throwing away samples a file
+    // already has would cost accuracy for nothing.
+    const double step = std::min(input.resample_dt, mean_step);
+    std::vector<double> sample_times;
+    if (uniform && mean_step <= input.resample_dt * (1.0 + 1e-9))
+    {
+        sample_times = time;
+    }
+    else
+    {
+        // Counted by index rather than accumulated, so the spacing cannot
+        // drift over a long track.
+        const auto count = static_cast<std::size_t>(std::floor(span / step)) + 1;
+        sample_times.resize(count);
+        for (std::size_t i = 0; i < count; i++)
+            sample_times[i] = time.front() + step * static_cast<double>(i);
+        info("Resampling ", filename, " from ", rows, " ",
+                uniform ? "evenly" : "unevenly", " spaced samples onto a ", step,
+                " s grid of ", count, " states.");
+    }
+
+    if (!velocity_given && input.path_smoothing <= 0.0 && mean_step < 0.5)
+    {
+        // Differentiating an interpolant twice amplifies whatever resolution the
+        // coordinates were written at by 1/step^2, and the load factor is that
+        // second derivative.  The shipped tracks quantise latitude at 1e-8
+        // degrees, about a millimetre, which at their 0.02 s spacing is worth
+        // a few tenths of a g -- enough to move CT by 17% and the footprint by
+        // 3 dB in the worst cell.  A path smoothing of 0.02 m takes that to
+        // 0.03 dB median and 2.4 dB worst against the same flight's measured
+        // accelerations.
+        log("Geodetic trajectory ", filename, " is sampled every ", mean_step,
+                " s and is being flown through exactly (--path_smoothing 0). The load factor "
+                "is then the curvature of a path through every given point, coordinate "
+                "rounding included. For measured positions rather than planned waypoints, "
+                "pass --path_smoothing (0.02 m suits the shipped tracks' resolution).");
+    }
+    if (!velocity_given && mean_step > 1.0)
+    {
+        log("Geodetic trajectory ", filename, " is sampled every ", mean_step,
+                " s on average. Velocity and load factor are the first and second derivatives "
+                "of the fitted path at that spacing, so CT in particular reflects the "
+                "interpolant rather than anything the file measured.");
+    }
+    const double integration_step = sample_times.size() > 1
+            ? (sample_times[1] - sample_times[0])
+            : 0.0;
+    if (integration_step > 0.25)
+    {
+        log("States come out ", integration_step, " s apart, which is a coarse step for the "
+                "sound exposure integral. Pass a smaller -s to resample more finely.");
+    }
+
+    const auto fit_x = fit_path(time, x, input.path_smoothing);
+    const auto fit_y = fit_path(time, y, input.path_smoothing);
+    const auto fit_z = fit_path(time, z, input.path_smoothing);
+    // Empty, or the three velocity components; a vector rather than three
+    // optionals because either all of them are fitted or none is.
+    std::vector<SmoothingSpline> fit_velocity;
+    if (velocity_given)
+    {
+        fit_velocity.push_back(fit_path(time, vx, input.path_smoothing));
+        fit_velocity.push_back(fit_path(time, vy, input.path_smoothing));
+        fit_velocity.push_back(fit_path(time, vz, input.path_smoothing));
+    }
+
+    // A file with its own utcsec column dates the flight itself; otherwise the
+    // run says when t = 0 was, and the default of zero puts it at UTC midnight.
+    const double utc_at_start = have_utc ? csv.rows.front()[columns.utc] : input.start_utc;
+
+    states.clear();
+    states.reserve(sample_times.size());
+    for (const double t : sample_times)
+    {
+        State now {};
+        now.t = t;
+        now.utcsec = utc_at_start + (t - time.front());
+        now.x = fit_x(t);
+        now.y = fit_y(t);
+        now.z = fit_z(t);
+        if (velocity_given)
+        {
+            now.vx = fit_velocity[0](t);
+            now.vy = fit_velocity[1](t);
+            now.vz = fit_velocity[2](t);
+            now.nx = fit_velocity[0].derivative(t, 1) * mps2g;
+            now.ny = fit_velocity[1].derivative(t, 1) * mps2g;
+            now.nz = fit_velocity[2].derivative(t, 1) * mps2g + 1.0;
+        }
+        else
+        {
+            now.vx = fit_x.derivative(t, 1);
+            now.vy = fit_y.derivative(t, 1);
+            now.vz = fit_z.derivative(t, 1);
+            // The load factor is the acceleration in g, with gravity added back
+            // on the vertical: the same convention adapt() uses when it derives
+            // states from a smoothed path.
+            now.nx = fit_x.derivative(t, 2) * mps2g;
+            now.ny = fit_y.derivative(t, 2) * mps2g;
+            now.nz = fit_z.derivative(t, 2) * mps2g + 1.0;
+        }
+        derive_flight_parameters(now, vehicle);
+        states.push_back(now);
+        trace("Parsed geodetic state: ", states.back());
+    }
+}
 
 } // namespace
 
 namespace niceops {
+
+std::optional<Geodetic> first_geodetic_position(const std::string& filename)
+{
+    // Parses the whole file to read one row of it, which is the price of having
+    // a single parser rather than a second, subtly different one.  It happens
+    // once per trajectory at start-up, against a database load of about a
+    // second, so it does not show.
+    LabelledCsv csv;
+    try
+    {
+        csv = read_labelled_csv(filename);
+    }
+    catch (const std::exception&)
+    {
+        // Unreadable, or not a CSV at all.  Say nothing here and let the real
+        // load report it, so the failure is described once and in one place.
+        return std::nullopt;
+    }
+    if (csv.rows.empty() || csv.rows.front().size() == 27)
+        return std::nullopt; // Empty, or the positional AC state format.
+    const auto columns = find_geodetic_columns(csv);
+    if (!columns.positioned() || csv.rows.front().size() < columns.width())
+        return std::nullopt;
+    return Geodetic {csv.rows.front()[columns.latitude], csv.rows.front()[columns.longitude], 0.0};
+}
 
 dimensional_data configure_vehicle(const std::string& filename)
 {
@@ -157,7 +483,8 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle)
 
 } // namespace niceops
 
-Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename)
+Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename,
+        const GeodeticInput& geodetic)
 {
     // Get vehicle data
     vehicle = configure_vehicle(vehicle_filename);
@@ -173,36 +500,70 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
         // D reads this with csvReader!(double)(contents, null), which discards
         // the first record as a header regardless of content.  The demo tracks
         // all carry a text header so both paths agreed by luck; a headerless
-        // trajectory would have gained a spurious first state here.
-        auto records = read_numeric_csv(filename, /*skip_first_record=*/true);
+        // trajectory would have gained a spurious first state here.  The
+        // labelled reader keeps that first record instead of discarding it,
+        // because the simpler formats below are read by column name -- it
+        // drops the same rows, so the AC path is unchanged.
+        const auto csv = read_labelled_csv(filename);
 
-        for (const auto& data : records)
+        // An empty file falls through to the "no usable states" check below,
+        // which names the format it expected; front() on no rows would not.
+        if (csv.rows.empty())
         {
-            if (data.size() == 27)
+            input_error("No usable rows in ", filename,
+                    ": expected the 27-column NASA/FAA AC state format, or a WGS84 track whose "
+                    "header names latitude, longitude, altitude and time columns.");
+        }
+
+        // 27 columns is the positional NASA/FAA AC state format; anything else
+        // is read by the names in its header.  The AC format's own header
+        // happens to name lat/lon/alt columns, so the width has to be tested
+        // first or a state file would be read as a WGS84 track -- and its x/y
+        // origin, which it does not record, is not its first position.
+        if (csv.rows.front().size() == 27)
+        {
+            for (const auto& data : csv.rows)
             {
-                // Assume NASA/FAA AC state data format
-                State now {};
-                // Convert to metric
-                now.utcsec = data[0];
-                now.t = data[1];
-                now.x = data[5] * ft2m;
-                now.y = data[6] * ft2m;
-                now.z = data[7] * ft2m;
-                now.vx = data[11] * ft2m;
-                now.vy = data[13] * ft2m;
-                now.vz = data[15] * ft2m;
-                // Convert to "g"
-                now.nx = data[21] * fps2g;
-                now.ny = data[22] * fps2g;
-                now.nz = (data[23] * fps2g + 1.0);
-                derive_flight_parameters(now, vehicle);
-                states.push_back(now);
-                trace("Parsed state: ", states.back());
+                if (data.size() == 27)
+                {
+                    // Assume NASA/FAA AC state data format
+                    State now {};
+                    // Convert to metric
+                    now.utcsec = data[0];
+                    now.t = data[1];
+                    now.x = data[5] * ft2m;
+                    now.y = data[6] * ft2m;
+                    now.z = data[7] * ft2m;
+                    now.vx = data[11] * ft2m;
+                    now.vy = data[13] * ft2m;
+                    now.vz = data[15] * ft2m;
+                    // Convert to "g"
+                    now.nx = data[21] * fps2g;
+                    now.ny = data[22] * fps2g;
+                    now.nz = (data[23] * fps2g + 1.0);
+                    derive_flight_parameters(now, vehicle);
+                    states.push_back(now);
+                    trace("Parsed state: ", states.back());
+                }
+                else
+                {
+                    input_error("Wrong number of columns in ", filename, ".");
+                }
             }
-            else
+        }
+        else
+        {
+            const auto columns = find_geodetic_columns(csv);
+            if (!columns.positioned())
             {
-                input_error("Wrong number of columns in ", filename, ".");
+                input_error("Unrecognised trajectory format in ", filename,
+                        ": it is neither the 27-column NASA/FAA AC state format nor a WGS84 "
+                        "track. A WGS84 track needs a header naming latitude and longitude "
+                        "columns in degrees, an altitude column in feet, and a time or utcsec "
+                        "column in seconds.");
             }
+            frame_ = geodetic.frame;
+            read_geodetic_states(filename, csv, columns, vehicle, geodetic, frame_, states);
         }
     }
     else if (extension == "nc")
