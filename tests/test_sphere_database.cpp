@@ -8,7 +8,10 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <stdexcept>
 #include <vector>
+
+#include <netcdf.h>
 
 #include "sphere_database.hpp"
 
@@ -353,5 +356,34 @@ TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")
         worst = std::max(worst, std::fabs(round_tripped.amplitudes[i] - plain_sphere.amplitudes[i]));
     REQUIRE(worst < 1e-9);
 
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a database with no condition groups is refused, not crashed", "[sphere_database]")
+{
+    // Every field the constructor fills comes out of the loop over the groups.
+    // With none, the loop never ran and the tail of the constructor read an
+    // uninitialised sphere radius and dereferenced max_element's end() on the
+    // empty condition lists.  That segfaulted, with nothing on stderr, after a
+    // log that looked like a successful load.
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_no_groups.nod").string();
+
+    int file = 0;
+    REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file) == NC_NOERR);
+    int scalar_dim = 0;
+    REQUIRE(nc_def_dim(file, "scalar", 1, &scalar_dim) == NC_NOERR);
+    int same_grid = 0;
+    REQUIRE(nc_def_var(file, "same_grid", NC_SHORT, 1, &scalar_dim, &same_grid) == NC_NOERR);
+    int version = 0;
+    REQUIRE(nc_def_var(file, "database_version", NC_INT, 1, &scalar_dim, &version) == NC_NOERR);
+    REQUIRE(nc_enddef(file) == NC_NOERR);
+    const short one = 1;
+    const int one_int = 1;
+    const std::size_t start = 0, count = 1;
+    REQUIRE(nc_put_vara_short(file, same_grid, &start, &count, &one) == NC_NOERR);
+    REQUIRE(nc_put_vara_int(file, version, &start, &count, &one_int) == NC_NOERR);
+    REQUIRE(nc_close(file) == NC_NOERR);
+
+    REQUIRE_THROWS_AS(Database(path), std::runtime_error);
     std::filesystem::remove(path);
 }

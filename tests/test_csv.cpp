@@ -9,6 +9,7 @@
 // gives 39 observers in both implementations.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -125,4 +126,34 @@ TEST_CASE("Labelled CSV keeps its header and matches names loosely", "[csv]")
     // The same rows read_numeric_csv sees: one parser, one set of rows, so the
     // positional AC path is unchanged by being read through this.
     REQUIRE(read_numeric_csv(numeric.path, /*skip_first_record=*/true).size() == rows.rows.size());
+}
+
+TEST_CASE("fields padded with whitespace still parse", "[csv]")
+{
+    // std::stod already skips what precedes a number, so rejecting only what
+    // follows it made the two ends behave differently.  Every shipped AC track
+    // pads on the left and so parsed anyway; arrays/coyle_approach.csv pads on
+    // the right and had every row dropped, leaving a scattered-observer run
+    // that read zero observers and still exited 0.
+    const TempCsv padded("id,x,y,z\n1 ,-794.12,-1928.64 ,10.69\n2 , -788.33 ,-1085.09,-1.08\n");
+    const auto rows = read_numeric_csv(padded.path, /*skip_first_record=*/true);
+    REQUIRE(rows.size() == 2);
+    REQUIRE(rows[0].size() == 4);
+    REQUIRE(rows[0][1] == Catch::Approx(-794.12));
+    REQUIRE(rows[0][2] == Catch::Approx(-1928.64));
+    REQUIRE(rows[1][1] == Catch::Approx(-788.33));
+
+    // Genuinely non-numeric fields are still rejected, whitespace or not.
+    const TempCsv junk("a,b\n1,2\n3, four \n");
+    REQUIRE(read_numeric_csv(junk.path, /*skip_first_record=*/true).size() == 1);
+}
+
+TEST_CASE("the shipped scattered observer file reads", "[csv]")
+{
+    // It is the only scattered-observer set in the repository and was entirely
+    // unreadable: every row is padded before its commas.
+    const auto rows = read_numeric_csv("arrays/coyle_approach.csv", /*skip_first_record=*/true);
+    REQUIRE(rows.size() > 24);
+    for (const auto& row : rows)
+        REQUIRE(row.size() == 4);
 }

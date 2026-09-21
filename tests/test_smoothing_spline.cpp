@@ -259,3 +259,34 @@ TEST_CASE("evaluation outside the data extends linearly", "[spline]")
     const double predicted = spline(x.back()) + 2.0 * slope;
     REQUIRE(std::fabs(spline(x.back() + 2.0) - predicted) < 1e-6);
 }
+
+TEST_CASE("zero smoothing gives the interpolating cubic, not a polyline", "[spline]")
+{
+    // lambda = 0 interpolates, which is true of the values and was once taken
+    // to settle the curvature too: fit() short-circuited and left it zero, so
+    // the "interpolating spline" was piecewise linear.  Its first derivative
+    // came back as the cell's chord slope and its second as identically zero,
+    // which is what the geodetic reader's default --path_smoothing 0 was
+    // handing the load factor.
+    //
+    // A parabola is the case that says so: an interpolating cubic carries a
+    // constant second derivative exactly, away from the ends where the natural
+    // boundary condition pins it to zero.
+    const auto x = linspace(0.0, 4.0, 81);
+    std::vector<double> y(x.size());
+    for (std::size_t i = 0; i < x.size(); i++)
+        y[i] = x[i] * x[i];
+
+    for (const auto& spline : {SmoothingSpline::with_smoothing(x, y, 0.0),
+                 SmoothingSpline::within_tolerance(x, y, 0.0)})
+    {
+        REQUIRE(spline.smoothing_parameter() == 0.0);
+        // Interpolation is still exact.
+        REQUIRE(max_abs_difference(spline.fitted(), y) < 1e-12);
+        for (double xi : {1.0, 2.0, 3.0})
+        {
+            REQUIRE(std::fabs(spline.derivative(xi, 1) - 2.0 * xi) < 1e-6);
+            REQUIRE(std::fabs(spline.derivative(xi, 2) - 2.0) < 1e-6);
+        }
+    }
+}

@@ -676,6 +676,16 @@ Database::Database(const std::string& datafile_path)
     }
 
     auto group_ids = get_group_ids(file_ncid);
+    // Every field below is filled from the loop over these groups.  With none,
+    // the loop never runs and the tail of this function read an uninitialised
+    // sphere radius and dereferenced max_element's end() on empty condition
+    // lists -- a segfault, with nothing on stderr because the log had already
+    // recorded a plausible-looking load.  Say what is wrong instead.
+    if (group_ids.empty())
+    {
+        input_error("Database ", datafile_path, " holds no operating-condition groups; "
+                "a .nod file needs one group per sphere.");
+    }
 
     // Allocate storage for operating conditions
     std::vector<double> advance_ratios, flight_path_angles, thrust_coefficients;

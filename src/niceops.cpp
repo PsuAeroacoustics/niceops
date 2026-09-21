@@ -312,6 +312,16 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
             input_error("Observer file format unreadable.");
         }
     }
+    if (observers.empty())
+    {
+        // Every row failing to parse leaves this empty, and the run then
+        // "succeeds" having evaluated nothing and written a lone header line.
+        // The first record is consumed as a header whether or not it holds
+        // numbers, so a one-line file lands here too.
+        input_error("Observer file ", observer_file, " yielded no observers. The first record "
+                "is taken as a header and discarded; every row after it must be x,y,z or "
+                "id,x,y,z in feet.");
+    }
 }
 
 } // namespace

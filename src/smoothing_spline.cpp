@@ -215,10 +215,20 @@ public:
         fitted = y_;
         curvature.assign(n_, 0.0);
 
-        // Fewer than three points, or no penalty weight, leaves nothing to
-        // smooth: two points are already a straight line, and lambda = 0
-        // interpolates.
-        if (n_ < 3 || lambda <= 0.0)
+        // Two points are already a straight line, with no interior knot to
+        // carry curvature.
+        //
+        // lambda == 0 is NOT a special case and must not short-circuit here.
+        // It interpolates, so `fitted` is y either way -- but the curvature
+        // still has to be solved for, because the lambda = 0 limit of this
+        // system is R gamma = Q^T y, the natural cubic *interpolating* spline.
+        // Returning zero curvature instead made the "interpolating" spline
+        // piecewise linear: derivative(x, 1) came back as the cell's chord
+        // slope and derivative(x, 2) as identically zero.  That reached the
+        // shipped geodetic reader, whose --path_smoothing default is 0 and
+        // whose load factor is the second derivative, so every WGS84 track
+        // flew at exactly 1 g and its CT never moved.
+        if (n_ < 3)
             return;
 
         const std::size_t m = n_ - 2;
