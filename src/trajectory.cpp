@@ -23,45 +23,6 @@ namespace {
 
 constexpr double PI = 3.14159265358979323846;
 
-void diff(double dx, const std::vector<double>& f, std::vector<double>& df, std::vector<double>& ddf);
-
-void smoother(const std::vector<double>& x, const std::vector<double>& f,
-        const std::vector<double>& xi, std::vector<double>& fi, std::vector<double>& dfi,
-        std::vector<double>& ddfi, double smoothing, double tolerance)
-{
-    // A negative tolerance means "use the smoothing parameter"; otherwise the
-    // penalty is solved for so the fit stays within `tolerance` of the data.
-    const auto spline = tolerance >= 0.0 ? SmoothingSpline::within_tolerance(x, f, tolerance)
-                                         : SmoothingSpline::with_smoothing(x, f, smoothing);
-    // Use spline for interpolation
-    fi = spline(xi);
-    // Use finite differences to get velocity and acceleration
-    const double dx = xi[1] - xi[0];
-    diff(dx, fi, dfi, ddfi);
-}
-
-void diff(double dx, const std::vector<double>& f, std::vector<double>& df, std::vector<double>& ddf)
-{
-    // Create storage for first derivative
-    df = f;
-    // Forward diff first point
-    df[0] = (f[1] - f[0]) / dx;
-    // Central diff interior points
-    for (std::size_t i = 1; i + 1 < f.size(); i++)
-        df[i] = 0.5 * (f[i + 1] - f[i - 1]) / dx;
-    // Backward diff last point
-    df[f.size() - 1] = (f[f.size() - 1] - f[f.size() - 2]) / dx;
-    // Create storage for second derivative
-    ddf = df;
-    // Forward diff first point
-    ddf[0] = (f[2] - 2 * f[1] + f[0]) / (dx * dx);
-    // Central diff interior points
-    for (std::size_t i = 1; i + 1 < f.size(); i++)
-        ddf[i] = (f[i + 1] - 2 * f[i] + f[i - 1]) / (dx * dx);
-    // Backward diff last point
-    ddf[f.size() - 1] = (f[f.size() - 1] - 2 * f[f.size() - 2] + f[f.size() - 3]) / (dx * dx);
-}
-
 // The vehicle JSONs store every value as a quoted string, and the D original
 // read them with `.str` followed by `to!double`.  nlohmann's get<double>()
 // throws on a string, so convert explicitly (tolerating a real JSON number).
@@ -629,50 +590,59 @@ void Trajectory::adapt(double dt, double smoothing, double tolerance)
         y.push_back(now.y);
         z.push_back(now.z);
     }
-    // Build interpolants
+    // The resampled instants, counted by index rather than accumulated so the
+    // spacing cannot drift over a long track.
     std::vector<double> ti;
-    ti.push_back(t[0]);
-    double tnext = ti[0] + dt;
-    while (tnext <= t[t.size() - 1])
-    {
-        ti.push_back(tnext);
-        tnext += dt;
-    }
-    trace("Smoothing x.");
-    std::vector<double> xi;
-    std::vector<double> vxi;
-    std::vector<double> axi;
-    smoother(t, x, ti, xi, vxi, axi, smoothing, tolerance);
+    const double span = t.back() - t.front();
+    const auto steps = static_cast<std::size_t>(std::floor(span / dt));
+    ti.reserve(steps + 1);
+    for (std::size_t i = 0; i <= steps; i++)
+        ti.push_back(t.front() + dt * static_cast<double>(i));
 
-    trace("Smoothing y.");
-    std::vector<double> yi;
-    std::vector<double> vyi;
-    std::vector<double> ayi;
-    smoother(t, y, ti, yi, vyi, ayi, smoothing, tolerance);
+    trace("Smoothing x, y and z.");
+    const auto fit = [&t, smoothing, tolerance](const std::vector<double>& f) {
+        // A negative tolerance means "use the smoothing parameter"; otherwise
+        // the penalty is solved for so the fit stays within `tolerance`.
+        return tolerance >= 0.0 ? SmoothingSpline::within_tolerance(t, f, tolerance)
+                                : SmoothingSpline::with_smoothing(t, f, smoothing);
+    };
+    const auto fit_x = fit(x);
+    const auto fit_y = fit(y);
+    const auto fit_z = fit(z);
 
-    trace("Smoothing z.");
-    std::vector<double> zi;
-    std::vector<double> vzi;
-    std::vector<double> azi;
-    smoother(t, z, ti, zi, vzi, azi, smoothing, tolerance);
+    // UTC seconds ride along with the resampled time.  They used to be dropped:
+    // the repacked State was value-initialised and nothing refilled utcsec, so
+    // adapting a trajectory silently moved the whole flight to UTC midnight and
+    // with it the day/night classification behind --dnlfile.
+    const double utc_at_start = states.front().utcsec;
+    const double t_at_start = t.front();
 
     // Repack data into states
     states.clear();
     trace("States reset to ", states);
-    for (std::size_t i = 0; i < ti.size(); i++)
+    states.reserve(ti.size());
+    for (const double now_t : ti)
     {
         State now {};
-        now.t = ti[i];
-        now.x = xi[i];
-        now.y = yi[i];
-        now.z = zi[i];
-        now.vx = vxi[i];
-        now.vy = vyi[i];
-        now.vz = vzi[i];
-        // Convert to "g"
-        now.nx = axi[i] * mps2g;
-        now.ny = ayi[i] * mps2g;
-        now.nz = azi[i] * mps2g + 1.0;
+        now.t = now_t;
+        now.utcsec = utc_at_start + (now_t - t_at_start);
+        now.x = fit_x(now_t);
+        now.y = fit_y(now_t);
+        now.z = fit_z(now_t);
+        // Velocity and acceleration come from the spline itself rather than
+        // from finite differences over the resampled values.  Fitting a curve
+        // and then differencing its samples throws away the exact derivatives
+        // the fit already carries, and charges the resampling step's truncation
+        // error for the privilege -- the load factor, which is the second
+        // derivative, paid for that twice.  read_geodetic_states derives its
+        // states the same way.
+        now.vx = fit_x.derivative(now_t, 1);
+        now.vy = fit_y.derivative(now_t, 1);
+        now.vz = fit_z.derivative(now_t, 1);
+        // Convert to "g", with gravity added back on the vertical
+        now.nx = fit_x.derivative(now_t, 2) * mps2g;
+        now.ny = fit_y.derivative(now_t, 2) * mps2g;
+        now.nz = fit_z.derivative(now_t, 2) * mps2g + 1.0;
         derive_flight_parameters(now, vehicle);
         states.push_back(now);
         trace("Adapted state: ", states.back());

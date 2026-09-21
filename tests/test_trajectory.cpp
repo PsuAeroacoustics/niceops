@@ -311,3 +311,87 @@ TEST_CASE("The AC state format is still read positionally", "[trajectory][geodet
     REQUIRE(first->latitude == Catch::Approx(records.front()[2]));
     REQUIRE(first->longitude == Catch::Approx(records.front()[3]));
 }
+
+TEST_CASE("adapt resamples onto a uniform grid and keeps the clock", "[trajectory][adapt]")
+{
+    // adapt() is the only smoothing/resampling path for the positional AC
+    // format (--path_smoothing reaches the geodetic reader only), and nothing
+    // in main calls it, so this is what keeps it honest.
+    Trajectory trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+
+    // A straight line at constant speed, which a natural cubic spline
+    // reproduces exactly: f'' = 0 everywhere already satisfies the natural end
+    // condition, so there is no boundary artefact to allow for.
+    const double speed_x = 3.0;
+    const double speed_y = -4.0;
+    const double start_utc = 43200.0; // noon
+    trajectory.states.clear();
+    for (int i = 0; i <= 100; i++)
+    {
+        State now {};
+        now.t = 0.02 * i;
+        now.utcsec = start_utc + now.t;
+        now.x = 100.0 + speed_x * now.t;
+        now.y = speed_y * now.t;
+        now.z = 250.0;
+        trajectory.states.push_back(now);
+    }
+
+    trajectory.adapt(0.1, /*smoothing=*/0.0);
+
+    // 2 s of track at 0.1 s: 21 samples, endpoint included.
+    REQUIRE(trajectory.states.size() == 21);
+    for (std::size_t i = 0; i < trajectory.states.size(); i++)
+    {
+        const auto& now = trajectory.states[i];
+        REQUIRE(now.t == Catch::Approx(0.1 * static_cast<double>(i)));
+        // UTC seconds used to be dropped here: the repacked State was
+        // value-initialised and nothing refilled utcsec, which moved the whole
+        // flight to midnight and with it --dnlfile's day/night split.
+        REQUIRE(now.utcsec == Catch::Approx(start_utc + now.t));
+        REQUIRE(now.x == Catch::Approx(100.0 + speed_x * now.t));
+        REQUIRE(now.vx == Catch::Approx(speed_x));
+        REQUIRE(now.vy == Catch::Approx(speed_y));
+        REQUIRE(now.vz == Catch::Approx(0.0).margin(1e-9));
+        // Straight and level: the load factor is gravity alone.
+        REQUIRE(now.LF == Catch::Approx(1.0));
+        REQUIRE(std::isfinite(now.CT));
+        REQUIRE(std::isfinite(now.mu));
+    }
+}
+
+TEST_CASE("adapt takes the load factor from the fitted path", "[trajectory][adapt]")
+{
+    // The load factor is the second derivative, and it is read off the spline
+    // rather than finite-differenced from the resampled positions.  A constant
+    // acceleration is the case that says so: the interior of an interpolating
+    // cubic through a parabola carries it exactly.
+    Trajectory trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+
+    const double acceleration = 2.0; // m/s^2 along x
+    trajectory.states.clear();
+    for (int i = 0; i <= 200; i++)
+    {
+        State now {};
+        now.t = 0.02 * i;
+        now.x = 0.5 * acceleration * now.t * now.t;
+        now.y = 0.0;
+        now.z = 300.0;
+        trajectory.states.push_back(now);
+    }
+
+    trajectory.adapt(0.1, /*smoothing=*/0.0);
+
+    // Skip the two end cells, where the natural boundary condition pins the
+    // curvature to zero and so cannot represent a parabola.
+    const std::size_t count = trajectory.states.size();
+    REQUIRE(count > 8);
+    for (std::size_t i = 3; i + 3 < count; i++)
+    {
+        const auto& now = trajectory.states[i];
+        REQUIRE(now.vx == Catch::Approx(acceleration * now.t).epsilon(1e-6));
+        // nx is normalised by LF, so recover the acceleration in g from both.
+        REQUIRE(now.nx * now.LF == Catch::Approx(acceleration * mps2g).epsilon(1e-6));
+        REQUIRE(now.nz * now.LF == Catch::Approx(1.0).epsilon(1e-6));
+    }
+}

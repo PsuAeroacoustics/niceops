@@ -434,11 +434,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         trajectory.watts_trim(trim_start_ft);
     }
 
-    // Trajectory adaptation parameters, for the adapt() call below.  Both the
-    // call and its arguments are disabled, matching the D original.
-    //const int degree = 5;
-    //const double smooth = 1e6;
-    //trajectory.adapt(dt, degree, smooth);
+    // Resample onto the -s grid, smoothing the path first.  Disabled, matching
+    // the D original; --path_smoothing covers the geodetic input that needs it.
+    // The arguments are (dt, smoothing, tolerance): a negative tolerance uses
+    // `smoothing` as the penalty weight directly, and a non-negative one solves
+    // for the weight instead.  The D-era pair here was (degree, smooth) from
+    // the vendored B-spline library, whose second and third arguments meant
+    // something else entirely -- uncommented as it stood, it asked for a fit
+    // allowed to sit 1e6 away from the measured path.
+    //trajectory.adapt(dt, /*smoothing=*/0.3);
 
     // And time series data
     const std::size_t nt = trajectory.states.size();
