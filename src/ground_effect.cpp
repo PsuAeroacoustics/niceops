@@ -14,33 +14,6 @@ namespace {
 constexpr double spherical_spreading_coefficient = 0.727477;
 constexpr double ground_reflection_coefficient = 6.325159;
 
-// Square root of a complex number, algebraically rather than in polar form.
-//
-// libc++'s std::sqrt for complex goes through abs() and arg(), costing a hypot
-// and an atan2; this costs three real square roots and no transcendental at
-// all. The branch is the standard one that avoids cancellation: take whichever
-// of the two components does not subtract nearly-equal quantities, and recover
-// the other by division.
-//
-// Values here are bounded well inside the exponent range, so squaring the
-// components directly is safe and hypot's overflow guard is not needed.
-inline std::complex<double> fast_sqrt(std::complex<double> z)
-{
-    const double x = z.real();
-    const double y = z.imag();
-    if (x == 0.0 && y == 0.0)
-        return {0.0, 0.0};
-
-    const double magnitude = std::sqrt(x * x + y * y);
-    if (x >= 0.0)
-    {
-        const double real = std::sqrt(0.5 * (magnitude + x));
-        return {real, y / (2.0 * real)};
-    }
-    const double imag = std::copysign(std::sqrt(0.5 * (magnitude - x)), y);
-    return {y / (2.0 * imag), imag};
-}
-
 // Beyond this the boundary-loss term is negligible and its series is not worth
 // evaluating; panam uses the same cut, leaving the term at zero above it.
 constexpr double boundary_loss_cutoff = 500.0;
@@ -75,8 +48,6 @@ void excess_ground_attenuation(const GroundModel& ground,
     // Bands outside the metric's limits are never read, so do not compute them.
     if (last_band > frequencies.size())
         last_band = frequencies.size();
-    using complex = std::complex<double>;
-    const complex i(0.0, 1.0);
 
     const double hs = source_height;
     const double hr = ground.receiver_height;
