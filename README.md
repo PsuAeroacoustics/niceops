@@ -375,16 +375,25 @@ its full inertial state:
 | Input | Median | 99th pct | Max | Cells over 1 dB (of 14400) |
 | --- | --- | --- | --- | --- |
 | 50 Hz positions, `--path_smoothing 0.02` | 0.028 dB | 0.64 | 2.44 | 37 |
-| 50 Hz positions, interpolated exactly | 0.196 dB | 1.32 | 3.00 | 369 |
-| 50 Hz positions and velocity columns | 0.011 dB | 0.31 | 1.88 | 15 |
-| Waypoints 10 s apart, resampled to 0.1 s | 0.180 dB | 1.26 | 2.31 | 347 |
+| 50 Hz positions, interpolated exactly | 11.6 dB | 15.51 | 16.32 | 14395 |
+| 50 Hz positions and velocity columns | 0.009 dB | 0.41 | 2.44 | 28 |
+| Waypoints 10 s apart, resampled to 0.1 s | 0.083 dB | 1.01 | 2.44 | 151 |
 
 The projection itself is not the lossy part: it reproduces that file's own x/y to under a metre
 over 3.2 km, and altitude passes through exactly. What costs is differentiating twice.
-Interpolating a *dense* track exactly is the worst of the four, because the second derivative
-amplifies the coordinates' 1e-8 degree rounding by 1/step²; the tool says so when it sees that
-combination. Sparse waypoints are resampled onto the `-s` grid first — never coarsened — and
-their load factor is an artefact of the interpolant, which is also logged.
+Interpolating a *dense* track exactly is by far the worst of the four, because the second
+derivative amplifies the coordinates' 1e-8 degree rounding by 1/step² — 2500x on a 0.02 s
+track — and the load factor is that second derivative. The tool logs a warning when it sees
+that combination, and on dense input it should be read as an instruction rather than a note:
+**pass `--path_smoothing` for measured positions.** Sparse waypoints are resampled onto the
+`-s` grid first — never coarsened — and their load factor is an artefact of the interpolant,
+which is also logged.
+
+> These four rows were re-measured after the interpolating spline was fixed to carry its own
+> curvature (see `src/smoothing_spline.cpp`). Before that, `--path_smoothing 0` produced a
+> spline with *zero* second derivative everywhere, so the load factor came out as exactly 1 g
+> on every state and the rounding amplification described above never happened — which is why
+> the row read 0.196 dB. The old figure measured a bug, not an interpolant.
 
 **Output.** `--latlon` writes a companion beside every level file (`out.csv` →
 `out_latlon.csv`) holding latitude, longitude and level, one row per observer, for dropping a

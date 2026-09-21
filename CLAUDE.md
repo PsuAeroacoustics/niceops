@@ -70,6 +70,16 @@ Notes:
   on a literal argument** in a test: the literal gets constant-folded at build time (GCC
   folds via MPFR, correctly rounded) while the function under test reaches libm at run
   time, and the two differ by an ULP. `acosc` was written that way and only GCC noticed.
+- **`arrays/coyle_approach.csv` is the only scattered-observer set in the repo**, and it is a
+  working `-b` input again: every one of its rows was being dropped, because its fields are
+  padded *before* the comma and `read_numeric_csv` counted trailing whitespace as junk. The run
+  then evaluated zero observers and exited 0. An observer file that yields nothing is now an
+  error. All 84 shipped AC tracks pad on the *left*, which `std::stod` always skipped, so the
+  goldens never saw this.
+- **`SmoothingSpline` at lambda = 0 is the natural cubic *interpolating* spline**, not a
+  polyline. `PenalizedSystem::fit` used to short-circuit there and leave the curvature zero;
+  the lambda = 0 limit of its own system is `R gamma = Q^T y`, which has to be solved. See the
+  `--path_smoothing` note below for what that cost.
 - **`state/`, `integrated/`, `log/` and `figures/` are not tracked**, so a fresh checkout
   has none of them and every writer must create its own parent directory
   (`ensure_parent_directory` in `src/util/paths.hpp`). `Trajectory::write_state` once
@@ -397,7 +407,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   - `std::sqrt` on a `std::complex` costs an **atan2**, because libc++ evaluates it in polar
     form. `ground_effect.cpp` called it three times per band; two were provably redundant
     (`sqrt(w)` *is* the numerical-distance parameter, verified over the whole domain) and the
-    third is now `fast_sqrt`, which is algebraic. `std::abs`/`std::arg` on a complex cost a
+    third is an algebraic root written out in the band loop. `std::abs`/`std::arg` on a complex cost a
     hypot and an atan2 and are gone the same way -- `|Q|cos(p + arg Q)` is
     `Re(Q)cos p - Im(Q)sin p`, and `|w| <= 500` is `norm(parameter) <= 500`.
   - `faddeeva` is written in real arithmetic. Every `std::complex` multiply carries a branch to
@@ -462,7 +472,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   `to_geodetic` inverts the projection by Newton iteration, which is what `--latlon` output
   uses. Ported from the D `worldtransforms.d`/`wgs84tocartesian.d` pair, which had no notion of
   a rotated frame and whose inverse walked fixed 1e-5 degree increments.
-- `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `src/splines.hpp` wraps it as `Spline` for `trajectory.cpp`. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
+- `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `trajectory.cpp` uses it directly. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
 ### Geodetic trajectory input
@@ -497,16 +507,24 @@ touching it:
   projection is not the lossy part: altitude passes through exactly and x/y to under a metre.
   Differentiating a spline twice for the load factor is. Interpolating a *dense* track exactly
   (`--path_smoothing 0`, the default) amplifies the coordinates' 1e-8 degree rounding by
-  1/step², which on the 0.02 s demo track moves CT by 17% and the footprint by 3 dB in the
-  worst cell; `--path_smoothing 0.02` takes that to 0.028 dB median and 2.4 dB worst. The
-  default stays at zero because a planner's waypoints are exact intent rather than
-  measurements, and the reader logs a warning when it sees dense input with no smoothing.
+  1/step² -- 2500x on the 0.02 s demo track -- which moves the footprint by **11.6 dB at the
+  median**; `--path_smoothing 0.02` takes that to 0.028 dB median and 2.4 dB worst. The default
+  stays at zero because a planner's waypoints are exact intent rather than measurements, and
+  the reader logs a warning when it sees dense input with no smoothing -- but on dense measured
+  input that warning is the whole ballgame, and **whether zero is still the right default is an
+  open question**.
+
+  Those numbers were re-measured after `SmoothingSpline` was fixed to give the lambda = 0 case
+  its curvature. Before that, `--path_smoothing 0` returned a spline with zero second
+  derivative everywhere, so the load factor was exactly 1 g on every state, CT never moved, and
+  the amplification above never happened -- the old "17% and 3 dB" measured that bug. README
+  carries the re-measured table for all four input shapes; do not re-derive it.
   README carries the measured table for all four input shapes; do not re-derive it.
 - **Resampling never coarsens.** The sound exposure integral is a Riemann sum over whatever
   step the states end up with, so a 50 Hz file keeps its own sample times and only sparse or
   unevenly spaced input is refitted onto the `-s` grid.
 
-- `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` resamples onto a uniform dt grid, smoothing via `src/splines.hpp` (currently commented out in `main`, as is `watts_trim()`). It takes either a smoothing parameter or a `tolerance` bounding how far the smoothed path may sit from the measured one.
+- `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` resamples onto a uniform dt grid, smoothing via `src/smoothing_spline.hpp` and taking velocity and load factor from the spline's own derivatives (currently commented out in `main`; `watts_trim()` is reachable through `--trim`). It takes either a smoothing parameter or a `tolerance` bounding how far the smoothed path may sit from the measured one.
 - `src/plotting.{hpp,cpp}` — `plt::` facade replacing the vendored matplotlib-d binding. Embeds Python via pybind11 and calls matplotlib directly; the interpreter is created lazily on first use, so non-plotting runs never pay the import cost.
 
 ### D standard-library replacements

@@ -6,9 +6,11 @@
 // level and EAA excess-attenuation factor.  eval() computes ground level:
 // geometry -> sphere angles (lookup_angles), barycentric interpolation between
 // operating conditions, periodic bilinear interpolation on the sphere grid,
-// then spherical spreading + excess attenuation (EAA x range) + a fixed 4 dB
-// ground effect.  Only same_grid == true databases are supported
-// (interpolation path is unimplemented).
+// then spherical spreading and excess attenuation, EAA * (range - r_sphere) /
+// 1000 -- EAA being the total A-weighted attenuation over the 1000 m reference
+// distance the database was built at.  No ground effect: see --ground_effect,
+// which is on the spectral path.  Only same_grid == true databases are
+// supported (interpolation path is unimplemented).
 
 #include <array>
 #include <cmath>

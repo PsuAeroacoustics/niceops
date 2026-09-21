@@ -21,12 +21,13 @@
 // the reflected path arrives out of phase.  Calling it an "attenuation" is the
 // literature's convention, not a sign.
 //
-// This replaces nothing by default.  The existing broadband path multiplies the
-// database's EAA by a constant 4.0 under a "TODO Add ground effects" -- inherited
-// verbatim from the D original (see c74bab3) and encoded in the goldens -- which
-// is not a ground effect at all but a fourfold overstatement of atmospheric
-// absorption.  This model is what that TODO was asking for, and it is wired into
-// the spectral path, which is opt-in.
+// This replaces nothing by default.  The broadband path used to multiply the
+// database's EAA by a constant 4.0 under a "TODO Add ground effects" --
+// inherited verbatim from the D original (see c74bab3) -- which was not a
+// ground effect at all but a fourfold overstatement of atmospheric absorption.
+// That factor is gone and golden/197421_LAE.csv was regenerated without it.
+// This model is what that TODO was asking for, and it is wired into the
+// spectral path, which is opt-in.
 
 #include <complex>
 #include <cstddef>
