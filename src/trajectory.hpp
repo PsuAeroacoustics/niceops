@@ -1,5 +1,7 @@
 #pragma once
 
+#include "atmosphere.hpp"
+
 // Port of trajectory.d.  Parses the 27-column NASA/FAA AC state CSV into
 // metric State records, computing non-dimensional flight parameters:
 // CT = LF*W/(rho*V_tip^2*pi*R^2), mu = v/V_tip, and flight path angles fpa
@@ -55,6 +57,9 @@ struct dimensional_data
     double radius = 0.0; // m
     double weight = 0.0; // kg (converted to Newtons)
     double rho = 0.0; // kg/m^3
+    // Atmospheric state for the spectral propagation path, from the same file's
+    // "Atmosphere" section.  Unused by CT and mu, which need only rho.
+    Atmosphere atmosphere;
 };
 
 inline std::ostream& operator<<(std::ostream& os, const dimensional_data& v)

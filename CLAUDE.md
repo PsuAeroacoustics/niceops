@@ -33,6 +33,12 @@ With `-DNICEOPS_PLOTTING=OFF` the only prerequisite left is netCDF.
 
 CLI11, nlohmann_json, Catch2, and pybind11 are pulled at configure time via `FetchContent`, so the first configure needs network access.
 
+Link-time optimization is on by default (`-DNICEOPS_LTO=OFF` turns it off), where
+`check_ipo_supported` says the toolchain has it. It is worth 18% of the acoustic loop,
+because that loop and the database live in different translation units; it leaves the
+golden comparison passing unchanged, and GCC 16 and Apple Clang produce identical output
+with it.
+
 Build out-of-source, and **always with explicit `-S`/`-B`**:
 
 ```sh
@@ -89,9 +95,42 @@ Notes:
   resolves it either way, **so this breaks Linux only and a macOS build will not show it**.
   If you add a target, check that its dependencies point one direction.
 
+### Where the database load time goes
+
+A default run is now ~1.0 s, and ~0.75 s of that is `Database::Database`. Most of it is not
+ours: `S-76D_M3.nod` has **one netCDF group per operating condition**, 1312 of them, and
+netCDF-4 reads every group's metadata eagerly at `nc_open` -- it opens all ~8000 HDF5 datasets
+in the file before returning. Measured split:
+
+| | share of the load |
+| --- | --- |
+| `nc_open` (eager per-group metadata) | 41% |
+| our variable reads (metadata lookup, not I/O) | 25% |
+| `nc_close` (tearing that metadata down) | 12% |
+| Delaunay build over the conditions | 14% |
+| grid fill and the rest | 8% |
+
+The first three -- 78% -- are netCDF's own cost for this file layout and are not reachable
+through its API; the five tiny scalars per group cost more than the four big arrays, because
+what they pay for is the lookup, not the bytes. The real fix is in the database builder
+(panam): the same data in one group with `(condition, channel)` arrays would load in a
+fraction of the time. Do not go looking for it in `sphere_database.cpp`.
+
 ### Golden reference files
 
-`golden/197421_LAE.csv` and `golden/state_197421.csv` are captured from the **D reference implementation** and the C++ port matches them to **1e-9** (actual max relative difference ~1e-14, i.e. a few ULPs of LDC-vs-clang round-off). `regression_golden` and `state_golden` both pass.
+`golden/state_197421.csv` is captured from the **D reference implementation**; the C++ port
+matched it to **1e-9** (actual max relative difference ~1e-14, a few ULPs of LDC-vs-clang
+round-off). It is trajectory state, which no propagation change touches, so it still stands as
+the D-derived oracle.
+
+`golden/197421_LAE.csv` **no longer comes from D.** Removing the spurious 4x EAA multiplier
+(see below) deliberately departs from the D original, so the D binary can no longer produce
+this file and regenerating it from D would only restore the bug. It was regenerated from the
+C++ build at the commit that removed the multiplier. The port's agreement with D was verified
+before that change and that verification stands on its own; D is retired as an oracle for the
+propagation path.
+
+`regression_golden` and `state_golden` both pass.
 
 To regenerate them, follow the `regenerate-goldens` skill
 (`.claude/skills/regenerate-goldens/SKILL.md`) — it builds the D original in a scratch
@@ -160,12 +199,150 @@ A default run evaluates 14,400 observers × 6,551 states = 94.3M times, so anyth
 
 - **`Database::SourceState` is built once per trajectory state, in `main`, and reused across every observer.** It carries the source position, the `SphereFrame` (unit TPP normal, nose, starboard) and the `Blend` (four bracketing spheres + barycentric weights). The `Blend` is a CGAL Delaunay `locate()` walk and was ~60% of the whole run when it sat inside `eval`. Anything that depends only on (μ, γ, CT) or on attitude belongs here, not in `eval`.
 - **`lookup_angles` is split**: `sphere_frame(velocity, normal)` is per state, `lookup_angles(frame, direction)` is per observer. The four-argument overload still exists for the unit tests and composes the two.
+- **`lookup_angles` takes three dot products and no projection.** `{nose, normal, starboard}` is orthonormal, so the propagation direction's components in the plane normal to the nose are just `normal.dot(d)` and `starboard.dot(d)`; forming the projected vector and normalising it (a square root and three divides) scaled both by the same positive length, which the angle does not depend on. `phi` is then `atan(across / |up|)` — `atan`, not `atan2`, which costs twice as much for quadrant handling a non-negative second argument does not need, and gives the right half of pi from the infinity the division produces when `up` is zero. The 0/0 case at the poles is caught explicitly.
 - **The level grid is one flat `vector<Sample>`** (`{dBA, EAA}` pairs), indexed `(i_phi * n_theta + i_theta) * n_conditions + condition`, not `vector<vector<vector<double>>>`. Both metrics are read together, so they share a cache line. A condition-major layout was tried and is *worse* — it also breaks bit-exactness via different FMA contraction.
 - **`GridAxis` replaces a binary search** with arithmetic when the axis is uniform, then corrects the estimate against the neighbouring knots so the answer provably equals `upper_bound`'s. The searches alone were about a third of the loop. `tests/test_sphere_database.cpp` sweeps both paths against each other; keep that test if you touch it.
+- **`DirectionBounds::bin` lives in the header.** The observer loop calls it ~94 million times from `niceops.cpp` while it is defined in `sphere_database.cpp`, so out of line it inlined only when `NICEOPS_LTO` was on and the toolchain supported it. It is fifteen instructions and should not depend on a build option; its tangent table is an `inline const` variable rather than a function-local static, which would test a guard on every call. The bin geometry — `bin`, the tangents, `narrowest_theta_bin_degrees`, `azimuth_bin_degrees` — sits on `DirectionBounds` together, because the table build has to pad by the same binning the hot path queries with, and three independent spellings of it is how that silently stops covering.
+- **`GridAxis::locate` gives the cell and the interpolation weight together**, and is what `eval` and `eval_spectrum` call. Going through `bracket()` meant reading four knots back out of `values_`, four subtractions and a divide by the cell area, all to recover a number the uniform spacing already implies; `locate` returns the bracketing pair plus the fraction of the way across the cell, so the four corner weights are products of `(1-f)` and `f` and already sum to one. Worth 18% of the loop. It skips `bracket`'s correction loops, which is why it needs the tighter `exactly_uniform_` test in `reset()` rather than the tenth-of-a-step one: round-off can only put the estimate on the wrong side of a *knot*, where the two cells interpolate to the same value anyway. The wrap-around cell at the ends is not uniform and falls back to the knots. `tests/test_sphere_database.cpp` sweeps `locate` against `periodic_bilinear_interp` over uniform, irregular and wrapping cells — the two derivations have to agree, and that test is what says so.
+- **Both `eval` and `eval_spectrum` build their stencil with `cell_stencil`.** It turns the two `GridAxis::Cell`s into the four corner indices and the four bilinear weights. Sharing `locate` alone got them the same *cell* but left each deriving its own weights, which is what keeps the claim below — that a broadband/spectral disagreement is the physics and never the interpolation — true rather than merely intended. `periodic_bilinear_interp` is no longer on either path; it is the reference `locate` is swept against in `tests/test_sphere_database.cpp`, and the cell/apply split it used to have (`BilinearCell`, `bilinear_apply`) existed only for the old `eval` and is gone.
+- **The interpolation carries `{dBA, EAA}` as a two-lane vector** (`Pair` in `sphere_database.cpp`). Every step applies the same weight to both metrics, and a `Sample` is exactly a two-double vector in memory, so blending the four conditions at four corners and then the corners themselves is half as many instructions. Clang would not do it on its own from the scalar form or from a two-element array; the GCC/Clang `vector_size` spelling is explicit, with a plain-struct fallback that compiles to what the code said before.
+- **Divides in the loop are multiplications by a stored reciprocal**: `inv_sphere_radius_`, `1e-3` for the EAA scaling, and one reciprocal for normalising the propagation direction instead of three divides. A double divide is about four times a multiply. These move the result by an ULP, which is the only thing in this round that does.
+- **The observer loop's chunks are dealt out on demand, not divided up front** (`src/util/parallel.hpp`). An equal split gives every worker the same slice, so the wall time is the slowest core's -- and the cores are not interchangeable. On an M4 Pro (10 performance + 4 efficiency) the old equal split ran no faster on all 14 threads than on 10, the efficiency cores' slices being the critical path; pulling chunks lets the fast cores take more of them and gets the 14-thread run back under the 10-thread one. Chunk size is `count / (8 * workers)`, which is fine-grained enough to balance and coarse enough that the per-chunk scratch allocation stays noise. The output still does not depend on the split -- every observer writes only its own slot -- so runs at any thread count remain byte-for-byte identical.
 - **`trace()` is force-inlined and `Logger::write` is `noinline`** (`src/util/logger.hpp`). `eval` and `level_at_observer` make ~7 trace calls each; as ordinary calls that was a sixth of the loop spent entering functions that immediately returned. The level lives in `detail::min_level`, outside the `Logger` singleton, so testing it does not touch a function-local static's guard.
 - **The database grid fill walks channels and places them**, rather than scanning all 1,406 channels for each of the 1,332 cells (2.5 billion `approx_equal` probes, most of the load time). Two semantics are load-bearing and preserved: a later channel still wins a shared cell, and `dba_max` covers matched channels only.
 
-Current cost on the demo case: database load ~0.65 s, acoustic loop ~3.2 s. It was 2.2 s and 11.7 s. What is left is roughly 40% grid gather and arithmetic in `eval`, 20% `acos` (two per evaluation, irreducible without changing results), 10% `log10`.
+- **Link-time optimization is on** (`NICEOPS_LTO`, see CMakeLists.txt). The loop lives in `niceops.cpp` and `Database::level_at_observer` in `sphere_database.cpp`, so without it every one of ~100 million evaluations was an out-of-line call across a translation unit. Worth 18% of the loop on top of the source changes — and only 5% before them, because what it buys is hoisting and inlining that the divides and knot lookups were hiding.
+
+Current cost on the demo case: database load ~0.75 s, acoustic loop 1.55 s of CPU (0.16 s wall on 14 threads). It was 2.2 s and 11.7 s originally, and 3.2 s of CPU before this work.
+
+Where the 19.4 ns of an *evaluation* goes, from an ablation (`full`, `levels only`, `angles only`, `geometry only`, `eval at fixed angles`): 33% the two inverse trig calls, 35% `eval` itself (gather, blend, `log10`, arithmetic), 8% the vector geometry, 7% the SEL integral, and ~17% the difference between a real `eval` and one at synthetic angles -- which is *not* cache misses, see the gather item below.
+
+Several further optimizations were measured and **rejected**; the numbers are here so they are not re-derived:
+
+- **Hand-rolled `acos`, `atan` and `log10`.** They are a third of the loop, which makes them look like the obvious target, but this platform's libm does `acos` in 2.3 ns, `atan` in 2.0 and `log10` in 1.9 — around 8 cycles each, table-driven. A polynomial accurate enough to hold the golden (~1e-12 rad, so the level moves by less than 1e-10 dB) needs a square root and a degree-10 minimax and is *slower*; one cheap enough to win (degree 4, ~1e-5 rad, ~1e-3 dB on the footprint) saves only about 1.5 ns of the 3.55 an in-situ call costs. Bad trade in both directions.
+- **`-fno-math-errno`.** The hope was that marking the libm calls pure would let the compiler overlap them. No measurable change: it will not software-pipeline across an opaque call, and the three calls in an evaluation are already independent of each other and so already overlap.
+- **Storing the grid as `float`.** Would halve the 28 MB gather. It costs ~1e-5 dB, which is
+  within engineering accuracy but ends the golden comparison as a bit-level regression test.
+  Not taken without being asked -- and see the next item, which says it would not help anyway.
+- **Anything aimed at the gather's locality.** The four blended conditions of a cell span 845 of
+  the 1312 indices on average and touch 3.1 cache lines per corner, never 1, so an evaluation
+  pulls ~800 bytes of lines to use 256 -- which looks like an obvious 3x to reclaim. It is not:
+  the whole trajectory uses only **52 distinct blends**, so the four needed condition slices
+  could be compacted into 4.4 MB of contiguous 64-byte rows (nothing like the rejected slab's
+  +131 MB). Before building it, the ceiling was measured the cheap way -- run the same loop
+  against a one-condition database, whose 21 KB grid makes the gather perfectly local -- and it
+  came out at 1.82 s against the full database's 1.80 s. **The loop is compute-bound, not
+  miss-bound**, which is what the slab note already said; this is an independent confirmation
+  from the other direction. Measure that ceiling before touching the layout again.
+- **Per-cell polynomial inverses for `acos`/`atan`.** The angles are never wanted for their own
+  sake -- only a grid cell and a fraction across it -- so a polynomial per 5-degree cell mapping
+  cos(theta) straight to the fraction would skip the inverse trig entirely. It cannot work:
+  acos has a square-root singularity at the poles, so no polynomial in cos(theta) represents it.
+  Degree 7 still leaves 0.31 degrees of error in the two polar cells, and 5e-5 degrees in the
+  best interior ones; changing variables to sqrt(1 - a) to fix it puts a square root back.
+- **Culling states the SEL window will discard, by bounding them one at a time.** 44% of
+  (observer, state) pairs fall outside the window, but a bound that proves a *particular* pair
+  is outside it has to be tighter than 10 dB, and `level <= sphere max - spreading` is 11.4 dB
+  loose at the median -- it proves only 7.6%. That is the wrong question; asking it the other
+  way round is what works, and is now the default path. See "Walking out from the peak" below.
+
+### The SEL integral is oversampled, and the window is why that cannot be used
+
+The largest speedup still on the table is not a code change: the sound exposure integral is a
+Riemann sum over a 50 Hz trajectory, and it is oversampled by roughly thirty times. Decimating
+the demo case's 6551 states moves the footprint's **mean** by 0.008 dB at stride 2 and 0.088 dB
+even at stride 64. A 2-8x cut in the whole acoustic loop is sitting there.
+
+What blocks it is `peak_range`, which walks out from the peak and stops at the **first** sample
+below peak - 10. One transient directivity dip therefore truncates the window, and the result
+is a knife-edge: decimation steps over the dip, the window doubles, and the level jumps. The
+tail does not shrink with stride the way a quadrature error would --
+
+| stride | max cell error, first-crossing | outermost-crossing |
+| --- | --- | --- |
+| 2 | 1.93 dB (104 cells > 0.1 dB) | 1.13 dB (86) |
+| 8 | 2.34 dB (619) | 1.13 dB (271) |
+| 64 | 2.48 dB (3150) | 1.54 dB (1346) |
+
+-- which is the signature of a discrete window flip, not of the integral. Widening the window
+to the outermost crossing only halves it, and is itself a metric change: at full resolution it
+moves 2758 of 14400 observers by more than 0.1 dB and one by 2.48 dB.
+
+So decimation is **not** safe as a default under either definition: the mean is negligible but
+individual cells move by 1-2 dB, and the cells are the deliverable. It stays available
+deliberately, through `adapt()` and `-s` (both currently commented out in `main`).
+
+The oversampling is spent a different way instead, and exactly: by not evaluating the states
+the window was never going to use. That is the next section.
+
+Worth knowing on its own, independent of performance: the first-crossing rule means ~0.7% of
+observers' SEL depends on whether a single sample dips below the threshold. That is a faithful
+port of the D original and is left alone under the port-fidelity rule, but it is a fragility,
+not a feature -- and it is the reason the oversampling cannot be spent.
+
+### Walking out from the peak instead of marching every emission time
+
+`windowed_sound_exposure_level` in `src/niceops.cpp` is the default path and the reason the
+loop is 1.2x faster than evaluating everything. It is **exact** -- byte-identical output on
+every track, grid, observer set and thread count tried, not an approximation.
+
+It does not carry its own copy of the window walk or the integral. `expand_window()` and
+`sel_over_window()` in `src/util/sel.hpp` are templated on a level accessor, so `peak_range`
+reads them out of a filled array and this path reads them through a memoizing lambda that
+computes a state the first time it is asked for. That is deliberate: the backward walk's
+`== threshold` tie rule decides ~0.7% of observers' SEL, and it now exists once rather than
+in two places that have to be edited together. The accessor is a template, not a
+`std::function`, so it inlines away and the comparisons are unchanged.
+
+The idea is to stop asking "can I prove this state is outside the window?", which needs a bound
+tighter than the 10 dB window and is hopeless (above), and ask "where is the peak?" instead.
+`peak_range` walks out from the peak and stops at the **first** sample below peak - 10, so the
+window is contiguous *by construction*: once the peak is known the walk itself decides where
+the window ends, and nothing beyond it needs a bound at all. A bound is then needed for exactly
+one thing -- being sure the walk started on the true peak -- and that is a far weaker demand,
+because it only has to beat the best level found so far rather than that level minus ten.
+
+Three things had to hold, and each was measured before any of it was written:
+
+- **The bound needs less than 10 dB of slack**, or the peak search reaches outside the window
+  and there is nothing left to save. The whole-sphere maximum is 11.4 dB, just over. Binning it
+  by direction -- `DirectionBounds`, bins uniform in cos^2(theta) crossed with azimuth sectors
+  -- brings the median to 8.6 dB and the search collapses inside the window.
+- **The test must cost nothing on the states it does not reject.** It forms the squared range
+  and the three dot products with the sphere frame, which is exactly what an evaluation needs,
+  so `Database::level_from_geometry` takes those and a surviving state pays nothing for having
+  been tested. Letting the test compute its own geometry and then recomputing it inside
+  `level_at_observer` was measured: it turns a 1.48x into a 1.08x.
+- **The table has to stay in cache.** One table per *distinct blend*, not per state -- a shipped
+  track resolves thousands of states onto a few dozen tetrahedra -- so it is tens of kilobytes.
+  Built per state it was 3.3 MB, re-streamed for every observer, and that alone cost more than
+  the scheme saved once the loop was threaded.
+
+What it gives up: the bound maxes over the four conditions of a tetrahedron rather than over
+the particular blend of them, so it is looser than the per-state tables the prototype used --
+70% of states evaluated against the prototype's 64%, where the window itself is the 56% floor.
+Buying that back means a table per state, which is the cache problem above. Bin counts were
+swept (8x8, 16x8, 16x16, 32x16): finer bins do cut the evaluated fraction, to 66%, but the
+extra binning work cancels the saving almost exactly (1.585, 1.546, 1.557, 1.567 s), so the
+choice among them hardly matters and 16x8 is kept only for being marginally ahead on both.
+
+`tests/test_sphere_database.cpp` checks the bound directly -- that it is never exceeded over a
+sweep of source states and observers -- because the whole thing rests on that one property.
+
+The path is skipped and the loop marches every state whenever the bound does not apply:
+`--spectral` (the bound is on the broadband dBA, which does not bound the band-limited weighted
+level -- the same reason `--db_cutoff` is refused there), `-a` (the level is transformed after
+eval), `-i` (the whole history is written out), `-D` (the day-night window is found on a
+penalized history, which a window found on the raw one need not cover), `--db_cutoff` (already
+culling on its own terms), and any database with a negative excess-attenuation factor, where
+dropping that term is not a loss.
+
+**Extending it to `--ground_effect` is the obvious next move and is not done.** An evaluation
+costs ~1160 ns there against the broadband path's 19, so the test is free and the saving would
+be close to the full 30% rather than being half eaten by overhead. It needs a bound on the
+*A-weighted band-limited* level -- the largest weighted band sum per direction, which a
+spectral database can supply -- and a bound on the ground term, which is a **gain** of up to
+about +6 dB and so has to be bounded rather than dropped.
 
 Two suggested optimizations were deliberately **not** taken:
 
@@ -178,10 +355,106 @@ The reason the intuition fails is worth keeping: observers sweep a 120×120 grou
 
 **The SEL integral takes its time step from the trajectory, not from `-s`.** `sound_exposure_level` weights every sample by a time step, and `-s` is only the resampling step for `adapt()` — the two coincide *only* when `adapt()` actually resamples onto that grid, and it is commented out in `main`. Every shipped track is sampled at 0.02 s, so using the 0.5 s default as the weight overstated every level by exactly `10*log10(0.5/0.02) = 13.98 dB`. `main` now derives the step via `uniform_sample_interval()` and logs it, warning if the sampling is not uniform. If you re-enable `adapt()`, it resamples to `-s` and the derived step follows automatically.
 
-- `src/sphere_database.{hpp,cpp}` — `Database` class. Loads a netCDF noise database (`.nod`): one group per operating condition (μ advance ratio, γ flight path angle, CT thrust coefficient), each holding scattered (phi, θ) channels of dBA level and EAA excess-attenuation factor. `eval()` computes ground level: geometry → sphere angles (`lookup_angles`), barycentric interpolation between operating conditions, periodic bilinear interpolation on the sphere grid, then spherical spreading + excess attenuation (EAA × range) + a fixed 4 dB ground effect. Only `same_grid == true` databases are supported (the interpolation path is unimplemented). Free functions (`bracket`, `periodic_bilinear_interp`, `lookup_angles`, the geometry helpers) are exported in the header so the unit tests can reach them.
-- `src/predicates.{hpp,cpp}` — exact orientation and in-sphere tests via Shewchuk expansions, with a filtered double fast path. **The exactness is not optional**: the operating conditions are a prism (164 flight conditions x 8 thrust coefficients), so whole families of points are *exactly* cospherical and a rounded in-sphere test answers the same question two different ways, which leaves Bowyer-Watson's cavity non-star-shaped. Assumes normal (non-subnormal) coordinates; conditions are normalized into [0, 1] first.
+- `src/sphere_database.{hpp,cpp}` — `Database` class. Loads a netCDF noise database (`.nod`): one group per operating condition (μ advance ratio, γ flight path angle, CT thrust coefficient), each holding scattered (phi, θ) channels of dBA level and EAA excess-attenuation factor. `eval()` computes ground level: geometry → sphere angles (`lookup_angles`), barycentric interpolation between operating conditions, periodic bilinear interpolation on the sphere grid, then spherical spreading + excess attenuation, `EAA * (range - r_sphere) / 1000` — EAA being
+the total A-weighted attenuation over the 1000 m reference distance the database was built at,
+which is exactly how panam writes and consumes it. No ground effect: see `--ground_effect`. Only `same_grid == true` databases are supported (the interpolation path is unimplemented). Free functions (`bracket`, `periodic_bilinear_interp`, `lookup_angles`, the geometry helpers) are exported in the header so the unit tests can reach them.
+- `src/predicates.{hpp,cpp}` — exact orientation and in-sphere tests via Shewchuk expansions, with a filtered double fast path. The recursion, `exact_determinant_recurse`, takes its matrix as an **array of pointers** and builds its minors the same way: the entries are expansions, which are heap-allocated vectors, and copying `(size-1)^2` of them at every level of a factorial recursion put `malloc` and `free` at the top of the database-load profile. Callers use the `std::vector<Expansion>` overload of `exact_determinant`, which adapts to the pointer form once; it asserts `size <= MAX_PREDICATE_SIZE` so the fixed stack buffers the recursion uses guard themselves rather than relying on each entry point's `fatal()`. The exact path is taken often here — mass degeneracy is the point — so it is worth keeping allocation-free. **The exactness is not optional**: the operating conditions are a prism (164 flight conditions x 8 thrust coefficients), so whole families of points are *exactly* cospherical and a rounded in-sphere test answers the same question two different ways, which leaves Bowyer-Watson's cavity non-star-shaped. Assumes normal (non-subnormal) coordinates; conditions are normalized into [0, 1] first.
 - `src/delaunay.{hpp,cpp}` — Delaunay triangulation in arbitrary dimension, Bowyer-Watson on those predicates. Dimension is a constructor argument, not a template parameter, so a fourth operating parameter costs nothing here. A simplex whose circumsphere passes exactly through the new point is left standing: a point *on* a circumsphere does not violate the Delaunay condition, and leaving it is what keeps the choice consistent under mass degeneracy.
 - `src/interpolator.{hpp,cpp}` — barycentric weights over the operating-condition space, on top of `delaunay.hpp`. Replaced CGAL's `Delaunay_triangulation_3`, and Boost/GMP/MPFR went with it. Databases with fewer than `dim + 1` conditions (a single exported sphere) skip the triangulation and take the nearest condition.
+- `src/atmosphere.{hpp,cpp}` — ISO 9613-1:1993 atmospheric absorption, ported term for term
+  from panam's `panam_acoustics/iso_9613_1_1993.py` and pinned against values generated by
+  running that module (`tests/test_atmosphere.cpp`). **Pressure is in kPa**, matching the
+  standard and the Python, and is the one non-SI unit in the codebase. `absorption_coefficients()`
+  is the form the hot path uses: it hoists the two relaxation frequencies out of the per-band
+  loop and is bit-exact against the per-frequency call.
+- `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
+  than a table, so it evaluates at whatever band centres a database carries) and band-limited
+  energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but
+  -1.49e-6 dB; a test asserting exact 0 there will fail. `a_weighting_gains()` folds the
+  weighting and the band limit into one per-band multiply, with excluded bands exactly zero.
+  `weighted_level()` returns -infinity for silence, not 0 dB, so an excluded spectrum cannot
+  survive an energy sum as a quiet-but-real level.
+- `src/faddeeva.{hpp,cpp}` — the Faddeeva function w(z) = exp(-z²)erfc(-iz), Weideman's 32-term
+  rational approximation. The series is evaluated as **four interleaved Horner chains over
+  t⁴** rather than one over t: 31 dependent complex multiply-adds is a latency chain, not a
+  throughput problem, and it was running at about a quarter of the machine's floating-point
+  rate. Splitting by the power of t modulo four gives chains a quarter as deep that issue
+  together — 32% off `faddeeva`, 14% off the whole ground path. The coefficient table is
+  left exactly as Weideman's construction produced it and indexed by stride, so it stays
+  checkable against the source. It exists solely for the ground model's boundary-loss term, which panam
+  writes as `exp(-w)(1 - erf(-i sqrt w))` using SciPy's complex `erf`; with z = sqrt(w) that *is*
+  w(z), and evaluating it as written overflows. Max relative error 3e-13 over the domain the
+  ground model reaches (Re z ∈ [0.09, 22.3], Im z ∈ [-1.2, 15.6]), measured against SciPy's `wofz`.
+  The lower-half-plane reflection `w(z) = 2exp(-z²) - w(-z)` is safe **only** in that domain.
+- `src/ground_effect.{hpp,cpp}` — excess ground attenuation, ported from panam's `ega()` and pinned
+  against it to 1e-9 dB. **It returns a gain, not a loss** — +6 dB over rigid ground with the
+  receiver on the surface. `ground_impedance()` is hoisted out of the observer loop and the
+  allocation-free overload is what the loop calls; returning a vector there allocated 94 million
+  times and cost 20% of the run.
+- **The spectral and ground paths were profiled, not guessed at.** Two rounds of intuition
+  (cache layout, then `pow`) bought 14% between them; `sample` on a running process then showed
+  the real costs and the same effort bought 2.5x. What it found, and what not to undo:
+  - `std::sqrt` on a `std::complex` costs an **atan2**, because libc++ evaluates it in polar
+    form. `ground_effect.cpp` called it three times per band; two were provably redundant
+    (`sqrt(w)` *is* the numerical-distance parameter, verified over the whole domain) and the
+    third is now `fast_sqrt`, which is algebraic. `std::abs`/`std::arg` on a complex cost a
+    hypot and an atan2 and are gone the same way -- `|Q|cos(p + arg Q)` is
+    `Re(Q)cos p - Im(Q)sin p`, and `|w| <= 500` is `norm(parameter) <= 500`.
+  - `faddeeva` is written in real arithmetic. Every `std::complex` multiply carries a branch to
+    recover NaN/infinity cases that cannot arise here, and the Horner loop does 31 of them.
+    Its two trailing divides are folded into one: `2p/d^2 + c/d == (2p + c d)/d^2`.
+  - `spectra_` is condition-innermost, matching `grid`. The netCDF file stores it the other way
+    and the loader transposes once.
+  - The whole band loop in `excess_ground_attenuation` is real arithmetic for the same reason,
+    and its band-invariant branches (boundary loss on/off, the sinc, turbulence) are hoisted so
+    the body stays straight-line.
+  - Bands outside the metric's limits are not computed at all. `first_band`/`last_band` bound a
+    contiguous run, which is always what the limits select because band centres are sorted.
+  - The Weideman series behind `faddeeva` runs as four interleaved Horner chains rather than
+    one; see `src/faddeeva.cpp`. It was 53% of the ground path on its own and is latency-
+    bound, not throughput-bound.
+  All of it is exact: the footprint moved by 2.8e-14 dB end to end, and the EGA tests still pin
+  to panam at 1e-9 dB. Acoustic loop on the Be407 case, default band limits: broadband 0.34 s,
+  `--spectral` 1.44 s, `--spectral --ground_effect` 10.9 s (was 41.4); the Horner split takes
+  the last of those to about 9.4 s.
+
+  No database in `databases/` carries spectra, but the path is still exercisable end to end
+  from a bare checkout: `write_flat_spectral_database` in `tests/test_spectral_propagation.cpp`
+  interpolates a sphere out of the shipped `S-76D_M3.nod`, hangs synthetic band amplitudes on
+  it and writes it back with `write_sphere`, and the result is a one-group `.nod` that
+  `--spectral` accepts. Its single condition makes the blend degenerate, so timings off it run
+  optimistic, but the ground term -- which is most of the cost -- does not care. On the demo
+  track that way: `--spectral` 1.36 s -> 1.16 s, `--spectral --ground_effect` 8.95 s -> 7.81 s.
+  For the ground term alone, driving `excess_ground_attenuation` over a spread of source
+  heights and ground distances with 26 synthetic third-octave bands reproduces the per-call
+  cost the observer loop sees (~840 ns, was ~975), and `tests/test_ground_effect.cpp` -- pinned
+  to panam at 1e-9 dB -- is what says it is still right.
+
+  **The asymptotic boundary loss was tried and rejected.** For large `|w|` the term tends to
+  `-(1/2w + 3/4w^2 + ...)`, which would skip `faddeeva` on ~20% of bands. It does not converge
+  to the exact value -- the error plateaus at 1.6e-5 at `|w| >= 50` and 1.9e-6 at `|w| >= 100`
+  no matter how many terms are taken -- so it cannot hold the 1e-9 dB pinning against panam at
+  any cutoff in range. Roughly 9% of the ground path, for the loss of the property that proves
+  the port. Not worth it; do not re-derive it.
+- **The 4x EAA multiplier is gone, and the goldens moved with it.** `eval` used to compute
+  `4.0 * EAA * (range - r)/1000` under a `//TODO Add ground effects`, inherited verbatim from
+  the D original (`c74bab3`). panam *writes* that EAA as `SPLA - SPLAa` over a 1000 m reference
+  and consumes it as `EAA / distance * (slant_range - radius)`, with no such factor, so the
+  multiplier overstated atmospheric absorption fourfold — 168 dB at 6 km where the physical
+  value is 14. It was not a ground effect either: measured against the model it stood in for,
+  soft ground costs a roughly range-independent 2–4 dB, where the factor removed 7 dB at 250 m
+  rising to 38 dB at 2 km. Removing it raised the demo footprint by **9.93 dB mean, up to
+  22.7 dB**. `golden/197421_LAE.csv` was regenerated; `golden/state_197421.csv` was not, being
+  trajectory state.
+- **Two propagation paths, and they do not agree.** The default carries one broadband dBA and
+  attenuates it with the database's `EAA` factor; `--spectral` carries the per-band spectrum
+  and attenuates each band at its own ISO 9613-1 coefficient. `Database::eval_spectrum` mirrors
+  `eval`'s bracketing and bilinear cell exactly, so a difference between them is the physics and
+  never the interpolation. `--spectral` is opt-in: the goldens are the broadband path, and
+  `spectra_` is condition-major (right for `interpolate_sphere`, wrong for this loop), so the
+  spectral path pays a long stride per band rather than making the sphere export pay.
+  It is rejected together with `--db_cutoff`, whose range bound is derived from the broadband
+  level and does not bound the band-limited one.
 - `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `src/splines.hpp` wraps it as `Spline` for `trajectory.cpp`. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
@@ -232,7 +505,13 @@ The port was validated against the D reference and these four bugs were found an
 General rule: when a D construct looks obvious, check it against Phobos semantics rather than intuition — and prefer verifying with a throwaway `ldc2` program, which is how the `iota` question was settled.
 
 
-- **Port fidelity outranks correctness.** Several `NOTE:` comments mark places that faithfully reproduce D quirks; leave them alone unless you are also regenerating the golden outputs, and say so explicitly:
+- **Port fidelity outranks correctness, with one deliberate exception.** Several `NOTE:`
+  comments mark places that faithfully reproduce D quirks; leave them alone unless you are also
+  regenerating the golden outputs, and say so explicitly. The exception is the 4x EAA multiplier,
+  removed above: it was a physics error rather than a quirk, it was measured against the model it
+  stood in for before being removed, and `golden/197421_LAE.csv` was regenerated from the C++.
+  That is the bar for departing from D — a measured case that the D behaviour is wrong, not a
+  reading that it looks wrong.
   - Contour defaults are 65/100, not c74bab3's 45/90: the older pair puts its top level below the demo case's 93.6 dB peak, leaving it unfilled, and the shipped reference figures use 65/100. Figures only -- the goldens are CSV.
   - `watts_trim` and the observer grid extent are now CLI options (`--trim`, `--grid`), both defaulting to the port's behaviour so the goldens are untouched. With `--trim -6000 --grid -2000 1100 -1500 1600` the demo case reproduces the June 2020 reference figures to within 1.05 dB on every cell.
   - D's `iota` is EXCLUSIVE of the stop value; observer grids and contour levels reconstruct that off-by-one deliberately (`iota_exclusive` in `src/niceops.cpp`).

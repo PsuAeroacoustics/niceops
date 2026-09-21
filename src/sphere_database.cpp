@@ -11,6 +11,7 @@
 #include <netcdf.h>
 
 #include "util/logger.hpp"
+#include "weighting.hpp"
 #include "util/paths.hpp"
 #include "util/rootfind.hpp"
 
@@ -264,88 +265,145 @@ bool repair_legacy_hover_directivity(std::vector<double>& phis_scattered)
 
 namespace {
 
-// The corner-independent half of a periodic bilinear interpolation: whether the
-// cell wraps around the sphere on either axis, and the deltas the corner
-// weights are built from.  eval() interpolates dBA and EAA over the very same
-// cell, so this is derived once and applied to both -- the corner values are
-// all that differ.
-struct BilinearCell
+// One (dBA, EAA) pair in a single two-lane vector.  Sample is exactly this in
+// memory, and every step of an evaluation -- blending the four operating
+// conditions, then the four bilinear corners -- applies the same weight to both
+// metrics, so carrying them together halves the instruction count of the whole
+// interpolation.  Neither the arithmetic nor its order changes.
+//
+// Both compilers this builds under spell a two-double vector this way (clang
+// defines __GNUC__ too, so the one test covers both); the fallback is exactly
+// what the code said before and keeps it portable.  Either spelling indexes
+// with [], so everything below this block is written once.
+#if defined(__GNUC__)
+
+typedef double Pair __attribute__((vector_size(2 * sizeof(double))));
+
+#else
+
+struct Pair
 {
-    bool swap_x;
-    bool swap_y;
-    double x2x, y2y, xx1, yy1, area;
+    double v[2];
+
+    double operator[](std::size_t lane) const
+    {
+        return v[lane];
+    }
 };
 
-// Expects the axes already in order; periodic_bilinear_cell puts them there.
-BilinearCell bilinear_cell(double x1, double x2, double y1, double y2, double x, double y)
+inline Pair operator*(Pair p, double scale)
 {
-    BilinearCell cell;
-    cell.swap_x = false;
-    cell.swap_y = false;
-
-    auto x2x1 = x2 - x1;
-    auto y2y1 = y2 - y1;
-    cell.x2x = x2 - x;
-    cell.y2y = y2 - y;
-    cell.yy1 = y - y1;
-    cell.xx1 = x - x1;
-    assert(x2x1 >= 0.0 && y2y1 >= 0.0);
-
-    if (x2x1 < 10 * std::numeric_limits<double>::epsilon())
-    {
-        x2x1 = 2.0;
-        cell.x2x = 1.0;
-        cell.xx1 = 1.0;
-    }
-    else if (y2y1 < 10 * std::numeric_limits<double>::epsilon())
-    {
-        y2y1 = 2.0;
-        cell.y2y = 1.0;
-        cell.yy1 = 1.0;
-    }
-    cell.area = x2x1 * y2y1;
-    return cell;
+    return Pair {{p.v[0] * scale, p.v[1] * scale}};
 }
 
-BilinearCell periodic_bilinear_cell(double x1, double x2, double y1, double y2, double x, double y)
+inline Pair& operator+=(Pair& a, Pair b)
 {
-    // Check if points "wrap around" sphere, and swap inputs to bilinear
-    // interpolation if necessary
-    const bool swap_x = x1 > x2;
-    if (swap_x)
-        std::swap(x1, x2);
-    const bool swap_y = y1 > y2;
-    if (swap_y)
-        std::swap(y1, y2);
-    auto cell = bilinear_cell(x1, x2, y1, y2, x, y);
-    cell.swap_x = swap_x;
-    cell.swap_y = swap_y;
-    return cell;
+    a.v[0] += b.v[0];
+    a.v[1] += b.v[1];
+    return a;
 }
 
-double bilinear_apply(const BilinearCell& cell, double q11, double q12, double q21, double q22)
+#endif
+
+inline Pair load_pair(const Database::Sample& s)
 {
-    if (cell.swap_x)
-    {
-        std::swap(q11, q21);
-        std::swap(q12, q22);
-    }
-    if (cell.swap_y)
-    {
-        std::swap(q11, q12);
-        std::swap(q21, q22);
-    }
-    return (q11 * cell.x2x * cell.y2y + q21 * cell.xx1 * cell.y2y + q12 * cell.x2x * cell.yy1
-                   + q22 * cell.xx1 * cell.yy1)
-            / cell.area;
+    return Pair {s.dBA, s.EAA};
+}
+
+// The four bracketing operating conditions of one grid cell, blended by their
+// barycentric weights.  `cell` points at that cell's run of conditions, which
+// the flat grid layout keeps contiguous.
+inline Pair blend_conditions(const Database::Sample* cell, const Database::Blend& blend)
+{
+    Pair blended = load_pair(cell[blend.indices[0]]) * blend.weights[0];
+    blended += load_pair(cell[blend.indices[1]]) * blend.weights[1];
+    blended += load_pair(cell[blend.indices[2]]) * blend.weights[2];
+    blended += load_pair(cell[blend.indices[3]]) * blend.weights[3];
+    return blended;
+}
+
+// The four corners of a sphere grid cell and the bilinear weight on each, in
+// the fixed order (lo,lo), (lo,hi), (hi,lo), (hi,hi).  `corner` is the flat
+// (phi, theta) cell index; eval() scales it by n_conditions to reach the grid
+// and eval_spectrum() by n_bands to reach the spectra.
+//
+// Both paths derive their stencil here rather than each spelling it out.  The
+// spectral path has to land on the identical geometry -- that is what makes a
+// disagreement between the two the physics and never the interpolation -- and
+// sharing GridAxis::locate() only got them the same cell, not the same weights.
+struct CellStencil
+{
+    std::size_t corner[4];
+    double weight[4];
+};
+
+inline CellStencil cell_stencil(const GridAxis::Cell& phi_cell, const GridAxis::Cell& theta_cell,
+        std::size_t n_thetas)
+{
+    // The four corner weights are the products of the two axes' own, and they
+    // sum to one, so the divide by the cell area that periodic_bilinear_interp()
+    // ends with is already done.
+    const double fp = phi_cell.fraction;
+    const double ft = theta_cell.fraction;
+    return {{phi_cell.lo * n_thetas + theta_cell.lo, phi_cell.lo * n_thetas + theta_cell.hi,
+                    phi_cell.hi * n_thetas + theta_cell.lo,
+                    phi_cell.hi * n_thetas + theta_cell.hi},
+            {(1.0 - fp) * (1.0 - ft), (1.0 - fp) * ft, fp * (1.0 - ft), fp * ft}};
 }
 
 } // namespace
 
+// The reference bilinear interpolation.  eval() no longer goes through it --
+// it takes its weights from GridAxis::locate(), which is arithmetic rather than
+// four knot lookups and a divide -- so this is now the *definition* the locate
+// path is checked against, swept cell by cell in tests/test_sphere_database.cpp.
+//
+// It used to be split into a cell-deriving half and a corner-applying half so
+// eval() could derive the cell once and apply it to dBA and EAA separately.
+// Nothing needs that split now, so it is one function again.
 double periodic_bilinear_interp(double q11, double q12, double q21, double q22, double x1, double x2,
         double y1, double y2, double x, double y)
 {
-    return bilinear_apply(periodic_bilinear_cell(x1, x2, y1, y2, x, y), q11, q12, q21, q22);
+    // Check if points "wrap around" sphere, and swap inputs to bilinear
+    // interpolation if necessary
+    if (x1 > x2)
+    {
+        std::swap(x1, x2);
+        std::swap(q11, q21);
+        std::swap(q12, q22);
+    }
+    if (y1 > y2)
+    {
+        std::swap(y1, y2);
+        std::swap(q11, q12);
+        std::swap(q21, q22);
+    }
+
+    auto x2x1 = x2 - x1;
+    auto y2y1 = y2 - y1;
+    auto x2x = x2 - x;
+    auto y2y = y2 - y;
+    auto yy1 = y - y1;
+    auto xx1 = x - x1;
+    assert(x2x1 >= 0.0 && y2y1 >= 0.0);
+
+    // A degenerate axis (both knots the same point) has no direction to
+    // interpolate along, so weight its two corners equally.
+    if (x2x1 < 10 * std::numeric_limits<double>::epsilon())
+    {
+        x2x1 = 2.0;
+        x2x = 1.0;
+        xx1 = 1.0;
+    }
+    else if (y2y1 < 10 * std::numeric_limits<double>::epsilon())
+    {
+        y2y1 = 2.0;
+        y2y = 1.0;
+        yy1 = 1.0;
+    }
+
+    return (q11 * x2x * y2y + q21 * xx1 * y2y + q12 * x2x * yy1 + q22 * xx1 * yy1)
+            / (x2x1 * y2y1);
 }
 
 namespace {
@@ -374,6 +432,7 @@ void GridAxis::reset(std::vector<double> values)
     values_ = std::move(values);
     first_ = values_.empty() ? 0.0 : values_.front();
     inv_step_ = 0.0;
+    exactly_uniform_ = false;
     if (values_.size() < 2)
         return;
     const double step = (values_.back() - first_) / static_cast<double>(values_.size() - 1);
@@ -381,13 +440,23 @@ void GridAxis::reset(std::vector<double> values)
         return;
     // Take the shortcut only if every entry sits within a tenth of a step of
     // where a perfectly uniform axis would put it, so the fix-up in bracket()
-    // never has to walk more than one cell.
+    // never has to walk more than one cell.  Track the worst deviation as well:
+    // locate() reads the interpolation weight straight off the spacing and so
+    // needs the knots to be where the spacing says, not merely near.
+    double worst = 0.0;
     for (std::size_t i = 0; i < values_.size(); i++)
     {
-        if (std::fabs(values_[i] - (first_ + step * static_cast<double>(i))) > 0.1 * step)
+        const double slip = std::fabs(values_[i] - (first_ + step * static_cast<double>(i)));
+        if (slip > 0.1 * step)
             return;
+        if (slip > worst)
+            worst = slip;
     }
     inv_step_ = 1.0 / step;
+    // A few ULP of the axis span.  Exact multiples of 10 and 5 degrees, which
+    // is what every shipped database's axes are, reconstruct to zero slip.
+    exactly_uniform_ = worst <= 8.0 * std::numeric_limits<double>::epsilon()
+                    * std::fabs(values_.back() - first_);
 }
 
 std::array<std::size_t, 2> GridAxis::bracket(double val) const
@@ -415,6 +484,71 @@ std::array<std::size_t, 2> GridAxis::bracket(double val) const
     return wrap_bracket(index, values_.size());
 }
 
+GridAxis::Cell GridAxis::locate(double val) const
+{
+    const std::size_t n = values_.size();
+    if (exactly_uniform_)
+    {
+        // One multiply gives both the cell and the position within it.  The
+        // correction loops bracket() runs are not needed here: they only ever
+        // move the index when round-off puts the estimate a hair on the wrong
+        // side of a knot, and at a knot the two cells agree -- the fraction is
+        // 1 at the top of one and 0 at the bottom of the next, so either
+        // answer interpolates to the same value.
+        const double estimate = (val - first_) * inv_step_;
+        if (estimate >= 0.0 && estimate < static_cast<double>(n - 1))
+        {
+            const double index = std::floor(estimate);
+            return {static_cast<std::size_t>(index), static_cast<std::size_t>(index) + 1,
+                    estimate - index};
+        }
+        // Past either end: the wrap-around cell, below.
+    }
+
+    const auto pair = bracket(val);
+    const double lo = values_[pair[0]];
+    const double hi = values_[pair[1]];
+    // Reproduce periodic_bilinear_interp(): it sorts the two knots, so when the
+    // pair wraps (lo > hi, the cell that spans the seam) the weights come out
+    // measured from the *sorted* lower knot, which is `hi`.
+    const double span = hi > lo ? hi - lo : lo - hi;
+    if (span < 10 * std::numeric_limits<double>::epsilon())
+        return {pair[0], pair[1], 0.5};
+    return {pair[0], pair[1], hi > lo ? (val - lo) / span : (lo - val) / span};
+}
+
+// The narrowest theta bin, in degrees.  The bins are uniform in the square of
+// the cosine, which makes them widest at the pole *and* at the equator and
+// narrowest near 45 degrees -- so this is a scan, not "the last bin".  Taking
+// the last bin would return 20.7 degrees against the true 7.2 and under-pad the
+// stencil, which is the one thing the exact-skip scheme cannot survive.
+double DirectionBounds::narrowest_theta_bin_degrees()
+{
+    constexpr int half = theta_bins / 2;
+    double narrowest = 180.0;
+    double previous = 90.0;
+    for (int k = 1; k <= half; k++)
+    {
+        const double edge = std::acos(std::sqrt(static_cast<double>(k) / half)) * 180.0 / PI;
+        narrowest = std::min(narrowest, previous - edge);
+        previous = edge;
+    }
+    return narrowest;
+}
+
+namespace {
+
+// Widest gap between adjacent knots of an axis, in degrees.
+double grid_spacing(const GridAxis& axis)
+{
+    double widest = 0.0;
+    for (std::size_t i = 1; i < axis.size(); i++)
+        widest = std::max(widest, std::fabs(axis[i] - axis[i - 1]));
+    return widest;
+}
+
+} // namespace
+
 double clamp01(double x)
 {
     return std::clamp(x, 0.0, 1.0);
@@ -440,28 +574,49 @@ SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal)
     return frame;
 }
 
+namespace {
+
+// Sphere phi, in degrees, from the propagation direction's components along the
+// TPP normal and starboard.  The frame is orthonormal, so these two components
+// *are* the direction's projection into the plane normal to the nose, up to a
+// common positive scale the angle does not depend on -- which is why neither
+// caller normalizes anything, and why this takes the raw components rather than
+// a vector.
+//
+// What the projection used to compute is acos(|up| / hypot(up, across)),
+// negated when `across` is, and that is exactly atan2(across, |up|) -- without
+// the normalization, and with one inverse trig call rather than a magnitude and
+// a sign test.  Written as atan of the ratio rather than atan2, which costs
+// twice as much for quadrant and sign handling that a non-negative second
+// argument does not need: the ratio overflows to an infinity of the right sign
+// when up is zero, and atan takes that to the right half of pi.
+//
+// Shared by lookup_angles and Database::level_from_geometry, which differ only
+// in how they get their components; the 0/0 guard is delicate enough that one
+// copy of it is the point.
+inline double phi_degrees(double up, double across)
+{
+    const double phi = std::atan(across / std::fabs(up));
+    if (up == 0.0 && across == 0.0)
+    {
+        // Straight along the nose: the projection degenerates and phi is
+        // undefined -- and 0/0 is a NaN, which has to be caught here rather
+        // than propagated into the grid lookup.  normalized() leaves the zero
+        // vector alone, so the projection form landed on acos(0).
+        return 0.5 * PI * (180.0 / PI);
+    }
+    return phi * (180.0 / PI);
+}
+
+} // namespace
+
 std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direction)
 {
     // Sphere theta angle is relative to projection of velocity onto TPP
-    double theta = acosc(frame.nose.dot(direction));
-    // Project the propagation vector onto the plane normal to the "nose"
-    Vec3 rp = direction - direction.dot(frame.nose) * frame.nose;
-    rp.normalize();
-    // Then, we can get sphere phi by computing the angle of the propagation
-    // vector in the plane
-    double phi = acosc(std::fabs(frame.normal.dot(rp)));
-    // Sign is still uncertain, so check which side of starboard we are on.
-    // acos is monotonically decreasing, so acos(t) > pi/2 is exactly t < 0 --
-    // the comparison does not need the angle, only its sign, which saves an
-    // acos, a divide and a norm on a path that runs tens of millions of times.
-    if (frame.starboard.dot(rp) < 0.0)
-    {
-        phi = -phi;
-    }
-    // Convert to degrees and return phi and theta
-    phi *= 180.0 / PI;
-    theta *= 180.0 / PI;
-    return {phi, theta};
+    const double along = frame.nose.dot(direction);
+    const double theta = acosc(along);
+    return {phi_degrees(frame.normal.dot(direction), frame.starboard.dot(direction)),
+            theta * (180.0 / PI)};
 }
 
 std::array<double, 2> lookup_angles(const Vec3& source, const Vec3& velocity,
@@ -651,10 +806,19 @@ Database::Database(const std::string& datafile_path)
             int amplitude_id = 0;
             if (NC_NOERR != nc_inq_varid(group_id, "amplitude", &amplitude_id))
                 input_error("Database error: sphere has a frequency dimension but no amplitude.");
+            // netCDF stores amplitude(phi, theta, frequency), so it arrives
+            // cell-major with the bands innermost.  Read it as it lies, then
+            // scatter into the condition-innermost layout the observer loop
+            // wants -- see the note on spectra_ in the header.  This costs one
+            // pass over the sphere at load time and saves a cache miss per
+            // condition per band on every one of ~94M evaluations.
+            std::vector<double> sphere_amplitudes(phis.size() * thetas.size() * n_bands);
             if (NC_NOERR
-                    != nc_get_var_double(group_id, amplitude_id,
-                            spectra_.data() + i * phis.size() * thetas.size() * n_bands))
+                    != nc_get_var_double(group_id, amplitude_id, sphere_amplitudes.data()))
                 input_error("Database error: could not read amplitude for sphere ", i, ".");
+            const std::size_t n_conditions_total = group_ids.size();
+            for (std::size_t slot = 0; slot < sphere_amplitudes.size(); slot++)
+                spectra_[slot * n_conditions_total + i] = sphere_amplitudes[slot];
         }
         else if (!frequencies_.empty())
         {
@@ -712,6 +876,7 @@ Database::Database(const std::string& datafile_path)
     info("Lowest excess attenuation factor is: ", min_excess_factor_);
     // Set sphere_radius to dimensional_radius
     sphere_radius_ = dimensional_radius;
+    inv_sphere_radius_ = 1.0 / sphere_radius_;
     info("Sphere radius set to ", sphere_radius_);
     // Find range of conditions
     advance_ratio_max = *std::max_element(advance_ratios.begin(), advance_ratios.end());
@@ -784,49 +949,59 @@ double Database::eval(double range, double phi, double theta, double advance_rat
 Database::Sample Database::blend_cell(std::size_t i_phi, std::size_t i_theta,
         const Blend& blend) const
 {
-    const Sample* cell = grid.data() + (i_phi * thetas.size() + i_theta) * n_conditions;
-    const Sample& s0 = cell[blend.indices[0]];
-    const Sample& s1 = cell[blend.indices[1]];
-    const Sample& s2 = cell[blend.indices[2]];
-    const Sample& s3 = cell[blend.indices[3]];
-    const auto& w = blend.weights;
-    return {w[0] * s0.dBA + w[1] * s1.dBA + w[2] * s2.dBA + w[3] * s3.dBA,
-            w[0] * s0.EAA + w[1] * s1.EAA + w[2] * s2.EAA + w[3] * s3.EAA};
+    const Pair blended = blend_conditions(
+            grid.data() + (i_phi * thetas.size() + i_theta) * n_conditions, blend);
+    return {blended[0], blended[1]};
 }
 
 double Database::eval(double range, double phi, double theta, const Blend& blend) const
 {
-    // Find the sphere grid points bounding the desired phi, theta
-    auto phi_range = phis.bracket(phi);
-    auto theta_range = thetas.bracket(theta);
-    trace("Found phi (", phi, ") in range ", phis[phi_range[0]], " -- ", phis[phi_range[1]]);
-    trace("Found theta (", theta, ") in range ", thetas[theta_range[0]], " -- ",
-            thetas[theta_range[1]]);
+    // Find the sphere grid cell containing the desired phi, theta, and where in
+    // it they sit.  locate() gives the bracketing indices and the interpolation
+    // weight together, so nothing below has to read the knot arrays back.
+    const auto phi_cell = phis.locate(phi);
+    const auto theta_cell = thetas.locate(theta);
+    trace("Found phi (", phi, ") in range ", phis[phi_cell.lo], " -- ", phis[phi_cell.hi]);
+    trace("Found theta (", theta, ") in range ", thetas[theta_cell.lo], " -- ",
+            thetas[theta_cell.hi]);
 
-    // Barycentric interpolation between conditions at each gridpoint
-    // Bilinear interpolation between gridpoints
-    const auto p1 = phis[phi_range[0]];
-    const auto p2 = phis[phi_range[1]];
-    const auto t1 = thetas[theta_range[0]];
-    const auto t2 = thetas[theta_range[1]];
-
-    // Blend the operating conditions at each of the four bracketing grid
-    // points, then bilinearly interpolate between them.  Both metrics travel
-    // together: they are read from the same cells, so splitting them would
-    // touch every cache line twice.
-    const auto q11 = blend_cell(phi_range[0], theta_range[0], blend);
-    const auto q12 = blend_cell(phi_range[0], theta_range[1], blend);
-    const auto q21 = blend_cell(phi_range[1], theta_range[0], blend);
-    const auto q22 = blend_cell(phi_range[1], theta_range[1], blend);
-    const auto cell = periodic_bilinear_cell(p1, p2, t1, t2, phi, theta);
-    const auto sphere_level = bilinear_apply(cell, q11.dBA, q12.dBA, q21.dBA, q22.dBA);
-    const auto excess_factor = bilinear_apply(cell, q11.EAA, q12.EAA, q21.EAA, q22.EAA);
+    // Barycentric interpolation between conditions at each gridpoint, bilinear
+    // interpolation between gridpoints.  Blend the operating conditions at each
+    // of the four bracketing grid points, then bilinearly interpolate between
+    // them.  Both metrics travel together: they are read from the same cells,
+    // so splitting them would touch every cache line twice.
+    const auto stencil = cell_stencil(phi_cell, theta_cell, thetas.size());
+    const Sample* base = grid.data();
+    Pair corner = blend_conditions(base + stencil.corner[0] * n_conditions, blend)
+            * stencil.weight[0];
+    corner += blend_conditions(base + stencil.corner[1] * n_conditions, blend) * stencil.weight[1];
+    corner += blend_conditions(base + stencil.corner[2] * n_conditions, blend) * stencil.weight[2];
+    corner += blend_conditions(base + stencil.corner[3] * n_conditions, blend) * stencil.weight[3];
+    const auto sphere_level = corner[0];
+    const auto excess_factor = corner[1];
     trace("Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
-    // Apply spherical spreading and excess atmospheric absorption to surface level
-    // TODO Add ground effects
-    const double ground_effect = 4.0;
-    auto excess_attenuation = ground_effect * excess_factor * (range - sphere_radius()) / 1000.0;
-    auto spreading_loss = 20.0 * std::log10(range / sphere_radius());
+    // Apply spherical spreading and excess atmospheric absorption to surface level.
+    //
+    // EAA is the total A-weighted attenuation over the 1000 m reference distance
+    // the database was built at: panam writes it as SPLA - SPLAa, the level at
+    // the sphere less the level after 1000 m of ISO 9613-1 absorption, and
+    // consumes it as EAA / distance * (slant_range - radius).  This is that
+    // formula.
+    //
+    // The D original multiplied it by a further 4.0 under a "TODO Add ground
+    // effects" (c74bab3).  That is not a ground effect: it is a fourfold
+    // overstatement of atmospheric absorption, unbounded in range -- 168 dB at
+    // 6 km where the physical value is 14 -- where a real ground effect is
+    // bounded by the surface impedance and roughly range-independent.  Measured
+    // against the model it was standing in for, soft ground costs 2 to 4 dB
+    // across the whole footprint while the factor removed 7 dB at 250 m rising
+    // to 38 dB at 2 km.  See --ground_effect for the real thing.
+    // Both scalings are multiplications by a stored reciprocal rather than
+    // divisions: eval runs about 100 million times a run, and a double divide
+    // is four times the cost of a multiply on every core this targets.  The
+    // reciprocal of 1000 is not exact, so this moves the result by an ULP.
+    auto excess_attenuation = excess_factor * (range - sphere_radius()) * 1e-3;
+    auto spreading_loss = 20.0 * std::log10(range * inv_sphere_radius_);
     trace("Spreading Loss (dB): ", spreading_loss, "\tExcess Attenuation (dB): ", excess_attenuation);
     assert(std::isfinite(sphere_level));
     assert(std::isfinite(excess_factor));
@@ -835,6 +1010,99 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     auto ground_level = sphere_level - spreading_loss - excess_attenuation;
     trace("Ground level: ", ground_level);
     return ground_level;
+}
+
+void Database::eval_spectrum(double range, double phi, double theta, const Blend& blend,
+        const double* absorption, double* levels, std::size_t first_band,
+        std::size_t last_band) const
+{
+    const std::size_t n_bands = frequencies_.size();
+    assert(n_bands > 0);
+    // Bands the metric excludes are never read; skip them rather than blend and
+    // propagate values that weighted_level will multiply by a zero gain.
+    if (last_band > n_bands)
+        last_band = n_bands;
+
+    // The same cell and the same weights as eval(): the spectral path must land
+    // on the identical geometry, or a disagreement between the two could be the
+    // interpolation rather than the physics.  Both derive the stencil with
+    // cell_stencil(), which is what keeps them identical -- sharing locate()
+    // alone would only have given them the same cell.
+    const auto stencil = cell_stencil(phis.locate(phi), thetas.locate(theta), thetas.size());
+
+    // Spreading is geometry, so it is the same for every band; absorption is
+    // not, which is the whole point of propagating the spectrum.
+    const double spreading_loss = 20.0 * std::log10(range / sphere_radius());
+    const double path_length = range - sphere_radius();
+
+    for (std::size_t band = first_band; band < last_band; band++)
+    {
+        double corner_level[4];
+        for (std::size_t corner = 0; corner < 4; corner++)
+        {
+            // spectra_ is condition-major, so the four conditions of one cell
+            // are a long stride apart.  That is the wrong layout for this loop
+            // and the right one for interpolate_sphere; this path is opt-in and
+            // pays for it rather than making the sphere export pay.
+            // The four conditions of one (cell, band) are adjacent now, so
+            // this is one cache line rather than four misses.
+            const double* conditions
+                    = spectra_.data() + (stencil.corner[corner] * n_bands + band) * n_conditions;
+            corner_level[corner] = blend.weights[0] * conditions[blend.indices[0]]
+                    + blend.weights[1] * conditions[blend.indices[1]]
+                    + blend.weights[2] * conditions[blend.indices[2]]
+                    + blend.weights[3] * conditions[blend.indices[3]];
+        }
+
+        const double sphere_level = stencil.weight[0] * corner_level[0]
+                + stencil.weight[1] * corner_level[1] + stencil.weight[2] * corner_level[2]
+                + stencil.weight[3] * corner_level[3];
+        levels[band] = sphere_level - spreading_loss - absorption[band] * path_length;
+        assert(std::isfinite(levels[band]));
+    }
+}
+
+double Database::spectral_level_at_observer(const Vec3& observer, const SourceState& state,
+        const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
+        const std::vector<std::complex<double>>* impedance, double sound_speed,
+        std::size_t first_band, std::size_t last_band) const
+{
+    // Reused across calls: this runs once per observer per trajectory state,
+    // and the band count is fixed for the life of the database.
+    thread_local std::vector<double> levels;
+    levels.resize(frequencies_.size());
+
+    Vec3 r = observer - state.position;
+    const auto slant_range = r.norm();
+    if (slant_range > 0.0)
+        r /= slant_range;
+    const auto angles = lookup_angles(state.frame, r);
+    assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
+
+    eval_spectrum(slant_range, angles[0], angles[1], state.blend, absorption, levels.data(),
+            first_band, last_band);
+
+    if (ground != nullptr)
+    {
+        // The ground effect is interference between the direct ray and the one
+        // reflected off the surface, so it needs the geometry in the vertical
+        // plane -- source height and horizontal separation -- not the slant
+        // range the rest of the propagation works in.
+        const Vec3 separation = observer - state.position;
+        const double ground_distance = separation.horizontal_norm();
+        const double source_height = state.position.z;
+        // Scratch, like levels above: this is the innermost loop of the whole
+        // run and returning a vector here allocated 94 million times.
+        thread_local std::vector<double> correction;
+        correction.resize(frequencies_.size());
+        excess_ground_attenuation(*ground, *impedance, source_height, ground_distance,
+                sound_speed, frequencies_, correction.data(), first_band, last_band);
+        const std::size_t end = std::min(last_band, levels.size());
+        for (std::size_t band = first_band; band < end; band++)
+            levels[band] += correction[band];
+    }
+
+    return weighted_level(levels.data(), gains);
 }
 
 double Database::shaft_power(const Blend& blend) const
@@ -889,7 +1157,8 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
                 for (std::size_t k = 0; k < 4; k++)
                 {
                     value += w[k]
-                            * spectra_[(blend.indices[k] * cells + cell) * n_bands + band];
+                            * spectra_[(cell * n_bands + band) * n_conditions
+                                    + blend.indices[k]];
                 }
                 sphere.amplitudes[cell * n_bands + band] = value;
             }
@@ -905,12 +1174,8 @@ double Database::cull_range(const Blend& blend, double cutoff) const
     const double unbounded = std::numeric_limits<double>::infinity();
     if (std::isnan(cutoff))
         return unbounded;
-    // A level is sphere_level - 20*log10(r/r0) - 4*EAA*(r - r0)/1000.  Dropping
-    // the attenuation term bounds the level from above only if that term cannot
-    // be negative, i.e. if no excess factor in the database is.  The D original
-    // used to take abs() of the factor precisely because it could be; if this
-    // database is one of those, decline to bound anything.
-    if (!(min_excess_factor_ >= 0.0))
+    // If this database's excess attenuation can be a gain, decline to bound.
+    if (!excess_attenuation_is_a_loss())
         return unbounded;
 
     // The blended sphere cannot exceed the loudest of the spheres it blends:
@@ -932,25 +1197,122 @@ double Database::cull_range(const Blend& blend, double cutoff) const
     return sphere_radius_ * std::pow(10.0, 0.05 * (blended_max - cutoff));
 }
 
-double Database::level_at_observer(const Vec3& observer, const SourceState& state) const
+DirectionBounds Database::direction_bounds(const std::vector<SourceState>& states) const
 {
-    Vec3 r = observer - state.position;
-    auto slant_range = r.norm();
-    trace("R = ", slant_range, " for r = ", r);
-    // Reuse the slant range as the normalization: normalized() divides by this
-    // same sqrt(squaredNorm()) (returning the vector untouched when it is zero),
-    // so this is the identical direction without a second subtraction and square
-    // root.
-    if (slant_range > 0.0)
+    DirectionBounds bounds;
+    // The bound drops the excess attenuation term, so it rests on the same
+    // condition cull_range does.  Returning early leaves `bounds` unusable,
+    // which is what the caller checks; nothing below it is worth allocating.
+    if (!excess_attenuation_is_a_loss() || states.empty())
+        return bounds;
+    bounds.blend_of_state_.assign(states.size(), 0);
+
+    // Group the states by their blend.  The tetrahedra a trajectory visits are
+    // far fewer than its states, and a table per tetrahedron is what keeps this
+    // small enough to stay in cache.
+    std::vector<std::array<std::size_t, condition_dims + 1>> blends;
+    for (std::size_t i = 0; i < states.size(); i++)
     {
-        r /= slant_range;
+        const auto& indices = states[i].blend.indices;
+        std::size_t found = blends.size();
+        for (std::size_t b = 0; b < blends.size(); b++)
+        {
+            if (blends[b] == indices)
+            {
+                found = b;
+                break;
+            }
+        }
+        if (found == blends.size())
+            blends.push_back(indices);
+        bounds.blend_of_state_[i] = found;
     }
-    auto angles = lookup_angles(state.frame, r);
-    trace("Looked up [phi,theta] = ", angles[0], ", ", angles[1]);
-    assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
-    auto level = eval(slant_range, angles[0], angles[1], state.blend);
+
+    // How many bins a single grid cell can straddle.  The bins are coarser than
+    // the grid on every shipped database, but widening by the computed number
+    // rather than by one keeps the bound valid whatever grid a database brings.
+    const int theta_pad = static_cast<int>(std::ceil(
+            grid_spacing(thetas) / DirectionBounds::narrowest_theta_bin_degrees())) + 1;
+    const int azimuth_pad = static_cast<int>(std::ceil(
+            grid_spacing(phis) / DirectionBounds::azimuth_bin_degrees())) + 1;
+
+    const std::size_t n_thetas = thetas.size();
+    bounds.numerators_.assign(blends.size() * DirectionBounds::bin_count,
+            -std::numeric_limits<double>::infinity());
+
+    for (std::size_t b = 0; b < blends.size(); b++)
+    {
+        double* row = bounds.numerators_.data() + b * DirectionBounds::bin_count;
+        for (std::size_t m = 0; m < phis.size(); m++)
+        {
+            for (std::size_t n = 0; n < n_thetas; n++)
+            {
+                // The largest level the four blended conditions can give at
+                // this cell.  Taking the maximum over the conditions rather
+                // than any particular convex combination of them is what makes
+                // one table serve every state on the tetrahedron.
+                const Sample* cell = grid.data() + (m * n_thetas + n) * n_conditions;
+                double top = -std::numeric_limits<double>::infinity();
+                for (std::size_t k = 0; k < blends[b].size(); k++)
+                    top = std::max(top, cell[blends[b][k]].dBA);
+
+                const double theta = thetas[n] * PI / 180.0;
+                const double phi = phis[m] * PI / 180.0;
+                const int here = DirectionBounds::bin(std::cos(theta),
+                        std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), 1.0);
+                const int theta_index = here / DirectionBounds::azimuth_bins;
+                const int azimuth_index = here % DirectionBounds::azimuth_bins;
+                // A direction reads this cell through a bilinear stencil that
+                // reaches a grid step either way, so every bin that stencil can
+                // be queried from has to carry the cell's value.
+                for (int dt = -theta_pad; dt <= theta_pad; dt++)
+                {
+                    const int t = std::min(DirectionBounds::theta_bins - 1,
+                            std::max(0, theta_index + dt));
+                    for (int da = -azimuth_pad; da <= azimuth_pad; da++)
+                    {
+                        const int a = std::min(DirectionBounds::azimuth_bins - 1,
+                                std::max(0, azimuth_index + da));
+                        double& slot = row[t * DirectionBounds::azimuth_bins + a];
+                        slot = std::max(slot, top);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fold the level into the energy domain, with the sphere radius, so the hot
+    // path compares numerator >= energy * range^2 and needs no logarithm.
+    for (double& value : bounds.numerators_)
+        value = std::pow(10.0, 0.1 * value) * sphere_radius_ * sphere_radius_;
+    bounds.usable_ = true;
+    return bounds;
+}
+
+double Database::level_from_geometry(double squared_range, double along, double up,
+        double across, const Blend& blend) const
+{
+    const double range = std::sqrt(squared_range);
+    trace("R = ", range);
+    // The frame is orthonormal, so `along`, `up` and `across` are the
+    // displacement's components in it.  Only theta needs the direction
+    // normalised; phi is an angle between two of the components and does not
+    // care about their common scale.
+    const double inverse = range > 0.0 ? 1.0 / range : 0.0;
+    const double theta = acosc(along * inverse) * (180.0 / PI);
+    const double phi = phi_degrees(up, across);
+    trace("Looked up [phi,theta] = ", phi, ", ", theta);
+    assert(std::isfinite(phi) && std::isfinite(theta));
+    const auto level = eval(range, phi, theta, blend);
     assert(std::isfinite(level));
     return level;
+}
+
+double Database::level_at_observer(const Vec3& observer, const SourceState& state) const
+{
+    const Vec3 delta = observer - state.position;
+    return level_from_geometry(delta.squaredNorm(), state.frame.nose.dot(delta),
+            state.frame.normal.dot(delta), state.frame.starboard.dot(delta), state.blend);
 }
 
 double Database::level_at_observer(const Vec3& observer, const Vec3& source,

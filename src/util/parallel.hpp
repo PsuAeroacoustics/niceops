@@ -17,6 +17,7 @@
 // matches what already happens: fatal() aborts, and nothing here throws.
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <thread>
 #include <vector>
@@ -31,10 +32,26 @@ inline unsigned default_thread_count()
     return hardware > 0 ? hardware : 1u;
 }
 
-// Split [0, count) into contiguous chunks, one per worker, and invoke
-// body(begin, end) on each.  Chunks are contiguous rather than interleaved so
-// every worker walks memory forwards; the calling thread takes the last chunk
-// itself rather than sitting idle.
+// How many chunks to cut per worker.  Enough that a slow core holds up only its
+// own share rather than a whole equal slice of the work, few enough that the
+// per-chunk setup a body does (allocating its scratch history) stays noise.
+inline constexpr std::size_t chunks_per_worker = 8;
+
+// Split [0, count) into contiguous chunks and invoke body(begin, end) on each,
+// handing them out to `threads` workers as they finish.  Chunks are contiguous
+// rather than interleaved so every worker walks memory forwards; the calling
+// thread pulls chunks itself rather than sitting idle.
+//
+// They are dealt out on demand rather than divided up front because the cores
+// are not interchangeable.  An equal split gives every worker the same slice,
+// so the wall time is the slowest core's -- on a big.LITTLE machine (every
+// Apple silicon part, and most recent x86 laptops) the efficiency cores run
+// this loop several times slower than the performance ones, and a run on all
+// 14 threads of an M4 Pro came out no faster than one on its 10 performance
+// cores alone.  Pulling chunks lets the fast cores simply take more of them.
+//
+// The result does not depend on the split: every index writes only its own
+// output, so runs at any thread count stay byte-for-byte identical.
 template <typename Body>
 void parallel_chunks(std::size_t count, unsigned threads, Body body)
 {
@@ -47,23 +64,27 @@ void parallel_chunks(std::size_t count, unsigned threads, Body body)
     }
 
     const std::size_t workers = std::min<std::size_t>(threads, count);
-    const std::size_t per_worker = count / workers;
-    const std::size_t remainder = count % workers;
+    const std::size_t slices = workers * chunks_per_worker;
+    // Round up, so the chunks cover `count` and the last one is the short one.
+    // count >= 1 here, so the ceiling is already at least 1.
+    const std::size_t chunk = (count + slices - 1) / slices;
+
+    std::atomic<std::size_t> next {0};
+    auto pull = [&body, &next, count, chunk] {
+        for (;;)
+        {
+            const std::size_t begin = next.fetch_add(chunk, std::memory_order_relaxed);
+            if (begin >= count)
+                return;
+            body(begin, std::min(begin + chunk, count));
+        }
+    };
 
     std::vector<std::thread> pool;
     pool.reserve(workers - 1);
-    std::size_t begin = 0;
-    for (std::size_t w = 0; w < workers; w++)
-    {
-        // Spread the remainder over the first few workers rather than piling it
-        // all onto the last one.
-        const std::size_t end = begin + per_worker + (w < remainder ? 1 : 0);
-        if (w + 1 < workers)
-            pool.emplace_back([&body, begin, end] { body(begin, end); });
-        else
-            body(begin, end);
-        begin = end;
-    }
+    for (std::size_t w = 0; w + 1 < workers; w++)
+        pool.emplace_back(pull);
+    pull();
     for (auto& worker : pool)
         worker.join();
 }

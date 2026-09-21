@@ -23,6 +23,23 @@ endif (NOT CMAKE_BUILD_TYPE)
 # in release builds, and sphere_database.cpp relies on assert(isFinite(...))
 # guards; matching that behavior is part of the port contract.
 
+# Link-time optimization.  The acoustic loop lives in niceops.cpp and calls
+# Database::level_at_observer, which lives in sphere_database.cpp, ~100 million
+# times a run; without LTO that is an out-of-line call across a translation-unit
+# boundary every time, with the spills and the lost hoisting that implies.
+# Turning it on is worth 19% of the loop and leaves the golden comparison
+# passing unchanged, so it is on by default where the toolchain supports it.
+option(NICEOPS_LTO "Build with link-time optimization" ON)
+if(NICEOPS_LTO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT NICEOPS_IPO_OK OUTPUT NICEOPS_IPO_WHY)
+  if(NICEOPS_IPO_OK)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+  else()
+    message(STATUS "Link-time optimization unavailable: ${NICEOPS_IPO_WHY}")
+  endif()
+endif()
+
 # netCDF shared library (some systems like Homebrew install static and shared
 # in the same place, so force the shared version)
 find_library(NETCDF_LIBRARY NAMES netcdf
@@ -141,6 +158,10 @@ endif()
 # Core library: noise database, trajectory, smoothing spline, plotting facade
 add_library(niceops_core STATIC
   src/sphere_database.cpp
+  src/atmosphere.cpp
+  src/weighting.cpp
+  src/faddeeva.cpp
+  src/ground_effect.cpp
   src/geodetic.cpp
   src/predicates.cpp
   src/delaunay.cpp
@@ -180,6 +201,10 @@ add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
+  tests/test_atmosphere.cpp
+  tests/test_weighting.cpp
+  tests/test_ground_effect.cpp
+  tests/test_spectral_propagation.cpp
   tests/test_predicates.cpp
   tests/test_delaunay.cpp
   tests/test_trajectory.cpp

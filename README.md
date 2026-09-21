@@ -36,6 +36,10 @@ cmake --build build -j8
 On macOS with Command Line Tools but no full Xcode, add
 `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`.
 
+Link-time optimization is on wherever the toolchain supports it, since the acoustic loop and
+the database it calls live in different translation units; `-DNICEOPS_LTO=OFF` turns it off if
+a build needs to be faster to produce than to run.
+
 Run the tests with `ctest --test-dir build -C Release`.
 
 ## Running
@@ -104,6 +108,12 @@ Input and output files use **feet**; the computation is metric internally.
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
+| `--spectral` | Propagate the database's per-band spectra to the ground with ISO 9613-1 absorption, instead of one broadband level with the database's EAA factor. Needs a database carrying spectra. |
+| `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
+| `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
+| `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
+| `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
+| `--receiver_height`, `--turbulence` | Receiver height (m, default 1.2) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
 
 ### Performance
 
@@ -171,10 +181,146 @@ None of the databases in `databases/` carries spectra. Build one with panam's
 amplitudes through from the source spheres. Band-limit it — `infreqs=(10.0, 3500.0)` —
 because the top few bands of a measured sphere are usually noise-floor artifacts.
 
+The AAM/RNM source spheres live in the group's OneDrive under `Data/Sphere_Database`, one
+directory of `.nc` files per aircraft (AS350, Be206L3, Be407, Be430, EC130, MD-902, Mi-8, R-44,
+R-66, SH-60B), each with its own `vehicle.cfg` and `vehicle.json`. `Be407_spectral.nod` sits
+beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. Databases are not tracked in
+this repository; they are far too large and are derived products.
+
+#### A note on levels changing
+
+**Results from before September 2026 are not comparable to results after.** `eval` used to
+multiply the database's `EAA` by a constant 4.0, under a `//TODO Add ground effects` inherited
+from the D original. That is not a ground effect, and it overstated atmospheric absorption
+fourfold — 168 dB at 6 km where the physical value is 14. panam *writes* that `EAA` as
+`SPLA - SPLAa` over a 1000 m reference and consumes it as `EAA / distance * (slant_range -
+radius)`; the tool now does the same.
+
+Removing it raised the demo footprint by **9.93 dB mean, up to 22.7 dB**, most of it far from
+the track where the old factor was removing the most. `golden/197421_LAE.csv` was regenerated;
+`golden/state_197421.csv` is trajectory state and unaffected.
+
+It was measured against `--ground_effect`, the model it was standing in for, before being
+removed: soft ground costs a roughly range-independent 2–4 dB relative to a rigid surface,
+where the factor removed 7 dB at 250 m rising to 38 dB at 2 km. A real ground effect is bounded
+by the surface impedance; a multiplier on a distance-proportional absorption is not.
+
+#### Propagating them to the ground
+
+`--spectral` carries the spectrum itself to the observer instead of a single number. Each
+band is spread by the same `20 log10(r/r_sphere)` and absorbed at its own ISO 9613-1
+coefficient over `r - r_sphere`, and only then are the bands A-weighted and summed into a
+level. The two paths answer different questions and will not agree:
+
+| | default | `--spectral` |
+| --- | --- | --- |
+| Attenuation | database's `EAA`, one dB/km factor | ISO 9613-1 α(f), per band |
+| Fitted for | the spectrum the source happened to have | the atmosphere you state |
+| Atmosphere | none — `EAA` is baked in | temperature, pressure, humidity |
+| Needs | any database | one carrying spectra |
+
+The absorption model is ported from panam's `panam_acoustics/iso_9613_1_1993.py` and pinned
+against it in `tests/test_atmosphere.cpp`; the A-weighting is panam's `dBAw`, pinned in
+`tests/test_weighting.cpp`.
+
+**Band-limit deliberately.** Summing whatever bands a database happens to carry quietly
+makes the answer a property of that database's bandwidth, so two databases are not
+comparable. `--band_limits low high` states the range; bands outside it contribute exactly
+nothing, and the run logs how many of the database's bands survived. A limit that excludes
+every band is an error rather than silence.
+
+The atmosphere comes from the vehicle JSON's `Atmosphere` section:
+
+```json
+"Atmosphere": {
+    "density": "1.225",
+    "temperature": "300.71",
+    "pressure": "105.74",        // optional; else derived as rho*R*T
+    "relative humidity": "20"    // optional; else 20%, panam's default
+}
+```
+
+Only `density` is required, as before. Pressure defaults to the one implied by that file's
+own density and temperature rather than to a standard day — `S-76D.json` pairs 1.225 kg/m³
+with 300.71 K, which is not an ISA point, so assuming 101.325 kPa would contradict its own
+numbers. `--humidity`, `--temperature` and `--pressure` override all of it.
+
+#### Ground effect
+
+`--ground_effect` adds the interference between the direct ray and the one reflected off the
+ground — Chien–Soroka over a Delany–Bazley impedance, with Chessell's boundary-loss correction
+and band averaging, ported from panam's `ega()` and pinned against it in
+`tests/test_ground_effect.cpp`.
+
+**It is a gain, not a loss**, despite the name: over rigid ground with the receiver on the
+surface it tends to +6 dB, the pressure doubling of a perfect reflector. It goes sharply
+negative only in the interference dip, where the reflected path arrives out of phase. On the
+Be407 demo case:
+
+| | mean | max |
+| --- | --- | --- |
+| spectral, no ground | 65.10 | 96.38 |
+| + concrete (10000) | 68.45 (**+3.35**) | 99.00 |
+| + grass (225) | 64.73 (**−0.36**) | 97.89 |
+
+Hard ground is 3.7 dB louder than soft, and grass roughly cancels its own reflection gain
+against the dip. `--flow_resistance` spans five orders of magnitude and the answer is sensitive
+to it, so name the surface rather than guessing.
+
+`--turbulence` decorrelates the two paths and fills the nulls in; leaving it at zero gives
+unrealistically deep interference dips.
+
+**It is expensive.** Acoustic loop on the Be407 case (94.3 M evaluations, 26 bands, 14 threads,
+default band limits): broadband 0.34 s, `--spectral` 1.44 s, `--spectral --ground_effect`
+10.9 s. So carrying the spectrum costs about 4x, and the ground effect about 32x — a complex
+reflection coefficient and a Faddeeva evaluation per band per observer per state, none of
+which can be hoisted because it all depends on the geometry. The Faddeeva evaluation is about
+half of the ground path on its own.
+
+Those three are from before the September 2026 optimization round and all of them are now
+lower. Measured against the same build on the S-76D demo track (94.3 M evaluations, 14
+threads), over a synthetic single-condition 24-band database built the way
+`write_flat_spectral_database` in `tests/test_spectral_propagation.cpp` builds one:
+
+| | before | after |
+| --- | --- | --- |
+| broadband | 0.32 s | 0.16 s |
+| `--spectral` | 1.36 s | 1.16 s |
+| `--spectral --ground_effect` | 8.95 s | 7.81 s |
+
+A single condition makes the operating-condition blend degenerate, so those two spectral
+figures are optimistic against a real multi-condition database like the Be407 one in the row
+above; the ground-effect term, which is most of the last row, does not depend on the condition
+count. All three outputs agree with the previous build to 1.4e-12 dB.
+
+`--spectral` cannot be combined with `--db_cutoff`: the cutoff's range bound is derived
+from the broadband level and is not a bound on the band-limited weighted one.
+
+### How much gets evaluated
+
+The sound exposure integral only uses the window from each observer's peak down to 10 dB below
+it, which on a shipped case is a little over half the track. The observer loop therefore finds
+the peak and walks out to the 10-dB-down points rather than marching every emission time, and
+the run logs how much that skipped:
+
+```
+Evaluated 66041828 of 94334400 (70.0%); the rest is provably outside every observer's 10 dB window.
+```
+
+It is exact, not an approximation — the output is byte-identical to evaluating every state.
+The path is skipped, and every state evaluated, with `--spectral`, `-a`, `-i`, `-D` or
+`--db_cutoff`; see CLAUDE.md for why each one cannot use it.
+
 ### Threads
 
 The observer loop runs on every core by default. Each observer is independent, so the output is
 deterministic: runs at `-j 1`, `-j 2` and `-j 32` are byte-for-byte identical.
+
+Observers are dealt out to the workers in chunks as they finish rather than split evenly up
+front, because on a machine with both performance and efficiency cores — every Apple silicon
+part, and most recent x86 laptops — an even split makes the slowest core the critical path.
+On an M4 Pro the even split ran the demo case no faster on all 14 threads than on its 10
+performance cores; pulling chunks recovers about 10%.
 
 ### Geodetic coordinates
 

@@ -1,6 +1,7 @@
 #include "predicates.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <vector>
 
@@ -83,6 +84,10 @@ Expansion exact_difference(double a, double b)
 Expansion multiply(const Expansion& a, const Expansion& b)
 {
     Expansion result;
+    // Two components per product pair is the bound the expansion can reach
+    // before cancellation shortens it, so this reserve is the last allocation
+    // the loop needs rather than one per growth step.
+    result.reserve(2 * a.size() * b.size());
     for (double x : a)
     {
         for (double y : b)
@@ -117,16 +122,27 @@ int sign_of(const Expansion& e)
 // Exact determinant of a small matrix of expansions, by Laplace expansion along
 // the first row.  Factorial in `size`, which is why the filtered path below runs
 // first; for the dimensions in play this is at most a few dozen terms.
-Expansion exact_determinant(const std::vector<Expansion>& matrix, std::size_t size)
+//
+// The matrix arrives as an array of pointers and the minors are built the same
+// way, rather than as copies.  Each entry is an expansion -- a heap-allocated
+// vector -- and copying (size-1)^2 of them at every level of a factorial
+// recursion put malloc and free at the top of the database load profile; with
+// pointers the recursion allocates nothing but the expansions it actually
+// computes.  `minor` is a stack array for the same reason `laplace` uses one.
+//
+// Callers go through the std::vector overload below, which adapts to this once;
+// the pointer form is what the recursion passes to itself.
+Expansion exact_determinant_recurse(const Expansion* const* matrix, std::size_t size)
 {
+    assert(size <= MAX_PREDICATE_SIZE);
     if (size == 1)
-        return matrix[0];
+        return *matrix[0];
 
     Expansion total;
-    std::vector<Expansion> minor((size - 1) * (size - 1));
+    const Expansion* minor[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
     for (std::size_t column = 0; column < size; column++)
     {
-        const Expansion& pivot = matrix[column];
+        const Expansion& pivot = *matrix[column];
         if (pivot.empty())
             continue;
         std::size_t out = 0;
@@ -138,7 +154,7 @@ Expansion exact_determinant(const std::vector<Expansion>& matrix, std::size_t si
                     minor[out++] = matrix[row * size + c];
             }
         }
-        Expansion term = multiply(pivot, exact_determinant(minor, size - 1));
+        Expansion term = multiply(pivot, exact_determinant_recurse(minor, size - 1));
         if (column % 2 == 1)
         {
             for (double& component : term)
@@ -147,6 +163,19 @@ Expansion exact_determinant(const std::vector<Expansion>& matrix, std::size_t si
         add_expansion(total, term);
     }
     return total;
+}
+
+// Exact determinant of a matrix held as expansions, which is how all three
+// predicates build theirs.  Adapting to the pointer form once, here, keeps that
+// four-line dance out of every call site while leaving the recursion itself
+// allocation-free.
+Expansion exact_determinant(const std::vector<Expansion>& matrix, std::size_t size)
+{
+    assert(size <= MAX_PREDICATE_SIZE);
+    const Expansion* rows[MAX_PREDICATE_SIZE * MAX_PREDICATE_SIZE];
+    for (std::size_t i = 0; i < size * size; i++)
+        rows[i] = &matrix[i];
+    return exact_determinant_recurse(rows, size);
 }
 
 // Determinant and permanent (the same expansion with every sign made positive)

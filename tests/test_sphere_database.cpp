@@ -108,6 +108,104 @@ TEST_CASE("GridAxis::bracket matches the binary search", "[sphere_database]")
     }
 }
 
+TEST_CASE("GridAxis::locate matches the bilinear cell it replaces", "[sphere_database]")
+{
+    // eval() takes its interpolation weights from locate() rather than from
+    // periodic_bilinear_interp(), which is what makes the hot path arithmetic
+    // instead of four knot lookups and a divide.  The two have to agree, so
+    // interpolate a known ramp both ways and compare: locate() gives the weight
+    // on its `hi` corner, and periodic_bilinear_interp() applied to the same
+    // pair has to land on the same value.
+    //
+    // Sweeps a uniform axis (locate's arithmetic path), an irregular one (the
+    // bracket fall-back) and the wrap-around cell at either end.
+    std::vector<double> uniform;
+    for (int i = -180; i < 180; i += 10)
+        uniform.push_back(static_cast<double>(i));
+
+    std::vector<double> irregular = {-180.0, -179.0, -100.0, -12.5, 0.0, 3.0, 61.25, 170.0};
+
+    for (const auto& values : {uniform, irregular})
+    {
+        GridAxis axis;
+        axis.reset(values);
+        for (int step = -2000; step <= 2000; step++)
+        {
+            const double val = 0.1 * static_cast<double>(step);
+            const auto cell = axis.locate(val);
+            const auto expected_pair = axis.bracket(val);
+            REQUIRE(cell.lo == expected_pair[0]);
+            REQUIRE(cell.hi == expected_pair[1]);
+
+            // Corner values chosen so the interpolated answer is the weight
+            // itself: 0 on `lo` and 1 on `hi`, held constant along the other
+            // axis so only this one's weighting shows.
+            const double reference = periodic_bilinear_interp(0.0, 0.0, 1.0, 1.0,
+                    values[cell.lo], values[cell.hi], 0.0, 1.0, val, 0.5);
+            REQUIRE(std::fabs(cell.fraction - reference) <= 1e-12);
+        }
+        for (auto val : values)
+        {
+            const auto cell = axis.locate(val);
+            const double reference = periodic_bilinear_interp(0.0, 0.0, 1.0, 1.0,
+                    values[cell.lo], values[cell.hi], 0.0, 1.0, val, 0.5);
+            REQUIRE(std::fabs(cell.fraction - reference) <= 1e-12);
+        }
+    }
+}
+
+TEST_CASE("DirectionBounds really bounds the level", "[sphere_database]")
+{
+    // The observer loop skips a state when this bound puts it below the best
+    // level found so far, so the whole peak search is only correct if the bound
+    // is never exceeded.  Sweep a spread of source states and observers and
+    // check it directly, in the energy form the hot path compares in.
+    if (!std::filesystem::exists("databases/S-76D_M3.nod"))
+        return;
+    Database db("databases/S-76D_M3.nod");
+
+    std::vector<Database::SourceState> states;
+    for (double mu : {0.0, 0.08, 0.15, 0.22})
+        for (double gamma : {-6.0, 0.0, 6.0})
+            for (double ct : {0.005, 0.007})
+            {
+                // A few attitudes, so the sphere frame is not always level.
+                states.push_back(db.source_state(Vec3(0.0, 0.0, 150.0), Vec3(60.0, 10.0, 2.0),
+                        Vec3(0.1, -0.05, 1.0), mu, gamma, ct));
+                states.push_back(db.source_state(Vec3(20.0, -40.0, 300.0), Vec3(-30.0, 55.0, -3.0),
+                        Vec3(-0.08, 0.12, 1.0), mu, gamma, ct));
+            }
+
+    const auto bounds = db.direction_bounds(states);
+    REQUIRE(bounds.usable());
+
+    const double radius = db.sphere_radius();
+    std::size_t checked = 0;
+    for (std::size_t s = 0; s < states.size(); s++)
+    {
+        for (double x = -2000.0; x <= 2000.0; x += 137.0)
+        {
+            for (double y = -2000.0; y <= 2000.0; y += 149.0)
+            {
+                const Vec3 observer(x, y, 0.0);
+                const Vec3 delta = observer - states[s].position;
+                const double squared_range = delta.squaredNorm();
+                if (squared_range <= radius * radius)
+                    continue; // inside the sphere, where the bound does not apply
+                const int bin = DirectionBounds::bin(states[s].frame.nose.dot(delta),
+                        states[s].frame.normal.dot(delta),
+                        states[s].frame.starboard.dot(delta), squared_range);
+                const double level = db.level_at_observer(observer, states[s]);
+                // bound >= level, in the energy form: numerator >= 10^(L/10) r^2.
+                REQUIRE(bounds.numerator(s, bin)
+                        >= std::pow(10.0, 0.1 * level) * squared_range * (1.0 - 1e-12));
+                checked++;
+            }
+        }
+    }
+    REQUIRE(checked > 10000);
+}
+
 TEST_CASE("clamp", "[sphere_database]")
 {
     REQUIRE(clamp01(0.5) == 0.5);

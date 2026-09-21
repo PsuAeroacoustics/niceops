@@ -11,11 +11,15 @@
 // (interpolation path is unimplemented).
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <string>
 #include <vector>
 
+#include <complex>
+
+#include "ground_effect.hpp"
 #include "vec3.hpp"
 
 #include "interpolator.hpp"
@@ -59,12 +63,39 @@ public:
     // Identical in every case to bracket(values(), val).
     std::array<std::size_t, 2> bracket(double val) const;
 
+    // Where `val` sits on the axis: the same bracketing pair bracket() returns,
+    // plus how far along the cell it lies.  `fraction` is the weight the
+    // bilinear interpolation puts on `hi`, so the weight on `lo` is 1 -
+    // fraction; that is exactly what periodic_bilinear_interp() derives from
+    // the two knot values, wrap-around included, and
+    // tests/test_sphere_database.cpp sweeps the two against each other.
+    //
+    // It exists because eval() wants the weights, not the knots: on a uniform
+    // axis both indices and the fraction fall out of one multiply, where going
+    // through bracket() meant four more loads from values_, four subtractions
+    // and a divide by the cell area.
+    struct Cell
+    {
+        std::size_t lo;
+        std::size_t hi;
+        double fraction;
+    };
+
+    Cell locate(double val) const;
+
 private:
     std::vector<double> values_;
     double first_ = 0.0;
     // Reciprocal of the uniform spacing, or 0 when the axis is not uniform and
     // the binary search has to be used after all.
     double inv_step_ = 0.0;
+    // Set only when every knot sits within a few ULP of where a perfectly
+    // uniform axis would put it -- tighter than inv_step_'s tolerance, because
+    // locate() derives the interpolation weight from the spacing rather than
+    // from the knots and so has no chance to correct for a knot that is merely
+    // close.  Every shipped database's axes are exact multiples of 10 and 5
+    // degrees and take this path.
+    bool exactly_uniform_ = false;
 };
 
 double clamp01(double x);
@@ -107,6 +138,119 @@ bool repair_legacy_hover_directivity(std::vector<double>& phis_scattered);
 bool approx_equal(double value, double reference, double max_rel_diff = 1e-2,
         double max_abs_diff = 1e-5);
 
+// An upper bound on the ground level a trajectory state can produce at an
+// observer, good enough to prove that the state cannot hold the peak of that
+// observer's time history -- without evaluating it.
+//
+// This is what lets the observer loop find the peak and then expand out to the
+// 10-dB-down points, instead of marching through every emission time.  The SEL
+// window is contiguous by construction (peak_range walks out from the peak and
+// stops at the first sample below the threshold), so nothing outside it needs
+// a bound at all; the bound is needed only to be sure the walk started on the
+// right peak.
+//
+// The bound is `max sphere level in this direction - spherical spreading`.
+// Dropping the excess attenuation is what makes it an upper bound, and that is
+// only true when no excess attenuation factor in the database is negative --
+// `usable` is false when one is, and the caller must then evaluate everything.
+//
+// Binning by direction is what makes it tight enough to be worth having.  The
+// whole-sphere maximum is 11.4 dB above the level actually seen, at the median,
+// which is *wider than the 10 dB window*: the peak search would then reach
+// outside the window and there would be nothing to save.  Splitting the sphere
+// into bins of (theta, azimuth) brings the median slack to 8.6 dB, under the
+// window, and the peak search collapses inside it.
+class DirectionBounds
+{
+public:
+    // Bins along the sphere's theta axis, and azimuth sectors across it.
+    static constexpr int theta_bins = 16;
+    static constexpr int azimuth_bins = 8;
+    static constexpr int bin_count = theta_bins * azimuth_bins;
+
+    // Which bin a propagation direction falls in, from the *unnormalised* dot
+    // products with the sphere frame and the squared range.
+    //
+    // Deliberately free of both a square root and any inverse trig: a state
+    // this rejects is never evaluated, so everything spent here is overhead on
+    // the rejection.  The azimuth test is scale-free already, and the theta bin
+    // uses along^2/r^2, which needs one divide where the angle would need a
+    // root and an acos.
+    static int bin(double along, double up, double across, double squared_range);
+
+    // The narrowest theta bin and the azimuth sector width, both in degrees --
+    // what Database::direction_bounds pads the stencil by.  They live here with
+    // bin() so that changing the binning scheme is one edit rather than three.
+    static double narrowest_theta_bin_degrees();
+
+    static constexpr double azimuth_bin_degrees()
+    {
+        return 180.0 / azimuth_bins;
+    }
+
+    bool usable() const
+    {
+        return usable_;
+    }
+
+    // 10^(bound/10) * r_sphere^2 for the state's blend in this direction, so
+    // the test "bound >= level" is "numerator >= 10^(level/10) * range^2" and
+    // the hot path needs no logarithm.
+    double numerator(std::size_t state, int bin_index) const
+    {
+        return numerators_[blend_of_state_[state] * bin_count + bin_index];
+    }
+
+private:
+    friend class Database;
+    std::vector<double> numerators_;
+    std::vector<std::size_t> blend_of_state_;
+    bool usable_ = false;
+};
+
+namespace detail {
+
+// tan of each azimuth sector edge, so the sector test in bin() is a multiply
+// and a compare rather than an atan2.  An inline variable rather than a
+// function-local static: bin() runs ~94 million times a run and a function
+// static would test its guard on every one of them.
+inline const std::array<double, DirectionBounds::azimuth_bins / 2 - 1> azimuth_edge_tangents = [] {
+    constexpr double pi = 3.14159265358979323846;
+    std::array<double, DirectionBounds::azimuth_bins / 2 - 1> edges {};
+    for (std::size_t k = 0; k < edges.size(); k++)
+        edges[k] = std::tan(pi * static_cast<double>(k + 1) / DirectionBounds::azimuth_bins);
+    return edges;
+}();
+
+} // namespace detail
+
+// Defined here rather than in the .cpp because the observer loop calls it ~94
+// million times from another translation unit: out of line it inlines only when
+// NICEOPS_LTO is on and the toolchain supports it, and it is fifteen
+// instructions that should never depend on a build option.
+inline int DirectionBounds::bin(double along, double up, double across, double squared_range)
+{
+    // Theta: uniform in along^2, which is the square of the cosine, so no root.
+    // The sign of `along` picks the hemisphere.
+    constexpr int half_theta = theta_bins / 2;
+    int theta_index = static_cast<int>((along * along / squared_range) * half_theta);
+    if (theta_index > half_theta - 1)
+        theta_index = half_theta - 1;
+    theta_index = along >= 0.0 ? half_theta + theta_index : half_theta - 1 - theta_index;
+
+    // Azimuth: |across| against |up| scaled by tan of each sector edge, which
+    // needs neither the angle nor a normalised direction.
+    constexpr int half_azimuth = azimuth_bins / 2;
+    const double magnitude = std::fabs(across);
+    const double reference = std::fabs(up);
+    int sector = 0;
+    while (sector < half_azimuth - 1
+            && magnitude > reference * detail::azimuth_edge_tangents[sector])
+        sector++;
+    return theta_index * azimuth_bins
+            + (across >= 0.0 ? half_azimuth + sector : half_azimuth - 1 - sector);
+}
+
 class Database
 {
 public:
@@ -147,10 +291,53 @@ public:
 
     double level_at_observer(const Vec3& observer, const SourceState& state) const;
 
+    // Ground level from geometry that has already been formed: the squared
+    // range, and the three *unnormalised* dot products of the displacement with
+    // the sphere frame.  The observer loop's bound test computes exactly these,
+    // so sharing them is what makes skipping states pay -- a state that
+    // survives the test costs no more than it would have without one.
+    double level_from_geometry(double squared_range, double along, double up, double across,
+            const Blend& blend) const;
+
     double level_at_observer(const Vec3& observer,
             const Vec3& source, const Vec3& velocity,
             const Vec3& normal, double advance_ratio,
             double flight_path_angle, double thrust_coefficient) const;
+
+    // ---- Spectral propagation -------------------------------------------
+    //
+    // The path above carries one broadband dBA from the sphere to the ground
+    // and attenuates it with the database's own EAA factor, which was fitted
+    // for whatever spectrum the source had.  These carry the spectrum itself:
+    // each band is spread and absorbed at its own rate, and only then summed
+    // into a metric.  The two answer different questions and will not agree --
+    // see SpectralSetup in weighting.hpp for what the difference is made of.
+    //
+    // Both require has_spectra(); a database without spectra cannot use this
+    // path at all.
+
+    // Per-band ground levels in dB at one direction, written into `levels`,
+    // which must have room for band_count() entries.  `absorption` is the
+    // dB/m coefficient for each band, from absorption_coefficients().
+    void eval_spectrum(double range, double phi, double theta, const Blend& blend,
+            const double* absorption, double* levels, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1)) const;
+
+    // A-weighted, band-limited ground level at an observer, propagated per
+    // band.  `gains` comes from a_weighting_gains() and must match the band
+    // count.  Returns -infinity when no band is inside the limits.
+    double spectral_level_at_observer(const Vec3& observer, const SourceState& state,
+            const double* absorption, const std::vector<double>& gains,
+            const GroundModel* ground = nullptr,
+            const std::vector<std::complex<double>>* impedance = nullptr,
+            double sound_speed = 343.2, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1)) const;
+
+    // Band centres carried by the database, empty when it has no spectra.
+    const std::vector<double>& band_centres() const
+    {
+        return frequencies_;
+    }
 
     double level_along_bearing(double range, double bearing, double altitude,
             const Vec3& velocity, const Vec3& normal,
@@ -233,6 +420,12 @@ public:
     // below `cutoff` dBA, or infinity when no such bound can be established.
     double cull_range(const Blend& blend, double cutoff) const;
 
+    // Directional level bounds for a trajectory's states.  One table per
+    // *distinct* blend rather than per state -- a shipped track resolves to a
+    // few dozen tetrahedra over thousands of states -- so the whole thing is a
+    // few tens of kilobytes and stays in cache under the observer loop.
+    DirectionBounds direction_bounds(const std::vector<SourceState>& states) const;
+
     double sphere_radius() const
     {
         return sphere_radius_;
@@ -253,6 +446,20 @@ private:
     std::vector<Sample> grid;
     std::size_t n_conditions = 0;
     double sphere_radius_ = 0.0;
+    // 1 / sphere_radius_, so eval's spherical spreading term is a multiply.
+    double inv_sphere_radius_ = 0.0;
+
+    // Whether dropping the excess attenuation term bounds a level from above.
+    // A level is sphere_level - 20*log10(r/r0) - EAA*(r - r0)/1000, so dropping
+    // that term is conservative only if no excess factor in the database is
+    // negative.  The D original took abs() of the factor precisely because it
+    // could be.  Both cull_range() and direction_bounds() rest on this, so it
+    // is asked in one place.
+    bool excess_attenuation_is_a_loss() const
+    {
+        return min_excess_factor_ >= 0.0;
+    }
+
     double advance_ratio_min = 0.0, advance_ratio_max = 0.0;
     double flight_path_angle_min = 0.0, flight_path_angle_max = 0.0;
     double thrust_coefficient_min = 0.0, thrust_coefficient_max = 0.0;
@@ -266,8 +473,13 @@ private:
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
     // Band centres shared by every sphere, and the per-band levels laid out as
-    // spectra_[(condition * cell_count + cell) * frequencies_.size() + band].
-    // Both empty unless the database carries spectra.
+    // spectra_[(cell * frequencies_.size() + band) * n_conditions + condition].
+    //
+    // Condition innermost, matching grid above and for the same reason: the
+    // observer loop blends four conditions at one (cell, band), so they want to
+    // be on one cache line.  The netCDF file stores them the other way round and
+    // the loader transposes once.  Both empty unless the database carries
+    // spectra.
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
     std::vector<double> frequencies_;
     std::vector<double> spectra_;

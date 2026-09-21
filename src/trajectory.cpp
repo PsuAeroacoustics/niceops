@@ -90,6 +90,31 @@ dimensional_data configure_vehicle(const std::string& filename)
     vehicle.tip_speed = json_to_double(config["Main Rotor"]["tip speed"]);
     vehicle.weight = json_to_double(config["Vehicle"]["weight"]) * g; // Actually a mass (kg), so convert to Newtons
     vehicle.rho = json_to_double(config["Atmosphere"]["density"]);
+
+    // Atmospheric state, for the optional spectral path.  Only density is
+    // required -- it is what CT needs -- so each of these falls back rather
+    // than failing, and a file written before any of this existed still loads.
+    const auto& air = config["Atmosphere"];
+    if (air.contains("temperature"))
+        vehicle.atmosphere.temperature = json_to_double(air["temperature"]);
+    if (air.contains("pressure"))
+    {
+        vehicle.atmosphere.pressure = json_to_double(air["pressure"]);
+    }
+    else
+    {
+        // No pressure given: take the one implied by the density and
+        // temperature already in the file, p = rho R T, rather than assuming a
+        // standard day the file may not be describing.  S-76D.json pairs
+        // 1.225 kg/m^3 with 300.71 K, which is not an ISA point and gives
+        // 105.7 kPa, so assuming 101.325 would contradict its own numbers.
+        constexpr double dry_air_gas_constant = 287.05; // J/(kg K)
+        vehicle.atmosphere.pressure
+                = vehicle.rho * dry_air_gas_constant * vehicle.atmosphere.temperature / 1000.0;
+    }
+    if (air.contains("relative humidity"))
+        vehicle.atmosphere.relative_humidity = json_to_double(air["relative humidity"]);
+
     trace("Vehicle data structure: ", vehicle);
     return vehicle;
 }
