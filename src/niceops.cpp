@@ -1378,24 +1378,23 @@ int run(int argc, char* argv[])
             const std::string ext = p.extension().string();
             const std::string base = p.replace_extension().string();
 
-            plt::figure();
-            plt::plot(x, CT);
-            plt::xlabel("X, ft", 14);
-            plt::ylabel("$C_T$", 14);
-            if (!state_figure_file.empty())
-            {
-                plt::savefig(base + "_CT_" + ext);
-            }
+            // One figure per state variable against x, all four identical but
+            // for the series and the y label.  NOTE: the separator lands before
+            // the extension, so these come out as "state_CT_.png" -- the D
+            // original's naming, which the reference figures carry.
+            auto state_figure = [&](const char* name, const char* label,
+                                        const std::vector<double>& series) {
+                plt::figure();
+                plt::plot(x, series);
+                plt::xlabel("X, ft", 14);
+                plt::ylabel(label, 14);
+                if (!state_figure_file.empty())
+                    plt::savefig(base + "_" + name + "_" + ext);
+            };
 
-            plt::figure();
-            plt::plot(x, mu);
-            plt::xlabel("X, ft", 14);
-            plt::ylabel("$\\mu$", 14);
-            if (!state_figure_file.empty())
-            {
-                plt::savefig(base + "_mu_" + ext);
-            }
-
+            state_figure("CT", "$C_T$", CT);
+            state_figure("mu", "$\\mu$", mu);
+            // The one exception: both flight path angles on the same axes.
             plt::figure();
             plt::plot(x, gamma, x, gamma_e);
             plt::xlabel("X, ft", 14);
@@ -1404,15 +1403,7 @@ int run(int argc, char* argv[])
             {
                 plt::savefig(base + "_gamma_" + ext);
             }
-
-            plt::figure();
-            plt::plot(x, z);
-            plt::xlabel("X, ft", 14);
-            plt::ylabel("Z, ft", 14);
-            if (!state_figure_file.empty())
-            {
-                plt::savefig(base + "_z_" + ext);
-            }
+            state_figure("z", "Z, ft", z);
         }
         if (plotting)
         {

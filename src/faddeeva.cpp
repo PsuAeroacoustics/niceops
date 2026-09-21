@@ -1,5 +1,7 @@
 #include "faddeeva.hpp"
 
+#include "util/constants.hpp"
+
 #include <cmath>
 #include <iterator>
 
@@ -33,7 +35,7 @@ constexpr double weideman_a[32] = {
     +2.26353729990026764e+00, +2.57225340812456960e+00,
 };
 
-const double one_over_sqrt_pi = 1.0 / std::sqrt(M_PI);
+const double one_over_sqrt_pi = 1.0 / std::sqrt(pi);
 
 // The series proper, valid for Im(z) >= 0.
 //

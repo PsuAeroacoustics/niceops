@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "smoothing_spline.hpp"
+#include "util/constants.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
 #include "util/paths.hpp"
@@ -20,8 +21,6 @@
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
 
 namespace {
-
-constexpr double PI = 3.14159265358979323846;
 
 // The vehicle JSONs store every value as a quoted string, and the D original
 // read them with `.str` followed by `to!double`.  nlohmann's get<double>()
@@ -419,15 +418,15 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle)
     now.ny /= now.LF;
     now.nz /= now.LF;
     // Non-dimensionalize
-    now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * PI
+    now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * pi
             * vehicle.radius * vehicle.radius);
     auto v = std::hypot(now.vx, now.vy, now.vz);
     now.mu = v / vehicle.tip_speed;
     if (v > 0.0)
     {
         auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
-        now.fpa_e = 180.0 / PI * std::asin(vn_hat);
-        now.fpa = 180.0 / PI * std::asin(now.vz / v);
+        now.fpa_e = 180.0 / pi * std::asin(vn_hat);
+        now.fpa = 180.0 / pi * std::asin(now.vz / v);
     }
     else
     {
@@ -441,8 +440,6 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle)
         now.fpa = 0.0;
     }
 }
-
-} // namespace niceops
 
 Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename,
         const GeodeticInput& geodetic)
@@ -686,3 +683,5 @@ void Trajectory::watts_trim(double xstart_ft)
     std::vector<State> sub(states.begin() + ixmin, states.begin() + ixmax + 1);
     states.swap(sub);
 }
+
+} // namespace niceops

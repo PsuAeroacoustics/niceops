@@ -11,13 +11,10 @@
 
 #include <array>
 #include <chrono>
-#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
-#include <filesystem>
 
-#include "paths.hpp"
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -26,6 +23,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "paths.hpp"
 
 namespace niceops {
 
@@ -230,18 +229,20 @@ inline void trace(Args&&... args)
     Logger::instance().write(LogLevel::trace, std::forward<Args>(args)...);
 }
 
-// NOTE: log() and info() are the same level.  Both names are in use across the
-// codebase; they are aliases, not a severity distinction.
-template <typename... Args>
-void log(Args&&... args)
-{
-    Logger::instance().write(LogLevel::info, std::forward<Args>(args)...);
-}
-
 template <typename... Args>
 void info(Args&&... args)
 {
     Logger::instance().write(LogLevel::info, std::forward<Args>(args)...);
+}
+
+// log() is info() under another name.  Both spellings are in use across the
+// ported code and neither is worth churning, but they are one function rather
+// than two identical ones, so a change to the level cannot reach only half the
+// call sites.
+template <typename... Args>
+void log(Args&&... args)
+{
+    info(std::forward<Args>(args)...);
 }
 
 template <typename... Args>

@@ -20,6 +20,7 @@
 #include <complex>
 
 #include "ground_effect.hpp"
+#include "util/constants.hpp"
 #include "vec3.hpp"
 
 #include "interpolator.hpp"
@@ -215,7 +216,6 @@ namespace detail {
 // function-local static: bin() runs ~94 million times a run and a function
 // static would test its guard on every one of them.
 inline const std::array<double, DirectionBounds::azimuth_bins / 2 - 1> azimuth_edge_tangents = [] {
-    constexpr double pi = 3.14159265358979323846;
     std::array<double, DirectionBounds::azimuth_bins / 2 - 1> edges {};
     for (std::size_t k = 0; k < edges.size(); k++)
         edges[k] = std::tan(pi * static_cast<double>(k + 1) / DirectionBounds::azimuth_bins);

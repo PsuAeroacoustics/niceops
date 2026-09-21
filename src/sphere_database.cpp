@@ -13,15 +13,12 @@
 #include "util/logger.hpp"
 #include "weighting.hpp"
 #include "util/paths.hpp"
+#include "util/constants.hpp"
 #include "util/rootfind.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
 
 namespace {
-
-// M_PI is not part of the C++ standard and disappears from glibc's math.h
-// under -std=c++17, so define it locally.
-constexpr double PI = 3.14159265358979323846;
 
 // RAII replacement for D's scope(exit) nc_close.  Note: intentionally does not
 // run on fatal() paths (fatal aborts the process).
@@ -529,7 +526,7 @@ double DirectionBounds::narrowest_theta_bin_degrees()
     double previous = 90.0;
     for (int k = 1; k <= half; k++)
     {
-        const double edge = std::acos(std::sqrt(static_cast<double>(k) / half)) * 180.0 / PI;
+        const double edge = std::acos(std::sqrt(static_cast<double>(k) / half)) * 180.0 / pi;
         narrowest = std::min(narrowest, previous - edge);
         previous = edge;
     }
@@ -603,9 +600,9 @@ inline double phi_degrees(double up, double across)
         // undefined -- and 0/0 is a NaN, which has to be caught here rather
         // than propagated into the grid lookup.  normalized() leaves the zero
         // vector alone, so the projection form landed on acos(0).
-        return 0.5 * PI * (180.0 / PI);
+        return 0.5 * pi * (180.0 / pi);
     }
-    return phi * (180.0 / PI);
+    return phi * (180.0 / pi);
 }
 
 } // namespace
@@ -616,7 +613,7 @@ std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direct
     const double along = frame.nose.dot(direction);
     const double theta = acosc(along);
     return {phi_degrees(frame.normal.dot(direction), frame.starboard.dot(direction)),
-            theta * (180.0 / PI)};
+            theta * (180.0 / pi)};
 }
 
 std::array<double, 2> lookup_angles(const Vec3& source, const Vec3& velocity,
@@ -1266,8 +1263,8 @@ DirectionBounds Database::direction_bounds(const std::vector<SourceState>& state
                 for (std::size_t k = 0; k < blends[b].size(); k++)
                     top = std::max(top, cell[blends[b][k]].dBA);
 
-                const double theta = thetas[n] * PI / 180.0;
-                const double phi = phis[m] * PI / 180.0;
+                const double theta = thetas[n] * pi / 180.0;
+                const double phi = phis[m] * pi / 180.0;
                 const int here = DirectionBounds::bin(std::cos(theta),
                         std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), 1.0);
                 const int theta_index = here / DirectionBounds::azimuth_bins;
@@ -1309,7 +1306,7 @@ double Database::level_from_geometry(double squared_range, double along, double 
     // normalised; phi is an angle between two of the components and does not
     // care about their common scale.
     const double inverse = range > 0.0 ? 1.0 / range : 0.0;
-    const double theta = acosc(along * inverse) * (180.0 / PI);
+    const double theta = acosc(along * inverse) * (180.0 / pi);
     const double phi = phi_degrees(up, across);
     trace("Looked up [phi,theta] = ", phi, ", ", theta);
     assert(std::isfinite(phi) && std::isfinite(theta));
@@ -1338,7 +1335,7 @@ double Database::level_along_bearing(double range, double bearing, double altitu
         const Vec3& velocity, const Vec3& normal, double advance_ratio,
         double flight_path_angle, double thrust_coefficient) const
 {
-    bearing *= PI / 180.0;
+    bearing *= pi / 180.0;
     // Define ground velocity, and get heading vector from it
     double ground_velocity[2] = {velocity(0), velocity(1)};
     double hnorm = std::sqrt(ground_velocity[0] * ground_velocity[0] + ground_velocity[1] * ground_velocity[1]);

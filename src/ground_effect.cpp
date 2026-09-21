@@ -4,6 +4,7 @@
 #include <complex>
 
 #include "faddeeva.hpp"
+#include "util/constants.hpp"
 #include "util/logger.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
@@ -65,8 +66,8 @@ void excess_ground_attenuation(const GroundModel& ground,
     const double turbulence_scale
             = ground.turbulence > 0.0 ? 0.5 * ground.turbulence * std::sqrt(direct_range) : 0.0;
     const double inverse_range_ratio = 1.0 / range_ratio;
-    const double root_pi = std::sqrt(M_PI);
-    const double numerical_distance_scale = M_PI * image_range / sound_speed;
+    const double root_pi = std::sqrt(pi);
+    const double numerical_distance_scale = pi * image_range / sound_speed;
     // 10*log10(x) == (10/ln 10) * ln(x), and log() is the cheaper call.
     constexpr double ten_over_ln10 = 4.34294481903251827651;
 

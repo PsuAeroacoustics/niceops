@@ -2,15 +2,14 @@
 
 #include <cmath>
 
+#include "util/constants.hpp"
 #include "util/logger.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
 
 namespace {
 
-constexpr double PI = 3.14159265358979323846;
-constexpr double DEG_TO_RAD = PI / 180.0;
-constexpr double HALF_PI = PI / 2.0;
+constexpr double HALF_PI = pi / 2.0;
 constexpr double EPSILON10 = 1.0e-10;
 constexpr double EPSILON12 = 1.0e-12;
 
@@ -91,7 +90,7 @@ namespace niceops {
 
 LocalFrame::LocalFrame(const Geodetic& reference)
     : reference_(reference)
-    , meridian_at_reference_(meridian_arc(reference.latitude * DEG_TO_RAD))
+    , meridian_at_reference_(meridian_arc(reference.latitude * deg_to_rad))
 {
 }
 
@@ -100,7 +99,7 @@ LocalFrame LocalFrame::track_aligned(const Geodetic& reference, double bearing)
     LocalFrame frame(reference);
     // A compass bearing runs clockwise from north; the rotation that carries
     // east/north onto it is its complement.
-    const double rotation = (90.0 - bearing) * DEG_TO_RAD;
+    const double rotation = (90.0 - bearing) * deg_to_rad;
     frame.cos_rotation_ = std::cos(rotation);
     frame.sin_rotation_ = std::sin(rotation);
     return frame;
@@ -108,8 +107,8 @@ LocalFrame LocalFrame::track_aligned(const Geodetic& reference, double bearing)
 
 Vec3 LocalFrame::to_local(const Geodetic& position) const
 {
-    double lat = position.latitude * DEG_TO_RAD;
-    double lon = position.longitude * DEG_TO_RAD;
+    double lat = position.latitude * deg_to_rad;
+    double lon = position.longitude * deg_to_rad;
 
     const double from_pole = std::fabs(lat) - HALF_PI;
     if (from_pole > EPSILON12 || std::fabs(lon) > 10.0)
@@ -121,7 +120,7 @@ Vec3 LocalFrame::to_local(const Geodetic& position) const
     {
         lat = lat < 0.0 ? -HALF_PI : HALF_PI;
     }
-    lon -= reference_.longitude * DEG_TO_RAD;
+    lon -= reference_.longitude * deg_to_rad;
 
     const auto projected = project(lat, lon, meridian_at_reference_);
     const double east = EQUATOR_RADIUS * projected.east;

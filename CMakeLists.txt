@@ -221,6 +221,10 @@ add_executable(golden_compare tests/golden_compare.cpp)
 enable_testing()
 # One default run feeds both the LAE and state golden comparisons
 add_test(NAME regression_default COMMAND niceops -S state/ci_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The two golden comparisons read files this run writes.  CI happens to run the
+# suite serially and in declaration order, but nothing said so: `ctest -j` was
+# free to diff last run's output, or a file that did not exist yet.
+set_tests_properties(regression_default PROPERTIES FIXTURES_SETUP demo_run)
 # Validates every sphere in the database against its own stored levels
 # (1.8M samples).  Was "broken_self_test" and excluded from CI while legacy
 # hover directivity made it fail; it passes now and is a real test.
@@ -228,3 +232,4 @@ add_test(NAME self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_
 add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME state_golden COMMAND golden_compare state/ci_state.csv golden/state_197421.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(regression_golden state_golden PROPERTIES FIXTURES_REQUIRED demo_run)
