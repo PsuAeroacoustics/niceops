@@ -1,6 +1,7 @@
 #pragma once
 
 #include "atmosphere.hpp"
+#include "util/constants.hpp"
 
 // Port of trajectory.d.  Parses the 27-column NASA/FAA AC state CSV into
 // metric State records, computing non-dimensional flight parameters:
@@ -26,7 +27,7 @@ namespace niceops {
 
 constexpr double g = 9.80665; // m/s^2
 constexpr double mps2g = 1.0 / g;
-constexpr double ft2m = 0.3048;
+// ft2m lives in util/constants.hpp, beside the unit system that uses it.
 constexpr double fps2g = mps2g * ft2m;
 
 struct State
@@ -86,13 +87,15 @@ struct GeodeticInput
     // all -- so it is settled before any file is read and handed in here.
     // Unset lets a lone trajectory centre its own frame on its first position.
     std::optional<LocalFrame> frame;
-    // Elevation of the observer plane above the WGS84 datum, in feet.  An
+    // Elevation of the observer plane above the WGS84 datum, in METRES -- the
+    // command line's --ground_elevation is in the user's units and is converted
+    // with every other length before it reaches here.  An
     // altitude column is height above mean sea level, while z is height above
     // the ground the observers stand on: in the shipped AC tracks the two
     // differ by a constant 54.2651 ft, the terrain under that particular
     // flight.  Leaving it at zero reads altitudes as height above the
     // observers, which is what a planner working in AGL already means.
-    double ground_elevation_ft = 0.0;
+    double ground_elevation = 0.0; // metres
     // Seconds since UTC midnight at t = 0.  Only the day-night window reads it,
     // and a file carrying its own utcsec column supplies it instead.
     double start_utc = 0.0;
@@ -111,7 +114,8 @@ struct GeodeticInput
 // The first WGS84 position in a labelled geodetic trajectory file, or nullopt
 // when `filename` is not one.  Reads the header and one row, so a run can
 // settle its frame before committing to loading anything.
-std::optional<Geodetic> first_geodetic_position(const std::string& filename);
+std::optional<Geodetic> first_geodetic_position(
+        const std::string& filename, LengthUnit unit = feet);
 
 // Read the vehicle JSON into its dimensional parameters.  Exported because the
 // sphere export needs the tip speed to turn an advance ratio back into an
@@ -127,8 +131,11 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle);
 class Trajectory
 {
 public:
+    // `unit` is the length unit the *file* is written in -- feet unless --units
+    // says otherwise.  It does not reach write_state, which is metric; see
+    // LengthUnit in util/constants.hpp.
     Trajectory(const std::string& filename, const std::string& vehicle_filename,
-            const GeodeticInput& geodetic = {});
+            const GeodeticInput& geodetic = {}, LengthUnit unit = feet);
 
     // The frame a geodetic file was projected through, or nullopt when the
     // trajectory was already Cartesian.  Lets a run adopt the frame its first
@@ -150,7 +157,10 @@ public:
     // D's Get!(varname).get(): collect one field from every state
     std::vector<double> column(const std::string& varname) const;
 
-    void watts_trim(double xstart_ft);
+    // Crop from this x, in METRES.  The caller converts; the command line's
+    // --trim is in the user's units and is converted at the same seam as
+    // everything else.
+    void watts_trim(double xstart_metres);
 
     std::vector<State> states;
     dimensional_data vehicle;

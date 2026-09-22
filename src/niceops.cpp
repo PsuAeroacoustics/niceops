@@ -68,7 +68,8 @@ std::ofstream open_output(const std::string& path, std::ios::openmode mode = std
 }
 
 void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y_obs,
-        const std::vector<double>& levels, const std::string& out_file, bool scattered)
+        const std::vector<double>& levels, const std::string& out_file, bool scattered,
+        LengthUnit unit)
 {
     info("Writing output to ", out_file);
     auto file = open_output(out_file);
@@ -77,10 +78,11 @@ void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y
     {
         info("Scattered output.");
         assert(levels.size() == x_obs.size() && levels.size() == y_obs.size());
-        file << "x(ft), y(ft), Level(dB)\n";
+        file << "x(" << unit.name << "), y(" << unit.name << "), Level(dB)\n";
         for (std::size_t i = 0; i < levels.size(); i++)
         {
-            file << x_obs[i] / ft2m << "," << y_obs[i] / ft2m << "," << levels[i] << "\n";
+            file << x_obs[i] / unit.to_metres << "," << y_obs[i] / unit.to_metres << ","
+                 << levels[i] << "\n";
         }
     }
     else
@@ -91,7 +93,8 @@ void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y
         assert(nx * ny == levels.size());
 
         // Write header
-        file << "Line 1: x(ft), Line 2: y(ft),  Lines 3+ levels (x cols y rows)\n";
+        file << "Line 1: x(" << unit.name << "), Line 2: y(" << unit.name
+             << "),  Lines 3+ levels (x cols y rows)\n";
         // Comma-separated, newline at the end of each row.
         auto write_row = [&file](const std::vector<double>& values, std::size_t first,
                                  std::size_t count, double scale) {
@@ -99,8 +102,8 @@ void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y
                 file << (i ? "," : "") << values[first + i] / scale;
             file << "\n";
         };
-        write_row(x_obs, 0, nx, ft2m);
-        write_row(y_obs, 0, ny, ft2m);
+        write_row(x_obs, 0, nx, unit.to_metres);
+        write_row(y_obs, 0, ny, unit.to_metres);
         for (std::size_t row = 0; row * nx < levels.size(); row++)
             write_row(levels, row * nx, nx, 1.0);
         // The D original writes one extra newline at the end; keep it.
@@ -155,12 +158,13 @@ std::string latlon_companion(const std::string& level_file)
 }
 
 void write_time_history_file(const std::vector<double>& time_history, double dt, double x, double y,
-        const std::string& filename)
+        const std::string& filename, LengthUnit unit)
 {
     info("Writing time history to ", filename);
     auto file = open_output(filename);
-    file << "Level time history. Next row [dt (s), x (ft), y(ft)], remaining rows, dB.\n";
-    file << dt << "," << x / ft2m << "," << y / ft2m << "\n";
+    file << "Level time history. Next row [dt (s), x (" << unit.name << "), y(" << unit.name
+         << ")], remaining rows, dB.\n";
+    file << dt << "," << x / unit.to_metres << "," << y / unit.to_metres << "\n";
     for (auto level : time_history)
     {
         file << level << "\n";
@@ -290,7 +294,8 @@ double windowed_sound_exposure_level(const Database& database,
     return sel_over_window(index[0], index[1], step, evaluate);
 }
 
-void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers)
+void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers,
+        LengthUnit unit)
 {
     trace("Reading observers from ", observer_file, ".");
     // D reads this with csvReader!(double)(contents, null), which consumes the
@@ -300,12 +305,14 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
     {
         if (data.size() == 3)
         {
-            observers.push_back(Vec3(data[0] * ft2m, data[1] * ft2m, data[2] * ft2m));
+            observers.push_back(Vec3(data[0] * unit.to_metres, data[1] * unit.to_metres,
+                    data[2] * unit.to_metres));
         }
         else if (data.size() == 4)
         {
             // Skip channel ID in first column
-            observers.push_back(Vec3(data[1] * ft2m, data[2] * ft2m, data[3] * ft2m));
+            observers.push_back(Vec3(data[1] * unit.to_metres, data[2] * unit.to_metres,
+                    data[3] * unit.to_metres));
         }
         else
         {
@@ -320,7 +327,7 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
         // numbers, so a one-line file lands here too.
         input_error("Observer file ", observer_file, " yielded no observers. The first record "
                 "is taken as a header and discarded; every row after it must be x,y,z or "
-                "id,x,y,z in feet.");
+                "id,x,y,z in ", unit.name, ".");
     }
 }
 
@@ -333,10 +340,10 @@ struct ObserverSet
     std::vector<double> y;
 };
 
-ObserverSet scattered_observers(const std::string& observer_file)
+ObserverSet scattered_observers(const std::string& observer_file, LengthUnit unit)
 {
     ObserverSet set;
-    read_observer_file(observer_file, set.observers);
+    read_observer_file(observer_file, set.observers, unit);
     set.x.reserve(set.observers.size());
     set.y.reserve(set.observers.size());
     for (const auto& observer : set.observers)
@@ -390,7 +397,8 @@ struct RunOptions
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
-    double trim_start_ft = 0.0;
+    // Metres, after the --units conversion; NaN means the trim is off.
+    double trim_start = 0.0;
     double utc_offset = 0.0;
     bool scattered = false;
     bool want_dnl = false;
@@ -406,6 +414,8 @@ struct RunOptions
     GeodeticInput geodetic;
     // Write a WGS84 companion beside every level file.
     bool latlon = false;
+    // The length unit the command line and the files speak (--units).
+    LengthUnit unit;
 };
 
 // The files one trajectory is computed from and written to, and where it sits
@@ -428,7 +438,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double>& integrated_levels, std::vector<double>& dnl_energy)
 {
     // Create trajectory from CSV data
-    Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic);
+    Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
 
     // mu and CT are non-dimensionalised by the vehicle JSON's tip speed, and
     // they index the database's operating conditions -- which were generated at
@@ -448,14 +458,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Trim trajectory (per Mike): crop from the given x to whichever comes
     // first, the lowest or the slowest point.  Off unless asked for -- it
     // changes which part of the flight is integrated, and so the levels.
-    if (!std::isnan(options.trim_start_ft))
+    if (!std::isnan(options.trim_start))
     {
-        trajectory.watts_trim(options.trim_start_ft);
+        trajectory.watts_trim(options.trim_start);
     }
 
     // Resample onto the -s grid, smoothing the path first.  Disabled, matching
     // the D original; --path_smoothing covers the geodetic input that needs it.
-    // The arguments are (options.dt, smoothing, tolerance): a negative tolerance uses
+    // The arguments are (dt, smoothing, tolerance): a negative tolerance uses
     // `smoothing` as the penalty weight directly, and a non-negative one solves
     // for the weight instead.  The D-era pair here was (degree, smooth) from
     // the vendored B-spline library, whose second and third arguments meant
@@ -539,7 +549,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
         }
     }
-    // options.ambient_level stays NaN unless -a was given, which is how D's default-NaN
+    // The ambient level stays NaN unless -a was given, which is how D's default-NaN
     // double suppressed the ambient mix-in.  The reference pressure it converts
     // to is loop-invariant; it used to be a pow() per evaluation.
     const bool add_ambient = !std::isnan(options.ambient_level);
@@ -563,7 +573,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::filesystem::create_directories(directory);
     }
 
-    // With --options.db_cutoff, skip any (observer, state) pair whose level is provably
+    // With --db_cutoff, skip any (observer, state) pair whose level is provably
     // below the cutoff.  The bound is per state, from the loudest sphere the
     // state blends and spherical spreading alone, so it never discards a sample
     // that could have been louder -- unlike the D original, which sorted
@@ -587,7 +597,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<std::complex<double>> ground_impedance_bands;
     double sound_speed = 343.2;
     // The contiguous run of bands inside the metric's limits. Band centres are
-    // sorted, so the limits always select a range rather than a options.scattered set.
+    // sorted, so the limits always select a range rather than a scattered set.
     std::size_t first_band = 0;
     std::size_t last_band = 0;
     if (options.spectral)
@@ -667,7 +677,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     //   eval returns -- would have to be transformed with it:
     //     --spectral     the bound is on the broadband dBA, which is not a
     //                    bound on the band-limited weighted level (the same
-    //                    reason --options.db_cutoff is refused with --spectral)
+    //                    reason --db_cutoff is refused with --spectral)
     //     -a / --ambient
     //
     //   every sample is wanted, not just the window's:
@@ -676,7 +686,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     //                    which a window found on the raw one does not cover
     //
     // A new option that does either belongs in the matching term below.
-    // --options.db_cutoff stands apart: it already culls on its own terms, and its
+    // --db_cutoff stands apart: it already culls on its own terms, and its
     // culling is a deliberate metric change, so leave the two mechanisms
     // separate rather than layering this one on top.
     const bool level_is_transformed = options.spectral || add_ambient;
@@ -758,7 +768,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // Write out time history files
                 auto time_history_filename = options.time_history_prefix + "_i" + std::to_string(index) + ".csv";
                 write_time_history_file(levels, integration_step, observer(0), observer(1),
-                        time_history_filename);
+                        time_history_filename, options.unit);
             }
         }
         culled_samples += culled_here;
@@ -786,7 +796,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::chrono::steady_clock::now() - acoustics_start)
                                  .count();
     log("Acoustic calculations completed in ", elapsed / 1000.0, " seconds.");
-    write_levels(x_obs, y_obs, integrated_levels, job.output, options.scattered);
+    write_levels(x_obs, y_obs, integrated_levels, job.output, options.scattered,
+            options.unit);
     if (options.latlon)
     {
         write_geodetic_levels(x_obs, y_obs, integrated_levels, *options.geodetic.frame,
@@ -810,29 +821,31 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 // Draw the footprint and the state figures for a single-trajectory run.
 //
 // Lifted out of run() unchanged.  It takes x_obs/y_obs by value because the
-// first thing it does is convert them to feet, and run() still holds the metric
-// copies -- in place, that conversion used to run over the caller's arrays.
+// first thing it does is convert them out of metres, and run() still holds the
+// metric copies -- in place, that conversion used to run over the caller's
+// arrays.
 void draw_figures(const Trajectory& trajectory, const std::vector<double>& integrated_levels,
         std::vector<double> x_obs, std::vector<double> y_obs, bool scattered, bool plotting,
         const std::string& figure_file, const std::string& state_figure_file,
-        double contour_min, double contour_max, double contour_step)
+        double contour_min, double contour_max, double contour_step, LengthUnit unit)
 {
+    const std::string x_label = std::string("X, ") + unit.name;
     auto x = trajectory.column("x");
     auto y = trajectory.column("y");
     auto z = trajectory.column("z");
 
-    // Convert to ft for plotting
-    // TODO add units throughout
+    // Out of metres and into whatever --units selected, which is also what the
+    // axes are labelled with.
     for (auto& v : x_obs)
-        v *= 1.0 / ft2m;
+        v *= 1.0 / unit.to_metres;
     for (auto& v : y_obs)
-        v *= 1.0 / ft2m;
+        v *= 1.0 / unit.to_metres;
     for (auto& v : x)
-        v *= 1.0 / ft2m;
+        v *= 1.0 / unit.to_metres;
     for (auto& v : y)
-        v *= 1.0 / ft2m;
+        v *= 1.0 / unit.to_metres;
     for (auto& v : z)
-        v *= 1.0 / ft2m;
+        v *= 1.0 / unit.to_metres;
 
     if (plotting || !figure_file.empty())
     {
@@ -869,8 +882,8 @@ void draw_figures(const Trajectory& trajectory, const std::vector<double>& integ
         // and on master, and every reference figure in figures/ has the
         // track drawn on it.
         plt::plot(x, y, "k-");
-        plt::xlabel("X, ft", 14);
-        plt::ylabel("Y, ft", 14);
+        plt::xlabel(x_label, 14);
+        plt::ylabel(std::string("Y, ") + unit.name, 14);
         plt::axis("equal");
         plt::colorbar();
         plt::tight_layout();
@@ -899,7 +912,7 @@ void draw_figures(const Trajectory& trajectory, const std::vector<double>& integ
                                     const std::vector<double>& series) {
             plt::figure();
             plt::plot(x, series);
-            plt::xlabel("X, ft", 14);
+            plt::xlabel(x_label, 14);
             plt::ylabel(label, 14);
             if (!state_figure_file.empty())
                 plt::savefig(base + "_" + name + "_" + ext);
@@ -910,13 +923,13 @@ void draw_figures(const Trajectory& trajectory, const std::vector<double>& integ
         // The one exception: both flight path angles on the same axes.
         plt::figure();
         plt::plot(x, gamma, x, gamma_e);
-        plt::xlabel("X, ft", 14);
+        plt::xlabel(x_label, 14);
         plt::ylabel("$\\gamma$", 14);
         if (!state_figure_file.empty())
         {
             plt::savefig(base + "_gamma_" + ext);
         }
-        state_figure("z", "Z, ft", z);
+        state_figure("z", (std::string("Z, ") + unit.name).c_str(), z);
     }
     if (plotting)
     {
@@ -944,12 +957,15 @@ int run(int argc, char* argv[])
     std::vector<std::string> state_files;
     std::string dnl_file = "";
     double utc_offset = 0.0;
-    double trim_start_ft = std::numeric_limits<double>::quiet_NaN();
-    // Every length on this command line is in FEET, matching the trajectory,
-    // observer and level files.  They are converted to metres in one place
-    // below; nothing downstream of that seam sees feet.  See `length_unit`.
+    double trim_start = std::numeric_limits<double>::quiet_NaN();
+    // Lengths on this command line are in whatever --units selects, feet by
+    // default, and are converted to metres at one seam below.  A *default* is a
+    // fixed physical quantity, not a number in the selected unit, so it is
+    // written here in metres and skips that conversion -- otherwise --units
+    // would silently change the geometry of a run that named no grid.
+    std::string unit_name = "ft";
     std::vector<double> grid_bounds;
-    double grid_step = 82.020997375328079; // 25 m
+    double grid_step = 25.0; // metres
     std::string sphere_file = "";
     std::string aam_file = "";
     std::string power_file = "";
@@ -985,7 +1001,7 @@ int run(int argc, char* argv[])
     std::vector<double> band_limits;
     bool ground_effect = false;
     double flow_resistance = flow_resistance::grassy_field;
-    double receiver_height = 3.9370078740157481; // 1.2 m
+    double receiver_height = 1.2; // metres
     double turbulence = 0.0;
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
@@ -1003,7 +1019,7 @@ int run(int argc, char* argv[])
     // is that curvature, so it lands in CT and then in the levels.  Ten feet is
     // loose enough to absorb both coordinate rounding and the corner a planner
     // did not mean literally.
-    double path_smoothing = 10.0;
+    double path_smoothing = 10.0 * ft2m; // 10 ft, in metres
     bool latlon = false;
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
@@ -1036,13 +1052,19 @@ int run(int argc, char* argv[])
     app.add_flag("--self_test", self_test, "Run self tests.");
     app.add_option("-j,--threads", thread_count,
             "Worker threads for the observer loop (0 = one per hardware thread).");
-    app.add_option("--trim", trim_start_ft,
-            "Crop each trajectory from this x (ft) to its lowest/slowest point. Off by default.");
-    app.add_option("--grid", grid_bounds,
+    auto* trim_option = app.add_option("--trim", trim_start,
+            "Crop each trajectory from this x to its lowest/slowest point, in --units. "
+            "Off by default.");
+    app.add_option("--units", unit_name,
+            "Length unit for the command line and for every file carrying a length: "
+            "ft (default) or m. Angles stay in degrees, time in seconds, levels in dB, "
+            "and the -S state file stays metric.")
+            ->check(CLI::IsMember({"ft", "m"}));
+    auto* grid_option = app.add_option("--grid", grid_bounds,
             "Observer grid bounds in feet: xmin xmax ymin ymax. Default +/-4921.26 "
             "(= 1500 m).")
             ->expected(4);
-    app.add_option("--gridstep", grid_step,
+    auto* gridstep_option = app.add_option("--gridstep", grid_step,
             "Observer grid spacing in feet (default 82.021, = 25 m).");
     app.add_option("-D,--dnlfile", dnl_file,
             "Write the day-night level, summed over every trajectory, to this file.");
@@ -1078,7 +1100,7 @@ int run(int argc, char* argv[])
     app.add_option("--flow_resistance", flow_resistance,
             "Specific flow resistance of the ground, kPa s/m^2. 30 snow, 225 grass (default), "
             "650 soil, 3000 dirt, 10000 concrete, 50000 asphalt.");
-    app.add_option("--receiver_height", receiver_height,
+    auto* receiver_height_option = app.add_option("--receiver_height", receiver_height,
             "Receiver height above ground for --ground_effect, ft (default 3.937, "
             "= 1.2 m).");
     app.add_option("--origin", origin,
@@ -1088,13 +1110,14 @@ int run(int argc, char* argv[])
     app.add_option("--frame_bearing", frame_bearing,
             "Compass bearing, degrees, of the local +x axis. Default: x east, y north. "
             "The shipped AC tracks use 210.");
-    app.add_option("--ground_elevation", ground_elevation,
-            "Elevation of the observer plane above mean sea level, ft. Subtracted from a "
-            "geodetic track's altitude column to give height above the observers (default 0).");
+    auto* ground_elevation_option = app.add_option("--ground_elevation", ground_elevation,
+            "Elevation of the observer plane above mean sea level, in --units. Subtracted "
+            "from a geodetic track's altitude column to give height above the observers "
+            "(default 0).");
     app.add_option("--start_utc", start_utc,
             "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
             "window. Ignored when the file carries its own utcsec column.");
-    app.add_option("--path_smoothing", path_smoothing,
+    auto* path_smoothing_option = app.add_option("--path_smoothing", path_smoothing,
             "How far, in feet RMS, the path fitted through a geodetic track may sit from "
             "the given positions, per axis. Default 10. Zero flies through them exactly, "
             "which on measured positions makes the load factor track coordinate rounding.");
@@ -1159,11 +1182,7 @@ int run(int argc, char* argv[])
 
     if (grid_bounds.empty())
     {
-        // +/-1500 m, spelled in feet.  Both the bounds and the step convert back
-        // to exactly the metric values, and the 120 generated coordinates are
-        // bit-identical either way, so the goldens do not move.
-        grid_bounds = {-4921.2598425196848, 4921.2598425196848,
-                -4921.2598425196848, 4921.2598425196848};
+        grid_bounds = {-1500.0, 1500.0, -1500.0, 1500.0}; // metres
     }
     if (!(grid_step > 0.0))
     {
@@ -1286,18 +1305,32 @@ int run(int argc, char* argv[])
         database.self_test(loaded_database);
     }
 
-    // The one place feet become metres.  Everything above is in the units the
-    // user typed; everything below is metric, as the whole computation is.  A
-    // future --units flag sets this factor and nothing else has to change.
-    const double length_unit = ft2m;
-    for (double& bound : grid_bounds)
-        bound *= length_unit;
-    grid_step *= length_unit;
-    receiver_height *= length_unit;
-    path_smoothing *= length_unit;
+    // The one place the user's units become metres.  Everything above is in
+    // what they typed; everything below is metric, as the computation is.
+    //
+    // Only options the user actually supplied are converted: a default is a
+    // physical quantity already written in metres above, and scaling it here
+    // would make --units m move the observer grid by 3.28x rather than just
+    // renaming its axis.  CLI11's count() is what tells the two apart.
+    const LengthUnit unit = unit_name == "m" ? metres : feet;
+    log("Lengths are in ", unit.name, ".");
+    auto to_metres = [&unit](const CLI::Option* option, double& value) {
+        if (option->count() > 0)
+            value *= unit.to_metres;
+    };
+    if (grid_option->count() > 0)
+    {
+        for (double& bound : grid_bounds)
+            bound *= unit.to_metres;
+    }
+    to_metres(gridstep_option, grid_step);
+    to_metres(receiver_height_option, receiver_height);
+    to_metres(path_smoothing_option, path_smoothing);
+    to_metres(trim_option, trim_start);
+    to_metres(ground_elevation_option, ground_elevation);
 
     ObserverSet observer_set = scattered
-            ? scattered_observers(observer_file)
+            ? scattered_observers(observer_file, unit)
             : gridded_observers(grid_bounds, grid_step);
     auto& observers = observer_set.observers;
     auto& x_obs = observer_set.x;
@@ -1354,7 +1387,7 @@ int run(int argc, char* argv[])
     options.humidity_override = humidity_override;
     options.temperature_override = temperature_override;
     options.pressure_override = pressure_override;
-    options.trim_start_ft = trim_start_ft;
+    options.trim_start = trim_start;
     options.utc_offset = utc_offset;
     options.scattered = scattered;
     options.want_dnl = want_dnl;
@@ -1364,8 +1397,9 @@ int run(int argc, char* argv[])
     options.metric_file = metric_file;
     options.power_file = power_file;
     options.latlon = latlon;
+    options.unit = unit;
     options.geodetic.frame = frame;
-    options.geodetic.ground_elevation_ft = ground_elevation;
+    options.geodetic.ground_elevation = ground_elevation;
     options.geodetic.start_utc = start_utc;
     // -s is the resampling step for both adapt() and a geodetic track that
     // needs resampling; neither ever coarsens a track that is already finer.
@@ -1416,7 +1450,7 @@ int run(int argc, char* argv[])
             dnl[i] = 10.0 * std::log10(dnl_energy[i]);
         log("Writing day-night level over ", path_count,
                 path_count == 1 ? " operation to " : " operations to ", dnl_file);
-        write_levels(x_obs, y_obs, dnl, dnl_file, scattered);
+        write_levels(x_obs, y_obs, dnl, dnl_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, dnl, *frame, latlon_companion(dnl_file), scattered);
     }
@@ -1439,7 +1473,7 @@ int run(int argc, char* argv[])
     {
         draw_figures(*trajectory_holder, integrated_levels, x_obs, y_obs,
                 scattered, plotting, figure_file, state_figure_file,
-                contour_min, contour_max, contour_step);
+                contour_min, contour_max, contour_step, unit);
     }
     // Nonzero when any trajectory was skipped, so a batch script notices.
     return failed_paths > 0 ? 1 : 0;

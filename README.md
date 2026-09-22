@@ -83,24 +83,42 @@ Input and output files use **feet**; the computation is metric internally.
 
 ## Units
 
-**Every length on the command line is in feet**, matching the trajectory, observer and level
-files. That covers `--grid`, `--gridstep`, `--trim`, `--ground_elevation`, `--receiver_height`
-and `--path_smoothing`. The computation itself is metric throughout; the conversion happens
-once, where the command line is parsed, and nothing downstream of that sees feet.
+`--units` selects the length unit for the whole interface: `ft` (the default) or `m`. It covers
 
-Non-length quantities keep the units the standards they come from use, because converting them
+- every length on the command line — `--grid`, `--gridstep`, `--trim`, `--ground_elevation`,
+  `--receiver_height`, `--path_smoothing`;
+- every file carrying a length — trajectory input, observer lists, level output, time histories;
+- the axis labels on the figures.
+
+The computation is metric throughout. The conversion happens once, where the command line is
+parsed, and nothing downstream of that seam sees anything else.
+
+**`--units` says what your files already are; it does not convert them.** The shipped tracks and
+observer sets are in feet, so running them with `--units m` reads feet as metres and flies the
+aircraft three times too far. Nothing can detect that, so the flag is a declaration you have to
+get right. Where a file names its own unit in a column header — `alt_ft`, `alt_m` — the name is
+checked against `--units` and a disagreement fails the file rather than being silently believed;
+a bare `alt` claims nothing and is always accepted.
+
+Two things stay put whatever you select:
+
+- **Defaults are physical quantities, not numbers in the current unit.** The observer grid
+  defaults to ±1500 m in steps of 25 m whichever unit is in force — it reads as ±4921.26 ft or
+  ±1500 m, the same ground either way. If defaults scaled with the flag, `--units m` would
+  quietly shrink the footprint to a third of its area.
+- **The `-S` state file is metric.** It is a dump of the internal state, and
+  `golden/state_197421.csv` — the D-derived oracle — encodes it that way.
+
+Non-length quantities keep the units of the standards they come from, because converting them
 would make them harder to check against the source: temperature in K, pressure and flow
 resistance in kPa (ISO 9613-1 is written in kPa), frequency in Hz, angles in degrees, time in
 seconds, levels in dB.
 
-The observer grid's default is `±4921.26 ft`, step `82.021` — exactly ±1500 m in steps of 25 m,
-which is what the grid has always been and what the golden outputs encode. Expressing it in
-feet is bit-exact: the point count and all 120 coordinates are identical either way.
+> Before this flag existed, `--grid`, `--gridstep`, `--receiver_height` and `--path_smoothing`
+> were metres while `--trim` and `--ground_elevation` were feet and every file was feet. Scripts
+> written against that need those four converting, or `--units m` adding.
 
-> Earlier versions took `--grid`, `--gridstep`, `--receiver_height` and `--path_smoothing` in
-> metres while `--trim` and `--ground_elevation` were in feet and every file was in feet. If
-> you have scripts written against that, the four metric flags need converting.
-
+## Command line arguments
 ## Command line arguments
 
 ### Inputs and outputs
@@ -117,8 +135,8 @@ feet is bit-exact: the point count and all 120 coordinates are identical either 
 | `-m`, `--metricfile` | Append overall noise metrics to this file. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
-| `--ground_elevation` | Elevation of the observer plane above mean sea level, ft. Subtracted from a WGS84 track's altitude column. |
-| `--path_smoothing` | How far, feet RMS per axis, the path fitted through a WGS84 track may sit from the given positions. Default 10. Zero interpolates exactly, which on measured positions makes the load factor track coordinate rounding. |
+| `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. |
+| `--path_smoothing` | How far, RMS per axis in `--units`, the path fitted through a WGS84 track may sit from the given positions. Default 10 ft. Zero interpolates exactly, which on measured positions makes the load factor track coordinate rounding. |
 | `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. |
 | `--latlon` | Also write each level file as latitude, longitude, level. |
 | `-l`, `--logfile` | Log file (default `log/niceops.log`). |
@@ -131,8 +149,9 @@ feet is bit-exact: the point count and all 120 coordinates are identical either 
 | `-a`, `--ambient` | Ambient level in dB, mixed into every sample. Off unless given. |
 | `-q`, `--qsam` / `--no-qsam` | Use the flight path angle relative to the tip-path-plane normal rather than the vertical. On by default. |
 | `-s`, `--step` | Resampling step for trajectory adaptation. **Not** the SEL integration step, which comes from the trajectory's own sampling. |
-| `--trim` | Crop each trajectory from this x (ft) to its lowest/slowest point. Off by default; it changes which part of the flight is integrated. |
-| `--grid`, `--gridstep` | Observer grid bounds and spacing, in feet. Default `-4921.26 4921.26 -4921.26 4921.26`, step 82.021 (= ±1500 m, step 25 m). |
+| `--units` | Length unit for the command line and for every file carrying a length: `ft` (default) or `m`. See **Units**. |
+| `--trim` | Crop each trajectory from this x, in `--units`, to its lowest/slowest point. Off by default; it changes which part of the flight is integrated. |
+| `--grid`, `--gridstep` | Observer grid bounds and spacing, in `--units`. Default ±1500 m (±4921.26 ft), step 25 m (82.021 ft) — a fixed extent either way. |
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
@@ -141,7 +160,7 @@ feet is bit-exact: the point count and all 120 coordinates are identical either 
 | `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
-| `--receiver_height`, `--turbulence` | Receiver height (ft, default 3.937 = 1.2 m) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
+| `--receiver_height`, `--turbulence` | Receiver height (in `--units`, default 1.2 m) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
 
 ### Performance
 

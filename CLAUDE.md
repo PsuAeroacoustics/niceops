@@ -197,13 +197,30 @@ Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERS
 
 Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. For the full option set see `README.md`, which documents every flag, or the CLI11 setup in `src/niceops.cpp`.
 
-Input/output files use **feet**, and so does every length on the command line -- `--grid`,
-`--gridstep`, `--trim`, `--ground_elevation`, `--receiver_height`, `--path_smoothing`.  Internal
-computation is metric (`ft2m = 0.3048`); the conversion is a single seam in `run()`, marked
-`length_unit`, and a `--units` flag would set that factor and change nothing else.  Four of
-those options used to be metric while the files were not, which is the inconsistency that seam
-removes.  The grid default is expressed in feet and is bit-exact against the old metric one --
-same point count, same 120 coordinates -- so the goldens did not move. Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
+**`--units` picks the length unit for the whole interface** -- `ft` (default) or `m` -- covering
+every length on the command line (`--grid`, `--gridstep`, `--trim`, `--ground_elevation`,
+`--receiver_height`, `--path_smoothing`), every file carrying a length, and the figure axes.
+Internal computation is metric (`ft2m` and `LengthUnit` in `src/util/constants.hpp`); the
+conversion is one seam in `run()`.  Four of those options used to be metric while every file was
+feet, which is the inconsistency this removes.
+
+Three things are load-bearing here:
+
+- **A default is a physical quantity, not a number in the current unit.**  Defaults are written
+  in metres and skip the conversion, which is why the seam tests CLI11's `count()` rather than
+  scaling everything.  Scale the defaults too and `--units m` shrinks the observer grid to a
+  third of its extent.
+- **`--units` declares what the files already are; it converts nothing.**  The shipped tracks are
+  feet, so `--units m` on the demo case reads feet as metres.  Nothing can detect that.  Where a
+  column header names its own unit (`alt_ft`, `alt_m`) it is checked against `--units` and a
+  disagreement fails the file; a bare `alt` is always accepted.
+- **`write_state` stays metric** whatever `--units` says: `golden/state_197421.csv` is the
+  D-derived oracle and encodes the internal values.
+
+`fps2g` is chosen as a whole constant rather than composed as `unit.to_metres * mps2g`, because
+the product of two constants is not the same double as two multiplies and the state golden is
+pinned at 1e-9.  Verified end to end: a metric twin of the demo track under `--units m`
+reproduces the golden footprint to 1.5e-12 dB. Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
 
 ## Architecture
 

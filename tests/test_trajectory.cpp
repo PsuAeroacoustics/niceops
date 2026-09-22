@@ -130,7 +130,7 @@ GeodeticInput demo_frame(double smoothing = 0.0)
     GeodeticInput input;
     input.frame = LocalFrame::track_aligned(
             Geodetic {records.front()[2], records.front()[3], 0.0}, 210.0);
-    input.ground_elevation_ft = 54.2651;
+    input.ground_elevation = 54.2651 * ft2m;
     input.path_smoothing = smoothing;
     return input;
 }
@@ -447,4 +447,67 @@ TEST_CASE("path_smoothing bounds the deviation, in feet", "[units][geodetic]")
     REQUIRE(rms_offset(10.0) < 20.0);
     // Monotone in the allowance.
     REQUIRE(rms_offset(40.0) > rms_offset(10.0));
+}
+
+TEST_CASE("--units m reads the same flight from a metric file", "[units][geodetic]")
+{
+    // The unit system is a statement about the interface, not about the
+    // physics: the same flight written in metres and read with metres has to
+    // give the same states as the feet original read as feet.
+    const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
+    REQUIRE(records.size() > 100);
+
+    std::ostringstream metric;
+    metric << std::setprecision(17) << "utcsec,t,lat,lon,alt,x,y,z,h,i,j,vx,l,vy,n,vz,p,q,r,s,t2,"
+                                       "ax,ay,az,x1,y1,z1\n";
+    for (const auto& r : records)
+    {
+        REQUIRE(r.size() == 27);
+        auto row = r;
+        for (std::size_t c : {5u, 6u, 7u, 11u, 13u, 15u, 21u, 22u, 23u})
+            row[c] *= ft2m;
+        for (std::size_t c = 0; c < row.size(); c++)
+            metric << (c ? "," : "") << row[c];
+        metric << "\n";
+    }
+    const TempCsv metric_track(metric.str());
+
+    const Trajectory in_feet("tracks/S-76D/197421AC.csv", "databases/S-76D.json", {}, feet);
+    const Trajectory in_metres(metric_track.path, "databases/S-76D.json", {}, metres);
+
+    REQUIRE(in_metres.states.size() == in_feet.states.size());
+    for (std::size_t i = 0; i < in_feet.states.size(); i++)
+    {
+        const auto& a = in_feet.states[i];
+        const auto& b = in_metres.states[i];
+        // Positions and velocities are already metric internally, so they match
+        // to the round-off of writing the file out and reading it back.
+        REQUIRE(std::fabs(b.x - a.x) < 1e-9);
+        REQUIRE(std::fabs(b.z - a.z) < 1e-9);
+        REQUIRE(std::fabs(b.vx - a.vx) < 1e-9);
+        // The derived flight parameters are what actually index the database.
+        REQUIRE(std::fabs(b.CT - a.CT) < 1e-12);
+        REQUIRE(std::fabs(b.mu - a.mu) < 1e-12);
+    }
+}
+
+TEST_CASE("an altitude column may only claim the unit in force", "[units][geodetic]")
+{
+    // "alt_ft" under --units m would read feet as metres and fly the aircraft
+    // a third as high; refusing to match is what makes that loud instead of
+    // silent.  A bare "alt" claims nothing and is always taken.
+    const std::string body = "0,39.81,-74.43,300\n1,39.811,-74.431,299\n2,39.812,-74.432,298\n";
+    const TempCsv in_feet("time,lat,lon,alt_ft\n" + body);
+    const TempCsv in_metres("time,lat,lon,alt_m\n" + body);
+    const TempCsv unlabelled("time,lat,lon,alt\n" + body);
+
+    GeodeticInput input;
+    input.frame = LocalFrame(Geodetic {39.81, -74.43, 0.0});
+
+    REQUIRE_NOTHROW(Trajectory(in_feet.path, "databases/S-76D.json", input, feet));
+    REQUIRE_THROWS(Trajectory(in_feet.path, "databases/S-76D.json", input, metres));
+    REQUIRE_NOTHROW(Trajectory(in_metres.path, "databases/S-76D.json", input, metres));
+    REQUIRE_THROWS(Trajectory(in_metres.path, "databases/S-76D.json", input, feet));
+    REQUIRE_NOTHROW(Trajectory(unlabelled.path, "databases/S-76D.json", input, feet));
+    REQUIRE_NOTHROW(Trajectory(unlabelled.path, "databases/S-76D.json", input, metres));
 }

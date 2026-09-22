@@ -80,7 +80,7 @@ struct GeodeticColumns
     }
 };
 
-GeodeticColumns find_geodetic_columns(const LabelledCsv& csv)
+GeodeticColumns find_geodetic_columns(const LabelledCsv& csv, LengthUnit unit)
 {
     // Aliases are matched after LabelledCsv::normalise, which lower-cases,
     // drops a parenthesised unit and removes punctuation -- so "Alt (ft)",
@@ -91,13 +91,18 @@ GeodeticColumns find_geodetic_columns(const LabelledCsv& csv)
     columns.utc = csv.column({"utcsec", "utc", "utc seconds", "utc time"});
     columns.latitude = csv.column({"lat", "latitude", "lat deg", "latitude deg"});
     columns.longitude = csv.column({"lon", "long", "longitude", "lon deg", "longitude deg"});
-    // Only the spellings that agree with the unit actually read.  "alt_ft" is
-    // matched and "alt_m" deliberately is not: an unmatched altitude column
-    // makes the file fail to parse at all, which is the right answer, where
-    // matching it would read metres as feet and quietly fly the aircraft three
-    // times too high.
-    columns.altitude = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height",
-            "alt ft", "altitude ft", "alt msl ft"});
+    // Only the spellings that agree with the unit actually being read.  A file
+    // that says "alt_ft" while --units says metres is not matched, and failing
+    // to parse is the right answer: matching it would read one unit as the
+    // other and quietly fly the aircraft three times too high or too low.  The
+    // bare spellings carry no claim and are always accepted.
+    columns.altitude = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height"});
+    if (columns.altitude == LabelledCsv::npos)
+    {
+        columns.altitude = unit.to_metres == 1.0
+                ? csv.column({"alt m", "altitude m", "alt msl m"})
+                : csv.column({"alt ft", "altitude ft", "alt msl ft"});
+    }
     columns.east_speed = csv.column({"ve", "v east", "veast", "east velocity"});
     columns.north_speed = csv.column({"vn", "v north", "vnorth", "north velocity"});
     columns.up_speed = csv.column({"vu", "vup", "v up", "up velocity", "climb rate", "climb"});
@@ -120,7 +125,7 @@ SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>
 // columns of its own.
 void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         const GeodeticColumns& columns, const dimensional_data& vehicle,
-        const GeodeticInput& input, std::optional<LocalFrame>& frame,
+        const GeodeticInput& input, LengthUnit unit, std::optional<LocalFrame>& frame,
         std::vector<State>& states)
 {
     const std::size_t rows = csv.rows.size();
@@ -191,7 +196,8 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
 
         // Altitude is above mean sea level while z is height above the plane
         // the observers stand on, so the ground's elevation comes off first.
-        const double height = (data[columns.altitude] - input.ground_elevation_ft) * ft2m;
+        const double height
+                = data[columns.altitude] * unit.to_metres - input.ground_elevation;
         const Vec3 local = frame->to_local(Geodetic {latitude, longitude, height});
         x.push_back(local(0));
         y.push_back(local(1));
@@ -201,8 +207,9 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         {
             // East/north/up in ft/s, turned onto the frame's axes.  A velocity
             // is a direction, so only the rotation applies to it.
-            const Vec3 enu(data[columns.east_speed] * ft2m, data[columns.north_speed] * ft2m,
-                    data[columns.up_speed] * ft2m);
+            const Vec3 enu(data[columns.east_speed] * unit.to_metres,
+                    data[columns.north_speed] * unit.to_metres,
+                    data[columns.up_speed] * unit.to_metres);
             const Vec3 velocity = frame->from_east_north_up(enu);
             vx.push_back(velocity(0));
             vy.push_back(velocity(1));
@@ -347,7 +354,7 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
 
 namespace niceops {
 
-std::optional<Geodetic> first_geodetic_position(const std::string& filename)
+std::optional<Geodetic> first_geodetic_position(const std::string& filename, LengthUnit unit)
 {
     // Parses the whole file to read one row of it, which is the price of having
     // a single parser rather than a second, subtly different one.  It happens
@@ -366,7 +373,7 @@ std::optional<Geodetic> first_geodetic_position(const std::string& filename)
     }
     if (csv.rows.empty() || csv.rows.front().size() == 27)
         return std::nullopt; // Empty, or the positional AC state format.
-    const auto columns = find_geodetic_columns(csv);
+    const auto columns = find_geodetic_columns(csv, unit);
     if (!columns.positioned() || csv.rows.front().size() < columns.width())
         return std::nullopt;
     return Geodetic {csv.rows.front()[columns.latitude], csv.rows.front()[columns.longitude], 0.0};
@@ -451,7 +458,7 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle)
 }
 
 Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename,
-        const GeodeticInput& geodetic)
+        const GeodeticInput& geodetic, LengthUnit unit)
 {
     // Get vehicle data
     vehicle = configure_vehicle(vehicle_filename);
@@ -498,16 +505,23 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                     // Convert to metric
                     now.utcsec = data[0];
                     now.t = data[1];
-                    now.x = data[5] * ft2m;
-                    now.y = data[6] * ft2m;
-                    now.z = data[7] * ft2m;
-                    now.vx = data[11] * ft2m;
-                    now.vy = data[13] * ft2m;
-                    now.vz = data[15] * ft2m;
+                    now.x = data[5] * unit.to_metres;
+                    now.y = data[6] * unit.to_metres;
+                    now.z = data[7] * unit.to_metres;
+                    now.vx = data[11] * unit.to_metres;
+                    now.vy = data[13] * unit.to_metres;
+                    now.vz = data[15] * unit.to_metres;
                     // Convert to "g"
-                    now.nx = data[21] * fps2g;
-                    now.ny = data[22] * fps2g;
-                    now.nz = (data[23] * fps2g + 1.0);
+                    // Accelerations carry the file's length unit too.  Chosen
+                    // as a single constant rather than unit.to_metres * mps2g,
+                    // so the feet path multiplies by exactly the same fps2g it
+                    // always did -- the product of two constants is not the
+                    // same double as two multiplies, and the state golden is
+                    // pinned at 1e-9.
+                    const double accel_to_g = unit.to_metres == 1.0 ? mps2g : fps2g;
+                    now.nx = data[21] * accel_to_g;
+                    now.ny = data[22] * accel_to_g;
+                    now.nz = (data[23] * accel_to_g + 1.0);
                     derive_flight_parameters(now, vehicle);
                     states.push_back(now);
                     trace("Parsed state: ", states.back());
@@ -520,17 +534,18 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
         }
         else
         {
-            const auto columns = find_geodetic_columns(csv);
+            const auto columns = find_geodetic_columns(csv, unit);
             if (!columns.positioned())
             {
                 input_error("Unrecognised trajectory format in ", filename,
                         ": it is neither the 27-column NASA/FAA AC state format nor a WGS84 "
                         "track. A WGS84 track needs a header naming latitude and longitude "
-                        "columns in degrees, an altitude column in feet, and a time or utcsec "
+                        "columns in degrees, an altitude column in ", unit.name, ", and a time "
+                        "or utcsec "
                         "column in seconds.");
             }
             frame_ = geodetic.frame;
-            read_geodetic_states(filename, csv, columns, vehicle, geodetic, frame_, states);
+            read_geodetic_states(filename, csv, columns, vehicle, geodetic, unit, frame_, states);
         }
     }
     else if (extension == "nc")
@@ -673,7 +688,7 @@ std::vector<double> Trajectory::column(const std::string& varname) const
     return x;
 }
 
-void Trajectory::watts_trim(double xstart_ft)
+void Trajectory::watts_trim(double xstart_metres)
 {
     auto mu = column("mu");
     auto z = column("z");
@@ -684,7 +699,7 @@ void Trajectory::watts_trim(double xstart_ft)
     std::size_t ixmin = 0;
     for (std::size_t i = 0; i < x.size(); i++)
     {
-        if (x[i] > xstart_ft * ft2m)
+        if (x[i] > xstart_metres)
             break;
         ixmin = i;
     }
