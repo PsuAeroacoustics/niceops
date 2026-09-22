@@ -253,16 +253,16 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         // Differentiating an interpolant twice amplifies whatever resolution the
         // coordinates were written at by 1/step^2, and the load factor is that
         // second derivative.  The shipped tracks quantise latitude at 1e-8
-        // degrees, about a millimetre, which at their 0.02 s spacing is worth
-        // a few tenths of a g -- enough to move CT by 17% and the footprint by
-        // 3 dB in the worst cell.  A path smoothing of 0.02 m takes that to
-        // 0.03 dB median and 2.4 dB worst against the same flight's measured
-        // accelerations.
+        // degrees, about a millimetre, which at their 0.02 s spacing moves the
+        // footprint by 11.6 dB at the median against the same flight's measured
+        // accelerations.  The 10 ft default takes that to 0.085 dB; asking for
+        // zero is asking for the 11.6.
         log("Geodetic trajectory ", filename, " is sampled every ", mean_step,
-                " s and is being flown through exactly (--path_smoothing 0). The load factor "
-                "is then the curvature of a path through every given point, coordinate "
-                "rounding included. For measured positions rather than planned waypoints, "
-                "pass --path_smoothing (0.02 m suits the shipped tracks' resolution).");
+                " s and --path_smoothing 0 was given, so it is flown through exactly. The "
+                "load factor is then the curvature of a path through every given point, "
+                "coordinate rounding included, which on a track this dense is mostly noise: "
+                "expect the footprint to be badly wrong. Drop the flag to use the 10 ft "
+                "default.");
     }
     if (!velocity_given && mean_step > 1.0)
     {
@@ -288,9 +288,18 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
     std::vector<SmoothingSpline> fit_velocity;
     if (velocity_given)
     {
-        fit_velocity.push_back(fit_path(time, vx, input.path_smoothing));
-        fit_velocity.push_back(fit_path(time, vy, input.path_smoothing));
-        fit_velocity.push_back(fit_path(time, vz, input.path_smoothing));
+        // Velocity gets its own tolerance, not path_smoothing.  That parameter
+        // is a distance, and passing it here silently reused the same number as
+        // a *speed* -- one value meaning both metres and metres per second.
+        // Harmless while the default was zero; at the current default it would
+        // hand every velocity column a ~3 m/s (6 kt) smoothing budget nobody
+        // asked for.  Zero interpolates the given velocities, which is what
+        // this path did by default before and what a file that bothers to carry
+        // velocity columns means by them.
+        const double velocity_tolerance = 0.0;
+        fit_velocity.push_back(fit_path(time, vx, velocity_tolerance));
+        fit_velocity.push_back(fit_path(time, vy, velocity_tolerance));
+        fit_velocity.push_back(fit_path(time, vz, velocity_tolerance));
     }
 
     // A file with its own utcsec column dates the flight itself; otherwise the

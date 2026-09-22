@@ -945,8 +945,11 @@ int run(int argc, char* argv[])
     std::string dnl_file = "";
     double utc_offset = 0.0;
     double trim_start_ft = std::numeric_limits<double>::quiet_NaN();
+    // Every length on this command line is in FEET, matching the trajectory,
+    // observer and level files.  They are converted to metres in one place
+    // below; nothing downstream of that seam sees feet.  See `length_unit`.
     std::vector<double> grid_bounds;
-    double grid_step = 25.0;
+    double grid_step = 82.020997375328079; // 25 m
     std::string sphere_file = "";
     std::string aam_file = "";
     std::string power_file = "";
@@ -982,7 +985,7 @@ int run(int argc, char* argv[])
     std::vector<double> band_limits;
     bool ground_effect = false;
     double flow_resistance = flow_resistance::grassy_field;
-    double receiver_height = 1.2;
+    double receiver_height = 3.9370078740157481; // 1.2 m
     double turbulence = 0.0;
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
@@ -995,7 +998,12 @@ int run(int argc, char* argv[])
     double frame_bearing = std::numeric_limits<double>::quiet_NaN();
     double ground_elevation = 0.0;
     double start_utc = 0.0;
-    double path_smoothing = 0.0;
+    // Waypoints state intent, not a constraint to be met to the inch: forcing
+    // a path exactly through them manufactures curvature, and the load factor
+    // is that curvature, so it lands in CT and then in the levels.  Ten feet is
+    // loose enough to absorb both coordinate rounding and the corner a planner
+    // did not mean literally.
+    double path_smoothing = 10.0;
     bool latlon = false;
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
@@ -1031,9 +1039,11 @@ int run(int argc, char* argv[])
     app.add_option("--trim", trim_start_ft,
             "Crop each trajectory from this x (ft) to its lowest/slowest point. Off by default.");
     app.add_option("--grid", grid_bounds,
-            "Observer grid bounds in metres: xmin xmax ymin ymax. Default -1500 1500 -1500 1500.")
+            "Observer grid bounds in feet: xmin xmax ymin ymax. Default +/-4921.26 "
+            "(= 1500 m).")
             ->expected(4);
-    app.add_option("--gridstep", grid_step, "Observer grid spacing in metres (default 25).");
+    app.add_option("--gridstep", grid_step,
+            "Observer grid spacing in feet (default 82.021, = 25 m).");
     app.add_option("-D,--dnlfile", dnl_file,
             "Write the day-night level, summed over every trajectory, to this file.");
     app.add_option("--utc_offset", utc_offset,
@@ -1069,7 +1079,8 @@ int run(int argc, char* argv[])
             "Specific flow resistance of the ground, kPa s/m^2. 30 snow, 225 grass (default), "
             "650 soil, 3000 dirt, 10000 concrete, 50000 asphalt.");
     app.add_option("--receiver_height", receiver_height,
-            "Receiver height above ground for --ground_effect, m (default 1.2).");
+            "Receiver height above ground for --ground_effect, ft (default 3.937, "
+            "= 1.2 m).");
     app.add_option("--origin", origin,
             "WGS84 reference for the local frame: latitude longitude, in degrees. "
             "Defaults to the first position of the first geodetic trajectory.")
@@ -1084,8 +1095,9 @@ int run(int argc, char* argv[])
             "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
             "window. Ignored when the file carries its own utcsec column.");
     app.add_option("--path_smoothing", path_smoothing,
-            "How far, in metres RMS, the path fitted through a geodetic track may sit from "
-            "the given positions. Default 0, which flies through them exactly.");
+            "How far, in feet RMS, the path fitted through a geodetic track may sit from "
+            "the given positions, per axis. Default 10. Zero flies through them exactly, "
+            "which on measured positions makes the load factor track coordinate rounding.");
     app.add_flag("--latlon", latlon,
             "Also write each level file as latitude, longitude, level. Needs --origin unless "
             "the trajectory is itself geodetic.");
@@ -1147,7 +1159,11 @@ int run(int argc, char* argv[])
 
     if (grid_bounds.empty())
     {
-        grid_bounds = {-1500.0, 1500.0, -1500.0, 1500.0};
+        // +/-1500 m, spelled in feet.  Both the bounds and the step convert back
+        // to exactly the metric values, and the 120 generated coordinates are
+        // bit-identical either way, so the goldens do not move.
+        grid_bounds = {-4921.2598425196848, 4921.2598425196848,
+                -4921.2598425196848, 4921.2598425196848};
     }
     if (!(grid_step > 0.0))
     {
@@ -1269,6 +1285,16 @@ int run(int argc, char* argv[])
         // the self test passes on every shipped database.
         database.self_test(loaded_database);
     }
+
+    // The one place feet become metres.  Everything above is in the units the
+    // user typed; everything below is metric, as the whole computation is.  A
+    // future --units flag sets this factor and nothing else has to change.
+    const double length_unit = ft2m;
+    for (double& bound : grid_bounds)
+        bound *= length_unit;
+    grid_step *= length_unit;
+    receiver_height *= length_unit;
+    path_smoothing *= length_unit;
 
     ObserverSet observer_set = scattered
             ? scattered_observers(observer_file)

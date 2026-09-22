@@ -395,3 +395,56 @@ TEST_CASE("adapt takes the load factor from the fitted path", "[trajectory][adap
         REQUIRE(now.nz * now.LF == Catch::Approx(1.0).epsilon(1e-6));
     }
 }
+
+TEST_CASE("the default observer grid is bit-exact in feet", "[units]")
+{
+    // Every length on the command line is in feet, the grid included.  Its
+    // default is +/-1500 m in steps of 25 m spelled in feet, and the goldens
+    // encode the resulting observer positions -- so the two spellings have to
+    // generate the identical sequence, not merely endpoints that agree.
+    const double bound_ft = 4921.2598425196848;
+    const double step_ft = 82.020997375328079;
+
+    // The count comes from ceil((end - begin) / step); one ULP the wrong way
+    // would give 121 points instead of 120 and move every golden.
+    const double count = std::ceil((bound_ft - -bound_ft) / step_ft);
+    REQUIRE(count == 120.0);
+
+    for (int i = 0; i < 120; i++)
+    {
+        const double as_metres = -1500.0 + 25.0 * i;
+        const double via_feet = (-bound_ft + step_ft * i) * ft2m;
+        REQUIRE(via_feet == as_metres);
+    }
+}
+
+TEST_CASE("path_smoothing bounds the deviation, in feet", "[units][geodetic]")
+{
+    // It is an acceptable deviation per axis, not an abstract weight: the fit
+    // is allowed to sit that far from the given positions and will use the
+    // whole allowance.  Ten feet of slack has to show up as ten feet.
+    const TempCsv track(demo_track_as_geodetic("time,lat,lon,alt"));
+
+    auto rms_offset = [&](double smoothing_ft) {
+        auto input = demo_frame(smoothing_ft * ft2m);
+        Trajectory fitted(track.path, "databases/S-76D.json", input);
+        auto exact_input = demo_frame(0.0);
+        Trajectory exact(track.path, "databases/S-76D.json", exact_input);
+        REQUIRE(fitted.states.size() == exact.states.size());
+        double sum = 0.0;
+        for (std::size_t i = 0; i < fitted.states.size(); i++)
+        {
+            const double dx = fitted.states[i].x - exact.states[i].x;
+            sum += dx * dx;
+        }
+        return std::sqrt(sum / static_cast<double>(fitted.states.size())) / ft2m;
+    };
+
+    // The exact fit passes through the given points, so the offset from it is
+    // the deviation the bound allows.  Loose tolerance: the bound is on the
+    // residual against the data, and x is one axis of three.
+    REQUIRE(rms_offset(10.0) > 1.0);
+    REQUIRE(rms_offset(10.0) < 20.0);
+    // Monotone in the allowance.
+    REQUIRE(rms_offset(40.0) > rms_offset(10.0));
+}

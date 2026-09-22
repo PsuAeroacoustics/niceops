@@ -197,7 +197,13 @@ Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERS
 
 Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. For the full option set see `README.md`, which documents every flag, or the CLI11 setup in `src/niceops.cpp`.
 
-Input/output files use **feet**; internal computation is metric (`ft2m = 0.3048`). Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
+Input/output files use **feet**, and so does every length on the command line -- `--grid`,
+`--gridstep`, `--trim`, `--ground_elevation`, `--receiver_height`, `--path_smoothing`.  Internal
+computation is metric (`ft2m = 0.3048`); the conversion is a single seam in `run()`, marked
+`length_unit`, and a `--units` flag would set that factor and change nothing else.  Four of
+those options used to be metric while the files were not, which is the inconsistency that seam
+removes.  The grid default is expressed in feet and is bit-exact against the old metric one --
+same point count, same 120 coordinates -- so the goldens did not move. Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
 
 ## Architecture
 
@@ -505,14 +511,17 @@ touching it:
   from `--origin` or from the first geodetic track and hands it to each `Trajectory`.
 - **Velocity and load factor are derived, and that is the whole accuracy story.** The
   projection is not the lossy part: altitude passes through exactly and x/y to under a metre.
-  Differentiating a spline twice for the load factor is. Interpolating a *dense* track exactly
-  (`--path_smoothing 0`, the default) amplifies the coordinates' 1e-8 degree rounding by
-  1/step² -- 2500x on the 0.02 s demo track -- which moves the footprint by **11.6 dB at the
-  median**; `--path_smoothing 0.02` takes that to 0.028 dB median and 2.4 dB worst. The default
-  stays at zero because a planner's waypoints are exact intent rather than measurements, and
-  the reader logs a warning when it sees dense input with no smoothing -- but on dense measured
-  input that warning is the whole ballgame, and **whether zero is still the right default is an
-  open question**.
+  Differentiating a spline twice for the load factor is. **`--path_smoothing` defaults to 10 ft**
+  and is an acceptable deviation in feet RMS per axis, not an abstract weight -- the solver
+  spends the whole budget rather than merely staying inside it. Interpolating exactly
+  (`--path_smoothing 0`) amplifies the coordinates' 1e-8 degree rounding by 1/step² -- 2500x on
+  the 0.02 s demo track -- and moves the footprint by **11.6 dB at the median**; the 10 ft
+  default takes that to 0.085 dB. Zero is wrong for both kinds of input, which is why it is no
+  longer the default: measured positions turn into rounding noise, and sparse waypoints are a
+  statement of intent, so flying exactly through them manufactures manoeuvring that is itself a
+  noise source. 10 ft is not the optimum for any one input shape (a dense 50 Hz track does
+  better at 0.0656 ft, tuned to its own resolution) but it is the only value that is good on
+  all of them at once.
 
   Those numbers were re-measured after `SmoothingSpline` was fixed to give the lambda = 0 case
   its curvature. Before that, `--path_smoothing 0` returned a spline with zero second

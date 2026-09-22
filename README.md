@@ -81,6 +81,26 @@ Input and output files use **feet**; the computation is metric internally.
 - `--latlon` — writes a `_latlon` companion beside every level file above, as latitude, longitude, level.
 - `--export_sphere` — a whole interpolated noise sphere, written as a one-group `.nod`.
 
+## Units
+
+**Every length on the command line is in feet**, matching the trajectory, observer and level
+files. That covers `--grid`, `--gridstep`, `--trim`, `--ground_elevation`, `--receiver_height`
+and `--path_smoothing`. The computation itself is metric throughout; the conversion happens
+once, where the command line is parsed, and nothing downstream of that sees feet.
+
+Non-length quantities keep the units the standards they come from use, because converting them
+would make them harder to check against the source: temperature in K, pressure and flow
+resistance in kPa (ISO 9613-1 is written in kPa), frequency in Hz, angles in degrees, time in
+seconds, levels in dB.
+
+The observer grid's default is `±4921.26 ft`, step `82.021` — exactly ±1500 m in steps of 25 m,
+which is what the grid has always been and what the golden outputs encode. Expressing it in
+feet is bit-exact: the point count and all 120 coordinates are identical either way.
+
+> Earlier versions took `--grid`, `--gridstep`, `--receiver_height` and `--path_smoothing` in
+> metres while `--trim` and `--ground_elevation` were in feet and every file was in feet. If
+> you have scripts written against that, the four metric flags need converting.
+
 ## Command line arguments
 
 ### Inputs and outputs
@@ -98,7 +118,7 @@ Input and output files use **feet**; the computation is metric internally.
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
 | `--ground_elevation` | Elevation of the observer plane above mean sea level, ft. Subtracted from a WGS84 track's altitude column. |
-| `--path_smoothing` | How far, metres RMS, the path fitted through a WGS84 track may sit from the given positions. Default 0. |
+| `--path_smoothing` | How far, feet RMS per axis, the path fitted through a WGS84 track may sit from the given positions. Default 10. Zero interpolates exactly, which on measured positions makes the load factor track coordinate rounding. |
 | `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. |
 | `--latlon` | Also write each level file as latitude, longitude, level. |
 | `-l`, `--logfile` | Log file (default `log/niceops.log`). |
@@ -112,7 +132,7 @@ Input and output files use **feet**; the computation is metric internally.
 | `-q`, `--qsam` / `--no-qsam` | Use the flight path angle relative to the tip-path-plane normal rather than the vertical. On by default. |
 | `-s`, `--step` | Resampling step for trajectory adaptation. **Not** the SEL integration step, which comes from the trajectory's own sampling. |
 | `--trim` | Crop each trajectory from this x (ft) to its lowest/slowest point. Off by default; it changes which part of the flight is integrated. |
-| `--grid`, `--gridstep` | Observer grid bounds and spacing, in **metres** (the grid is defined metrically). Default `-1500 1500 -1500 1500`, step 25. |
+| `--grid`, `--gridstep` | Observer grid bounds and spacing, in feet. Default `-4921.26 4921.26 -4921.26 4921.26`, step 82.021 (= ±1500 m, step 25 m). |
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
@@ -121,7 +141,7 @@ Input and output files use **feet**; the computation is metric internally.
 | `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
-| `--receiver_height`, `--turbulence` | Receiver height (m, default 1.2) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
+| `--receiver_height`, `--turbulence` | Receiver height (ft, default 3.937 = 1.2 m) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
 
 ### Performance
 
@@ -365,35 +385,50 @@ frame serves the whole run, because every trajectory in it shares the observers.
 
 **What is derived, and how well.** A WGS84 track gives position only, so the velocity and the
 load factor behind C<sub>T</sub> come from the first and second derivatives of a smoothing
-spline through the path. `--path_smoothing` says how far, in metres RMS, that fit may sit from
-the given positions; zero — the default — flies through them exactly, which is what waypoints
-mean.
+spline through the path. `--path_smoothing` says how far, in feet RMS **per axis**, that fit
+may sit from the given positions. It is an acceptable deviation, not an abstract weight: the
+solver finds the smoothest curve whose RMS residual meets the bound, so asking for 10 ft means
+the fit will use 10 ft of slack, not merely stay under it.
+
+The default is 10 ft. Zero interpolates exactly, and exact interpolation is the wrong thing for
+both kinds of input: measured positions make the second derivative track coordinate rounding,
+and sparse waypoints are a statement of intent rather than a constraint to be met to the inch —
+flying precisely through them manufactures aggressive manoeuvring, which is itself a noise
+source.
 
 Feeding the demo track's own lat/lon/alt columns back in, against the footprint computed from
 its full inertial state:
 
 | Input | Median | 99th pct | Max | Cells over 1 dB (of 14400) |
 | --- | --- | --- | --- | --- |
-| 50 Hz positions, `--path_smoothing 0.02` | 0.028 dB | 0.64 | 2.44 | 37 |
-| 50 Hz positions, interpolated exactly | 11.6 dB | 15.51 | 16.32 | 14395 |
-| 50 Hz positions and velocity columns | 0.009 dB | 0.41 | 2.44 | 28 |
-| Waypoints 10 s apart, resampled to 0.1 s | 0.083 dB | 1.01 | 2.44 | 151 |
+| 50 Hz positions, default `--path_smoothing 10` | 0.085 dB | 1.00 | 2.88 | 145 |
+| 50 Hz positions, `--path_smoothing 0.0656` (= 0.02 m) | 0.028 dB | 0.64 | 2.44 | 37 |
+| 50 Hz positions, `--path_smoothing 0` (exact) | 11.6 dB | 15.51 | 16.32 | 14395 |
+| 50 Hz positions and velocity columns, default | 0.014 dB | 0.42 | 2.25 | 18 |
+| Waypoints 10 s apart, resampled to 0.1 s, default | 0.096 dB | 0.95 | 2.10 | 107 |
 
 The projection itself is not the lossy part: it reproduces that file's own x/y to under a metre
 over 3.2 km, and altitude passes through exactly. What costs is differentiating twice.
-Interpolating a *dense* track exactly is by far the worst of the four, because the second
-derivative amplifies the coordinates' 1e-8 degree rounding by 1/step² — 2500x on a 0.02 s
-track — and the load factor is that second derivative. The tool logs a warning when it sees
-that combination, and on dense input it should be read as an instruction rather than a note:
-**pass `--path_smoothing` for measured positions.** Sparse waypoints are resampled onto the
-`-s` grid first — never coarsened — and their load factor is an artefact of the interpolant,
-which is also logged.
 
-> These four rows were re-measured after the interpolating spline was fixed to carry its own
-> curvature (see `src/smoothing_spline.cpp`). Before that, `--path_smoothing 0` produced a
-> spline with *zero* second derivative everywhere, so the load factor came out as exactly 1 g
-> on every state and the rounding amplification described above never happened — which is why
-> the row read 0.196 dB. The old figure measured a bug, not an interpolant.
+The default is not the best row in the table — a dense 50 Hz track does better at 0.0656 ft,
+which is tuned to *that* file's coordinate resolution. It is the best *default*, because it is
+the only setting that is good on every input shape at once: 0.085 dB on dense positions,
+0.096 dB on sparse waypoints, 0.014 dB when velocities are given. Exact interpolation is
+uniformly catastrophic on measured input, and a value tuned for one sampling rate is wrong for
+another. Tune it down if you know your coordinate resolution; leave it alone otherwise.
+
+Sparse waypoints are resampled onto the `-s` grid first — never coarsened — and their load
+factor is an artefact of the interpolant, which is logged.
+
+> The `--path_smoothing 0` row was, until recently, reported as 0.196 dB. That measured a bug:
+> `SmoothingSpline` short-circuited at λ = 0 and returned zero curvature, so the load factor
+> came out as exactly 1 g on every state and the rounding amplification never happened. With
+> the interpolating spline carrying its own curvature, exact interpolation costs what the
+> surrounding text always said it would.
+
+**Note on velocity columns.** `--path_smoothing` is a distance and applies to the fitted
+position only. A file carrying `ve`/`vn`/`vu` has those interpolated exactly; they are
+measurements of the quantity wanted, not something to be re-derived.
 
 **Output.** `--latlon` writes a companion beside every level file (`out.csv` →
 `out_latlon.csv`) holding latitude, longitude and level, one row per observer, for dropping a
