@@ -387,3 +387,246 @@ TEST_CASE("a database with no condition groups is refused, not crashed", "[spher
     REQUIRE_THROWS_AS(Database(path), std::runtime_error);
     std::filesystem::remove(path);
 }
+
+namespace {
+
+// Writes a minimal .nod with one group per (advance_ratio, flight_path_angle,
+// thrust_coefficient, dBA) condition, each a uniform 2x2 (phi, theta) sphere
+// (dBA and EAA=0 the same at every channel) -- enough for a real GridAxis on
+// both axes without needing to hand-verify any phi/theta interpolation
+// arithmetic, which is not what these tests are about. radius is always
+// sphere_radius_m, so eval() at range == radius has spreading_loss == 0 and
+// (EAA == 0) excess_attenuation == 0, leaving ground_level == sphere_level +
+// level_correction_db exactly -- the cleanest point to query panam's
+// load-factor scaling law against.
+std::string write_fixed_load_factor_test_database(const std::string& name,
+        const std::vector<std::array<double, 4>>& conditions, bool fixed_load_factor,
+        double sphere_radius_m = 30.48)
+{
+    const auto path = (std::filesystem::temp_directory_path() / name).string();
+    int file = 0;
+    REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file) == NC_NOERR);
+    int scalar_dim = 0;
+    REQUIRE(nc_def_dim(file, "scalar", 1, &scalar_dim) == NC_NOERR);
+    int same_grid_var = 0, version_var = 0, flag_var = 0;
+    REQUIRE(nc_def_var(file, "same_grid", NC_SHORT, 1, &scalar_dim, &same_grid_var) == NC_NOERR);
+    REQUIRE(nc_def_var(file, "database_version", NC_INT, 1, &scalar_dim, &version_var) == NC_NOERR);
+    REQUIRE(nc_def_var(file, "fixed_load_factor", NC_SHORT, 1, &scalar_dim, &flag_var) == NC_NOERR);
+
+    struct GroupVars
+    {
+        int group, radius, scale, mu, gamma, ct, phi, theta, dba, eaa;
+    };
+    // Full-sphere coverage (every phi x every theta), or direction_bounds'
+    // padding logic legitimately leaves bins this fixture never touches at
+    // -infinity -- correct (a direction with no nearby grid data cannot be
+    // bounded), but wrong for a test that wants to sweep observers broadly.
+    // A real AAM sphere always covers the whole range for the same reason.
+    const std::vector<double> phis = {-90.0, -30.0, 30.0, 90.0};
+    const std::vector<double> thetas = {0.0, 60.0, 120.0, 180.0};
+    const std::size_t n_channels = phis.size() * thetas.size();
+
+    std::vector<GroupVars> groups;
+    for (std::size_t i = 0; i < conditions.size(); i++)
+    {
+        int group = 0;
+        REQUIRE(nc_def_grp(file, ("sphere" + std::to_string(i)).c_str(), &group) == NC_NOERR);
+        int radii_dim = 0, condition_dim = 0, channel_dim = 0;
+        REQUIRE(nc_def_dim(group, "radii", 1, &radii_dim) == NC_NOERR);
+        REQUIRE(nc_def_dim(group, "condition", 1, &condition_dim) == NC_NOERR);
+        REQUIRE(nc_def_dim(group, "channels", n_channels, &channel_dim) == NC_NOERR);
+        GroupVars v {group, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        REQUIRE(nc_def_var(group, "radius", NC_DOUBLE, 1, &radii_dim, &v.radius) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "rotor_scale", NC_DOUBLE, 1, &condition_dim, &v.scale) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "advance_ratio", NC_DOUBLE, 1, &condition_dim, &v.mu) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "flight_path_angle", NC_DOUBLE, 1, &condition_dim, &v.gamma)
+                == NC_NOERR);
+        REQUIRE(nc_def_var(group, "thrust_coefficient", NC_DOUBLE, 1, &condition_dim, &v.ct)
+                == NC_NOERR);
+        REQUIRE(nc_def_var(group, "phi", NC_DOUBLE, 1, &channel_dim, &v.phi) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "theta", NC_DOUBLE, 1, &channel_dim, &v.theta) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "dBA", NC_DOUBLE, 1, &channel_dim, &v.dba) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "EAA", NC_DOUBLE, 1, &channel_dim, &v.eaa) == NC_NOERR);
+        groups.push_back(v);
+    }
+    REQUIRE(nc_enddef(file) == NC_NOERR);
+
+    const short one = 1;
+    const short flag = fixed_load_factor ? 1 : 0;
+    const int version = 1;
+    REQUIRE(nc_put_var_short(file, same_grid_var, &one) == NC_NOERR);
+    REQUIRE(nc_put_var_int(file, version_var, &version) == NC_NOERR);
+    REQUIRE(nc_put_var_short(file, flag_var, &flag) == NC_NOERR);
+
+    const double scale = 1.0;
+    std::vector<double> phi_channel, theta_channel;
+    for (double p : phis)
+        for (double t : thetas)
+        {
+            phi_channel.push_back(p);
+            theta_channel.push_back(t);
+        }
+    for (std::size_t i = 0; i < conditions.size(); i++)
+    {
+        const auto& v = groups[i];
+        // Uniform across every channel: these tests are about the
+        // load-factor correction, not phi/theta interpolation, so the base
+        // level is the same everywhere on a given condition's sphere.
+        const std::vector<double> eaa(n_channels, 0.0);
+        const std::vector<double> dba(n_channels, conditions[i][3]);
+        REQUIRE(nc_put_var_double(v.group, v.radius, &sphere_radius_m) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.scale, &scale) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.mu, &conditions[i][0]) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.gamma, &conditions[i][1]) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.ct, &conditions[i][2]) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.phi, phi_channel.data()) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.theta, theta_channel.data()) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.dba, dba.data()) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.eaa, eaa.data()) == NC_NOERR);
+    }
+    REQUIRE(nc_close(file) == NC_NOERR);
+    return path;
+}
+
+// Three conditions at a shared reference CT, forming a non-degenerate
+// triangle in (mu, gamma) so blend_at() has a real 2D locate to walk rather
+// than the single-point nearest-condition fallback.
+constexpr double test_ct_reference = 0.005;
+const std::vector<std::array<double, 4>> fixed_load_factor_conditions = {
+    {0.0, 0.0, test_ct_reference, 100.0},
+    {1.0, 0.0, test_ct_reference, 110.0},
+    {0.0, 1.0, test_ct_reference, 120.0},
+};
+
+} // namespace
+
+TEST_CASE("fixed_load_factor: query at or below the reference applies no correction",
+        "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_fixed_lf_no_correction.nod", fixed_load_factor_conditions, true);
+    Database db(path);
+
+    // At (mu=0, gamma=0) the blend lands on condition 0 alone -- "a sphere
+    // exported at an operating condition the database already holds comes
+    // back bit-for-bit as that sphere's own data" (interpolate_sphere's own
+    // comment) -- so this is dBA=100.0 exactly, with no interpolation
+    // arithmetic to account for.
+    for (double ct : {test_ct_reference * 0.2, test_ct_reference * 0.5, test_ct_reference})
+    {
+        const auto blend = db.blend_at(0.0, 0.0, ct);
+        REQUIRE(blend.level_correction_db == 0.0);
+        // range == radius: spreading_loss and (EAA == 0) excess_attenuation
+        // both vanish, so eval() is exactly the stored level.
+        REQUIRE(approx_equal(db.eval(db.sphere_radius(), 0.0, 90.0, blend), 100.0));
+    }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("fixed_load_factor: query above the reference scales by 20*log10(load factor)",
+        "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_fixed_lf_correction.nod", fixed_load_factor_conditions, true);
+    Database db(path);
+
+    for (double load_factor : {1.1, 2.0, 5.0, 50.0}) // no upper bound, by design
+    {
+        const double ct = test_ct_reference * load_factor;
+        const auto blend = db.blend_at(0.0, 0.0, ct);
+        const double expected = 20.0 * std::log10(load_factor);
+        REQUIRE(approx_equal(blend.level_correction_db, expected));
+        REQUIRE(approx_equal(db.eval(db.sphere_radius(), 0.0, 90.0, blend), 100.0 + expected));
+    }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("fixed_load_factor: cull_range accounts for the correction", "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_fixed_lf_cull.nod", fixed_load_factor_conditions, true);
+    Database db(path);
+
+    // A cutoff comfortably above the stored 100 dBA but below the corrected
+    // level at 3x load factor (100 + 20*log10(3) ~= 109.5): cull_range must
+    // not treat this state as culled at any finite range, or eval() at a
+    // range where it is still genuinely audible would be skipped.
+    const auto blend = db.blend_at(0.0, 0.0, test_ct_reference * 3.0);
+    const double cutoff = 105.0;
+    const double range = db.cull_range(blend, cutoff);
+    REQUIRE(std::isfinite(range));
+
+    // Sweep ranges out to (and past) the bound and check the invariant
+    // cull_range exists to guarantee: eval() must be below cutoff at or
+    // beyond it.  (EAA == 0 in this fixture, so level is non-increasing in
+    // range and one boundary check would do, but sweeping is what the real
+    // DirectionBounds test above does and catches an off-by-factor error
+    // the same way.)
+    for (double r = range; r <= range * 1.5; r += db.sphere_radius())
+        REQUIRE(db.eval(r, 0.0, 90.0, blend) <= cutoff + 1e-9);
+    // And it must not be trivially large: just below it, the level this
+    // fixture actually has is still above cutoff, so a bound of 0 (or
+    // unbounded) would not have been wrong, but would have been useless.
+    REQUIRE(db.eval(range * 0.9, 0.0, 90.0, blend) > cutoff);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("fixed_load_factor: direction_bounds accounts for varying load factor "
+        "at the same (mu, gamma)",
+        "[sphere_database]")
+{
+    // Two states share (mu, gamma) = (0, 0) -- the same 2D blend indices --
+    // but query different load factors, which the 2D locate cannot see: this
+    // is exactly the case the indices-alone grouping in direction_bounds
+    // would have merged, applying one state's correction to both.
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_fixed_lf_bounds.nod", fixed_load_factor_conditions, true);
+    Database db(path);
+
+    std::vector<Database::SourceState> states;
+    for (double load_factor : {1.0, 4.0})
+    {
+        states.push_back(db.source_state(Vec3(0.0, 0.0, 100.0), Vec3(50.0, 0.0, 0.0),
+                Vec3(0.0, 0.0, 1.0), 0.0, 0.0, test_ct_reference * load_factor));
+    }
+    const auto bounds = db.direction_bounds(states);
+    REQUIRE(bounds.usable());
+
+    const double radius = db.sphere_radius();
+    for (std::size_t s = 0; s < states.size(); s++)
+    {
+        for (double x = -300.0; x <= 300.0; x += 37.0)
+        {
+            for (double y = -300.0; y <= 300.0; y += 41.0)
+            {
+                const Vec3 observer(x, y, 0.0);
+                const Vec3 delta = observer - states[s].position;
+                const double squared_range = delta.squaredNorm();
+                if (squared_range <= radius * radius)
+                    continue;
+                const int bin = DirectionBounds::bin(states[s].frame.nose.dot(delta),
+                        states[s].frame.normal.dot(delta),
+                        states[s].frame.starboard.dot(delta), squared_range);
+                const double level = db.level_at_observer(observer, states[s]);
+                REQUIRE(bounds.numerator(s, bin)
+                        >= std::pow(10.0, 0.1 * level) * squared_range * (1.0 - 1e-9));
+            }
+        }
+    }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("fixed_load_factor requires thrust_coefficient to actually be constant",
+        "[sphere_database]")
+{
+    // The flag is trusted for the triangulation (dropping CT from it entirely)
+    // but not blindly: a file claiming fixed_load_factor with varying CT would
+    // otherwise silently stop scaling correctly rather than fail loudly.
+    auto conditions = fixed_load_factor_conditions;
+    conditions[1][2] = test_ct_reference * 2.0; // now inconsistent with the others
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_fixed_lf_inconsistent.nod", conditions, true);
+
+    REQUIRE_THROWS_AS(Database(path), std::runtime_error);
+    std::filesystem::remove(path);
+}

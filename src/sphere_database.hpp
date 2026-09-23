@@ -261,10 +261,27 @@ public:
     // expensive part of an evaluation -- it is a CGAL Delaunay locate() walk --
     // and it depends only on (mu, gamma, CT), so it is hoisted out of any loop
     // that holds the operating condition fixed.
+    //
+    // A database built with panam's load_factors=None stores only the LF=1
+    // reference condition at each (mu, gamma): CT carries no information (it
+    // is the same constant on every stored sphere), so the triangulation this
+    // blends against is 2D, over (mu, gamma) alone; weights[3]/indices[3] is
+    // then padding (weight 0, matching the existing convention for a
+    // degenerate blend), and level_correction_db carries what CT alone would
+    // have contributed -- see the fixed_load_factor handling in the .cpp.
     struct Blend
     {
         std::array<double, condition_dims + 1> weights;
         std::array<std::size_t, condition_dims + 1> indices;
+        // Additive dB correction for a query load factor above what the
+        // database stores, from panam's own scaling law (dBA, and every band
+        // of a spectral database, are exactly linear in 20*log10(load_factor)
+        // -- see add_sphere_group in panam's flight_acoustics.py).  Zero for
+        // an ordinary database, and for a query at or below the reference:
+        // the correction only ever adds level, matching panam's own
+        // convention of leaving load factors at or below 1 g unscaled from
+        // the stored reference rather than extrapolating them down.
+        double level_correction_db = 0.0;
     };
 
     // Everything about one trajectory state that every observer shares: where
@@ -465,6 +482,18 @@ private:
     double advance_ratio_min = 0.0, advance_ratio_max = 0.0;
     double flight_path_angle_min = 0.0, flight_path_angle_max = 0.0;
     double thrust_coefficient_min = 0.0, thrust_coefficient_max = 0.0;
+    // From the root `fixed_load_factor` flag (absent or false in every
+    // database predating panam's load_factors=None): every stored sphere is
+    // the same LF=1 reference condition, so CT is constant across them
+    // rather than a real axis, and thrust_coefficient_min/max above are not
+    // used for it -- normalizing against them would divide by zero.  The
+    // triangulation is then built over (mu, gamma) alone (dims 2, not
+    // condition_dims), and blend_at() derives Blend::level_correction_db
+    // from the query CT against reference_thrust_coefficient_ analytically
+    // instead.
+    bool fixed_load_factor_ = false;
+    double reference_thrust_coefficient_ = 0.0;
+    std::size_t active_condition_dims_ = condition_dims;
     // The triangulation over this database's own operating conditions.  Owning
     // it makes several Databases independent; it used to be a file-scope global,
     // so constructing a second one re-armed the interpolator under the first.

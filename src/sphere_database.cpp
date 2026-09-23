@@ -663,6 +663,13 @@ Database::Database(const std::string& datafile_path)
     if (!same_grid)
         input_error("same_grid == false not supported");
 
+    // Optional, absent or false in every database predating panam's
+    // load_factors=None: whether every stored sphere is the same LF=1
+    // reference condition, scaled to other load factors analytically rather
+    // than stored.  See the member comment on fixed_load_factor_.
+    fixed_load_factor_ = get_int_scalar(file_ncid, "fixed_load_factor", 0) != 0;
+    info("fixed_load_factor is set to: ", fixed_load_factor_);
+
     // Optional: builders since the versioned format record the rotor scale at
     // the root, which is enough to redimensionalize without a vehicle file.
     double tip_speed_value = 0.0;
@@ -865,9 +872,22 @@ Database::Database(const std::string& datafile_path)
             {
                 for (std::size_t n = theta_match[0]; n < theta_match[1]; n++)
                 {
-                    // Load sphere data into grid
-                    grid[(m * thetas.size() + n) * n_conditions + i]
-                            = {dBAs_scattered[c], EAAs_scattered[c]};
+                    // Load sphere data into grid.  dBA of -inf legitimately
+                    // means "no energy in this direction" (ambient gating
+                    // emptied it) and blend_conditions() must still be able
+                    // to read it under a zero barycentric weight -- which a
+                    // sparse, coarse triangulation hits routinely, e.g. any
+                    // query that lands exactly on a condition's own gamma or
+                    // mu.  IEEE 754 makes 0 * -inf a NaN that poisons the
+                    // whole blended sum regardless of weight, so floor it to
+                    // a level far below anything physical; panam already
+                    // established that swapping -inf for a very negative
+                    // finite floor changes nothing where the weight is
+                    // nonzero (byte-identical footprints), so this is free
+                    // everywhere it matters and fixes it everywhere it does.
+                    const double dBA = std::isfinite(dBAs_scattered[c]) ? dBAs_scattered[c] : -1000.0;
+                    const double EAA = std::isfinite(EAAs_scattered[c]) ? EAAs_scattered[c] : 0.0;
+                    grid[(m * thetas.size() + n) * n_conditions + i] = {dBA, EAA};
                 }
             }
         }
@@ -895,6 +915,23 @@ Database::Database(const std::string& datafile_path)
     info("Operating condition ranges are:\n", "μ  = [", advance_ratio_min, " , ",
             advance_ratio_max, "]\n", "γ  = [", flight_path_angle_min, " , ", flight_path_angle_max,
             "]\n", "CT = [", thrust_coefficient_min, " , ", thrust_coefficient_max, "]\n");
+
+    // A fixed_load_factor database's CT is the same constant on every stored
+    // sphere by construction (panam writes only the LF=1 reference), which
+    // min/max_element already confirms: unlike same_grid, this is not
+    // trusted blindly, because the whole point of the flag is that every
+    // condition's thrust_coefficient is discarded from the triangulation --
+    // if the file lied, load factor scaling would silently stop working
+    // rather than fail loudly, so it is checked here instead.
+    if (fixed_load_factor_ && !approx_equal(thrust_coefficient_min, thrust_coefficient_max))
+    {
+        input_error("Database error: fixed_load_factor is set but thrust_coefficient is not "
+                "constant across spheres (", thrust_coefficient_min, " to ", thrust_coefficient_max,
+                ").");
+    }
+    reference_thrust_coefficient_ = thrust_coefficient_min;
+    active_condition_dims_ = fixed_load_factor_ ? 2 : condition_dims;
+
     // Normalize operating conditions
     for (auto& x : advance_ratios)
         x = (x - advance_ratio_min) / (advance_ratio_max - advance_ratio_min);
@@ -902,40 +939,84 @@ Database::Database(const std::string& datafile_path)
     for (auto& x : flight_path_angles)
         x = (x - flight_path_angle_min) / (flight_path_angle_max - flight_path_angle_min);
     trace("Normalized γ   = ", flight_path_angles);
-    for (auto& x : thrust_coefficients)
-        x = (x - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min);
-    trace("Normalized CT  = ", thrust_coefficients);
+    // A fixed_load_factor database has thrust_coefficient_min == max, so this
+    // would divide by zero -- and there is nothing to normalize anyway, since
+    // CT plays no part in a triangulation that does not include it.
+    if (!fixed_load_factor_)
+    {
+        for (auto& x : thrust_coefficients)
+            x = (x - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min);
+        trace("Normalized CT  = ", thrust_coefficients);
+    }
 
-    // Pack the three normalized axes into the row-major point array the
-    // interpolator takes.  A fourth operating parameter would be another column
-    // here and nothing else.
-    std::vector<double> conditions(advance_ratios.size() * condition_dims);
+    // Pack the normalized axes into the row-major point array the
+    // interpolator takes -- (mu, gamma, CT) ordinarily, (mu, gamma) alone for
+    // a fixed_load_factor database, where CT carries no information and
+    // including it as a third, constant coordinate would make every point
+    // coplanar and the 3D triangulation degenerate.  A fourth operating
+    // parameter would be another column here and nothing else -- the
+    // interpolator's dimension is a constructor argument, not a fixed three.
+    std::vector<double> conditions(advance_ratios.size() * active_condition_dims_);
     for (std::size_t i = 0; i < advance_ratios.size(); i++)
     {
-        conditions[i * condition_dims + 0] = advance_ratios[i];
-        conditions[i * condition_dims + 1] = flight_path_angles[i];
-        conditions[i * condition_dims + 2] = thrust_coefficients[i];
+        conditions[i * active_condition_dims_ + 0] = advance_ratios[i];
+        conditions[i * active_condition_dims_ + 1] = flight_path_angles[i];
+        if (!fixed_load_factor_)
+            conditions[i * active_condition_dims_ + 2] = thrust_coefficients[i];
     }
-    interpolator_.build(condition_dims, advance_ratios.size(), conditions.data());
+    interpolator_.build(active_condition_dims_, advance_ratios.size(), conditions.data());
 }
 
 Database::Blend Database::blend_at(double advance_ratio, double flight_path_angle,
         double thrust_coefficient) const
 {
+    // The raw query CT, kept before it is normalized below (or, for a
+    // fixed_load_factor database, not used for normalization at all): the
+    // analytic load-factor correction compares it against
+    // reference_thrust_coefficient_ in physical units, not normalized ones.
+    const double raw_thrust_coefficient = thrust_coefficient;
+
     // Normalize flight condition and limit range to [0.0,1.0]
     advance_ratio = clamp01((advance_ratio - advance_ratio_min) / (advance_ratio_max - advance_ratio_min));
     flight_path_angle = clamp01(
             (flight_path_angle - flight_path_angle_min) / (flight_path_angle_max - flight_path_angle_min));
-    thrust_coefficient = clamp01(
-            (thrust_coefficient - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min));
-    trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
-            ", CT = ", thrust_coefficient);
 
-    // Get barycentric weights and indicies
     Blend blend;
-    const double condition[condition_dims] = {advance_ratio, flight_path_angle, thrust_coefficient};
-    interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
-    trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+    if (fixed_load_factor_)
+    {
+        // CT is not part of this triangulation -- see the member comment on
+        // fixed_load_factor_ -- so the interpolator only ever sees (mu, gamma)
+        // and writes 3 of Blend's 4 slots; the 4th is padding, weight 0,
+        // matching the existing convention for a degenerate blend (see
+        // cull_range's comment on "Skip the padding").
+        const double condition[2] = {advance_ratio, flight_path_angle};
+        interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
+        blend.weights[3] = 0.0;
+        blend.indices[3] = blend.indices[0];
+        trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+
+        // The correction only ever adds level: panam's own convention leaves
+        // load factors at or below 1 g unscaled from the stored reference
+        // rather than extrapolating them down (a descent or a light-thrust
+        // condition is not assumed to follow the same simple scaling law a
+        // maneuvering pull-up does), and there is no upper bound on how far
+        // above the reference a query may extrapolate.
+        blend.level_correction_db = raw_thrust_coefficient > reference_thrust_coefficient_
+                ? 20.0 * std::log10(raw_thrust_coefficient / reference_thrust_coefficient_)
+                : 0.0;
+        trace("Load factor correction (dB): ", blend.level_correction_db);
+    }
+    else
+    {
+        thrust_coefficient = clamp01(
+                (thrust_coefficient - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min));
+        trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
+                ", CT = ", thrust_coefficient);
+
+        const double condition[condition_dims] = {advance_ratio, flight_path_angle, thrust_coefficient};
+        interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
+        trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+    }
     return blend;
 }
 
@@ -1014,7 +1095,10 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     assert(std::isfinite(excess_factor));
     assert(std::isfinite(excess_attenuation));
     assert(std::isfinite(spreading_loss));
-    auto ground_level = sphere_level - spreading_loss - excess_attenuation;
+    // level_correction_db is 0 except on a fixed_load_factor database queried
+    // above its reference load factor -- see blend_at().  It is a level, not
+    // a loss like the two terms above it, so it adds rather than subtracts.
+    auto ground_level = sphere_level - spreading_loss - excess_attenuation + blend.level_correction_db;
     trace("Ground level: ", ground_level);
     return ground_level;
 }
@@ -1064,7 +1148,11 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
         const double sphere_level = stencil.weight[0] * corner_level[0]
                 + stencil.weight[1] * corner_level[1] + stencil.weight[2] * corner_level[2]
                 + stencil.weight[3] * corner_level[3];
-        levels[band] = sphere_level - spreading_loss - absorption[band] * path_length;
+        // Same uniform-offset correction as eval(), applied identically to
+        // every band: panam's load_factors=None scaling shifts the whole
+        // spectrum together, not its shape (see blend_at()).
+        levels[band] = sphere_level - spreading_loss - absorption[band] * path_length
+                + blend.level_correction_db;
         assert(std::isfinite(levels[band]));
     }
 }
@@ -1145,6 +1233,10 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
         for (std::size_t n = 0; n < thetas.size(); n++)
         {
             sphere.cells[m * thetas.size() + n] = blend_cell(m, n, blend);
+            // Same correction as eval(): 0 unless this is a fixed_load_factor
+            // database queried above its reference load factor.  EAA is an
+            // attenuation-rate factor, not a level, so it is untouched.
+            sphere.cells[m * thetas.size() + n].dBA += blend.level_correction_db;
         }
     }
     if (!frequencies_.empty())
@@ -1167,7 +1259,7 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
                             * spectra_[(cell * n_bands + band) * n_conditions
                                     + blend.indices[k]];
                 }
-                sphere.amplitudes[cell * n_bands + band] = value;
+                sphere.amplitudes[cell * n_bands + band] = value + blend.level_correction_db;
             }
         }
     }
@@ -1198,6 +1290,11 @@ double Database::cull_range(const Blend& blend, double cutoff) const
     }
     if (!std::isfinite(blended_max))
         return unbounded;
+    // blend.level_correction_db is 0 except on a fixed_load_factor database
+    // queried above its reference load factor, where it only ever adds level
+    // (see blend_at()) -- so adding it here keeps this a valid upper bound
+    // rather than an approximate one.
+    blended_max += blend.level_correction_db;
 
     // Spherical spreading alone takes that peak below the cutoff at this range,
     // and excess attenuation only takes it further down.
@@ -1217,21 +1314,36 @@ DirectionBounds Database::direction_bounds(const std::vector<SourceState>& state
     // Group the states by their blend.  The tetrahedra a trajectory visits are
     // far fewer than its states, and a table per tetrahedron is what keeps this
     // small enough to stay in cache.
+    //
+    // On an ordinary database indices alone determines the bound, because CT
+    // is one of the three axes the Delaunay locate already resolved. On a
+    // fixed_load_factor database the triangulation is 2D (mu, gamma only --
+    // see blend_at()), so two states can share indices while querying
+    // different load factors; grouping by indices alone would then apply
+    // whichever correction happened to be computed last to every state in the
+    // group. correction is 0 on an ordinary database, so this changes nothing
+    // there -- states can only fail to merge over a distinction that already
+    // did not exist.
     std::vector<std::array<std::size_t, condition_dims + 1>> blends;
+    std::vector<double> corrections;
     for (std::size_t i = 0; i < states.size(); i++)
     {
         const auto& indices = states[i].blend.indices;
+        const double correction = states[i].blend.level_correction_db;
         std::size_t found = blends.size();
         for (std::size_t b = 0; b < blends.size(); b++)
         {
-            if (blends[b] == indices)
+            if (blends[b] == indices && corrections[b] == correction)
             {
                 found = b;
                 break;
             }
         }
         if (found == blends.size())
+        {
             blends.push_back(indices);
+            corrections.push_back(correction);
+        }
         bounds.blend_of_state_[i] = found;
     }
 
@@ -1262,6 +1374,9 @@ DirectionBounds Database::direction_bounds(const std::vector<SourceState>& state
                 double top = -std::numeric_limits<double>::infinity();
                 for (std::size_t k = 0; k < blends[b].size(); k++)
                     top = std::max(top, cell[blends[b][k]].dBA);
+                // 0 except on a fixed_load_factor database (see the grouping
+                // loop above); only ever adds level, so top stays an upper bound.
+                top += corrections[b];
 
                 const double theta = thetas[n] * pi / 180.0;
                 const double phi = phis[m] * pi / 180.0;
@@ -1383,8 +1498,15 @@ double Database::find_range(double contour_level, double bearing, double altitud
                     flight_path_angle, thrust_coefficient);
             return level - contour_level;
         };
-        // Set maximum range bound from max_level assuming spherical spreading only
-        auto range_max = sphere_radius() * std::pow(10.0, 0.05 * (max_level_ - contour_level));
+        // Set maximum range bound from max_level assuming spherical spreading
+        // only.  max_level_ is the database's raw stored maximum, which does
+        // not know about a fixed_load_factor correction (see blend_at()); add
+        // it here or a query above the reference load factor could have a
+        // true zero-range level past this bound, and the bisection below
+        // would search short and miss the real crossing.
+        const auto correction = blend_at(advance_ratio, flight_path_angle, thrust_coefficient)
+                .level_correction_db;
+        auto range_max = sphere_radius() * std::pow(10.0, 0.05 * (max_level_ + correction - contour_level));
         trace("Max search range set to: ", range_max);
         range = bisect(residual, 0.0, range_max, threshold);
         trace("Found range: ", range);
