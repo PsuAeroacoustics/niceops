@@ -670,6 +670,37 @@ Database::Database(const std::string& datafile_path)
     fixed_load_factor_ = get_int_scalar(file_ncid, "fixed_load_factor", 0) != 0;
     info("fixed_load_factor is set to: ", fixed_load_factor_);
 
+    // Optional, absent or false in every database predating panam's grid/band
+    // deduplication: whether phi, theta and (if present) frequency are the
+    // same on every sphere, in which case the builder wrote them once at the
+    // root instead of once per group.  Normally true -- panam completes every
+    // sphere onto a common grid and reduces every condition to the same
+    // frequency bands -- but not guaranteed (mixed microphone layouts, or
+    // per-file frequency resolution), so it is a flag panam checked at write
+    // time, not an assumption made here.
+    const bool shared_grid_and_frequency =
+            get_int_scalar(file_ncid, "shared_grid_and_frequency", 0) != 0;
+    info("shared_grid_and_frequency is set to: ", shared_grid_and_frequency);
+    std::vector<double> shared_phis_scattered, shared_thetas_scattered;
+    std::vector<double> shared_bands;
+    if (shared_grid_and_frequency)
+    {
+        const auto shared_nchannels = get_dim_length("channels", file_ncid);
+        shared_phis_scattered.resize(shared_nchannels);
+        shared_thetas_scattered.resize(shared_nchannels);
+        require_array(file_ncid, "phi", shared_nchannels, shared_phis_scattered);
+        require_array(file_ncid, "theta", shared_nchannels, shared_thetas_scattered);
+        info("Shared grid contains ", shared_nchannels, " channels.");
+        std::size_t shared_n_bands = 0;
+        if (NC_NOERR == nc_inq_dimid_len(file_ncid, "frequency", &shared_n_bands))
+        {
+            shared_bands.resize(shared_n_bands);
+            require_array(file_ncid, "frequency", shared_n_bands, shared_bands);
+            info("Shared frequency axis carries ", shared_n_bands, " bands from ",
+                    shared_bands.front(), " to ", shared_bands.back(), " Hz.");
+        }
+    }
+
     // Optional: builders since the versioned format record the rotor scale at
     // the root, which is enough to redimensionalize without a vehicle file.
     double tip_speed_value = 0.0;
@@ -744,7 +775,34 @@ Database::Database(const std::string& datafile_path)
             input_error("Database error: ShaftPower present on some spheres but not others.");
         }
 
-        auto nchannels = get_dim_length("channels", group_id);
+        std::size_t nchannels;
+        if (shared_grid_and_frequency)
+        {
+            // Already read once at the root; every sphere shares it verbatim,
+            // so there is nothing here to re-read or repair.
+            nchannels = shared_phis_scattered.size();
+            phis_scattered = shared_phis_scattered;
+            thetas_scattered = shared_thetas_scattered;
+        }
+        else
+        {
+            nchannels = get_dim_length("channels", group_id);
+            // Read THIS sphere's own channel angles.  They are not identical
+            // across spheres: in a pre-versioned database the hover spheres
+            // label their mirrored half differently from the forward-flight
+            // ones, so reusing sphere 0's arrays files their levels into the
+            // wrong grid cells.
+            phis_scattered.resize(nchannels);
+            thetas_scattered.resize(nchannels);
+            require_array(group_id, "phi", phis_scattered.size(), phis_scattered);
+            trace("The original phi values are:\n", phis_scattered);
+            require_array(group_id, "theta", thetas_scattered.size(), thetas_scattered);
+            trace("The original theta values are:\n", thetas_scattered);
+            if (database_version < 1 && repair_legacy_hover_directivity(phis_scattered))
+            {
+                repaired_spheres++;
+            }
+        }
         if (i == 0)
         {
             // Record number of channels to check for changes
@@ -754,20 +812,6 @@ Database::Database(const std::string& datafile_path)
         else if (nchannels != nchannels0)
         {
             input_error("Database error: number of channels is not constant.");
-        }
-        // Read THIS sphere's own channel angles.  They are not identical across
-        // spheres: in a pre-versioned database the hover spheres label their
-        // mirrored half differently from the forward-flight ones, so reusing
-        // sphere 0's arrays files their levels into the wrong grid cells.
-        phis_scattered.resize(nchannels);
-        thetas_scattered.resize(nchannels);
-        require_array(group_id, "phi", phis_scattered.size(), phis_scattered);
-        trace("The original phi values are:\n", phis_scattered);
-        require_array(group_id, "theta", thetas_scattered.size(), thetas_scattered);
-        trace("The original theta values are:\n", thetas_scattered);
-        if (database_version < 1 && repair_legacy_hover_directivity(phis_scattered))
-        {
-            repaired_spheres++;
         }
         if (i == 0)
         {
@@ -802,21 +846,40 @@ Database::Database(const std::string& datafile_path)
         // to carry them, so its absence is not an error -- but a database that
         // has them on some spheres and not others is malformed.
         std::size_t n_bands = 0;
-        if (NC_NOERR == nc_inq_dimid_len(group_id, "frequency", &n_bands))
+        bool has_spectrum;
+        if (shared_grid_and_frequency && !shared_bands.empty())
         {
-            std::vector<double> bands(n_bands);
-            require_array(group_id, "frequency", n_bands, bands);
+            // Already read once at the root; every sphere shares it verbatim.
+            has_spectrum = true;
+            n_bands = shared_bands.size();
             if (i == 0)
             {
-                frequencies_ = bands;
+                frequencies_ = shared_bands;
                 spectra_.assign(phis.size() * thetas.size() * group_ids.size() * n_bands, 0.0);
-                info("Database carries ", n_bands, " frequency bands from ", bands.front(),
-                        " to ", bands.back(), " Hz.");
             }
-            else if (bands != frequencies_)
+        }
+        else
+        {
+            has_spectrum = NC_NOERR == nc_inq_dimid_len(group_id, "frequency", &n_bands);
+            if (has_spectrum)
             {
-                input_error("Database error: frequency bands differ between spheres.");
+                std::vector<double> bands(n_bands);
+                require_array(group_id, "frequency", n_bands, bands);
+                if (i == 0)
+                {
+                    frequencies_ = bands;
+                    spectra_.assign(phis.size() * thetas.size() * group_ids.size() * n_bands, 0.0);
+                    info("Database carries ", n_bands, " frequency bands from ", bands.front(),
+                            " to ", bands.back(), " Hz.");
+                }
+                else if (bands != frequencies_)
+                {
+                    input_error("Database error: frequency bands differ between spheres.");
+                }
             }
+        }
+        if (has_spectrum)
+        {
             int amplitude_id = 0;
             if (NC_NOERR != nc_inq_varid(group_id, "amplitude", &amplitude_id))
                 input_error("Database error: sphere has a frequency dimension but no amplitude.");
@@ -885,7 +948,8 @@ Database::Database(const std::string& datafile_path)
                     // finite floor changes nothing where the weight is
                     // nonzero (byte-identical footprints), so this is free
                     // everywhere it matters and fixes it everywhere it does.
-                    const double dBA = std::isfinite(dBAs_scattered[c]) ? dBAs_scattered[c] : -1000.0;
+                    const double dBA =
+                            std::isfinite(dBAs_scattered[c]) ? dBAs_scattered[c] : no_energy_floor_db;
                     const double EAA = std::isfinite(EAAs_scattered[c]) ? EAAs_scattered[c] : 0.0;
                     grid[(m * thetas.size() + n) * n_conditions + i] = {dBA, EAA};
                 }
@@ -1775,6 +1839,19 @@ void Database::self_test(const std::string& datafile_path)
     // everything else off this same file, and re-running its side effects here
     // would corrupt the object under test rather than check it.
     const int self_test_version = get_int_scalar(file_ncid, "database_version", 0);
+    // Same flag the constructor reads -- see its comment on
+    // shared_grid_and_frequency for when this holds.
+    const bool shared_grid_and_frequency =
+            get_int_scalar(file_ncid, "shared_grid_and_frequency", 0) != 0;
+    std::vector<double> shared_phi_data, shared_theta_data;
+    if (shared_grid_and_frequency)
+    {
+        const auto shared_nchannels = get_dim_length("channels", file_ncid);
+        shared_theta_data.resize(shared_nchannels);
+        require_array(file_ncid, "theta", shared_nchannels, shared_theta_data);
+        shared_phi_data.resize(shared_nchannels);
+        require_array(file_ncid, "phi", shared_nchannels, shared_phi_data);
+    }
 
     auto group_ids = get_group_ids(file_ncid);
     // Local operating parameters
@@ -1795,18 +1872,29 @@ void Database::self_test(const std::string& datafile_path)
                 ",\t radius = ", radius);
 
         // Get the data for this sphere
-        auto nchannels = get_dim_length("channels", group_id);
-        std::vector<double> theta_data(nchannels);
-        require_array(group_id, "theta", nchannels, theta_data);
-
-        std::vector<double> phi_data(nchannels);
-        require_array(group_id, "phi", nchannels, phi_data);
-        // Interpret the file exactly as the loader did, or this compares the
-        // grid built from repaired labels against queries at the raw ones.
-        if (self_test_version < 1)
+        std::vector<double> theta_data, phi_data;
+        if (shared_grid_and_frequency)
         {
-            repair_legacy_hover_directivity(phi_data);
+            theta_data = shared_theta_data;
+            phi_data = shared_phi_data;
         }
+        else
+        {
+            auto nchannels = get_dim_length("channels", group_id);
+            theta_data.resize(nchannels);
+            require_array(group_id, "theta", nchannels, theta_data);
+
+            phi_data.resize(nchannels);
+            require_array(group_id, "phi", nchannels, phi_data);
+            // Interpret the file exactly as the loader did, or this compares
+            // the grid built from repaired labels against queries at the raw
+            // ones.
+            if (self_test_version < 1)
+            {
+                repair_legacy_hover_directivity(phi_data);
+            }
+        }
+        const auto nchannels = phi_data.size();
 
         std::vector<double> dBA_data(nchannels);
         require_array(group_id, "dBA", nchannels, dBA_data);
@@ -1822,7 +1910,11 @@ void Database::self_test(const std::string& datafile_path)
         // Validate the database against the known data at sphere surface
         for (std::size_t ch = 0; ch < dBA_data.size(); ch++)
         {
-            auto dBA = dBA_data[ch];
+            // eval() can only ever read back no_energy_floor_db for a
+            // direction the constructor floored, never the original -inf --
+            // see its member comment -- so the raw file value gets the same
+            // floor applied here before the comparison means anything.
+            auto dBA = std::isfinite(dBA_data[ch]) ? dBA_data[ch] : no_energy_floor_db;
             auto level = eval(dimensional_radius, phi_data[ch], theta_data[ch], blend);
             if (!approx_equal(dBA, level))
             {

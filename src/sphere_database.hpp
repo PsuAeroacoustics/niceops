@@ -452,6 +452,16 @@ public:
 
 
 private:
+    // dBA of -inf legitimately means "no energy in this direction" (ambient
+    // gating emptied it), but a zero barycentric weight against -inf is a
+    // NaN under IEEE 754 that poisons an entire blended sum regardless of
+    // weight -- see the constructor's grid-fill comment. Every non-finite
+    // dBA read from a file is floored to this value once, at load time, so
+    // self_test() must apply the same floor to the raw value it re-reads
+    // before comparing it against eval() -- eval() can only ever produce
+    // this floor back, never the original -inf.
+    static constexpr double no_energy_floor_db = -1000.0;
+
     // Blend the four bracketing operating conditions at one grid cell.
     Sample blend_cell(std::size_t i_phi, std::size_t i_theta, const Blend& blend) const;
 

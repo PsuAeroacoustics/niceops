@@ -498,6 +498,226 @@ const std::vector<std::array<double, 4>> fixed_load_factor_conditions = {
     {0.0, 1.0, test_ct_reference, 120.0},
 };
 
+// Writes a minimal .nod with one group per (advance_ratio, flight_path_angle,
+// thrust_coefficient, dBA) condition, every condition sharing the same 4x4
+// (phi, theta) sphere and, when with_spectrum, the same 2 frequency bands --
+// the case shared_grid_and_frequency is meant to deduplicate.  When
+// shared_grid_and_frequency is true, phi/theta/frequency are written once at
+// the root and every group's dBA/EAA/amplitude resolve them by inheriting the
+// root's dimensions (a plain netCDF4 group scoping rule), exactly as panam's
+// writer does; when false, every group carries its own copies, so a test can
+// build both forms of the same conditions and require identical eval()
+// results between them.
+std::string write_shared_grid_test_database(const std::string& name,
+        const std::vector<std::array<double, 4>>& conditions, bool shared_grid_and_frequency,
+        bool with_spectrum, double sphere_radius_m = 30.48)
+{
+    const auto path = (std::filesystem::temp_directory_path() / name).string();
+    int file = 0;
+    REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file) == NC_NOERR);
+    int scalar_dim = 0;
+    REQUIRE(nc_def_dim(file, "scalar", 1, &scalar_dim) == NC_NOERR);
+    int same_grid_var = 0, version_var = 0, shared_var = 0;
+    REQUIRE(nc_def_var(file, "same_grid", NC_SHORT, 1, &scalar_dim, &same_grid_var) == NC_NOERR);
+    REQUIRE(nc_def_var(file, "database_version", NC_INT, 1, &scalar_dim, &version_var) == NC_NOERR);
+    REQUIRE(nc_def_var(file, "shared_grid_and_frequency", NC_SHORT, 1, &scalar_dim, &shared_var)
+            == NC_NOERR);
+
+    const std::vector<double> phis = {-90.0, -30.0, 30.0, 90.0};
+    const std::vector<double> thetas = {0.0, 60.0, 120.0, 180.0};
+    const std::size_t n_channels = phis.size() * thetas.size();
+    const std::vector<double> bands = {500.0, 2000.0};
+    std::vector<double> phi_channel, theta_channel;
+    for (double p : phis)
+        for (double t : thetas)
+        {
+            phi_channel.push_back(p);
+            theta_channel.push_back(t);
+        }
+
+    int root_channels_dim = 0, root_phi_var = 0, root_theta_var = 0;
+    int root_frequency_dim = 0, root_frequency_var = 0, root_phi_dim = 0, root_theta_dim = 0;
+    if (shared_grid_and_frequency)
+    {
+        REQUIRE(nc_def_dim(file, "channels", n_channels, &root_channels_dim) == NC_NOERR);
+        REQUIRE(nc_def_var(file, "phi", NC_DOUBLE, 1, &root_channels_dim, &root_phi_var)
+                == NC_NOERR);
+        REQUIRE(nc_def_var(file, "theta", NC_DOUBLE, 1, &root_channels_dim, &root_theta_var)
+                == NC_NOERR);
+        if (with_spectrum)
+        {
+            REQUIRE(nc_def_dim(file, "frequency", bands.size(), &root_frequency_dim)
+                    == NC_NOERR);
+            REQUIRE(nc_def_var(file, "frequency", NC_DOUBLE, 1, &root_frequency_dim,
+                    &root_frequency_var) == NC_NOERR);
+            REQUIRE(nc_def_dim(file, "PHI", phis.size(), &root_phi_dim) == NC_NOERR);
+            REQUIRE(nc_def_dim(file, "THETA", thetas.size(), &root_theta_dim) == NC_NOERR);
+        }
+    }
+
+    struct GroupVars
+    {
+        int group, radius, scale, mu, gamma, ct, phi, theta, dba, eaa, frequency, amplitude;
+    };
+    std::vector<GroupVars> groups;
+    for (std::size_t i = 0; i < conditions.size(); i++)
+    {
+        int group = 0;
+        REQUIRE(nc_def_grp(file, ("sphere" + std::to_string(i)).c_str(), &group) == NC_NOERR);
+        int radii_dim = 0, condition_dim = 0;
+        REQUIRE(nc_def_dim(group, "radii", 1, &radii_dim) == NC_NOERR);
+        REQUIRE(nc_def_dim(group, "condition", 1, &condition_dim) == NC_NOERR);
+        GroupVars v {group, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        REQUIRE(nc_def_var(group, "radius", NC_DOUBLE, 1, &radii_dim, &v.radius) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "rotor_scale", NC_DOUBLE, 1, &condition_dim, &v.scale) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "advance_ratio", NC_DOUBLE, 1, &condition_dim, &v.mu) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "flight_path_angle", NC_DOUBLE, 1, &condition_dim, &v.gamma)
+                == NC_NOERR);
+        REQUIRE(nc_def_var(group, "thrust_coefficient", NC_DOUBLE, 1, &condition_dim, &v.ct)
+                == NC_NOERR);
+        int channel_dim = root_channels_dim;
+        if (!shared_grid_and_frequency)
+        {
+            REQUIRE(nc_def_dim(group, "channels", n_channels, &channel_dim) == NC_NOERR);
+            REQUIRE(nc_def_var(group, "phi", NC_DOUBLE, 1, &channel_dim, &v.phi) == NC_NOERR);
+            REQUIRE(nc_def_var(group, "theta", NC_DOUBLE, 1, &channel_dim, &v.theta) == NC_NOERR);
+        }
+        REQUIRE(nc_def_var(group, "dBA", NC_DOUBLE, 1, &channel_dim, &v.dba) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "EAA", NC_DOUBLE, 1, &channel_dim, &v.eaa) == NC_NOERR);
+        if (with_spectrum)
+        {
+            int frequency_dim = root_frequency_dim, phi_dim = root_phi_dim,
+                theta_dim = root_theta_dim;
+            if (!shared_grid_and_frequency)
+            {
+                REQUIRE(nc_def_dim(group, "frequency", bands.size(), &frequency_dim) == NC_NOERR);
+                REQUIRE(nc_def_dim(group, "PHI", phis.size(), &phi_dim) == NC_NOERR);
+                REQUIRE(nc_def_dim(group, "THETA", thetas.size(), &theta_dim) == NC_NOERR);
+                REQUIRE(nc_def_var(group, "frequency", NC_DOUBLE, 1, &frequency_dim,
+                        &v.frequency) == NC_NOERR);
+            }
+            const int amplitude_dims[3] = {phi_dim, theta_dim, frequency_dim};
+            REQUIRE(nc_def_var(group, "amplitude", NC_DOUBLE, 3, amplitude_dims, &v.amplitude)
+                    == NC_NOERR);
+        }
+        groups.push_back(v);
+    }
+    REQUIRE(nc_enddef(file) == NC_NOERR);
+
+    const short one = 1;
+    const short shared_flag = shared_grid_and_frequency ? 1 : 0;
+    const int version = 1;
+    REQUIRE(nc_put_var_short(file, same_grid_var, &one) == NC_NOERR);
+    REQUIRE(nc_put_var_int(file, version_var, &version) == NC_NOERR);
+    REQUIRE(nc_put_var_short(file, shared_var, &shared_flag) == NC_NOERR);
+    if (shared_grid_and_frequency)
+    {
+        REQUIRE(nc_put_var_double(file, root_phi_var, phi_channel.data()) == NC_NOERR);
+        REQUIRE(nc_put_var_double(file, root_theta_var, theta_channel.data()) == NC_NOERR);
+        if (with_spectrum)
+            REQUIRE(nc_put_var_double(file, root_frequency_var, bands.data()) == NC_NOERR);
+    }
+
+    const double scale = 1.0;
+    for (std::size_t i = 0; i < conditions.size(); i++)
+    {
+        const auto& v = groups[i];
+        const std::vector<double> eaa(n_channels, 0.0);
+        const std::vector<double> dba(n_channels, conditions[i][3]);
+        REQUIRE(nc_put_var_double(v.group, v.radius, &sphere_radius_m) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.scale, &scale) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.mu, &conditions[i][0]) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.gamma, &conditions[i][1]) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.ct, &conditions[i][2]) == NC_NOERR);
+        if (!shared_grid_and_frequency)
+        {
+            REQUIRE(nc_put_var_double(v.group, v.phi, phi_channel.data()) == NC_NOERR);
+            REQUIRE(nc_put_var_double(v.group, v.theta, theta_channel.data()) == NC_NOERR);
+        }
+        REQUIRE(nc_put_var_double(v.group, v.dba, dba.data()) == NC_NOERR);
+        REQUIRE(nc_put_var_double(v.group, v.eaa, eaa.data()) == NC_NOERR);
+        if (with_spectrum)
+        {
+            if (!shared_grid_and_frequency)
+                REQUIRE(nc_put_var_double(v.group, v.frequency, bands.data()) == NC_NOERR);
+            // Distinguishable per condition and per band, uniform over phi/theta
+            // (this test is about grid/frequency dedup, not spatial variation).
+            std::vector<double> amplitude(phis.size() * thetas.size() * bands.size());
+            for (std::size_t cell = 0; cell < phis.size() * thetas.size(); cell++)
+                for (std::size_t band = 0; band < bands.size(); band++)
+                    amplitude[cell * bands.size() + band] =
+                            conditions[i][3] + 10.0 * static_cast<double>(band);
+            REQUIRE(nc_put_var_double(v.group, v.amplitude, amplitude.data()) == NC_NOERR);
+        }
+    }
+    REQUIRE(nc_close(file) == NC_NOERR);
+    return path;
+}
+
+// A single condition on a 4x4 sphere with one channel's dBA at -inf, the way
+// ambient gating legitimately empties a direction.  self_test() re-reads
+// this raw value from the file to compare against eval(), so it has to know
+// eval() can only ever answer no_energy_floor_db for it, never -inf itself.
+std::string write_test_database_with_silent_direction(const std::string& name)
+{
+    const auto path = (std::filesystem::temp_directory_path() / name).string();
+    int file = 0;
+    REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file) == NC_NOERR);
+    int scalar_dim = 0;
+    REQUIRE(nc_def_dim(file, "scalar", 1, &scalar_dim) == NC_NOERR);
+    int same_grid_var = 0;
+    REQUIRE(nc_def_var(file, "same_grid", NC_SHORT, 1, &scalar_dim, &same_grid_var) == NC_NOERR);
+
+    int group = 0;
+    REQUIRE(nc_def_grp(file, "sphere0", &group) == NC_NOERR);
+    int radii_dim = 0, condition_dim = 0, channel_dim = 0;
+    REQUIRE(nc_def_dim(group, "radii", 1, &radii_dim) == NC_NOERR);
+    REQUIRE(nc_def_dim(group, "condition", 1, &condition_dim) == NC_NOERR);
+    const std::vector<double> phis = {-90.0, -30.0, 30.0, 90.0};
+    const std::vector<double> thetas = {0.0, 60.0, 120.0, 180.0};
+    const std::size_t n_channels = phis.size() * thetas.size();
+    REQUIRE(nc_def_dim(group, "channels", n_channels, &channel_dim) == NC_NOERR);
+    int radius_var = 0, scale_var = 0, mu_var = 0, gamma_var = 0, ct_var = 0, phi_var = 0,
+        theta_var = 0, dba_var = 0, eaa_var = 0;
+    REQUIRE(nc_def_var(group, "radius", NC_DOUBLE, 1, &radii_dim, &radius_var) == NC_NOERR);
+    REQUIRE(nc_def_var(group, "rotor_scale", NC_DOUBLE, 1, &condition_dim, &scale_var) == NC_NOERR);
+    REQUIRE(nc_def_var(group, "advance_ratio", NC_DOUBLE, 1, &condition_dim, &mu_var) == NC_NOERR);
+    REQUIRE(nc_def_var(group, "flight_path_angle", NC_DOUBLE, 1, &condition_dim, &gamma_var)
+            == NC_NOERR);
+    REQUIRE(nc_def_var(group, "thrust_coefficient", NC_DOUBLE, 1, &condition_dim, &ct_var)
+            == NC_NOERR);
+    REQUIRE(nc_def_var(group, "phi", NC_DOUBLE, 1, &channel_dim, &phi_var) == NC_NOERR);
+    REQUIRE(nc_def_var(group, "theta", NC_DOUBLE, 1, &channel_dim, &theta_var) == NC_NOERR);
+    REQUIRE(nc_def_var(group, "dBA", NC_DOUBLE, 1, &channel_dim, &dba_var) == NC_NOERR);
+    REQUIRE(nc_def_var(group, "EAA", NC_DOUBLE, 1, &channel_dim, &eaa_var) == NC_NOERR);
+    REQUIRE(nc_enddef(file) == NC_NOERR);
+
+    const short one = 1;
+    REQUIRE(nc_put_var_short(file, same_grid_var, &one) == NC_NOERR);
+    const double radius = 30.48, scale = 1.0, mu = 0.0, gamma = 0.0, ct = 0.005;
+    REQUIRE(nc_put_var_double(group, radius_var, &radius) == NC_NOERR);
+    REQUIRE(nc_put_var_double(group, scale_var, &scale) == NC_NOERR);
+    REQUIRE(nc_put_var_double(group, mu_var, &mu) == NC_NOERR);
+    REQUIRE(nc_put_var_double(group, gamma_var, &gamma) == NC_NOERR);
+    REQUIRE(nc_put_var_double(group, ct_var, &ct) == NC_NOERR);
+    std::vector<double> phi_channel, theta_channel;
+    for (double p : phis)
+        for (double t : thetas)
+        {
+            phi_channel.push_back(p);
+            theta_channel.push_back(t);
+        }
+    REQUIRE(nc_put_var_double(group, phi_var, phi_channel.data()) == NC_NOERR);
+    REQUIRE(nc_put_var_double(group, theta_var, theta_channel.data()) == NC_NOERR);
+    std::vector<double> dba(n_channels, 100.0);
+    dba[0] = -std::numeric_limits<double>::infinity();
+    const std::vector<double> eaa(n_channels, 0.0);
+    REQUIRE(nc_put_var_double(group, dba_var, dba.data()) == NC_NOERR);
+    REQUIRE(nc_put_var_double(group, eaa_var, eaa.data()) == NC_NOERR);
+    REQUIRE(nc_close(file) == NC_NOERR);
+    return path;
+}
+
 } // namespace
 
 TEST_CASE("fixed_load_factor: query at or below the reference applies no correction",
@@ -628,5 +848,80 @@ TEST_CASE("fixed_load_factor requires thrust_coefficient to actually be constant
             "niceops_fixed_lf_inconsistent.nod", conditions, true);
 
     REQUIRE_THROWS_AS(Database(path), std::runtime_error);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("shared_grid_and_frequency reproduces the per-group form exactly, "
+        "levels and spectra alike",
+        "[sphere_database]")
+{
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.0, 0.0, 0.005, 100.0},
+        {1.0, 0.0, 0.005, 110.0},
+        {0.0, 1.0, 0.005, 120.0},
+    };
+    const auto shared_path = write_shared_grid_test_database(
+            "niceops_shared_grid.nod", conditions, true, true);
+    const auto per_group_path = write_shared_grid_test_database(
+            "niceops_per_group_grid.nod", conditions, false, true);
+    Database shared_db(shared_path);
+    Database per_group_db(per_group_path);
+
+    for (const auto& c : conditions)
+    {
+        const auto shared_sphere = shared_db.interpolate_sphere(c[0], c[1], c[2]);
+        const auto per_group_sphere = per_group_db.interpolate_sphere(c[0], c[1], c[2]);
+
+        REQUIRE(shared_sphere.phis == per_group_sphere.phis);
+        REQUIRE(shared_sphere.thetas == per_group_sphere.thetas);
+        REQUIRE(shared_sphere.frequencies == per_group_sphere.frequencies);
+        REQUIRE(shared_sphere.cells.size() == per_group_sphere.cells.size());
+        for (std::size_t cell = 0; cell < shared_sphere.cells.size(); cell++)
+        {
+            CHECK(approx_equal(shared_sphere.cells[cell].dBA, per_group_sphere.cells[cell].dBA));
+            CHECK(approx_equal(shared_sphere.cells[cell].EAA, per_group_sphere.cells[cell].EAA));
+        }
+        REQUIRE(shared_sphere.amplitudes.size() == per_group_sphere.amplitudes.size());
+        for (std::size_t k = 0; k < shared_sphere.amplitudes.size(); k++)
+        {
+            CHECK(approx_equal(shared_sphere.amplitudes[k], per_group_sphere.amplitudes[k]));
+        }
+    }
+    std::filesystem::remove(shared_path);
+    std::filesystem::remove(per_group_path);
+}
+
+TEST_CASE("shared_grid_and_frequency: absent is the same as false (legacy files)",
+        "[sphere_database]")
+{
+    // Every file every other test in this suite loads predates this flag, so
+    // this is really just documenting the default rather than adding new
+    // coverage: get_int_scalar's own default is what makes it work.
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.0, 0.0, 0.005, 100.0},
+        {1.0, 0.0, 0.005, 110.0},
+    };
+    const auto path = write_shared_grid_test_database(
+            "niceops_no_shared_flag.nod", conditions, false, false);
+    Database db(path); // must not throw
+    const auto sphere = db.interpolate_sphere(0.0, 0.0, 0.005);
+    REQUIRE(approx_equal(sphere.cells[0].dBA, 100.0));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("self_test does not flag a direction ambient gating legitimately emptied",
+        "[sphere_database]")
+{
+    // A silent direction is stored as dBA = -inf, and the constructor floors
+    // that to no_energy_floor_db so a zero barycentric weight against it
+    // cannot produce a NaN (see the member comment). self_test() re-reads
+    // the raw file value directly rather than going through that floor, so
+    // without the same floor applied to its own comparison it always
+    // disagreed with eval() -- found on Be407's real fixed_load_factor
+    // database (3399 of 238428 samples), reproduced here on one channel.
+    const auto path = write_test_database_with_silent_direction(
+            "niceops_self_test_silent_direction.nod");
+    Database db(path);
+    db.self_test(path); // must not throw
     std::filesystem::remove(path);
 }
