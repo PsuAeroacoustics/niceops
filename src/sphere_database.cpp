@@ -1487,7 +1487,7 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
         const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
         const std::vector<std::complex<double>>* impedance, double sound_speed,
         std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
-        const PlateReceiver* plate, double plate_mic_azimuth) const
+        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table) const
 {
     // Reused across calls: this runs once per observer per trajectory state,
     // and the band count is fixed for the life of the database.
@@ -1523,17 +1523,22 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
             // frame, where the microphone is offset along +y.
             const double azimuth = std::atan2(separation.y, separation.x) - plate_mic_azimuth
                     + 0.5 * pi;
-            plate->level(source_height, ground_distance, azimuth, correction.data(), first_band,
-                    last_band);
+            plate->power_ratio(source_height, ground_distance, azimuth, correction.data(),
+                    first_band, last_band);
+        }
+        else if (ground_table != nullptr)
+        {
+            ground_table->power_ratio(source_height, ground_distance, correction.data());
         }
         else
         {
             excess_ground_attenuation(*ground, *impedance, source_height, ground_distance,
-                    sound_speed, frequencies_, correction.data(), first_band, last_band);
+                    sound_speed, frequencies_, correction.data(), first_band, last_band, true);
         }
-        const std::size_t end = std::min(last_band, levels.size());
-        for (std::size_t band = first_band; band < end; band++)
-            levels[band] += correction[band];
+        // As power ratios multiplied into the band sum: the same as adding the
+        // correction in dB, without a log and an exp per band.  Only bands in
+        // [first_band, last_band) have non-zero gains, so only they are read.
+        return weighted_level(levels.data(), gains, correction.data());
     }
 
     return weighted_level(levels.data(), gains);

@@ -9,6 +9,7 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -454,6 +455,8 @@ struct RunOptions
     // expensive thing in the evaluation.
     bool ground_effect = false;
     GroundModel ground;
+    // Evaluate the point-receiver ground effect directly, not from GroundTable.
+    bool exact_ground = false;
     // A flush microphone on a ground plate (--plate_table), read once and
     // bound to each trajectory's atmosphere.  Needs ground_effect.
     std::optional<PlateReceiver> plate;
@@ -667,6 +670,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     const GroundModel* ground_model = nullptr;
     std::vector<std::complex<double>> ground_impedance_bands;
     std::optional<PlateReceiver> plate;
+    GroundTable ground_table;
+    const GroundTable* ground_table_ptr = nullptr;
     // The contiguous run of bands inside the metric's limits. Band centres are
     // sorted, so the limits always select a range rather than a scattered set.
     std::size_t first_band = 0;
@@ -747,10 +752,49 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     options.ground.turbulence_model == TurbulenceModel::chessell ? " (Chessell)"
                                                                                  : " (HARMONOISE gamma_T)",
                     ", roughness ", options.ground.roughness, " m, sound speed ", sound_speed, " m/s.");
+            // Farthest any observer is from any state: how far the ground
+            // tables must reach.
+            auto reach = [&]() {
+                double lo_x = 1e300, hi_x = -1e300, lo_y = 1e300, hi_y = -1e300;
+                for (const auto& o : observers)
+                {
+                    lo_x = std::min(lo_x, o.x); hi_x = std::max(hi_x, o.x);
+                    lo_y = std::min(lo_y, o.y); hi_y = std::max(hi_y, o.y);
+                }
+                double r_max = 1.0;
+                for (const auto& state : source_states)
+                    for (const double cx : {lo_x, hi_x})
+                        for (const double cy : {lo_y, hi_y})
+                            r_max = std::max(r_max, std::hypot(std::hypot(cx - state.position.x,
+                                    cy - state.position.y), state.position.z));
+                return r_max * 1.01;
+            };
+            if (!options.plate && !options.exact_ground)
+            {
+                const auto table_start = std::chrono::steady_clock::now();
+                const double r_max = reach();
+                ground_table = GroundTable(options.ground, ground_impedance_bands, sound_speed,
+                        bands, first_band, last_band, 1.0, r_max);
+                ground_table_ptr = &ground_table;
+                log("  ground effect tabulated to ", r_max, " m in ",
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - table_start)
+                                .count(),
+                        " s (--exact_ground to evaluate it directly).");
+            }
             if (options.plate)
             {
                 plate = options.plate->bound(bands, options.ground, sound_speed, first_band,
                         last_band);
+                if (!options.exact_ground)
+                {
+                    const auto table_start = std::chrono::steady_clock::now();
+                    const double r_max = reach();
+                    plate->tabulate(r_max, 161, 40);
+                    log("  plate reflection coefficients tabulated to ", r_max, " m in ",
+                            std::chrono::duration<double>(std::chrono::steady_clock::now() - table_start)
+                                    .count(),
+                            " s (--exact_ground to evaluate them directly).");
+                }
                 log("  observers are flush microphones on a ground plate: ", plate->description(),
                         options.plate_orientation.outboard
                                 ? std::string(", microphone outboard of the track.")
@@ -935,7 +979,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                         source_states[it], absorption.data(), band_gains,
                                         ground_model, &ground_impedance_bands, sound_speed,
                                         first_band, last_band, packed_of_state[it],
-                                        plate_receiver, plate_mic_azimuth);
+                                        plate_receiver, plate_mic_azimuth, ground_table_ptr);
                             });
                 }
                 else
@@ -964,7 +1008,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         ? database.spectral_level_at_observer(observer, source_states[it],
                                 absorption.data(), band_gains, ground_model,
                                 &ground_impedance_bands, sound_speed, first_band, last_band,
-                                packed_of_state[it], plate_receiver, plate_mic_azimuth)
+                                packed_of_state[it], plate_receiver, plate_mic_azimuth,
+                                ground_table_ptr)
                         : database.level_at_observer(observer, source_states[it]);
                 if (add_ambient)
                 {
@@ -1232,6 +1277,7 @@ int run(int argc, char* argv[])
     double roughness = 0.0;          // m
     std::string plate_table;
     std::string plate_mic_azimuth = "outboard";
+    bool exact_ground = false;
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
@@ -1377,6 +1423,10 @@ int run(int argc, char* argv[])
     auto* roughness_option = app.add_option("--roughness", roughness,
             "RMS roughness height of the ground, in --units: the coherent reflection falls by "
             "exp(-2 (k sigma cos theta)^2). Default 0.");
+    app.add_flag("--exact_ground", exact_ground,
+            "Evaluate the --ground_effect model (or --plate_table's reflection coefficients) at "
+            "every observer and state instead of interpolating tables of it built per "
+            "trajectory (level histories agree to ~0.001 dB; the tables are 3-9x faster).");
     app.add_option("--plate_table", plate_table,
             "Observers are flush microphones on a rigid ground plate (e.g. GRAS 67AX in a "
             "400 mm GR1425 plate, per SAE ARP 4055): a netCDF table from panam's "
@@ -1649,6 +1699,7 @@ int run(int argc, char* argv[])
     options.ground.turbulence_model = parse_turbulence_model(turbulence_model);
     options.ground.gamma_t = gamma_t;
     options.ground.roughness = roughness;
+    options.exact_ground = exact_ground;
     if (!plate_table.empty())
     {
         options.plate = PlateReceiver::load(plate_table);

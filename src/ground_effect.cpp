@@ -191,7 +191,7 @@ TurbulenceModel parse_turbulence_model(const std::string& name)
 void excess_ground_attenuation(const GroundModel& ground,
         const std::vector<std::complex<double>>& impedance, double source_height,
         double ground_distance, double sound_speed, const std::vector<double>& frequencies,
-        double* attenuation, std::size_t first_band, std::size_t last_band)
+        double* attenuation, std::size_t first_band, std::size_t last_band, bool as_power_ratio)
 {
     // Bands outside the metric's limits are never read, so do not compute them.
     if (last_band > frequencies.size())
@@ -303,7 +303,7 @@ void excess_ground_attenuation(const GroundModel& ground,
                     " m away. Check the flow resistance (", ground.flow_resistance,
                     " kPa s/m^2) and receiver height (", hr, " m).");
         }
-        attenuation[band] = ten_over_ln10 * std::log(magnitude);
+        attenuation[band] = as_power_ratio ? magnitude : ten_over_ln10 * std::log(magnitude);
     }
 }
 
@@ -373,6 +373,63 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
         bounds[band] = margin * largest;
     }
     return bounds;
+}
+
+GroundTable::GroundTable(const GroundModel& ground,
+        const std::vector<std::complex<double>>& impedance, double sound_speed,
+        const std::vector<double>& frequencies, std::size_t first_band, std::size_t last_band,
+        double r_min, double r_max, int angle_nodes, int nodes_per_decade)
+{
+    last_band = std::min(last_band, frequencies.size());
+    first_band_ = first_band;
+    last_band_ = last_band;
+    bands_ = last_band > first_band ? last_band - first_band : 0;
+    n_s_ = std::max(angle_nodes, 2);
+    r_min = std::max(r_min, 1e-3);
+    r_max = std::max(r_max, r_min * 1.0001);
+    log_r_min_ = std::log(r_min);
+    log_r_step_ = std::log(10.0) / std::max(nodes_per_decade, 1);
+    n_r_ = std::max(2, static_cast<int>(std::ceil((std::log(r_max) - log_r_min_) / log_r_step_)) + 1);
+    values_.assign(static_cast<std::size_t>(n_r_) * n_s_ * bands_, 1.0F);
+    std::vector<double> ratio(frequencies.size());
+    for (int ir = 0; ir < n_r_; ir++)
+    {
+        const double r = std::exp(log_r_min_ + ir * log_r_step_);
+        for (int is = 0; is < n_s_; is++)
+        {
+            const double s = static_cast<double>(is) / (n_s_ - 1);
+            const double sin_elevation = s * s;
+            const double hs = r * sin_elevation;
+            const double d = r * std::sqrt(std::max(0.0, 1.0 - sin_elevation * sin_elevation));
+            excess_ground_attenuation(ground, impedance, hs, d, sound_speed, frequencies,
+                    ratio.data(), first_band, last_band, true);
+            std::copy(ratio.begin() + first_band, ratio.begin() + last_band,
+                    values_.begin() + (static_cast<std::size_t>(ir) * n_s_ + is) * bands_);
+        }
+    }
+}
+
+void GroundTable::power_ratio(double source_height, double ground_distance, double* ratio) const
+{
+    const double r = std::hypot(source_height, ground_distance);
+    const double s = r > 0.0 ? std::sqrt(std::max(0.0, source_height) / r) : 1.0;
+    double fs = s * (n_s_ - 1);
+    double fr = (std::log(std::max(r, 1e-300)) - log_r_min_) / log_r_step_;
+    fs = std::min(std::max(fs, 0.0), static_cast<double>(n_s_ - 1));
+    fr = std::min(std::max(fr, 0.0), static_cast<double>(n_r_ - 1));
+    const int is = std::min(static_cast<int>(fs), n_s_ - 2);
+    const int ir = std::min(static_cast<int>(fr), n_r_ - 2);
+    const double ws = fs - is;
+    const double wr = fr - ir;
+    const double w00 = (1.0 - wr) * (1.0 - ws);
+    const double w01 = (1.0 - wr) * ws;
+    const double w10 = wr * (1.0 - ws);
+    const double w11 = wr * ws;
+    const float* a = values_.data() + (static_cast<std::size_t>(ir) * n_s_ + is) * bands_;
+    const float* b = a + static_cast<std::size_t>(n_s_) * bands_;
+    double* out = ratio + first_band_;
+    for (std::size_t k = 0; k < bands_; k++)
+        out[k] = w00 * a[k] + w01 * a[k + bands_] + w10 * b[k] + w11 * b[k + bands_];
 }
 
 std::vector<double> excess_ground_attenuation(const GroundModel& ground, double source_height,

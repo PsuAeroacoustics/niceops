@@ -388,7 +388,7 @@ public:
             double sound_speed = 343.2, std::size_t first_band = 0,
             std::size_t last_band = static_cast<std::size_t>(-1),
             const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
-            double plate_mic_azimuth = 0.0) const;
+            double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr) const;
 
     // Band centres carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centres() const

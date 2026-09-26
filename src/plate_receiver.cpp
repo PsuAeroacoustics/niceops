@@ -179,13 +179,54 @@ void PlateReceiver::level(double source_height, double ground_distance, double a
     evaluate<false>(source_height, ground_distance, azimuth, correction, first_band, last_band);
 }
 
+void PlateReceiver::power_ratio(double source_height, double ground_distance, double azimuth,
+        double* ratio, std::size_t first_band, std::size_t last_band) const
+{
+    evaluate<false, true>(source_height, ground_distance, azimuth, ratio, first_band, last_band);
+}
+
 void PlateReceiver::level_exact(double source_height, double ground_distance, double azimuth,
         double* correction, std::size_t first_band, std::size_t last_band) const
 {
     evaluate<true>(source_height, ground_distance, azimuth, correction, first_band, last_band);
 }
 
-template <bool exact>
+void PlateReceiver::tabulate(double r_max, int angle_nodes, int nodes_per_decade)
+{
+    const double r_min = 1.0;
+    r_max = std::max(r_max, 2.0);
+    q_n_s_ = std::max(angle_nodes, 2);
+    q_log_r_min_ = std::log(r_min);
+    q_log_r_step_ = std::log(10.0) / std::max(nodes_per_decade, 1);
+    q_n_r_ = std::max(2, static_cast<int>(std::ceil((std::log(r_max) - q_log_r_min_) / q_log_r_step_)) + 1);
+    const std::size_t points = 2 * n_bands_ + 1;
+    q_table_.assign(static_cast<std::size_t>(q_n_r_) * q_n_s_ * points * 2, 0.0F);
+    const bool boundary_loss = ground_.boundary_loss_correction;
+    for (int ir = 0; ir < q_n_r_; ir++)
+    {
+        const double r = std::exp(q_log_r_min_ + ir * q_log_r_step_);
+        const double kappa_per_hz = pi * r / sound_speed_;
+        for (int is = 0; is < q_n_s_; is++)
+        {
+            const double s = static_cast<double>(is) / (q_n_s_ - 1);
+            const double cos_grazing = s * s;
+            float* out = q_table_.data() + ((static_cast<std::size_t>(ir) * q_n_s_ + is) * points) * 2;
+            for (std::size_t p = 0; p < points; p++)
+            {
+                const bool edge = p % 2 == 0;
+                const std::size_t band = p / 2;
+                const double f = edge ? edges_[band] : centres_[band];
+                const auto beta = edge ? edge_admittance_[band] : centre_admittance_[band];
+                const auto q = spherical_reflection_coefficient(cos_grazing, kappa_per_hz * f, beta,
+                        boundary_loss);
+                out[2 * p] = static_cast<float>(q[0]);
+                out[2 * p + 1] = static_cast<float>(q[1]);
+            }
+        }
+    }
+}
+
+template <bool exact, bool as_ratio>
 void PlateReceiver::evaluate(double source_height, double ground_distance, double azimuth,
         double* correction, std::size_t first_band, std::size_t last_band) const
 {
@@ -230,12 +271,68 @@ void PlateReceiver::evaluate(double source_height, double ground_distance, doubl
     constexpr double ten_over_ln10 = 4.34294481903251827651;
     const bool boundary_loss = ground_.boundary_loss_correction;
 
+    // The fast path's Q at point p (see q_table_): from the table when there
+    // is one, else evaluated.
+    const bool tabulated = !exact && !q_table_.empty();
+    const float* q_row[4] = {nullptr, nullptr, nullptr, nullptr};
+    double q_weight[4] = {0.0, 0.0, 0.0, 0.0};
+    if (tabulated)
+    {
+        const std::size_t points = 2 * n_bands_ + 1;
+        double fs = std::sqrt(std::min(std::max(cos_grazing, 0.0), 1.0)) * (q_n_s_ - 1);
+        double fr = (std::log(std::max(image_range, 1e-300)) - q_log_r_min_) / q_log_r_step_;
+        fr = std::min(std::max(fr, 0.0), static_cast<double>(q_n_r_ - 1));
+        const int is = std::min(static_cast<int>(fs), q_n_s_ - 2);
+        const int ir = std::min(static_cast<int>(fr), q_n_r_ - 2);
+        const double ws = fs - is;
+        const double wr = fr - ir;
+        const float* base = q_table_.data() + ((static_cast<std::size_t>(ir) * q_n_s_ + is) * points) * 2;
+        q_row[0] = base;
+        q_row[1] = base + points * 2;
+        q_row[2] = base + static_cast<std::size_t>(q_n_s_) * points * 2;
+        q_row[3] = q_row[2] + points * 2;
+        q_weight[0] = (1.0 - wr) * (1.0 - ws);
+        q_weight[1] = (1.0 - wr) * ws;
+        q_weight[2] = wr * (1.0 - ws);
+        q_weight[3] = wr * ws;
+    }
+    auto q_at = [&](std::size_t point, double f, std::complex<double> beta) -> std::array<double, 2> {
+        if (tabulated)
+        {
+            double re = 0.0, im = 0.0;
+            for (int c = 0; c < 4; c++)
+            {
+                re += q_weight[c] * q_row[c][2 * point];
+                im += q_weight[c] * q_row[c][2 * point + 1];
+            }
+            return {re, im};
+        }
+        return spherical_reflection_coefficient(cos_grazing, kappa_per_hz * f, beta, boundary_loss);
+    };
+
     // Q at the lower edge of the first band; each band then adds its centre
     // and upper edge, which is the next band's lower edge.
     std::array<double, 2> q_low {};
     if (!exact && first_band < last_band)
-        q_low = spherical_reflection_coefficient(cos_grazing, kappa_per_hz * edges_[first_band],
-                edge_admittance_[first_band], boundary_loss);
+        q_low = q_at(2 * first_band, edges_[first_band], edge_admittance_[first_band]);
+
+    // P_d and P_r at this direction for every sub-frequency in range, as one
+    // weighted sum of the four corners' contiguous runs (vectorises), rather
+    // than corner by corner inside the band loop.
+    thread_local std::vector<double> interpolated;
+    const std::size_t lo = first_band * n_sub_ * 4;
+    const std::size_t hi = last_band * n_sub_ * 4;
+    interpolated.resize(spectrum * 4);
+    {
+        const double w0 = weight[0], w1 = weight[1], w2 = weight[2], w3 = weight[3];
+        const double* c0 = corner[0];
+        const double* c1 = corner[1];
+        const double* c2 = corner[2];
+        const double* c3 = corner[3];
+        double* out = interpolated.data();
+        for (std::size_t i = lo; i < hi; i++)
+            out[i] = w0 * c0[i] + w1 * c1[i] + w2 * c2[i] + w3 * c3[i];
+    }
 
     for (std::size_t band = first_band; band < last_band; band++)
     {
@@ -243,19 +340,14 @@ void PlateReceiver::evaluate(double source_height, double ground_distance, doubl
         std::array<double, 2> q_high {};
         if (!exact)
         {
-            q_centre = spherical_reflection_coefficient(cos_grazing,
-                    kappa_per_hz * centres_[band], centre_admittance_[band], boundary_loss);
-            q_high = spherical_reflection_coefficient(cos_grazing,
-                    kappa_per_hz * edges_[band + 1], edge_admittance_[band + 1], boundary_loss);
+            q_centre = q_at(2 * band + 1, centres_[band], centre_admittance_[band]);
+            q_high = q_at(2 * band + 2, edges_[band + 1], edge_admittance_[band + 1]);
         }
         double energy = 0.0;
         for (std::size_t sub = 0; sub < n_sub_; sub++)
         {
             const std::size_t s = band * n_sub_ + sub;
-            double p[4] = {0.0, 0.0, 0.0, 0.0};
-            for (std::size_t c = 0; c < 4; c++)
-                for (std::size_t part = 0; part < 4; part++)
-                    p[part] += weight[c] * corner[c][s * 4 + part];
+            const double* p = interpolated.data() + s * 4;
             std::array<double, 2> q;
             if (exact)
             {
@@ -272,7 +364,8 @@ void PlateReceiver::evaluate(double source_height, double ground_distance, doubl
             const double im = p[1] + q[0] * p[3] + q[1] * p[2];
             energy += re * re + im * im;
         }
-        correction[band] = ten_over_ln10 * std::log(energy / static_cast<double>(n_sub_));
+        const double mean = energy / static_cast<double>(n_sub_);
+        correction[band] = as_ratio ? mean : ten_over_ln10 * std::log(mean);
         q_low = q_high;
     }
 }

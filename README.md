@@ -165,6 +165,7 @@ seconds, levels in dB.
 | `--turbulence_model`, `--gamma_t` | `chessell` (default, `--turbulence`) or `harmonoise`, whose coherence takes `--gamma_t` (~1e-6 moderate, ~1e-5 strong). |
 | `--roughness` | RMS roughness height, in `--units`: the coherent reflection falls by exp(−2(kσ cos θ)²). Default 0. |
 | `--plate_table` | Observers are flush microphones on a rigid ground plate (GRAS 67AX in a GR1425 plate). Takes a netCDF table from panam; needs `--ground_effect` over the ground the table was built for. See below. |
+| `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state instead of interpolating per-trajectory tables of it: 3-4x slower, for checking the tables. |
 | `--plate_mic_azimuth` | Which way the microphone is offset on its plate: `outboard` (default, away from the track) or degrees in the local frame from +x toward +y. |
 
 ### Performance
@@ -362,9 +363,19 @@ above −15 dB. The exact per-sub-frequency form (`PlateReceiver::level_exact`) 
 | | acoustic loop |
 | --- | --- |
 | spectral, no ground | 1.6 s |
-| `--ground_effect` | 9.1 s |
-| `--ground_effect --plate_table` | 15.7 s |
-| same, exact Q (every sub-frequency) | 28.4 s |
+| `--ground_effect` | 2.1 s (7.1 s with `--exact_ground`) |
+| `--ground_effect --plate_table` | 5.4 s (13.3 s with `--exact_ground`) |
+
+By default both receivers interpolate per-trajectory tables instead of evaluating the model at
+every observer and state. The tables are built exactly at their nodes in well under 0.1 s.
+- **Point receiver:** the whole ground correction, over source elevation and log range. Level
+  histories agree with the exact model within 0.001 dB.
+- **Plate receiver:** its reflection coefficients. SEL agrees within 0.0005 dB rms.
+
+The interpolated values never exceed the model's bounds, so the peak search and `--db_cutoff`
+stay exact. `--exact_ground` evaluates the model directly. Either way the Faddeeva function uses
+fast paths: an asymptotic series for |z| ≥ 6 and a Taylor table below, which agree with
+Weideman's series within 1e-11.
 
 The peak search and `--db_cutoff` bound the plate with `PlateReceiver::gain_bounds`, so both
 keep working. The `plate_windowed_is_exact` ctest checks that skipped states change nothing.

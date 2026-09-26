@@ -61,6 +61,22 @@ double weighted_level(const double* band_levels, const std::vector<double>& gain
     return 10.0 * std::log10(total);
 }
 
+double weighted_level(const double* band_levels, const std::vector<double>& gains,
+        const double* ratios)
+{
+    constexpr double ln10_over_10 = 0.23025850929940456840; // ln(10)/10
+    double total = 0.0;
+    for (std::size_t band = 0; band < gains.size(); band++)
+    {
+        if (gains[band] == 0.0)
+            continue;
+        total += gains[band] * ratios[band] * std::exp(band_levels[band] * ln10_over_10);
+    }
+    if (total <= 0.0)
+        return -std::numeric_limits<double>::infinity();
+    return 10.0 * std::log10(total);
+}
+
 std::size_t bands_in_range(const std::vector<double>& frequencies, BandLimits limits)
 {
     std::size_t count = 0;

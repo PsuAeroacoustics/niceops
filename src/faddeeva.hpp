@@ -12,7 +12,7 @@
 // overflows, since exp(-w) and erf of a large imaginary argument blow up in
 // opposite directions.
 //
-// The implementation is Weideman's rational approximation (J.A.C. Weideman,
+// The reference implementation is Weideman's rational approximation (J.A.C. Weideman,
 // "Computation of the Complex Error Function", SIAM J. Numer. Anal. 31 (1994)
 // 1497-1518), which is a polynomial in a Moebius transform of z.  32 terms give
 // a maximum relative error of 3e-13 over the domain the ground model actually
@@ -31,5 +31,10 @@
 namespace niceops {
 
 std::complex<double> faddeeva(std::complex<double> z);
+
+// Weideman's series everywhere: faddeeva() uses it outside its fast paths
+// (an asymptotic series for |z| >= 6, a Taylor table below; see
+// faddeeva.cpp).  Exposed so the tests can hold the fast paths to it.
+std::complex<double> faddeeva_reference(std::complex<double> z);
 
 } // namespace niceops

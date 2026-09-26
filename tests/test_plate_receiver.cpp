@@ -172,3 +172,41 @@ TEST_CASE("Plate receiver refuses a table for another ground or other bands", "[
     // A band outside the run's range may differ.
     REQUIRE_NOTHROW(plate.bound(shifted, grass(), 343.0, 11, 31));
 }
+
+TEST_CASE("Plate receiver's tabulated Q stays close to the evaluated one, inside the bound",
+        "[plate_receiver]")
+{
+    const auto evaluated = PlateReceiver::load("plates/gr1425_vp200.nc").bound(kBands, amedee(), 343.0);
+    auto tabulated = evaluated;
+    tabulated.tabulate(12000.0, 161, 40);
+    const auto bounds = tabulated.gain_bounds(0, kBands.size());
+    std::mt19937_64 random(13);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    std::vector<double> a(kBands.size()), b(kBands.size());
+    double worst = 0.0, sum2 = 0.0;
+    long n = 0;
+    for (int trial = 0; trial < 30000; trial++)
+    {
+        const double r = 5.0 * std::pow(2000.0, unit(random));
+        const double elevation = trial % 3 == 0 ? 0.2 * unit(random) * unit(random) : 1.5707 * unit(random);
+        const double azimuth = 2.0 * pi * unit(random);
+        evaluated.level(r * std::sin(elevation), r * std::cos(elevation), azimuth, a.data(), 0, kBands.size());
+        tabulated.level(r * std::sin(elevation), r * std::cos(elevation), azimuth, b.data(), 0, kBands.size());
+        for (std::size_t band = 0; band < kBands.size(); band++)
+        {
+            REQUIRE(10.0 * std::log10(bounds[band]) >= b[band]);
+            if (a[band] > -15.0)
+            {
+                const double e = b[band] - a[band];
+                worst = std::max(worst, std::abs(e));
+                sum2 += e * e;
+                n++;
+            }
+        }
+    }
+    // The worst cases sit where the model's own boundary-loss cutoff (|w| =
+    // 500) makes Q jump, which a table smooths over.
+    INFO("worst " << worst << " dB, rms " << std::sqrt(sum2 / n) << " dB");
+    CHECK(std::sqrt(sum2 / n) < 0.002);
+    CHECK(worst < 0.15);
+}

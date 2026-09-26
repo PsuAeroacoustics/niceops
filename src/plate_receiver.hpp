@@ -83,6 +83,19 @@ public:
     void level(double source_height, double ground_distance, double azimuth,
             double* correction, std::size_t first_band, std::size_t last_band) const;
 
+    // Tabulate the fast path's Q values (band edges and centres) over the
+    // image path's grazing cosine and length, up to `r_max` metres, so that
+    // level() and power_ratio() interpolate them instead of evaluating the
+    // reflection coefficient (a Faddeeva evaluation each).  Q varies smoothly
+    // with the geometry -- the plate's interference is in P_d and P_r -- so
+    // the grid is coarser than GroundTable's.  level_exact() never uses it.
+    void tabulate(double r_max, int angle_nodes = 161, int nodes_per_decade = 20);
+
+    // The same as a power ratio, 10^(level/10): what the band sum multiplies
+    // by, without a log per band.
+    void power_ratio(double source_height, double ground_distance, double azimuth,
+            double* ratio, std::size_t first_band, std::size_t last_band) const;
+
     // The same with Q at every sub-frequency, as panam's board_level() takes it.
     void level_exact(double source_height, double ground_distance, double azimuth,
             double* correction, std::size_t first_band, std::size_t last_band) const;
@@ -100,7 +113,7 @@ public:
     std::string description() const;
 
 private:
-    template <bool exact>
+    template <bool exact, bool as_ratio = false>
     void evaluate(double source_height, double ground_distance, double azimuth,
             double* correction, std::size_t first_band, std::size_t last_band) const;
 
@@ -108,6 +121,14 @@ private:
     std::vector<double> lagrange_; // [sub][lower edge, centre, upper edge]
     std::vector<std::complex<double>> edge_admittance_;
     std::vector<std::complex<double>> centre_admittance_;
+    // Q table: [r][s][point][re, im], point 2b the lower edge of band b, 2b+1
+    // its centre, 2n the top edge; s = sqrt(cos), cos the image path's
+    // grazing cosine.
+    std::vector<float> q_table_;
+    int q_n_s_ = 0;
+    int q_n_r_ = 0;
+    double q_log_r_min_ = 0.0;
+    double q_log_r_step_ = 1.0;
     std::size_t n_bands_ = 0;
     std::size_t n_sub_ = 0;
     std::vector<double> frequencies_; // [band][sub]

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <random>
 #include <vector>
 
 #include "faddeeva.hpp"
@@ -27,6 +28,28 @@ void check_close(double got, double expected, double tolerance)
 const std::vector<double> kBands = {50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0};
 
 } // namespace
+
+TEST_CASE("Faddeeva's fast paths match the Weideman series across the ground model's domain",
+        "[ground_effect]")
+{
+    // Re 0 to 23, Im -1.25 to 16 (the ground model's reach, with margin), on a
+    // grid that is not aligned with the Taylor table's nodes, plus the rings
+    // either side of the |z| = 6 switch.
+    double worst = 0.0;
+    auto check = [&](std::complex<double> z) {
+        const auto fast = faddeeva(z);
+        const auto reference = faddeeva_reference(z);
+        worst = std::max(worst, std::abs(fast - reference) / std::abs(reference));
+    };
+    for (double x = 0.0013; x < 23.0; x += 0.0371)
+        for (double y = -1.2487; y < 16.0; y += 0.0413)
+            check({x, y});
+    for (double angle = -0.2; angle < 1.6; angle += 0.001)
+        for (const double radius : {5.9999999, 6.0, 6.0000001})
+            check(std::polar(radius, angle));
+    INFO("worst relative difference " << worst);
+    REQUIRE(worst < 2e-11);
+}
 
 TEST_CASE("Faddeeva matches SciPy's wofz", "[ground_effect]")
 {
@@ -342,4 +365,60 @@ TEST_CASE("a thin low-resistivity Delany-Bazley layer is refused as non-passive"
     ground.layer_depth = 0.03;
     REQUIRE_THROWS(ground_impedance(ground, {10.0, 1000.0}, 343.0));
     REQUIRE_NOTHROW(ground_impedance(ground, {200.0, 1000.0}, 343.0));
+}
+
+TEST_CASE("GroundTable interpolates the model to within its stated accuracy, inside its bound",
+        "[ground_effect]")
+{
+    const std::vector<double> bands = {10, 12.5, 16, 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160,
+            200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000,
+            6300, 8000, 10000};
+    // Coherent grass (the hardest: sharpest interference), Amedee with
+    // turbulence and roughness, and hard ground.
+    std::vector<GroundModel> grounds(3);
+    grounds[1].impedance_model = ImpedanceModel::variable_porosity;
+    grounds[1].flow_resistance = 200.0;
+    grounds[1].turbulence_model = TurbulenceModel::harmonoise;
+    grounds[1].gamma_t = 3e-5;
+    grounds[1].roughness = 0.01;
+    grounds[2].flow_resistance = flow_resistance::concrete;
+    for (const auto& ground : grounds)
+    {
+        const auto impedance = ground_impedance(ground, bands, 343.0);
+        const GroundTable table(ground, impedance, 343.0, bands, 2, 29, 1.0, 12000.0);
+        const auto bounds = ground_gain_bounds(ground, impedance, 2, 29);
+        std::mt19937_64 random(5);
+        std::uniform_real_distribution<double> unit(0.0, 1.0);
+        std::vector<double> exact(bands.size()), ratio(bands.size());
+        double worst = 0.0, sum2 = 0.0;
+        long n = 0;
+        for (int trial = 0; trial < 40000; trial++)
+        {
+            const double r = 20.0 * std::pow(500.0, unit(random));
+            const double elevation = (trial % 3 == 0 ? 0.2 * unit(random) * unit(random) : 1.5707 * unit(random));
+            const double hs = r * std::sin(elevation), d = r * std::cos(elevation);
+            // A source at least 1 m up.  Right at the ground, HARMONOISE's
+            // gamma_p = h_s h_r / (h_s + h_r) goes to zero and the turbulence with
+            // it, leaving a coherent null the table cannot resolve -- a source on
+            // the ground kilometres away, which matters to nothing.
+            if (hs < 1.0)
+                continue;
+            excess_ground_attenuation(ground, impedance, hs, d, 343.0, bands, exact.data(), 2, 29);
+            table.power_ratio(hs, d, ratio.data());
+            for (std::size_t band = 2; band < 29; band++)
+            {
+                REQUIRE(ratio[band] <= bounds[band]);
+                if (exact[band] > -15.0)
+                {
+                    const double e = 10.0 * std::log10(ratio[band]) - exact[band];
+                    worst = std::max(worst, std::abs(e));
+                    sum2 += e * e;
+                    n++;
+                }
+            }
+        }
+        INFO("worst " << worst << " dB, rms " << std::sqrt(sum2 / n) << " dB");
+        CHECK(std::sqrt(sum2 / n) < 0.003);
+        CHECK(worst < 0.1);
+    }
 }

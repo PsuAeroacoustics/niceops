@@ -133,11 +133,13 @@ TurbulenceModel parse_turbulence_model(const std::string& name);
 // Excess ground attenuation into a caller-provided buffer, with the impedance
 // precomputed. This is the form the observer loop uses: no allocation, no
 // repeated pow(). `attenuation` must have room for frequencies.size() entries.
+// With `as_power_ratio`, it receives 10^(attenuation/10) instead -- what the
+// band sum multiplies by -- which saves a log per band.
 void excess_ground_attenuation(const GroundModel& ground,
         const std::vector<std::complex<double>>& impedance, double source_height,
         double ground_distance, double sound_speed, const std::vector<double>& frequencies,
         double* attenuation, std::size_t first_band = 0,
-        std::size_t last_band = static_cast<std::size_t>(-1));
+        std::size_t last_band = static_cast<std::size_t>(-1), bool as_power_ratio = false);
 
 // Per band, an upper bound on 10^(attenuation/10) -- the energy the ground can
 // add -- over every geometry, for this ground and impedance.  Bands outside
@@ -163,6 +165,63 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
 // `admittance`.  No roughness or turbulence: those enter the model outside Q.
 std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, double kappa,
         std::complex<double> admittance, bool boundary_loss = true);
+
+// The point-receiver ground effect tabulated over the geometry, for the
+// observer loop.  The model depends on the geometry only through the source
+// height h_s and horizontal distance d (the receiver height is fixed for a
+// run), so it is computed exactly at the nodes of a grid in
+// s = sqrt(h_s / r) and ln r, r = hypot(h_s, d) -- s resolves grazing
+// incidence, where the model changes fastest -- and interpolated bilinearly,
+// as a power ratio, in between.  The interpolant is a convex combination of
+// exact values, so ground_gain_bounds() bounds it as it bounds the model.
+// Ranges outside [r_min, r_max] are clamped to the table's edge.
+//
+// Why: the model costs ~20 ns per band (a complex reflection coefficient and
+// a Faddeeva evaluation) and the observer loop reaches it for every observer
+// at every state -- 94 million times on the demo case, where it was 5.5 of
+// the 7.1 s.  A lookup is four reads per band.  With the defaults (641
+// angles, 40 per decade), level histories agree with the exact model to
+// 0.001 dB; on the demo grid 99.97% of SELs agree to 0.01 dB, the rest being
+// points where the 10 dB-down window's first-to-last rule flips on a
+// secondary hump at the threshold (a perturbation of any size can do that).
+// --exact_ground bypasses the table.
+class GroundTable
+{
+public:
+    GroundTable() = default;
+    GroundTable(const GroundModel& ground, const std::vector<std::complex<double>>& impedance,
+            double sound_speed, const std::vector<double>& frequencies, std::size_t first_band,
+            std::size_t last_band, double r_min, double r_max, int angle_nodes = 641,
+            int nodes_per_decade = 40);
+
+    // 10^(attenuation/10) per band in [first_band, last_band) of the table.
+    void power_ratio(double source_height, double ground_distance, double* ratio) const;
+
+    bool empty() const
+    {
+        return values_.empty();
+    }
+    std::size_t first_band() const
+    {
+        return first_band_;
+    }
+    std::size_t last_band() const
+    {
+        return last_band_;
+    }
+
+private:
+    std::size_t first_band_ = 0;
+    std::size_t last_band_ = 0;
+    std::size_t bands_ = 0;
+    int n_s_ = 0;
+    int n_r_ = 0;
+    double log_r_min_ = 0.0;
+    double log_r_step_ = 1.0;
+    // [r][s][band], float: 1e-7 relative is 4e-7 dB, and half the memory
+    // keeps more of a large table in cache.
+    std::vector<float> values_;
+};
 
 // Excess ground attenuation in dB for each band centre, for a source at
 // `source_height` metres and a receiver `ground_distance` metres away
