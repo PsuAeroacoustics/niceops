@@ -71,6 +71,13 @@ Atmosphere AtmosphereProfile::at(double z) const
     return air;
 }
 
+std::array<double, 2> AtmosphereProfile::wind_at(double z) const
+{
+    if (!has_wind())
+        return {0.0, 0.0};
+    return {interpolate(height, wind_east, z), interpolate(height, wind_north, z)};
+}
+
 AtmosphereProfile AtmosphereProfile::with_hydrostatic_pressure(double surface_pressure) const
 {
     // dp/p = -(g / R T) dz, so p(z) = p(0) exp(-(g/R) G(z)) with G the
@@ -218,9 +225,67 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
     take(pressure_column);
     const bool have_pressure = pressure_column != LabelledCsv::npos;
 
-    const std::size_t needed = 1
+    // Wind, as speed and the direction it blows from, or as east and north
+    // components.  Its unit has to be named: m/s and knots cover the same
+    // values, so unlike temperature nothing in the numbers can tell them apart.
+    constexpr double knot = 1852.0 / 3600.0; // m/s
+    constexpr std::size_t npos = LabelledCsv::npos;
+    double speed_to_mps = 1.0;
+    std::size_t speed_column = csv.column({"wind speed mps", "wind speed ms", "wspd mps",
+            "wspd ms", "ws mps", "ws ms"});
+    if (speed_column == npos)
+    {
+        speed_column = csv.column({"wind speed kt", "wind speed kts", "wind speed knots",
+                "wspd kt", "wspd kts", "ws kt", "ws kts"});
+        speed_to_mps = knot;
+    }
+    const std::size_t direction_column = csv.column({"wind direction", "wind dir", "wdir", "wd",
+            "wind direction deg", "wdir deg", "wd deg"});
+    double component_to_mps = 1.0;
+    std::size_t u_column = csv.column({"u mps", "u ms"});
+    std::size_t v_column = csv.column({"v mps", "v ms"});
+    if (u_column == npos && v_column == npos)
+    {
+        u_column = csv.column({"u kt", "u kts"});
+        v_column = csv.column({"v kt", "v kts"});
+        component_to_mps = knot;
+    }
+    if (speed_column == npos && u_column == npos && v_column == npos
+            && csv.column({"wind speed", "wspd", "ws", "wind", "u", "v"}) != npos)
+    {
+        input_error("--atmosphere ", path, ": name the wind's unit in its column, as "
+                "wind_speed_mps or wind_speed_kt (with wind_direction), or u_mps and v_mps.");
+    }
+    if ((speed_column == npos) != (direction_column == npos))
+    {
+        input_error("--atmosphere ", path, ": wind speed and wind direction come together; "
+                "this file gives one without the other.");
+    }
+    if ((u_column == npos) != (v_column == npos))
+    {
+        input_error("--atmosphere ", path, ": the wind components u and v come together; this "
+                "file gives one without the other.");
+    }
+    if (speed_column != npos && u_column != npos)
+    {
+        input_error("--atmosphere ", path, " gives the wind both as speed and direction and as "
+                "components; give one.");
+    }
+    const bool polar_wind = speed_column != npos;
+    const bool component_wind = u_column != npos;
+    take(speed_column);
+    take(direction_column);
+    take(u_column);
+    take(v_column);
+
+    std::size_t needed = 1
             + std::max({height_column, temperature_column, humidity_column,
                     have_pressure ? pressure_column : 0});
+    for (const std::size_t column : {speed_column, direction_column, u_column, v_column})
+    {
+        if (column != npos)
+            needed = std::max(needed, column + 1);
+    }
     if (csv.rows.empty())
         input_error("--atmosphere ", path, " holds no numeric rows under its header.");
 
@@ -252,6 +317,31 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
         profile.relative_humidity.push_back(data[humidity_column]);
         if (have_pressure)
             profile.pressure.push_back(data[pressure_column]);
+        if (polar_wind)
+        {
+            // The meteorological convention: the bearing the wind comes from.
+            const double speed = data[speed_column] * speed_to_mps;
+            const double from = data[direction_column] * pi / 180.0;
+            if (!(speed >= 0.0) || speed > 150.0)
+            {
+                input_error("--atmosphere ", path, ": wind speed ", speed,
+                        " m/s is not plausible.");
+            }
+            profile.wind_east.push_back(-speed * std::sin(from));
+            profile.wind_north.push_back(-speed * std::cos(from));
+        }
+        else if (component_wind)
+        {
+            const double east = data[u_column] * component_to_mps;
+            const double north = data[v_column] * component_to_mps;
+            if (!(std::hypot(east, north) <= 150.0))
+            {
+                input_error("--atmosphere ", path, ": wind of ", std::hypot(east, north),
+                        " m/s is not plausible.");
+            }
+            profile.wind_east.push_back(east);
+            profile.wind_north.push_back(north);
+        }
     }
     for (std::size_t i = 1; i < profile.height.size(); i++)
     {
@@ -364,11 +454,15 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
                                                              : "")
                           : "; no pressure column, so it is integrated hydrostatically from the "
                             "surface pressure",
+            polar_wind ? (speed_to_mps == 1.0 ? "; wind as speed (m/s) and direction"
+                                              : "; wind as speed (knots) and direction")
+                    : component_wind ? (component_to_mps == 1.0 ? "; wind as u, v (m/s)"
+                                                                : "; wind as u, v (knots)")
+                                     : "; no wind",
             ".");
     if (ignored.tellp() > 0)
     {
-        log("  ignoring columns: ", ignored.str(),
-                ". Wind, if among them, is not modelled yet.");
+        log("  ignoring columns: ", ignored.str(), ".");
     }
     return profile;
 }

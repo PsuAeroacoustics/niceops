@@ -1333,6 +1333,14 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
         const double* absorption, double* levels, std::size_t first_band,
         std::size_t last_band, const PackedSpectra* packed) const
 {
+    eval_spectrum(range, range, phi, theta, blend, absorption, levels, first_band, last_band,
+            packed);
+}
+
+void Database::eval_spectrum(double range, double absorbed_range, double phi, double theta,
+        const Blend& blend, const double* absorption, double* levels, std::size_t first_band,
+        std::size_t last_band, const PackedSpectra* packed) const
+{
     const std::size_t n_bands = frequencies_.size();
     assert(n_bands > 0);
     // Bands the metric excludes are never read; skip them rather than blend and
@@ -1350,7 +1358,7 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
     // Spreading is geometry, so it is the same for every band; absorption is
     // not, which is the whole point of propagating the spectrum.
     const double spreading_loss = 20.0 * std::log10(range / sphere_radius());
-    const double path_length = range - sphere_radius();
+    const double path_length = absorbed_range - sphere_radius();
     const double* w = blend.weights.data();
     const double* sw = stencil.weight;
     constexpr std::size_t n_slots = condition_dims + 1;
@@ -1484,11 +1492,19 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
         general_band(band);
 }
 
-double Database::spectral_level_at_observer(const Vec3& observer, const SourceState& state,
+// The body both spectral_level_at_observer and spectral_level_along share,
+// forced inline into each.  As an ordinary call from the first -- the one the
+// straight-ray observer loop takes -- it cost 4% of the acoustic loop, measured
+// against the body written out in place.
+#if defined(__GNUC__) || defined(__clang__)
+[[gnu::always_inline]]
+#endif
+inline double Database::spectral_level_impl(const RayPath& path, const SourceState& state,
         const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
         const std::vector<std::complex<double>>* impedance, double sound_speed,
         std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
-        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table) const
+        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
+        const double* extra_loss) const
 {
     // Reused across calls: this runs once per observer per trajectory state,
     // and the band count is fixed for the life of the database.
@@ -1496,12 +1512,16 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
     levels.resize(frequencies_.size());
 
     // Everything the level takes from the path (propagation.hpp).
-    const RayPath path = straight_ray(state.position, observer);
     const auto angles = lookup_angles(state.frame, path.direction);
     assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
 
-    eval_spectrum(path.range, angles[0], angles[1], state.blend, absorption, levels.data(),
-            first_band, last_band, packed);
+    eval_spectrum(path.range, path.path_length, angles[0], angles[1], state.blend, absorption,
+            levels.data(), first_band, last_band, packed);
+    if (extra_loss != nullptr)
+    {
+        for (std::size_t band = first_band; band < std::min(last_band, levels.size()); band++)
+            levels[band] -= extra_loss[band];
+    }
 
     if (ground != nullptr)
     {
@@ -1520,9 +1540,8 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
             // frame, where the microphone is offset along +y.  This is the
             // bearing between the two, which a ray in a stratified atmosphere
             // keeps unless a crosswind deflects it.
-            const Vec3 separation = observer - state.position;
-            const double azimuth = std::atan2(separation.y, separation.x) - plate_mic_azimuth
-                    + 0.5 * pi;
+            const double azimuth = std::atan2(path.separation.y, path.separation.x)
+                    - plate_mic_azimuth + 0.5 * pi;
             plate->power_ratio(path.source_height, path.ground_distance, azimuth,
                     correction.data(), first_band, last_band);
         }
@@ -1544,6 +1563,28 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
     }
 
     return weighted_level(levels.data(), gains);
+}
+
+double Database::spectral_level_at_observer(const Vec3& observer, const SourceState& state,
+        const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
+        const std::vector<std::complex<double>>* impedance, double sound_speed,
+        std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
+        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table) const
+{
+    return spectral_level_impl(straight_ray(state.position, observer), state, absorption, gains,
+            ground, impedance, sound_speed, first_band, last_band, packed, plate,
+            plate_mic_azimuth, ground_table, nullptr);
+}
+
+double Database::spectral_level_along(const RayPath& path, const SourceState& state,
+        const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
+        const std::vector<std::complex<double>>* impedance, double sound_speed,
+        std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
+        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
+        const double* extra_loss) const
+{
+    return spectral_level_impl(path, state, absorption, gains, ground, impedance, sound_speed,
+            first_band, last_band, packed, plate, plate_mic_azimuth, ground_table, extra_loss);
 }
 
 double Database::shaft_power(const Blend& blend) const

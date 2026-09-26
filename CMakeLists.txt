@@ -160,6 +160,7 @@ add_library(niceops_core STATIC
   src/sphere_database.cpp
   src/atmosphere.cpp
   src/atmosphere_profile.cpp
+  src/refraction.cpp
   src/weighting.cpp
   src/faddeeva.cpp
   src/ground_effect.cpp
@@ -205,6 +206,7 @@ add_executable(niceops_unit_tests
   tests/test_geodetic.cpp
   tests/test_atmosphere.cpp
   tests/test_atmosphere_profile.cpp
+  tests/test_refraction.cpp
   tests/test_weighting.cpp
   tests/test_ground_effect.cpp
   tests/test_plate_receiver.cpp
@@ -272,3 +274,26 @@ add_test(NAME atmosphere_homogeneous_scattered COMMAND niceops -d databases/B407
 set_tests_properties(atmosphere_uniform_scattered atmosphere_homogeneous_scattered PROPERTIES FIXTURES_SETUP atmosphere_scattered_runs)
 add_test(NAME atmosphere_uniform_scattered_is_homogeneous COMMAND golden_compare integrated/atmosphere_uniform_scattered.csv integrated/atmosphere_homogeneous_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(atmosphere_uniform_scattered_is_homogeneous PROPERTIES FIXTURES_REQUIRED atmosphere_scattered_runs)
+# --refraction linear through the uniform profile: no gradient, so every path is
+# straight, and it has to reproduce the homogeneous run above -- the whole
+# refracted-path plumbing (per-path fits, travel time into reception time, the
+# march it forces) against the straight path.
+add_test(NAME refraction_uniform COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/B407_uniform.csv --refraction linear --gridstep 492 -L warn -o integrated/refraction_uniform.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(refraction_uniform PROPERTIES FIXTURES_SETUP atmosphere_runs)
+add_test(NAME refraction_uniform_is_homogeneous COMMAND golden_compare integrated/refraction_uniform.csv integrated/atmosphere_homogeneous.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(refraction_uniform_is_homogeneous PROPERTIES FIXTURES_REQUIRED atmosphere_runs)
+# The configuration most test data is compared in: flush plate microphones,
+# scattered over sloping ground (arrays/coyle_approach.csv stands above and
+# below the plane).  Refraction in uniform air must end each ray where the
+# straight model does.
+add_test(NAME refraction_uniform_plate_scattered COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b arrays/coyle_approach.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --atmosphere atmospheres/B407_uniform.csv --refraction linear -L warn -o integrated/refraction_uniform_plate_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME straight_plate_scattered COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b arrays/coyle_approach.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn -o integrated/straight_plate_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(refraction_uniform_plate_scattered straight_plate_scattered PROPERTIES FIXTURES_SETUP refraction_plate_runs)
+add_test(NAME refraction_uniform_plate_is_straight COMMAND golden_compare integrated/refraction_uniform_plate_scattered.csv integrated/straight_plate_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(refraction_uniform_plate_is_straight PROPERTIES FIXTURES_REQUIRED refraction_plate_runs)
+# Real refraction, with wind, a shadow zone upwind and every ground receiver:
+# these have no reference to compare against (tests/test_refraction.cpp checks
+# the rays against traced ones), but they must run, and eval_spectrum's
+# asserts catch any non-finite level along the way.
+add_test(NAME refraction_windy_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --gridstep 492 -L warn -o integrated/refraction_windy_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME refraction_windy_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 492 -L warn -o integrated/refraction_windy_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

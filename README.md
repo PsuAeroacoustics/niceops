@@ -158,7 +158,9 @@ seconds, levels in dB.
 | `--spectral` | Propagate the database's per-band spectra to the ground with ISO 9613-1 absorption, instead of one broadband level with the database's EAA factor. Needs a database carrying spectra. |
 | `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
 | `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
-| `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity and optionally pressure against height. Absorption is integrated through it. Spectral path only; wind is not modelled yet. See below. |
+| `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity, and optionally pressure and wind, against height. Absorption is integrated through it. Spectral path only. See below. |
+| `--refraction` | `none` (default) or `linear`: curved rays through the `--atmosphere` profile's effective sound speed, fitted to a straight line per path, with shadow zones under upward refraction. See below. |
+| `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
 | `--receiver_height`, `--turbulence` | Receiver height (in `--units`, default 1.2 m) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
@@ -322,6 +324,8 @@ Columns are found by name, in any order, one row per level; rows may run top dow
 | Temperature | `T_K`, `T_C` | named; a bare `T` is told from the values |
 | Relative humidity | `RH`, `humidity` | percent |
 | Pressure (optional) | `p_kPa`, `p_hPa`, `p_Pa` | named; a bare `p` is told from the values |
+| Wind (optional) | `wind_speed_mps` or `wind_speed_kt`, with `wind_direction` | direction is the compass bearing it blows **from**, degrees |
+| or wind components | `u_mps` and `v_mps`, or `u_kt` and `v_kt` | toward east and toward north |
 
 ```csv
 z_ft,T_K,RH,p_kPa
@@ -346,8 +350,72 @@ The rules that keep it from guessing:
   unless the file gives no pressure, in which case it is the surface pressure.
 - **Only the spectral path uses it.** The broadband path's `EAA` is the database's own
   fitted attenuation, and there is nothing per band to integrate.
-- **Wind columns are read past.** Refraction, and the airspeed that wind changes, are later
-  steps; the log names every column it ignored.
+- **Wind columns must name their unit.** Nothing in the values tells m/s from knots. Wind
+  matters only to `--refraction`; absorption does not depend on it. The log names every
+  column it ignored.
+
+#### Refraction
+
+`--refraction linear` bends the rays through the profile. For each path it fits a straight
+line to the effective sound speed, c(z) + w(z)·h, where w is the wind and h the horizontal
+direction of propagation. The fit is least squares over the heights the path spans, widened
+to at least 10 m. This is the equivalent linear profile of Harmonoise and Nord2000. In a
+linear profile every ray is an arc of a circle, so the eigenrays have closed forms, and the
+path supplies:
+
+- **The sphere's direction:** the direct ray's launch angle. At kilometre ranges it is a few
+  degrees from the straight line, which is a large fraction of the database's 5° grid.
+- **Spreading:** from the ray tube's area, which in a linear profile is exactly
+  r / cos(launch angle).
+- **Absorption:** along the arc.
+- **Ground geometry:** a point receiver's ground model gets the reflected ray's grazing angle
+  and length; a plate microphone gets the direct ray's arrival angle. Both ground models are
+  otherwise unchanged.
+- **Reception time:** from the ray's travel time.
+- **Shadow zones:** under upward refraction, receivers beyond the ray that grazes the ground
+  get the grazing ray's level, decaying with distance into the shadow. The decay is the first
+  creeping-wave mode over rigid ground, about 24 dB/km at 1 kHz for a gradient of 0.02 /s.
+  It is capped at `--shadow_floor`, where energy scattered in by turbulence takes over.
+
+`atmospheres/example_windy.csv` is an illustrative profile, not a measurement: a neutral
+log-law westerly (5.2 m/s at 10 m, 8.5 m/s at 1000 ft) over the ISA lapse. On the demo track
+with the B407 database and `--frame_bearing 210`, compared with the same profile under
+`--refraction none`:
+
+| | mean | upwind half | downwind half | worst cell | acoustic loop |
+| --- | --- | --- | --- | --- | --- |
+| no ground effect | -0.77 dB | -1.51 dB | -0.04 dB | -7.85 dB | 2.2 s (1.8 s without) |
+| `--ground_effect` | -0.56 dB | -0.80 dB | -0.32 dB | -3.81 dB | 4.7 s (2.1 s without) |
+
+Most of the upwind loss comes from the low states near the end of the approach. From 10 m up,
+the shadow begins about a kilometre upwind.
+
+What to know before relying on it:
+
+- **Wind directions are compass bearings**, turned into the local frame by `--frame_bearing`,
+  whose default is +x east. The shipped AC tracks run +x along 210°, so without
+  `--frame_bearing 210` their wind is read 120° off. The log says so whenever wind is present
+  and the bearing was not given.
+- **One gradient per path.** A log-law profile's steep lowest metres are averaged into it.
+  Equivalent-linear models have been found up to 10 dB off a parabolic-equation solution near
+  the ground at 500–2000 Hz (van Maercke & Salomons 2009). The general stratified model
+  planned as step 6 removes this approximation.
+- **The effective-sound-speed approximation** overstates the wind by 1/cos(elevation). That is
+  worst on steep paths, where refraction matters least.
+- **One direct and one reflected ray.** The extra ground-bouncing arrivals of strong downward
+  refraction at long range are not included.
+- **The source does not feel the wind.** Its advance ratio still comes from the track's ground
+  speed.
+- **The ray ends at the microphone.** With a plate, or with no ground model, the ray ends at
+  the observer's own height, as the straight path does, so uniform air gives the straight
+  result exactly, scattered microphones on sloping ground included. With a point-receiver
+  ground model the ray ends `--receiver_height` above that, where the microphone is. The straight model's direct
+  path ends on the plane. On the demo grid that difference alone moves SEL by -0.7 to +0.8 dB
+  (median 0), even in a uniform atmosphere. Almost all of it comes from the low states at the
+  end of the approach, where 1.2 m is a sizeable fraction of the source's height. With
+  `--receiver_height 0` the two agree to 1e-9.
+- **Every state is marched.** The peak search's bounds assume straight rays, so they are off,
+  and `--db_cutoff` is refused.
 
 #### Ground effect
 

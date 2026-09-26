@@ -24,6 +24,7 @@
 
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
+#include "propagation.hpp"
 #include "util/constants.hpp"
 #include "vec3.hpp"
 
@@ -356,6 +357,13 @@ public:
             const double* absorption, double* levels, std::size_t first_band = 0,
             std::size_t last_band = static_cast<std::size_t>(-1),
             const PackedSpectra* packed = nullptr) const;
+    // The same, with spreading taken over `range` and absorption over
+    // `path_length - r_sphere`: a curved ray's tube and its arc (RayPath).  The
+    // form above is this one with the two equal.
+    void eval_spectrum(double range, double path_length, double phi, double theta,
+            const Blend& blend, const double* absorption, double* levels,
+            std::size_t first_band = 0, std::size_t last_band = static_cast<std::size_t>(-1),
+            const PackedSpectra* packed = nullptr) const;
 
     // One blend's spectra, laid out [cell][k][band] for the k-th of its four
     // indices, with a bit mask per (cell, k) of the bands in [first_band,
@@ -390,6 +398,20 @@ public:
             std::size_t last_band = static_cast<std::size_t>(-1),
             const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
             double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr) const;
+
+    // The same along a path the caller has already formed (propagation.hpp):
+    // spectral_level_at_observer is this with straight_ray().  `extra_loss`,
+    // when given, is dB per band taken off after propagation -- the shadow
+    // zone's, under --refraction.
+    double spectral_level_along(const RayPath& path, const SourceState& state,
+            const double* absorption, const std::vector<double>& gains,
+            const GroundModel* ground = nullptr,
+            const std::vector<std::complex<double>>* impedance = nullptr,
+            double sound_speed = 343.2, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1),
+            const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
+            double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr,
+            const double* extra_loss = nullptr) const;
 
     // Band centres carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centres() const
@@ -512,6 +534,15 @@ public:
     static constexpr double no_energy_floor_db = -1000.0;
 
 private:
+
+    // What spectral_level_at_observer and spectral_level_along share; see the
+    // definition for why it is forced inline.
+    double spectral_level_impl(const RayPath& path, const SourceState& state,
+            const double* absorption, const std::vector<double>& gains,
+            const GroundModel* ground, const std::vector<std::complex<double>>* impedance,
+            double sound_speed, std::size_t first_band, std::size_t last_band,
+            const PackedSpectra* packed, const PlateReceiver* plate, double plate_mic_azimuth,
+            const GroundTable* ground_table, const double* extra_loss) const;
 
     // Group states by the conditions they blend, filling the bounds' per-state
     // group and load-factor scale.  Both direction_bounds() and

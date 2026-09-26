@@ -438,6 +438,48 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
 
   The roadmap this starts (refraction, then urban) is in the Claude Doc "NICE-OPS:
   Atmospheric and Urban Propagation Options".
+- `src/refraction.{hpp,cpp}` — `--refraction linear` (roadmap step 4). Per path, a
+  least-squares line through the effective sound speed c(z) + w(z).h over the heights the path
+  spans (`EffectiveSoundSpeed`: running integrals of c, w_x, w_y and z times each on a 1 m
+  table, so a fit costs a few flops per pair), then closed-form circular-arc eigenrays. The
+  things to preserve:
+  - **Numerically stable forms, not textbook ones.** The circles are centred L = c0/|a| away,
+    kilometres to 1e11 m, so every difference of squares of h = L + sigma z is formed from
+    kappa(z) = z(2L + sigma z). Reflected legs are kappa/(sum of d), travel time is one atanh of
+    the addition formula, and arc length is 2 rho asin(chord/2 rho). Written the obvious way
+    they cancel to nothing as the gradient shrinks. Gradients under 1e-9 /s take the straight
+    path.
+  - **Spreading is r / cos(launch), exactly.** In a linear profile the tube area
+    r |dr/dtheta| sin|arrival| / cos(launch) reduces to (r rho / h_s)^2.
+    `tests/test_refraction.cpp` checks it against finite differences of traced rays; keep that.
+  - **The reflected ray is a bracketed 1-D solve** on launch angle (Illinois). The range is
+    monotonic in it, which was checked across both gradient signs. Under downward refraction at
+    long range the ray is launched *upward*, over its top: a separate branch of the range
+    formula.
+  - **Ground models get an equivalent straight geometry.** A point receiver gets
+    h' = L2 sin(grazing) - h_r and d' = L2 cos(grazing) from the reflected ray; a plate gets
+    the direct ray's arrival angle and length. The ground models themselves are untouched.
+  - **The direct ray ends at the observer's own height plus the point receiver's
+    microphone height** (`ray_receiver_height`), never clamped. Scattered flush mics on
+    sloping ground sit below the plane, and clamping them once made plate runs disagree with
+    the straight model. With a plate or no ground model, uniform air reproduces the straight
+    run to 1e-9 on grids and scattered sets; `refraction_uniform_plate_is_straight` guards
+    the plate case, which is how most test data is compared. The reflected ray goes to
+    `receiver_height` above the plane z = 0, where the ground models put the microphone.
+  - **The point receiver is where the two models differ.** The straight model's direct path
+    ends on the plane even when its ground model puts the microphone 1.2 m up; the refracted
+    ray ends at the microphone. That alone is ±0.8 dB on the demo grid, from the low states.
+    With `--receiver_height 0` they agree to 1e-9.
+  - **It marches every state and refuses `--db_cutoff`.** The bounds use the straight-line
+    direction and spreading; step 5 adds a propagation gain to them. Refraction roughly
+    doubles the acoustic loop with a point ground model (2.1 -> 4.7 s on the demo), mostly
+    from that march plus the reflected-ray solve.
+  - **Every ray is checked against RK4 traces** of the ray equations: position to 1e-6 m,
+    time and arc length to 1e-9, reflected grazing angle to 1e-8 rad.
+  - **Wind directions are compass bearings** turned by `--frame_bearing` (default +x east).
+    The shipped AC tracks need 210.
+  - Shadow zones: the grazing ray's level, less the first creeping-wave mode over rigid ground
+    (`shadow_attenuation_rates`), capped at `--shadow_floor`.
 - `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
   than a table, so it evaluates at whatever band centres a database carries) and band-limited
   energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but

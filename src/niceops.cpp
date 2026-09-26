@@ -29,6 +29,7 @@
 
 #include "atmosphere.hpp"
 #include "atmosphere_profile.hpp"
+#include "refraction.hpp"
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
 #include "weighting.hpp"
@@ -473,6 +474,15 @@ struct RunOptions
     // in for the rest.  Pressure may be missing, in which case each trajectory
     // fills it hydrostatically from its own surface pressure.
     std::optional<AtmosphereProfile> atmosphere;
+    // --refraction linear: curved rays through the profile's equivalent linear
+    // effective sound speed, fitted per path (refraction.hpp).  Needs the
+    // profile.  The shadow zone's attenuation is capped at shadow_floor dB.
+    bool refraction = false;
+    double shadow_floor = 20.0;
+    // Compass bearing of the local +x axis, degrees, for turning the profile's
+    // wind into the local frame; NaN means --frame_bearing was not given and
+    // +x is east.
+    double frame_bearing = std::numeric_limits<double>::quiet_NaN();
     // Metres, after the --units conversion; NaN means the trim is off.
     double trim_start = 0.0;
     double utc_offset = 0.0;
@@ -679,6 +689,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // [state][band], so the observer loop never looks a state's up twice.
     std::optional<LayeredAbsorption> layered;
     std::vector<double> state_absorption_integral;
+    double z_low = 0.0;
+    double z_high = 0.0;
     // When every observer stands at one height -- any grid -- a state's mean
     // coefficient is the same for all of them, so it is formed here once,
     // [state][band], and the loop reads it instead of forming it per pair.
@@ -779,8 +791,6 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         {
             // The heights any path spans: every state's and every observer's,
             // and the ground.
-            double z_low = 0.0;
-            double z_high = 0.0;
             for (const auto& state : source_states)
             {
                 z_low = std::min(z_low, state.position.z);
@@ -904,6 +914,55 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
     }
 
+    // --refraction linear: the effective sound speed tabulated for the
+    // per-path linear fits, each state's moments, and which ground geometry a
+    // ray has to hand on.  A point receiver's ray ends at its microphone.
+    std::optional<EffectiveSoundSpeed> effective_sound_speed;
+    std::vector<EffectiveSoundSpeed::Moments> state_moments;
+    std::vector<double> shadow_rates;
+    GroundGeometry ground_geometry = GroundGeometry::none;
+    double ray_receiver = 0.0;
+    if (options.refraction && spectral && profile)
+    {
+        ground_geometry = ground_model == nullptr ? GroundGeometry::none
+                : plate                           ? GroundGeometry::plate
+                                                  : GroundGeometry::point;
+        ray_receiver = ground_geometry == GroundGeometry::point ? options.ground.receiver_height : 0.0;
+        const double bearing = std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing;
+        effective_sound_speed = EffectiveSoundSpeed(*profile, bearing, z_low,
+                z_high + ray_receiver + EffectiveSoundSpeed::min_fit_span);
+        state_moments.reserve(nt);
+        for (const auto& state : source_states)
+            state_moments.push_back(effective_sound_speed->moments(state.position.z));
+        shadow_rates = shadow_attenuation_rates(database.band_centres(), first_band, last_band);
+        // What the fit makes of the air along and against +x from the
+        // highest state, so a profile read wrong shows in the log.
+        const auto top = std::max_element(source_states.begin(), source_states.end(),
+                [](const auto& a, const auto& b) { return a.position.z < b.position.z; });
+        const auto at_top = effective_sound_speed->moments(top->position.z);
+        const auto at_ground = effective_sound_speed->moments(ray_receiver);
+        const auto along = effective_sound_speed->fit(top->position.z, at_top, ray_receiver,
+                at_ground, 1.0, 0.0);
+        const auto against = effective_sound_speed->fit(top->position.z, at_top, ray_receiver,
+                at_ground, -1.0, 0.0);
+        log("Refraction: curved rays through a linear effective sound speed fitted per path. "
+            "From the highest state (",
+                top->position.z / options.unit.to_metres, " ", options.unit.name,
+                ") the gradient is ", along.gradient, " /s toward +x and ", against.gradient,
+                " /s toward -x; shadow zones attenuate by the first creeping-wave mode, capped at ",
+                options.shadow_floor, " dB.");
+        if (profile->has_wind() && std::isnan(options.frame_bearing))
+        {
+            log("  the profile's wind directions are compass bearings, turned into the local "
+                "frame taking +x as east. If this run's x/y are rotated -- the shipped AC tracks "
+                "run +x along 210 degrees -- give --frame_bearing.");
+        }
+    }
+    else if (profile && profile->has_wind())
+    {
+        log("  the profile's wind is read but not used: it matters only to --refraction.");
+    }
+
     // The spectral path's bound (Database::spectral_direction_bounds) serves
     // both --db_cutoff and the peak search below.  With --ground_effect, each
     // band's gain is raised by the most the ground can add to it
@@ -994,7 +1053,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // A new option that does either belongs in the matching term above.
     // --db_cutoff stands apart: its culling is a deliberate metric change, so
     // leave the two mechanisms separate rather than layering this one on top.
-    const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history;
+    // Under --refraction the bounds no longer hold (propagation.hpp), so every
+    // state is marched.
+    const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history
+            && !effective_sound_speed;
 
     // Each blend's spectra packed contiguously (Database::pack_spectra), one
     // copy per distinct blend the track visits, so the observer loop's reads
@@ -1037,6 +1099,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 " MiB).");
     }
     std::atomic<std::size_t> evaluated_samples {0};
+    std::atomic<std::size_t> shadowed_samples {0};
 
     const auto acoustics_start = std::chrono::steady_clock::now();
 
@@ -1071,6 +1134,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     observer_absorption_integral.data(), path_absorption.data());
             return path_absorption.data();
         };
+        // Refraction: the moments at each observer's receiver, and the shadow
+        // zone's per-band loss.
+        std::vector<double> shadow(effective_sound_speed ? database.band_centres().size() : 0, 0.0);
+        std::size_t shadowed_here = 0;
         for (std::size_t index = begin; index < end; index++)
         {
             const auto& observer = observers[index];
@@ -1113,29 +1180,61 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 continue;
             }
-            for (std::size_t it = 0; it < nt; it++)
+            if (effective_sound_speed)
             {
-                // Range for the reception-time integral (see reception_factor).
-                ranges[it] = (observer - source_states[it].position).norm();
-                if (culling && is_culled(it, observer))
+                const auto at_receiver = effective_sound_speed->moments(
+                        ray_receiver_height(observer, ray_receiver));
+                for (std::size_t it = 0; it < nt; it++)
                 {
-                    levels[it] = culled_level;
-                    culled_here++;
-                    continue;
+                    const auto ray = refracted_ray(*effective_sound_speed, source_states[it].position,
+                            state_moments[it], observer, ray_receiver, at_receiver, ground_geometry);
+                    // Reception time from the curved ray's travel time, as the
+                    // range a straight ray at the surface sound speed would take.
+                    ranges[it] = sound_speed * ray.travel_time;
+                    const double* extra_loss = nullptr;
+                    if (ray.shadow_depth > 0.0)
+                    {
+                        shadow_loss(ray, shadow_rates, options.shadow_floor, first_band, last_band,
+                                shadow.data());
+                        extra_loss = shadow.data();
+                        shadowed_here++;
+                    }
+                    double level = database.spectral_level_along(ray.path, source_states[it],
+                            absorption_for(it, observer), band_gains, ground_model,
+                            &ground_impedance_bands, sound_speed, first_band, last_band,
+                            packed_of_state[it], plate_receiver, plate_mic_azimuth, ground_table_ptr,
+                            extra_loss);
+                    if (add_ambient)
+                        level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
+                    levels[it] = level;
                 }
-                double level = spectral
-                        ? database.spectral_level_at_observer(observer, source_states[it],
-                                absorption_for(it, observer), band_gains, ground_model,
-                                &ground_impedance_bands, sound_speed, first_band, last_band,
-                                packed_of_state[it], plate_receiver, plate_mic_azimuth,
-                                ground_table_ptr)
-                        : database.level_at_observer(observer, source_states[it]);
-                if (add_ambient)
+            }
+            else
+            {
+                for (std::size_t it = 0; it < nt; it++)
                 {
-                    // Add ambient noise
-                    level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
+                    // Range for the reception-time integral (see reception_factor).
+                    ranges[it] = (observer - source_states[it].position).norm();
+                    if (culling && is_culled(it, observer))
+                    {
+                        levels[it] = culled_level;
+                        culled_here++;
+                        continue;
+                    }
+                    double level = spectral
+                            ? database.spectral_level_at_observer(observer, source_states[it],
+                                    absorption_for(it, observer), band_gains, ground_model,
+                                    &ground_impedance_bands, sound_speed, first_band, last_band,
+                                    packed_of_state[it], plate_receiver, plate_mic_azimuth,
+                                    ground_table_ptr)
+                            : database.level_at_observer(observer, source_states[it]);
+                    if (add_ambient)
+                    {
+                        // Add ambient noise
+                        level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
+                    }
+                    levels[it] = level;
                 }
-                levels[it] = level;
             }
             integrated_levels[index] = sound_exposure_level(levels, integration_step, ranges, sound_speed);
             if (options.want_dnl)
@@ -1158,7 +1257,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
         culled_samples += culled_here;
         evaluated_samples += evaluated_here;
+        shadowed_samples += shadowed_here;
     });
+
+    if (effective_sound_speed)
+    {
+        const auto total = observers.size() * nt;
+        log("Refraction put ", shadowed_samples.load(), " of ", total, " evaluations (",
+                100.0 * static_cast<double>(shadowed_samples.load()) / static_cast<double>(total),
+                "%) in a shadow zone.");
+    }
 
     if (expand_from_peak)
     {
@@ -1401,6 +1509,8 @@ int run(int argc, char* argv[])
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
     std::string atmosphere_file;
+    std::string refraction = "none";
+    double shadow_floor = 20.0;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
     // trajectory; an unset bearing leaves the axes east/north, which is what a
     // map wants -- the shipped AC tracks are the other case, their +x running
@@ -1494,7 +1604,15 @@ int run(int argc, char* argv[])
             "A stratified atmosphere: CSV of temperature, relative humidity and optionally "
             "pressure against height (see README). Per-band absorption is integrated through "
             "it, and its ground level replaces the vehicle file's atmosphere. Spectral path "
-            "only; wind is not modelled yet.");
+            "only.");
+    app.add_option("--refraction", refraction,
+            "Refraction through the --atmosphere profile: none (default), or linear -- curved "
+            "rays through its effective sound speed (temperature and wind) fitted to a straight "
+            "line per path, with shadow zones under upward refraction.")
+            ->check(CLI::IsMember({"none", "linear"}));
+    app.add_option("--shadow_floor", shadow_floor,
+            "Most a refractive shadow zone attenuates, dB (default 20). Deeper in, energy "
+            "scattered by turbulence dominates.");
     app.add_flag("--ground_effect", ground_effect,
             "Add excess ground attenuation (Chien-Soroka over a Delany-Bazley impedance) to "
             "the spectral path (the default). Cannot be combined with --no-spectral.");
@@ -1805,6 +1923,18 @@ int run(int argc, char* argv[])
                     "the broadband path (--no-spectral) carries one level attenuated by the "
                     "database's own EAA factor.");
     }
+    if (refraction == "linear" && atmosphere_file.empty())
+    {
+        input_error("--refraction linear needs --atmosphere: it refracts through the profile's "
+                    "temperature and wind.");
+    }
+    if (refraction == "linear" && !std::isnan(db_cutoff))
+    {
+        input_error("--refraction does not combine with --db_cutoff yet: the culling bound "
+                    "assumes straight-line propagation.");
+    }
+    if (!(shadow_floor >= 0.0))
+        input_error("--shadow_floor must not be negative, got ", shadow_floor, ".");
     if (!atmosphere_file.empty()
             && (!std::isnan(temperature_override) || !std::isnan(humidity_override)))
     {
@@ -1857,6 +1987,9 @@ int run(int argc, char* argv[])
     options.humidity_override = humidity_override;
     options.temperature_override = temperature_override;
     options.pressure_override = pressure_override;
+    options.refraction = refraction == "linear";
+    options.shadow_floor = shadow_floor;
+    options.frame_bearing = frame_bearing;
     if (!atmosphere_file.empty())
     {
         options.atmosphere = read_atmosphere_profile(atmosphere_file, unit, ground_elevation);

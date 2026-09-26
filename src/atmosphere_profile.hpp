@@ -14,9 +14,10 @@
 // Heights are above the observer plane -- the same z the trajectory uses -- so
 // the ground is z = 0 whatever --ground_elevation says.
 //
-// Wind is not modelled yet.  A wind column in the file is read past, and named
-// in the log, not applied.
+// Wind, when the file gives it, only matters to refraction (--refraction):
+// absorption does not depend on it.
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -37,10 +38,18 @@ struct AtmosphereProfile
     // kPa.  Empty when the file gave no pressure; with_hydrostatic_pressure()
     // fills it.
     std::vector<double> pressure;
+    // m/s toward the east and toward the north (the meteorological u and v).
+    // Empty when the file gives no wind: still air.
+    std::vector<double> wind_east;
+    std::vector<double> wind_north;
 
     bool has_pressure() const
     {
         return !pressure.empty();
+    }
+    bool has_wind() const
+    {
+        return !wind_east.empty();
     }
     double bottom() const
     {
@@ -56,6 +65,10 @@ struct AtmosphereProfile
     // falls off exponentially.  Every quantity is held at its end value outside
     // the levels.  Needs has_pressure().
     Atmosphere at(double z) const;
+
+    // The wind at height z, m/s east and north, interpolated like temperature.
+    // Zero without wind columns.
+    std::array<double, 2> wind_at(double z) const;
 
     // A copy with the pressure filled in: the hydrostatic equation integrated
     // through the temperature profile from `surface_pressure` kPa at z = 0,
@@ -76,7 +89,12 @@ struct AtmosphereProfile
 //   relative humidity, percent   RH, humidity
 //   pressure (optional)          p_kPa, p_hPa, p_Pa       or p / pressure,
 //                                                          unit told from values
-// Other columns are ignored and named in the log.  A single row is a uniform
+//   wind (optional), either      wind_speed_mps / _kt     and wind_direction, the
+//                                                          compass bearing it
+//                                                          blows FROM, degrees
+//                                or u_mps / u_kt, v_...   toward east and north
+// Wind columns must name their unit: nothing about the values tells m/s from
+// knots.  Other columns are ignored and named in the log.  A single row is a uniform
 // atmosphere.  Rows may come in either height order.
 AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit unit,
         double ground_elevation);
