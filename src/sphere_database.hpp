@@ -13,6 +13,7 @@
 // supported (interpolation path is unimplemented).
 
 #include <array>
+#include <cstdint>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -22,6 +23,7 @@
 #include <complex>
 
 #include "ground_effect.hpp"
+#include "plate_receiver.hpp"
 #include "util/constants.hpp"
 #include "vec3.hpp"
 
@@ -145,12 +147,12 @@ bool approx_equal(double value, double reference, double max_rel_diff = 1e-2,
 // observer, good enough to prove that the state cannot hold the peak of that
 // observer's time history -- without evaluating it.
 //
-// This is what lets the observer loop find the peak and then expand out to the
-// 10-dB-down points, instead of marching through every emission time.  The SEL
-// window is contiguous by construction (peak_range walks out from the peak and
-// stops at the first sample below the threshold), so nothing outside it needs
-// a bound at all; the bound is needed only to be sure the walk started on the
-// right peak.
+// This is what lets the observer loop find the peak and then the 10-dB-down
+// interval without evaluating every emission time.  The interval runs from the
+// first to the last sample within 10 dB of the peak (ten_db_down_interval), so
+// the bound serves twice: to be sure the peak found is the real one, and to
+// skip states it proves are below the threshold while scanning in from either
+// end for the interval's first and last samples.
 //
 // The bound is `max sphere level in this direction - spherical spreading`.
 // Dropping the excess attenuation is what makes it an upper bound, and that is
@@ -201,13 +203,18 @@ public:
     // the hot path needs no logarithm.
     double numerator(std::size_t state, int bin_index) const
     {
-        return numerators_[blend_of_state_[state] * bin_count + bin_index];
+        return numerators_[blend_of_state_[state] * bin_count + bin_index] * state_scale_[state];
     }
 
 private:
     friend class Database;
     std::vector<double> numerators_;
     std::vector<std::size_t> blend_of_state_;
+    // 10^(level_correction_db/10) per state.  The fixed_load_factor correction
+    // shifts every direction and band alike, so it factors out of the table;
+    // keeping it in the grouping key made nearly every state its own group,
+    // since it varies continuously with CT.
+    std::vector<double> state_scale_;
     bool usable_ = false;
 };
 
@@ -338,19 +345,50 @@ public:
     // Per-band ground levels in dB at one direction, written into `levels`,
     // which must have room for band_count() entries.  `absorption` is the
     // dB/m coefficient for each band, from absorption_coefficients().
+    //
+    // `packed`, when given, is pack_spectra(blend.indices, ...): the same
+    // values gathered per blend.  The result is identical to the bit; it only
+    // changes where they are read, and lets a stencil with nothing empty take
+    // a branch-free loop across the bands.
+    struct PackedSpectra;
     void eval_spectrum(double range, double phi, double theta, const Blend& blend,
             const double* absorption, double* levels, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1),
+            const PackedSpectra* packed = nullptr) const;
+
+    // One blend's spectra, laid out [cell][k][band] for the k-th of its four
+    // indices, with a bit mask per (cell, k) of the bands in [first_band,
+    // last_band) that are empty there (databases with more than 64 bands
+    // skip the fast path).  spectra_ interleaves every condition, so a
+    // blend's four values for one (cell, band) sit on four cache lines of a
+    // table tens of MB long; here each (cell, k) is one contiguous run of
+    // bands, which is what the vectorised loop in eval_spectrum reads.
+    // Size: cells * 4 * bands doubles.
+    struct PackedSpectra
+    {
+        std::vector<double> values;
+        std::vector<std::uint64_t> empty_bands;
+        std::size_t first_band = 0;
+        std::size_t last_band = 0;
+    };
+    PackedSpectra pack_spectra(const std::array<std::size_t, condition_dims + 1>& indices,
+            std::size_t first_band = 0,
             std::size_t last_band = static_cast<std::size_t>(-1)) const;
 
     // A-weighted, band-limited ground level at an observer, propagated per
-    // band.  `gains` comes from a_weighting_gains() and must match the band
+    // band.  With `plate` (which needs `ground` and `impedance`), the observer
+    // is a flush microphone on a ground plate whose offset points along
+    // `plate_mic_azimuth` (radians in the local frame, from +x toward +y), and
+    // the plate's level replaces the point-receiver ground effect.  `gains` comes from a_weighting_gains() and must match the band
     // count.  Returns -infinity when no band is inside the limits.
     double spectral_level_at_observer(const Vec3& observer, const SourceState& state,
             const double* absorption, const std::vector<double>& gains,
             const GroundModel* ground = nullptr,
             const std::vector<std::complex<double>>* impedance = nullptr,
             double sound_speed = 343.2, std::size_t first_band = 0,
-            std::size_t last_band = static_cast<std::size_t>(-1)) const;
+            std::size_t last_band = static_cast<std::size_t>(-1),
+            const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
+            double plate_mic_azimuth = 0.0) const;
 
     // Band centres carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centres() const
@@ -445,22 +483,45 @@ public:
     // few tens of kilobytes and stays in cache under the observer loop.
     DirectionBounds direction_bounds(const std::vector<SourceState>& states) const;
 
+    // The same tables for the spectral path's A-weighted, band-limited level
+    // (spectral_level_at_observer with these `gains` and no ground effect),
+    // under the same contract: numerator >= 10^(L/10) r^2 outside the sphere.
+    // Dropping the per-band absorption is what makes it a bound, and ISO 9613-1
+    // absorption is never negative, so unlike direction_bounds() it does not
+    // depend on the EAA factors.  The ground effect can add up to ~6 dB and is
+    // not covered: a caller propagating with it must not use these.
+    DirectionBounds spectral_direction_bounds(const std::vector<SourceState>& states,
+            const std::vector<double>& gains) const;
+
     double sphere_radius() const
     {
         return sphere_radius_;
     }
 
-
-private:
     // dBA of -inf legitimately means "no energy in this direction" (ambient
     // gating emptied it), but a zero barycentric weight against -inf is a
     // NaN under IEEE 754 that poisons an entire blended sum regardless of
     // weight -- see the constructor's grid-fill comment. Every non-finite
-    // dBA read from a file is floored to this value once, at load time, so
-    // self_test() must apply the same floor to the raw value it re-reads
-    // before comparing it against eval() -- eval() can only ever produce
-    // this floor back, never the original -inf.
+    // dBA (and spectral band) read from a file is floored to this value once,
+    // at load time, so self_test() must apply the same floor to the raw value
+    // it re-reads before comparing it against eval().  The blends treat an
+    // entry at the floor as "not measured" and leave it out (blend_present in
+    // sphere_database.cpp), so it only comes back where every entry is empty.
+    // Public so those file-local blends can name it.
     static constexpr double no_energy_floor_db = -1000.0;
+
+private:
+
+    // Group states by the conditions they blend, filling the bounds' per-state
+    // group and load-factor scale.  Both direction_bounds() and
+    // spectral_direction_bounds() build one table per group.
+    void group_blends(const std::vector<SourceState>& states, DirectionBounds& bounds,
+            std::vector<std::array<std::size_t, condition_dims + 1>>& blends) const;
+
+    // The DirectionBounds bin a grid cell's centre direction falls in, and how
+    // far a bilinear stencil reading that cell can reach in bins either way.
+    int home_bin(std::size_t i_phi, std::size_t i_theta) const;
+    std::array<int, 2> bin_padding() const;
 
     // Blend the four bracketing operating conditions at one grid cell.
     Sample blend_cell(std::size_t i_phi, std::size_t i_theta, const Blend& blend) const;

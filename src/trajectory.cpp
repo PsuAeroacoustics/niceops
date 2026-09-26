@@ -457,6 +457,66 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle)
     }
 }
 
+// The AC state format does not agree with itself about the sign of vz.  The
+// 2019 tracks (tracks/B205/190337AC.csv) store it positive up, as z is; the
+// 2017 Noise Abatement tracks store it positive DOWN while z stays positive up
+// (vz against dz/dt correlates at -0.996 on B407 run 286270) -- except the 49
+// files of EC130B4 test day 298, which are positive up.  Read as up, every
+// 2017 descent became a climb of the same angle, selecting climb spheres and
+// losing the descent's blade-vortex interaction.  az is positive up in both,
+// so only vz is affected.
+//
+// Decide from the track itself: correlate vz with the derivative of z.  A track
+// with too little vertical motion to tell is left alone -- there the sign
+// barely matters, and guessing would be worse than not.  Returns true if the
+// sign was corrected.
+bool correct_vertical_speed_sign(std::vector<State>& states, const std::string& filename)
+{
+    if (states.size() < 3)
+        return false;
+    // Uncentred -- the cosine between vz and dz/dt, not their correlation -- so
+    // a steady descent, whose dz/dt is constant and has no variance to
+    // correlate, still decides: vz . dz/dt is +|dz/dt|^2 when the two agree.
+    double s_vz_dz = 0.0, s_vz2 = 0.0, s_dz2 = 0.0;
+    std::size_t n = 0;
+    for (std::size_t i = 1; i + 1 < states.size(); i++)
+    {
+        const double dt = states[i + 1].t - states[i - 1].t;
+        if (!(dt > 0.0))
+            continue;
+        const double dz = (states[i + 1].z - states[i - 1].z) / dt;
+        const double vz = states[i].vz;
+        s_vz_dz += vz * dz;
+        s_vz2 += vz * vz;
+        s_dz2 += dz * dz;
+        n++;
+    }
+    if (n < 2)
+        return false;
+    // Below ~0.15 m/s rms of vertical speed there is nothing to decide from.
+    if (s_vz2 / n < 0.0225 || s_dz2 / n < 0.0225)
+        return false;
+    const double agreement = s_vz_dz / std::sqrt(s_vz2 * s_dz2);
+    if (agreement > -0.5)
+        return false;
+    warn("Trajectory ", filename, ": vz runs opposite to dz/dt (cosine ", agreement,
+            "), so this file stores vertical speed positive down; negating it.");
+    for (auto& now : states)
+    {
+        now.vz = -now.vz;
+        // Only the path angles depend on vz's sign.  The speed, and so mu, do
+        // not, and nx/ny/nz were already normalised when the state was derived.
+        const double v = std::hypot(now.vx, now.vy, now.vz);
+        if (v > 0.0)
+        {
+            now.fpa_e = 180.0 / pi
+                    * std::asin((now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v);
+            now.fpa = 180.0 / pi * std::asin(now.vz / v);
+        }
+    }
+    return true;
+}
+
 Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename,
         const GeodeticInput& geodetic, LengthUnit unit)
 {
@@ -531,6 +591,7 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                     input_error("Wrong number of columns in ", filename, ".");
                 }
             }
+            correct_vertical_speed_sign(states, filename);
         }
         else
         {

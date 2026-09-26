@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -29,11 +30,41 @@ TEST_CASE("peak_range", "[sel]")
     REQUIRE(index[0] == 0);
     REQUIRE(index[1] == levels.size() - 1);
 
-    // Two peaks
+    // Two peaks: the interval runs from the first to the last sample within
+    // 10 dB of the peak, dips included (14 CFR 36 A36.4.5).  The D original's
+    // walk out from the peak stopped at the dips and gave [2, 4].
     levels = {20.0, 10.0, 20.0, 25.0, 20.0, 10.0, 20.0};
     index = peak_range(levels);
-    REQUIRE(index[0] == 2);
-    REQUIRE(index[1] == 4);
+    REQUIRE(index[0] == 0);
+    REQUIRE(index[1] == levels.size() - 1);
+
+    // Samples outside the interval are not counted however the dips fall.
+    levels = {0.0, 16.0, 0.0, 25.0, 0.0, 0.0, 0.0};
+    index = peak_range(levels);
+    REQUIRE(index[0] == 1);
+    REQUIRE(index[1] == 3);
+}
+
+TEST_CASE("sound_exposure_level integrates in reception time", "[sel]")
+{
+    // A steady level for 11 samples, from a source receding at a constant
+    // rate: each emission step arrives stretched by 1 + v/c.
+    const double T = 0.5, c = 340.0, v = 34.0;
+    std::vector<double> levels(11, 80.0), ranges;
+    for (int i = 0; i < 11; i++)
+        ranges.push_back(100.0 + v * T * i);
+    const double emission = sound_exposure_level(levels, T);
+    const double reception = sound_exposure_level(levels, T, ranges, c);
+    REQUIRE(std::fabs(emission - (80.0 + 10.0 * std::log10(11 * T))) < 1e-9);
+    REQUIRE(std::fabs(reception - emission - 10.0 * std::log10(1.0 + v / c)) < 1e-9);
+
+    // Approaching, compressed by 1 - v/c.
+    std::reverse(ranges.begin(), ranges.end());
+    REQUIRE(std::fabs(sound_exposure_level(levels, T, ranges, c) - emission
+                    - 10.0 * std::log10(1.0 - v / c)) < 1e-9);
+
+    // Mismatched or absent ranges fall back to emission time.
+    REQUIRE(sound_exposure_level(levels, T, {1.0, 2.0}, c) == emission);
 }
 
 TEST_CASE("uniform_sample_interval", "[sel]")

@@ -5,8 +5,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -508,9 +510,18 @@ const std::vector<std::array<double, 4>> fixed_load_factor_conditions = {
 // writer does; when false, every group carries its own copies, so a test can
 // build both forms of the same conditions and require identical eval()
 // results between them.
+//
+// Two options for the blend and layout tests: channel_dba(condition, channel),
+// when given, sets each channel's dBA (use -inf for a direction ambient gating
+// emptied); reverse_phi_rows lays the channels -- and so the amplitude rows --
+// out with phi descending, the way panam's unsorted completion order arrives,
+// and writes each amplitude as 200 + that row's phi + 10 * band so a test can
+// see which direction every spectrum landed in.
 std::string write_shared_grid_test_database(const std::string& name,
         const std::vector<std::array<double, 4>>& conditions, bool shared_grid_and_frequency,
-        bool with_spectrum, double sphere_radius_m = 30.48)
+        bool with_spectrum, double sphere_radius_m = 30.48,
+        std::function<double(std::size_t, std::size_t)> channel_dba = {},
+        bool reverse_phi_rows = false)
 {
     const auto path = (std::filesystem::temp_directory_path() / name).string();
     int file = 0;
@@ -528,7 +539,10 @@ std::string write_shared_grid_test_database(const std::string& name,
     const std::size_t n_channels = phis.size() * thetas.size();
     const std::vector<double> bands = {500.0, 2000.0};
     std::vector<double> phi_channel, theta_channel;
-    for (double p : phis)
+    std::vector<double> row_phis = phis;
+    if (reverse_phi_rows)
+        std::reverse(row_phis.begin(), row_phis.end());
+    for (double p : row_phis)
         for (double t : thetas)
         {
             phi_channel.push_back(p);
@@ -623,7 +637,10 @@ std::string write_shared_grid_test_database(const std::string& name,
     {
         const auto& v = groups[i];
         const std::vector<double> eaa(n_channels, 0.0);
-        const std::vector<double> dba(n_channels, conditions[i][3]);
+        std::vector<double> dba(n_channels, conditions[i][3]);
+        if (channel_dba)
+            for (std::size_t c = 0; c < n_channels; c++)
+                dba[c] = channel_dba(i, c);
         REQUIRE(nc_put_var_double(v.group, v.radius, &sphere_radius_m) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.scale, &scale) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.mu, &conditions[i][0]) == NC_NOERR);
@@ -645,8 +662,9 @@ std::string write_shared_grid_test_database(const std::string& name,
             std::vector<double> amplitude(phis.size() * thetas.size() * bands.size());
             for (std::size_t cell = 0; cell < phis.size() * thetas.size(); cell++)
                 for (std::size_t band = 0; band < bands.size(); band++)
-                    amplitude[cell * bands.size() + band] =
-                            conditions[i][3] + 10.0 * static_cast<double>(band);
+                    amplitude[cell * bands.size() + band] = reverse_phi_rows
+                            ? 200.0 + phi_channel[cell] + 10.0 * static_cast<double>(band)
+                            : conditions[i][3] + 10.0 * static_cast<double>(band);
             REQUIRE(nc_put_var_double(v.group, v.amplitude, amplitude.data()) == NC_NOERR);
         }
     }
@@ -924,4 +942,109 @@ TEST_CASE("self_test does not flag a direction ambient gating legitimately empti
     Database db(path);
     db.self_test(path); // must not throw
     std::filesystem::remove(path);
+}
+
+
+// ---------------------------------------------------------------------------
+// Empty directions drop out of the blends rather than silencing them.
+
+namespace {
+const double minus_inf = -std::numeric_limits<double>::infinity();
+const std::vector<std::array<double, 4>> uniform_conditions = {
+    {0.0, 0.0, 0.005, 100.0},
+    {1.0, 0.0, 0.005, 100.0},
+    {0.0, 1.0, 0.005, 100.0},
+};
+// Channel 5 is (phi -30, theta 60): row 1, column 1 of the 4x4 test sphere.
+constexpr std::size_t gated_channel = 5;
+} // namespace
+
+TEST_CASE("a direction empty in one condition takes the others' level, not silence",
+        "[sphere_database][empty]")
+{
+    // Blending in dB is linear, so before this a third of the weight on the
+    // -1000 dB floor put the blended level near -270 dB: a measured direction
+    // became silent because one neighbouring condition had not measured it.
+    const auto path = write_shared_grid_test_database("niceops_empty_one_condition.nod",
+            uniform_conditions, false, false, 30.48,
+            [](std::size_t condition, std::size_t channel) {
+                return condition == 0 && channel == gated_channel ? minus_inf : 100.0;
+            });
+    Database db(path);
+    const auto sphere = db.interpolate_sphere(0.3, 0.3, 0.005); // every condition weighted
+    REQUIRE(approx_equal(sphere.cells[gated_channel].dBA, 100.0));
+    REQUIRE(approx_equal(sphere.cells[0].dBA, 100.0));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a direction empty in every condition stays empty", "[sphere_database][empty]")
+{
+    const auto path = write_shared_grid_test_database("niceops_empty_all_conditions.nod",
+            uniform_conditions, false, false, 30.48, [](std::size_t, std::size_t channel) {
+                return channel == gated_channel ? minus_inf : 100.0;
+            });
+    Database db(path);
+    const auto sphere = db.interpolate_sphere(0.3, 0.3, 0.005);
+    REQUIRE(sphere.cells[gated_channel].dBA <= Database::no_energy_floor_db + 1.0);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("an empty grid corner drops out of the bilinear step", "[sphere_database][empty]")
+{
+    // Every condition empty at one grid point, so the empty value reaches the
+    // corner stage.  A direction in a cell that touches it must read the same
+    // as one in a fully measured cell, the field being 100 dB all round.
+    const auto path = write_shared_grid_test_database("niceops_empty_corner.nod",
+            uniform_conditions, false, false, 30.48, [](std::size_t, std::size_t channel) {
+                return channel == gated_channel ? minus_inf : 100.0;
+            });
+    Database db(path);
+    const double range = 100.0;
+    const double touching = db.eval(range, -45.0, 40.0, 0.3, 0.3, 0.005); // cell with (-30, 60)
+    const double clear = db.eval(range, 60.0, 150.0, 0.3, 0.3, 0.005);    // (30..90, 120..180)
+    REQUIRE(std::isfinite(touching));
+    REQUIRE(approx_equal(touching, clear));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("nothing empty: the blend is exactly what it always was", "[sphere_database][empty]")
+{
+    // The empty-aware path only runs when an entry is empty.  Fully measured,
+    // querying a condition the database holds returns that condition's value.
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.0, 0.0, 0.005, 90.0},
+        {1.0, 0.0, 0.005, 100.0},
+        {0.0, 1.0, 0.005, 110.0},
+    };
+    const auto path = write_shared_grid_test_database("niceops_empty_none.nod", conditions, false, false);
+    Database db(path);
+    const auto sphere = db.interpolate_sphere(1.0, 0.0, 0.005);
+    REQUIRE(sphere.cells[gated_channel].dBA == 100.0);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("spectra land in the direction their channel names, whatever the row order",
+        "[sphere_database][spectrum]")
+{
+    // panam wrote amplitude rows in completion order (lower hemisphere, then
+    // the mirrored upper surface), not sorted; read as sorted, every spectrum
+    // sat in the wrong direction -- an exported Be407 sphere came back with its
+    // lateral asymmetry reversed.  The channels say which row is which.
+    for (bool shared : {false, true})
+    {
+        const auto path = write_shared_grid_test_database(
+                shared ? "niceops_reversed_rows_shared.nod" : "niceops_reversed_rows.nod",
+                uniform_conditions, shared, true, 30.48, {}, true);
+        Database db(path);
+        const auto sphere = db.interpolate_sphere(0.0, 0.0, 0.005);
+        const std::size_t n_bands = sphere.frequencies.size();
+        REQUIRE(n_bands == 2);
+        for (std::size_t m = 0; m < sphere.phis.size(); m++)
+            for (std::size_t n = 0; n < sphere.thetas.size(); n++)
+                for (std::size_t b = 0; b < n_bands; b++)
+                    REQUIRE(approx_equal(
+                            sphere.amplitudes[(m * sphere.thetas.size() + n) * n_bands + b],
+                            200.0 + sphere.phis[m] + 10.0 * static_cast<double>(b)));
+        std::filesystem::remove(path);
+    }
 }

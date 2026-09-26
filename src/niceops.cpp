@@ -28,6 +28,7 @@
 
 #include "atmosphere.hpp"
 #include "ground_effect.hpp"
+#include "plate_receiver.hpp"
 #include "weighting.hpp"
 #include "sphere_database.hpp"
 #include "trajectory.hpp"
@@ -195,22 +196,38 @@ void append_metrics_file(const std::string& filename, const std::string& casenam
 
 // Sound exposure level at one observer without marching every emission time.
 //
-// The integral only ever uses the window from the peak down to 10 dB below it,
-// which on a shipped case is a little over half the track -- the rest is
-// computed and thrown away.  peak_range's window is *contiguous by
-// construction*: it walks out from the peak and stops at the first sample below
-// the threshold.  So nothing outside the window needs a bound at all; the walk
-// stops there by definition.  A bound is needed for one thing only -- to be
-// sure the walk started on the right peak -- and DirectionBounds is tight
-// enough (median slack 8.6 dB, inside the 10 dB window) that proving that costs
-// almost nothing beyond the window itself.
+// The integral only ever uses the 10 dB-down duration, which on a shipped case
+// is a little over half the track -- the rest is computed and thrown away.  The
+// bound does two jobs: it proves the peak is the peak, and it proves a state
+// below the threshold, so the scans for the window's first and last states can
+// step over most of the track unevaluated.  Everything between those two is
+// evaluated, since dips below the threshold are inside the duration.
+// DirectionBounds is tight enough (median slack 8.6 dB, inside the 10 dB
+// window) that this costs little beyond the window itself.
 //
 // The result is identical to evaluating every state, not an approximation: a
-// skipped state is provably neither the peak nor inside the window.
+// skipped state is provably neither the peak nor an end of the window, and
+// nothing between the ends is skipped.  The integral is in reception time --
+// see reception_factor in sel.hpp.
+//
+// `level_of(it, geometry)` evaluates state `it` at this observer, given its
+// displacement in the sphere frame; `bounds` must bound what it returns.
+//
+// The displacement's components in the sphere frame.  The bound test needs
+// exactly what an evaluation needs, which is why they are formed once and
+// handed on rather than recomputed -- doing it twice was measured at 1.48x
+// down to 1.08x.
+struct StateGeometry
+{
+    double squared_range, along, up, across;
+};
+
+template <typename LevelOf>
 double windowed_sound_exposure_level(const Database& database,
         const std::vector<Database::SourceState>& states, const DirectionBounds& bounds,
-        const Vec3& observer, double step, std::vector<double>& levels,
-        std::vector<unsigned>& visited, unsigned generation, std::size_t& evaluated)
+        const Vec3& observer, double step, double sound_speed, std::vector<double>& levels,
+        std::vector<unsigned>& visited, unsigned generation, std::size_t& evaluated,
+        LevelOf&& level_of)
 {
     const std::size_t nt = states.size();
     const double sphere_radius_squared = database.sphere_radius() * database.sphere_radius();
@@ -218,14 +235,7 @@ double windowed_sound_exposure_level(const Database& database,
     // and 1024 land within a couple of percent of each other.
     const std::size_t seed_stride = std::max<std::size_t>(1, nt / 128);
 
-    // The displacement's components in the sphere frame.  The bound test needs
-    // exactly what an evaluation needs, which is why they are formed once and
-    // handed on rather than recomputed -- doing it twice was measured at 1.48x
-    // down to 1.08x.
-    struct Geometry
-    {
-        double squared_range, along, up, across;
-    };
+    using Geometry = StateGeometry;
     auto geometry_of = [&](std::size_t it) {
         const Vec3 delta = observer - states[it].position;
         return Geometry {delta.squaredNorm(), states[it].frame.nose.dot(delta),
@@ -234,8 +244,7 @@ double windowed_sound_exposure_level(const Database& database,
     auto evaluate_with = [&](std::size_t it, const Geometry& g) {
         visited[it] = generation;
         evaluated++;
-        return levels[it] = database.level_from_geometry(g.squared_range, g.along, g.up, g.across,
-                       states[it].blend);
+        return levels[it] = level_of(it, g);
     };
     auto evaluate = [&](std::size_t it) {
         if (visited[it] == generation)
@@ -286,12 +295,31 @@ double windowed_sound_exposure_level(const Database& database,
     }
 
     // `best` is now provably the peak of the whole history, so the window and
-    // the integral are the ordinary ones -- expand_window() and
+    // the integral are the ordinary ones -- ten_db_down_interval() and
     // sel_over_window() from sel.hpp, reading through `evaluate` instead of a
     // filled array.  Sharing them is what keeps this path's window identical to
-    // peak_range's, tie rule included, rather than merely intended to be.
-    const auto index = expand_window(peak, nt, best - sel_window_db, evaluate);
-    return sel_over_window(index[0], index[1], step, evaluate);
+    // peak_range's rather than merely intended to be.
+    //
+    // The window runs from the first to the last state at or above the
+    // threshold, so its ends are found by scanning in from both ends of the
+    // track.  A state the bound puts provably below the threshold cannot be an
+    // end and is skipped unevaluated; every state *between* the ends is then
+    // evaluated, dips included, since they are inside the duration.
+    const double threshold = best - sel_window_db;
+    const double threshold_energy = std::pow(10.0, 0.1 * threshold);
+    auto certainly_below = [&](std::size_t it) {
+        if (visited[it] == generation)
+            return levels[it] < threshold;
+        const Geometry g = geometry_of(it);
+        return g.squared_range > sphere_radius_squared
+                && bounds.numerator(it, DirectionBounds::bin(g.along, g.up, g.across, g.squared_range))
+                        < threshold_energy * g.squared_range;
+    };
+    const auto index = ten_db_down_interval(nt, threshold, evaluate, certainly_below);
+    auto range_at = [&](std::size_t it) { return (observer - states[it].position).norm(); };
+    return sel_over_window(index[0], index[1], step, evaluate, [&](std::size_t it) {
+        return reception_factor(it, nt, step, sound_speed, range_at);
+    });
 }
 
 void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers,
@@ -375,6 +403,37 @@ ObserverSet gridded_observers(const std::vector<double>& bounds, double step)
 
 namespace {
 
+// The plate microphone's offset direction for "outboard": away from the
+// track, along the horizontal line from the track's nearest state to the
+// observer.  Directly under the track that line has no direction, and the
+// microphone goes to the track's right.
+double outboard_azimuth(const Vec3& observer, const std::vector<Database::SourceState>& states)
+{
+    std::size_t nearest = 0;
+    double nearest_distance = std::numeric_limits<double>::infinity();
+    for (std::size_t it = 0; it < states.size(); it++)
+    {
+        const Vec3 separation = observer - states[it].position;
+        const double distance = separation.x * separation.x + separation.y * separation.y;
+        if (distance < nearest_distance)
+        {
+            nearest_distance = distance;
+            nearest = it;
+        }
+    }
+    const Vec3 separation = observer - states[nearest].position;
+    if (nearest_distance > 1e-6)
+        return std::atan2(separation.y, separation.x);
+    const std::size_t before = nearest > 0 ? nearest - 1 : nearest;
+    const std::size_t after = nearest + 1 < states.size() ? nearest + 1 : nearest;
+    const Vec3 track = states[after].position - states[before].position;
+    return std::atan2(track.y, track.x) - 0.5 * pi;
+}
+
+} // namespace
+
+namespace {
+
 // Everything about a run that does not vary between trajectories.
 struct RunOptions
 {
@@ -385,13 +444,20 @@ struct RunOptions
     double db_cutoff = 0.0;
     // Spectral propagation: carry the database's per-band spectra to the ground
     // and integrate a metric from them, rather than propagating one broadband
-    // dBA with the database's fitted EAA factor.
-    bool spectral = false;
+    // dBA with the database's fitted EAA factor.  On by default; a database
+    // without spectra falls back to broadband unless spectral_explicit says
+    // --spectral was asked for by name.
+    bool spectral = true;
+    bool spectral_explicit = false;
     BandLimits band_limits;
     // Excess ground attenuation, off unless asked for: it is the single most
     // expensive thing in the evaluation.
     bool ground_effect = false;
     GroundModel ground;
+    // A flush microphone on a ground plate (--plate_table), read once and
+    // bound to each trajectory's atmosphere.  Needs ground_effect.
+    std::optional<PlateReceiver> plate;
+    PlateOrientation plate_orientation;
     // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
     // whatever the file said".
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -582,12 +648,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // rotor is pointed straight at.
     //
     // The threshold sits 10 dB below the cutoff, as the D original's did, and
-    // that margin is what makes the result exact where it matters: the sound
-    // exposure level integrates the window from the peak down to peak - 10, so
-    // for any observer whose peak reaches the cutoff, every sample in its window
-    // is at or above cutoff - 10 and none of them is ever culled.  Observers
-    // that never reach the cutoff are the only ones whose level changes, and
-    // they are precisely the ones the cutoff says are not of interest.
+    // that margin is what makes the result exact where it matters: for any
+    // observer whose peak reaches the cutoff, the window's ends and everything
+    // near the peak are at or above cutoff - 10 and are never culled.  The one
+    // exception is a dip inside the window (the 10 dB-down duration runs from
+    // the first to the last sample within 10 dB of the peak, dips included)
+    // deeper than cutoff - 10: it can be culled, and it loses what is at most a
+    // tenth of the peak's energy per sample.  On a 101x101 grid over an EC130
+    // approach, 11 of the 404 observers reaching a 60 dB cutoff had such dips,
+    // and none changed.  Observers that never reach the cutoff are the ones
+    // whose level changes, and they are precisely the ones the cutoff says are
+    // not of interest.
     // Spectral propagation setup.  Both of these depend only on the atmosphere
     // and the database's band centres, so they are computed once here rather
     // than per observer: the coefficients cost a pow() and two exp() per band.
@@ -595,27 +666,48 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<double> band_gains;
     const GroundModel* ground_model = nullptr;
     std::vector<std::complex<double>> ground_impedance_bands;
-    double sound_speed = 343.2;
+    std::optional<PlateReceiver> plate;
     // The contiguous run of bands inside the metric's limits. Band centres are
     // sorted, so the limits always select a range rather than a scattered set.
     std::size_t first_band = 0;
     std::size_t last_band = 0;
-    if (options.spectral)
-    {
-        if (!database.has_spectra())
-        {
-            input_error("--spectral needs a database carrying per-band spectra; this one "
-                    "has none. Rebuild it with spectra, or drop --spectral to propagate the "
-                    "broadband level.");
-        }
 
-        Atmosphere air = trajectory.vehicle.atmosphere;
-        if (!std::isnan(options.temperature_override))
-            air.temperature = options.temperature_override;
-        if (!std::isnan(options.pressure_override))
-            air.pressure = options.pressure_override;
-        if (!std::isnan(options.humidity_override))
-            air.relative_humidity = options.humidity_override;
+    // The atmosphere is needed on every path now, not only the spectral one:
+    // its sound speed turns the emission-time level history into reception time
+    // for the exposure integral (see reception_factor in sel.hpp).
+    Atmosphere air = trajectory.vehicle.atmosphere;
+    if (!std::isnan(options.temperature_override))
+        air.temperature = options.temperature_override;
+    if (!std::isnan(options.pressure_override))
+        air.pressure = options.pressure_override;
+    if (!std::isnan(options.humidity_override))
+        air.relative_humidity = options.humidity_override;
+    const double sound_speed = air.sound_speed();
+
+    // Spectral propagation is the default, since per-band ISO 9613-1 absorption
+    // is what the EAA factor approximates -- and approximates badly: EAA is one
+    // A-weighted attenuation fitted at 1000 m and scaled linearly with range,
+    // which under-attenuates at the few hundred metres a footprint mostly sees.
+    // Against the 2017 approach measurements (139 runs, ~6200 mic-runs) the
+    // broadband path read +1.2 dB high in the median (rms 3.1 dB) and the
+    // spectral one -0.2 dB (rms 2.5).  A database without spectra falls back to
+    // broadband unless --spectral was asked for by name.
+    bool spectral = options.spectral;
+    if (spectral && !database.has_spectra())
+    {
+        if (options.spectral_explicit || options.ground_effect)
+        {
+            input_error(std::string(options.ground_effect ? "--ground_effect" : "--spectral")
+                    + " needs a database carrying per-band spectra; this one has none. Rebuild "
+                      "it with spectra, or propagate the broadband level with --no-spectral"
+                    + (options.ground_effect ? " and no ground effect." : "."));
+        }
+        log("Database carries no per-band spectra: propagating the broadband level with its "
+            "EAA factor.");
+        spectral = false;
+    }
+    if (spectral)
+    {
 
         const auto& bands = database.band_centres();
         const auto retained = bands_in_range(bands, options.band_limits);
@@ -643,62 +735,164 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         log("  absorption spans ", absorption.front(), " dB/m at ", bands.front(), " Hz to ",
                 absorption.back(), " dB/m at ", bands.back(), " Hz.");
 
-        sound_speed = air.sound_speed();
         if (options.ground_effect)
         {
             ground_model = &options.ground;
-            ground_impedance_bands = ground_impedance(options.ground, bands);
-            log("  ground effect on: flow resistance ", options.ground.flow_resistance,
+            ground_impedance_bands = ground_impedance(options.ground, bands, sound_speed);
+            log("  ground effect on: impedance model ", static_cast<int>(options.ground.impedance_model),
+                    ", flow resistance ", options.ground.flow_resistance,
                     " kPa s/m^2, receiver ", options.ground.receiver_height, " m up, turbulence ",
-                    options.ground.turbulence, ", sound speed ", sound_speed, " m/s.");
+                    options.ground.turbulence_model == TurbulenceModel::chessell
+                            ? options.ground.turbulence : options.ground.gamma_t,
+                    options.ground.turbulence_model == TurbulenceModel::chessell ? " (Chessell)"
+                                                                                 : " (HARMONOISE gamma_T)",
+                    ", roughness ", options.ground.roughness, " m, sound speed ", sound_speed, " m/s.");
+            if (options.plate)
+            {
+                plate = options.plate->bound(bands, options.ground, sound_speed, first_band,
+                        last_band);
+                log("  observers are flush microphones on a ground plate: ", plate->description(),
+                        options.plate_orientation.outboard
+                                ? std::string(", microphone outboard of the track.")
+                                : ", microphone offset toward "
+                                        + std::to_string(options.plate_orientation.azimuth * 180.0 / pi)
+                                        + " deg.");
+            }
         }
     }
 
+    // The spectral path's bound (Database::spectral_direction_bounds) serves
+    // both --db_cutoff and the peak search below.  With --ground_effect, each
+    // band's gain is raised by the most the ground can add to it
+    // (ground_gain_bounds), which keeps it a bound with the ground included.
     const bool culling = !std::isnan(options.db_cutoff);
+    const bool level_is_transformed = add_ambient;
+    const bool needs_full_history = options.write_time_history || options.want_dnl;
+    const bool bounded = !level_is_transformed;
+    DirectionBounds direction_bounds;
+    if (bounded && (culling || !needs_full_history))
+    {
+        // Both report themselves unusable on an empty trajectory, so nt > 0
+        // does not need testing here as well.
+        const auto bounds_start = std::chrono::steady_clock::now();
+        if (spectral)
+        {
+            std::vector<double> bound_gains = band_gains;
+            if (ground_model != nullptr)
+            {
+                const auto ground_gains = plate
+                        ? plate->gain_bounds(first_band, last_band)
+                        : ground_gain_bounds(*ground_model, ground_impedance_bands, first_band,
+                                last_band);
+                for (std::size_t band = 0; band < bound_gains.size(); band++)
+                    bound_gains[band] *= ground_gains[band];
+            }
+            direction_bounds = database.spectral_direction_bounds(source_states, bound_gains);
+        }
+        else
+        {
+            direction_bounds = database.direction_bounds(source_states);
+        }
+        log("Direction bounds built in ",
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - bounds_start)
+                        .count(),
+                " s.");
+    }
+
     const double cull_below = options.db_cutoff - sel_window_db;
     // A culled sample contributes no acoustic energy.  Filling with the
     // threshold instead would be far worse than useless -- thousands of samples
     // at the floor integrate to well above it.
     const double culled_level = -std::numeric_limits<double>::infinity();
-    std::vector<double> cull_range_squared(culling ? nt : 0);
+    // Broadband culls on a per-state range (cull_range, from the loudest
+    // sphere the state blends); spectral culls per direction, on the table
+    // above, which is the tighter test.
+    const bool cull_by_direction = culling && spectral;
+    if (cull_by_direction && !direction_bounds.usable())
+    {
+        input_error("--db_cutoff: no bound on this run's spectral level (no band inside "
+                    "--band_limits?), so nothing could be culled safely.");
+    }
+    const double cull_energy = std::pow(10.0, 0.1 * cull_below);
+    const double sphere_radius_squared = database.sphere_radius() * database.sphere_radius();
+    std::vector<double> cull_range_squared(culling && !cull_by_direction ? nt : 0);
     for (std::size_t it = 0; it < cull_range_squared.size(); it++)
     {
         const double range = database.cull_range(source_states[it].blend, cull_below);
         cull_range_squared[it] = range * range;
     }
+    auto is_culled = [&](std::size_t it, const Vec3& observer) {
+        const Vec3 delta = observer - source_states[it].position;
+        const double squared_range = delta.squaredNorm();
+        if (!cull_by_direction)
+            return squared_range > cull_range_squared[it];
+        const auto& frame = source_states[it].frame;
+        return squared_range > sphere_radius_squared
+                && direction_bounds.numerator(it,
+                           DirectionBounds::bin(frame.nose.dot(delta), frame.normal.dot(delta),
+                                   frame.starboard.dot(delta), squared_range))
+                        < cull_energy * squared_range;
+    };
     std::atomic<std::size_t> culled_samples {0};
 
     // Find each observer's peak and expand out to the 10-dB-down points, rather
     // than marching every emission time -- see windowed_sound_exposure_level.
-    // It is exact, so it is on whenever it applies, which is the plain
-    // broadband run.  Everything else marches, for one of two reasons:
+    // It is exact, so it is on whenever it applies.  Everything else marches,
+    // for one of two reasons:
     //
-    //   the level is transformed after eval, so the bound -- which is on what
-    //   eval returns -- would have to be transformed with it:
-    //     --spectral     the bound is on the broadband dBA, which is not a
-    //                    bound on the band-limited weighted level (the same
-    //                    reason --db_cutoff is refused with --spectral)
-    //     -a / --ambient
+    //   there is no bound on the level being integrated:
+    //     -a / --ambient    the level is transformed after eval
     //
     //   every sample is wanted, not just the window's:
     //     -i / --history writes the whole time history, skipped states included
     //     -D / --dnlfile the day-night window is found on a penalized history,
     //                    which a window found on the raw one does not cover
     //
-    // A new option that does either belongs in the matching term below.
-    // --db_cutoff stands apart: it already culls on its own terms, and its
-    // culling is a deliberate metric change, so leave the two mechanisms
-    // separate rather than layering this one on top.
-    const bool level_is_transformed = options.spectral || add_ambient;
-    const bool needs_full_history = options.write_time_history || options.want_dnl;
-    DirectionBounds direction_bounds;
-    if (!level_is_transformed && !needs_full_history && !culling)
+    // A new option that does either belongs in the matching term above.
+    // --db_cutoff stands apart: its culling is a deliberate metric change, so
+    // leave the two mechanisms separate rather than layering this one on top.
+    const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history;
+
+    // Each blend's spectra packed contiguously (Database::pack_spectra), one
+    // copy per distinct blend the track visits, so the observer loop's reads
+    // stay within one corner's run of bands.  Measured on an approach track
+    // (3,520 states, 14,641 observers): 14% faster, and identical to the bit.
+    std::vector<Database::PackedSpectra> packed_spectra;
+    std::vector<const Database::PackedSpectra*> packed_of_state(spectral ? nt : 0, nullptr);
+    if (spectral)
     {
-        // direction_bounds() reports itself unusable on an empty trajectory, so
-        // nt > 0 does not need testing here as well.
-        direction_bounds = database.direction_bounds(source_states);
+        std::vector<std::array<std::size_t, condition_dims + 1>> packed_indices;
+        std::size_t last = 0;
+        for (std::size_t it = 0; it < nt; it++)
+        {
+            const auto& indices = source_states[it].blend.indices;
+            std::size_t found = packed_indices.size();
+            if (last < packed_indices.size() && packed_indices[last] == indices)
+                found = last;
+            for (std::size_t b = 0; found == packed_indices.size() && b < packed_indices.size(); b++)
+            {
+                if (packed_indices[b] == indices)
+                    found = b;
+            }
+            if (found == packed_indices.size())
+            {
+                packed_indices.push_back(indices);
+                packed_spectra.push_back(database.pack_spectra(indices, first_band, last_band));
+            }
+            last = found;
+        }
+        // Pointers only once the outer vector has stopped growing.
+        for (std::size_t it = 0; it < nt; it++)
+        {
+            const auto& indices = source_states[it].blend.indices;
+            const auto where = std::find(packed_indices.begin(), packed_indices.end(), indices);
+            packed_of_state[it] = &packed_spectra[where - packed_indices.begin()];
+        }
+        log("Packed spectra for ", packed_spectra.size(), " blends (",
+                static_cast<double>(packed_spectra.size() * packed_spectra.front().values.size())
+                        * sizeof(double) / 1048576.0,
+                " MiB).");
     }
-    const bool expand_from_peak = direction_bounds.usable();
     std::atomic<std::size_t> evaluated_samples {0};
 
     const auto acoustics_start = std::chrono::steady_clock::now();
@@ -708,6 +902,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // deals out several chunks per worker, so this runs a few times a
         // thread, which it measures as noise against the work in the chunk.
         std::vector<double> levels(nt);
+        std::vector<double> ranges(nt);
         std::vector<double> penalized;
         // Which states of `levels` this observer has filled, stamped by a
         // counter so the array does not have to be cleared per observer.
@@ -718,6 +913,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         for (std::size_t index = begin; index < end; index++)
         {
             const auto& observer = observers[index];
+            const PlateReceiver* plate_receiver = plate ? &*plate : nullptr;
+            const double plate_mic_azimuth = plate && options.plate_orientation.outboard
+                    ? outboard_azimuth(observer, source_states)
+                    : options.plate_orientation.azimuth;
             if (expand_from_peak)
             {
                 if (++generation == 0)
@@ -726,25 +925,46 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     std::fill(visited.begin(), visited.end(), 0u);
                     generation = 1;
                 }
-                integrated_levels[index] = windowed_sound_exposure_level(database, source_states,
-                        direction_bounds, observer, integration_step, levels, visited,
-                        generation, evaluated_here);
+                if (spectral)
+                {
+                    integrated_levels[index] = windowed_sound_exposure_level(database,
+                            source_states, direction_bounds, observer, integration_step,
+                            sound_speed, levels, visited, generation, evaluated_here,
+                            [&](std::size_t it, const StateGeometry&) {
+                                return database.spectral_level_at_observer(observer,
+                                        source_states[it], absorption.data(), band_gains,
+                                        ground_model, &ground_impedance_bands, sound_speed,
+                                        first_band, last_band, packed_of_state[it],
+                                        plate_receiver, plate_mic_azimuth);
+                            });
+                }
+                else
+                {
+                    integrated_levels[index] = windowed_sound_exposure_level(database,
+                            source_states, direction_bounds, observer, integration_step,
+                            sound_speed, levels, visited, generation, evaluated_here,
+                            [&](std::size_t it, const StateGeometry& g) {
+                                return database.level_from_geometry(g.squared_range, g.along,
+                                        g.up, g.across, source_states[it].blend);
+                            });
+                }
                 continue;
             }
             for (std::size_t it = 0; it < nt; it++)
             {
-                if (culling
-                        && (observer - source_states[it].position).squaredNorm()
-                                > cull_range_squared[it])
+                // Range for the reception-time integral (see reception_factor).
+                ranges[it] = (observer - source_states[it].position).norm();
+                if (culling && is_culled(it, observer))
                 {
                     levels[it] = culled_level;
                     culled_here++;
                     continue;
                 }
-                double level = options.spectral
+                double level = spectral
                         ? database.spectral_level_at_observer(observer, source_states[it],
                                 absorption.data(), band_gains, ground_model,
-                                &ground_impedance_bands, sound_speed, first_band, last_band)
+                                &ground_impedance_bands, sound_speed, first_band, last_band,
+                                packed_of_state[it], plate_receiver, plate_mic_azimuth)
                         : database.level_at_observer(observer, source_states[it]);
                 if (add_ambient)
                 {
@@ -753,7 +973,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 levels[it] = level;
             }
-            integrated_levels[index] = sound_exposure_level(levels, integration_step);
+            integrated_levels[index] = sound_exposure_level(levels, integration_step, ranges, sound_speed);
             if (options.want_dnl)
             {
                 // Energies add across operations; the logarithm comes at the
@@ -761,7 +981,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // index belongs to exactly one worker, and the trajectories run
                 // one after another, so this needs no synchronisation.
                 dnl_energy[index] += std::pow(
-                        10.0, 0.1 * day_night_level(levels, integration_step, night, penalized));
+                        10.0, 0.1 * day_night_level(levels, integration_step, night, penalized, ranges,
+                                              sound_speed));
             }
             if (options.write_time_history)
             {
@@ -997,12 +1218,20 @@ int run(int argc, char* argv[])
     bool self_test = false;
     unsigned thread_count = 0;
     double db_cutoff = std::numeric_limits<double>::quiet_NaN();
-    bool spectral = false;
+    bool spectral = true;
     std::vector<double> band_limits;
     bool ground_effect = false;
     double flow_resistance = flow_resistance::grassy_field;
     double receiver_height = 1.2; // metres
     double turbulence = 0.0;
+    std::string impedance_model = "delany_bazley";
+    double porosity_rate = 0.0;      // 1/m
+    double layer_depth = 0.05;       // m
+    std::string turbulence_model = "chessell";
+    double gamma_t = 0.0;
+    double roughness = 0.0;          // m
+    std::string plate_table;
+    std::string plate_mic_azimuth = "outboard";
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
@@ -1081,10 +1310,11 @@ int run(int argc, char* argv[])
             ->expected(3);
     app.add_option("--db_cutoff", db_cutoff,
             "Skip evaluations that provably fall below this level, dB. Off by default.");
-    app.add_flag("--spectral", spectral,
+    auto* spectral_option = app.add_flag("--spectral,!--no-spectral", spectral,
             "Propagate the database's per-band spectra to the ground with ISO 9613-1 "
-            "absorption, instead of one broadband level with the database's EAA factor. "
-            "Requires a database carrying spectra.");
+            "absorption (default on; falls back to broadband when the database carries no "
+            "spectra). --no-spectral propagates one broadband level with the database's EAA "
+            "factor instead.");
     app.add_option("--band_limits", band_limits,
             "Frequency range integrated into the metric, Hz: low high. Default 20 20000.")
             ->expected(2);
@@ -1096,7 +1326,7 @@ int run(int argc, char* argv[])
             "Ambient pressure in kPa, overriding the vehicle file.");
     app.add_flag("--ground_effect", ground_effect,
             "Add excess ground attenuation (Chien-Soroka over a Delany-Bazley impedance) to "
-            "the spectral path. Needs --spectral.");
+            "the spectral path (the default). Cannot be combined with --no-spectral.");
     app.add_option("--flow_resistance", flow_resistance,
             "Specific flow resistance of the ground, kPa s/m^2. 30 snow, 225 grass (default), "
             "650 soil, 3000 dirt, 10000 concrete, 50000 asphalt.");
@@ -1126,7 +1356,35 @@ int run(int argc, char* argv[])
             "the trajectory is itself geodetic.");
     app.add_option("--turbulence", turbulence,
             "Turbulence parameter for --ground_effect, rad s/sqrt(m); 0 to 16e-4. "
-            "Zero gives unrealistically deep interference nulls.");
+            "Zero gives unrealistically deep interference nulls. (--turbulence_model chessell)");
+    app.add_option("--impedance_model", impedance_model,
+            "Ground impedance model for --ground_effect: delany_bazley (default), miki, "
+            "variable_porosity (with --porosity_rate) or delany_bazley_layer (with "
+            "--layer_depth). --flow_resistance is the (effective) flow resistivity.")
+            ->check(CLI::IsMember({"delany_bazley", "miki", "variable_porosity", "delany_bazley_layer"}));
+    app.add_option("--porosity_rate", porosity_rate,
+            "variable_porosity: rate of change of porosity with depth, alpha_e, 1/m (a material "
+            "parameter, in metres whatever --units says).");
+    auto* layer_depth_option = app.add_option("--layer_depth", layer_depth,
+            "delany_bazley_layer: depth of the hard-backed layer, in --units (default 0.05 m).");
+    app.add_option("--turbulence_model", turbulence_model,
+            "chessell (default; --turbulence) or harmonoise (--gamma_t): the HARMONOISE "
+            "coherence of the direct and reflected paths.")
+            ->check(CLI::IsMember({"chessell", "harmonoise"}));
+    app.add_option("--gamma_t", gamma_t,
+            "HARMONOISE turbulence strength C_T^2/T0^2 + 22 C_v^2/(3 c0^2); ~1e-6 moderate, "
+            "~1e-5 strong. The 2017 Amedee pole data fitted ~3e-5.");
+    auto* roughness_option = app.add_option("--roughness", roughness,
+            "RMS roughness height of the ground, in --units: the coherent reflection falls by "
+            "exp(-2 (k sigma cos theta)^2). Default 0.");
+    app.add_option("--plate_table", plate_table,
+            "Observers are flush microphones on a rigid ground plate (e.g. GRAS 67AX in a "
+            "400 mm GR1425 plate, per SAE ARP 4055): a netCDF table from panam's "
+            "axisymmetric_bem.write_netcdf, computed over the same ground as --impedance_model "
+            "and --flow_resistance. Replaces the point receiver of --ground_effect, which it needs.");
+    app.add_option("--plate_mic_azimuth", plate_mic_azimuth,
+            "Direction the microphone is offset on its plate: 'outboard' (default; away from "
+            "the track) or degrees in the local frame, from +x toward +y.");
 
     try
     {
@@ -1325,6 +1583,8 @@ int run(int argc, char* argv[])
     }
     to_metres(gridstep_option, grid_step);
     to_metres(receiver_height_option, receiver_height);
+    to_metres(layer_depth_option, layer_depth);
+    to_metres(roughness_option, roughness);
     to_metres(path_smoothing_option, path_smoothing);
     to_metres(trim_option, trim_start);
     to_metres(ground_elevation_option, ground_elevation);
@@ -1347,19 +1607,17 @@ int run(int argc, char* argv[])
 
     // The flag combinations that cannot be served, checked before anything is
     // built from them.
-    if (spectral && !std::isnan(db_cutoff))
-    {
-        // cull_range bounds the broadband level from the loudest sphere in the
-        // blend; it says nothing about the A-weighted, band-limited level the
-        // spectral path produces, so the two together could silently discard
-        // samples that mattered.
-        input_error("--spectral cannot be combined with --db_cutoff: the cutoff's range "
-                    "bound is derived from the broadband level, not the band-limited one.");
-    }
+    const bool spectral_explicit = spectral_option->count() > 0 && spectral;
     if (ground_effect && !spectral)
     {
-        input_error("--ground_effect needs --spectral: the ground effect is a function of "
-                    "frequency, and the broadband path has no spectrum to apply it to.");
+        input_error("--ground_effect needs the spectral path: the ground effect is a function "
+                    "of frequency, and the broadband path (--no-spectral or --db_cutoff) has no "
+                    "spectrum to apply it to.");
+    }
+    if (!plate_table.empty() && !ground_effect)
+    {
+        input_error("--plate_table needs --ground_effect: the plate's level depends on the "
+                    "ground's reflection coefficient.");
     }
     if (band_limits.size() == 2 && !(band_limits[0] < band_limits[1]))
     {
@@ -1378,12 +1636,36 @@ int run(int argc, char* argv[])
     options.thread_count = thread_count;
     options.db_cutoff = db_cutoff;
     options.spectral = spectral;
+    options.spectral_explicit = spectral_explicit;
     if (band_limits.size() == 2)
         options.band_limits = BandLimits {band_limits[0], band_limits[1]};
     options.ground_effect = ground_effect;
     options.ground.flow_resistance = flow_resistance;
     options.ground.receiver_height = receiver_height;
     options.ground.turbulence = turbulence;
+    options.ground.impedance_model = parse_impedance_model(impedance_model);
+    options.ground.porosity_rate = porosity_rate;
+    options.ground.layer_depth = layer_depth;
+    options.ground.turbulence_model = parse_turbulence_model(turbulence_model);
+    options.ground.gamma_t = gamma_t;
+    options.ground.roughness = roughness;
+    if (!plate_table.empty())
+    {
+        options.plate = PlateReceiver::load(plate_table);
+        if (plate_mic_azimuth != "outboard")
+        {
+            options.plate_orientation.outboard = false;
+            try
+            {
+                options.plate_orientation.azimuth = std::stod(plate_mic_azimuth) * pi / 180.0;
+            }
+            catch (const std::exception&)
+            {
+                input_error("--plate_mic_azimuth takes 'outboard' or degrees, not '",
+                        plate_mic_azimuth, "'.");
+            }
+        }
+    }
     options.humidity_override = humidity_override;
     options.temperature_override = temperature_override;
     options.pressure_override = pressure_override;

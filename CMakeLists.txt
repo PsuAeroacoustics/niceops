@@ -162,6 +162,7 @@ add_library(niceops_core STATIC
   src/weighting.cpp
   src/faddeeva.cpp
   src/ground_effect.cpp
+  src/plate_receiver.cpp
   src/geodetic.cpp
   src/predicates.cpp
   src/delaunay.cpp
@@ -204,6 +205,7 @@ add_executable(niceops_unit_tests
   tests/test_atmosphere.cpp
   tests/test_weighting.cpp
   tests/test_ground_effect.cpp
+  tests/test_plate_receiver.cpp
   tests/test_spectral_propagation.cpp
   tests/test_predicates.cpp
   tests/test_delaunay.cpp
@@ -233,3 +235,20 @@ add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CUR
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME state_golden COMMAND golden_compare state/ci_state.csv golden/state_197421.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(regression_golden state_golden PROPERTIES FIXTURES_REQUIRED demo_run)
+# The spectral peak search and --db_cutoff skip what a bound puts below a
+# threshold; with --ground_effect the bound includes the most the ground can
+# add.  A skipped state must change nothing, so a run through the peak search
+# has to equal a full march (-D forces one).  Coarse grid: this is about the
+# wiring, which the bounds' own unit tests cannot see.
+add_test(NAME ground_effect_windowed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --turbulence 8e-4 --gridstep 492 -L warn -o integrated/ground_effect_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_effect_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --turbulence 8e-4 --gridstep 492 -L warn -D integrated/ground_effect_dnl.csv -o integrated/ground_effect_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_effect_windowed ground_effect_marched PROPERTIES FIXTURES_SETUP ground_effect_runs)
+add_test(NAME ground_effect_windowed_is_exact COMMAND golden_compare integrated/ground_effect_windowed.csv integrated/ground_effect_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_effect_windowed_is_exact PROPERTIES FIXTURES_REQUIRED ground_effect_runs)
+# The same for the ground-plane receiver (--plate_table), whose bound is its
+# own (PlateReceiver::gain_bounds), over the fitted 2017 Amedee ground.
+add_test(NAME plate_windowed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 492 -L warn -o integrated/plate_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME plate_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 492 -L warn -D integrated/plate_dnl.csv -o integrated/plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(plate_windowed plate_marched PROPERTIES FIXTURES_SETUP plate_runs)
+add_test(NAME plate_windowed_is_exact COMMAND golden_compare integrated/plate_windowed.csv integrated/plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED plate_runs)

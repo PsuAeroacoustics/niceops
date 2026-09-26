@@ -161,6 +161,11 @@ seconds, levels in dB.
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
 | `--receiver_height`, `--turbulence` | Receiver height (in `--units`, default 1.2 m) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
+| `--impedance_model` | Ground impedance: `delany_bazley` (default), `miki`, `variable_porosity` (with `--porosity_rate`, 1/m) or `delany_bazley_layer` (with `--layer_depth`, in `--units`). `--flow_resistance` is the (effective) flow resistivity. |
+| `--turbulence_model`, `--gamma_t` | `chessell` (default, `--turbulence`) or `harmonoise`, whose coherence takes `--gamma_t` (~1e-6 moderate, ~1e-5 strong). |
+| `--roughness` | RMS roughness height, in `--units`: the coherent reflection falls by exp(−2(kσ cos θ)²). Default 0. |
+| `--plate_table` | Observers are flush microphones on a rigid ground plate (GRAS 67AX in a GR1425 plate). Takes a netCDF table from panam; needs `--ground_effect` over the ground the table was built for. See below. |
+| `--plate_mic_azimuth` | Which way the microphone is offset on its plate: `outboard` (default, away from the track) or degrees in the local frame from +x toward +y. |
 
 ### Performance
 
@@ -317,6 +322,53 @@ to it, so name the surface rather than guessing.
 `--turbulence` decorrelates the two paths and fills the nulls in; leaving it at zero gives
 unrealistically deep interference dips.
 
+The impedance, turbulence and roughness models follow Attenborough & Taherzadeh, *Prediction
+of outdoor ground effect*, Applied Acoustics 242 (2026) 111067, as panam's `ground_plane`
+module does. They are pinned against `ground_plane.pole_level` in
+`tests/test_ground_effect.cpp`. Delany–Bazley is poor for grassland. On the 2017 Amedee pole
+microphones, variable porosity with σe ≈ 200 fitted best, with HARMONOISE γT ≈ 3e-5 and
+10–15 mm roughness (panam `docs/ground_plane_corrections.md`).
+
+#### Ground-plane microphones
+
+A flush ground-plane microphone sits on a plate: rigid close in, soft ground beyond. The point
+receiver can model one surface or the other, not both. `--plate_table` models the plate
+itself, using panam's axisymmetric boundary-element solution for a GRAS GR1425 plate (400 mm,
+8 mm thick, lying on the ground) with the microphone at 3/4 R per SAE ARP 4055. The solution is
+stored as two complex transfer functions of the direct and image waves:
+
+    p / p_free = P_d + Q P_r
+
+P_d and P_r are tabulated over frequency (five sub-frequencies per band), elevation and
+azimuth. Q is the ground's spherical-wave reflection coefficient, which NICE-OPS computes for
+each geometry. The table depends on the ground, so it is built for one ground and NICE-OPS
+refuses any other. Two tables are shipped in `plates/`:
+
+| table | ground |
+| --- | --- |
+| `gr1425_db225.nc` | `--flow_resistance 225` (Delany–Bazley grass, the default) |
+| `gr1425_vp200.nc` | `--impedance_model variable_porosity --flow_resistance 200` (the fitted Amedee ground) |
+
+Build another with panam's `axisymmetric_bem.table(bands, …)` and `write_netcdf`. A table at
+the databases' 31 bands takes about 20 s on 14 cores. Turbulence and roughness do not apply to
+the plate, because its reflection is millimetres from its direct path.
+
+Q is taken as quadratic in log frequency across each band, through the band's edges and
+centre. This is within 0.07 dB of evaluating Q at every sub-frequency wherever the level is
+above −15 dB. The exact per-sub-frequency form (`PlateReceiver::level_exact`) matches panam's
+`board_level` to 1e-6 dB in `tests/test_plate_receiver.cpp`. Its cost on the full demo grid
+(S-76D track, B407 fixed-load-factor database, 94.3 M evaluations, 14 threads):
+
+| | acoustic loop |
+| --- | --- |
+| spectral, no ground | 1.6 s |
+| `--ground_effect` | 9.1 s |
+| `--ground_effect --plate_table` | 15.7 s |
+| same, exact Q (every sub-frequency) | 28.4 s |
+
+The peak search and `--db_cutoff` bound the plate with `PlateReceiver::gain_bounds`, so both
+keep working. The `plate_windowed_is_exact` ctest checks that skipped states change nothing.
+
 **It is expensive.** Acoustic loop on the Be407 case (94.3 M evaluations, 26 bands, 14 threads,
 default band limits): broadband 0.34 s, `--spectral` 1.44 s, `--spectral --ground_effect`
 10.9 s. So carrying the spectrum costs about 4x, and the ground effect about 32x — a complex
@@ -340,8 +392,9 @@ figures are optimistic against a real multi-condition database like the Be407 on
 above; the ground-effect term, which is most of the last row, does not depend on the condition
 count. All three outputs agree with the previous build to 1.4e-12 dB.
 
-`--spectral` cannot be combined with `--db_cutoff`: the cutoff's range bound is derived
-from the broadband level and is not a bound on the band-limited weighted one.
+`--db_cutoff` works on the spectral path through per-direction bounds on the band-limited,
+weighted level (`Database::spectral_direction_bounds`). With `--ground_effect` or
+`--plate_table`, each band is raised by the most the ground or the plate can add.
 
 ### How much gets evaluated
 

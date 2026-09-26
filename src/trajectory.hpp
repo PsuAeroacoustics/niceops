@@ -128,6 +128,12 @@ dimensional_data configure_vehicle(const std::string& filename);
 // the unit tests can reach the hover case directly.
 void derive_flight_parameters(State& now, const dimensional_data& vehicle);
 
+// Negate vz (and recompute the path angles) when a track's vz runs opposite to
+// dz/dt: the 2017 NASA/FAA AC files store vertical speed positive down (bar
+// EC130B4 day 298), the 2019 ones positive up.  Leaves a track with too little vertical motion to
+// judge untouched.  Returns true if it corrected the sign.  Exported for tests.
+bool correct_vertical_speed_sign(std::vector<State>& states, const std::string& filename);
+
 class Trajectory
 {
 public:

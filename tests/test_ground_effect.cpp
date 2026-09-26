@@ -179,3 +179,167 @@ TEST_CASE("ground effect behaves the way the physics requires", "[ground_effect]
         REQUIRE(differs);
     }
 }
+
+TEST_CASE("ground_gain_bounds bounds the ground effect in every geometry", "[ground_effect][bounds]")
+{
+    // The spectral peak search and --db_cutoff skip whatever the bound puts
+    // below a threshold, so the energy the ground adds must never exceed it --
+    // at grazing incidence in particular, where |Q| passes 2 (+9.6 dB).
+    std::vector<double> bands;
+    for (int n = 10; n <= 40; n++)
+        bands.push_back(std::pow(10.0, n / 10.0));
+    std::size_t checked = 0;
+    for (double sigma : {10.0, 30.0, 225.0, 3000.0, 50000.0, 200000.0})
+    {
+        for (double turbulence : {0.0, 8e-4})
+        {
+            for (bool boundary_loss : {true, false})
+            {
+                GroundModel ground;
+                ground.flow_resistance = sigma;
+                ground.turbulence = turbulence;
+                ground.boundary_loss_correction = boundary_loss;
+                for (double receiver : {0.0, 0.05, 1.2, 10.0})
+                {
+                    ground.receiver_height = receiver;
+                    const auto impedance = ground_impedance(ground, bands);
+                    const auto bound = ground_gain_bounds(ground, impedance);
+                    std::vector<double> attenuation(bands.size());
+                    for (double height : {0.5, 3.0, 15.0, 60.0, 300.0, 1500.0})
+                    {
+                        for (double distance = 1.0; distance < 3e4; distance *= 1.37)
+                        {
+                            excess_ground_attenuation(ground, impedance, height, distance, 340.0,
+                                    bands, attenuation.data());
+                            for (std::size_t b = 0; b < bands.size(); b++)
+                            {
+                                REQUIRE(std::pow(10.0, 0.1 * attenuation[b]) <= bound[b]);
+                                checked++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    REQUIRE(checked > 500000);
+}
+
+
+namespace {
+
+struct PanamCase
+{
+    const char* model;
+    double flow_resistance, porosity_rate, layer_depth, gamma_t, roughness;
+    double source_height, ground_distance, receiver_height;
+    double levels[5];
+};
+
+// panam's ground_plane.pole_level (validated in panam's
+// tests/test_ground_validation.py) for the same models, geometries and bands:
+// Chien-Soroka band-averaged two-ray form, HARMONOISE coherence, Ament
+// roughness.  Sound speed 1125 ft/s = 342.9 m/s.
+const PanamCase panam_cases[] = {
+{"delany_bazley", 225.0, 0.0, 0.05, 0.0, 0, 91.44, 45.72, 1.2192, {-4.99647701288, -1.19553336942, 2.68749015195, 0.939741198836, 0.513395350761}},
+{"delany_bazley", 225.0, 0.0, 0.05, 0.0, 0, 12.192, 457.2, 1.2192, {4.35879392971, -7.41877826781, -1.38403000801, 2.52770137215, 5.16882425026}},
+{"delany_bazley", 225.0, 0.0, 0.05, 0.0, 0, 2.4384, 914.4, 0.3048, {5.10864749968, -23.1007610889, -33.6458977207, -19.060531041, -12.627949843}},
+{"miki", 500.0, 0.0, 0.05, 0.0, 0, 91.44, 45.72, 1.2192, {-5.04511372047, -1.16842142418, 2.93392308217, 1.39839619812, 0.942624906878}},
+{"miki", 500.0, 0.0, 0.05, 0.0, 0, 12.192, 457.2, 1.2192, {4.65511658792, -6.52404743055, -2.11426239177, 2.6240728192, 5.09661209045}},
+{"miki", 500.0, 0.0, 0.05, 0.0, 0, 2.4384, 914.4, 0.3048, {5.80882477165, -21.2178781092, -33.4152541631, -19.4258492431, -12.7623358781}},
+{"variable_porosity", 200.0, 40.0, 0.05, 3e-05, 0, 91.44, 45.72, 1.2192, {-4.97657505235, -1.20987602166, 2.90306336719, 1.7122403685, 1.36382405259}},
+{"variable_porosity", 200.0, 40.0, 0.05, 3e-05, 0, 12.192, 457.2, 1.2192, {4.42008992613, -4.22801447001, 0.187102666691, 2.30015465625, 2.49216546229}},
+{"variable_porosity", 200.0, 40.0, 0.05, 3e-05, 0, 2.4384, 914.4, 0.3048, {5.22207412095, -13.4805138285, -5.85936985853, 2.46579868301, 2.95349289745}},
+{"delany_bazley_layer", 250.0, 0.0, 0.05, 1e-06, 0.009144, 91.44, 45.72, 1.2192, {-5.01991262979, -1.23871398407, 2.5949829727, 0.265450884343, 0.00280214248167}},
+{"delany_bazley_layer", 250.0, 0.0, 0.05, 1e-06, 0.009144, 12.192, 457.2, 1.2192, {4.10146092659, -6.47744003561, -1.4134240492, 2.52309858511, 3.24903393044}},
+{"delany_bazley_layer", 250.0, 0.0, 0.05, 1e-06, 0.009144, 2.4384, 914.4, 0.3048, {4.68713115176, -20.5180113441, -20.1158164035, -8.06806114657, -2.52126252302}},
+{"variable_porosity", 380.0, 0.0, 0.05, 3e-05, 0.0079248, 91.44, 45.72, 1.2192, {-4.81714721269, -1.3010068409, 2.90363987088, 0.766321174462, 0.0261494191022}},
+{"variable_porosity", 380.0, 0.0, 0.05, 3e-05, 0.0079248, 12.192, 457.2, 1.2192, {4.42764901901, -2.15389885383, -0.275691140602, 2.06907565163, 2.30759534082}},
+{"variable_porosity", 380.0, 0.0, 0.05, 3e-05, 0.0079248, 2.4384, 914.4, 0.3048, {4.78328548042, -8.38747839469, -5.87570399069, 2.43586427809, 2.93226451062}},
+};
+
+} // namespace
+
+TEST_CASE("impedance models, HARMONOISE turbulence and roughness reproduce panam", "[ground_effect][panam]")
+{
+    const std::vector<double> bands = {63.0, 250.0, 1000.0, 4000.0, 8000.0};
+    const double sound_speed = 1125.0 * 0.3048;
+    for (const auto& c : panam_cases)
+    {
+        GroundModel ground;
+        ground.impedance_model = parse_impedance_model(c.model);
+        ground.flow_resistance = c.flow_resistance;
+        ground.porosity_rate = c.porosity_rate;
+        ground.layer_depth = c.layer_depth;
+        ground.turbulence_model = TurbulenceModel::harmonoise;
+        ground.gamma_t = c.gamma_t;
+        ground.roughness = c.roughness;
+        ground.receiver_height = c.receiver_height;
+        const auto level = excess_ground_attenuation(ground, c.source_height, c.ground_distance,
+                sound_speed, bands);
+        for (std::size_t b = 0; b < bands.size(); b++)
+            REQUIRE(std::fabs(level[b] - c.levels[b]) < 1e-6);
+    }
+}
+
+TEST_CASE("ground_gain_bounds bounds every impedance model, with turbulence and roughness", "[ground_effect][bounds]")
+{
+    std::vector<double> bands;
+    for (int n = 10; n <= 40; n++)
+        bands.push_back(std::pow(10.0, n / 10.0));
+    struct Model { ImpedanceModel model; double sigma, alpha, depth; };
+    const Model models[] = {{ImpedanceModel::miki, 100.0, 0.0, 0.05},
+                            {ImpedanceModel::variable_porosity, 200.0, 40.0, 0.05},
+                            {ImpedanceModel::variable_porosity, 50.0, 0.0, 0.05},
+                            {ImpedanceModel::delany_bazley_layer, 250.0, 0.0, 0.05},
+                            {ImpedanceModel::delany_bazley_layer, 1300.0, 0.0, 0.11}};
+    std::size_t checked = 0;
+    for (const auto& m : models)
+    {
+        for (double gamma_t : {0.0, 3e-5})
+        {
+            for (double roughness : {0.0, 0.02})
+            {
+                GroundModel ground;
+                ground.impedance_model = m.model;
+                ground.flow_resistance = m.sigma;
+                ground.porosity_rate = m.alpha;
+                ground.layer_depth = m.depth;
+                ground.turbulence_model = TurbulenceModel::harmonoise;
+                ground.gamma_t = gamma_t;
+                ground.roughness = roughness;
+                for (double receiver : {0.0, 0.05, 1.2})
+                {
+                    ground.receiver_height = receiver;
+                    const auto impedance = ground_impedance(ground, bands, 340.0);
+                    const auto bound = ground_gain_bounds(ground, impedance);
+                    std::vector<double> attenuation(bands.size());
+                    for (double height : {0.5, 3.0, 15.0, 60.0, 300.0, 1500.0})
+                    {
+                        for (double distance = 1.0; distance < 3e4; distance *= 1.6)
+                        {
+                            excess_ground_attenuation(ground, impedance, height, distance, 340.0,
+                                    bands, attenuation.data());
+                            for (std::size_t b = 0; b < bands.size(); b++)
+                            {
+                                REQUIRE(std::pow(10.0, 0.1 * attenuation[b]) <= bound[b]);
+                                checked++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    REQUIRE(checked > 100000);
+}
+
+TEST_CASE("a thin low-resistivity Delany-Bazley layer is refused as non-passive", "[ground_effect]")
+{
+    GroundModel ground;
+    ground.impedance_model = ImpedanceModel::delany_bazley_layer;
+    ground.flow_resistance = 100.0;
+    ground.layer_depth = 0.03;
+    REQUIRE_THROWS(ground_impedance(ground, {10.0, 1000.0}, 343.0));
+    REQUIRE_NOTHROW(ground_impedance(ground, {200.0, 1000.0}, 343.0));
+}

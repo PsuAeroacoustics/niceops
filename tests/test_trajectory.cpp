@@ -511,3 +511,83 @@ TEST_CASE("an altitude column may only claim the unit in force", "[units][geodet
     REQUIRE_NOTHROW(Trajectory(unlabelled.path, "databases/S-76D.json", input, feet));
     REQUIRE_NOTHROW(Trajectory(unlabelled.path, "databases/S-76D.json", input, metres));
 }
+
+namespace {
+// A steady 6 degree descent at 36 m/s, 0.02 s apart, with vz stored as the
+// file would: positive up (vz_positive_up) or positive down.  derive has
+// already normalised the load factor, as the reader leaves it.
+std::vector<State> steady_descent(bool vz_positive_up)
+{
+    dimensional_data vehicle;
+    vehicle.tip_speed = 230.0;
+    vehicle.radius = 5.3;
+    vehicle.weight = 2250.0 * 9.81;
+    vehicle.rho = 1.2;
+    const double v = 36.0, gamma = 6.0 * pi / 180.0;
+    std::vector<State> states;
+    for (int i = 0; i < 500; i++)
+    {
+        State now {};
+        now.t = 0.02 * i;
+        now.x = v * std::cos(gamma) * now.t;
+        now.z = 500.0 - v * std::sin(gamma) * now.t;
+        now.vx = v * std::cos(gamma);
+        now.vz = (vz_positive_up ? -1.0 : 1.0) * v * std::sin(gamma);
+        now.nz = 1.0;
+        derive_flight_parameters(now, vehicle);
+        states.push_back(now);
+    }
+    return states;
+}
+} // namespace
+
+TEST_CASE("vz stored positive down is detected and made positive up", "[trajectory][vz]")
+{
+    // The 2017 Noise Abatement AC files (all but EC130B4 day 298's) store vz
+    // positive down; read as up, every descent was flown as a climb.
+    auto states = steady_descent(false);
+    REQUIRE(states[10].fpa > 0.0); // as read: a climb
+    REQUIRE(correct_vertical_speed_sign(states, "descent_vz_down"));
+    for (const auto& s : states)
+    {
+        REQUIRE(s.vz < 0.0);
+        REQUIRE(std::fabs(s.fpa - (-6.0)) < 1e-9);
+    }
+}
+
+TEST_CASE("vz already positive up is left alone, even at a constant rate", "[trajectory][vz]")
+{
+    // A steady descent has a constant dz/dt, so a centred correlation has no
+    // variance to work with; the check has to decide from the uncentred one.
+    auto states = steady_descent(true);
+    const auto before = states;
+    REQUIRE_FALSE(correct_vertical_speed_sign(states, "descent_vz_up"));
+    for (std::size_t i = 0; i < states.size(); i++)
+    {
+        REQUIRE(states[i].vz == before[i].vz);
+        REQUIRE(states[i].fpa == before[i].fpa);
+    }
+}
+
+TEST_CASE("a level track gives no evidence and is left alone", "[trajectory][vz]")
+{
+    auto states = steady_descent(true);
+    for (auto& s : states)
+    {
+        s.z = 300.0;
+        s.vz = 0.0;
+    }
+    REQUIRE_FALSE(correct_vertical_speed_sign(states, "level"));
+}
+
+TEST_CASE("the shipped demo tracks store vz positive up and are read unchanged", "[trajectory][vz]")
+{
+    for (const auto& [track, vehicle] :
+            {std::pair {"tracks/S-76D/197421AC.csv", "databases/S-76D.json"},
+                    std::pair {"tracks/B205/190337AC.csv", "databases/B205.json"}})
+    {
+        Trajectory trajectory(track, vehicle);
+        std::vector<State> copy = trajectory.states;
+        REQUIRE_FALSE(correct_vertical_speed_sign(copy, track));
+    }
+}
