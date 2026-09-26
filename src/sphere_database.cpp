@@ -12,6 +12,7 @@
 
 #include <netcdf.h>
 
+#include "propagation.hpp"
 #include "util/logger.hpp"
 #include "weighting.hpp"
 #include "util/paths.hpp"
@@ -1494,14 +1495,12 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
     thread_local std::vector<double> levels;
     levels.resize(frequencies_.size());
 
-    Vec3 r = observer - state.position;
-    const auto slant_range = r.norm();
-    if (slant_range > 0.0)
-        r /= slant_range;
-    const auto angles = lookup_angles(state.frame, r);
+    // Everything the level takes from the path (propagation.hpp).
+    const RayPath path = straight_ray(state.position, observer);
+    const auto angles = lookup_angles(state.frame, path.direction);
     assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
 
-    eval_spectrum(slant_range, angles[0], angles[1], state.blend, absorption, levels.data(),
+    eval_spectrum(path.range, angles[0], angles[1], state.blend, absorption, levels.data(),
             first_band, last_band, packed);
 
     if (ground != nullptr)
@@ -1510,9 +1509,7 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
         // reflected off the surface, so it needs the geometry in the vertical
         // plane -- source height and horizontal separation -- not the slant
         // range the rest of the propagation works in.
-        const Vec3 separation = observer - state.position;
-        const double ground_distance = separation.horizontal_norm();
-        const double source_height = state.position.z;
+        //
         // Scratch, like levels above: this is the innermost loop of the whole
         // run and returning a vector here allocated 94 million times.
         thread_local std::vector<double> correction;
@@ -1520,20 +1517,25 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
         if (plate != nullptr)
         {
             // The propagation direction, source to microphone, in the plate's
-            // frame, where the microphone is offset along +y.
+            // frame, where the microphone is offset along +y.  This is the
+            // bearing between the two, which a ray in a stratified atmosphere
+            // keeps unless a crosswind deflects it.
+            const Vec3 separation = observer - state.position;
             const double azimuth = std::atan2(separation.y, separation.x) - plate_mic_azimuth
                     + 0.5 * pi;
-            plate->power_ratio(source_height, ground_distance, azimuth, correction.data(),
-                    first_band, last_band);
+            plate->power_ratio(path.source_height, path.ground_distance, azimuth,
+                    correction.data(), first_band, last_band);
         }
         else if (ground_table != nullptr)
         {
-            ground_table->power_ratio(source_height, ground_distance, correction.data());
+            ground_table->power_ratio(path.source_height, path.ground_distance,
+                    correction.data());
         }
         else
         {
-            excess_ground_attenuation(*ground, *impedance, source_height, ground_distance,
-                    sound_speed, frequencies_, correction.data(), first_band, last_band, true);
+            excess_ground_attenuation(*ground, *impedance, path.source_height,
+                    path.ground_distance, sound_speed, frequencies_, correction.data(),
+                    first_band, last_band, true);
         }
         // As power ratios multiplied into the band sum: the same as adding the
         // correction in dB, without a log and an exp per band.  Only bands in

@@ -344,7 +344,8 @@ public:
 
     // Per-band ground levels in dB at one direction, written into `levels`,
     // which must have room for band_count() entries.  `absorption` is the
-    // dB/m coefficient for each band, from absorption_coefficients().
+    // dB/m coefficient for each band, from absorption_coefficients(), or the
+    // mean over the heights the path spans (LayeredAbsorption).
     //
     // `packed`, when given, is pack_spectra(blend.indices, ...): the same
     // values gathered per blend.  The result is identical to the bit; it only

@@ -28,6 +28,7 @@
 #include <complex>
 
 #include "atmosphere.hpp"
+#include "atmosphere_profile.hpp"
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
 #include "weighting.hpp"
@@ -466,6 +467,12 @@ struct RunOptions
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
+    // A stratified atmosphere (--atmosphere), read once for the whole run.
+    // It replaces the vehicle file's single atmosphere for absorption, which
+    // is integrated through it (LayeredAbsorption); its surface level stands
+    // in for the rest.  Pressure may be missing, in which case each trajectory
+    // fills it hydrostatically from its own surface pressure.
+    std::optional<AtmosphereProfile> atmosphere;
     // Metres, after the --units conversion; NaN means the trim is off.
     double trim_start = 0.0;
     double utc_offset = 0.0;
@@ -667,6 +674,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // than per observer: the coefficients cost a pow() and two exp() per band.
     std::vector<double> absorption;
     std::vector<double> band_gains;
+    // With --atmosphere, absorption integrated through the profile instead
+    // (LayeredAbsorption), and its running integral at each state's height,
+    // [state][band], so the observer loop never looks a state's up twice.
+    std::optional<LayeredAbsorption> layered;
+    std::vector<double> state_absorption_integral;
+    // When every observer stands at one height -- any grid -- a state's mean
+    // coefficient is the same for all of them, so it is formed here once,
+    // [state][band], and the loop reads it instead of forming it per pair.
+    std::vector<double> state_absorption_mean;
     const GroundModel* ground_model = nullptr;
     std::vector<std::complex<double>> ground_impedance_bands;
     std::optional<PlateReceiver> plate;
@@ -687,6 +703,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         air.pressure = options.pressure_override;
     if (!std::isnan(options.humidity_override))
         air.relative_humidity = options.humidity_override;
+    // With a profile, its level at the ground stands in for the one
+    // atmosphere everything but absorption still takes: the sound speed of the
+    // reception-time integral, and the ground impedance.  Both are properties
+    // of the air at the surface.  A profile without pressure takes the surface
+    // pressure the vehicle file (or --pressure) gives, as `air` now holds.
+    std::optional<AtmosphereProfile> profile;
+    if (options.atmosphere)
+    {
+        profile = options.atmosphere->has_pressure()
+                ? *options.atmosphere
+                : options.atmosphere->with_hydrostatic_pressure(air.pressure);
+        air = profile->at(0.0);
+    }
     const double sound_speed = air.sound_speed();
 
     // Spectral propagation is the default, since per-band ISO 9613-1 absorption
@@ -700,12 +729,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     bool spectral = options.spectral;
     if (spectral && !database.has_spectra())
     {
-        if (options.spectral_explicit || options.ground_effect)
+        if (options.spectral_explicit || options.ground_effect || options.atmosphere)
         {
-            input_error(std::string(options.ground_effect ? "--ground_effect" : "--spectral")
+            const std::string asked = options.ground_effect ? "--ground_effect"
+                    : options.atmosphere                    ? "--atmosphere"
+                                                            : "--spectral";
+            input_error(asked
                     + " needs a database carrying per-band spectra; this one has none. Rebuild "
                       "it with spectra, or propagate the broadband level with --no-spectral"
-                    + (options.ground_effect ? " and no ground effect." : "."));
+                    + (options.ground_effect ? " and no ground effect."
+                                    : options.atmosphere ? " and no --atmosphere."
+                                                         : "."));
         }
         log("Database carries no per-band spectra: propagating the broadband level with its "
             "EAA factor.");
@@ -734,11 +768,76 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         log("Propagating spectra: ", retained, " of ", bands.size(), " bands within ",
                 options.band_limits.low, " to ", options.band_limits.high, " Hz, at ",
                 air.temperature, " K, ", air.pressure, " kPa, ", air.relative_humidity,
-                "% RH.");
+                "% RH", profile ? " at the ground" : "", ".");
         // Say what that atmosphere costs at the extremes actually in play, so a
         // wrong humidity is visible in the log rather than only in the answer.
         log("  absorption spans ", absorption.front(), " dB/m at ", bands.front(), " Hz to ",
-                absorption.back(), " dB/m at ", bands.back(), " Hz.");
+                absorption.back(), " dB/m at ", bands.back(), " Hz", profile ? " at the ground" : "",
+                ".");
+
+        if (profile)
+        {
+            // The heights any path spans: every state's and every observer's,
+            // and the ground.
+            double z_low = 0.0;
+            double z_high = 0.0;
+            for (const auto& state : source_states)
+            {
+                z_low = std::min(z_low, state.position.z);
+                z_high = std::max(z_high, state.position.z);
+            }
+            for (const auto& observer : observers)
+            {
+                z_low = std::min(z_low, observer.z);
+                z_high = std::max(z_high, observer.z);
+            }
+            // One level is a uniform atmosphere and reaches every height.  Past
+            // the top of several, the profile holds its last level, which is a
+            // guess about air nobody measured -- refuse rather than guess.
+            if (profile->height.size() > 1 && z_high > profile->top())
+            {
+                input_error("--atmosphere ", profile->source, " reaches ",
+                        profile->top() / options.unit.to_metres, " ", options.unit.name,
+                        " above the observers, but paths from ", job.trajectory, " reach ",
+                        z_high / options.unit.to_metres, " ", options.unit.name,
+                        ". Extend the profile above the highest state and observer.");
+            }
+            if (profile->height.size() > 1 && z_low < profile->bottom())
+            {
+                log("  the profile's lowest level, ", profile->bottom() / options.unit.to_metres,
+                        " ", options.unit.name, ", is held down to ", z_low / options.unit.to_metres,
+                        " ", options.unit.name, ".");
+            }
+            layered = LayeredAbsorption(*profile, bands, first_band, last_band, z_low, z_high);
+            state_absorption_integral.assign(nt * bands.size(), 0.0);
+            for (std::size_t it = 0; it < nt; it++)
+            {
+                layered->integral(source_states[it].position.z,
+                        state_absorption_integral.data() + it * bands.size());
+            }
+            const bool common_height = std::all_of(observers.begin(), observers.end(),
+                    [&](const Vec3& o) { return o.z == observers.front().z; });
+            if (common_height && !observers.empty())
+            {
+                std::vector<double> at_observers(bands.size(), 0.0);
+                const double z_observers = observers.front().z;
+                layered->integral(z_observers, at_observers.data());
+                state_absorption_mean.assign(nt * bands.size(), 0.0);
+                for (std::size_t it = 0; it < nt; it++)
+                {
+                    layered->mean_coefficients(source_states[it].position.z,
+                            state_absorption_integral.data() + it * bands.size(), z_observers,
+                            at_observers.data(), state_absorption_mean.data() + it * bands.size());
+                }
+            }
+            std::vector<double> at_top(bands.size(), 0.0);
+            layered->coefficients(z_high, at_top.data());
+            log("  absorption layered through ", profile->source, " from ",
+                    z_low / options.unit.to_metres, " to ", z_high / options.unit.to_metres, " ",
+                    options.unit.name, ": at ", bands[last_band - 1], " Hz it is ",
+                    absorption[last_band - 1], " dB/m at the ground and ", at_top[last_band - 1],
+                    " dB/m at the top.");
+        }
 
         if (options.ground_effect)
         {
@@ -954,9 +1053,29 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         unsigned generation = 0;
         std::size_t culled_here = 0;
         std::size_t evaluated_here = 0;
+        // Layered absorption: each state's mean coefficients, when the observers
+        // share a height; otherwise the running integral at the observer's
+        // height, once per observer, and the per-band mean over each path's
+        // heights, once per evaluation.  Without a profile every path takes the
+        // one run-wide array, as before.
+        const std::size_t band_count = layered ? database.band_centres().size() : 0;
+        std::vector<double> observer_absorption_integral(band_count, 0.0);
+        std::vector<double> path_absorption(band_count, 0.0);
+        auto absorption_for = [&](std::size_t it, const Vec3& observer) -> const double* {
+            if (!layered)
+                return absorption.data();
+            if (!state_absorption_mean.empty())
+                return state_absorption_mean.data() + it * band_count;
+            layered->mean_coefficients(source_states[it].position.z,
+                    state_absorption_integral.data() + it * band_count, observer.z,
+                    observer_absorption_integral.data(), path_absorption.data());
+            return path_absorption.data();
+        };
         for (std::size_t index = begin; index < end; index++)
         {
             const auto& observer = observers[index];
+            if (layered)
+                layered->integral(observer.z, observer_absorption_integral.data());
             const PlateReceiver* plate_receiver = plate ? &*plate : nullptr;
             const double plate_mic_azimuth = plate && options.plate_orientation.outboard
                     ? outboard_azimuth(observer, source_states)
@@ -976,7 +1095,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             sound_speed, levels, visited, generation, evaluated_here,
                             [&](std::size_t it, const StateGeometry&) {
                                 return database.spectral_level_at_observer(observer,
-                                        source_states[it], absorption.data(), band_gains,
+                                        source_states[it], absorption_for(it, observer), band_gains,
                                         ground_model, &ground_impedance_bands, sound_speed,
                                         first_band, last_band, packed_of_state[it],
                                         plate_receiver, plate_mic_azimuth, ground_table_ptr);
@@ -1006,7 +1125,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 double level = spectral
                         ? database.spectral_level_at_observer(observer, source_states[it],
-                                absorption.data(), band_gains, ground_model,
+                                absorption_for(it, observer), band_gains, ground_model,
                                 &ground_impedance_bands, sound_speed, first_band, last_band,
                                 packed_of_state[it], plate_receiver, plate_mic_azimuth,
                                 ground_table_ptr)
@@ -1281,6 +1400,7 @@ int run(int argc, char* argv[])
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
+    std::string atmosphere_file;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
     // trajectory; an unset bearing leaves the axes east/north, which is what a
     // map wants -- the shipped AC tracks are the other case, their +x running
@@ -1370,6 +1490,11 @@ int run(int argc, char* argv[])
             "Temperature in K, overriding the vehicle file.");
     app.add_option("--pressure", pressure_override,
             "Ambient pressure in kPa, overriding the vehicle file.");
+    app.add_option("--atmosphere", atmosphere_file,
+            "A stratified atmosphere: CSV of temperature, relative humidity and optionally "
+            "pressure against height (see README). Per-band absorption is integrated through "
+            "it, and its ground level replaces the vehicle file's atmosphere. Spectral path "
+            "only; wind is not modelled yet.");
     app.add_flag("--ground_effect", ground_effect,
             "Add excess ground attenuation (Chien-Soroka over a Delany-Bazley impedance) to "
             "the spectral path (the default). Cannot be combined with --no-spectral.");
@@ -1674,6 +1799,18 @@ int run(int argc, char* argv[])
         input_error("--band_limits needs low < high, got ", band_limits[0], " and ",
                 band_limits[1], ".");
     }
+    if (!atmosphere_file.empty() && !spectral)
+    {
+        input_error("--atmosphere needs the spectral path: layered absorption is per band, and "
+                    "the broadband path (--no-spectral) carries one level attenuated by the "
+                    "database's own EAA factor.");
+    }
+    if (!atmosphere_file.empty()
+            && (!std::isnan(temperature_override) || !std::isnan(humidity_override)))
+    {
+        input_error("--atmosphere gives temperature and humidity at every height; --temperature "
+                    "and --humidity would contradict it.");
+    }
 
     // Everything the trajectory loop needs that does not vary between
     // trajectories, named once.  Written as an initialiser rather than thirty
@@ -1720,6 +1857,16 @@ int run(int argc, char* argv[])
     options.humidity_override = humidity_override;
     options.temperature_override = temperature_override;
     options.pressure_override = pressure_override;
+    if (!atmosphere_file.empty())
+    {
+        options.atmosphere = read_atmosphere_profile(atmosphere_file, unit, ground_elevation);
+        if (options.atmosphere->has_pressure() && !std::isnan(pressure_override))
+        {
+            input_error("--atmosphere ", atmosphere_file, " gives pressure at every height; "
+                    "--pressure would contradict it. (Without a pressure column, --pressure "
+                    "sets the surface pressure the profile is integrated from.)");
+        }
+    }
     options.trim_start = trim_start;
     options.utc_offset = utc_offset;
     options.scattered = scattered;

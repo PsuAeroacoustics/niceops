@@ -400,6 +400,44 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   standard and the Python, and is the one non-SI unit in the codebase. `absorption_coefficients()`
   is the form the hot path uses: it hoists the two relaxation frequencies out of the per-band
   loop and is bit-exact against the per-frequency call.
+- `src/propagation.hpp` — the propagation seam. `straight_ray()` returns a `RayPath`: the
+  direction the sphere is looked up by, the range that spreading and absorption take, and the
+  ground model's (source height, ground distance). `spectral_level_at_observer` takes all of
+  these from it and nothing from raw geometry. It went in bit-identical on every path. A
+  refracting model returns the same record per eigenray. The header lists what such a model
+  must *also* change and that deliberately does not live there: reception time
+  (`reception_factor` differentiates straight-line range), the bounds (they subtract
+  straight-line spreading; focusing adds gain), and the broadband path, which shares its
+  geometry with the bound test and does not use the record.
+- `src/atmosphere_profile.{hpp,cpp}` — `--atmosphere`: a stratified T/RH/p profile and
+  `LayeredAbsorption`, per-band absorption integrated through it. Along a straight path a band
+  loses the coefficient's mean over the heights spanned times the path length. The mean is
+  (F_b(z_s) - F_b(z_o)) / (z_s - z_o), F being a 1 m table of alpha's running integral. The
+  things to preserve:
+  - **The hot loop pays nothing on a grid, and a subtract and a multiply per band otherwise.**
+    F at each state's height is looked up once per trajectory. When every observer shares a
+    height, as on any grid, each state's mean is formed once too (`state_absorption_mean`), and
+    the loop only reads it. Without that the profile cost ~5% of the acoustic loop. Scattered
+    observers at mixed heights take the per-pair path; `atmosphere_uniform_scattered_is_homogeneous`
+    runs `arrays/coyle_approach.csv` through it.
+  - **`Database` knows nothing about profiles.** The caller hands `spectral_level_at_observer`
+    per-band coefficients exactly as before. Without `--atmosphere` the run-wide array goes
+    through untouched, so the default output is byte-identical.
+  - **F is quadratic within a node.** Alpha is linear between nodes and F is its exact
+    integral, so the difference quotient tends smoothly to alpha as the heights meet. Within
+    1 mm it switches to alpha at the midpoint.
+  - **One level means uniform at every height.** With several levels, a trajectory above the
+    top is refused, not extrapolated.
+  - **The surface level supplies the sound speed** for the reception time and the ground
+    impedance.
+  - **Spectral path only.** `EAA` is a fitted broadband attenuation with nothing per band to
+    integrate.
+  - **`atmosphere_uniform_is_homogeneous` compares at 1e-9, not byte-for-byte.** A mean of a
+    uniform integral is the coefficient to a few ULP. Do not "fix" it by comparing bytes.
+  - **Wind columns are ignored** and named in the log.
+
+  The roadmap this starts (refraction, then urban) is in the Claude Doc "NICE-OPS:
+  Atmospheric and Urban Propagation Options".
 - `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
   than a table, so it evaluates at whatever band centres a database carries) and band-limited
   energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but

@@ -158,6 +158,7 @@ seconds, levels in dB.
 | `--spectral` | Propagate the database's per-band spectra to the ground with ISO 9613-1 absorption, instead of one broadband level with the database's EAA factor. Needs a database carrying spectra. |
 | `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
 | `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
+| `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity and optionally pressure against height. Absorption is integrated through it. Spectral path only; wind is not modelled yet. See below. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
 | `--receiver_height`, `--turbulence` | Receiver height (in `--units`, default 1.2 m) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
@@ -297,6 +298,56 @@ Only `density` is required, as before. Pressure defaults to the one implied by t
 own density and temperature rather than to a standard day — `S-76D.json` pairs 1.225 kg/m³
 with 300.71 K, which is not an ISA point, so assuming 101.325 kPa would contradict its own
 numbers. `--humidity`, `--temperature` and `--pressure` override all of it.
+
+#### Stratified atmosphere
+
+`--atmosphere file.csv` replaces that single atmosphere with a profile, and integrates each
+band's absorption through it. Along a straight path, what a band loses is the ISO 9613-1
+coefficient's mean over the heights the path spans, times the path length. That is the
+fine-layered form of what certification does with 30 m layers (14 CFR 36 Appendix A), and a
+unit test checks the two agree.
+
+On the demo track with the B407 database, `atmospheres/isa.csv` moves 90% of the footprint by
+-0.10 to -0.005 dB (mean -0.04 dB, extremes -0.57 and +1.11 dB), against a homogeneous run at
+ISA sea-level conditions. On a grid it costs nothing measurable, because every observer stands
+at one height and each state's mean is formed once. Scattered observers at different heights
+pay a subtraction and a multiply per band per evaluation.
+
+Columns are found by name, in any order, one row per level; rows may run top down:
+
+| Quantity | Column names | Unit |
+| --- | --- | --- |
+| Height above the observers | `z`, `agl` | `--units`; `z_ft` / `z_m` must agree with it |
+| or altitude above sea level | `alt`, `altitude`, `height` | `--units`, less `--ground_elevation` |
+| Temperature | `T_K`, `T_C` | named; a bare `T` is told from the values |
+| Relative humidity | `RH`, `humidity` | percent |
+| Pressure (optional) | `p_kPa`, `p_hPa`, `p_Pa` | named; a bare `p` is told from the values |
+
+```csv
+z_ft,T_K,RH,p_kPa
+0,288.150,20,101.325
+1000,286.169,20,97.717
+2000,284.188,20,94.213
+```
+
+Without a pressure column, pressure is integrated hydrostatically up from the surface
+pressure, which is the vehicle file's or `--pressure`'s. A single row is a uniform
+atmosphere. `atmospheres/isa.csv` is the ISA to 10,000 ft at 20% RH, and
+`atmospheres/B407_uniform.csv` holds `B407.json`'s own atmosphere. With the latter a run
+reproduces the homogeneous one, which a CTest case checks.
+
+The rules that keep it from guessing:
+
+- **The profile has to reach the aircraft.** A trajectory climbing above the top level is
+  refused, not extrapolated. Below the lowest level, that level is held down to the ground.
+- **Surface properties stay at the surface.** The profile's level at the ground supplies the
+  sound speed for the reception-time integral and for the ground impedance.
+- **`--temperature` and `--humidity` cannot be combined with it.** Nor can `--pressure`
+  unless the file gives no pressure, in which case it is the surface pressure.
+- **Only the spectral path uses it.** The broadband path's `EAA` is the database's own
+  fitted attenuation, and there is nothing per band to integrate.
+- **Wind columns are read past.** Refraction, and the airspeed that wind changes, are later
+  steps; the log names every column it ignored.
 
 #### Ground effect
 
@@ -579,6 +630,7 @@ which a binary distribution needs to carry with it.
 - `golden/` — reference outputs captured from the D implementation; the regression tests compare
   against these at 1e-9 relative tolerance.
 - `databases/`, `tracks/` — shipped noise databases and flight tracks.
+- `atmospheres/` — atmosphere profiles for `--atmosphere`.
 
 `CLAUDE.md` carries the developer-facing detail: the port's history, the shape of the hot path,
 and the pitfalls worth knowing before changing the numerics.

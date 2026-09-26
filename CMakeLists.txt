@@ -159,6 +159,7 @@ endif()
 add_library(niceops_core STATIC
   src/sphere_database.cpp
   src/atmosphere.cpp
+  src/atmosphere_profile.cpp
   src/weighting.cpp
   src/faddeeva.cpp
   src/ground_effect.cpp
@@ -203,6 +204,7 @@ add_executable(niceops_unit_tests
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
   tests/test_atmosphere.cpp
+  tests/test_atmosphere_profile.cpp
   tests/test_weighting.cpp
   tests/test_ground_effect.cpp
   tests/test_plate_receiver.cpp
@@ -252,3 +254,21 @@ add_test(NAME plate_marched COMMAND niceops -d databases/B407_fixed_load_factor.
 set_tests_properties(plate_windowed plate_marched PROPERTIES FIXTURES_SETUP plate_runs)
 add_test(NAME plate_windowed_is_exact COMMAND golden_compare integrated/plate_windowed.csv integrated/plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED plate_runs)
+# --atmosphere through a single-level profile holding the vehicle file's own
+# atmosphere has to reproduce the homogeneous run: the whole layered-absorption
+# path (the table, the per-state and per-observer integrals, the per-path mean)
+# against the one run-wide coefficient array.  Not bit-identical -- a mean of a
+# uniform integral is the coefficient to a few ULP -- so golden_compare's 1e-9.
+add_test(NAME atmosphere_uniform COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/B407_uniform.csv --gridstep 492 -L warn -o integrated/atmosphere_uniform.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME atmosphere_homogeneous COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --gridstep 492 -L warn -o integrated/atmosphere_homogeneous.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_uniform atmosphere_homogeneous PROPERTIES FIXTURES_SETUP atmosphere_runs)
+add_test(NAME atmosphere_uniform_is_homogeneous COMMAND golden_compare integrated/atmosphere_uniform.csv integrated/atmosphere_homogeneous.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_uniform_is_homogeneous PROPERTIES FIXTURES_REQUIRED atmosphere_runs)
+# The same over arrays/coyle_approach.csv, whose microphones stand at different
+# heights.  A grid's observers share one, so their mean coefficients are formed
+# once per state; these take the per-pair path the grid never reaches.
+add_test(NAME atmosphere_uniform_scattered COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b arrays/coyle_approach.csv --atmosphere atmospheres/B407_uniform.csv -L warn -o integrated/atmosphere_uniform_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME atmosphere_homogeneous_scattered COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b arrays/coyle_approach.csv -L warn -o integrated/atmosphere_homogeneous_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_uniform_scattered atmosphere_homogeneous_scattered PROPERTIES FIXTURES_SETUP atmosphere_scattered_runs)
+add_test(NAME atmosphere_uniform_scattered_is_homogeneous COMMAND golden_compare integrated/atmosphere_uniform_scattered.csv integrated/atmosphere_homogeneous_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_uniform_scattered_is_homogeneous PROPERTIES FIXTURES_REQUIRED atmosphere_scattered_runs)
