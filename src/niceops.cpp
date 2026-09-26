@@ -214,37 +214,34 @@ void append_metrics_file(const std::string& filename, const std::string& casenam
 // nothing between the ends is skipped.  The integral is in reception time --
 // see reception_factor in sel.hpp.
 //
-// `level_of(it, geometry)` evaluates state `it` at this observer, given its
-// displacement in the sphere frame; `bounds` must bound what it returns.
+// `geometry_of(it)` gives state `it`'s geometry at this observer: at least the
+// squared range and the three components, in the sphere frame, of the
+// displacement the level spreads over and looks the sphere up along.  For a
+// straight ray that is the displacement itself; for a refracted one it is the
+// launch direction scaled by the ray tube's range (refraction.hpp), which is
+// what makes the same DirectionBounds bound it.  `level_of(it, geometry)`
+// evaluates the state from it, and `bounds` must bound what it returns.
+// `range_at(it)` is the range whose rate of change gives reception time.
 //
-// The displacement's components in the sphere frame.  The bound test needs
-// exactly what an evaluation needs, which is why they are formed once and
-// handed on rather than recomputed -- doing it twice was measured at 1.48x
-// down to 1.08x.
+// The bound test needs exactly what an evaluation needs, which is why the
+// geometry is formed once and handed on rather than recomputed -- doing it
+// twice was measured at 1.48x down to 1.08x.
 struct StateGeometry
 {
     double squared_range, along, up, across;
 };
 
-template <typename LevelOf>
-double windowed_sound_exposure_level(const Database& database,
-        const std::vector<Database::SourceState>& states, const DirectionBounds& bounds,
-        const Vec3& observer, double step, double sound_speed, std::vector<double>& levels,
+template <typename GeometryOf, typename LevelOf, typename RangeAt>
+double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
+        double sphere_radius_squared, double step, double sound_speed, std::vector<double>& levels,
         std::vector<unsigned>& visited, unsigned generation, std::size_t& evaluated,
-        LevelOf&& level_of)
+        GeometryOf&& geometry_of, LevelOf&& level_of, RangeAt&& range_at)
 {
-    const std::size_t nt = states.size();
-    const double sphere_radius_squared = database.sphere_radius() * database.sphere_radius();
     // A coarse sweep seeds the peak search; the stride is not sensitive -- 16
     // and 1024 land within a couple of percent of each other.
     const std::size_t seed_stride = std::max<std::size_t>(1, nt / 128);
 
-    using Geometry = StateGeometry;
-    auto geometry_of = [&](std::size_t it) {
-        const Vec3 delta = observer - states[it].position;
-        return Geometry {delta.squaredNorm(), states[it].frame.nose.dot(delta),
-                states[it].frame.normal.dot(delta), states[it].frame.starboard.dot(delta)};
-    };
+    using Geometry = decltype(geometry_of(std::size_t {0}));
     auto evaluate_with = [&](std::size_t it, const Geometry& g) {
         visited[it] = generation;
         evaluated++;
@@ -320,10 +317,29 @@ double windowed_sound_exposure_level(const Database& database,
                         < threshold_energy * g.squared_range;
     };
     const auto index = ten_db_down_interval(nt, threshold, evaluate, certainly_below);
-    auto range_at = [&](std::size_t it) { return (observer - states[it].position).norm(); };
     return sel_over_window(index[0], index[1], step, evaluate, [&](std::size_t it) {
         return reception_factor(it, nt, step, sound_speed, range_at);
     });
+}
+
+// The straight-ray form: the displacement from each state to the observer.
+template <typename LevelOf>
+double windowed_sound_exposure_level(const Database& database,
+        const std::vector<Database::SourceState>& states, const DirectionBounds& bounds,
+        const Vec3& observer, double step, double sound_speed, std::vector<double>& levels,
+        std::vector<unsigned>& visited, unsigned generation, std::size_t& evaluated,
+        LevelOf&& level_of)
+{
+    return windowed_exposure(
+            states.size(), bounds, database.sphere_radius() * database.sphere_radius(), step,
+            sound_speed, levels, visited, generation, evaluated,
+            [&](std::size_t it) {
+                const Vec3 delta = observer - states[it].position;
+                return StateGeometry {delta.squaredNorm(), states[it].frame.nose.dot(delta),
+                        states[it].frame.normal.dot(delta), states[it].frame.starboard.dot(delta)};
+            },
+            std::forward<LevelOf>(level_of),
+            [&](std::size_t it) { return (observer - states[it].position).norm(); });
 }
 
 void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers,
@@ -1155,10 +1171,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // A new option that does either belongs in the matching term above.
     // --db_cutoff stands apart: its culling is a deliberate metric change, so
     // leave the two mechanisms separate rather than layering this one on top.
-    // Under --refraction the bounds no longer hold (propagation.hpp), so every
-    // state is marched.
-    const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history
-            && !effective_sound_speed;
+    // Under --refraction the same bounds hold, taken along each ray's launch
+    // direction at its tube's range -- see windowed_exposure.
+    const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history;
 
     // Each blend's spectra packed contiguously (Database::pack_spectra), one
     // copy per distinct blend the track visits, so the observer loop's reads
@@ -1215,6 +1230,26 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // Which states of `levels` this observer has filled, stamped by a
         // counter so the array does not have to be cleared per observer.
         std::vector<unsigned> visited(expand_from_peak ? nt : 0, 0u);
+        // Refraction through the peak search: each state's reception range,
+        // kept from when its ray was formed, and stamped like `visited`.
+        const bool windowed_refraction = expand_from_peak && effective_sound_speed.has_value();
+        std::vector<double> travel(windowed_refraction ? nt : 0);
+        std::vector<unsigned> travel_stamp(windowed_refraction ? nt : 0, 0u);
+        // A refracted ray's geometry for the bounds: its launch direction
+        // scaled by its tube's range, in the sphere frame, which is what the
+        // level spreads over and looks the sphere up along.  Absorption, the
+        // shadow's loss and the ground's gain are bounded apart from it.
+        auto equivalent_geometry = [&](std::size_t it, const RayPath& path) {
+            const Vec3 d = path.direction * path.range;
+            const auto& frame = source_states[it].frame;
+            return StateGeometry {path.range * path.range, frame.nose.dot(d), frame.normal.dot(d),
+                    frame.starboard.dot(d)};
+        };
+        struct RefractedGeometry
+        {
+            double squared_range, along, up, across;
+            RefractedRay ray;
+        };
         unsigned generation = 0;
         std::size_t culled_here = 0;
         std::size_t evaluated_here = 0;
@@ -1260,15 +1295,72 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const GroundGeometry ray_ground = ground_model == nullptr ? GroundGeometry::none
                     : flush                                           ? GroundGeometry::plate
                                                                       : GroundGeometry::point;
+            // Refraction: the table's moments at this microphone, and the level
+            // of a state whose direct ray is formed -- its ground geometry
+            // (the reflected ray, for a point receiver) is solved only now,
+            // once the state has survived any bound.
+            const auto at_receiver = effective_sound_speed
+                    ? effective_sound_speed->moments(observer.z)
+                    : EffectiveSoundSpeed::Moments {};
+            auto refracted_level = [&](std::size_t it, RefractedRay ray) {
+                finish_ground(ray, ray_ground, microphone_height[index]);
+                const double* extra_loss = nullptr;
+                if (ray.shadow_depth > 0.0)
+                {
+                    shadow_loss(ray, shadow_rates, options.shadow_floor, first_band, last_band,
+                            shadow.data());
+                    extra_loss = shadow.data();
+                    shadowed_here++;
+                }
+                double level = database.spectral_level_along(ray.path, source_states[it],
+                        absorption_for(it, observer), band_gains, ground_here,
+                        &ground_impedance_bands, sound_speed, first_band, last_band,
+                        packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
+                        extra_loss);
+                if (add_ambient)
+                    level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
+                return level;
+            };
             if (expand_from_peak)
             {
                 if (++generation == 0)
                 {
                     // Wrapped, so old stamps could be mistaken for this pass.
                     std::fill(visited.begin(), visited.end(), 0u);
+                    std::fill(travel_stamp.begin(), travel_stamp.end(), 0u);
                     generation = 1;
                 }
-                if (spectral)
+                if (effective_sound_speed)
+                {
+                    integrated_levels[index] = windowed_exposure(nt, direction_bounds,
+                            sphere_radius_squared, integration_step, sound_speed, levels, visited,
+                            generation, evaluated_here,
+                            [&](std::size_t it) {
+                                RefractedGeometry g;
+                                g.ray = direct_ray(*effective_sound_speed, source_states[it].position,
+                                        state_moments[it], observer, at_receiver);
+                                const auto e = equivalent_geometry(it, g.ray.path);
+                                g.squared_range = e.squared_range;
+                                g.along = e.along;
+                                g.up = e.up;
+                                g.across = e.across;
+                                travel[it] = sound_speed * g.ray.travel_time;
+                                travel_stamp[it] = generation;
+                                return g;
+                            },
+                            [&](std::size_t it, const RefractedGeometry& g) {
+                                return refracted_level(it, g.ray);
+                            },
+                            [&](std::size_t it) {
+                                if (travel_stamp[it] == generation)
+                                    return travel[it];
+                                return sound_speed
+                                        * direct_ray(*effective_sound_speed, source_states[it].position,
+                                                state_moments[it], observer, at_receiver)
+                                                  .travel_time;
+                            });
+                }
+                else if (spectral)
                 {
                     integrated_levels[index] = windowed_sound_exposure_level(database,
                             source_states, direction_bounds, observer, integration_step,
@@ -1295,31 +1387,27 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
             if (effective_sound_speed)
             {
-                const auto at_receiver = effective_sound_speed->moments(observer.z);
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    const auto ray = refracted_ray(*effective_sound_speed, source_states[it].position,
-                            state_moments[it], observer, at_receiver, ray_ground,
-                            microphone_height[index]);
+                    auto ray = direct_ray(*effective_sound_speed, source_states[it].position,
+                            state_moments[it], observer, at_receiver);
                     // Reception time from the curved ray's travel time, as the
                     // range a straight ray at the surface sound speed would take.
                     ranges[it] = sound_speed * ray.travel_time;
-                    const double* extra_loss = nullptr;
-                    if (ray.shadow_depth > 0.0)
+                    if (culling)
                     {
-                        shadow_loss(ray, shadow_rates, options.shadow_floor, first_band, last_band,
-                                shadow.data());
-                        extra_loss = shadow.data();
-                        shadowed_here++;
+                        const auto g = equivalent_geometry(it, ray.path);
+                        if (g.squared_range > sphere_radius_squared
+                                && direction_bounds.numerator(it,
+                                           DirectionBounds::bin(g.along, g.up, g.across, g.squared_range))
+                                        < cull_energy * g.squared_range)
+                        {
+                            levels[it] = culled_level;
+                            culled_here++;
+                            continue;
+                        }
                     }
-                    double level = database.spectral_level_along(ray.path, source_states[it],
-                            absorption_for(it, observer), band_gains, ground_here,
-                            &ground_impedance_bands, sound_speed, first_band, last_band,
-                            packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
-                            extra_loss);
-                    if (add_ambient)
-                        level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
-                    levels[it] = level;
+                    levels[it] = refracted_level(it, std::move(ray));
                 }
             }
             else
@@ -1376,8 +1464,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (effective_sound_speed)
     {
         const auto total = observers.size() * nt;
-        log("Refraction put ", shadowed_samples.load(), " of ", total, " evaluations (",
-                100.0 * static_cast<double>(shadowed_samples.load()) / static_cast<double>(total),
+        const auto evaluations = expand_from_peak ? evaluated_samples.load()
+                                                  : total - culled_samples.load();
+        log("Refraction put ", shadowed_samples.load(), " of the ", evaluations,
+                " evaluations made (",
+                100.0 * static_cast<double>(shadowed_samples.load())
+                        / static_cast<double>(std::max<std::size_t>(evaluations, 1)),
                 "%) in a shadow zone.");
     }
 
@@ -2040,11 +2132,6 @@ int run(int argc, char* argv[])
     {
         input_error("--refraction linear needs --atmosphere: it refracts through the profile's "
                     "temperature and wind.");
-    }
-    if (refraction == "linear" && !std::isnan(db_cutoff))
-    {
-        input_error("--refraction does not combine with --db_cutoff yet: the culling bound "
-                    "assumes straight-line propagation.");
     }
     if (!(shadow_floor >= 0.0))
         input_error("--shadow_floor must not be negative, got ", shadow_floor, ".");

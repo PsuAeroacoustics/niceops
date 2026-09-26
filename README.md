@@ -384,8 +384,9 @@ with the B407 database and `--frame_bearing 210`, compared with the same profile
 
 | | mean | upwind half | downwind half | worst cell | acoustic loop |
 | --- | --- | --- | --- | --- | --- |
-| no ground effect | -0.77 dB | -1.51 dB | -0.04 dB | -7.85 dB | 2.2 s (1.8 s without) |
-| `--ground_effect` | -0.56 dB | -0.80 dB | -0.32 dB | -3.81 dB | 4.7 s (2.1 s without) |
+| no ground effect | -0.77 dB | -1.51 dB | -0.04 dB | -7.85 dB | 2.3 s (1.6 s without) |
+| `--ground_effect` | -0.56 dB | -0.80 dB | -0.32 dB | -3.81 dB | 3.6 s (2.1 s without) |
+| `--plate_table` | | | | | 6.1 s (5.4 s without) |
 
 Most of the upwind loss comes from the low states near the end of the approach. From 10 m up,
 the shadow begins about a kilometre upwind.
@@ -409,8 +410,9 @@ What to know before relying on it:
 - **The ray ends at the microphone,** as the straight path does (see [Receivers](#receivers)),
   so uniform air gives the straight result to 1e-9 for every receiver, scattered microphones
   on sloping ground included.
-- **Every state is marched.** The peak search's bounds assume straight rays, so they are off,
-  and `--db_cutoff` is refused.
+- **The peak search and `--db_cutoff` still work.** They bound a refracted state with the
+  same direction tables as a straight one, taken along the ray's launch direction at its ray
+  tube's range. A CTest case checks that the windowed run equals a full march.
 
 #### Ground effect
 

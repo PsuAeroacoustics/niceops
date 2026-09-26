@@ -151,6 +151,13 @@ struct RefractedRay
     double travel_time = 0.0; // s
     double shadow_depth = 0.0; // m
     LinearProfile profile; // the path's equivalent linear profile
+    // What finish_ground() works from: whether the ray bends at all (a
+    // straight one's ground geometry is already the real one), the source's
+    // height and horizontal distance, and the direct eigenray.
+    bool curved = false;
+    double source_z = 0.0;
+    double horizontal = 0.0;
+    DirectEigenray direct;
 };
 
 // The refracted path from `source` to the microphone at `receiver` --
@@ -169,6 +176,18 @@ RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
         const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, GroundGeometry ground,
         double microphone_height);
+
+// refracted_ray() in two halves.  The first gives everything the level's bound
+// needs -- the launch direction and the ray tube's range, so a state can be
+// ruled out by DirectionBounds exactly as a straight one is (see
+// windowed_sound_exposure_level) -- plus the travel time.  Its ground geometry
+// is the straight one until the second half, which solves for the reflected
+// ray when a point receiver needs it, and so is left until a state survives
+// the bound.
+RefractedRay direct_ray(const EffectiveSoundSpeed& air, const Vec3& source,
+        const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
+        const EffectiveSoundSpeed::Moments& at_receiver);
+void finish_ground(RefractedRay& ray, GroundGeometry ground, double microphone_height);
 
 // Per band, the shadow zone's attenuation rate for a unit gradient and sound
 // speed.  This is the first creeping-wave mode over a rigid ground (Pierce,

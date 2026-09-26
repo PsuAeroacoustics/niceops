@@ -452,10 +452,12 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   - **Spreading is r / cos(launch), exactly.** In a linear profile the tube area
     r |dr/dtheta| sin|arrival| / cos(launch) reduces to (r rho / h_s)^2.
     `tests/test_refraction.cpp` checks it against finite differences of traced rays; keep that.
-  - **The reflected ray is a bracketed 1-D solve** on launch angle (Illinois). The range is
-    monotonic in it, which was checked across both gradient signs. Under downward refraction at
-    long range the ray is launched *upward*, over its top: a separate branch of the range
-    formula.
+  - **The reflected ray is a 1-D solve** on launch angle, along which the range is monotonic
+    (checked across both gradient signs). It starts from the direct ray to the receiver's image
+    below the ground and takes secant steps from there, which usually close in one or two. That
+    warm start took the point-receiver refraction run from 4.7 to 3.6 s. A bracketed Illinois
+    solve is the fallback. Under downward refraction at long range the ray is launched
+    *upward*, over its top: a separate branch of the range formula.
   - **Ground models get an equivalent straight geometry.** A point receiver gets
     h' = L2 sin(grazing) - h_r and d' = L2 cos(grazing) from the reflected ray; a plate gets
     the direct ray's arrival angle and length. The ground models themselves are untouched.
@@ -465,10 +467,16 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     air reproduces the straight run to 1e-9 for plates, point receivers and bare observers
     (`refraction_uniform_*_is_straight`). The reflected ray goes to the microphone's height
     above the plane z = 0, where the ground models put it.
-  - **It marches every state and refuses `--db_cutoff`.** The bounds use the straight-line
-    direction and spreading; step 5 adds a propagation gain to them. Refraction roughly
-    doubles the acoustic loop with a point ground model (2.1 -> 4.7 s on the demo), mostly
-    from that march plus the reflected-ray solve.
+  - **The same bounds cover refraction.** The peak search and `--db_cutoff` take a refracted
+    state's geometry as its launch direction scaled by its ray tube's range, so the existing
+    DirectionBounds tables bound it unchanged. Absorption and the shadow's loss are losses, and
+    the ground's gain is bounded independently of geometry. `direct_ray` gives that geometry
+    and the travel time; `finish_ground`, with its reflected-ray solve, runs only for states
+    that survive the bound. `refraction_*_windowed_is_exact` checks the windowed run against a
+    march. On this database and track the bounds are loose even for straight rays (92–98% of
+    states get evaluated), so the windowing saves little here. The overhead of refraction is
+    the rays themselves: +0.7 s bare, +1.5 s with a point receiver, +0.7 s with a plate, on the
+    demo grid.
   - **Every ray is checked against RK4 traces** of the ray equations: position to 1e-6 m,
     time and arc length to 1e-9, reflected grazing angle to 1e-8 rad.
   - **Wind directions are compass bearings** turned by `--frame_bearing` (default +x east).

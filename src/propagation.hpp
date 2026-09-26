@@ -39,11 +39,12 @@
 //   - Reception time.  reception_factor (util/sel.hpp) differentiates the
 //     straight-line range; a curved ray supplies its travel time instead, as
 //     an equivalent range (sound speed times travel time).
-//   - The bounds.  DirectionBounds and the spectral bounds subtract
-//     straight-line spreading from the loudest sphere in the straight-line
-//     direction's bin.  A curved ray looks the sphere up in another direction
-//     and can focus, so under --refraction the run marches every state and
-//     refuses --db_cutoff until the bounds carry a propagation gain.
+//   - The bounds.  DirectionBounds and the spectral bounds hold the loudest
+//     sphere in a direction bin, spread spherically.  A curved ray is bounded
+//     by the same tables taken along its launch direction at its ray tube's
+//     range, so the peak search and --db_cutoff hand them that geometry
+//     instead of the straight displacement (windowed_exposure in niceops.cpp).
+//     Absorption, the shadow's loss and the ground's gain are bounded apart.
 // The broadband (EAA) path does not use this record at all.  Its windowed
 // evaluation shares its geometry with the bound test (level_from_geometry), and
 // EAA is itself a straight-line fit.

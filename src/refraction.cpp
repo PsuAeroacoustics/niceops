@@ -152,6 +152,48 @@ ReflectedEigenray reflected_eigenray(const LinearProfile& profile, double z_s, d
         const auto l = legs(theta);
         return l.to_ground + l.from_ground - r;
     };
+    const double tolerance = 1e-10 * std::max(r, 1.0);
+
+    // First, from a close guess: the direct ray to the receiver's image, z_r
+    // below the ground, which the reflected ray becomes as z_r shrinks.  In
+    // the medium continued below ground that is the circle through the two
+    // points, as in direct_eigenray.  A secant step or two from there usually
+    // closes to tolerance, against a dozen for the bracketed solve below
+    // started cold -- which was most of what refraction cost with a point
+    // receiver.  Anything that strays out of the domain falls back to it.
+    {
+        const double x_c = (r * r + c.sigma * (c.kappa(-z_r) - kappa_s)) / (2.0 * r);
+        double theta0 = std::atan2(c.sigma * x_c, h_s);
+        const double upper = c.sigma < 0.0 ? -std::asin(c.grazing_half_chord(z_s) / c.L)
+                                           : 0.5 * pi - 1e-9;
+        theta0 = std::clamp(theta0, -0.5 * pi + 1e-9, upper);
+        double f0 = miss(theta0);
+        double theta1 = std::clamp(theta0 + (f0 > 0.0 ? -1e-6 : 1e-6), -0.5 * pi + 1e-9, upper);
+        double f1 = miss(theta1);
+        for (int step = 0; step < 8 && std::fabs(f1) > tolerance && f1 != f0; step++)
+        {
+            const double theta2 = theta1 - f1 * (theta1 - theta0) / (f1 - f0);
+            if (!(theta2 > -0.5 * pi && theta2 < upper))
+                break;
+            theta0 = theta1;
+            f0 = f1;
+            theta1 = theta2;
+            f1 = miss(theta1);
+        }
+        if (std::fabs(f1) <= tolerance)
+        {
+            const auto l = legs(theta1);
+            ray.exists = true;
+            ray.launch = theta1;
+            ray.grazing = std::atan2(l.d0, c.L);
+            auto arc = [&](double horizontal, double vertical) {
+                return 2.0 * l.rho
+                        * std::asin(std::min(1.0, std::hypot(horizontal, vertical) / (2.0 * l.rho)));
+            };
+            ray.path_length = arc(l.to_ground, z_s) + arc(l.from_ground, z_r);
+            return ray;
+        }
+    }
 
     // The range is monotonic in the launch angle: near zero straight down, and
     // rising to the shadow boundary (upward refraction) or without limit
@@ -193,7 +235,6 @@ ReflectedEigenray reflected_eigenray(const LinearProfile& profile, double z_s, d
     double f_hi = miss(hi);
     if (f_lo > 0.0 || f_hi < 0.0)
         return ray; // cannot bracket: leave it to the caller's fallback
-    const double tolerance = 1e-10 * std::max(r, 1.0);
     double theta = hi;
     int side = 0;
     for (int iteration = 0; iteration < 100; iteration++)
@@ -353,10 +394,9 @@ LinearProfile EffectiveSoundSpeed::fit(double z_a, const Moments& at_a, double z
     return {mean - slope * z_mid, slope};
 }
 
-RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
+RefractedRay direct_ray(const EffectiveSoundSpeed& air, const Vec3& source,
         const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
-        const EffectiveSoundSpeed::Moments& at_receiver, GroundGeometry ground,
-        double microphone_height)
+        const EffectiveSoundSpeed::Moments& at_receiver)
 {
     const double z_r = receiver.z;
     const double z_s = source.z;
@@ -367,6 +407,8 @@ RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
 
     RefractedRay ray;
     ray.profile = air.fit(z_s, at_source, z_r, at_receiver, hx, hy);
+    ray.source_z = z_s;
+    ray.horizontal = r;
 
     if (r < 1e-3 || std::fabs(ray.profile.gradient) < straight_gradient)
     {
@@ -376,28 +418,37 @@ RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
         return ray;
     }
 
-    const auto direct = direct_eigenray(ray.profile, z_s, z_r, r);
+    ray.curved = true;
+    ray.direct = direct_eigenray(ray.profile, z_s, z_r, r);
     RayPath& path = ray.path;
     path.separation = separation;
-    const double horizontal = std::cos(direct.launch);
-    path.direction = Vec3(horizontal * hx, horizontal * hy, std::sin(direct.launch));
-    path.range = direct.spreading_range;
-    path.path_length = direct.path_length;
-    ray.travel_time = direct.travel_time;
-    ray.shadow_depth = direct.shadow_depth;
-
-    // The ground models take the straight-ray geometry that has the curved
-    // ray's grazing angle and length: a source height h and ground distance d
-    // with (h + z_r) = L sin(grazing) and d = L cos(grazing).  Straight rays
-    // give back the real h and d.
+    const double horizontal = std::cos(ray.direct.launch);
+    path.direction = Vec3(horizontal * hx, horizontal * hy, std::sin(ray.direct.launch));
+    path.range = ray.direct.spreading_range;
+    path.path_length = ray.direct.path_length;
     path.source_height = source.z;
     path.ground_distance = r;
-    if (ground == GroundGeometry::point && z_s > 0.0)
+    ray.travel_time = ray.direct.travel_time;
+    ray.shadow_depth = ray.direct.shadow_depth;
+    return ray;
+}
+
+void finish_ground(RefractedRay& ray, GroundGeometry ground, double microphone_height)
+{
+    if (!ray.curved)
+        return;
+    // The ground models take the straight-ray geometry that has the curved
+    // ray's grazing angle and length: a source height h and ground distance d
+    // with (h + microphone height) = L sin(grazing) and d = L cos(grazing).
+    // Straight rays give back the real h and d.
+    RayPath& path = ray.path;
+    const DirectEigenray& direct = ray.direct;
+    if (ground == GroundGeometry::point && ray.source_z > 0.0)
     {
         // Reflected off the plane z = 0 to the microphone microphone_height
         // above it, where the ground models put it.
         const auto reflected = direct.lit
-                ? reflected_eigenray(ray.profile, z_s, microphone_height, r)
+                ? reflected_eigenray(ray.profile, ray.source_z, microphone_height, ray.horizontal)
                 : ReflectedEigenray {};
         const double grazing = reflected.exists ? reflected.grazing : 0.0;
         const double length = reflected.exists ? reflected.path_length : direct.path_length;
@@ -410,6 +461,15 @@ RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
         path.source_height = direct.path_length * std::sin(std::fabs(direct.arrival));
         path.ground_distance = direct.path_length * std::cos(direct.arrival);
     }
+}
+
+RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
+        const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
+        const EffectiveSoundSpeed::Moments& at_receiver, GroundGeometry ground,
+        double microphone_height)
+{
+    RefractedRay ray = direct_ray(air, source, at_source, receiver, at_receiver);
+    finish_ground(ray, ground, microphone_height);
     return ray;
 }
 

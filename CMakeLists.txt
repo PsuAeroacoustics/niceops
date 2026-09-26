@@ -316,9 +316,17 @@ add_test(NAME straight_point COMMAND niceops -d databases/B407_fixed_load_factor
 set_tests_properties(refraction_uniform_point straight_point PROPERTIES FIXTURES_SETUP refraction_point_runs)
 add_test(NAME refraction_uniform_point_is_straight COMMAND golden_compare integrated/refraction_uniform_point.csv integrated/straight_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(refraction_uniform_point_is_straight PROPERTIES FIXTURES_REQUIRED refraction_point_runs)
-# Real refraction, with wind, a shadow zone upwind and every ground receiver:
-# these have no reference to compare against (tests/test_refraction.cpp checks
-# the rays against traced ones), but they must run, and eval_spectrum's
-# asserts catch any non-finite level along the way.
+# Real refraction, with wind, a shadow zone upwind, and each ground receiver,
+# through the peak search against a march (-D).  The peak search bounds a
+# refracted state by the same DirectionBounds as a straight one, taken along
+# its launch direction at its ray tube's range; a skipped state must change
+# nothing.  (The rays themselves are checked against traced ones in
+# tests/test_refraction.cpp; eval_spectrum's asserts catch any non-finite level.)
 add_test(NAME refraction_windy_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --gridstep 492 -L warn -o integrated/refraction_windy_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME refraction_windy_point_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --gridstep 492 -L warn -D integrated/refraction_windy_point_dnl.csv -o integrated/refraction_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME refraction_windy_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 492 -L warn -o integrated/refraction_windy_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME refraction_windy_plate_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 492 -L warn -D integrated/refraction_windy_plate_dnl.csv -o integrated/refraction_windy_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(refraction_windy_point refraction_windy_point_marched refraction_windy_plate refraction_windy_plate_marched PROPERTIES FIXTURES_SETUP refraction_windy_runs)
+add_test(NAME refraction_point_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_point.csv integrated/refraction_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME refraction_plate_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_plate.csv integrated/refraction_windy_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(refraction_point_windowed_is_exact refraction_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED refraction_windy_runs)
