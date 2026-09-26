@@ -31,6 +31,7 @@
 #include "atmosphere.hpp"
 #include "atmosphere_profile.hpp"
 #include "refraction.hpp"
+#include "stratified.hpp"
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
 #include "weighting.hpp"
@@ -515,9 +516,11 @@ struct RunOptions
     // fills it hydrostatically from its own surface pressure.
     std::optional<AtmosphereProfile> atmosphere;
     // --refraction linear: curved rays through the profile's equivalent linear
-    // effective sound speed, fitted per path (refraction.hpp).  Needs the
-    // profile.  The shadow zone's attenuation is capped at shadow_floor dB.
+    // effective sound speed, fitted per path (refraction.hpp).  --refraction
+    // stratified: through the profile's own layers (stratified.hpp).  Both need
+    // the profile.  The shadow zone's attenuation is capped at shadow_floor dB.
     bool refraction = false;
+    bool stratified = false;
     double shadow_floor = 20.0;
     // Compass bearing of the local +x axis, degrees, for turning the profile's
     // wind into the local frame; NaN means --frame_bearing was not given and
@@ -1035,11 +1038,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::optional<EffectiveSoundSpeed> effective_sound_speed;
     std::vector<EffectiveSoundSpeed::Moments> state_moments;
     std::vector<double> shadow_rates;
+    // --refraction stratified: the profile's layers, with the linear model kept
+    // alongside for its warm start and for what the layered solve leaves to it.
+    std::optional<LayeredSoundSpeed> layered_sound_speed;
     if (options.refraction && spectral && profile)
     {
         const double bearing = std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing;
         effective_sound_speed = EffectiveSoundSpeed(*profile, bearing, z_low,
                 z_high + EffectiveSoundSpeed::min_fit_span);
+        if (options.stratified)
+            layered_sound_speed = LayeredSoundSpeed(*profile, bearing);
         state_moments.reserve(nt);
         for (const auto& state : source_states)
             state_moments.push_back(effective_sound_speed->moments(state.position.z));
@@ -1054,8 +1062,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 1.0, 0.0);
         const auto against = effective_sound_speed->fit(top->position.z, at_top, 0.0, at_ground,
                 -1.0, 0.0);
-        log("Refraction: curved rays through a linear effective sound speed fitted per path. "
-            "From the highest state (",
+        log(options.stratified
+                        ? "Refraction: curved rays through the profile's layers, the effective sound "
+                          "speed linear between its levels. The linear fit per path"
+                        : "Refraction: curved rays through a linear effective sound speed fitted "
+                          "per path.",
+                " From the highest state (",
                 top->position.z / options.unit.to_metres, " ", options.unit.name,
                 ") the gradient is ", along.gradient, " /s toward +x and ", against.gradient,
                 " /s toward -x; shadow zones attenuate by the first creeping-wave mode, capped at ",
@@ -1250,6 +1262,26 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             double squared_range, along, up, across;
             RefractedRay ray;
         };
+        // The two halves of a refracted ray, from whichever model the run
+        // asked for; the layered one keeps its path's layers in `layer_scratch`.
+        std::vector<double> layer_scratch;
+        auto form_ray = [&](std::size_t it, const Vec3& observer,
+                                const EffectiveSoundSpeed::Moments& at_receiver) {
+            if (layered_sound_speed)
+            {
+                return layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
+                        source_states[it].position, state_moments[it], observer, at_receiver,
+                        layer_scratch);
+            }
+            return direct_ray(*effective_sound_speed, source_states[it].position, state_moments[it],
+                    observer, at_receiver);
+        };
+        auto finish_ray = [&](RefractedRay& ray, GroundGeometry ground, double microphone) {
+            if (layered_sound_speed)
+                layered_finish_ground(*layered_sound_speed, ray, ground, microphone, layer_scratch);
+            else
+                finish_ground(ray, ground, microphone);
+        };
         unsigned generation = 0;
         std::size_t culled_here = 0;
         std::size_t evaluated_here = 0;
@@ -1303,7 +1335,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     ? effective_sound_speed->moments(observer.z)
                     : EffectiveSoundSpeed::Moments {};
             auto refracted_level = [&](std::size_t it, RefractedRay ray) {
-                finish_ground(ray, ray_ground, microphone_height[index]);
+                finish_ray(ray, ray_ground, microphone_height[index]);
                 const double* extra_loss = nullptr;
                 if (ray.shadow_depth > 0.0)
                 {
@@ -1337,8 +1369,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             generation, evaluated_here,
                             [&](std::size_t it) {
                                 RefractedGeometry g;
-                                g.ray = direct_ray(*effective_sound_speed, source_states[it].position,
-                                        state_moments[it], observer, at_receiver);
+                                g.ray = form_ray(it, observer, at_receiver);
                                 const auto e = equivalent_geometry(it, g.ray.path);
                                 g.squared_range = e.squared_range;
                                 g.along = e.along;
@@ -1354,10 +1385,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             [&](std::size_t it) {
                                 if (travel_stamp[it] == generation)
                                     return travel[it];
-                                return sound_speed
-                                        * direct_ray(*effective_sound_speed, source_states[it].position,
-                                                state_moments[it], observer, at_receiver)
-                                                  .travel_time;
+                                return sound_speed * form_ray(it, observer, at_receiver).travel_time;
                             });
                 }
                 else if (spectral)
@@ -1389,8 +1417,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    auto ray = direct_ray(*effective_sound_speed, source_states[it].position,
-                            state_moments[it], observer, at_receiver);
+                    auto ray = form_ray(it, observer, at_receiver);
                     // Reception time from the curved ray's travel time, as the
                     // range a straight ray at the surface sound speed would take.
                     ranges[it] = sound_speed * ray.travel_time;
@@ -1811,10 +1838,11 @@ int run(int argc, char* argv[])
             "it, and its ground level replaces the vehicle file's atmosphere. Spectral path "
             "only.");
     app.add_option("--refraction", refraction,
-            "Refraction through the --atmosphere profile: none (default), or linear -- curved "
-            "rays through its effective sound speed (temperature and wind) fitted to a straight "
-            "line per path, with shadow zones under upward refraction.")
-            ->check(CLI::IsMember({"none", "linear"}));
+            "Refraction through the --atmosphere profile: none (default); linear -- curved rays "
+            "through its effective sound speed (temperature and wind) fitted to a straight line "
+            "per path; or stratified -- through the profile's own layers, slower but without "
+            "the fit. Both give shadow zones under upward refraction.")
+            ->check(CLI::IsMember({"none", "linear", "stratified"}));
     app.add_option("--shadow_floor", shadow_floor,
             "Most a refractive shadow zone attenuates, dB (default 20). Deeper in, energy "
             "scattered by turbulence dominates.");
@@ -2128,10 +2156,10 @@ int run(int argc, char* argv[])
                     "the broadband path (--no-spectral) carries one level attenuated by the "
                     "database's own EAA factor.");
     }
-    if (refraction == "linear" && atmosphere_file.empty())
+    if (refraction != "none" && atmosphere_file.empty())
     {
-        input_error("--refraction linear needs --atmosphere: it refracts through the profile's "
-                    "temperature and wind.");
+        input_error("--refraction ", refraction, " needs --atmosphere: it refracts through the "
+                    "profile's temperature and wind.");
     }
     if (!(shadow_floor >= 0.0))
         input_error("--shadow_floor must not be negative, got ", shadow_floor, ".");
@@ -2187,7 +2215,8 @@ int run(int argc, char* argv[])
     options.humidity_override = humidity_override;
     options.temperature_override = temperature_override;
     options.pressure_override = pressure_override;
-    options.refraction = refraction == "linear";
+    options.refraction = refraction != "none";
+    options.stratified = refraction == "stratified";
     options.shadow_floor = shadow_floor;
     options.frame_bearing = frame_bearing;
     if (!atmosphere_file.empty())

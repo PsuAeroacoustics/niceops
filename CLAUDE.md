@@ -483,6 +483,36 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     The shipped AC tracks need 210.
   - Shadow zones: the grazing ray's level, less the first creeping-wave mode over rigid ground
     (`shadow_attenuation_rates`), capped at `--shadow_floor`.
+- `src/stratified.{hpp,cpp}` — `--refraction stratified` (roadmap step 6a): the effective
+  sound speed piecewise linear between the profile's own levels, circular arcs within each
+  layer, eigenrays solved per pair. The things to preserve:
+  - **Parametrise by the Snell invariant p, in four families.** Launched up or down, arriving
+    on the first crossing of the receiver height or on the second, after dipping below it
+    (`Arm`, `families`). The range is monotonic in p within a family. The dipping family is
+    what the linear model's unique circle includes implicitly. Without it the shadow boundary
+    comes out short by sqrt(2 L z_r), which was 170 m on a linear test profile.
+  - **Layer crossings are closed forms written stably**
+    (dx = p(c0+c1)dz/(q0+q1), plus log1p and atan2 forms for time and arc). They were checked
+    against a 200,000-point quadrature to 3e-15. At a turning point the sine is pinned to 0:
+    computing it as sqrt(1 - p^2 c^2) leaves ~1e-8 of rounding, which is 1e-7 in range.
+  - **The RK4 trace in `tests/test_stratified.cpp` is fussy, for reasons worth knowing.** A
+    finite-difference gradient rounds to 1e-8 /s, which is 1e-4 m over a km of ray. A step that
+    straddles a level integrates across the gradient's jump and drops to first order. Even a
+    step that only *lands* on a level takes its last RK4 stage from the next layer unless the
+    step is held to the gradient of the layer it starts in. With all three fixed, the trace
+    matches the layered model to 1e-10 m.
+  - **The linear model stays alongside.** It gives the warm start (usually within a fraction
+    of a degree), the fallback for a receiver at or above the source, the shadow's attenuation
+    rate (its fitted gradient), and the refracted path's `profile`.
+  - **One arrival per pair.** Non-monotonic profiles give caustics and several arrivals; the
+    solve returns the first family's root. Focusing is capped at `max_focusing_gain_db` (+10).
+  - **The log-law finding.** With zero wind at the ground, the upwind limiting ray is fixed by
+    c(z_s)/c(0) alone. On `example_windy.csv` a 100 m source's upwind shadow starts at 520 m,
+    where the linear fit puts it past 1.2 km; a test pins that. Ray theory probably overstates
+    that shadow at low frequencies, so GFPE (step 7) should adjudicate before either model's
+    shadow levels are trusted.
+  - Costs: 12 s on the demo grid with a point receiver (linear 3.3 s), 35 ms over a
+    96-microphone array.
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its

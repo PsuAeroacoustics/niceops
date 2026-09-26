@@ -159,7 +159,7 @@ seconds, levels in dB.
 | `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
 | `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
 | `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity, and optionally pressure and wind, against height. Absorption is integrated through it. Spectral path only. See below. |
-| `--refraction` | `none` (default) or `linear`: curved rays through the `--atmosphere` profile's effective sound speed, fitted to a straight line per path, with shadow zones under upward refraction. See below. |
+| `--refraction` | `none` (default); `linear`, curved rays through the `--atmosphere` profile's effective sound speed fitted to a straight line per path; or `stratified`, through the profile's own layers. Both give shadow zones under upward refraction. See below. |
 | `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
@@ -445,6 +445,47 @@ module does. They are pinned against `ground_plane.pole_level` in
 `tests/test_ground_effect.cpp`. Delany–Bazley is poor for grassland. On the 2017 Amedee pole
 microphones, variable porosity with σe ≈ 200 fitted best, with HARMONOISE γT ≈ 3e-5 and
 10–15 mm roughness (panam `docs/ground_plane_corrections.md`).
+
+#### Refraction through the profile's layers
+
+`--refraction stratified` drops the single straight-line fit. The effective sound speed is
+taken as linear *between the profile's own levels*, and held constant below the lowest and
+above the highest. Inside each layer a ray is still a circular arc, so crossing a layer has a
+closed form, and a ray is a sum over its layers.
+
+Eigenrays are solved per source–observer pair, over four families of rays:
+
+- launched down, arriving from above;
+- launched down, dipping below the microphone and turning back up to it;
+- launched up, turning aloft, then arriving from above;
+- launched up, turning aloft, then dipping.
+
+The range is monotonic along each family. The solve starts from the linear model's answer. A
+receiver at or above the source is left to the linear model.
+
+It is checked two ways. On a linear profile it reproduces the linear model's closed forms,
+the shadow boundary included. On layered profiles its rays match numerically traced ones to a
+micrometre. Everything else follows `--refraction linear`: the ray tube, the ground geometry,
+reception time, the shadow's decay and floor, and the peak search.
+
+What the layers change is near the ground. A log-law wind is zero at the ground, so for
+propagation upwind the fastest air is at the surface. Snell's law then fixes the limiting
+ray's launch angle from the speeds at the source and at the ground alone, whatever lies
+between. For a source at 100 m in `atmospheres/example_windy.csv`, the upwind shadow begins
+520 m out, where a fitted line puts it past 1.2 km. On the demo grid with a point receiver
+this takes the upwind half 11 dB below `--refraction linear` (mean -6.3 dB over the whole
+grid, 5th percentile -20 dB), and puts 44% of evaluations in shadow against 14%.
+
+**Treat that difference as the size of the uncertainty, not as the answer.** Ray theory
+takes the thin near-ground shear layer at face value, but at low frequencies the wavelength
+is comparable to the layer, and diffraction fills in what rays leave dark. The two models
+bracket the physics; the parabolic-equation reference planned next is what should adjudicate
+between them.
+
+Costs, with a point receiver: the demo grid's acoustic loop takes 12.0 s (3.3 s linear, 2.1 s
+without refraction). A 96-microphone scattered array like `arrays/coyle_approach.csv` takes
+35 ms. Where the range is not monotonic (caustics in non-monotonic profiles), the solve finds
+one arrival rather than summing all of them. Focusing at a caustic is capped at +10 dB.
 
 #### Receivers
 
