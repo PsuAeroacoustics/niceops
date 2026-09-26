@@ -153,31 +153,22 @@ struct RefractedRay
     LinearProfile profile; // the path's equivalent linear profile
 };
 
-// The refracted path from `source` to the receiver standing `receiver_height`
-// above `observer` (the ground model's microphone; 0 for a plate or no ground
-// model).  `at_source` and `at_receiver` are the table's moments at the source's
-// height and at ray_receiver_height().  Paths too near vertical, or through air
-// too close to uniform to bend them (|gradient| under 1e-9 /s), are straight --
-// to the same receiver, so with no ground model or a plate, uniform air gives
-// back straight_ray() exactly.
+// The refracted path from `source` to the microphone at `receiver` --
+// the observer's point raised by the microphone's height above the ground,
+// which is where the level is evaluated whichever the path model.
+// `at_source` and `at_receiver` are the table's moments at their heights.
+// Paths too near vertical, or through air too close to uniform to bend them
+// (|gradient| under 1e-9 /s), are straight, to the same microphone, so uniform
+// air gives back straight_ray() exactly.
 //
-// The ground is the plane z = 0, as in the straight model: the reflected ray
-// runs from the source to a microphone `receiver_height` above that plane,
-// whatever height the observer itself is at, just as the ground models place
-// it.  Only the direct ray goes to the observer's own height.
+// The ground is the plane z = 0, as in the straight model.  With a point
+// receiver, the reflected ray runs from the source to a microphone
+// `microphone_height` above that plane, whatever the observer's own z, just as
+// the ground models place it.
 RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
-        const EffectiveSoundSpeed::Moments& at_source, const Vec3& observer,
-        double receiver_height, const EffectiveSoundSpeed::Moments& at_receiver,
-        GroundGeometry ground);
-
-// The height the direct ray ends at: the observer's own, which the straight
-// model uses too -- scattered microphones on sloping ground sit above and below
-// the plane -- plus the point receiver's microphone height.  The shadow
-// boundary takes a receiver below the plane as on it.
-inline double ray_receiver_height(const Vec3& observer, double receiver_height)
-{
-    return observer.z + receiver_height;
-}
+        const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
+        const EffectiveSoundSpeed::Moments& at_receiver, GroundGeometry ground,
+        double microphone_height);
 
 // Per band, the shadow zone's attenuation rate for a unit gradient and sound
 // speed.  This is the first creeping-wave mode over a rigid ground (Pierce,

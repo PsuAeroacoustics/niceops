@@ -65,7 +65,7 @@ shipped data.
 | Trajectory (`-t`), WGS84 | A CSV whose header names `time`, `lat`, `lon` and `alt` columns — see [Geodetic coordinates](#geodetic-coordinates). Any column order, and optional `vE`/`vN`/`vUp`. |
 | Database (`-d`) | netCDF `.nod`: one group per operating condition (advance ratio μ, flight path angle γ, thrust coefficient C<sub>T</sub>), each holding scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor. |
 | Vehicle (`-v`) | JSON with `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg) and `Atmosphere.density`. |
-| Observers (`-b`) | CSV of scattered observer positions, in feet. Without it, a 120×120 grid spanning −1500…1475 m is used. |
+| Observers (`-b`) | CSV of scattered observer positions, in feet: `x,y,z`, `id,x,y,z`, or `id,x,y,z,height` with each microphone's height above the ground (see [Receivers](#receivers)). The first line is always taken as a header. Without it, a 120×120 grid spanning −1500…1475 m is used. |
 
 Input and output files use **feet**; the computation is metric internally.
 
@@ -163,7 +163,7 @@ seconds, levels in dB.
 | `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
-| `--receiver_height`, `--turbulence` | Receiver height (in `--units`, default 1.2 m) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
+| `--receiver_height`, `--turbulence` | Point receiver's microphone height (in `--units`, default 1.2 m; an observer file's fifth column overrides it per observer) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
 | `--impedance_model` | Ground impedance: `delany_bazley` (default), `miki`, `variable_porosity` (with `--porosity_rate`, 1/m) or `delany_bazley_layer` (with `--layer_depth`, in `--units`). `--flow_resistance` is the (effective) flow resistivity. |
 | `--turbulence_model`, `--gamma_t` | `chessell` (default, `--turbulence`) or `harmonoise`, whose coherence takes `--gamma_t` (~1e-6 moderate, ~1e-5 strong). |
 | `--roughness` | RMS roughness height, in `--units`: the coherent reflection falls by exp(−2(kσ cos θ)²). Default 0. |
@@ -406,14 +406,9 @@ What to know before relying on it:
   refraction at long range are not included.
 - **The source does not feel the wind.** Its advance ratio still comes from the track's ground
   speed.
-- **The ray ends at the microphone.** With a plate, or with no ground model, the ray ends at
-  the observer's own height, as the straight path does, so uniform air gives the straight
-  result exactly, scattered microphones on sloping ground included. With a point-receiver
-  ground model the ray ends `--receiver_height` above that, where the microphone is. The straight model's direct
-  path ends on the plane. On the demo grid that difference alone moves SEL by -0.7 to +0.8 dB
-  (median 0), even in a uniform atmosphere. Almost all of it comes from the low states at the
-  end of the approach, where 1.2 m is a sizeable fraction of the source's height. With
-  `--receiver_height 0` the two agree to 1e-9.
+- **The ray ends at the microphone,** as the straight path does (see [Receivers](#receivers)),
+  so uniform air gives the straight result to 1e-9 for every receiver, scattered microphones
+  on sloping ground included.
 - **Every state is marched.** The peak search's bounds assume straight rays, so they are off,
   and `--db_cutoff` is refused.
 
@@ -448,6 +443,39 @@ module does. They are pinned against `ground_plane.pole_level` in
 `tests/test_ground_effect.cpp`. Delany–Bazley is poor for grassland. On the 2017 Amedee pole
 microphones, variable porosity with σe ≈ 200 fitted best, with HARMONOISE γT ≈ 3e-5 and
 10–15 mm roughness (panam `docs/ground_plane_corrections.md`).
+
+#### Receivers
+
+Each observer's level is evaluated at its microphone: the observer's point raised by the
+microphone's height above the ground. What the microphone is decides the ground model:
+
+| Microphone | Ground model | How to ask for it |
+| --- | --- | --- |
+| flush with the ground, height 0 | the plate (below) | `--plate_table` |
+| on a pole, height h | the point receiver at h | `--ground_effect`, with h from `--receiver_height` or the observer file |
+| anything, without `--ground_effect` | none: the free field at the microphone | |
+
+With a four-column observer file, every observer takes the run's receiver: all on plates
+with `--plate_table`, otherwise all at `--receiver_height`. A fifth column gives each
+microphone's own height, in `--units`, so one run can hold an array of flush microphones with
+a few on poles, as the test campaigns do. With `--plate_table`, height 0 is a plate and
+anything else is a point receiver at that height:
+
+```csv
+id,x_ft,y_ft,z_ft,height_ft
+2,-788.3,-1085.1,-1.1,0
+10,-405.9,1940.8,-10.1,3.937
+```
+
+The log reports how many observers took each receiver. `tests/data/mixed_receivers.csv` is a
+worked example, and a CTest case checks that it gives the same levels as separate runs over
+each kind of microphone.
+
+Before the microphone height set the evaluation point, the point receiver's direct path ended
+on the ground even though its ground model put the microphone 1.2 m up. Correcting that moved
+point-receiver SEL on the demo grid by up to about ±0.8 dB (median 0). Almost all of it comes
+from the low states at the end of the approach, where 1.2 m is a sizeable fraction of the
+source's height. Plate and free-field results did not change.
 
 #### Ground-plane microphones
 

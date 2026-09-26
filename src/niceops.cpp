@@ -26,6 +26,7 @@
 
 #include "plotting.hpp"
 #include <complex>
+#include <sstream>
 
 #include "atmosphere.hpp"
 #include "atmosphere_profile.hpp"
@@ -326,7 +327,7 @@ double windowed_sound_exposure_level(const Database& database,
 }
 
 void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers,
-        LengthUnit unit)
+        std::vector<double>& microphone_heights, LengthUnit unit)
 {
     trace("Reading observers from ", observer_file, ".");
     // D reads this with csvReader!(double)(contents, null), which consumes the
@@ -345,10 +346,29 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
             observers.push_back(Vec3(data[1] * unit.to_metres, data[2] * unit.to_metres,
                     data[3] * unit.to_metres));
         }
+        else if (data.size() == 5)
+        {
+            // id, x, y, z, and the microphone's height above the ground there:
+            // 0 for a flush microphone (a plate, with --plate_table), more for
+            // one on a pole.
+            observers.push_back(Vec3(data[1] * unit.to_metres, data[2] * unit.to_metres,
+                    data[3] * unit.to_metres));
+            if (!(data[4] >= 0.0))
+            {
+                input_error("Observer file ", observer_file, " gives a microphone height of ",
+                        data[4], " ", unit.name, "; it must not be negative.");
+            }
+            microphone_heights.push_back(data[4] * unit.to_metres);
+        }
         else
         {
             input_error("Observer file format unreadable.");
         }
+    }
+    if (!microphone_heights.empty() && microphone_heights.size() != observers.size())
+    {
+        input_error("Observer file ", observer_file, " gives a microphone height on some rows "
+                "and not others; give it on every row (id,x,y,z,height) or on none.");
     }
     if (observers.empty())
     {
@@ -357,8 +377,8 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
         // The first record is consumed as a header whether or not it holds
         // numbers, so a one-line file lands here too.
         input_error("Observer file ", observer_file, " yielded no observers. The first record "
-                "is taken as a header and discarded; every row after it must be x,y,z or "
-                "id,x,y,z in ", unit.name, ".");
+                "is taken as a header and discarded; every row after it must be x,y,z, "
+                "id,x,y,z or id,x,y,z,height in ", unit.name, ".");
     }
 }
 
@@ -369,12 +389,16 @@ struct ObserverSet
     std::vector<Vec3> observers;
     std::vector<double> x;
     std::vector<double> y;
+    // Each observer's microphone height above the ground, metres, when the
+    // observer file gives one (id,x,y,z,height); empty otherwise, and every
+    // observer takes the run's receiver (Receivers in process_trajectory).
+    std::vector<double> microphone_heights;
 };
 
 ObserverSet scattered_observers(const std::string& observer_file, LengthUnit unit)
 {
     ObserverSet set;
-    read_observer_file(observer_file, set.observers, unit);
+    read_observer_file(observer_file, set.observers, set.microphone_heights, unit);
     set.x.reserve(set.observers.size());
     set.y.reserve(set.observers.size());
     for (const auto& observer : set.observers)
@@ -520,8 +544,9 @@ struct PathJob
 // in here condemns this trajectory alone; the caller catches and moves on.
 Trajectory process_trajectory(const Database& database, const PathJob& job,
         const RunOptions& options, const std::vector<Vec3>& observers,
-        const std::vector<double>& x_obs, const std::vector<double>& y_obs,
-        std::vector<double>& integrated_levels, std::vector<double>& dnl_energy)
+        const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
+        const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
+        std::vector<double>& dnl_energy)
 {
     // Create trajectory from CSV data
     Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
@@ -659,6 +684,71 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::filesystem::create_directories(directory);
     }
 
+    // Each observer's receiver, and where its level is evaluated: at the
+    // microphone, the observer's point raised by the microphone's height above
+    // the ground there.  A flush microphone (height 0) is on a plate when
+    // --plate_table is given; any other is a point receiver at its height, for
+    // the ground model.  An observer file giving heights (id,x,y,z,height) says
+    // it per observer, so one run can hold both kinds -- most test arrays are
+    // flush microphones with a few on poles.  Otherwise every observer takes
+    // the run's: the plate, or --receiver_height with --ground_effect, or none.
+    const std::size_t observer_count = observers.size();
+    std::vector<Vec3> microphones(observer_count);
+    std::vector<double> microphone_height(observer_count, 0.0);
+    std::vector<char> on_plate(observer_count, 0);
+    // Point receivers, by distinct height: each needs its own ground table.
+    std::vector<double> point_heights;
+    std::vector<std::size_t> point_of(observer_count, 0);
+    {
+        const double run_height = options.plate ? 0.0
+                : options.ground_effect         ? options.ground.receiver_height
+                                                : 0.0;
+        for (std::size_t i = 0; i < observer_count; i++)
+        {
+            const double height = microphone_heights.empty() ? run_height : microphone_heights[i];
+            microphone_height[i] = height;
+            microphones[i] = observers[i] + Vec3(0.0, 0.0, height);
+            on_plate[i] = options.plate && height == 0.0 ? 1 : 0;
+            if (options.ground_effect && !on_plate[i])
+            {
+                const auto found = std::find(point_heights.begin(), point_heights.end(), height);
+                point_of[i] = static_cast<std::size_t>(found - point_heights.begin());
+                if (found == point_heights.end())
+                    point_heights.push_back(height);
+            }
+        }
+    }
+    const bool any_plate = std::any_of(on_plate.begin(), on_plate.end(), [](char c) { return c != 0; });
+    const bool any_point = !point_heights.empty();
+    if (options.ground_effect || !microphone_heights.empty())
+    {
+        std::vector<std::size_t> at_height(point_heights.size(), 0);
+        std::size_t flush_count = 0;
+        std::size_t bare_count = 0;
+        for (std::size_t i = 0; i < observer_count; i++)
+        {
+            if (on_plate[i])
+                flush_count++;
+            else if (options.ground_effect)
+                at_height[point_of[i]]++;
+            else
+                bare_count++;
+        }
+        std::ostringstream summary;
+        auto item = [&summary](const auto&... parts) {
+            if (summary.tellp() > 0)
+                summary << ", ";
+            (summary << ... << parts);
+        };
+        if (flush_count > 0)
+            item(flush_count, " flush on plates");
+        for (std::size_t k = 0; k < point_heights.size(); k++)
+            item(at_height[k], " at ", point_heights[k] / options.unit.to_metres, " ", options.unit.name);
+        if (bare_count > 0)
+            item(bare_count, " with no ground model");
+        log("Receivers: ", summary.str(), "; each level is evaluated at its microphone.");
+    }
+
     // With --db_cutoff, skip any (observer, state) pair whose level is provably
     // below the cutoff.  The bound is per state, from the loudest sphere the
     // state blends and spherical spreading alone, so it never discards a sample
@@ -679,6 +769,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // and none changed.  Observers that never reach the cutoff are the ones
     // whose level changes, and they are precisely the ones the cutoff says are
     // not of interest.
+
     // Spectral propagation setup.  Both of these depend only on the atmosphere
     // and the database's band centres, so they are computed once here rather
     // than per observer: the coefficients cost a pow() and two exp() per band.
@@ -698,8 +789,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     const GroundModel* ground_model = nullptr;
     std::vector<std::complex<double>> ground_impedance_bands;
     std::optional<PlateReceiver> plate;
-    GroundTable ground_table;
-    const GroundTable* ground_table_ptr = nullptr;
+    // Per distinct point-receiver height: its ground model (receiver_height
+    // set) and, unless --exact_ground, its table.
+    std::vector<GroundModel> point_models;
+    std::vector<GroundTable> point_tables;
     // The contiguous run of bands inside the metric's limits. Band centres are
     // sorted, so the limits always select a range rather than a scattered set.
     std::size_t first_band = 0;
@@ -789,17 +882,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
         if (profile)
         {
-            // The heights any path spans: every state's and every observer's,
+            // The heights any path spans: every state's and every microphone's,
             // and the ground.
             for (const auto& state : source_states)
             {
                 z_low = std::min(z_low, state.position.z);
                 z_high = std::max(z_high, state.position.z);
             }
-            for (const auto& observer : observers)
+            for (const auto& microphone : microphones)
             {
-                z_low = std::min(z_low, observer.z);
-                z_high = std::max(z_high, observer.z);
+                z_low = std::min(z_low, microphone.z);
+                z_high = std::max(z_high, microphone.z);
             }
             // One level is a uniform atmosphere and reaches every height.  Past
             // the top of several, the profile holds its last level, which is a
@@ -825,12 +918,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 layered->integral(source_states[it].position.z,
                         state_absorption_integral.data() + it * bands.size());
             }
-            const bool common_height = std::all_of(observers.begin(), observers.end(),
-                    [&](const Vec3& o) { return o.z == observers.front().z; });
-            if (common_height && !observers.empty())
+            const bool common_height = std::all_of(microphones.begin(), microphones.end(),
+                    [&](const Vec3& m) { return m.z == microphones.front().z; });
+            if (common_height && !microphones.empty())
             {
                 std::vector<double> at_observers(bands.size(), 0.0);
-                const double z_observers = observers.front().z;
+                const double z_observers = microphones.front().z;
                 layered->integral(z_observers, at_observers.data());
                 state_absorption_mean.assign(nt * bands.size(), 0.0);
                 for (std::size_t it = 0; it < nt; it++)
@@ -878,19 +971,25 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                     cy - state.position.y), state.position.z));
                 return r_max * 1.01;
             };
-            if (!options.plate && !options.exact_ground)
+            for (const double height : point_heights)
             {
-                const auto table_start = std::chrono::steady_clock::now();
-                const double r_max = reach();
-                ground_table = GroundTable(options.ground, ground_impedance_bands, sound_speed,
-                        bands, first_band, last_band, 1.0, r_max);
-                ground_table_ptr = &ground_table;
-                log("  ground effect tabulated to ", r_max, " m in ",
-                        std::chrono::duration<double>(std::chrono::steady_clock::now() - table_start)
-                                .count(),
-                        " s (--exact_ground to evaluate it directly).");
+                GroundModel model = options.ground;
+                model.receiver_height = height;
+                point_models.push_back(model);
+                if (!options.exact_ground)
+                {
+                    const auto table_start = std::chrono::steady_clock::now();
+                    const double r_max = reach();
+                    point_tables.emplace_back(model, ground_impedance_bands, sound_speed, bands,
+                            first_band, last_band, 1.0, r_max);
+                    log("  ground effect for microphones ", height / options.unit.to_metres, " ",
+                            options.unit.name, " up tabulated to ", r_max, " m in ",
+                            std::chrono::duration<double>(std::chrono::steady_clock::now() - table_start)
+                                    .count(),
+                            " s (--exact_ground to evaluate it directly).");
+                }
             }
-            if (options.plate)
+            if (any_plate)
             {
                 plate = options.plate->bound(bands, options.ground, sound_speed, first_band,
                         last_band);
@@ -915,22 +1014,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
 
     // --refraction linear: the effective sound speed tabulated for the
-    // per-path linear fits, each state's moments, and which ground geometry a
-    // ray has to hand on.  A point receiver's ray ends at its microphone.
+    // per-path linear fits, and each state's moments.  Rays end at the
+    // microphones, like everything else.
     std::optional<EffectiveSoundSpeed> effective_sound_speed;
     std::vector<EffectiveSoundSpeed::Moments> state_moments;
     std::vector<double> shadow_rates;
-    GroundGeometry ground_geometry = GroundGeometry::none;
-    double ray_receiver = 0.0;
     if (options.refraction && spectral && profile)
     {
-        ground_geometry = ground_model == nullptr ? GroundGeometry::none
-                : plate                           ? GroundGeometry::plate
-                                                  : GroundGeometry::point;
-        ray_receiver = ground_geometry == GroundGeometry::point ? options.ground.receiver_height : 0.0;
         const double bearing = std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing;
         effective_sound_speed = EffectiveSoundSpeed(*profile, bearing, z_low,
-                z_high + ray_receiver + EffectiveSoundSpeed::min_fit_span);
+                z_high + EffectiveSoundSpeed::min_fit_span);
         state_moments.reserve(nt);
         for (const auto& state : source_states)
             state_moments.push_back(effective_sound_speed->moments(state.position.z));
@@ -940,11 +1033,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const auto top = std::max_element(source_states.begin(), source_states.end(),
                 [](const auto& a, const auto& b) { return a.position.z < b.position.z; });
         const auto at_top = effective_sound_speed->moments(top->position.z);
-        const auto at_ground = effective_sound_speed->moments(ray_receiver);
-        const auto along = effective_sound_speed->fit(top->position.z, at_top, ray_receiver,
-                at_ground, 1.0, 0.0);
-        const auto against = effective_sound_speed->fit(top->position.z, at_top, ray_receiver,
-                at_ground, -1.0, 0.0);
+        const auto at_ground = effective_sound_speed->moments(0.0);
+        const auto along = effective_sound_speed->fit(top->position.z, at_top, 0.0, at_ground,
+                1.0, 0.0);
+        const auto against = effective_sound_speed->fit(top->position.z, at_top, 0.0, at_ground,
+                -1.0, 0.0);
         log("Refraction: curved rays through a linear effective sound speed fitted per path. "
             "From the highest state (",
                 top->position.z / options.unit.to_metres, " ", options.unit.name,
@@ -982,10 +1075,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::vector<double> bound_gains = band_gains;
             if (ground_model != nullptr)
             {
-                const auto ground_gains = plate
-                        ? plate->gain_bounds(first_band, last_band)
-                        : ground_gain_bounds(*ground_model, ground_impedance_bands, first_band,
-                                last_band);
+                // The loudest the ground can make any observer: a plate's, a
+                // point receiver's, or the larger of the two when a run holds
+                // both.  The point receiver's does not depend on its height.
+                std::vector<double> ground_gains(bound_gains.size(), 0.0);
+                if (any_plate)
+                    ground_gains = plate->gain_bounds(first_band, last_band);
+                if (any_point)
+                {
+                    const auto point_gains = ground_gain_bounds(*ground_model,
+                            ground_impedance_bands, first_band, last_band);
+                    for (std::size_t band = 0; band < ground_gains.size(); band++)
+                        ground_gains[band] = std::max(ground_gains[band], point_gains[band]);
+                }
                 for (std::size_t band = 0; band < bound_gains.size(); band++)
                     bound_gains[band] *= ground_gains[band];
             }
@@ -1140,13 +1242,24 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::size_t shadowed_here = 0;
         for (std::size_t index = begin; index < end; index++)
         {
-            const auto& observer = observers[index];
+            // Evaluated at the microphone, with this observer's receiver.
+            const auto& observer = microphones[index];
             if (layered)
                 layered->integral(observer.z, observer_absorption_integral.data());
-            const PlateReceiver* plate_receiver = plate ? &*plate : nullptr;
-            const double plate_mic_azimuth = plate && options.plate_orientation.outboard
+            const bool flush = on_plate[index] != 0;
+            const PlateReceiver* plate_receiver = flush ? &*plate : nullptr;
+            const GroundModel* ground_here = ground_model == nullptr ? nullptr
+                    : flush                                  ? ground_model
+                                                             : &point_models[point_of[index]];
+            const GroundTable* table_here = ground_model != nullptr && !flush && !point_tables.empty()
+                    ? &point_tables[point_of[index]]
+                    : nullptr;
+            const double plate_mic_azimuth = flush && options.plate_orientation.outboard
                     ? outboard_azimuth(observer, source_states)
                     : options.plate_orientation.azimuth;
+            const GroundGeometry ray_ground = ground_model == nullptr ? GroundGeometry::none
+                    : flush                                           ? GroundGeometry::plate
+                                                                      : GroundGeometry::point;
             if (expand_from_peak)
             {
                 if (++generation == 0)
@@ -1163,9 +1276,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             [&](std::size_t it, const StateGeometry&) {
                                 return database.spectral_level_at_observer(observer,
                                         source_states[it], absorption_for(it, observer), band_gains,
-                                        ground_model, &ground_impedance_bands, sound_speed,
+                                        ground_here, &ground_impedance_bands, sound_speed,
                                         first_band, last_band, packed_of_state[it],
-                                        plate_receiver, plate_mic_azimuth, ground_table_ptr);
+                                        plate_receiver, plate_mic_azimuth, table_here);
                             });
                 }
                 else
@@ -1182,12 +1295,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
             if (effective_sound_speed)
             {
-                const auto at_receiver = effective_sound_speed->moments(
-                        ray_receiver_height(observer, ray_receiver));
+                const auto at_receiver = effective_sound_speed->moments(observer.z);
                 for (std::size_t it = 0; it < nt; it++)
                 {
                     const auto ray = refracted_ray(*effective_sound_speed, source_states[it].position,
-                            state_moments[it], observer, ray_receiver, at_receiver, ground_geometry);
+                            state_moments[it], observer, at_receiver, ray_ground,
+                            microphone_height[index]);
                     // Reception time from the curved ray's travel time, as the
                     // range a straight ray at the surface sound speed would take.
                     ranges[it] = sound_speed * ray.travel_time;
@@ -1200,9 +1313,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         shadowed_here++;
                     }
                     double level = database.spectral_level_along(ray.path, source_states[it],
-                            absorption_for(it, observer), band_gains, ground_model,
+                            absorption_for(it, observer), band_gains, ground_here,
                             &ground_impedance_bands, sound_speed, first_band, last_band,
-                            packed_of_state[it], plate_receiver, plate_mic_azimuth, ground_table_ptr,
+                            packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
                             extra_loss);
                     if (add_ambient)
                         level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
@@ -1223,10 +1336,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     }
                     double level = spectral
                             ? database.spectral_level_at_observer(observer, source_states[it],
-                                    absorption_for(it, observer), band_gains, ground_model,
+                                    absorption_for(it, observer), band_gains, ground_here,
                                     &ground_impedance_bands, sound_speed, first_band, last_band,
                                     packed_of_state[it], plate_receiver, plate_mic_azimuth,
-                                    ground_table_ptr)
+                                    table_here)
                             : database.level_at_observer(observer, source_states[it]);
                     if (add_ambient)
                     {
@@ -2042,7 +2155,7 @@ int run(int argc, char* argv[])
             job.state = state_files.empty() ? std::string() : state_files[path_index];
             job.count = path_count;
             trajectory_holder = process_trajectory(database, job, options, observers,
-                    x_obs, y_obs, integrated_levels, dnl_energy);
+                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, dnl_energy);
         }
         catch (const std::exception& problem)
         {

@@ -291,6 +291,31 @@ add_test(NAME straight_plate_scattered COMMAND niceops -d databases/B407_fixed_l
 set_tests_properties(refraction_uniform_plate_scattered straight_plate_scattered PROPERTIES FIXTURES_SETUP refraction_plate_runs)
 add_test(NAME refraction_uniform_plate_is_straight COMMAND golden_compare integrated/refraction_uniform_plate_scattered.csv integrated/straight_plate_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(refraction_uniform_plate_is_straight PROPERTIES FIXTURES_REQUIRED refraction_plate_runs)
+# One run over an array of flush plate microphones and microphones on poles at
+# two heights (id,x,y,z,height) has to equal a run over each kind alone: the
+# plates with --plate_table, each pole height as the run's --receiver_height.
+# --exact_ground, because a table's extent follows its run's observers.  Then
+# the mixed run through the peak search against a march (-D), since its bound
+# is the larger of the plate's and the point receiver's.
+add_test(NAME mixed_receivers COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --exact_ground -L warn --plate_table plates/gr1425_vp200.nc -b tests/data/mixed_receivers.csv -o integrated/mixed_receivers.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME mixed_receivers_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --exact_ground -L warn --plate_table plates/gr1425_vp200.nc -b tests/data/mixed_receivers.csv -D integrated/mixed_receivers_dnl.csv -o integrated/mixed_receivers_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME mixed_flush_only COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --exact_ground -L warn --plate_table plates/gr1425_vp200.nc -b tests/data/mixed_flush.csv -o integrated/mixed_flush.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME mixed_poles_4ft_only COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --exact_ground -L warn --receiver_height 3.937 -b tests/data/mixed_poles_4ft.csv -o integrated/mixed_poles_4ft.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME mixed_poles_10ft_only COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --exact_ground -L warn --receiver_height 10 -b tests/data/mixed_poles_10ft.csv -o integrated/mixed_poles_10ft.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(mixed_receivers mixed_receivers_marched mixed_flush_only mixed_poles_4ft_only mixed_poles_10ft_only PROPERTIES FIXTURES_SETUP mixed_runs)
+add_test(NAME mixed_expected COMMAND ${CMAKE_COMMAND} -DOUT=integrated/mixed_expected.csv "-DINPUTS=integrated/mixed_flush.csv;integrated/mixed_poles_4ft.csv;integrated/mixed_poles_10ft.csv" -P tests/concatenate.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(mixed_expected PROPERTIES FIXTURES_REQUIRED mixed_runs FIXTURES_SETUP mixed_expected_file)
+add_test(NAME mixed_receivers_are_their_subsets COMMAND golden_compare integrated/mixed_receivers.csv integrated/mixed_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(mixed_receivers_are_their_subsets PROPERTIES FIXTURES_REQUIRED "mixed_runs;mixed_expected_file")
+add_test(NAME mixed_receivers_windowed_is_exact COMMAND golden_compare integrated/mixed_receivers.csv integrated/mixed_receivers_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(mixed_receivers_windowed_is_exact PROPERTIES FIXTURES_REQUIRED mixed_runs)
+# A point receiver, refracting through uniform air, ends its ray at the
+# microphone as the straight path does: the two agree.
+add_test(NAME refraction_uniform_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --atmosphere atmospheres/B407_uniform.csv --refraction linear --gridstep 492 -L warn -o integrated/refraction_uniform_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME straight_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --gridstep 492 -L warn -o integrated/straight_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(refraction_uniform_point straight_point PROPERTIES FIXTURES_SETUP refraction_point_runs)
+add_test(NAME refraction_uniform_point_is_straight COMMAND golden_compare integrated/refraction_uniform_point.csv integrated/straight_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(refraction_uniform_point_is_straight PROPERTIES FIXTURES_REQUIRED refraction_point_runs)
 # Real refraction, with wind, a shadow zone upwind and every ground receiver:
 # these have no reference to compare against (tests/test_refraction.cpp checks
 # the rays against traced ones), but they must run, and eval_spectrum's

@@ -459,17 +459,12 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   - **Ground models get an equivalent straight geometry.** A point receiver gets
     h' = L2 sin(grazing) - h_r and d' = L2 cos(grazing) from the reflected ray; a plate gets
     the direct ray's arrival angle and length. The ground models themselves are untouched.
-  - **The direct ray ends at the observer's own height plus the point receiver's
-    microphone height** (`ray_receiver_height`), never clamped. Scattered flush mics on
-    sloping ground sit below the plane, and clamping them once made plate runs disagree with
-    the straight model. With a plate or no ground model, uniform air reproduces the straight
-    run to 1e-9 on grids and scattered sets; `refraction_uniform_plate_is_straight` guards
-    the plate case, which is how most test data is compared. The reflected ray goes to
-    `receiver_height` above the plane z = 0, where the ground models put the microphone.
-  - **The point receiver is where the two models differ.** The straight model's direct path
-    ends on the plane even when its ground model puts the microphone 1.2 m up; the refracted
-    ray ends at the microphone. That alone is ±0.8 dB on the demo grid, from the low states.
-    With `--receiver_height 0` they agree to 1e-9.
+  - **The direct ray ends at the microphone**, the same point the straight path uses (see
+    Receivers below), never clamped. Scattered flush mics on sloping ground sit below the
+    plane, and clamping them once made plate runs disagree with the straight model. Uniform
+    air reproduces the straight run to 1e-9 for plates, point receivers and bare observers
+    (`refraction_uniform_*_is_straight`). The reflected ray goes to the microphone's height
+    above the plane z = 0, where the ground models put it.
   - **It marches every state and refuses `--db_cutoff`.** The bounds use the straight-line
     direction and spreading; step 5 adds a propagation gain to them. Refraction roughly
     doubles the acoustic loop with a point ground model (2.1 -> 4.7 s on the demo), mostly
@@ -480,6 +475,18 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     The shipped AC tracks need 210.
   - Shadow zones: the grazing ray's level, less the first creeping-wave mode over rigid ground
     (`shadow_attenuation_rates`), capped at `--shadow_floor`.
+- **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
+  observer's point raised by its height above the ground. A flush microphone (height 0) with
+  `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its
+  height, whose ground model and `GroundTable` are built once per distinct height. An observer
+  file's fifth column (`id,x,y,z,height`) gives heights per observer, so one run mixes plates
+  and poles, as test arrays do. Without it everyone takes the run's receiver. The peak
+  search's ground bound is the larger of the plate's and the point receiver's, which does not
+  depend on height. `mixed_receivers_are_their_subsets` checks a mixed run against runs over
+  each kind (with `--exact_ground`, because a table's extent follows its run's observers).
+  The point receiver's direct path ended on the ground until this went in, while its ground
+  model put the microphone 1.2 m up. Point-receiver SEL moved by up to ±0.8 dB on the demo
+  grid, almost all from the low states; plates and the goldens did not move.
 - `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
   than a table, so it evaluates at whatever band centres a database carries) and band-limited
   energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but

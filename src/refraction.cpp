@@ -354,13 +354,13 @@ LinearProfile EffectiveSoundSpeed::fit(double z_a, const Moments& at_a, double z
 }
 
 RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
-        const EffectiveSoundSpeed::Moments& at_source, const Vec3& observer,
-        double receiver_height, const EffectiveSoundSpeed::Moments& at_receiver,
-        GroundGeometry ground)
+        const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
+        const EffectiveSoundSpeed::Moments& at_receiver, GroundGeometry ground,
+        double microphone_height)
 {
-    const double z_r = ray_receiver_height(observer, receiver_height);
+    const double z_r = receiver.z;
     const double z_s = source.z;
-    const Vec3 separation = observer - source;
+    const Vec3 separation = receiver - source;
     const double r = separation.horizontal_norm();
     const double hx = r > 0.0 ? separation.x / r : 1.0;
     const double hy = r > 0.0 ? separation.y / r : 0.0;
@@ -370,9 +370,7 @@ RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
 
     if (r < 1e-3 || std::fabs(ray.profile.gradient) < straight_gradient)
     {
-        // Straight, to the same receiver the curved rays go to.
-        ray.path = straight_ray(source, Vec3(observer.x, observer.y, z_r));
-        ray.path.separation = separation;
+        ray.path = straight_ray(source, receiver);
         ray.travel_time = ray.path.range
                 / (ray.profile.sound_speed + ray.profile.gradient * 0.5 * (z_s + z_r));
         return ray;
@@ -396,13 +394,14 @@ RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
     path.ground_distance = r;
     if (ground == GroundGeometry::point && z_s > 0.0)
     {
-        // Reflected off the plane z = 0 to the microphone receiver_height above
-        // it, where the ground models put it.
-        const auto reflected = direct.lit ? reflected_eigenray(ray.profile, z_s, receiver_height, r)
-                                          : ReflectedEigenray {};
+        // Reflected off the plane z = 0 to the microphone microphone_height
+        // above it, where the ground models put it.
+        const auto reflected = direct.lit
+                ? reflected_eigenray(ray.profile, z_s, microphone_height, r)
+                : ReflectedEigenray {};
         const double grazing = reflected.exists ? reflected.grazing : 0.0;
         const double length = reflected.exists ? reflected.path_length : direct.path_length;
-        path.source_height = std::max(length * std::sin(grazing) - receiver_height, 0.0);
+        path.source_height = std::max(length * std::sin(grazing) - microphone_height, 0.0);
         path.ground_distance = length * std::cos(grazing);
     }
     else if (ground == GroundGeometry::plate)

@@ -325,8 +325,8 @@ TEST_CASE("refracted_ray in uniform air is the straight ray", "[refraction]")
     const EffectiveSoundSpeed air(profile, 90.0, 0.0, 600.0);
     const Vec3 source(-400.0, 250.0, 300.0);
     const Vec3 observer(700.0, -150.0, 0.0);
-    const auto ray = refracted_ray(air, source, air.moments(300.0), observer, 0.0, air.moments(0.0),
-            GroundGeometry::point);
+    const auto ray = refracted_ray(air, source, air.moments(300.0), observer, air.moments(0.0),
+            GroundGeometry::point, 0.0);
     const auto straight = straight_ray(source, observer);
     CHECK(ray.path.range == straight.range);
     CHECK(ray.path.path_length == straight.path_length);
@@ -352,8 +352,8 @@ TEST_CASE("refracted_ray hands the ground model the reflected ray's geometry", "
     const Vec3 source(0.0, 0.0, 200.0);
     const Vec3 observer(900.0, 0.0, 0.0);
     const double h_r = 1.2;
-    const auto ray = refracted_ray(air, source, air.moments(200.0), observer, h_r, air.moments(h_r),
-            GroundGeometry::point);
+    const auto ray = refracted_ray(air, source, air.moments(200.0), observer + Vec3(0.0, 0.0, h_r),
+            air.moments(h_r), GroundGeometry::point, h_r);
     CHECK(ray.path.source_height == Catch::Approx(200.0).epsilon(1e-6));
     CHECK(ray.path.ground_distance == Catch::Approx(900.0).epsilon(1e-6));
 }
