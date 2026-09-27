@@ -162,6 +162,9 @@ add_library(niceops_core STATIC
   src/atmosphere_profile.cpp
   src/refraction.cpp
   src/stratified.cpp
+  src/pe.cpp
+  src/airy.cpp
+  src/exact_solutions.cpp
   src/weighting.cpp
   src/faddeeva.cpp
   src/ground_effect.cpp
@@ -209,6 +212,9 @@ add_executable(niceops_unit_tests
   tests/test_atmosphere_profile.cpp
   tests/test_refraction.cpp
   tests/test_stratified.cpp
+  tests/test_pe.cpp
+  tests/test_pe_shadow.cpp
+  tests/test_benchmark.cpp
   tests/test_weighting.cpp
   tests/test_ground_effect.cpp
   tests/test_plate_receiver.cpp
@@ -224,6 +230,14 @@ target_link_libraries(niceops_unit_tests niceops_core Catch2::Catch2WithMain)
 
 # Golden output comparison tool (numeric, elementwise)
 add_executable(golden_compare tests/golden_compare.cpp)
+# Refraction models against the parabolic equation on one path (tools/pe_compare.cpp):
+# a research tool, not part of a run.
+add_executable(niceops_pe_compare tools/pe_compare.cpp)
+target_link_libraries(niceops_pe_compare niceops_core CLI11::CLI11)
+# The Attenborough et al. (1995) benchmark cases by the PE and the exact
+# solutions (tools/benchmark.cpp); tools/plot_benchmark.py draws them.
+add_executable(niceops_benchmark tools/benchmark.cpp)
+target_link_libraries(niceops_benchmark niceops_core CLI11::CLI11 Threads::Threads)
 
 # Add testing with CTest
 enable_testing()

@@ -513,6 +513,82 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     shadow levels are trusted.
   - Costs: 12 s on the demo grid with a point receiver (linear 3.3 s), 35 ms over a
     96-microphone array.
+- `src/pe.{hpp,cpp}`, `tools/pe_compare.cpp` — roadmap step 7a: a wide-angle parabolic
+  equation as the full-wave reference, and `niceops_pe_compare`, which runs one path through
+  straight, linear, stratified and PE. Load-bearing:
+  - **Crank–Nicolson Padé(1,1), not the GFPE the roadmap named.** The impedance condition
+    dpsi/dz = -i k beta psi goes straight into the grid (psi_0 eliminated by a one-sided
+    difference), so no surface-wave pole has to be handled by hand. The convention is
+    exp(-i omega t), as in `ground_effect.cpp`, whose admittance it takes. The left-hand
+    tridiagonal matrix is factored once per run.
+  - **Normalisation:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
+    p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the
+    exact two-ray field (0.3 dB, rigid) and to Weyl–van der Pol through NICE-OPS's own
+    `spherical_reflection_coefficient` (0.5 dB, grass), which checks the ground condition's
+    sign too.
+  - **Results land on exact multiples of `output_step`,** interpolated between range steps.
+    The range step follows the wavelength, so without that each frequency had its own grid,
+    and band averaging read past the end of one.
+  - **The shadow is checked against an exact solution** (`tests/test_pe_shadow.cpp`). For
+    k^2 = k0^2 (1 + 2z/R) over rigid ground the field is a residue series of Airy creeping
+    waves, and the PE matches it within 0.02 dB down to -47 dB at 250 Hz to 1 kHz. The complex
+    Airy function it needs is `src/airy.{hpp,cpp}`: series for |z| <= 5, asymptotic beyond,
+    with the connection formula near the negative axis. Five is where both are ~1e-7; near
+    the positive real axis the series cancels exp(4/3 z^1.5) of its digits away. The
+    reference values came from Bessel-integral quadrature, not memory, which had Ai(-10)
+    wrong.
+  - **The domain margin is at least 250 m, and the absorbing layer 100 wavelengths.** In a
+    shadow the near-ground field is a weak remainder while energy leaks upward past it.
+    With 60 wavelengths of margin (25 m at 1 kHz), reflection off the layer set a floor: the
+    PE came out 3.8 dB high at -44 dB against the residue series.
+  - **There is no turbulence.** The deep shadow, 40–90 dB down, is not physical; the ray
+    models' `--shadow_floor` stands in for scattering. Absorption is optional
+    (`PeSetup::absorption`, Np/m, the imaginary part of k so it acts along the actual path)
+    and off in `pe_compare`, because the ray-model comparison leaves it out of all four.
+  - **Findings** (README has the tables). Downwind, `stratified` is within 0.4–2.1 dB rms of
+    the PE and the others are 1–8 dB off. Upwind, the PE's shadow onset lies between
+    `stratified` (too early) and `linear` (too late), moving toward `stratified` with
+    frequency. That points to a frequency-dependent near-ground treatment for `stratified`,
+    calibrated against this tool.
+- `src/exact_solutions.{hpp,cpp}`, `tools/benchmark.cpp`, `tests/test_benchmark.cpp` — step 7b:
+  the Attenborough et al. benchmark (JASA 97, 173 (1995); the PDF is not in the repo) and its
+  exact solutions: direct plus image ray (case 1), the downward normal-mode series (case 2)
+  and the upward residue series (case 3), all over impedance ground with absorption as
+  Im k0. The PE reproduces the paper's figs. 11–14 in every panel. `README.md` has the
+  tables. Load-bearing:
+  - **The mode sums are derived in `exact_solutions.cpp`, not copied, because the paper's
+    eq. (11) is wrong.** Its upward ground condition, Ai'(b) + i k0 l beta w Ai(b) = 0, should
+    read Ai'(b) - i k0 l beta w² Ai(b) = 0, a factor exp(i pi/3) in the admittance term. The
+    printed form misses the PE by 1.5–12 dB at 100 Hz, and the derived one agrees to 0.02 dB.
+    Eq. (10) is right up to an overall sign. Over rigid ground the two forms coincide, so
+    `test_pe_shadow` could never have caught it. Do not "fix" the code back to the paper.
+  - **Case 2's exact profile, c0/sqrt(1 - 2z/R), turns every ray below z = R/2.** Near-vertical
+    ones fall back within R = 3.4 km like mortar rounds. The PE cannot carry them (30–45° and
+    an absorbing top), and neither can the benchmark's linear profile. Uncut, they put 5 dB
+    between the series and the PE by 1 km at 100 Hz, and features at R and 2R that the paper's
+    own normal-mode figure shows and its FFP/PE figure lacks. `downward_pressure`'s
+    `max_elevation` drops modes steeper than the cut. The test uses 75°: paths reaching 1 km
+    leave below 8.4° or above 81.6°. At 10 Hz only ~60 modes lie below 75°, too few for a
+    clean cut within 6 wavelengths, so the test uses the full series there. At 1 kHz past
+    500 m the PE's own grid is the limit, 0.8 dB at 10 points a wavelength and 0.3 at 20.
+  - **`impedance_airy_zeros` is built for |q| <= 6 and throws past it.** It follows each zero
+    of Ai' from q = 0, from a first-order seed once |a'| > 4|q|² + 10. It checks the count
+    with the argument principle on a box, which caught a zero lost to the continuation in
+    development. The benchmark reaches |q| = 4.9. At |q| = 8.5 the continuation loses its
+    way, and at 10.8 the box's edge overflows a double. The low zero at 1 kHz is the ground's
+    surface wave, near q², and the continuation reaches it.
+  - **A mode sum returns NaN where it cannot be trusted:** terms cancelling by more than nine
+    orders (the residue series near the source, whose terms grow before decaying), or a tail
+    not yet dead at the 12000-mode cap. Callers skip NaN rather than tighten the cap.
+  - **`hankel1_0` switches from the power series to the asymptotic expansion at
+    |z| = 12 - 3 Im z / |z|.** The series loses exp(|z| + Im z) of its digits, and the
+    expansion's smallest term is exp(-2|z|). A switch on |z| alone put H0(3+6i) off by 1e-6.
+    Its test values are Mathematica's, as are the root-finder's.
+  - **The benchmark's inputs are its own:** the tabulated impedances (Z = 38.79+38.41i,
+    12.81+11.62i, 5.96+2.46i), not a NICE-OPS impedance model, and the absorption it quotes
+    (0.18 and 5.4 dB/km, ANSI S1.26-1978; ISO 9613-1 gives 0.22 and 4.98). Its profiles stop
+    at 1000 m, the height of its contour plots. Only case 2 at 10 km cares, and the paper
+    notes the same dependence. A full run is ~2.5 min.
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its

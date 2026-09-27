@@ -478,14 +478,137 @@ grid, 5th percentile -20 dB), and puts 44% of evaluations in shadow against 14%.
 
 **Treat that difference as the size of the uncertainty, not as the answer.** Ray theory
 takes the thin near-ground shear layer at face value, but at low frequencies the wavelength
-is comparable to the layer, and diffraction fills in what rays leave dark. The two models
-bracket the physics; the parabolic-equation reference planned next is what should adjudicate
-between them.
+is comparable to the layer, and diffraction fills in what rays leave dark. The parabolic
+equation below confirms it: the two models bracket the truth upwind.
 
 Costs, with a point receiver: the demo grid's acoustic loop takes 12.0 s (3.3 s linear, 2.1 s
 without refraction). A 96-microphone scattered array like `arrays/coyle_approach.csv` takes
 35 ms. Where the range is not monotonic (caustics in non-monotonic profiles), the solve finds
 one arrival rather than summing all of them. Focusing at a caustic is capped at +10 dB.
+
+#### Checking the refraction models against a parabolic equation
+
+`niceops_pe_compare` runs one path through all four models and writes each band's level
+relative to free field: straight rays, `linear`, `stratified`, and a wide-angle parabolic
+equation. The last is a full-wave solution, Crank–Nicolson Padé(1,1) with the ground's
+impedance written into the grid. Absorption and turbulence are left out of all four.
+
+The PE is checked against exact solutions:
+
+| Case | Agreement | Test |
+| --- | --- | --- |
+| Two rays over rigid ground | within 0.3 dB | `tests/test_pe.cpp` |
+| Weyl–van der Pol field over grass | within 0.5 dB | `tests/test_pe.cpp` |
+| Residue series in an upward-refraction shadow, rigid ground | within 0.02 dB at 250, 500 and 1000 Hz, down to 47 dB below free field | `tests/test_pe_shadow.cpp` |
+| Benchmark case 1: direct and image rays over the benchmark's ground | within 0.2 dB at 10 Hz and 0.08 dB at 100 Hz and 1 kHz, 20 m to 1 km | `tests/test_benchmark.cpp` |
+| Benchmark case 2: normal-mode series, downward refraction | within 0.06 dB at 100 Hz to 1 km and 1 kHz to 500 m, 0.2 dB at 10 Hz | `tests/test_benchmark.cpp` |
+| Benchmark case 3: residue series, upward refraction, impedance ground | within 0.03 dB at 100 Hz and 1 kHz, to 60 dB below free field | `tests/test_benchmark.cpp` |
+
+The shadow rows are the checks that matter for arbitrating the ray models. Their profiles
+have k² linear in height, and the field in the shadow is then exactly a sum of creeping waves
+built from Airy functions of complex argument. Doubling the grid resolution moves no shadow
+onset and no level past 100 m by more than 0.7 dB.
+
+```sh
+niceops_pe_compare --atmosphere atmospheres/example_windy.csv --toward 270 \
+    --source_height 328 --receiver_height 3.937 --bands 125 250 500 1000 --max_range 8000
+```
+
+Through `atmospheres/example_windy.csv` with a 1.2 m receiver, this is where each model falls
+10 dB below free field and stays there, upwind:
+
+| source | band | straight | linear | stratified | PE |
+| --- | --- | --- | --- | --- | --- |
+| 100 m | 125 Hz | never | 1.9 km | 1.2 km | 1.3 km |
+| | 250 Hz | never | 1.4 km | 0.53 km | 1.07 km |
+| | 500 Hz | never | 1.3 km | 0.53 km | 0.91 km |
+| | 1 kHz | never | 1.4 km | 0.53 km | 0.84 km |
+| 30 m | 125 Hz | never | 0.91 km | 0.72 km | 0.65 km |
+| | 250 Hz | never | 0.46 km | 0.38 km | 0.50 km |
+| | 500 Hz | 1.2 km | 0.42 km | 0.19 km | 0.38 km |
+| | 1 kHz | never | 0.50 km | 0.23 km | 0.34 km |
+
+And the rms difference from the PE beyond 400 m, downwind of the 100 m source:
+
+| band | straight | linear | stratified |
+| --- | --- | --- | --- |
+| 125 Hz | 2.8 dB | 4.0 dB | 0.9 dB |
+| 250 Hz | 7.1 dB | 7.6 dB | 0.4 dB |
+| 500 Hz | 3.1 dB | 0.9 dB | 0.9 dB |
+| 1 kHz | 8.1 dB | 7.2 dB | 2.1 dB |
+
+What that says:
+
+- **Downwind and in the lit region, `stratified` is right** and the others are not.
+- **Upwind, the shadow begins between the two ray models' predictions.** It moves toward
+  `stratified` as the frequency rises and the wavelength shrinks against the near-ground shear
+  layer, which is what diffraction would do. `stratified` starts the shadow too early and
+  `linear` too late, by similar amounts.
+
+`tools/plot_pe_compare.py OUTDIR CSV:TITLE ...` plots that output: one figure per case, a
+panel per band, and a summary of where each shadow begins. It runs under the build's Python,
+`build/pyenv/bin/python`.
+
+The PE's deep shadow, 40–80 dB down, is not to be believed either. With no turbulence in it,
+nothing scatters energy in, and the ray models' `--shadow_floor` stands in for exactly that.
+The next step these numbers point to is a frequency-dependent near-ground treatment for
+`stratified`, calibrated against this tool.
+
+#### The Attenborough et al. benchmark
+
+Attenborough et al., "Benchmark cases for outdoor sound propagation models", JASA 97, 173
+(1995), is the standard set of test cases for outdoor propagation codes. It fixes a source at
+5 m, a receiver at 1 m, 10, 100 and 1000 Hz, a locally reacting ground with impedances it
+tabulates, absorption at 20 °C and 70% RH, and four profiles:
+
+| case | profile | exact solution |
+| --- | --- | --- |
+| 1 | uniform | direct and image rays with the spherical-wave reflection coefficient (their eq. 12) |
+| 2 | c rising 0.1 /s (downward refraction) | normal-mode series (eq. 10) |
+| 3 | c falling 0.1 /s (upward refraction) | residue series of creeping waves (eq. 11) |
+| 4 | rising 0.1 /s to 100 m, falling to 300 m, uniform above (a duct) | none |
+
+`niceops_benchmark` runs all four to 200 m and to 10 km with the PE and, where one exists,
+the exact solution (`src/exact_solutions.hpp`). `tools/plot_benchmark.py DIR` draws them in
+the paper's layout, so each figure sits beside their figs. 11–14, and prints how far the PE is
+from the exact solution. A full run takes about 2.5 minutes, most of it the 1 kHz PE to 10 km.
+
+```sh
+niceops_benchmark --out figures/benchmark
+build/pyenv/bin/python tools/plot_benchmark.py figures/benchmark
+```
+
+Set beside the paper's FFP and PE curves, all four cases agree in every panel. Where there is
+an exact solution, the PE is within 0.3 dB of it past 20 m on every 200 m panel. On the 10 km
+panels it is within 0.2 dB for case 1, and for case 3 within 0.1 dB, or 0.5 dB at 10 Hz,
+where the linear profile and the exact solution's profile part company within a few Airy
+lengths of the ground. Case 2 at 10 km is the exception, covered below. Case 4 has no exact
+solution; it reproduces the paper's curve feature for feature, down to the 100 Hz humps at
+2.5–3.2 km and 4.3–4.7 km.
+
+Three things came out of it:
+
+- **Their eq. (11), the upward-refraction residue series, has the ground condition wrong.**
+  It writes the eigenvalue condition as Ai'(b) + i k0 l beta w Ai(b) = 0, w = exp(2 pi i/3),
+  where the derivation gives Ai'(b) - i k0 l beta w² Ai(b) = 0: the admittance term is off by
+  a factor exp(i pi/3). Over the benchmark's 100 Hz ground the printed form is 1.5 dB off the
+  PE at 100 m and 12 dB off at 1 km. The derived form agrees with the PE to 0.02 dB down to
+  -90 dB. Over rigid ground the two coincide, which is why that case never showed it.
+  `src/exact_solutions.cpp` carries the derivation.
+- **Case 2's normal-mode solution carries a field no PE can.** Its profile, c0/sqrt(1 - 2z/R),
+  reaches infinite sound speed at z = R/2 = 1716 m, so every ray turns below that height,
+  including the near-vertical ones. Those fall back within R = 3.4 km of the source, landing
+  at R sin(2 × elevation), like mortar rounds. They put structure at 3.4 and 6.8 km into the
+  mode sum; the paper's own normal-mode figure has it, and its FFP and PE figure does not.
+  With modes steeper than 75° left out (`max_elevation`), the series and the PE agree to
+  0.06 dB out to 1 km at 100 Hz. With them in, they differ by 5 dB.
+- **Case 2 at 10 km depends on where the profile is cut off.** The paper says so, and it holds
+  here: the PE with the linear profile stopped at 1000 m matches their curves in form, not
+  interference null for null.
+
+The inputs are theirs. The impedances are the four-parameter model's values they give, not a
+NICE-OPS impedance model. The absorption is the 0.18 dB/km at 100 Hz and 5.4 dB/km at 1 kHz
+they quote from ANSI S1.26-1978. ISO 9613-1 gives 0.22 and 4.98 dB/km at the same conditions.
 
 #### Receivers
 
@@ -770,6 +893,8 @@ which a binary distribution needs to carry with it.
   against these at 1e-9 relative tolerance.
 - `databases/`, `tracks/` — shipped noise databases and flight tracks.
 - `atmospheres/` — atmosphere profiles for `--atmosphere`.
+- `tools/` — `pe_compare.cpp`, the refraction models against the parabolic equation, and
+  `benchmark.cpp`, the Attenborough et al. benchmark cases; with a plotting script for each.
 
 `CLAUDE.md` carries the developer-facing detail: the port's history, the shape of the hot path,
 and the pitfalls worth knowing before changing the numerics.
