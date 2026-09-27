@@ -161,6 +161,7 @@ seconds, levels in dB.
 | `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity, and optionally pressure and wind, against height. Absorption is integrated through it. Spectral path only. See below. |
 | `--refraction` | `none` (default); `linear`, curved rays through the `--atmosphere` profile's effective sound speed fitted to a straight line per path; or `stratified`, through the profile's own layers. Both give shadow zones under upward refraction. See below. |
 | `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
+| `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
 | `--receiver_height`, `--turbulence` | Point receiver's microphone height (in `--units`, default 1.2 m; an observer file's fifth column overrides it per observer) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
@@ -351,8 +352,31 @@ The rules that keep it from guessing:
 - **Only the spectral path uses it.** The broadband path's `EAA` is the database's own
   fitted attenuation, and there is nothing per band to integrate.
 - **Wind columns must name their unit.** Nothing in the values tells m/s from knots. Wind
-  matters only to `--refraction`; absorption does not depend on it. The log names every
-  column it ignored.
+  matters only to `--refraction` and to `--speed_reference air`; absorption does not depend
+  on it. The log names every column it ignored.
+
+#### Speed reference
+
+A database's flight conditions come from some velocity: μ = |v| / V_tip, the path angle
+asin(v_z / |v|), and the sphere's azimuth reference, which is v projected into the tip-path
+plane. Every database so far took v over the ground. `--speed_reference air` takes it
+through the air instead: the ground velocity less the profile's wind at each state's height,
+turned into the local frame by `--frame_bearing`. The load factor, and so CT, stays inertial,
+because the rotor's thrust balances the aircraft's acceleration over the ground whatever
+the air does.
+
+- **The database says which it is,** in a root text attribute `speed_reference`, `ground`
+  or `air`, and NICE-OPS follows it by default. A file without one is ground, which is
+  every database so far; panam does not write the attribute yet.
+  Giving `--speed_reference` against the database is logged as an override.
+- **Air needs a wind.** With no wind columns in `--atmosphere`, an air-referenced run is
+  refused rather than taken as calm. `--speed_reference ground` says so explicitly.
+- **It is after `--trim`,** which cuts an approach at its slowest point over the ground.
+- **Calm air changes nothing**, to the bit, which a CTest case checks.
+
+What it moves, on the 2017 Noise Abatement approaches: 1–3% in μ and about 1° of nose on
+calm days. On a 15 kt day, 5–10% in μ and 8–15° of nose. Matching a ground-built database with
+an air-referenced trajectory mixes the two, so change both together.
 
 #### Refraction
 

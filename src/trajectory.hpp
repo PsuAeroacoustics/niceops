@@ -16,6 +16,8 @@
 // the run's local frame (see geodetic.hpp) and derives the velocity and load
 // factor the flight parameters need from the path itself.
 
+#include <array>
+#include <functional>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -51,7 +53,20 @@ struct State
     double mu;
     double fpa_e;
     double fpa;
+    // The horizontal wind at the state, m/s in the local frame.  Zero unless
+    // Trajectory::relative_to_air() set it, which leaves mu, both path angles
+    // and the sphere's nose following air_velocity() rather than the ground
+    // velocity.  Last, so that brace-initialising the fields above still works.
+    double wx = 0.0;
+    double wy = 0.0;
 };
+
+// The velocity the rotor sees: the ground velocity less the wind, the vertical
+// wind taken as zero.  The ground velocity itself while there is no wind.
+inline std::array<double, 3> air_velocity(const State& s)
+{
+    return {s.vx - s.wx, s.vy - s.wy, s.vz};
+}
 
 inline std::ostream& operator<<(std::ostream& os, const State& s)
 {
@@ -162,6 +177,14 @@ public:
 
     // D's Get!(varname).get(): collect one field from every state
     std::vector<double> column(const std::string& varname) const;
+
+    // Take mu, both flight path angles and the sphere's nose from the velocity
+    // through the air rather than over the ground: `wind(z)` gives the
+    // horizontal wind at height z, m/s in the local frame.  The load factor,
+    // and so CT, stays inertial, because the rotor's thrust balances the
+    // aircraft's acceleration over the ground whatever the air is doing.
+    // Returns the largest wind speed met, for the log.
+    double relative_to_air(const std::function<std::array<double, 2>(double)>& wind);
 
     // Crop from this x, in METRES.  The caller converts; the command line's
     // --trim is in the user's units and is converted at the same seam as

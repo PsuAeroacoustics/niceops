@@ -440,15 +440,13 @@ bool Layers::uniform() const
 LayeredSoundSpeed::LayeredSoundSpeed(const AtmosphereProfile& profile, double frame_bearing)
     : heights_(profile.height)
 {
-    const double bearing = frame_bearing * pi / 180.0;
-    const double sin_b = std::sin(bearing);
-    const double cos_b = std::cos(bearing);
+    const CompassToLocal to_local(frame_bearing);
     for (std::size_t k = 0; k < heights_.size(); k++)
     {
         sound_speed_.push_back(profile.at(heights_[k]).sound_speed());
-        const auto enu = profile.wind_at(heights_[k]);
-        wind_x_.push_back(enu[0] * sin_b + enu[1] * cos_b);
-        wind_y_.push_back(-enu[0] * cos_b + enu[1] * sin_b);
+        const auto wind = to_local(profile.wind_at(heights_[k]));
+        wind_x_.push_back(wind[0]);
+        wind_y_.push_back(wind[1]);
     }
 }
 

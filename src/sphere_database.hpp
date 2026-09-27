@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,20 @@
 #include "interpolator.hpp"
 
 namespace niceops {
+
+// Which velocity a database's flight conditions -- mu, the path angle and the
+// sphere's azimuth reference -- were taken from: the aircraft's over the
+// ground, or its through the air.  Recorded at the root of the database as the
+// text attribute speed_reference; see Database::speed_reference().
+enum class SpeedReference
+{
+    ground,
+    air,
+};
+
+// "ground" or "air"; nullopt for anything else.
+std::optional<SpeedReference> parse_speed_reference(const std::string& name);
+const char* to_string(SpeedReference reference);
 
 
 // Check if points "wrap around" sphere, and swap inputs to bilinear
@@ -476,6 +491,14 @@ public:
         return tip_speed_;
     }
 
+    // Which velocity the flight conditions were taken from, as the root
+    // attribute speed_reference records it.  Absent means the ground, which is
+    // what every database built before the attribute existed used.
+    SpeedReference speed_reference() const
+    {
+        return speed_reference_;
+    }
+
     // Whether the database carries per-band spectra alongside the overall level.
     bool has_spectra() const
     {
@@ -615,6 +638,7 @@ private:
     // the loader transposes once.  Both empty unless the database carries
     // spectra.
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
+    SpeedReference speed_reference_ = SpeedReference::ground;
     std::vector<double> frequencies_;
     std::vector<double> spectra_;
 

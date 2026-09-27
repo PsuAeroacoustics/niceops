@@ -10,11 +10,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <string>
 #include <unistd.h>
 
+#include "atmosphere_profile.hpp"
+#include "sphere_database.hpp"
 #include "trajectory.hpp"
 #include "util/csv.hpp"
 
@@ -590,4 +593,113 @@ TEST_CASE("the shipped demo tracks store vz positive up and are read unchanged",
         std::vector<State> copy = trajectory.states;
         REQUIRE_FALSE(correct_vertical_speed_sign(copy, track));
     }
+}
+
+// --speed_reference air: mu, the path angles and the sphere's nose follow the
+// velocity through the air, the ground velocity less the wind at the state.
+namespace {
+
+std::function<std::array<double, 2>(double)> uniform_wind(double wx, double wy)
+{
+    return [=](double) { return std::array<double, 2> {wx, wy}; };
+}
+
+// One state flying +x at `speed` m/s, TPP level, taken from the demo track so
+// that its CT and the vehicle's tip speed are real ones.
+Trajectory single_state(double speed, double vz, double z = 100.0)
+{
+    Trajectory trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+    State s = trajectory.states.front();
+    s.x = 0.0;
+    s.y = 0.0;
+    s.z = z;
+    s.vx = speed;
+    s.vy = 0.0;
+    s.vz = vz;
+    s.nx = 0.0;
+    s.ny = 0.0;
+    s.nz = 1.0;
+    trajectory.states = {s};
+    // mu and the path angles for that velocity, over the ground.
+    trajectory.relative_to_air(uniform_wind(0.0, 0.0));
+    return trajectory;
+}
+
+} // namespace
+
+TEST_CASE("an air reference in calm air changes nothing, to the bit", "[trajectory][speed_reference]")
+{
+    const Trajectory ground("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+    Trajectory air = ground;
+    REQUIRE(air.relative_to_air(uniform_wind(0.0, 0.0)) == 0.0);
+    for (std::size_t i = 0; i < ground.states.size(); i++)
+    {
+        const auto& g = ground.states[i];
+        const auto& a = air.states[i];
+        REQUIRE(a.mu == g.mu);
+        REQUIRE(a.fpa == g.fpa);
+        REQUIRE(a.fpa_e == g.fpa_e);
+        REQUIRE(a.CT == g.CT);
+    }
+}
+
+TEST_CASE("a headwind raises mu and flattens the path; CT stays inertial", "[trajectory][speed_reference]")
+{
+    auto trajectory = single_state(40.0, -3.0);
+    const State before = trajectory.states.front();
+    // Blowing toward -x, into the aircraft's face, at 10 m/s.
+    REQUIRE(trajectory.relative_to_air(uniform_wind(-10.0, 0.0)) == 10.0);
+    const State& after = trajectory.states.front();
+    const double airspeed = std::hypot(50.0, 3.0);
+    REQUIRE(after.mu == Catch::Approx(airspeed / trajectory.vehicle.tip_speed));
+    REQUIRE(after.mu > before.mu);
+    REQUIRE(after.fpa == Catch::Approx(std::asin(-3.0 / airspeed) * 180.0 / pi));
+    REQUIRE(std::fabs(after.fpa) < std::fabs(before.fpa));
+    // The TPP is level, so the QSAM angle is the path angle.
+    REQUIRE(after.fpa_e == Catch::Approx(after.fpa));
+    // The thrust balances the acceleration over the ground, and the ground
+    // velocity itself is the track's.
+    REQUIRE(after.CT == before.CT);
+    REQUIRE(after.nz == before.nz);
+    REQUIRE(after.vx == 40.0);
+}
+
+TEST_CASE("a crosswind turns the sphere's nose into the relative wind", "[trajectory][speed_reference]")
+{
+    auto trajectory = single_state(40.0, 0.0);
+    // Blowing toward +y: the aircraft has to point toward -y to hold its track.
+    trajectory.relative_to_air(uniform_wind(0.0, 5.0));
+    const auto v = air_velocity(trajectory.states.front());
+    REQUIRE(v == std::array<double, 3> {40.0, -5.0, 0.0});
+    const auto frame = sphere_frame(Vec3(v[0], v[1], v[2]), Vec3(0.0, 0.0, 1.0));
+    REQUIRE(std::atan2(frame.nose.y, frame.nose.x) == Catch::Approx(std::atan2(-5.0, 40.0)));
+    REQUIRE(trajectory.states.front().mu * trajectory.vehicle.tip_speed
+            == Catch::Approx(std::hypot(40.0, 5.0)));
+}
+
+TEST_CASE("the wind is the profile's at each state's height, in the track frame",
+        "[trajectory][speed_reference]")
+{
+    // From the north, calm at the ground and 10 m/s at 100 m.
+    AtmosphereProfile profile;
+    profile.height = {0.0, 100.0};
+    profile.temperature = {288.15, 288.15};
+    profile.relative_humidity = {50.0, 50.0};
+    profile.wind_east = {0.0, 0.0};
+    profile.wind_north = {0.0, -10.0};
+    // The 2017 tracks' frame: +x along 270 (west), so +y along 180 (south),
+    // which is where a north wind blows.
+    const CompassToLocal to_local(270.0);
+    auto trajectory = single_state(40.0, 0.0, 50.0);
+    State high = trajectory.states.front();
+    high.z = 100.0;
+    trajectory.states.push_back(high);
+    const double strongest = trajectory.relative_to_air(
+            [&](double z) { return to_local(profile.wind_at(z)); });
+    REQUIRE(strongest == Catch::Approx(10.0));
+    REQUIRE(trajectory.states[0].wx == Catch::Approx(0.0).margin(1e-12));
+    REQUIRE(trajectory.states[0].wy == Catch::Approx(5.0));
+    REQUIRE(trajectory.states[1].wy == Catch::Approx(10.0));
+    REQUIRE(trajectory.states[1].mu * trajectory.vehicle.tip_speed
+            == Catch::Approx(std::hypot(40.0, 10.0)));
 }

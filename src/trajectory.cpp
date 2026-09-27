@@ -421,6 +421,36 @@ dimensional_data configure_vehicle(const std::string& filename)
     return vehicle;
 }
 
+namespace {
+
+// The two flight path angles, from the velocity the rotor sees (air_velocity:
+// the ground velocity until relative_to_air() sets a wind).  Needs nx/ny/nz
+// already normalised.
+void derive_path_angles(State& now)
+{
+    const auto [ux, uy, uz] = air_velocity(now);
+    const double v = std::hypot(ux, uy, uz);
+    if (v > 0.0)
+    {
+        auto vn_hat = (ux * now.nx + uy * now.ny + uz * now.nz) / v;
+        now.fpa_e = 180.0 / pi * std::asin(vn_hat);
+        now.fpa = 180.0 / pi * std::asin(uz / v);
+    }
+    else
+    {
+        // True hover: both flight path angles are undefined rather than
+        // infinite, and dividing by v would put a NaN into mu's sphere lookup
+        // and from there into every level.  Zero is the D original's answer
+        // (niceops commit 0b05d3a, "Fixed issue giving NaN flight path angles
+        // in hover"), and it is the right one -- a stationary aircraft is
+        // neither climbing nor descending.
+        now.fpa_e = 0.0;
+        now.fpa = 0.0;
+    }
+}
+
+} // namespace
+
 // Derive the non-dimensional flight parameters from a state's raw kinematics.
 // The trajectory constructor and adapt() both need exactly this, from different
 // sources, and previously each carried its own copy.  Expects nx/ny/nz to hold
@@ -436,25 +466,9 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle)
     // Non-dimensionalize
     now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * pi
             * vehicle.radius * vehicle.radius);
-    auto v = std::hypot(now.vx, now.vy, now.vz);
-    now.mu = v / vehicle.tip_speed;
-    if (v > 0.0)
-    {
-        auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
-        now.fpa_e = 180.0 / pi * std::asin(vn_hat);
-        now.fpa = 180.0 / pi * std::asin(now.vz / v);
-    }
-    else
-    {
-        // True hover: both flight path angles are undefined rather than
-        // infinite, and dividing by v would put a NaN into mu's sphere lookup
-        // and from there into every level.  Zero is the D original's answer
-        // (niceops commit 0b05d3a, "Fixed issue giving NaN flight path angles
-        // in hover"), and it is the right one -- a stationary aircraft is
-        // neither climbing nor descending.
-        now.fpa_e = 0.0;
-        now.fpa = 0.0;
-    }
+    const auto [ux, uy, uz] = air_velocity(now);
+    now.mu = std::hypot(ux, uy, uz) / vehicle.tip_speed;
+    derive_path_angles(now);
 }
 
 // The AC state format does not agree with itself about the sign of vz.  The
@@ -506,13 +520,7 @@ bool correct_vertical_speed_sign(std::vector<State>& states, const std::string& 
         now.vz = -now.vz;
         // Only the path angles depend on vz's sign.  The speed, and so mu, do
         // not, and nx/ny/nz were already normalised when the state was derived.
-        const double v = std::hypot(now.vx, now.vy, now.vz);
-        if (v > 0.0)
-        {
-            now.fpa_e = 180.0 / pi
-                    * std::asin((now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v);
-            now.fpa = 180.0 / pi * std::asin(now.vz / v);
-        }
+        derive_path_angles(now);
     }
     return true;
 }
@@ -747,6 +755,24 @@ std::vector<double> Trajectory::column(const std::string& varname) const
         x.push_back(state.*(it->second));
     }
     return x;
+}
+
+double Trajectory::relative_to_air(const std::function<std::array<double, 2>(double)>& wind)
+{
+    double strongest = 0.0;
+    for (auto& now : states)
+    {
+        const auto w = wind(now.z);
+        now.wx = w[0];
+        now.wy = w[1];
+        strongest = std::max(strongest, std::hypot(w[0], w[1]));
+        // nx/ny/nz, LF and CT stay as the constructor derived them: normalised,
+        // and inertial.
+        const auto [ux, uy, uz] = air_velocity(now);
+        now.mu = std::hypot(ux, uy, uz) / vehicle.tip_speed;
+        derive_path_angles(now);
+    }
+    return strongest;
 }
 
 void Trajectory::watts_trim(double xstart_metres)

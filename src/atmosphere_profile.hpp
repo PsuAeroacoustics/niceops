@@ -18,6 +18,7 @@
 // absorption does not depend on it.
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -76,6 +77,29 @@ struct AtmosphereProfile
     // which moves the pressure at 1 km by well under 0.1%, and absorption is
     // the least sensitive of the three inputs to pressure.
     AtmosphereProfile with_hydrostatic_pressure(double surface_pressure) const;
+};
+
+// Turns a wind's east and north components into the local frame, whose +x
+// axis points along compass bearing `frame_bearing` degrees and +y ninety
+// degrees to its left, as LocalFrame::track_aligned has it.  The ray models and
+// the air-referenced flight conditions all take the wind through this one
+// rotation.
+struct CompassToLocal
+{
+    explicit CompassToLocal(double frame_bearing)
+        : sin_b(std::sin(frame_bearing * pi / 180.0))
+        , cos_b(std::cos(frame_bearing * pi / 180.0))
+    {
+    }
+
+    std::array<double, 2> operator()(const std::array<double, 2>& east_north) const
+    {
+        return {east_north[0] * sin_b + east_north[1] * cos_b,
+                -east_north[0] * cos_b + east_north[1] * sin_b};
+    }
+
+    double sin_b;
+    double cos_b;
 };
 
 // Read a profile.  Columns are found by name (read_labelled_csv), in any order,

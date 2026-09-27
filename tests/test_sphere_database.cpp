@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <limits>
@@ -315,6 +316,42 @@ TEST_CASE("Shaft power round-trips through a written sphere", "[sphere_database]
     // And the levels still survive the round trip.
     REQUIRE(reloaded.sphere_radius() == sphere.radius);
     std::filesystem::remove(path);
+}
+
+TEST_CASE("speed_reference is read from the database root", "[sphere_database]")
+{
+    // Every database so far predates the attribute and was built against the
+    // ground, so absent has to mean ground.  panam writes it with
+    // netCDF4-python, as NC_CHAR text.
+    Database source("databases/S-76D_M3.nod");
+    REQUIRE(source.speed_reference() == SpeedReference::ground);
+    const auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_speed_reference.nod").string();
+
+    const auto with_attribute = [&](const char* value) {
+        write_sphere(sphere, path);
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "speed_reference", std::strlen(value), value)
+                == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+
+    write_sphere(sphere, path);
+    REQUIRE(Database(path).speed_reference() == SpeedReference::ground);
+    with_attribute("air");
+    REQUIRE(Database(path).speed_reference() == SpeedReference::air);
+    with_attribute("ground");
+    REQUIRE(Database(path).speed_reference() == SpeedReference::ground);
+    // Anything else is refused rather than guessed at.
+    with_attribute("inertial");
+    REQUIRE_THROWS(Database(path));
+    std::filesystem::remove(path);
+
+    REQUIRE(parse_speed_reference("air") == SpeedReference::air);
+    REQUIRE(!parse_speed_reference("Air").has_value());
+    REQUIRE(std::string(to_string(SpeedReference::ground)) == "ground");
 }
 
 TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")

@@ -294,20 +294,15 @@ EffectiveSoundSpeed::EffectiveSoundSpeed(const AtmosphereProfile& profile, doubl
     }
     inv_step_ = 1.0 / step_;
 
-    // East/north into the local axes: +x along the compass bearing, +y ninety
-    // degrees to its left, as LocalFrame::track_aligned has it.
-    const double bearing = frame_bearing * pi / 180.0;
-    const double sin_b = std::sin(bearing);
-    const double cos_b = std::cos(bearing);
+    const CompassToLocal to_local(frame_bearing);
 
     values_.resize(nodes_);
     moments_.resize(nodes_);
     for (std::size_t node = 0; node < nodes_; node++)
     {
         const double z = z_low_ + step_ * static_cast<double>(node);
-        const auto enu = profile.wind_at(z);
-        values_[node] = {profile.at(z).sound_speed(), enu[0] * sin_b + enu[1] * cos_b,
-                -enu[0] * cos_b + enu[1] * sin_b};
+        const auto wind = to_local(profile.wind_at(z));
+        values_[node] = {profile.at(z).sound_speed(), wind[0], wind[1]};
     }
     // The integrals of f and z f over each cell, exact for f linear across it.
     moments_[0].fill(0.0);

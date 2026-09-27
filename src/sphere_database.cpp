@@ -100,6 +100,45 @@ int get_scalar(int ncid, const std::string& variable_name, T* value)
     return status;
 }
 
+// The root attribute speed_reference, as text.  Absent is the ground.  panam
+// writes it with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is
+// accepted too.
+SpeedReference read_speed_reference(int ncid)
+{
+    nc_type type = NC_NAT;
+    std::size_t length = 0;
+    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, "speed_reference", &type, &length))
+        return SpeedReference::ground;
+    std::string text;
+    if (type == NC_CHAR)
+    {
+        text.resize(length);
+        if (NC_NOERR != nc_get_att_text(ncid, NC_GLOBAL, "speed_reference", text.data()))
+            input_error("Found but could not read the database attribute speed_reference.");
+    }
+    else if (type == NC_STRING && length == 1)
+    {
+        char* value = nullptr;
+        if (NC_NOERR != nc_get_att_string(ncid, NC_GLOBAL, "speed_reference", &value))
+            input_error("Found but could not read the database attribute speed_reference.");
+        text = value == nullptr ? "" : value;
+        nc_free_string(1, &value);
+    }
+    else
+    {
+        input_error("The database attribute speed_reference is not text.");
+    }
+    // Fixed-width writers pad with NULs or blanks.
+    text.erase(text.find_last_not_of(std::string(" \0", 2)) + 1);
+    const auto reference = parse_speed_reference(text);
+    if (!reference)
+    {
+        input_error("The database attribute speed_reference is '", text,
+                "'; expected 'ground' or 'air'.");
+    }
+    return *reference;
+}
+
 // Read an integer-valued scalar, converting from whatever numeric type the
 // file actually uses.  nc_get_var() reads the EXTERNAL type with no conversion,
 // so reading a byte or short variable through it into an int reads the wrong
@@ -202,6 +241,20 @@ std::array<std::size_t, 2> approx_equal_range(const std::vector<double>& a, doub
 // niceops::acosc & co. undefined (breaking the unit tests at link time) and
 // makes unqualified calls here ambiguous against the using-directive above.
 namespace niceops {
+
+std::optional<SpeedReference> parse_speed_reference(const std::string& name)
+{
+    if (name == "ground")
+        return SpeedReference::ground;
+    if (name == "air")
+        return SpeedReference::air;
+    return std::nullopt;
+}
+
+const char* to_string(SpeedReference reference)
+{
+    return reference == SpeedReference::air ? "air" : "ground";
+}
 
 // Repair the azimuth labels of a sphere written by a pre-versioned builder.
 //
@@ -773,6 +826,8 @@ Database::Database(const std::string& datafile_path)
         tip_speed_ = tip_speed_value;
         info("Database records a main rotor tip speed of ", tip_speed_, " m/s.");
     }
+    speed_reference_ = read_speed_reference(file_ncid);
+    info("Database flight conditions are referred to the ", to_string(speed_reference_), ".");
 
     auto group_ids = get_group_ids(file_ncid);
     // Every field below is filled from the loop over these groups.  With none,

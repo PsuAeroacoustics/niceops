@@ -752,6 +752,25 @@ touching it:
   unevenly spaced input is refitted onto the `-s` grid.
 
 - `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` resamples onto a uniform dt grid, smoothing via `src/smoothing_spline.hpp` and taking velocity and load factor from the spline's own derivatives (currently commented out in `main`; `watts_trim()` is reachable through `--trim`). It takes either a smoothing parameter or a `tolerance` bounding how far the smoothed path may sit from the measured one.
+- **`--speed_reference`** (roadmap step 3, the NICE-OPS half). It takes the flight condition
+  against the air, not the ground. The things to preserve:
+  - **Scope.** `Trajectory::relative_to_air` sets each state's wind (`State::wx`, `wy`) and
+    recomputes μ, `fpa` and `fpa_e` from `air_velocity()`. `process_trajectory` hands the same
+    air velocity to the sphere frame, so the nose follows it too. LF, CT and the load-factor
+    normal stay inertial.
+  - **Calm is bit-identical.** `vx - 0.0` is `vx`, and `speed_reference_air_calm_is_ground`
+    checks it end to end.
+  - **The database decides by default.** The root text attribute `speed_reference`, `ground`
+    or `air` (absent is ground), is read into `Database::speed_reference()`. It is settled per
+    trajectory in `refer_to_database_speed`, because each trajectory can name its own
+    database. Air with no wind in `--atmosphere` is refused, not taken as calm.
+  - **It runs after `--trim`,** whose "slowest point" is over the ground.
+  - **One rotation.** `CompassToLocal` (atmosphere_profile.hpp) turns east/north into the
+    local frame for this and for both ray models. Before it, refraction.cpp and
+    stratified.cpp each spelled the rotation out, with the same expression.
+  - **panam's side is not built yet.** It has to use the same definition, the README's
+    "Speed reference" section, and write the attribute. Until it does, every database is
+    ground-referenced, and an air run against one mixes the two.
 - `src/plotting.{hpp,cpp}` — `plt::` facade replacing the vendored matplotlib-d binding. Embeds Python via pybind11 and calls matplotlib directly; the interpreter is created lazily on first use, so non-plotting runs never pay the import cost.
 
 ### D standard-library replacements

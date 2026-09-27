@@ -526,6 +526,9 @@ struct RunOptions
     // wind into the local frame; NaN means --frame_bearing was not given and
     // +x is east.
     double frame_bearing = std::numeric_limits<double>::quiet_NaN();
+    // Which velocity the flight conditions are taken from (--speed_reference).
+    // Unset follows each database's own speed_reference attribute.
+    std::optional<SpeedReference> speed_reference;
     // Metres, after the --units conversion; NaN means the trim is off.
     double trim_start = 0.0;
     double utc_offset = 0.0;
@@ -557,6 +560,48 @@ struct PathJob
     std::string state;
     std::size_t count = 1;
 };
+
+// Take the trajectory's flight conditions against the air when its database's
+// were: the database's speed_reference attribute, unless --speed_reference
+// overrides it.  The wind at each state is the --atmosphere profile's at its
+// height, turned into the local frame by --frame_bearing.  A run with no wind
+// profile cannot refer anything to the air, and treating it as calm would
+// quietly mix the two references, so it is refused -- --speed_reference ground
+// says so explicitly.  Returns whether the trajectory is now air-referenced.
+bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
+        const RunOptions& options)
+{
+    const SpeedReference built = database.speed_reference();
+    const SpeedReference wanted = options.speed_reference.value_or(built);
+    if (wanted != built)
+    {
+        log("--speed_reference ", to_string(wanted), " overrides the database, whose flight "
+                "conditions are referred to the ", to_string(built), ".");
+    }
+    if (wanted == SpeedReference::ground)
+        return false;
+    if (!options.atmosphere || !options.atmosphere->has_wind())
+    {
+        input_error(options.speed_reference ? "--speed_reference air"
+                                            : "This database is referred to the air, and",
+                " needs the wind at the aircraft: give --atmosphere with wind columns, or "
+                "--speed_reference ground to take the ground velocity as the airspeed.");
+    }
+    const CompassToLocal to_local(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
+    const AtmosphereProfile& profile = *options.atmosphere;
+    const double strongest = trajectory.relative_to_air(
+            [&](double z) { return to_local(profile.wind_at(z)); });
+    log("Flight conditions referred to the air: mu, the path angle and the sphere's nose follow "
+        "the velocity less the profile's wind, which reaches ",
+            strongest / options.unit.to_metres, " ", options.unit.name, "/s at the aircraft.");
+    if (std::isnan(options.frame_bearing))
+    {
+        log("  the wind directions are compass bearings, turned into the local frame taking +x "
+            "as east. If this run's x/y are rotated -- the shipped AC tracks run +x along 210 "
+            "degrees -- give --frame_bearing.");
+    }
+    return true;
+}
 
 // Compute one trajectory's footprint and write its outputs, returning the
 // trajectory itself for the single-path plotting block.  Anything that throws
@@ -603,6 +648,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // allowed to sit 1e6 away from the measured path.
     //trajectory.adapt(options.dt, /*smoothing=*/0.3);
 
+    // Refer mu, the path angle and the sphere's nose to the velocity the
+    // database's conditions were taken from.  After the trim, which cuts the
+    // approach at its slowest point over the ground, not through the air.
+    const bool air_referenced = refer_to_database_speed(trajectory, database, options);
+
     // And time series data
     const std::size_t nt = trajectory.states.size();
 
@@ -644,8 +694,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
     {
+        const auto velocity = air_velocity(state);
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
-                Vec3(state.vx, state.vy, state.vz),
+                Vec3(velocity[0], velocity[1], velocity[2]),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
                 options.qsam ? state.fpa_e : state.fpa, state.CT));
     }
@@ -1079,9 +1130,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 "run +x along 210 degrees -- give --frame_bearing.");
         }
     }
-    else if (profile && profile->has_wind())
+    else if (profile && profile->has_wind() && !air_referenced)
     {
-        log("  the profile's wind is read but not used: it matters only to --refraction.");
+        log("  the profile's wind is read but not used: it matters only to --refraction and to "
+            "a database referred to the air (--speed_reference).");
     }
 
     // The spectral path's bound (Database::spectral_direction_bounds) serves
@@ -1743,6 +1795,8 @@ int run(int argc, char* argv[])
     std::string atmosphere_file;
     std::string refraction = "none";
     double shadow_floor = 20.0;
+    // Empty follows the database's speed_reference attribute.
+    std::string speed_reference;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
     // trajectory; an unset bearing leaves the axes east/north, which is what a
     // map wants -- the shipped AC tracks are the other case, their +x running
@@ -1862,6 +1916,12 @@ int run(int argc, char* argv[])
     app.add_option("--frame_bearing", frame_bearing,
             "Compass bearing, degrees, of the local +x axis. Default: x east, y north. "
             "The shipped AC tracks use 210.");
+    app.add_option("--speed_reference", speed_reference,
+            "Which velocity sets the flight condition -- mu, the path angle and the sphere's "
+            "nose: ground, or air (the ground velocity less the --atmosphere profile's wind at "
+            "the aircraft). Default: what the database records it was built with; ground if it "
+            "records nothing.")
+            ->check(CLI::IsMember({"ground", "air"}));
     auto* ground_elevation_option = app.add_option("--ground_elevation", ground_elevation,
             "Elevation of the observer plane above mean sea level, in --units. Subtracted "
             "from a geodetic track's altitude column to give height above the observers "
@@ -2219,6 +2279,8 @@ int run(int argc, char* argv[])
     options.stratified = refraction == "stratified";
     options.shadow_floor = shadow_floor;
     options.frame_bearing = frame_bearing;
+    if (!speed_reference.empty())
+        options.speed_reference = parse_speed_reference(speed_reference);
     if (!atmosphere_file.empty())
     {
         options.atmosphere = read_atmosphere_profile(atmosphere_file, unit, ground_elevation);

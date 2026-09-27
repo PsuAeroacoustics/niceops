@@ -282,6 +282,16 @@ add_test(NAME atmosphere_homogeneous COMMAND niceops -d databases/B407_fixed_loa
 set_tests_properties(atmosphere_uniform atmosphere_homogeneous PROPERTIES FIXTURES_SETUP atmosphere_runs)
 add_test(NAME atmosphere_uniform_is_homogeneous COMMAND golden_compare integrated/atmosphere_uniform.csv integrated/atmosphere_homogeneous.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(atmosphere_uniform_is_homogeneous PROPERTIES FIXTURES_REQUIRED atmosphere_runs)
+# --speed_reference air through the same atmosphere with its wind given as zero:
+# every flight condition is the ground one, so it has to reproduce the uniform
+# run.  And an air reference with no wind to subtract is refused, not taken as
+# calm.
+add_test(NAME speed_reference_air_calm COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere tests/data/B407_uniform_calm.csv --speed_reference air --gridstep 492 -L warn -o integrated/speed_reference_air_calm.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(speed_reference_air_calm PROPERTIES FIXTURES_SETUP atmosphere_runs)
+add_test(NAME speed_reference_air_calm_is_ground COMMAND golden_compare integrated/speed_reference_air_calm.csv integrated/atmosphere_uniform.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(speed_reference_air_calm_is_ground PROPERTIES FIXTURES_REQUIRED atmosphere_runs)
+add_test(NAME speed_reference_air_needs_wind COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/B407_uniform.csv --speed_reference air --gridstep 492 -L warn -o integrated/speed_reference_air_needs_wind.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(speed_reference_air_needs_wind PROPERTIES WILL_FAIL TRUE)
 # The same over arrays/coyle_approach.csv, whose microphones stand at different
 # heights.  A grid's observers share one, so their mean coefficients are formed
 # once per state; these take the per-pair path the grid never reaches.
