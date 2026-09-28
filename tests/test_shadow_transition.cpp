@@ -10,9 +10,11 @@
 #include <vector>
 
 #include "airy.hpp"
+#include "atmosphere_profile.hpp"
 #include "exact_solutions.hpp"
 #include "ground_effect.hpp"
 #include "refraction.hpp"
+#include "stratified.hpp"
 #include "util/constants.hpp"
 
 using namespace niceops; // NOLINT
@@ -212,4 +214,88 @@ TEST_CASE("the transition leaves lit rays alone and keeps to its floor and cap",
     // The table never goes above pressure doubling.
     for (std::size_t b = 0; b < bands.size(); b++)
         CHECK(transition.max_power_ratio(b) <= 4.0 * (1.0 + 1e-12));
+}
+
+TEST_CASE("each band's shadow boundary lies between the layered one and the fit's", "[shadow]")
+{
+    // example_windy.csv's upwind geometry from 100 m: the layered boundary is
+    // 535 m, the linear fit's 1620 m.
+    constexpr double r_s = 535.0, r_l = 1620.0, z_s = 100.0, z_r = 1.2, c0 = 340.0;
+    double previous = r_l;
+    for (const double f : {63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0})
+    {
+        const double b = ShadowTransition::band_boundary(r_s, r_l, z_s, z_r, f, c0);
+        INFO(f << " Hz: " << b << " m");
+        CHECK(b > r_s);
+        CHECK(b < previous);
+        previous = b;
+    }
+    // Toward the fit's as the diffraction length outgrows the gap, toward the
+    // layered one as it shrinks.
+    CHECK(ShadowTransition::band_boundary(r_s, r_l, z_s, z_r, 1.0, c0) > r_s + 0.8 * (r_l - r_s));
+    CHECK(ShadowTransition::band_boundary(r_s, r_l, z_s, z_r, 1e5, c0) < r_s + 0.15 * (r_l - r_s));
+    // One boundary is itself.
+    CHECK(ShadowTransition::band_boundary(r_s, r_s, z_s, z_r, 500.0, c0) == r_s);
+    CHECK(ShadowTransition::band_boundary(r_s, std::numeric_limits<double>::infinity(), z_s, z_r,
+                  500.0, c0) == r_s);
+}
+
+TEST_CASE("through a log-law shadow, stratified with the boundary law follows the PE", "[shadow]")
+{
+    // niceops_pe_compare's stratified column, formed the way it forms it, against
+    // the PE's levels from that tool on atmospheres/example_windy.csv: upwind
+    // (toward 270), source 100 m, receiver 1.2 m, grass.  Over the shadow edge,
+    // from the PE's last level above -3 dB to -25 dB, the model is within 2.7 dB
+    // rms at 500 Hz and 5.5 dB at 1 kHz; before the boundary law and the field
+    // near the boundary it was 30 and 34 dB off.
+    auto profile = read_atmosphere_profile("atmospheres/example_windy.csv", feet, 0.0);
+    profile = profile.with_hydrostatic_pressure(reference_pressure);
+    const double c0 = profile.at(0.0).sound_speed();
+    constexpr double z_s = 100.0, z_r = 1.2;
+    const double bearing = 270.0 * pi / 180.0;
+    const double hx = std::sin(bearing), hy = std::cos(bearing);
+    const LayeredSoundSpeed layered(profile, 90.0);
+    const EffectiveSoundSpeed linear(profile, 90.0, 0.0,
+            std::max(profile.top(), z_s) + 2.0 * EffectiveSoundSpeed::min_fit_span);
+    struct Band
+    {
+        double frequency, first_range, tolerance;
+        std::vector<double> pe;
+    };
+    const std::vector<Band> bands = {
+        {500.0, 500.0, 4.0,
+                {0.49, 0.92, 1.41, 1.61, 1.38, 0.65, -0.59, -2.37, -4.75, -7.81, -11.7, -16.44, -21.65}},
+        {1000.0, 500.0, 7.0, {4.64, 6.01, 6.27, 5.63, 4.22, 1.98, -1.25, -5.35, -10.19, -15.89, -22.19}},
+    };
+    GroundModel ground;
+    ground.receiver_height = z_r;
+    for (const Band& band : bands)
+    {
+        const std::vector<double> f = {band.frequency};
+        const auto admittance = ground_impedance(ground, f, c0);
+        const ShadowAttenuation attenuation(f, admittance, 0, 1);
+        const ShadowTransition transition(f, admittance, z_r, c0, 0, 1);
+        const Vec3 source(0.0, 0.0, z_s);
+        std::vector<double> scratch;
+        double sum = 0.0;
+        for (std::size_t i = 0; i < band.pe.size(); i++)
+        {
+            const double r = band.first_range + 40.0 * static_cast<double>(i);
+            const Vec3 receiver(r * hx, r * hy, z_r);
+            RefractedRay ray = layered_direct_ray(layered, linear, source, linear.moments(z_s), receiver,
+                    linear.moments(z_r), scratch, true);
+            layered_finish_ground(layered, ray, GroundGeometry::point, z_r, scratch);
+            const double ground_db = excess_ground_attenuation(ground, ray.path.source_height,
+                    ray.path.ground_distance, c0, f)[0];
+            const double spreading = 20.0 * std::log10(std::hypot(r, z_s - z_r) / ray.path.range);
+            double weight = 1.0, loss = 0.0;
+            REQUIRE(transition.apply(ray, attenuation, 20.0, 0, 1, &weight, &loss));
+            const double level = spreading + weight * ground_db - loss;
+            INFO(band.frequency << " Hz, " << r << " m: PE " << band.pe[i] << ", model " << level);
+            sum += (level - band.pe[i]) * (level - band.pe[i]);
+        }
+        const double rms = std::sqrt(sum / static_cast<double>(band.pe.size()));
+        INFO(band.frequency << " Hz: rms " << rms << " dB");
+        CHECK(rms < band.tolerance);
+    }
 }

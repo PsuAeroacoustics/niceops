@@ -512,13 +512,27 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       run stops being exact.
     - `Database::spectral_level_along`'s `ground_weight` is how the ground term is faded out:
       a power of the power ratio, per band.
-    - **Off for `--refraction stratified`**, by leaving `boundary_gradient` 0 in
-      `layered_direct_eigenray`. Scaled by the gradient that makes the log-law boundary, it
-      falls 10-20 dB too fast at 125-250 Hz against the PE, and moved the demo footprint by
-      up to -10 dB. The PE says the low bands do not see the thin fast layer. Needs a
-      per-band effective curvature first (roadmap: shadow zone, item 1).
+    - **Through layers, each band gets its own boundary**, r_b = r_s + w (r_l - r_s),
+      w = x / (x + boundary_resolution), x the band's diffraction length at the fit's
+      curvature over r_l - r_s (`band_boundary`). r_s is the layered boundary, r_l the linear
+      fit's, and both ride on `DirectEigenray`. Scaled by r_s alone it fell 10-20 dB too
+      fast at 125-250 Hz against the PE, because low bands do not see a log law's thin fast
+      layer. The constant 0.363 was fitted on 12 log laws and held out on example_windy
+      (6.8 dB edge rms, against 18.9 at r_s). Pooled over 16 log-law cases the edge error
+      goes 30.7 -> 6.1 dB, and the lapse control stays at 0.4.
+    - **Past r_s the lit ray is the linear fit's.** `layered_direct_ray(..., true)` hands it
+      back (`from_linear_fit`, finished by `finish_ground`) whenever r > r_s, *not only where
+      the layered solve fails*. On a log law the dipping family's range is not monotonic
+      and reaches tens of metres past its end, and those near-grazing rays have no
+      reflected partner, so the ground term took the grazing geometry (-32 dB). It is
+      formed in `form_ray`, so the peak search bounds the ray whose level it takes. Only
+      for observers the transition serves; plates and no-ground runs are byte-identical.
+    - **The calibration was confounded once, so beware.** An experiment that sets a
+      boundary by hand must also set `linear_boundary` equal to it, or `apply()`'s own
+      interpolation runs on top. That run falsely suggested w = 0.
     - Against the PE on a linear lapse: shadow-edge error 5-20 dB -> 0.1-1 dB.
-      `tests/test_shadow_transition.cpp` holds it to the exact series.
+      `tests/test_shadow_transition.cpp` holds it to the exact series, and pins the law
+      against stored PE levels (example_windy, 100 m source, 500 Hz and 1 kHz).
 - `src/stratified.{hpp,cpp}` — `--refraction stratified` (roadmap step 6a): the effective
   sound speed piecewise linear between the profile's own levels, circular arcs within each
   layer, eigenrays solved per pair. The things to preserve:

@@ -1352,13 +1352,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // The two halves of a refracted ray, from whichever model the run
         // asked for; the layered one keeps its path's layers in `layer_scratch`.
         std::vector<double> layer_scratch;
+        // `transition`: the observer is a point receiver that ShadowTransition
+        // serves, so past the layered boundary its lit level is the linear fit's.
         auto form_ray = [&](std::size_t it, const Vec3& observer,
-                                const EffectiveSoundSpeed::Moments& at_receiver) {
+                                const EffectiveSoundSpeed::Moments& at_receiver, bool transition) {
             if (layered_sound_speed)
             {
                 return layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
                         source_states[it].position, state_moments[it], observer, at_receiver,
-                        layer_scratch);
+                        layer_scratch, transition);
             }
             return direct_ray(*effective_sound_speed, source_states[it].position, state_moments[it],
                     observer, at_receiver);
@@ -1437,7 +1439,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     // ground term and the creeping-wave loss.
                     extra_loss = shadow.data();
                     ground_weight = shadow_weight.data();
-                    if (ray.shadow_depth > 0.0)
+                    // Past the layered boundary counts, lit linear fit or not.
+                    if (ray.shadow_depth > 0.0 || ray.from_linear_fit)
                         shadowed_here++;
                 }
                 else if (ray.shadow_depth > 0.0)
@@ -1472,7 +1475,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             generation, evaluated_here,
                             [&](std::size_t it) {
                                 RefractedGeometry g;
-                                g.ray = form_ray(it, observer, at_receiver);
+                                g.ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
                                 const auto e = equivalent_geometry(it, g.ray.path);
                                 g.squared_range = e.squared_range;
                                 g.along = e.along;
@@ -1488,7 +1491,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             [&](std::size_t it) {
                                 if (travel_stamp[it] == generation)
                                     return travel[it];
-                                return sound_speed * form_ray(it, observer, at_receiver).travel_time;
+                                return sound_speed * form_ray(it, observer, at_receiver, transition_here != nullptr).travel_time;
                             });
                 }
                 else if (spectral)
@@ -1520,7 +1523,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    auto ray = form_ray(it, observer, at_receiver);
+                    auto ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
                     // Reception time from the curved ray's travel time, as the
                     // range a straight ray at the surface sound speed would take.
                     ranges[it] = sound_speed * ray.travel_time;

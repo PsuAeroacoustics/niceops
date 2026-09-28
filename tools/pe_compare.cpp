@@ -153,7 +153,7 @@ int main(int argc, char** argv)
         RefractedRay by_linear = direct_ray(linear, source, at_source, receiver, at_receiver);
         finish_ground(by_linear, GroundGeometry::point, z_r);
         RefractedRay by_layers = layered_direct_ray(layered, linear, source, at_source, receiver,
-                at_receiver, scratch);
+                at_receiver, scratch, true);
         layered_finish_ground(layered, by_layers, GroundGeometry::point, z_r, scratch);
 
         std::cout << r / unit.to_metres;

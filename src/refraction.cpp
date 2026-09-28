@@ -72,6 +72,7 @@ DirectEigenray direct_eigenray(const LinearProfile& profile, double z_s, double 
         const double t_s = c.grazing_half_chord(z_s);
         const double t_r = c.grazing_half_chord(z_r);
         ray.boundary = t_s + t_r;
+        ray.linear_boundary = ray.boundary;
         ray.boundary_gradient = profile.gradient;
         if (r > t_s + t_r)
         {
@@ -407,6 +408,7 @@ RefractedRay direct_ray(const EffectiveSoundSpeed& air, const Vec3& source,
     RefractedRay ray;
     ray.profile = air.fit(z_s, at_source, z_r, at_receiver, hx, hy);
     ray.source_z = z_s;
+    ray.receiver_z = z_r;
     ray.horizontal = r;
 
     if (r < 1e-3 || std::fabs(ray.profile.gradient) < straight_gradient)
@@ -700,6 +702,19 @@ double ShadowTransition::level(std::size_t band, double xi, double s) const
     return v0 + t * (v1 - v0);
 }
 
+double ShadowTransition::band_boundary(double r_s, double r_l, double z_s, double z_r,
+        double frequency, double sound_speed)
+{
+    if (!(r_l > r_s) || !std::isfinite(r_l))
+        return r_s;
+    const double root = std::sqrt(2.0 * std::max(z_s, 0.0)) + std::sqrt(2.0 * std::max(z_r, 0.0));
+    const double a_linear = sound_speed * root * root / (r_l * r_l);
+    // x: the band's diffraction length at the fit's curvature over the gap.
+    const double s = std::cbrt(pi * frequency / a_linear);
+    const double x = s * s * sound_speed / (pi * frequency) / (r_l - r_s);
+    return r_s + x / (x + boundary_resolution) * (r_l - r_s);
+}
+
 bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& attenuation,
         double floor, std::size_t first_band, std::size_t last_band, double* ground_weight,
         double* loss) const
@@ -707,29 +722,46 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
     if (empty() || !ray.curved || !(ray.direct.boundary_gradient < 0.0)
             || !std::isfinite(ray.direct.boundary) || first_band >= last_band)
         return false;
-    const double a = -ray.direct.boundary_gradient;
     const double c0 = ray.profile.sound_speed;
-    // The creeping wave past the table decays by the same curvature.
-    const LinearProfile equivalent {c0, -a};
-    const double past = ray.horizontal - ray.direct.boundary;
-    // The widest diffraction length is the lowest band's: if the ray is lit by
-    // more than xi_ray of that, it is lit in every band.
+    const double r_s = ray.direct.boundary;
+    const double r_l = ray.direct.linear_boundary;
+    // Two boundaries (through layers), or one.
+    const bool between = std::isfinite(r_l) && r_l > r_s;
+    const double root = std::sqrt(2.0 * std::max(ray.source_z, 0.0))
+            + std::sqrt(2.0 * std::max(ray.receiver_z, 0.0));
+    // The curvature that makes a boundary r: c0 root^2 / r^2.
+    const double a_one = -ray.direct.boundary_gradient;
+    const double a_linear = between ? c0 * root * root / (r_l * r_l) : a_one;
+    // Every band's boundary lies in [r_s, r_l] and its diffraction length is at
+    // most the lowest band's at the weakest curvature: lit by more than xi_ray
+    // of that, it is lit in every band.
     const double f_lo = frequencies_[first_band];
-    const double s_lo = std::cbrt(pi * f_lo / a);
-    if (past < xi_ray * s_lo * s_lo * c0 / (pi * f_lo) && !(ray.shadow_depth > 0.0))
+    const double s_lo = std::cbrt(pi * f_lo / a_linear);
+    if (ray.horizontal - r_s < xi_ray * s_lo * s_lo * c0 / (pi * f_lo) && !(ray.shadow_depth > 0.0))
         return false;
+    const LinearProfile one_boundary {c0, -a_one};
     for (std::size_t band = first_band; band < last_band; band++)
     {
         const double f = frequencies_[band];
-        const double creeping = ray.shadow_depth > 0.0
-                ? std::min(attenuation.rate(band, equivalent) * ray.shadow_depth, floor)
+        double a = a_one;
+        double boundary = r_s;
+        double depth = ray.shadow_depth;
+        if (between)
+        {
+            boundary = band_boundary(r_s, r_l, ray.source_z, ray.receiver_z, f, c0);
+            a = c0 * root * root / (boundary * boundary);
+            depth = std::max(ray.horizontal - boundary, 0.0);
+        }
+        const LinearProfile equivalent = between ? LinearProfile {c0, -a} : one_boundary;
+        const double creeping = depth > 0.0
+                ? std::min(attenuation.rate(band, equivalent) * depth, floor)
                 : 0.0;
         ground_weight[band] = 1.0;
         loss[band] = creeping;
         const double s = std::cbrt(pi * f / a);
         if (s < s_min)
             continue;
-        const double xi = past * pi * f / (s * s * c0); // F = 2 s^2 / k0
+        const double xi = (ray.horizontal - boundary) * pi * f / (s * s * c0); // F = 2 s^2 / k0
         if (xi <= xi_ray)
             continue;
         double v = level(band, xi, s);

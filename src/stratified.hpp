@@ -100,9 +100,17 @@ ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, d
 // --refraction stratified's counterparts of direct_ray() and finish_ground().
 // `linear` supplies the warm start; `scratch` holds the path's effective sound
 // speed at each level between the two calls, so is per thread.
+//
+// With `linear_past_shadow`, a pair in the layered shadow whose linear fit is
+// still lit gets the fit's ray instead, carrying both boundaries
+// (from_linear_fit set).  That is for ShadowTransition, whose bands' boundaries
+// lie between the two: past the layered one the lit level is the fit's.
+// Formed here, not later, so that the peak search bounds the ray whose level
+// it will take.
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
-        const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch);
+        const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
+        bool linear_past_shadow = false);
 void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, GroundGeometry ground,
         double microphone_height, std::vector<double>& scratch);
 

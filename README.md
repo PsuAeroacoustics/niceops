@@ -419,8 +419,8 @@ path supplies:
   one table per band and microphone height serves every path. The ray model stands until
   2F before the boundary, blends into the table by 1F before it, and the table (floored 20 dB
   below its boundary level) takes over from there. It follows the exact field to 0.1–1 dB
-  for sources from 30 to 300 m. It is not yet used with `--refraction stratified`; see the
-  parabolic-equation section below.
+  for sources from 30 to 300 m. With `--refraction stratified` each band gets its own
+  boundary first, as the next section describes.
 
 `atmospheres/example_windy.csv` is an illustrative profile, not a measurement: a neutral
 log-law westerly (5.2 m/s at 10 m, 8.5 m/s at 1000 ft) over the ISA lapse. On the demo track
@@ -516,15 +516,26 @@ reception time, the shadow's decay and floor, and the peak search.
 What the layers change is near the ground. A log-law wind is zero at the ground, so for
 propagation upwind the fastest air is at the surface. Snell's law then fixes the limiting
 ray's launch angle from the speeds at the source and at the ground alone, whatever lies
-between. For a source at 100 m in `atmospheres/example_windy.csv`, the upwind shadow begins
-520 m out, where a fitted line puts it past 1.2 km. On the demo grid with a point receiver
-this takes the upwind half 11 dB below `--refraction linear` (mean -6.3 dB over the whole
-grid, 5th percentile -20 dB), and puts 44% of evaluations in shadow against 14%.
+between. For a source at 100 m in `atmospheres/example_windy.csv`, the layered model's
+upwind shadow begins 535 m out, where a fitted line puts it past 1.6 km.
 
-**Treat that difference as the size of the uncertainty, not as the answer.** Ray theory
-takes the thin near-ground shear layer at face value, but at low frequencies the wavelength
-is comparable to the layer, and diffraction fills in what rays leave dark. The parabolic
-equation below confirms it: the two models bracket the truth upwind.
+**The wave does not take that boundary at face value.** Rays follow the thin near-ground
+shear layer, but the wave resolves it only once its diffraction length is short against the
+distance between the two boundaries. At 125 Hz the parabolic equation below shows no shadow
+until about a kilometre, and even at 2 kHz it has not reached the layered boundary. So with a
+point receiver each band gets an effective boundary between the two,
+r_b = r_s + w (r_l − r_s), where w = x / (x + 0.363) and x is the band's diffraction length
+at the linear fit's curvature over r_l − r_s. The boundary field is then scaled by the
+curvature that makes r_b. Past the layered boundary the lit level is the linear fit's ray:
+- The layered model's near-grazing rays there have no reflected partner.
+- On a log law its dipping family reaches tens of metres past its own end.
+
+The law's one constant was fitted on twelve log laws (u* 0.2–0.6 m/s, z0 0.01–0.1 m,
+sources 30 and 100 m, 125 Hz – 2 kHz) and checked on `example_windy.csv`, which was held out:
+6.8 dB rms over the shadow edge against the PE there, against 18.9 dB with the layered
+boundary as it stands. On the demo grid with a point receiver, `stratified` now averages
+3.1 dB below `linear` (5th percentile −12.4 dB), where it was 6.1 (−19). Plates, and runs
+without `--ground_effect`, keep the layered boundary and the creeping-wave loss.
 
 Costs, with a point receiver: the demo grid's acoustic loop takes 12.0 s (3.3 s linear, 2.1 s
 without refraction). A 96-microphone scattered array like `arrays/coyle_approach.csv` takes
@@ -600,17 +611,23 @@ level error against it (rms, dB):
 | case | before | with the boundary field |
 | --- | --- | --- |
 | linear lapse (−0.018 /s), sources 30 and 100 m, 125 Hz – 2 kHz | 5–20 | 0.1–1.0 |
-| log-law winds, 18 cases, 125 Hz – 2 kHz, median | 29.5 | 16.5 (not adopted) |
+| log-law winds, `stratified`, 16 cases, 125 Hz – 2 kHz, pooled | 30.7 | 6.1 |
+
+| log-law winds, pooled rms | 125 Hz | 250 Hz | 500 Hz | 1 kHz | 2 kHz |
+| --- | --- | --- | --- | --- | --- |
+| `stratified` before | 7.1 | 22.6 | 34.6 | 37.4 | 39.3 |
+| with the boundary field and the per-band boundary | 6.0 | 5.2 | 5.7 | 4.7 | 8.4 |
 
 On the linear profile, where the ray model's geometry is right, the boundary field puts it on
-the PE. On log laws it is used only with `--refraction linear` for now. `stratified`'s
-boundary there comes from the steep lowest metres of the wind, and the PE says that holds
-only at high frequency. At 125 Hz the PE shows no shadow until about a kilometre, near the
-linear fit's boundary. Scaled by `stratified`'s curvature, the boundary field falls 10–20 dB
-too fast. `stratified` keeps its old ground term until each band gets its own effective
-near-ground curvature. Clipping the profile below a fixed height is not that treatment: once
-the height passes the microphone, the microphone sits in the clipped layer and shadows at
-every range.
+the PE. On log laws it needs the per-band boundary too. Scaled by the layered model's own
+boundary, it falls 10–20 dB too fast at 125–250 Hz and pooled at 19.5 dB.
+
+Two things that looked like the treatment and are not:
+- **Clipping the profile below a fixed height.** Once the height passes the microphone, the
+  microphone sits in the clipped layer and shadows at every range.
+- **Smoothing the profile per band.** A linear profile smoothed only over its lowest metres
+  moved the lapse control by 20 dB at 2.5 km. The ray model is too sensitive to structure
+  below the microphone for either to work.
 
 The PE's deep shadow, 40–80 dB down, is not to be believed either. With no turbulence in it,
 nothing scatters energy in, and the ray models' `--shadow_floor` stands in for exactly that.

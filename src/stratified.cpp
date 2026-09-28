@@ -472,19 +472,17 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     // ground, and none aloft turns rays back down.  Its boundary is where the
     // limiting ray reaches the receiver's height.
     //
-    // boundary_gradient is left 0, which keeps ShadowTransition off this model
-    // for now.  The gradient that makes this boundary is the log-law's steep
-    // lowest metres, and against the parabolic equation that is right only at
-    // high frequency: at 125 Hz the wave does not see the layer, the PE's
-    // shadow starts nearer the linear fit's boundary than this one, and the
-    // transition scaled by it falls 10-20 dB too fast.  The old ground term
-    // and creeping-wave loss stay until the near-ground treatment gives each
-    // band its own effective curvature (roadmap: the shadow zone, item 1).
+    // ShadowTransition does not take it at face value: a log law's steep
+    // lowest metres set it, and the wave resolves them only at high frequency
+    // (see there, and layered_direct_ray's linear_boundary).
     if (fams.count > 0 && !(path.fastest_above(z_s) > c_s)
             && !(path.fastest(0.0, z_s) > layers.at(0.0)))
     {
         const Family& limit = fams.list[fams.limiting];
         out.boundary = trace_p<false>(path, z_s, z_r, fams.limiting_p, limit.arm, false).dx;
+        const double root = std::sqrt(2.0 * std::max(z_s, 0.0)) + std::sqrt(2.0 * std::max(z_r, 0.0));
+        if (out.boundary > 0.0)
+            out.boundary_gradient = -layers.at(0.0) * root * root / (out.boundary * out.boundary);
     }
     for (int k = 0; k < fams.count; k++)
     {
@@ -569,7 +567,8 @@ Layers path_layers(const LayeredSoundSpeed& air, double hx, double hy, std::vect
 
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
-        const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch)
+        const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
+        bool linear_past_shadow)
 {
     // The linear model's ray: the warm start, and the answer wherever the
     // layered solve does not apply -- straight paths, and a receiver at or
@@ -591,13 +590,29 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
         straight.profile = {layers.c[0], 0.0};
         straight.travel_time = straight.path.range / layers.c[0];
         straight.source_z = z_s;
+        straight.receiver_z = z_r;
         straight.horizontal = r;
         return straight;
     }
     const double guess = ray.curved ? ray.direct.launch : std::atan2(z_r - z_s, r);
     const auto direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
+    const double linear_boundary = ray.direct.boundary;
+    // Past the layered boundary, not only where the layered solve fails: on a
+    // log law the dipping family's range is not monotonic, and reaches some
+    // tens of metres past its end, where its near-grazing rays have no
+    // reflected partner and the ground term would take the grazing geometry.
+    if (linear_past_shadow && r > direct.boundary && ray.curved && ray.direct.lit
+            && linear_boundary > direct.boundary)
+    {
+        ray.direct.boundary = direct.boundary;
+        ray.direct.linear_boundary = linear_boundary;
+        ray.direct.boundary_gradient = direct.boundary_gradient;
+        ray.from_linear_fit = true;
+        return ray;
+    }
     ray.curved = true;
     ray.direct = direct;
+    ray.direct.linear_boundary = linear_boundary;
     RayPath& path = ray.path;
     const double horizontal = std::cos(direct.launch);
     path.direction = Vec3(horizontal * hx, horizontal * hy, std::sin(direct.launch));
@@ -617,6 +632,11 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
 {
     if (!ray.curved)
         return;
+    if (ray.from_linear_fit)
+    {
+        finish_ground(ray, ground, microphone_height);
+        return;
+    }
     RayPath& path = ray.path;
     const DirectEigenray& direct = ray.direct;
     if (ground == GroundGeometry::point && ray.source_z > microphone_height)

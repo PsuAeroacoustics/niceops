@@ -71,10 +71,14 @@ struct DirectEigenray
     // height.  Lit rays carry it too, for the transition into the shadow
     // (ShadowTransition).  Infinite where the profile makes no such shadow.
     double boundary = std::numeric_limits<double>::infinity();
-    // The gradient (1/s, negative) the diffraction near the boundary is scaled
-    // by: for --refraction linear, the profile's own.  0 where there is no
-    // boundary, or where ShadowTransition should not be used -- which for now
-    // is --refraction stratified (see layered_direct_eigenray).
+    // The path's linear fit's own boundary.  For --refraction linear it is
+    // `boundary`; through layers it lies beyond, since a log law's steep lowest
+    // metres bring the layered boundary in.  ShadowTransition puts each band's
+    // effective boundary between the two.
+    double linear_boundary = std::numeric_limits<double>::infinity();
+    // The gradient (1/s, negative) of the linear profile whose grazing ray makes
+    // `boundary`, r_b = sqrt(2 R z_s) + sqrt(2 R z_r): for --refraction linear the
+    // profile's own.  0 where there is no boundary.
     double boundary_gradient = 0.0;
 };
 
@@ -168,8 +172,12 @@ struct RefractedRay
     // height and horizontal distance, and the direct eigenray.
     bool curved = false;
     double source_z = 0.0;
+    double receiver_z = 0.0;
     double horizontal = 0.0;
     DirectEigenray direct;
+    // Set by layered_direct_ray when it hands back the linear fit's ray past
+    // the layered shadow boundary (see there); finished as a linear ray.
+    bool from_linear_fit = false;
 };
 
 // The refracted path from `source` to the microphone at `receiver` --
@@ -315,6 +323,20 @@ void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, 
 // band whose s falls below s_min keeps the old model, ground term and
 // creeping-wave loss: there the source is a large fraction of R up and the
 // profile near the ground is not what the table assumes.
+//
+// Through layers there are two boundaries: the layered model's r_s, set by a
+// log law's steep lowest metres, and the path's linear fit's r_l, beyond it.
+// Against the parabolic equation the shadow begins between them, near r_l at
+// low frequency and moving toward r_s as the frequency rises, but reaching it
+// by no means even at 2 kHz: the wave does not resolve the thin fast layer
+// until its diffraction length is short against the gap.  Each band therefore
+// takes r_b = r_s + w (r_l - r_s), w = x / (x + boundary_resolution), with x
+// the band's diffraction length at the fit's curvature over r_l - r_s, and is
+// scaled by the curvature that makes r_b.  Fitted on twelve log laws (u* 0.2 -
+// 0.6 m/s, z0 0.01 - 0.1 m, sources 30 and 100 m, 125 Hz - 2 kHz) and held out
+// on atmospheres/example_windy.csv: shadow-edge error against the PE 18.9 dB rms
+// with r_b = r_s, 6.7 dB with the law.  With r_s = r_l, a linear profile, it is
+// the one boundary.
 class ShadowTransition
 {
 public:
@@ -343,6 +365,11 @@ public:
             std::size_t first_band, std::size_t last_band, double* ground_weight,
             double* loss) const;
 
+    // One band's effective boundary between the layered r_s and the linear
+    // fit's r_l > r_s (see above), for a source and receiver z_s and z_r up.
+    static double band_boundary(double r_s, double r_l, double z_s, double z_r, double frequency,
+            double sound_speed);
+
     // V, dB, in `band` at xi and s: the table (tests).  NaN where it has no
     // value, which is only on the lit side, below xi_modal.
     double level(std::size_t band, double xi, double s) const;
@@ -357,6 +384,9 @@ public:
     // The table's source height in l, or 0.1 s^2 where that is lower, which
     // keeps the source below R / 10.
     static constexpr double reference_height = 20.0;
+    // Where a band's diffraction length at the fit's curvature equals this
+    // fraction of r_l - r_s, its boundary is half-way between them.
+    static constexpr double boundary_resolution = 0.363;
 
 private:
     double column(std::size_t band, std::size_t j, double xi) const;
