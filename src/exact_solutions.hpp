@@ -63,8 +63,11 @@ std::vector<std::complex<double>> downward_pressure(const ExactProblem& problem,
 // in the order of the zeros of Ai' they continue from, then any that no zero
 // of Ai' continues to (the surface wave of a soft enough ground).  Checked
 // against the argument principle, and throws if that finds one missing.
-// Built for |q| <= 6 and refuses more: q = i k0 l beta (downward), and the
-// benchmark's grounds reach 4.9.
+// Past |q| = 6 it seeds each zero from the mode equation's large-argument form
+// instead, which needs Re q <= 0, where there is no surface wave: every
+// upward-refracting problem over an ordinary ground (q = -i w^2 k0 l beta).
+// It refuses |q| > 6 with Re q > 0, which includes every downward one
+// (q = i k0 l beta); the benchmark's grounds reach 4.9.
 std::vector<std::complex<double>> impedance_airy_zeros(std::complex<double> q, int count);
 
 // The one zero of Ai'(t) + q Ai(t) that continues the first zero of Ai' from

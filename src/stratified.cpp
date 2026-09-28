@@ -468,6 +468,24 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     const double focus_floor = chord * std::pow(10.0, -max_focusing_gain_db / 20.0);
 
     DirectEigenray out;
+    // A ground-grazing shadow: the fastest air below the source is at the
+    // ground, and none aloft turns rays back down.  Its boundary is where the
+    // limiting ray reaches the receiver's height.
+    //
+    // boundary_gradient is left 0, which keeps ShadowTransition off this model
+    // for now.  The gradient that makes this boundary is the log-law's steep
+    // lowest metres, and against the parabolic equation that is right only at
+    // high frequency: at 125 Hz the wave does not see the layer, the PE's
+    // shadow starts nearer the linear fit's boundary than this one, and the
+    // transition scaled by it falls 10-20 dB too fast.  The old ground term
+    // and creeping-wave loss stay until the near-ground treatment gives each
+    // band its own effective curvature (roadmap: the shadow zone, item 1).
+    if (fams.count > 0 && !(path.fastest_above(z_s) > c_s)
+            && !(path.fastest(0.0, z_s) > layers.at(0.0)))
+    {
+        const Family& limit = fams.list[fams.limiting];
+        out.boundary = trace_p<false>(path, z_s, z_r, fams.limiting_p, limit.arm, false).dx;
+    }
     for (int k = 0; k < fams.count; k++)
     {
         const Family& family = fams.list[k];

@@ -496,6 +496,29 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       frequency; the run logs the bands.
     - `tests/test_shadow_attenuation.cpp` holds the rate to the exact residue series' slope
       deep in the shadow, 0.02-0.3% on the benchmark grounds. Keep it.
+  - **`ShadowTransition`: the level near a shadow boundary** (`--refraction linear`, point
+    receivers only). Ray theory fails within a couple of diffraction lengths F = 2 k0 l^2 of
+    the boundary; its ground term at the grazing geometry was 10-25 dB low over grass and
+    ~5 dB high over rigid ground there. Per band and microphone height, a table V(xi, s) of
+    the residue series relative to the ray's own spreading, xi = (r - r_b)/F. Things to keep:
+    - **Built at a reference source height, 20 l** (0.1 s^2 when lower, keeping it under
+      R/10). V collapses over source height (within ~1 dB, 5 l-100 l, from xi = -1.5) but
+      the series itself fails for high sources at high frequency, so do not build it at
+      the actual height.
+    - **Each model at its own boundary**: the table places the exact field at the parabolic
+      boundary of k^2-linear and the ray at the circle one; NICE-OPS uses the ray's.
+    - **Ray model below xi = -2, blend to -1, V beyond**, floored at V(0) - floor and capped
+      at 20 log10 2. `max_power_ratio` feeds the peak search's ground bound, or the windowed
+      run stops being exact.
+    - `Database::spectral_level_along`'s `ground_weight` is how the ground term is faded out:
+      a power of the power ratio, per band.
+    - **Off for `--refraction stratified`**, by leaving `boundary_gradient` 0 in
+      `layered_direct_eigenray`. Scaled by the gradient that makes the log-law boundary, it
+      falls 10-20 dB too fast at 125-250 Hz against the PE, and moved the demo footprint by
+      up to -10 dB. The PE says the low bands do not see the thin fast layer. Needs a
+      per-band effective curvature first (roadmap: shadow zone, item 1).
+    - Against the PE on a linear lapse: shadow-edge error 5-20 dB -> 0.1-1 dB.
+      `tests/test_shadow_transition.cpp` holds it to the exact series.
 - `src/stratified.{hpp,cpp}` — `--refraction stratified` (roadmap step 6a): the effective
   sound speed piecewise linear between the profile's own levels, circular arcs within each
   layer, eigenrays solved per pair. The things to preserve:
@@ -592,6 +615,10 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     surface wave, near q², and the continuation reaches it. `first_impedance_airy_zero`
     follows the first zero alone, which stays well apart from its neighbours, to any |q|
     (checked to 1e5 against a_1 - 1/q - a_1/(3q^3)): what the shadow loss needs.
+    **Past |q| = 6 with Re q <= 0** (every upward problem over ordinary ground) the zeros
+    are seeded instead from zeta = (n - 3/4) pi - atan(q / sqrt(x)), b = -x, and polished by
+    Newton; checked to step by pi in zeta. That removed the limit for `upward_pressure`.
+    Re q > 0 past 6 (downward, and surface-wave grounds) still throws.
   - **A mode sum returns NaN where it cannot be trusted:** terms cancelling by more than nine
     orders (the residue series near the source, whose terms grow before decaying), or a tail
     not yet dead at the 12000-mode cap. Callers skip NaN rather than tighten the cap.

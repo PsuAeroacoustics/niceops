@@ -408,6 +408,19 @@ path supplies:
   takes over. A ground reactive enough to carry a surface wave into the shadow (a porosity
   rate of tens per metre, a thin hard-backed layer, low bands) takes the rigid rate in those
   bands, and the log names them.
+- **Near the shadow boundary**, with `--refraction linear` and a point receiver, the level
+  comes from the exact field instead. Within a couple of diffraction lengths of the boundary
+  (F = 2k₀ℓ², about 100–400 m) ray theory fails on both sides: its ground term, taken at
+  the grazing ray's geometry, sinks toward the grazing ground wave, 10–25 dB below the exact
+  field over grass, and over rigid ground it doubles where the exact field does not.
+  NICE-OPS tabulates the residue series of the path's linear profile per band, relative to
+  the ray's own spreading, as a function of distance past the boundary in diffraction
+  lengths. That function barely depends on the source's height, which is Fock's result, so
+  one table per band and microphone height serves every path. The ray model stands until
+  2F before the boundary, blends into the table by 1F before it, and the table (floored 20 dB
+  below its boundary level) takes over from there. It follows the exact field to 0.1–1 dB
+  for sources from 30 to 300 m. It is not yet used with `--refraction stratified`; see the
+  parabolic-equation section below.
 
 `atmospheres/example_windy.csv` is an illustrative profile, not a measurement: a neutral
 log-law westerly (5.2 m/s at 10 m, 8.5 m/s at 1000 ft) over the ISA lapse. On the demo track
@@ -580,6 +593,24 @@ What that says:
 `tools/plot_pe_compare.py OUTDIR CSV:TITLE ...` plots that output: one figure per case, a
 panel per band, and a summary of where each shadow begins. It runs under the build's Python,
 `build/pyenv/bin/python`.
+
+**The shadow's edge.** Over the stretch where the PE falls from −3 to −25 dB, the ray models'
+level error against it (rms, dB):
+
+| case | before | with the boundary field |
+| --- | --- | --- |
+| linear lapse (−0.018 /s), sources 30 and 100 m, 125 Hz – 2 kHz | 5–20 | 0.1–1.0 |
+| log-law winds, 18 cases, 125 Hz – 2 kHz, median | 29.5 | 16.5 (not adopted) |
+
+On the linear profile, where the ray model's geometry is right, the boundary field puts it on
+the PE. On log laws it is used only with `--refraction linear` for now. `stratified`'s
+boundary there comes from the steep lowest metres of the wind, and the PE says that holds
+only at high frequency. At 125 Hz the PE shows no shadow until about a kilometre, near the
+linear fit's boundary. Scaled by `stratified`'s curvature, the boundary field falls 10–20 dB
+too fast. `stratified` keeps its old ground term until each band gets its own effective
+near-ground curvature. Clipping the profile below a fixed height is not that treatment: once
+the height passes the microphone, the microphone sits in the clipped layer and shadows at
+every range.
 
 The PE's deep shadow, 40–80 dB down, is not to be believed either. With no turbulence in it,
 nothing scatters energy in, and the ray models' `--shadow_floor` stands in for exactly that.

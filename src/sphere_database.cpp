@@ -1559,7 +1559,7 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
         const std::vector<std::complex<double>>* impedance, double sound_speed,
         std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
         const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
-        const double* extra_loss) const
+        const double* extra_loss, const double* ground_weight) const
 {
     // Reused across calls: this runs once per observer per trajectory state,
     // and the band count is fixed for the life of the database.
@@ -1611,6 +1611,18 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
                     path.ground_distance, sound_speed, frequencies_, correction.data(),
                     first_band, last_band, true);
         }
+        if (ground_weight != nullptr)
+        {
+            // A weight scales the correction in dB, so the power ratio's power.
+            for (std::size_t band = first_band; band < std::min(last_band, correction.size()); band++)
+            {
+                const double w = ground_weight[band];
+                if (w == 0.0)
+                    correction[band] = 1.0;
+                else if (w != 1.0)
+                    correction[band] = std::pow(correction[band], w);
+            }
+        }
         // As power ratios multiplied into the band sum: the same as adding the
         // correction in dB, without a log and an exp per band.  Only bands in
         // [first_band, last_band) have non-zero gains, so only they are read.
@@ -1636,10 +1648,11 @@ double Database::spectral_level_along(const RayPath& path, const SourceState& st
         const std::vector<std::complex<double>>* impedance, double sound_speed,
         std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
         const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
-        const double* extra_loss) const
+        const double* extra_loss, const double* ground_weight) const
 {
     return spectral_level_impl(path, state, absorption, gains, ground, impedance, sound_speed,
-            first_band, last_band, packed, plate, plate_mic_azimuth, ground_table, extra_loss);
+            first_band, last_band, packed, plate, plate_mic_azimuth, ground_table, extra_loss,
+            ground_weight);
 }
 
 double Database::shaft_power(const Blend& blend) const

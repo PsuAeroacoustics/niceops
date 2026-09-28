@@ -417,7 +417,9 @@ public:
     // The same along a path the caller has already formed (propagation.hpp):
     // spectral_level_at_observer is this with straight_ray().  `extra_loss`,
     // when given, is dB per band taken off after propagation -- the shadow
-    // zone's, under --refraction.
+    // zone's, under --refraction.  `ground_weight`, when given, scales the
+    // ground effect per band in dB (0 drops it): ShadowTransition hands the
+    // ground over to its own field near a shadow boundary.
     double spectral_level_along(const RayPath& path, const SourceState& state,
             const double* absorption, const std::vector<double>& gains,
             const GroundModel* ground = nullptr,
@@ -426,7 +428,7 @@ public:
             std::size_t last_band = static_cast<std::size_t>(-1),
             const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
             double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr,
-            const double* extra_loss = nullptr) const;
+            const double* extra_loss = nullptr, const double* ground_weight = nullptr) const;
 
     // Band centres carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centres() const
@@ -565,7 +567,8 @@ private:
             const GroundModel* ground, const std::vector<std::complex<double>>* impedance,
             double sound_speed, std::size_t first_band, std::size_t last_band,
             const PackedSpectra* packed, const PlateReceiver* plate, double plate_mic_azimuth,
-            const GroundTable* ground_table, const double* extra_loss) const;
+            const GroundTable* ground_table, const double* extra_loss,
+            const double* ground_weight = nullptr) const;
 
     // Group states by the conditions they blend, filling the bounds' per-state
     // group and load-factor scale.  Both direction_bounds() and

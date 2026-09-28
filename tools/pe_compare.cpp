@@ -98,6 +98,9 @@ int main(int argc, char** argv)
     ground.receiver_height = z_r;
     const auto admittance = ground_impedance(ground, bands, sound_speed);
     const ShadowAttenuation attenuation(bands, admittance, 0, bands.size());
+    // The receiver is a point receiver: near the boundary its level comes from
+    // the transition's field, as in niceops.
+    const ShadowTransition transition(bands, admittance, z_r, sound_speed, 0, bands.size());
 
     std::vector<PeResult> pe(bands.size());
     for (std::size_t b = 0; b < bands.size(); b++)
@@ -125,7 +128,7 @@ int main(int argc, char** argv)
     const auto at_source = linear.moments(z_s);
     const auto at_receiver = linear.moments(z_r);
     std::vector<double> scratch;
-    std::vector<double> loss(bands.size());
+    std::vector<double> loss(bands.size()), weight(bands.size());
     for (std::size_t q = 0; q < pe[0].range.size(); q++)
     {
         const double r = pe[0].range[q];
@@ -134,13 +137,16 @@ int main(int argc, char** argv)
         auto relative = [&](const RefractedRay& ray, std::size_t b) {
             const double ground_db = excess_ground_attenuation(ground, ray.path.source_height,
                     ray.path.ground_distance, sound_speed, {bands[b]})[0];
+            const double spreading_db = 20.0 * std::log10(slant / ray.path.range);
+            if (transition.apply(ray, attenuation, 20.0, 0, bands.size(), weight.data(), loss.data()))
+                return spreading_db + weight[b] * ground_db - loss[b];
             double shadow_db = 0.0;
             if (ray.shadow_depth > 0.0)
             {
                 shadow_loss(ray, attenuation, 20.0, 0, bands.size(), loss.data());
                 shadow_db = loss[b];
             }
-            return 20.0 * std::log10(slant / ray.path.range) + ground_db - shadow_db;
+            return spreading_db + ground_db - shadow_db;
         };
         RefractedRay straight;
         straight.path = straight_ray(source, receiver);

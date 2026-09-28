@@ -114,6 +114,48 @@ complex ordinary_zero(complex q, int n)
     return t;
 }
 
+// Past |q| = 6, where following zeros out from q = 0 loses its way (below),
+// but only where there is no surface wave (Re q <= 0): each zero seeded from
+// the mode equation's large-argument form and polished by Newton.  With
+// b = -x and zeta = (2/3) x^(3/2), Ai'(b) + q Ai(b) = 0 becomes
+// tan(zeta + pi/4) = sqrt(x) / q, so zeta = (n - 3/4) pi - atan(q / sqrt(x)):
+// the n-th zero of Ai' as q -> 0 and, Re q < 0 taking the principal atan to
+// -pi/2, the n-th zero of Ai as |q| grows -- the one continuation keeps.
+// Within |q| <= 6 these agree with the followed zeros to 4e-14 over the first
+// forty (tests/test_shadow_attenuation.cpp).
+bool seeds_reach(complex q)
+{
+    return q.real() <= 0.0;
+}
+
+complex seeded_zero(complex q, int n)
+{
+    complex x = std::pow(1.5 * (n - 0.75) * pi, 2.0 / 3.0);
+    for (int i = 0; i < 100; i++)
+    {
+        const complex next = std::pow(1.5 * ((n - 0.75) * pi - std::atan(q / std::sqrt(x))), 2.0 / 3.0);
+        const bool settled_here = std::abs(next - x) <= 1e-13 * std::abs(x);
+        x = next;
+        if (settled_here)
+            break;
+    }
+    complex t = -x;
+    if (!newton(t, q))
+        throw std::runtime_error("impedance_airy_zeros: Newton did not settle on zero "
+                + std::to_string(n) + " at |q| = " + std::to_string(std::abs(q)));
+    return t;
+}
+
+// Consecutive zeros step by pi in zeta; a step far from it means one was
+// skipped or found twice.
+void check_step(complex previous, complex t, int n)
+{
+    const double step = (2.0 / 3.0 * (std::pow(-t, 1.5) - std::pow(-previous, 1.5))).real() / pi;
+    if (!(step > 0.5 && step < 1.5))
+        throw std::runtime_error("impedance_airy_zeros: zeros " + std::to_string(n - 1) + " and "
+                + std::to_string(n) + " are " + std::to_string(step) + " pi apart in zeta, not one");
+}
+
 // Zeros of Ai' + q Ai inside the box [x0, x1] x [-h, h], by the argument
 // principle: the equation is entire, so its argument turns once round the
 // edge for every zero inside.
@@ -156,9 +198,9 @@ int zeros_inside(complex q, double x0, double x1, double h)
 // of Ai past the range of a double -- both measured, at |q| = 8.5 and 10.8.
 void check_reach(complex q)
 {
-    if (std::abs(q) > 6.0)
+    if (std::abs(q) > 6.0 && !seeds_reach(q))
         throw std::invalid_argument("impedance_airy_zeros: |q| = " + std::to_string(std::abs(q))
-                + " is past the 6 the root finder is built for");
+                + " with Re q > 0 is past the 6 the root finder is built for");
 }
 
 std::vector<complex> checked_zeros(complex q, int& ordinary)
@@ -246,10 +288,26 @@ std::vector<complex> modal_sum(complex q, const std::function<Mode(complex)>& mo
         largest = std::max(largest, size);
         quiet = size < 1e-17 * largest ? quiet + 1 : 0;
     };
-    for (const complex t : checked_zeros(q, ordinary))
-        add(t);
-    for (int n = ordinary + 1; (quiet < 16 || modes.size() < 20) && modes.size() < max_modes; n++)
-        add(ordinary_zero(q, n));
+    if (std::abs(q) <= 6.0)
+    {
+        for (const complex t : checked_zeros(q, ordinary))
+            add(t);
+        for (int n = ordinary + 1; (quiet < 16 || modes.size() < 20) && modes.size() < max_modes; n++)
+            add(ordinary_zero(q, n));
+    }
+    else
+    {
+        check_reach(q);
+        complex previous = 0.0;
+        for (int n = 1; (quiet < 16 || modes.size() < 20) && modes.size() < max_modes; n++)
+        {
+            const complex t = seeded_zero(q, n);
+            if (n > 1)
+                check_step(previous, t, n);
+            add(t);
+            previous = t;
+        }
+    }
 
     // Each range on its own: NaN where the terms cancel by more than nine
     // orders, or where the last few have not died away.
@@ -284,6 +342,17 @@ complex wavenumber(const ExactProblem& p)
 std::vector<complex> impedance_airy_zeros(complex q, int count)
 {
     check_reach(q);
+    if (std::abs(q) > 6.0)
+    {
+        std::vector<complex> zeros;
+        for (int n = 1; n <= count; n++)
+        {
+            zeros.push_back(seeded_zero(q, n));
+            if (n > 1)
+                check_step(zeros[n - 2], zeros[n - 1], n);
+        }
+        return zeros;
+    }
     int ordinary = 0;
     auto checked = checked_zeros(q, ordinary);
     std::vector<complex> zeros(checked.begin(), checked.begin() + std::min(ordinary, count));

@@ -29,6 +29,7 @@
 #include <array>
 #include <complex>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include "atmosphere_profile.hpp"
@@ -65,6 +66,16 @@ struct DirectEigenray
     double travel_time = 0.0;
     // Metres past the shadow boundary, 0 when lit.
     double shadow_depth = 0.0;
+    // The shadow boundary itself: the horizontal range from the source at which
+    // the limiting ray, grazing the ground, comes back up to the receiver's
+    // height.  Lit rays carry it too, for the transition into the shadow
+    // (ShadowTransition).  Infinite where the profile makes no such shadow.
+    double boundary = std::numeric_limits<double>::infinity();
+    // The gradient (1/s, negative) the diffraction near the boundary is scaled
+    // by: for --refraction linear, the profile's own.  0 where there is no
+    // boundary, or where ShadowTransition should not be used -- which for now
+    // is --refraction stratified (see layered_direct_eigenray).
+    double boundary_gradient = 0.0;
 };
 
 DirectEigenray direct_eigenray(const LinearProfile& profile, double z_s, double z_r, double r);
@@ -277,5 +288,88 @@ private:
 // `floor` dB, where energy scattered in by turbulence takes over from it.
 void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, double floor,
         std::size_t first_band, std::size_t last_band, double* loss);
+
+// The field through the shadow boundary, for a point receiver over ground of a
+// given admittance: what replaces the ray's ground term and creeping-wave loss
+// there.
+//
+// Ray theory breaks down within a few diffraction lengths F = 2 k0 l^2 of the
+// boundary, on both sides.  Its ground term, taken with the grazing ray's
+// straight equivalent geometry, sinks toward the grazing ground wave, 10 dB
+// below the exact field over grass at 1 kHz; over rigid ground it doubles
+// where the exact field does not.  For k^2 = k0^2 (1 + 2 z / R) the exact field
+// is the residue series (upward_pressure).  Relative to the spreading of the
+// model's own ray it depends on the signed distance past the boundary in
+// diffraction lengths, xi = (r - r_b) / F, and hardly on the source's height:
+// within about 1 dB for sources 5 l to 100 l up, from xi = -1.5 on (Fock's
+// result, for a source well above the ground).  So each band gets one table,
+// V(xi, s), built from the series with the source reference_height l up, and s
+// = (pi f / |a|)^(1/3) carries the path as in ShadowAttenuation.  The level is
+// the ray's own, ground term included, up to xi = xi_ray; spreading plus V from
+// xi_modal on; and a blend between, where the two agree within about a dB.
+//
+// Past the table, V continues at its last slope, the first mode's.  It is
+// held at V(0) - floor at worst, turbulence's scattered floor, as
+// --shadow_floor held the creeping-wave loss; and at 20 log10 2 at best, the
+// most two coherent rays give, which keeps it under the ground's bound.  A
+// band whose s falls below s_min keeps the old model, ground term and
+// creeping-wave loss: there the source is a large fraction of R up and the
+// profile near the ground is not what the table assumes.
+class ShadowTransition
+{
+public:
+    ShadowTransition() = default;
+    ShadowTransition(const std::vector<double>& frequencies,
+            const std::vector<std::complex<double>>& admittance, double receiver_height,
+            double sound_speed, std::size_t first_band, std::size_t last_band);
+
+    bool empty() const { return table_.empty(); }
+    double receiver_height() const { return receiver_height_; }
+    // The largest 10^(V/10) in `band`'s table, at least 1: what the peak
+    // search's bound on the ground's gain has to allow for.
+    double max_power_ratio(std::size_t band) const
+    {
+        return band < max_power_ratio_.size() ? max_power_ratio_[band] : 1.0;
+    }
+
+    // For an upward-refracting ray that carries a boundary, per band in
+    // [first_band, last_band): the weight on the ray's own ground term (1 on
+    // the lit side, 0 from xi_modal on) and the loss to take off (dB).  Bands
+    // too far from the boundary get weight 1 and, in the shadow, the
+    // creeping-wave loss of `attenuation`, which is also what a band below
+    // s_min keeps.  False, with nothing written, when the ray is nowhere near
+    // a boundary in any band: then the caller's ordinary path stands.
+    bool apply(const RefractedRay& ray, const ShadowAttenuation& attenuation, double floor,
+            std::size_t first_band, std::size_t last_band, double* ground_weight,
+            double* loss) const;
+
+    // V, dB, in `band` at xi and s: the table (tests).  NaN where it has no
+    // value, which is only on the lit side, below xi_modal.
+    double level(std::size_t band, double xi, double s) const;
+
+    static constexpr double xi_ray = -2.0;
+    static constexpr double xi_modal = -1.0;
+    static constexpr double xi_max = 6.0;
+    static constexpr double xi_step = 0.1;
+    static constexpr double s_min = 5.0;
+    static constexpr double s_max = 3000.0;
+    static constexpr int s_per_decade = 8;
+    // The table's source height in l, or 0.1 s^2 where that is lower, which
+    // keeps the source below R / 10.
+    static constexpr double reference_height = 20.0;
+
+private:
+    double column(std::size_t band, std::size_t j, double xi) const;
+
+    std::vector<double> frequencies_;
+    double receiver_height_ = 0.0;
+    std::size_t xi_nodes_ = 0;
+    std::size_t s_nodes_ = 0;
+    // [band][j * xi_nodes_ + i]: V at s_j, xi_i.
+    std::vector<std::vector<double>> table_;
+    // [band][j]: V at xi = 0, for the floor.
+    std::vector<std::vector<double>> at_boundary_;
+    std::vector<double> max_power_ratio_;
+};
 
 } // namespace niceops

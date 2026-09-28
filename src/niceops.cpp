@@ -1089,6 +1089,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::optional<EffectiveSoundSpeed> effective_sound_speed;
     std::vector<EffectiveSoundSpeed::Moments> state_moments;
     ShadowAttenuation shadow_attenuation;
+    // Point receivers near a shadow boundary: one table per microphone height.
+    std::vector<ShadowTransition> shadow_transitions;
     // --refraction stratified: the profile's layers, with the linear model kept
     // alongside for its warm start and for what the layered solve leaves to it.
     std::optional<LayeredSoundSpeed> layered_sound_speed;
@@ -1107,6 +1109,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         shadow_attenuation = ground_model
                 ? ShadowAttenuation(database.band_centres(), ground_impedance_bands, first_band, last_band)
                 : ShadowAttenuation(database.band_centres(), first_band, last_band);
+        if (ground_model != nullptr)
+        {
+            for (const double height : point_heights)
+            {
+                const auto start = std::chrono::steady_clock::now();
+                shadow_transitions.emplace_back(database.band_centres(), ground_impedance_bands,
+                        height, sound_speed, first_band, last_band);
+                log("  shadow-boundary field for microphones ", height / options.unit.to_metres, " ",
+                        options.unit.name, " up tabulated from the residue series in ",
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
+                        " s.");
+            }
+        }
         std::string surface_bands;
         for (std::size_t band = first_band; band < last_band; band++)
             if (shadow_attenuation.admits_surface_wave(band))
@@ -1181,6 +1196,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             ground_impedance_bands, first_band, last_band);
                     for (std::size_t band = 0; band < ground_gains.size(); band++)
                         ground_gains[band] = std::max(ground_gains[band], point_gains[band]);
+                    // Near a shadow boundary the transition's field stands in
+                    // for the ground term, and the bound has to cover it too.
+                    for (const auto& transition : shadow_transitions)
+                        for (std::size_t band = 0; band < ground_gains.size(); band++)
+                            ground_gains[band] = std::max(ground_gains[band],
+                                    transition.max_power_ratio(band));
                 }
                 for (std::size_t band = 0; band < bound_gains.size(); band++)
                     bound_gains[band] *= ground_gains[band];
@@ -1372,6 +1393,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // Refraction: the moments at each observer's receiver, and the shadow
         // zone's per-band loss.
         std::vector<double> shadow(effective_sound_speed ? database.band_centres().size() : 0, 0.0);
+        std::vector<double> shadow_weight(shadow.size(), 1.0);
         std::size_t shadowed_here = 0;
         for (std::size_t index = begin; index < end; index++)
         {
@@ -1400,10 +1422,25 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const auto at_receiver = effective_sound_speed
                     ? effective_sound_speed->moments(observer.z)
                     : EffectiveSoundSpeed::Moments {};
+            const ShadowTransition* transition_here = !flush && !shadow_transitions.empty()
+                    ? &shadow_transitions[point_of[index]]
+                    : nullptr;
             auto refracted_level = [&](std::size_t it, RefractedRay ray) {
                 finish_ray(ray, ray_ground, microphone_height[index]);
                 const double* extra_loss = nullptr;
-                if (ray.shadow_depth > 0.0)
+                const double* ground_weight = nullptr;
+                if (transition_here != nullptr
+                        && transition_here->apply(ray, shadow_attenuation, options.shadow_floor,
+                                first_band, last_band, shadow_weight.data(), shadow.data()))
+                {
+                    // Near the boundary the transition's field replaces the
+                    // ground term and the creeping-wave loss.
+                    extra_loss = shadow.data();
+                    ground_weight = shadow_weight.data();
+                    if (ray.shadow_depth > 0.0)
+                        shadowed_here++;
+                }
+                else if (ray.shadow_depth > 0.0)
                 {
                     shadow_loss(ray, shadow_attenuation, options.shadow_floor, first_band, last_band,
                             shadow.data());
@@ -1414,7 +1451,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         absorption_for(it, observer), band_gains, ground_here,
                         &ground_impedance_bands, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
-                        extra_loss);
+                        extra_loss, ground_weight);
                 if (add_ambient)
                     level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
                 return level;

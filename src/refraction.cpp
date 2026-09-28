@@ -7,6 +7,7 @@
 
 #include "exact_solutions.hpp"
 #include "util/constants.hpp"
+#include "util/parallel.hpp"
 
 namespace niceops {
 
@@ -70,6 +71,8 @@ DirectEigenray direct_eigenray(const LinearProfile& profile, double z_s, double 
     {
         const double t_s = c.grazing_half_chord(z_s);
         const double t_r = c.grazing_half_chord(z_r);
+        ray.boundary = t_s + t_r;
+        ray.boundary_gradient = profile.gradient;
         if (r > t_s + t_r)
         {
             // Past the limiting ray: it leaves the source at the critical angle,
@@ -565,6 +568,194 @@ void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, 
     }
     for (std::size_t band = first_band; band < last_band; band++)
         loss[band] = std::min(attenuation.rate(band, ray.profile) * ray.shadow_depth, floor);
+}
+
+} // namespace niceops
+
+namespace niceops {
+
+ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
+        const std::vector<std::complex<double>>& admittance, double receiver_height,
+        double sound_speed, std::size_t first_band, std::size_t last_band)
+    : frequencies_(frequencies), receiver_height_(receiver_height)
+{
+    if (admittance.size() != frequencies.size())
+        throw std::invalid_argument("ShadowTransition: one admittance per band");
+    xi_nodes_ = static_cast<std::size_t>(std::lround((xi_max - xi_ray) / xi_step)) + 1;
+    s_nodes_ = static_cast<std::size_t>(std::ceil(std::log10(s_max / s_min) * s_per_decade)) + 1;
+    table_.assign(frequencies.size(), {});
+    at_boundary_.assign(frequencies.size(), {});
+    max_power_ratio_.assign(frequencies.size(), 1.0);
+    const std::size_t at_zero = static_cast<std::size_t>(std::lround(-xi_ray / xi_step));
+    const double doubling = 20.0 * std::log10(2.0);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::size_t end = std::min(last_band, frequencies.size());
+    if (first_band >= end)
+        return;
+
+    // A few seconds' worth of mode sums in all, so the bands go in parallel.
+    parallel_chunks(end - first_band, default_thread_count(), [&](std::size_t lo, std::size_t hi) {
+        for (std::size_t band = first_band + lo; band < first_band + hi; band++)
+        {
+            const double f = frequencies[band];
+            const double k0 = 2.0 * pi * f / sound_speed;
+            std::vector<double> col(xi_nodes_ * s_nodes_, nan);
+            std::vector<double> zero(s_nodes_, nan);
+            for (std::size_t j = 0; j < s_nodes_; j++)
+            {
+                const double s = s_min * std::pow(10.0, static_cast<double>(j) / s_per_decade);
+                const double a = pi * f / (s * s * s);
+                const double l = s / k0;
+                const double diffraction = 2.0 * s * s / k0;
+                const double y_ref = std::min(reference_height, 0.1 * s * s);
+                const double z_ref = y_ref * l;
+                // k^2 linear in height has parabolic rays; the model's are circles.
+                // Each is placed by its own boundary.
+                const double exact_boundary
+                        = diffraction * (std::sqrt(y_ref) + std::sqrt(receiver_height / l));
+                const LinearProfile profile {sound_speed, -a};
+                const double model_boundary = shadow_boundary(profile, z_ref, receiver_height);
+                std::vector<double> ranges;
+                std::vector<std::size_t> which;
+                for (std::size_t i = 0; i < xi_nodes_; i++)
+                {
+                    const double xi = xi_ray + i * xi_step;
+                    if (exact_boundary + xi * diffraction > 0.0 && model_boundary + xi * diffraction > 0.0)
+                    {
+                        ranges.push_back(exact_boundary + xi * diffraction);
+                        which.push_back(i);
+                    }
+                }
+                if (ranges.empty())
+                    continue;
+                ExactProblem problem;
+                problem.frequency = f;
+                problem.sound_speed = sound_speed;
+                problem.admittance = admittance[band];
+                problem.source_height = z_ref;
+                problem.receiver_height = receiver_height;
+                std::vector<std::complex<double>> field;
+                try
+                {
+                    field = upward_pressure(problem, sound_speed / a, ranges);
+                }
+                catch (const std::exception&)
+                {
+                    continue; // no column: this band keeps the ray model at this s
+                }
+                double* v = col.data() + j * xi_nodes_;
+                for (std::size_t k = 0; k < ranges.size(); k++)
+                {
+                    const std::size_t i = which[k];
+                    const double r_model = model_boundary + (xi_ray + i * xi_step) * diffraction;
+                    const auto ray = direct_eigenray(profile, z_ref, receiver_height, r_model);
+                    const double exact_db = 20.0 * std::log10(std::abs(field[k])
+                            * std::hypot(ranges[k], z_ref - receiver_height));
+                    const double spreading_db = 20.0
+                            * std::log10(std::hypot(r_model, z_ref - receiver_height) / ray.spreading_range);
+                    const double value = exact_db - spreading_db;
+                    if (std::isfinite(value))
+                        v[i] = std::min(value, doubling);
+                }
+                // The series is trusted everywhere in the shadow; should a node
+                // there still come back NaN, carry the column on at its slope.
+                for (std::size_t i = at_zero; i < xi_nodes_; i++)
+                    if (std::isnan(v[i]) && i >= 2 && std::isfinite(v[i - 1]) && std::isfinite(v[i - 2]))
+                        v[i] = 2.0 * v[i - 1] - v[i - 2];
+                zero[j] = v[at_zero];
+            }
+            for (const double v : col)
+                if (std::isfinite(v))
+                    max_power_ratio_[band] = std::max(max_power_ratio_[band], std::pow(10.0, v / 10.0));
+            table_[band] = std::move(col);
+            at_boundary_[band] = std::move(zero);
+        }
+    });
+}
+
+double ShadowTransition::column(std::size_t band, std::size_t j, double xi) const
+{
+    const double* v = table_[band].data() + j * xi_nodes_;
+    const double x = (xi - xi_ray) / xi_step;
+    if (x < 0.0)
+        return std::numeric_limits<double>::quiet_NaN();
+    const std::size_t last = xi_nodes_ - 1;
+    if (x >= static_cast<double>(last))
+        return v[last] + (x - static_cast<double>(last)) * (v[last] - v[last - 1]);
+    const std::size_t i = static_cast<std::size_t>(x);
+    return v[i] + (x - static_cast<double>(i)) * (v[i + 1] - v[i]);
+}
+
+double ShadowTransition::level(std::size_t band, double xi, double s) const
+{
+    if (table_[band].empty())
+        return std::numeric_limits<double>::quiet_NaN();
+    const double x = std::clamp(std::log10(s / s_min) * s_per_decade, 0.0,
+            static_cast<double>(s_nodes_ - 1));
+    const std::size_t j = std::min(static_cast<std::size_t>(x), s_nodes_ - 2);
+    const double t = x - static_cast<double>(j);
+    const double v0 = column(band, j, xi);
+    const double v1 = column(band, j + 1, xi);
+    // Held at V(0) - floor happens in apply(); here only the table.
+    return v0 + t * (v1 - v0);
+}
+
+bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& attenuation,
+        double floor, std::size_t first_band, std::size_t last_band, double* ground_weight,
+        double* loss) const
+{
+    if (empty() || !ray.curved || !(ray.direct.boundary_gradient < 0.0)
+            || !std::isfinite(ray.direct.boundary) || first_band >= last_band)
+        return false;
+    const double a = -ray.direct.boundary_gradient;
+    const double c0 = ray.profile.sound_speed;
+    // The creeping wave past the table decays by the same curvature.
+    const LinearProfile equivalent {c0, -a};
+    const double past = ray.horizontal - ray.direct.boundary;
+    // The widest diffraction length is the lowest band's: if the ray is lit by
+    // more than xi_ray of that, it is lit in every band.
+    const double f_lo = frequencies_[first_band];
+    const double s_lo = std::cbrt(pi * f_lo / a);
+    if (past < xi_ray * s_lo * s_lo * c0 / (pi * f_lo) && !(ray.shadow_depth > 0.0))
+        return false;
+    for (std::size_t band = first_band; band < last_band; band++)
+    {
+        const double f = frequencies_[band];
+        const double creeping = ray.shadow_depth > 0.0
+                ? std::min(attenuation.rate(band, equivalent) * ray.shadow_depth, floor)
+                : 0.0;
+        ground_weight[band] = 1.0;
+        loss[band] = creeping;
+        const double s = std::cbrt(pi * f / a);
+        if (s < s_min)
+            continue;
+        const double xi = past * pi * f / (s * s * c0); // F = 2 s^2 / k0
+        if (xi <= xi_ray)
+            continue;
+        double v = level(band, xi, s);
+        if (std::isnan(v))
+            continue;
+        // At worst V(0) - floor: the boundary's own level, less the floor.
+        const double x = std::clamp(std::log10(s / s_min) * s_per_decade, 0.0,
+                static_cast<double>(s_nodes_ - 1));
+        const std::size_t j = std::min(static_cast<std::size_t>(x), s_nodes_ - 2);
+        const double v_zero = at_boundary_[band][j]
+                + (x - static_cast<double>(j)) * (at_boundary_[band][j + 1] - at_boundary_[band][j]);
+        if (std::isfinite(v_zero))
+            v = std::max(v, v_zero - floor);
+        if (xi >= xi_modal)
+        {
+            ground_weight[band] = 0.0;
+            loss[band] = -v;
+        }
+        else
+        {
+            const double t = (xi - xi_ray) / (xi_modal - xi_ray);
+            ground_weight[band] = 1.0 - t;
+            loss[band] = (1.0 - t) * creeping - t * v;
+        }
+    }
+    return true;
 }
 
 } // namespace niceops
