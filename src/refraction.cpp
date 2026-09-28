@@ -5,6 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
+#include "exact_solutions.hpp"
 #include "util/constants.hpp"
 
 namespace niceops {
@@ -468,25 +469,102 @@ RefractedRay refracted_ray(const EffectiveSoundSpeed& air, const Vec3& source,
     return ray;
 }
 
+namespace {
+
+constexpr double tau_1 = 1.01879297; // first zero of Ai'(-x)
+const double nepers_to_db = 20.0 / std::log(10.0);
+const double shadow_log_step = std::log(10.0) / ShadowAttenuation::per_decade;
+
+} // namespace
+
 std::vector<double> shadow_attenuation_rates(const std::vector<double>& frequencies,
         std::size_t first_band, std::size_t last_band)
 {
-    constexpr double tau_1 = 1.01879297; // first zero of Ai'(-x)
     const double sin_60 = std::sqrt(3.0) / 2.0;
-    const double nepers_to_db = 20.0 / std::log(10.0);
     std::vector<double> rates(frequencies.size(), 0.0);
     for (std::size_t band = first_band; band < std::min(last_band, frequencies.size()); band++)
         rates[band] = nepers_to_db * tau_1 * sin_60 * std::cbrt(pi * frequencies[band]);
     return rates;
 }
 
-void shadow_loss(const RefractedRay& ray, const std::vector<double>& rates, double floor,
+ShadowAttenuation::ShadowAttenuation(const std::vector<double>& frequencies,
+        std::size_t first_band, std::size_t last_band)
+    : frequencies_(frequencies), rigid_rates_(shadow_attenuation_rates(frequencies, first_band, last_band))
+{
+}
+
+ShadowAttenuation::ShadowAttenuation(const std::vector<double>& frequencies,
+        const std::vector<std::complex<double>>& admittance, std::size_t first_band,
+        std::size_t last_band)
+    : frequencies_(frequencies), rigid_rates_(shadow_attenuation_rates(frequencies, first_band, last_band)),
+      log_pi_f_(frequencies.size(), 0.0), table_(frequencies.size()),
+      surface_wave_(frequencies.size(), false)
+{
+    if (admittance.size() != frequencies.size())
+        throw std::invalid_argument("ShadowAttenuation: one admittance per band");
+    const int nodes = static_cast<int>(std::ceil(std::log(s_max / s_min) / shadow_log_step)) + 1;
+    std::vector<double> s(nodes);
+    for (int i = 0; i < nodes; i++)
+        s[i] = s_min * std::exp(i * shadow_log_step);
+    const std::complex<double> w = std::polar(1.0, 2.0 * pi / 3.0);
+    for (std::size_t band = first_band; band < std::min(last_band, frequencies.size()); band++)
+    {
+        log_pi_f_[band] = std::log(pi * frequencies[band]);
+        const std::complex<double> direction = std::complex<double>(0.0, -1.0) * w * w * admittance[band];
+        // Re q > 0 along the whole ray q = s d, arg beta below -60 degrees: the
+        // surface wave's band, which takes the rigid rate.
+        surface_wave_[band] = direction.real() > 0.0;
+        if (surface_wave_[band])
+            continue;
+        const auto zeros = first_impedance_airy_zero(direction, s);
+        table_[band].resize(zeros.size());
+        for (std::size_t i = 0; i < zeros.size(); i++)
+            table_[band][i] = (zeros[i] / w).imag();
+    }
+}
+
+double ShadowAttenuation::factor_at(std::size_t band, double log_s) const
+{
+    const auto& g = table_[band];
+    const double x = std::clamp((log_s - std::log(s_min)) / shadow_log_step, 0.0,
+            static_cast<double>(g.size() - 1));
+    const std::size_t i = std::min(static_cast<std::size_t>(x), g.size() - 2);
+    return g[i] + (x - static_cast<double>(i)) * (g[i + 1] - g[i]);
+}
+
+double ShadowAttenuation::decay_factor(std::size_t band, double s) const
+{
+    if (rigid() || surface_wave_[band])
+        return tau_1 * std::sqrt(3.0) / 2.0;
+    return factor_at(band, std::log(s));
+}
+
+double ShadowAttenuation::rate(std::size_t band, const LinearProfile& profile) const
+{
+    const double a = std::fabs(profile.gradient);
+    if (rigid() || surface_wave_[band])
+        return rigid_rates_[band] * std::cbrt(a * a) / profile.sound_speed;
+    // alpha = Im(b / w) pi f / (c0 s^2), s^2 = (pi f / |a|)^(2/3).
+    const double log_s = (log_pi_f_[band] - std::log(a)) / 3.0;
+    return nepers_to_db * factor_at(band, log_s) * pi * frequencies_[band]
+            / (profile.sound_speed * std::exp(2.0 * log_s));
+}
+
+void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, double floor,
         std::size_t first_band, std::size_t last_band, double* loss)
 {
-    const double a = std::fabs(ray.profile.gradient);
-    const double scale = std::cbrt(a * a) / ray.profile.sound_speed * ray.shadow_depth;
+    if (attenuation.rigid())
+    {
+        // As it was before there was a table, to the bit.
+        const auto& rates = attenuation.rigid_rates();
+        const double a = std::fabs(ray.profile.gradient);
+        const double scale = std::cbrt(a * a) / ray.profile.sound_speed * ray.shadow_depth;
+        for (std::size_t band = first_band; band < last_band; band++)
+            loss[band] = std::min(rates[band] * scale, floor);
+        return;
+    }
     for (std::size_t band = first_band; band < last_band; band++)
-        loss[band] = std::min(rates[band] * scale, floor);
+        loss[band] = std::min(attenuation.rate(band, ray.profile) * ray.shadow_depth, floor);
 }
 
 } // namespace niceops

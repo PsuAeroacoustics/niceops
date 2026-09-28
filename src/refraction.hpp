@@ -27,6 +27,7 @@
 // Everything here is metres, seconds and radians.
 
 #include <array>
+#include <complex>
 #include <cstddef>
 #include <vector>
 
@@ -199,10 +200,82 @@ void finish_ground(RefractedRay& ray, GroundGeometry ground, double microphone_h
 std::vector<double> shadow_attenuation_rates(const std::vector<double>& frequencies,
         std::size_t first_band, std::size_t last_band);
 
+// The shadow zone's attenuation per band: the least attenuated creeping wave of
+// the path's equivalent linear profile, over rigid ground or over ground of a
+// given admittance.
+//
+// Near the ground c0 + a z is k^2 = k0^2 (1 + 2 z / R), R = c0 / |a|, whose
+// waves are Ai(b - w z / l), w = exp(2 pi i / 3), l = (R / 2 k0^2)^(1/3), with
+// Ai'(b) + q Ai(b) = 0 and q = -i w^2 beta k0 l (exact_solutions.cpp derives
+// it).  The first decays at
+//   alpha = Im(b / w) k0 / (2 s^2)  Np/m,   s = k0 l = (pi f / |a|)^(1/3).
+// Over rigid ground b = a'_1 and this is shadow_attenuation_rates().  Over any
+// other, b is first_impedance_airy_zero() along q = s (-i w^2 beta): beta is
+// fixed per band for a run and s carries the path, so each band gets one table
+// in log s.  Im(b / w) is 0.882 over rigid ground and tends to 2.025, the first
+// zero of Ai (a pressure-release ground), as |q| grows.  It is not monotonic:
+// the first-order shift -q / a'_1 lowers it wherever arg beta lies in (-90,
+// -30) degrees -- always for variable porosity (-45), and for Delany-Bazley and
+// Miki except on soft ground at high frequency, where they reach -4 -- so at
+// small |q| real ground can attenuate less than rigid, by up to 12% (Miki,
+// |q| = 0.47), before it attenuates up to 2.3 times as much.  Both keep Pierce's first-order form of
+// alpha, so a ground tending to rigid tends to the rigid rate.  Against the
+// exact residue series' slope deep in the shadow it is within 0.3%
+// (tests/test_shadow_attenuation.cpp).
+//
+// Left out: the surface wave, a zero near q^2 that no zero of Ai' continues
+// to.  Upward it needs Re q > 0, which is arg beta < -60 degrees.  Delany-Bazley,
+// Miki and variable porosity without a porosity rate never go below -57, at
+// 10 Hz - 10 kHz and 10 - 10000 kPa s/m^2 (tests/test_shadow_attenuation.cpp).
+// A porosity rate of tens per metre, or a thin hard-backed layer, does, in the
+// low bands.  Along such a q the first zero turns into the surface wave (it
+// runs out toward q^2) and cannot be followed, so those bands take the rigid
+// rate, and admits_surface_wave() names them for the run's log.
+class ShadowAttenuation
+{
+public:
+    ShadowAttenuation() = default;
+    // Rigid ground: exactly shadow_attenuation_rates().
+    ShadowAttenuation(const std::vector<double>& frequencies, std::size_t first_band,
+            std::size_t last_band);
+    // Ground whose normalised admittance in each band is admittance[band]
+    // (ground_impedance()); 0 is rigid.
+    ShadowAttenuation(const std::vector<double>& frequencies,
+            const std::vector<std::complex<double>>& admittance, std::size_t first_band,
+            std::size_t last_band);
+
+    bool rigid() const { return table_.empty(); }
+    // dB/m in `band` along a path whose equivalent linear profile is `profile`.
+    double rate(std::size_t band, const LinearProfile& profile) const;
+    // Im(b / w) in `band` at s: what the table holds (tests).
+    double decay_factor(std::size_t band, double s) const;
+    const std::vector<double>& rigid_rates() const { return rigid_rates_; }
+    // Whether the ground admits the surface wave left out above, in `band`,
+    // which then takes the rigid rate.
+    bool admits_surface_wave(std::size_t band) const
+    {
+        return !surface_wave_.empty() && surface_wave_[band];
+    }
+
+    // s's table: log s from log(s_min) in steps of ln(10) / per_decade.
+    static constexpr double s_min = 0.5;
+    static constexpr double s_max = 1e5;
+    static constexpr int per_decade = 32;
+
+private:
+    double factor_at(std::size_t band, double log_s) const;
+
+    std::vector<double> frequencies_;
+    std::vector<double> rigid_rates_; // shadow_attenuation_rates(), when rigid
+    std::vector<double> log_pi_f_; // log(pi f) per band
+    std::vector<std::vector<double>> table_; // [band][i]: Im(b / w) at s_min 10^(i / per_decade)
+    std::vector<bool> surface_wave_;
+};
+
 // Fill `loss` (dB per band, bands in [first_band, last_band)) for a ray
 // `ray.shadow_depth` metres into the shadow: the creeping-wave decay, capped at
 // `floor` dB, where energy scattered in by turbulence takes over from it.
-void shadow_loss(const RefractedRay& ray, const std::vector<double>& rates, double floor,
+void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, double floor,
         std::size_t first_band, std::size_t last_band, double* loss);
 
 } // namespace niceops

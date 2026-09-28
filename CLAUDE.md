@@ -481,8 +481,21 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     time and arc length to 1e-9, reflected grazing angle to 1e-8 rad.
   - **Wind directions are compass bearings** turned by `--frame_bearing` (default +x east).
     The shipped AC tracks need 210.
-  - Shadow zones: the grazing ray's level, less the first creeping-wave mode over rigid ground
-    (`shadow_attenuation_rates`), capped at `--shadow_floor`.
+  - Shadow zones: the grazing ray's level, less the least attenuated creeping-wave mode,
+    capped at `--shadow_floor`. `ShadowAttenuation` builds it: over rigid ground (no
+    `--ground_effect`) it is `shadow_attenuation_rates` and `shadow_loss`'s old arithmetic,
+    to the bit; over the ground's admittance it is one table per band in s = (pi f / |a|)^(1/3),
+    of the first zero of Ai' + q Ai followed along q = -i w^2 beta s. Three things to keep:
+    - **It is not monotonic in the ground.** The first-order shift -q/a'_1 lowers the rate
+      for arg beta in (-90, -30) degrees, so ordinary grounds attenuate up to 12% *less*
+      than rigid at small |q| before up to 2.3x more. Do not "fix" a soft ground coming out
+      quieter than rigid in the shallow shadow.
+    - **Bands whose Re q > 0 (arg beta < -60) take the rigid rate.** There the first zero
+      turns into the surface wave and the follower loses it (measured: it runs to |t| ~ 100,
+      near q^2, and throws). Only strong porosity rates and thin layers get there, at low
+      frequency; the run logs the bands.
+    - `tests/test_shadow_attenuation.cpp` holds the rate to the exact residue series' slope
+      deep in the shadow, 0.02-0.3% on the benchmark grounds. Keep it.
 - `src/stratified.{hpp,cpp}` — `--refraction stratified` (roadmap step 6a): the effective
   sound speed piecewise linear between the profile's own levels, circular arcs within each
   layer, eigenrays solved per pair. The things to preserve:
@@ -576,7 +589,9 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     with the argument principle on a box, which caught a zero lost to the continuation in
     development. The benchmark reaches |q| = 4.9. At |q| = 8.5 the continuation loses its
     way, and at 10.8 the box's edge overflows a double. The low zero at 1 kHz is the ground's
-    surface wave, near q², and the continuation reaches it.
+    surface wave, near q², and the continuation reaches it. `first_impedance_airy_zero`
+    follows the first zero alone, which stays well apart from its neighbours, to any |q|
+    (checked to 1e5 against a_1 - 1/q - a_1/(3q^3)): what the shadow loss needs.
   - **A mode sum returns NaN where it cannot be trusted:** terms cancelling by more than nine
     orders (the residue series near the source, whose terms grow before decaying), or a tail
     not yet dead at the 12000-mode cap. Callers skip NaN rather than tighten the cap.

@@ -397,9 +397,17 @@ path supplies:
   otherwise unchanged.
 - **Reception time:** from the ray's travel time.
 - **Shadow zones:** under upward refraction, receivers beyond the ray that grazes the ground
-  get the grazing ray's level, decaying with distance into the shadow. The decay is the first
-  creeping-wave mode over rigid ground, about 24 dB/km at 1 kHz for a gradient of 0.02 /s.
-  It is capped at `--shadow_floor`, where energy scattered in by turbulence takes over.
+  get the grazing ray's level, decaying with distance into the shadow. The decay is the least
+  attenuated creeping-wave mode. With `--ground_effect` it runs over the ground's own
+  impedance; without, over rigid ground, about 24 dB/km at 1 kHz for a gradient of 0.02 /s.
+  Real ground is not always the deeper shadow: to first order it attenuates up to 12% less
+  than rigid at low frequency and weak gradients, and up to 2.3 times as much once the ground
+  counts as soft on the wave's scale. The benchmark's 1 kHz ground, at 0.1 /s, is 146 dB/km
+  against rigid's 70. The rate is held to the slope of the exact residue series deep in the
+  shadow to 0.3%. It is capped at `--shadow_floor`, where energy scattered in by turbulence
+  takes over. A ground reactive enough to carry a surface wave into the shadow (a porosity
+  rate of tens per metre, a thin hard-backed layer, low bands) takes the rigid rate in those
+  bands, and the log names them.
 
 `atmospheres/example_windy.csv` is an illustrative profile, not a measurement: a neutral
 log-law westerly (5.2 m/s at 10 m, 8.5 m/s at 1000 ft) over the ISA lapse. On the demo track

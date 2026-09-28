@@ -1088,7 +1088,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // microphones, like everything else.
     std::optional<EffectiveSoundSpeed> effective_sound_speed;
     std::vector<EffectiveSoundSpeed::Moments> state_moments;
-    std::vector<double> shadow_rates;
+    ShadowAttenuation shadow_attenuation;
     // --refraction stratified: the profile's layers, with the linear model kept
     // alongside for its warm start and for what the layered solve leaves to it.
     std::optional<LayeredSoundSpeed> layered_sound_speed;
@@ -1102,7 +1102,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         state_moments.reserve(nt);
         for (const auto& state : source_states)
             state_moments.push_back(effective_sound_speed->moments(state.position.z));
-        shadow_rates = shadow_attenuation_rates(database.band_centres(), first_band, last_band);
+        // The creeping wave runs along the ground: over its admittance when
+        // there is a ground model, over rigid ground (the old rate) when not.
+        shadow_attenuation = ground_model
+                ? ShadowAttenuation(database.band_centres(), ground_impedance_bands, first_band, last_band)
+                : ShadowAttenuation(database.band_centres(), first_band, last_band);
+        std::string surface_bands;
+        for (std::size_t band = first_band; band < last_band; band++)
+            if (shadow_attenuation.admits_surface_wave(band))
+                surface_bands += (surface_bands.empty() ? "" : ", ") + std::to_string(
+                        static_cast<int>(std::lround(database.band_centres()[band]))) + " Hz";
+        if (!surface_bands.empty())
+            log("  warning: the ground's admittance allows a surface wave in the shadow at ",
+                    surface_bands, ", which the creeping-wave loss leaves out. Those bands take "
+                    "the rigid ground's rate, and their shadow levels are likely too low.");
         // What the fit makes of the air along and against +x from the
         // highest state, so a profile read wrong shows in the log.
         const auto top = std::max_element(source_states.begin(), source_states.end(),
@@ -1121,7 +1134,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 " From the highest state (",
                 top->position.z / options.unit.to_metres, " ", options.unit.name,
                 ") the gradient is ", along.gradient, " /s toward +x and ", against.gradient,
-                " /s toward -x; shadow zones attenuate by the first creeping-wave mode, capped at ",
+                " /s toward -x; shadow zones attenuate by the first creeping-wave mode over ",
+                shadow_attenuation.rigid() ? "rigid ground" : "the ground's impedance", ", capped at ",
                 options.shadow_floor, " dB.");
         if (profile->has_wind() && std::isnan(options.frame_bearing))
         {
@@ -1391,7 +1405,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 const double* extra_loss = nullptr;
                 if (ray.shadow_depth > 0.0)
                 {
-                    shadow_loss(ray, shadow_rates, options.shadow_floor, first_band, last_band,
+                    shadow_loss(ray, shadow_attenuation, options.shadow_floor, first_band, last_band,
                             shadow.data());
                     extra_loss = shadow.data();
                     shadowed_here++;

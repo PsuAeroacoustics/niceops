@@ -97,7 +97,7 @@ int main(int argc, char** argv)
     ground.porosity_rate = porosity_rate;
     ground.receiver_height = z_r;
     const auto admittance = ground_impedance(ground, bands, sound_speed);
-    const auto rates = shadow_attenuation_rates(bands, 0, bands.size());
+    const ShadowAttenuation attenuation(bands, admittance, 0, bands.size());
 
     std::vector<PeResult> pe(bands.size());
     for (std::size_t b = 0; b < bands.size(); b++)
@@ -137,7 +137,7 @@ int main(int argc, char** argv)
             double shadow_db = 0.0;
             if (ray.shadow_depth > 0.0)
             {
-                shadow_loss(ray, rates, 20.0, 0, bands.size(), loss.data());
+                shadow_loss(ray, attenuation, 20.0, 0, bands.size(), loss.data());
                 shadow_db = loss[b];
             }
             return 20.0 * std::log10(slant / ray.path.range) + ground_db - shadow_db;

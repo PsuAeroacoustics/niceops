@@ -67,6 +67,16 @@ std::vector<std::complex<double>> downward_pressure(const ExactProblem& problem,
 // benchmark's grounds reach 4.9.
 std::vector<std::complex<double>> impedance_airy_zeros(std::complex<double> q, int count);
 
+// The one zero of Ai'(t) + q Ai(t) that continues the first zero of Ai' from
+// q = 0, followed out along q = s * direction, for each of the increasing,
+// non-negative `s`.  impedance_airy_zeros stops at |q| = 6 because it accounts
+// for every zero, and the high ones crowd; the first stays well apart from its
+// neighbours, so it can be followed as far as asked, to the first zero of Ai,
+// a_1 - 1/q, as |q| grows.  It is the least attenuated creeping wave of an
+// upward-refracting atmosphere over ground of any admittance (ShadowAttenuation).
+std::vector<std::complex<double>> first_impedance_airy_zero(std::complex<double> direction,
+        const std::vector<double>& s);
+
 // H0^(1)(z), for Im z >= 0.
 std::complex<double> hankel1_0(std::complex<double> z);
 

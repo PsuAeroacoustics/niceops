@@ -368,11 +368,12 @@ TEST_CASE("shadow_loss grows with depth and frequency and stops at the floor", "
     ray.profile = {343.0, -0.02};
     ray.shadow_depth = 100.0;
     std::vector<double> loss(3, 0.0);
-    shadow_loss(ray, rates, 20.0, 0, 3, loss.data());
+    const ShadowAttenuation rigid(bands, 0, bands.size());
+    shadow_loss(ray, rigid, 20.0, 0, 3, loss.data());
     // At 1 kHz and 0.02 /s the first mode decays at about 24 dB/km.
     CHECK(loss[1] == Catch::Approx(2.4111).epsilon(1e-4));
     ray.shadow_depth = 5000.0;
-    shadow_loss(ray, rates, 20.0, 0, 3, loss.data());
+    shadow_loss(ray, rigid, 20.0, 0, 3, loss.data());
     CHECK(loss[2] == 20.0);
 }
 

@@ -293,6 +293,32 @@ std::vector<complex> impedance_airy_zeros(complex q, int count)
     return zeros;
 }
 
+std::vector<complex> first_impedance_airy_zero(complex direction, const std::vector<double>& s)
+{
+    std::vector<complex> zeros;
+    zeros.reserve(s.size());
+    complex t = airy_prime_zero(1);
+    double previous = 0.0;
+    for (const double next : s)
+    {
+        if (!(next >= previous))
+            throw std::invalid_argument("first_impedance_airy_zero: s must be non-negative and increasing");
+        // Steps of at most a tenth of s itself (0.1 near q = 0), so that Newton
+        // starts near the zero it follows; follow() halves them if not.
+        const double reach = std::max(0.1, 0.1 * previous);
+        const int steps = std::max(1, static_cast<int>(std::ceil((next - previous) / reach)));
+        for (int j = 1; j <= steps; j++)
+        {
+            const double from = previous + (next - previous) * (j - 1) / steps;
+            const double to = previous + (next - previous) * j / steps;
+            follow(t, from * direction, to * direction);
+        }
+        zeros.push_back(t);
+        previous = next;
+    }
+    return zeros;
+}
+
 complex hankel1_0(complex z)
 {
     // The series loses digits as exp(|z| + Im z) -- J0 grows where H0 decays

@@ -215,6 +215,7 @@ add_executable(niceops_unit_tests
   tests/test_pe.cpp
   tests/test_pe_shadow.cpp
   tests/test_benchmark.cpp
+  tests/test_shadow_attenuation.cpp
   tests/test_weighting.cpp
   tests/test_ground_effect.cpp
   tests/test_plate_receiver.cpp
