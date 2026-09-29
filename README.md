@@ -1,10 +1,10 @@
 # NICE-OPS
 
-**N**oise **I**nformed **C**ommunity **E**nvironment **OP**eration Planning **S**ystem — a
+**N**oise **I**nformed **C**ommunity **E**nvironment **O**perations **P**lanning **S**ystem — a
 helicopter noise footprint tool. It predicts ground-level dBA noise exposure over an observer
 grid (or a scattered observer set) from a flight trajectory and a rotor-noise "sphere" database.
 
-NICE-OPS was developed by Rob Rau and Eric Greenwood. It began life in D; this is the C++17
+NICE-OPS was developed by Eric Greenwood and Rob Rau. It began life in D; this is the C++17
 implementation, which reproduces the D original's results on the demo case to within a few
 units in the last place.
 
