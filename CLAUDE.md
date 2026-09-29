@@ -618,6 +618,33 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     difference), so no surface-wave pole has to be handled by hand. The convention is
     exp(-i omega t), as in `ground_effect.cpp`, whose admittance it takes. The left-hand
     tridiagonal matrix is factored once per run.
+  - **The march is latency-bound, and shaped for that** (2.7 ns per point per step, from
+    9.0). The Thomas sweep is a recurrence; each row waited on two dependent complex
+    multiplies. Three things, all needed:
+    - The factorisation is twisted (burn at both ends): rows below the middle eliminate
+      downward, rows above upward. Each sweep then carries two independent chains.
+    - The pivot is folded into the stored coefficients, so each row is one complex
+      multiply-add.
+    - That multiply-add is written as two explicit `std::fma` per part (`minus_mul`).
+      Left to itself the compiler contracts inside the multiply and leaves a subtract at
+      the end, which puts 11 cycles of latency on the chain where 8 will do; that alone
+      was 5.1 -> 2.7 ns.
+
+    Output matches the plain Thomas sweep to ~1e-9 dB (the same arithmetic reordered), and
+    stored PE runs reproduce to their printed digits. `solve_pe_bands` pools every (band,
+    frequency) march, highest frequency first, because cost goes as f^2 and a band at a time
+    left the 2 kHz band on a 2-thread share. A five-band `pe_compare` case went from 194 s
+    to 14 s. Summing is in frequency order afterwards, so any thread count gives the same
+    bits.
+  - **The grid is 20 points per wavelength in height and 10 in range.** Against a
+    30 x 30 reference, 10 in height was ~0.1 dB rms near the ground but 0.47 dB rms (2.2 at
+    worst) for a 1.2 m receiver at 1 kHz; 20 is 0.09 dB, for twice the cost. Rerunning the
+    stored calibration cases at 20 moved the PE by 0.16-0.39 dB rms (1.1 at worst) and did
+    not move the shadow-edge calibration fitted against it, so the fits stand. The
+    turbulent mean-field test runs at 10 in height with 1000 realisations; at 20 its
+    tolerance was too tight for its sample size. Halving the range steps costs most cases
+    only 0.02-0.03 dB, but fails `test_benchmark` by 0.2-0.4 dB at long range. Do not
+    coarsen the range step to buy speed.
   - **Normalisation:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
     p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the
     exact two-ray field (0.3 dB, rigid) and to Weyl–van der Pol through NICE-OPS's own

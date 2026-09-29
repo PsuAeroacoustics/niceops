@@ -22,8 +22,21 @@
 // zones -- and not the steep ones near the source, where refraction does not
 // matter and the straight ray is exact anyway.
 //
-// It is slow by the observer loop's standards, a second or so per frequency,
-// and never runs in a footprint.
+// It is slow by the observer loop's standards and never runs in a footprint:
+// 2.7 ns per grid point per range step, so a kilometre at 1 kHz from a 100 m
+// source is about a second.  A band's frequencies, and several bands at once
+// (solve_pe_bands), run in parallel.
+//
+// The grid is 20 points per wavelength in height and 10 per wavelength in
+// range.  Against a 30 x 30 reference, 10 in height was within about 0.1 dB rms
+// for a microphone near the ground but 0.47 dB rms (2.2 dB at worst) for one
+// 1.2 m up at 1 kHz; 20 brings that to 0.09, for twice the cost.  Rerunning
+// the stored calibration cases at 20 moved the PE by 0.16-0.39 dB rms (1.1 at
+// worst) and left the shadow-edge calibration against it unchanged.  Five per
+// wavelength in range would halve the cost and moves most cases by only
+// 0.02-0.03 dB rms, but it fails the Attenborough benchmark by 0.2-0.4 dB at
+// long range, where Crank-Nicolson's phase error builds up over hundreds of
+// wavelengths, so it is not the default.
 
 #include <complex>
 #include <vector>
@@ -49,7 +62,7 @@ struct PeSetup
     // leaves it out.
     double absorption = 0.0;
     // Grid points per wavelength, vertically and in range.
-    double points_per_wavelength = 10.0;
+    double points_per_wavelength = 20.0;
     double range_points_per_wavelength = 10.0;
     // Height of the physical domain, below the absorbing layer; 0 chooses it.
     double domain_height = 0.0;
@@ -71,6 +84,9 @@ struct PeSetup
     double outer_scale = 10.0; // m
     double screen_spacing = 0.0; // m
     unsigned seed = 1;
+    // Threads solve_pe_band spreads its frequencies over (0: one per hardware
+    // thread).  The result does not depend on it.
+    unsigned threads = 0;
 };
 
 struct PeResult
@@ -91,8 +107,18 @@ PeResult solve_pe(const PeSetup& setup);
 // log frequency across the one-third-octave band centred on `centre`: what a
 // band level sees, rather than one tone's interference pattern.
 // With turbulence each frequency is also its own realisation (seed + k), so the
-// average is over the band and the ensemble at once.
+// average is over the band and the ensemble at once.  The frequencies are
+// independent marches and run in parallel (PeSetup::threads); they are summed
+// in order afterwards, so the result is the same on any thread count.
 PeResult solve_pe_band(PeSetup setup, double centre, int samples = 5);
+
+// solve_pe_band for several bands at once, band b from setups[b] at centres[b]:
+// every (band, frequency) march is one task in a single pool, the highest
+// frequencies -- the longest marches, their cost going as f^2 -- dealt out
+// first.  The same result as a band at a time, sooner.  Threads from
+// setups[0].threads.
+std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const std::vector<double>& centres,
+        int samples = 5);
 
 // The PE's phase screen: phi(z_j) at z_j = j dz, j = 0 .. count - 1, for a slab
 // `thickness` metres deep at wavenumber k.  Its variance is

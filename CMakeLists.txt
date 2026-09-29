@@ -237,6 +237,8 @@ add_executable(golden_compare tests/golden_compare.cpp)
 # a research tool, not part of a run.
 add_executable(niceops_pe_compare tools/pe_compare.cpp)
 target_link_libraries(niceops_pe_compare niceops_core CLI11::CLI11)
+add_executable(niceops_pe_field tools/pe_field.cpp)
+target_link_libraries(niceops_pe_field niceops_core CLI11::CLI11)
 # The Attenborough et al. (1995) benchmark cases by the PE and the exact
 # solutions (tools/benchmark.cpp); tools/plot_benchmark.py draws them.
 add_executable(niceops_benchmark tools/benchmark.cpp)

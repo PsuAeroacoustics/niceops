@@ -624,6 +624,16 @@ equation. The last is a full-wave solution, Crank–Nicolson Padé(1,1) with the
 impedance written into the grid. Absorption and turbulence are left out of all four,
 unless `--gamma_t` puts turbulence in the PE (below).
 
+It runs at 2.7 ns per grid point per range step. Its bands and their frequencies run in
+parallel: a five-band case from a 50 m source out to 3 km takes 14 s on 14 cores, where the
+original single-threaded solver took 194 s (both on a grid of 10 points per wavelength in height). The
+grid is 20 points per wavelength in height and 10 in range (`--ppw`, `--range_ppw`). Against a
+30 × 30 reference, 10 in height is within about 0.1 dB rms for a receiver near the ground, but
+0.47 dB rms (2.2 dB at worst) for one 1.2 m up at 1 kHz; 20 brings that to 0.09 dB, at twice the
+cost. On the stored shadow-calibration cases the change moved the PE by 0.16–0.39 dB rms (1.1 dB
+at worst) and left the calibration's edge error against it unchanged. Coarser range steps are
+not a safe saving: five per wavelength fails the benchmark below by 0.2–0.4 dB at long range.
+
 The PE is checked against exact solutions:
 
 | Case | Agreement | Test |

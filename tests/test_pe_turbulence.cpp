@@ -70,6 +70,9 @@ TEST_CASE("pe_turbulent_mean_field_decays", "[pe_turbulence]")
     setup.output_step = 50.0;
     setup.z = {0.0};
     setup.c = {340.0};
+    // The screens' statistics do not depend on the grid; the coarse one keeps
+    // a thousand marches cheap.
+    setup.points_per_wavelength = 10.0;
     const double k = 2.0 * pi * setup.frequency / 340.0;
     setup.outer_scale = 10.0;
     setup.gamma_t = 1.0 / (0.7817 * k * k * 300.0 * 0.25 * std::pow(setup.outer_scale, 5.0 / 3.0));
@@ -78,7 +81,10 @@ TEST_CASE("pe_turbulent_mean_field_decays", "[pe_turbulence]")
         s.gamma_t = 0.0;
         return solve_pe(s);
     }();
-    constexpr int realisations = 300;
+    // The mean of N unit phasors scatters by about sqrt((1 - |mean|^2) / 2N):
+    // 0.02 at N = 1000, so 0.07 is 3-4 sigma at every range checked.  (300 of
+    // them, at 0.035, failed by chance once the grid changed the draws.)
+    constexpr int realisations = 1000;
     std::vector<std::complex<double>> mean(still.range.size(), 0.0);
     for (int i = 0; i < realisations; i++)
     {
@@ -93,8 +99,7 @@ TEST_CASE("pe_turbulent_mean_field_decays", "[pe_turbulence]")
         const double expected = std::exp(-0.5 * screen_variance(k, setup.gamma_t, setup.outer_scale, r));
         const double ratio = std::abs(mean[q] / still.psi[0][q]);
         INFO("range " << r << " m: |<psi>| / |psi_0| = " << ratio << ", expected " << expected);
-        // Sampling error of the mean of 300 unit phasors is about 0.04.
-        CHECK(std::fabs(ratio - expected) < 0.08);
+        CHECK(std::fabs(ratio - expected) < 0.07);
     }
 }
 

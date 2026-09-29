@@ -32,6 +32,7 @@
 #include "stratified.hpp"
 #include "util/constants.hpp"
 #include "util/logger.hpp"
+#include "util/parallel.hpp"
 
 using namespace niceops; // NOLINT
 
@@ -50,7 +51,7 @@ int main(int argc, char** argv)
     std::string impedance_model = "delany_bazley";
     double porosity_rate = 0.0;
     int samples = 5;
-    double points_per_wavelength = 10.0;
+    double points_per_wavelength = 20.0;
     double range_points_per_wavelength = 10.0;
     bool no_pe = false;
     double gamma_t = 0.0;
@@ -68,7 +69,7 @@ int main(int argc, char** argv)
     app.add_option("--impedance_model", impedance_model, "As for niceops.");
     app.add_option("--porosity_rate", porosity_rate, "As for niceops, 1/m.");
     app.add_option("--samples", samples, "PE frequencies per band (default 5).");
-    app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 10).");
+    app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 20).");
     app.add_option("--range_ppw", range_points_per_wavelength,
             "PE range steps per wavelength (default 10).");
     app.add_flag("--no_pe", no_pe, "Only the ray models; the pe columns are NaN.");
@@ -122,9 +123,10 @@ int main(int argc, char** argv)
         pe[b].relative_level.assign(1, std::vector<double>(pe[b].range.size(),
                 std::numeric_limits<double>::quiet_NaN()));
     }
-    for (std::size_t b = 0; b < bands.size() && !no_pe; b++)
+    std::vector<PeSetup> setups(bands.size());
+    for (std::size_t b = 0; b < bands.size(); b++)
     {
-        PeSetup setup;
+        PeSetup& setup = setups[b];
         setup.source_height = z_s;
         setup.receiver_heights = {z_r};
         setup.max_range = r_max;
@@ -137,8 +139,12 @@ int main(int argc, char** argv)
         setup.gamma_t = gamma_t;
         setup.outer_scale = outer_scale;
         setup.seed = seed + 1000u * static_cast<unsigned>(b);
-        std::cerr << "PE at " << bands[b] << " Hz..." << std::endl;
-        pe[b] = solve_pe_band(setup, bands[b], samples);
+    }
+    if (!no_pe)
+    {
+        std::cerr << "PE: " << bands.size() << " bands x " << samples << " frequencies on "
+                  << default_thread_count() << " threads..." << std::endl;
+        pe = solve_pe_bands(setups, bands, samples);
     }
 
     std::cout << "range_" << unit.name;
