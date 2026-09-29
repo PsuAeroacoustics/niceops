@@ -522,7 +522,13 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     const double tube = tube_range(range, family, p_inside, c_s, reach,
             family.arm.second ? rising : -rising);
     out.shadow_depth = std::max(r - full.dx, 0.0);
-    out.spreading_range = std::max(tube * r / reach, focus_floor);
+    // A receiver a few millimetres up leaves the dipping family a sliver of
+    // heights that deep, whose tube comes out 0 / 0; the limiting ray is then
+    // spread as a linear profile's, r / cos(launch).
+    const double carried = std::isfinite(tube) && tube > 0.0 && reach > 0.0
+            ? tube * r / reach
+            : r / std::cos(out.launch);
+    out.spreading_range = std::max(carried, focus_floor);
     out.path_length = full.ds + out.shadow_depth;
     out.travel_time = full.dt + out.shadow_depth / layers.at(0.0);
     return out;
@@ -576,7 +582,14 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     RefractedRay ray = direct_ray(linear, source, at_source, receiver, at_receiver);
     const double r = ray.horizontal;
     const double z_s = source.z;
-    const double z_r = receiver.z;
+    // A microphone a few centimetres below the plane -- a ground board on
+    // ground just under the survey datum -- is solved for on the plane.  The
+    // layers hold their lowest speed below z = 0, and the direct-ray solve
+    // knows no ground, so it would otherwise send a ray grazing along under
+    // the plane to it: on a log-law wind 2.7 cm down gave a "lit" arrival of
+    // -0.003 degrees and a ray tube 46 times its range, 33 dB low, where on
+    // the plane the pair is in shadow.  The ray still ends at the microphone.
+    const double z_r = std::max(receiver.z, 0.0);
     if (r < 1e-3 || !(z_s > z_r))
         return ray;
     const double hx = (receiver.x - source.x) / r;

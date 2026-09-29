@@ -408,7 +408,7 @@ path supplies:
   takes over. A ground reactive enough to carry a surface wave into the shadow (a porosity
   rate of tens per metre, a thin hard-backed layer, low bands) takes the rigid rate in those
   bands, and the log names them.
-- **Near the shadow boundary**, with `--refraction linear` and a point receiver, the level
+- **Near the shadow boundary**, with a point receiver or a flush plate microphone, the level
   comes from the exact field instead. Within a couple of diffraction lengths of the boundary
   (F = 2k₀ℓ², about 100–400 m) ray theory fails on both sides: its ground term, taken at
   the grazing ray's geometry, sinks toward the grazing ground wave, 10–25 dB below the exact
@@ -534,8 +534,26 @@ The law's one constant was fitted on twelve log laws (u* 0.2–0.6 m/s, z0 0.01�
 sources 30 and 100 m, 125 Hz – 2 kHz) and checked on `example_windy.csv`, which was held out:
 6.8 dB rms over the shadow edge against the PE there, against 18.9 dB with the layered
 boundary as it stands. On the demo grid with a point receiver, `stratified` now averages
-3.1 dB below `linear` (5th percentile −12.4 dB), where it was 6.1 (−19). Plates, and runs
-without `--ground_effect`, keep the layered boundary and the creeping-wave loss.
+3.1 dB below `linear` (5th percentile −12.4 dB), where it was 6.1 (−19). Runs without
+`--ground_effect` keep the layered boundary and the creeping-wave loss.
+
+**Flush plate microphones** get the same treatment:
+- **The field:** the boundary field for a receiver at the plate's top (8 mm for the GR1425).
+- **The plate over bare ground, K:** added on top. Near grazing K barely depends on elevation
+  (within 0.1 dB from 0.5° to 10°). It is about 0 dB up to 1 kHz, +0.9 dB at 2 kHz, +2.6 at
+  4 kHz and +7 at 8 kHz, and it varies with azimuth by ±1 to ±2.5 dB, so it is tabulated per
+  band and azimuth at 2° and applied at each pair's own azimuth.
+- **At ground level** the boundary law holds up. Against the PE for a receiver 3 mm up, over
+  16 log-law cases, the shadow-edge error is 7.1 dB rms, against 10.0 for `linear`. The
+  constant that suits both heights together is 0.39, only 0.1 dB better than 0.363.
+
+Two faults in the layered model surfaced with flush microphones, both fixed:
+- **Microphones just below the plane.** Ground boards sit a few centimetres below the survey
+  datum. The layers hold their lowest speed below z = 0 and the direct-ray solve knew no
+  ground, so it sent a ray grazing along under the plane. On the 2017 test's windy day that
+  was 33 dB low. Such a microphone is now solved for on the plane.
+- **Receivers a few millimetres up.** The ray tube past the boundary came out 0/0. It is now
+  spread as a linear profile's limiting ray.
 
 Costs, with a point receiver: the demo grid's acoustic loop takes 12.0 s (3.3 s linear, 2.1 s
 without refraction). A 96-microphone scattered array like `arrays/coyle_approach.csv` takes
@@ -621,6 +639,10 @@ level error against it (rms, dB):
 On the linear profile, where the ray model's geometry is right, the boundary field puts it on
 the PE. On log laws it needs the per-band boundary too. Scaled by the layered model's own
 boundary, it falls 10–20 dB too fast at 125–250 Hz and pooled at 19.5 dB.
+
+For a receiver on the ground (3 mm up) the same comparison gives 7.1 dB pooled, against 10.0
+for `linear`, with the lapse control at 0.5 dB. By band, 125 Hz is the worst (10.2 dB) and
+500 Hz the best (4.4).
 
 Two things that looked like the treatment and are not:
 - **Clipping the profile below a fixed height.** Once the height passes the microphone, the

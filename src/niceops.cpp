@@ -1089,8 +1089,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::optional<EffectiveSoundSpeed> effective_sound_speed;
     std::vector<EffectiveSoundSpeed::Moments> state_moments;
     ShadowAttenuation shadow_attenuation;
-    // Point receivers near a shadow boundary: one table per microphone height.
+    // Point receivers near a shadow boundary: one table per microphone height;
+    // flush plate microphones, one more.
     std::vector<ShadowTransition> shadow_transitions;
+    std::optional<ShadowTransition> plate_transition;
     // --refraction stratified: the profile's layers, with the linear model kept
     // alongside for its warm start and for what the layered solve leaves to it.
     std::optional<LayeredSoundSpeed> layered_sound_speed;
@@ -1115,9 +1117,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 const auto start = std::chrono::steady_clock::now();
                 shadow_transitions.emplace_back(database.band_centres(), ground_impedance_bands,
-                        height, sound_speed, first_band, last_band);
+                        height, sound_speed, first_band, last_band, nullptr, nullptr,
+                        options.thread_count);
                 log("  shadow-boundary field for microphones ", height / options.unit.to_metres, " ",
                         options.unit.name, " up tabulated from the residue series in ",
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
+                        " s.");
+            }
+            if (any_plate)
+            {
+                const auto start = std::chrono::steady_clock::now();
+                plate_transition.emplace(database.band_centres(), ground_impedance_bands,
+                        plate->thickness(), sound_speed, first_band, last_band, &*plate, ground_model,
+                        options.thread_count);
+                log("  shadow-boundary field for plate microphones tabulated in ",
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
                         " s.");
             }
@@ -1189,7 +1202,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // both.  The point receiver's does not depend on its height.
                 std::vector<double> ground_gains(bound_gains.size(), 0.0);
                 if (any_plate)
+                {
                     ground_gains = plate->gain_bounds(first_band, last_band);
+                    if (plate_transition)
+                        for (std::size_t band = 0; band < ground_gains.size(); band++)
+                            ground_gains[band] = std::max(ground_gains[band],
+                                    plate_transition->max_power_ratio(band));
+                }
                 if (any_point)
                 {
                     const auto point_gains = ground_gain_bounds(*ground_model,
@@ -1424,16 +1443,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const auto at_receiver = effective_sound_speed
                     ? effective_sound_speed->moments(observer.z)
                     : EffectiveSoundSpeed::Moments {};
-            const ShadowTransition* transition_here = !flush && !shadow_transitions.empty()
-                    ? &shadow_transitions[point_of[index]]
-                    : nullptr;
+            const ShadowTransition* transition_here = flush
+                    ? (plate_transition ? &*plate_transition : nullptr)
+                    : (!shadow_transitions.empty() ? &shadow_transitions[point_of[index]] : nullptr);
             auto refracted_level = [&](std::size_t it, RefractedRay ray) {
                 finish_ray(ray, ray_ground, microphone_height[index]);
                 const double* extra_loss = nullptr;
                 const double* ground_weight = nullptr;
+                // The plate's frame, as Database::spectral_level_along takes it.
+                const double plate_azimuth = flush
+                        ? std::atan2(ray.path.separation.y, ray.path.separation.x) - plate_mic_azimuth
+                                + 0.5 * pi
+                        : 0.0;
                 if (transition_here != nullptr
                         && transition_here->apply(ray, shadow_attenuation, options.shadow_floor,
-                                first_band, last_band, shadow_weight.data(), shadow.data()))
+                                first_band, last_band, shadow_weight.data(), shadow.data(),
+                                plate_azimuth))
                 {
                     // Near the boundary the transition's field replaces the
                     // ground term and the creeping-wave loss.

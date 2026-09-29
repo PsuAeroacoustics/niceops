@@ -533,6 +533,25 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     - Against the PE on a linear lapse: shadow-edge error 5-20 dB -> 0.1-1 dB.
       `tests/test_shadow_transition.cpp` holds it to the exact series, and pins the law
       against stored PE levels (example_windy, 100 m source, 500 Hz and 1 kHz).
+    - **Plates** get their own table: the field at the plate's top (its thickness as the
+      receiver height) plus K, the plate over bare ground, per band and azimuth, taken from
+      `PlateReceiver::level` at 2 degrees. K barely depends on elevation near grazing
+      (within 0.1 dB from 0.5 to 10 degrees), which is what makes one value hold through
+      the shadow. The caller passes the pair's plate-frame azimuth, the same as
+      `Database::spectral_level_along` forms it. `max_power_ratio` includes the loudest
+      K. On the 2017 day 284 this takes `stratified`'s 5-10 degree rms from 4.5 to 3.6 dB.
+    - The tables take the run's `-j` (`threads`). The harness runs a dozen `-j 1`
+      processes at once, and a table building on every core in each of them took 7 s.
+  - **`layered_direct_ray` solves for a microphone below the plane as if on it.** The
+    layers hold their lowest speed below z = 0 and the direct-ray solve knows no ground,
+    so it sent a ray grazing along under the plane: a "lit" arrival of -0.003 degrees
+    whose tube was 46 times its range, 33 dB low. Ground boards 3-10 cm under the survey
+    datum hit it on every run of the 2017 data. The ray still ends at the microphone,
+    and uniform air never reaches the layered solve, so the straight-ray equivalence
+    stands.
+  - **The layered shadow's tube can be 0/0** for a receiver a few millimetres up, where the
+    dipping family is a sliver that thin. It then falls back to r / cos(launch). Both
+    fixes have tests in `test_shadow_transition.cpp`.
 - `src/stratified.{hpp,cpp}` — `--refraction stratified` (roadmap step 6a): the effective
   sound speed piecewise linear between the profile's own levels, circular arcs within each
   layer, eigenrays solved per pair. The things to preserve:

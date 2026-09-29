@@ -138,8 +138,10 @@ int main(int argc, char** argv)
             const double ground_db = excess_ground_attenuation(ground, ray.path.source_height,
                     ray.path.ground_distance, sound_speed, {bands[b]})[0];
             const double spreading_db = 20.0 * std::log10(slant / ray.path.range);
+            // A weight of 0 drops the ground term, which at the surface can be
+            // -infinity; 0 * -inf would be NaN.
             if (transition.apply(ray, attenuation, 20.0, 0, bands.size(), weight.data(), loss.data()))
-                return spreading_db + weight[b] * ground_db - loss[b];
+                return spreading_db + (weight[b] > 0.0 ? weight[b] * ground_db : 0.0) - loss[b];
             double shadow_db = 0.0;
             if (ray.shadow_depth > 0.0)
             {

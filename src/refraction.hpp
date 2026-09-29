@@ -337,13 +337,30 @@ void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, 
 // on atmospheres/example_windy.csv: shadow-edge error against the PE 18.9 dB rms
 // with r_b = r_s, 6.7 dB with the law.  With r_s = r_l, a linear profile, it is
 // the one boundary.
+//
+// A flush plate microphone gets the field at the plate's top, receiver_height
+// its thickness, plus the plate's level over bare ground there, K.  Near
+// grazing K barely depends on elevation -- over the GR1425 on the Amedee
+// ground, within 0.1 dB from 0.5 to 10 degrees, about 0 dB to 1 kHz, +0.9 at
+// 2 kHz, +2.6 at 4 kHz, +7 at 8 kHz -- but it does on azimuth (+-1 dB at 1-4 kHz,
+// +-2.5 at 8 kHz), so it is tabulated per band and azimuth at 2 degrees and
+// applied at each pair's own.
+class PlateReceiver;
+struct GroundModel;
+
 class ShadowTransition
 {
 public:
     ShadowTransition() = default;
+    // A point receiver `receiver_height` up; with `plate` (bound to these
+    // bands, over `ground`), a flush microphone on that plate, receiver_height
+    // its thickness.  The bands are built on `threads` threads (0: one per
+    // hardware thread), as the observer loop's -j.
     ShadowTransition(const std::vector<double>& frequencies,
             const std::vector<std::complex<double>>& admittance, double receiver_height,
-            double sound_speed, std::size_t first_band, std::size_t last_band);
+            double sound_speed, std::size_t first_band, std::size_t last_band,
+            const PlateReceiver* plate = nullptr, const GroundModel* ground = nullptr,
+            unsigned threads = 0);
 
     bool empty() const { return table_.empty(); }
     double receiver_height() const { return receiver_height_; }
@@ -361,9 +378,15 @@ public:
     // creeping-wave loss of `attenuation`, which is also what a band below
     // s_min keeps.  False, with nothing written, when the ray is nowhere near
     // a boundary in any band: then the caller's ordinary path stands.
+    // `plate_azimuth` is the horizontal propagation direction in the plate's
+    // frame, as PlateReceiver takes it; ignored for a point receiver.
     bool apply(const RefractedRay& ray, const ShadowAttenuation& attenuation, double floor,
             std::size_t first_band, std::size_t last_band, double* ground_weight,
-            double* loss) const;
+            double* loss, double plate_azimuth = 0.0) const;
+
+    // K, dB, in `band` at `azimuth` (radians, the plate's frame); 0 for a point
+    // receiver (tests).
+    double plate_offset(std::size_t band, double azimuth) const;
 
     // One band's effective boundary between the layered r_s and the linear
     // fit's r_l > r_s (see above), for a source and receiver z_s and z_r up.
@@ -400,6 +423,9 @@ private:
     // [band][j]: V at xi = 0, for the floor.
     std::vector<std::vector<double>> at_boundary_;
     std::vector<double> max_power_ratio_;
+    // [band][i]: K at azimuth i * plate_azimuth_step; empty for a point receiver.
+    std::vector<std::vector<double>> plate_offset_;
+    static constexpr int plate_azimuths = 36;
 };
 
 } // namespace niceops

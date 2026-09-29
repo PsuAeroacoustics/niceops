@@ -6,6 +6,8 @@
 #include <stdexcept>
 
 #include "exact_solutions.hpp"
+#include "ground_effect.hpp"
+#include "plate_receiver.hpp"
 #include "util/constants.hpp"
 #include "util/parallel.hpp"
 
@@ -578,9 +580,12 @@ namespace niceops {
 
 ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
         const std::vector<std::complex<double>>& admittance, double receiver_height,
-        double sound_speed, std::size_t first_band, std::size_t last_band)
+        double sound_speed, std::size_t first_band, std::size_t last_band,
+        const PlateReceiver* plate, const GroundModel* ground, unsigned threads)
     : frequencies_(frequencies), receiver_height_(receiver_height)
 {
+    if (plate != nullptr && ground == nullptr)
+        throw std::invalid_argument("ShadowTransition: a plate needs its ground model");
     if (admittance.size() != frequencies.size())
         throw std::invalid_argument("ShadowTransition: one admittance per band");
     xi_nodes_ = static_cast<std::size_t>(std::lround((xi_max - xi_ray) / xi_step)) + 1;
@@ -596,7 +601,8 @@ ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
         return;
 
     // A few seconds' worth of mode sums in all, so the bands go in parallel.
-    parallel_chunks(end - first_band, default_thread_count(), [&](std::size_t lo, std::size_t hi) {
+    parallel_chunks(end - first_band, threads > 0 ? threads : default_thread_count(),
+            [&](std::size_t lo, std::size_t hi) {
         for (std::size_t band = first_band + lo; band < first_band + hi; band++)
         {
             const double f = frequencies[band];
@@ -673,6 +679,45 @@ ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
             at_boundary_[band] = std::move(zero);
         }
     });
+
+    if (plate == nullptr)
+        return;
+    // K: the plate over bare ground at its top, 2 degrees up, a kilometre out.
+    plate_offset_.assign(frequencies.size(), std::vector<double>(plate_azimuths, 0.0));
+    GroundModel bare = *ground;
+    bare.receiver_height = receiver_height;
+    const double elevation = 2.0 * pi / 180.0;
+    const double h = 1000.0 * std::sin(elevation), d = 1000.0 * std::cos(elevation);
+    std::vector<double> bare_db(frequencies.size(), 0.0), plate_db(frequencies.size(), 0.0);
+    excess_ground_attenuation(bare, admittance, h, d, sound_speed, frequencies, bare_db.data(),
+            first_band, end, false);
+    for (int i = 0; i < plate_azimuths; i++)
+    {
+        plate->level(h, d, 2.0 * pi * i / plate_azimuths, plate_db.data(), first_band, end);
+        for (std::size_t band = first_band; band < end; band++)
+            plate_offset_[band][i] = plate_db[band] - bare_db[band];
+    }
+    // The bound has to cover V + K at the loudest azimuth.
+    for (std::size_t band = first_band; band < end; band++)
+    {
+        const double k_max = *std::max_element(plate_offset_[band].begin(), plate_offset_[band].end());
+        max_power_ratio_[band] = 1.0;
+        for (const double v : table_[band])
+            if (std::isfinite(v))
+                max_power_ratio_[band] = std::max(max_power_ratio_[band], std::pow(10.0, (v + k_max) / 10.0));
+    }
+}
+
+double ShadowTransition::plate_offset(std::size_t band, double azimuth) const
+{
+    if (plate_offset_.empty() || plate_offset_[band].empty())
+        return 0.0;
+    const double x = std::fmod(azimuth / (2.0 * pi) * plate_azimuths, static_cast<double>(plate_azimuths));
+    const double wrapped = x < 0.0 ? x + plate_azimuths : x;
+    const int i = std::min(static_cast<int>(wrapped), plate_azimuths - 1);
+    const double t = wrapped - i;
+    const auto& k = plate_offset_[band];
+    return k[i] + t * (k[(i + 1) % plate_azimuths] - k[i]);
 }
 
 double ShadowTransition::column(std::size_t band, std::size_t j, double xi) const
@@ -717,7 +762,7 @@ double ShadowTransition::band_boundary(double r_s, double r_l, double z_s, doubl
 
 bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& attenuation,
         double floor, std::size_t first_band, std::size_t last_band, double* ground_weight,
-        double* loss) const
+        double* loss, double plate_azimuth) const
 {
     if (empty() || !ray.curved || !(ray.direct.boundary_gradient < 0.0)
             || !std::isfinite(ray.direct.boundary) || first_band >= last_band)
@@ -775,6 +820,7 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
                 + (x - static_cast<double>(j)) * (at_boundary_[band][j + 1] - at_boundary_[band][j]);
         if (std::isfinite(v_zero))
             v = std::max(v, v_zero - floor);
+        v += plate_offset(band, plate_azimuth);
         if (xi >= xi_modal)
         {
             ground_weight[band] = 0.0;
