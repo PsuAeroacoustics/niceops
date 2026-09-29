@@ -101,12 +101,21 @@ ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, d
 // `linear` supplies the warm start; `scratch` holds the path's effective sound
 // speed at each level between the two calls, so is per thread.
 //
-// With `linear_past_shadow`, a pair in the layered shadow whose linear fit is
-// still lit gets the fit's ray instead, carrying both boundaries
+// With `linear_past_shadow`, a pair beyond handover_fraction of the layered
+// boundary whose linear fit's boundary lies further out gets the fit's ray
+// instead, lit or in the fit's own shadow, carrying both boundaries
 // (from_linear_fit set).  That is for ShadowTransition, whose bands' boundaries
 // lie between the two: past the layered one the lit level is the fit's.
 // Formed here, not later, so that the peak search bounds the ray whose level
 // it will take.
+//
+// handover_fraction: against the parabolic equation on the lit side, over the
+// last half of the way to the layered boundary, the layered ray is 6-9 dB out
+// at worst and the fit's 1-3; handing over at 0.9 of the boundary is 0.6 dB rms
+// on measured day-284 profiles (1.4 at the boundary itself) and 1.7 on log laws
+// (3.3).
+inline constexpr double handover_fraction = 0.9;
+
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,

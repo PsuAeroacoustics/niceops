@@ -21,6 +21,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,10 @@ int main(int argc, char** argv)
     int samples = 5;
     double points_per_wavelength = 10.0;
     double range_points_per_wavelength = 10.0;
+    bool no_pe = false;
+    double gamma_t = 0.0;
+    double outer_scale = 10.0;
+    unsigned seed = 1;
     app.add_option("--atmosphere", atmosphere_file, "Atmosphere profile, as for niceops.")->required();
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("--toward", toward, "Compass bearing the sound travels along, degrees.")->required();
@@ -66,6 +71,12 @@ int main(int argc, char** argv)
     app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 10).");
     app.add_option("--range_ppw", range_points_per_wavelength,
             "PE range steps per wavelength (default 10).");
+    app.add_flag("--no_pe", no_pe, "Only the ray models; the pe columns are NaN.");
+    app.add_option("--gamma_t", gamma_t,
+            "Turbulence in the PE (HARMONOISE strength; 0, the default, is none).  Each of --samples "
+            "frequencies is then its own realisation, so give it 20 or so.");
+    app.add_option("--outer_scale", outer_scale, "von Karman outer scale of the PE's turbulence, m (default 10).");
+    app.add_option("--seed", seed, "First realisation's seed (default 1).");
     CLI11_PARSE(app, argc, argv);
 
     Logger::instance().set_file("log/pe_compare.log");
@@ -103,7 +114,15 @@ int main(int argc, char** argv)
     const ShadowTransition transition(bands, admittance, z_r, sound_speed, 0, bands.size());
 
     std::vector<PeResult> pe(bands.size());
-    for (std::size_t b = 0; b < bands.size(); b++)
+    for (std::size_t b = 0; b < bands.size() && no_pe; b++)
+    {
+        // The PE's own output grid, without solving it.
+        for (std::size_t q = 1; q * dr_out <= r_max + 1e-9; q++)
+            pe[b].range.push_back(q * dr_out);
+        pe[b].relative_level.assign(1, std::vector<double>(pe[b].range.size(),
+                std::numeric_limits<double>::quiet_NaN()));
+    }
+    for (std::size_t b = 0; b < bands.size() && !no_pe; b++)
     {
         PeSetup setup;
         setup.source_height = z_s;
@@ -115,6 +134,9 @@ int main(int argc, char** argv)
         setup.c = c;
         setup.points_per_wavelength = points_per_wavelength;
         setup.range_points_per_wavelength = range_points_per_wavelength;
+        setup.gamma_t = gamma_t;
+        setup.outer_scale = outer_scale;
+        setup.seed = seed + 1000u * static_cast<unsigned>(b);
         std::cerr << "PE at " << bands[b] << " Hz..." << std::endl;
         pe[b] = solve_pe_band(setup, bands[b], samples);
     }

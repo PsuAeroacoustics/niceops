@@ -214,6 +214,7 @@ add_executable(niceops_unit_tests
   tests/test_stratified.cpp
   tests/test_pe.cpp
   tests/test_pe_shadow.cpp
+  tests/test_pe_turbulence.cpp
   tests/test_benchmark.cpp
   tests/test_shadow_attenuation.cpp
   tests/test_shadow_transition.cpp

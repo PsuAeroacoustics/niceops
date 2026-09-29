@@ -520,9 +520,29 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       layer. The constant 0.363 was fitted on 12 log laws and held out on example_windy
       (6.8 dB edge rms, against 18.9 at r_s). Pooled over 16 log-law cases the edge error
       goes 30.7 -> 6.1 dB, and the lapse control stays at 0.4.
-    - **Past r_s the lit ray is the linear fit's.** `layered_direct_ray(..., true)` hands it
-      back (`from_linear_fit`, finished by `finish_ground`) whenever r > r_s, *not only where
-      the layered solve fails*. On a log law the dipping family's range is not monotonic
+    - **Flush microphones take their own constant, 0.75** (`boundary_resolution_flush`,
+      chosen by the table's receiver height or plate, never the observer's terrain z). Fitted
+      per case against the PE, a flush microphone's best boundary is ~0.9 diffraction lengths
+      at the fit's curvature past r_s on the measured day-284 profiles and ~1.2 on flush log
+      laws, where 0.363 put it at 1.7-2.7. 1.2 m keeps 0.363 (0.387 refitted).
+    - **Where the fit casts no shadow (r_l infinite), each band takes a multiple of r_s**:
+      1.60 (f/1 kHz)^-0.08 flush, 1.90 (f/1 kHz)^-0.08 at 1.2 m (`fallback_multiple_*`).
+      The law has nothing to interpolate toward there, and falling back to r_s itself was
+      the cliff again. A strong inversion above the source does it: the fit over the path
+      refracts downward while the shear under it still casts a shadow.
+    - **The law cannot be made much better by fitting.** The per-case optimum is 2.7 dB
+      pooled; every smooth law tried (constant multiples, power laws in f, offsets in
+      diffraction lengths, tangent-extended profiles, regressions on f, z_s, r_l/r_s) sits
+      at 6-9 over all cases. The optimum is sharp where the wall is steep. Do not spend another day on it
+      without turbulence in the reference.
+    - **Past 0.9 r_s the lit ray is the linear fit's** (`handover_fraction`, stratified.hpp).
+      `layered_direct_ray(..., true)` hands it back (`from_linear_fit`, finished by
+      `finish_ground`) whenever r > 0.9 r_s, *not only where the layered solve fails*, and
+      keeps it past the fit's own boundary too, in its shadow. Short of r_s the layered ray
+      focuses into a caustic (+10 dB) that the PE does not show; 0.9 was the best hand-over
+      on both calibration sets (0.6 dB rms on day 284 over [0.5, 1] r_s, 1.4 at r_s). Going
+      back to the layered shadow ray past r_l stepped 2-10 dB, where the fit's limiting ray
+      is continuous. On a log law the dipping family's range is not monotonic
       and reaches tens of metres past its end, and those near-grazing rays have no
       reflected partner, so the ground term took the grazing geometry (-32 dB). It is
       formed in `form_ray`, so the peak search bounds the ray whose level it takes. Only
@@ -555,6 +575,14 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
 - `src/stratified.{hpp,cpp}` — `--refraction stratified` (roadmap step 6a): the effective
   sound speed piecewise linear between the profile's own levels, circular arcs within each
   layer, eigenrays solved per pair. The things to preserve:
+  - **A ground-grazing boundary needs only that no ray from aloft reaches the receiver**:
+    the air above the source must not outrun everything between receiver and source
+    (`fastest_above(z_s) > fastest(z_r, z_s)`, the same rule families() uses for the
+    upward arms). Testing against the source's own speed left the day-284 mornings -- an
+    inversion over an upwind shear, 330.5 m/s aloft against 339 at the ground -- with no
+    boundary, so no transition and no hand-over, and the shadow a 10-35 dB cliff the PE
+    puts 30-50% further out. It moved day 284's upwind 5-10 degree bin most of all; see the
+    README for the table.
   - **Parametrise by the Snell invariant p, in four families.** Launched up or down, arriving
     on the first crossing of the receiver height or on the second, after dipping below it
     (`Arm`, `families`). The range is monotonic in p within a family. The dipping family is
@@ -610,15 +638,33 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     shadow the near-ground field is a weak remainder while energy leaks upward past it.
     With 60 wavelengths of margin (25 m at 1 kHz), reflection off the layer set a floor: the
     PE came out 3.8 dB high at -44 dB against the residue series.
-  - **There is no turbulence.** The deep shadow, 40–90 dB down, is not physical; the ray
-    models' `--shadow_floor` stands in for scattering. Absorption is optional
+  - **Turbulence is phase screens** (`PeSetup::gamma_t`, `outer_scale`, `screen_spacing`,
+    `seed`; `pe_compare --gamma_t`). von Karman in the effective index with C^2 = gamma_t / 4
+    -- HARMONOISE's gamma_t, the form Ostashev's and HARMONOISE's coherences both reduce to
+    -- uniform in height, one screen per outer scale of range, drawn by FFT (`ScreenSource`).
+    The screen's vertical spectrum is the 3-D spectrum integrated across the plane, so the
+    vertical coherence is 3-D's. `solve_pe_band` makes each frequency its own realisation.
+    `tests/test_pe_turbulence.cpp` checks the screens' variance (0.06%), the mean field's
+    exp(-sigma^2/2) decay (within sampling noise), and ShadowScattering against the PE.
+    Still air is untouched: gamma_t 0 skips it all.
+  - **`ShadowScattering` (`--scattering`) is fitted to it**, a + 10 lg gamma_t + b lg f +
+    c lg R + d lg z_s dB re free field, added in energy to the transition's field where it
+    runs, with the floor off. Single scattering is linear in gamma_t and the PE agrees (x3 ->
+    4.82 dB, theory 4.77). Two things to know before trusting a strength:
+    - **The pair fit's gamma_t = 3e-5 is far too strong for scattering.** It fills the
+      day-284 shadows to -3 dB re free field; the measured SEL wants <= ~3e-6
+      (HARMONOISE's "moderate"), and does as well with the floor. It is off by default for
+      that reason.
+    - The 1.2 m constants come from one source height; the height term is the flush fit's.
+  - Without `--gamma_t` the deep shadow, 40–90 dB down, is not physical. Absorption is optional
     (`PeSetup::absorption`, Np/m, the imaginary part of k so it acts along the actual path)
     and off in `pe_compare`, because the ray-model comparison leaves it out of all four.
   - **Findings** (README has the tables). Downwind, `stratified` is within 0.4–2.1 dB rms of
     the PE and the others are 1–8 dB off. Upwind, the PE's shadow onset lies between
     `stratified` (too early) and `linear` (too late), moving toward `stratified` with
-    frequency. That points to a frequency-dependent near-ground treatment for `stratified`,
-    calibrated against this tool.
+    frequency; the per-band boundary law is that treatment.
+  - **`--no_pe`** gives the ray models' columns alone, on the PE's range grid, for
+    re-scoring a model change against stored PE runs without re-solving them.
 - `src/exact_solutions.{hpp,cpp}`, `tools/benchmark.cpp`, `tests/test_benchmark.cpp` — step 7b:
   the Attenborough et al. benchmark (JASA 97, 173 (1995); the PDF is not in the repo) and its
   exact solutions: direct plus image ray (case 1), the downward normal-mode series (case 2)

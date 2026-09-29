@@ -522,6 +522,9 @@ struct RunOptions
     bool refraction = false;
     bool stratified = false;
     double shadow_floor = 20.0;
+    // --scattering: the HARMONOISE turbulence strength whose scattered energy
+    // fills the shadows (ShadowScattering); 0 keeps shadow_floor instead.
+    double scattering = 0.0;
     // Compass bearing of the local +x axis, degrees, for turning the profile's
     // wind into the local frame; NaN means --frame_bearing was not given and
     // +x is east.
@@ -1119,6 +1122,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 shadow_transitions.emplace_back(database.band_centres(), ground_impedance_bands,
                         height, sound_speed, first_band, last_band, nullptr, nullptr,
                         options.thread_count);
+                if (options.scattering > 0.0)
+                    shadow_transitions.back().set_scattering(
+                            ShadowScattering::for_receiver(options.scattering, height, false));
                 log("  shadow-boundary field for microphones ", height / options.unit.to_metres, " ",
                         options.unit.name, " up tabulated from the residue series in ",
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
@@ -1130,6 +1136,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 plate_transition.emplace(database.band_centres(), ground_impedance_bands,
                         plate->thickness(), sound_speed, first_band, last_band, &*plate, ground_model,
                         options.thread_count);
+                if (options.scattering > 0.0)
+                    plate_transition->set_scattering(
+                            ShadowScattering::for_receiver(options.scattering, plate->thickness(), true));
                 log("  shadow-boundary field for plate microphones tabulated in ",
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
                         " s.");
@@ -1163,8 +1172,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 top->position.z / options.unit.to_metres, " ", options.unit.name,
                 ") the gradient is ", along.gradient, " /s toward +x and ", against.gradient,
                 " /s toward -x; shadow zones attenuate by the first creeping-wave mode over ",
-                shadow_attenuation.rigid() ? "rigid ground" : "the ground's impedance", ", capped at ",
-                options.shadow_floor, " dB.");
+                shadow_attenuation.rigid() ? "rigid ground" : "the ground's impedance",
+                options.scattering > 0.0 ? ", filled by turbulent scattering at gamma_T " : ", capped at ",
+                options.scattering > 0.0 ? options.scattering : options.shadow_floor,
+                options.scattering > 0.0 ? "." : " dB.");
         if (profile->has_wind() && std::isnan(options.frame_bearing))
         {
             log("  the profile's wind directions are compass bearings, turned into the local "
@@ -1464,8 +1475,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     // ground term and the creeping-wave loss.
                     extra_loss = shadow.data();
                     ground_weight = shadow_weight.data();
-                    // Past the layered boundary counts, lit linear fit or not.
-                    if (ray.shadow_depth > 0.0 || ray.from_linear_fit)
+                    // Past the layered boundary counts, lit linear fit or not;
+                    // the fit's ray from handover_fraction of it on does not.
+                    if (ray.shadow_depth > 0.0
+                            || (ray.from_linear_fit && ray.horizontal > ray.direct.boundary))
                         shadowed_here++;
                 }
                 else if (ray.shadow_depth > 0.0)
@@ -1874,6 +1887,7 @@ int run(int argc, char* argv[])
     std::string atmosphere_file;
     std::string refraction = "none";
     double shadow_floor = 20.0;
+    double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
     std::string speed_reference;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
@@ -1979,6 +1993,10 @@ int run(int argc, char* argv[])
     app.add_option("--shadow_floor", shadow_floor,
             "Most a refractive shadow zone attenuates, dB (default 20). Deeper in, energy "
             "scattered by turbulence dominates.");
+    app.add_option("--scattering", scattering,
+            "Fill refraction shadows with the energy turbulence scatters into them instead of "
+            "--shadow_floor: the HARMONOISE strength gamma_T = C_T^2/T0^2 + 22 C_v^2/(3 c0^2) "
+            "(0, the default, is off). Needs --refraction and --ground_effect.");
     app.add_flag("--ground_effect", ground_effect,
             "Add excess ground attenuation (Chien-Soroka over a Delany-Bazley impedance) to "
             "the spectral path (the default). Cannot be combined with --no-spectral.");
@@ -2302,6 +2320,13 @@ int run(int argc, char* argv[])
     }
     if (!(shadow_floor >= 0.0))
         input_error("--shadow_floor must not be negative, got ", shadow_floor, ".");
+    if (!(scattering >= 0.0))
+        input_error("--scattering must not be negative, got ", scattering, ".");
+    if (scattering > 0.0 && (refraction == "none" || !ground_effect))
+    {
+        input_error("--scattering fills the shadows --refraction casts, through the shadow-boundary "
+                    "field that --ground_effect's ground model sets up; give both.");
+    }
     if (!atmosphere_file.empty()
             && (!std::isnan(temperature_override) || !std::isnan(humidity_override)))
     {
@@ -2357,6 +2382,7 @@ int run(int argc, char* argv[])
     options.refraction = refraction != "none";
     options.stratified = refraction == "stratified";
     options.shadow_floor = shadow_floor;
+    options.scattering = scattering;
     options.frame_bearing = frame_bearing;
     if (!speed_reference.empty())
         options.speed_reference = parse_speed_reference(speed_reference);

@@ -469,13 +469,22 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
 
     DirectEigenray out;
     // A ground-grazing shadow: the fastest air below the source is at the
-    // ground, and none aloft turns rays back down.  Its boundary is where the
-    // limiting ray reaches the receiver's height.
+    // ground, and no ray from aloft reaches the receiver.  Its boundary is where
+    // the limiting ray reaches the receiver's height.
+    //
+    // Faster air above the source is not enough to rule that out: a ray turned
+    // back down by it turns up again wherever the air is faster still, so it
+    // reaches the receiver only if the air above the source outruns everything
+    // between the two -- exactly when families() gives the upward arms.  A
+    // morning inversion over an upwind shear is the common case: 330.5 m/s aloft
+    // against 339 at the ground, where the shear, not the inversion, casts the
+    // shadow.  Testing against the source's own speed instead left those paths
+    // with no boundary, so no transition, and the shadow came in as a cliff.
     //
     // ShadowTransition does not take it at face value: a log law's steep
     // lowest metres set it, and the wave resolves them only at high frequency
     // (see there, and layered_direct_ray's linear_boundary).
-    if (fams.count > 0 && !(path.fastest_above(z_s) > c_s)
+    if (fams.count > 0 && !(path.fastest_above(z_s) > path.fastest(z_r, z_s))
             && !(path.fastest(0.0, z_s) > layers.at(0.0)))
     {
         const Family& limit = fams.list[fams.limiting];
@@ -610,11 +619,20 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     const double guess = ray.curved ? ray.direct.launch : std::atan2(z_r - z_s, r);
     const auto direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
     const double linear_boundary = ray.direct.boundary;
-    // Past the layered boundary, not only where the layered solve fails: on a
-    // log law the dipping family's range is not monotonic, and reaches some
-    // tens of metres past its end, where its near-grazing rays have no
-    // reflected partner and the ground term would take the grazing geometry.
-    if (linear_past_shadow && r > direct.boundary && ray.curved && ray.direct.lit
+    // From handover_fraction of the layered boundary on, not only where the
+    // layered solve fails.  On a log law the dipping family's range is not
+    // monotonic, and reaches some tens of metres past its end, where its
+    // near-grazing rays have no reflected partner and the ground term would
+    // take the grazing geometry.  Short of the boundary the layered ray is
+    // worse still: the steep lowest layer that sets the boundary also focuses
+    // the rays that just clear it, and the parabolic equation, which does not
+    // resolve that layer, shows neither (see handover_fraction).
+    //
+    // And the fit's ray stays on past the fit's own boundary, in its shadow.
+    // Its limiting ray carries its lit spreading on continuously, where going
+    // back to the layered shadow ray there stepped by its different spreading,
+    // ~2 dB on a log law.
+    if (linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
             && linear_boundary > direct.boundary)
     {
         ray.direct.boundary = direct.boundary;

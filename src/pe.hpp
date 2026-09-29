@@ -55,6 +55,22 @@ struct PeSetup
     double domain_height = 0.0;
     // Thickness of the absorbing layer, in wavelengths.
     double layer_wavelengths = 100.0;
+    // Turbulence, by random phase screens (Gilbert, Raspet and Di 1990;
+    // Salomons 2001, appendix I): off at 0.  gamma_t is the HARMONOISE
+    // strength, C_T^2/T0^2 + 22 C_v^2 / (3 c0^2) (ground_effect.hpp), so the
+    // effective index's structure parameter is gamma_t / 4 -- the value whose
+    // spherical-wave coherence Ostashev's form (Attenborough & Taherzadeh 2026,
+    // eq. 20) and HARMONOISE's (eq. 18) both reduce to.  The spectrum is von
+    // Karman's with outer scale `outer_scale`, 0.033 C^2 (kappa^2 + 1/L0^2)^(-11/6),
+    // uniform in height.  One screen every `screen_spacing` metres of range (0:
+    // the outer scale) carries the phase a slab that thick accumulates, which
+    // is the Markov approximation; its vertical spectrum is the 3-D one
+    // integrated across the plane, so the vertical coherence is the 3-D
+    // medium's.  Each realisation draws its screens from `seed`.
+    double gamma_t = 0.0;
+    double outer_scale = 10.0; // m
+    double screen_spacing = 0.0; // m
+    unsigned seed = 1;
 };
 
 struct PeResult
@@ -64,6 +80,9 @@ struct PeResult
     // relative to a point source's field in free space at the straight-line
     // distance.  Rigid ground in still air gives two rays' interference.
     std::vector<std::vector<double>> relative_level;
+    // psi at each receiver and output range, [receiver][range]: for ensemble
+    // means of the complex field (tests).  solve_pe_band leaves it empty.
+    std::vector<std::vector<std::complex<double>>> psi;
 };
 
 PeResult solve_pe(const PeSetup& setup);
@@ -71,6 +90,15 @@ PeResult solve_pe(const PeSetup& setup);
 // The same averaged in energy over `samples` frequencies spread evenly in
 // log frequency across the one-third-octave band centred on `centre`: what a
 // band level sees, rather than one tone's interference pattern.
+// With turbulence each frequency is also its own realisation (seed + k), so the
+// average is over the band and the ensemble at once.
 PeResult solve_pe_band(PeSetup setup, double centre, int samples = 5);
+
+// The PE's phase screen: phi(z_j) at z_j = j dz, j = 0 .. count - 1, for a slab
+// `thickness` metres deep at wavenumber k.  Its variance is
+// 0.782 k^2 thickness (gamma_t / 4) outer_scale^(5/3), less what the finite
+// column leaves out (tests).
+std::vector<double> phase_screen(double k, double gamma_t, double outer_scale, double thickness,
+        double dz, std::size_t count, unsigned long long seed);
 
 } // namespace niceops

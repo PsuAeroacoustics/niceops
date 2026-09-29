@@ -27,6 +27,7 @@
 // Everything here is metres, seconds and radians.
 
 #include <array>
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <limits>
@@ -348,6 +349,34 @@ void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, 
 class PlateReceiver;
 struct GroundModel;
 
+// Turbulent scattering into a refraction shadow (--scattering): the incoherent
+// energy that eddies scatter down past the boundary, which the coherent field
+// there -- ray theory, the residue series, a PE in still air -- has none of.
+// Its level re free field at the slant range R from a source z_s up is
+//   S = a_db + 10 lg gamma_t + per_decade_frequency lg(f / 1 kHz)
+//       + per_decade_range lg(R / 100 m) + per_decade_height lg(z_s / 100 m),
+// gamma_t the HARMONOISE strength (ground_effect.hpp), fitted to the wide-angle
+// PE with von Karman phase screens (pe.hpp) deep in the shadows of measured
+// upwind profiles, wherever the turbulent field stands 10 dB clear of the
+// still one (tests/test_pe_turbulence.cpp holds it to the PE).  Single
+// scattering is linear in the medium's variance, hence 10 lg gamma_t, and the
+// PE agrees: a third of the strength moves it 4.82 dB.  R and z_s are held to the fit's span, and S to 0 dB.  The
+// constants depend on the receiver: for_receiver() picks them.
+struct ShadowScattering
+{
+    double gamma_t = 0.0; // 0: none, and the shadow keeps --shadow_floor
+    double a_db = 0.0;
+    double per_decade_frequency = 0.0;
+    double per_decade_range = 0.0;
+    double per_decade_height = 0.0;
+
+    bool on() const { return gamma_t > 0.0; }
+    double level(double frequency, double slant, double source_height) const;
+    // The fitted constants for a flush microphone (under 5 cm up, or on a
+    // plate) or one receiver_height metres up.
+    static ShadowScattering for_receiver(double gamma_t, double receiver_height, bool plate);
+};
+
 class ShadowTransition
 {
 public:
@@ -364,6 +393,11 @@ public:
 
     bool empty() const { return table_.empty(); }
     double receiver_height() const { return receiver_height_; }
+    // Scattered energy to add in the shadow (off by default).  With it the
+    // coherent field is not held at V(0) - floor: the scattered energy is what
+    // the floor stood in for.
+    void set_scattering(const ShadowScattering& scattering) { scattering_ = scattering; }
+    const ShadowScattering& scattering() const { return scattering_; }
     // The largest 10^(V/10) in `band`'s table, at least 1: what the peak
     // search's bound on the ground's gain has to allow for.
     double max_power_ratio(std::size_t band) const
@@ -389,9 +423,12 @@ public:
     double plate_offset(std::size_t band, double azimuth) const;
 
     // One band's effective boundary between the layered r_s and the linear
-    // fit's r_l > r_s (see above), for a source and receiver z_s and z_r up.
+    // fit's r_l > r_s (see above), for a source and receiver z_s and z_r up;
+    // `flush` for a plate or flush microphone.  Where the fit casts no shadow
+    // (r_l infinite) there is nothing to interpolate toward, and the band takes
+    // a fitted multiple of r_s instead.
     static double band_boundary(double r_s, double r_l, double z_s, double z_r, double frequency,
-            double sound_speed);
+            double sound_speed, bool flush = false);
 
     // V, dB, in `band` at xi and s: the table (tests).  NaN where it has no
     // value, which is only on the lit side, below xi_modal.
@@ -408,8 +445,19 @@ public:
     // keeps the source below R / 10.
     static constexpr double reference_height = 20.0;
     // Where a band's diffraction length at the fit's curvature equals this
-    // fraction of r_l - r_s, its boundary is half-way between them.
+    // fraction of r_l - r_s, its boundary is half-way between them.  Fitted for
+    // a microphone 1.2 m up (0.387 refitted with day-284 profiles added); a
+    // flush one resolves the thin fast layer later, and wants about twice it:
+    // 0.47 on log laws, 0.94 on the measured day-284 profiles.
     static constexpr double boundary_resolution = 0.363;
+    static constexpr double boundary_resolution_flush = 0.75;
+    // Where the fit casts no shadow: r_b = m (f / 1 kHz)^fallback_per_decade r_s,
+    // the per-band optimum against the PE pooled over the calibration cases.
+    static constexpr double fallback_multiple_flush = 1.60;
+    static constexpr double fallback_multiple_raised = 1.90;
+    static constexpr double fallback_per_decade = -0.08;
+    // Receivers below this are flush for the purposes above, m.
+    static constexpr double flush_height = 0.05;
 
 private:
     double column(std::size_t band, std::size_t j, double xi) const;
@@ -426,6 +474,7 @@ private:
     // [band][i]: K at azimuth i * plate_azimuth_step; empty for a point receiver.
     std::vector<std::vector<double>> plate_offset_;
     static constexpr int plate_azimuths = 36;
+    ShadowScattering scattering_;
 };
 
 } // namespace niceops

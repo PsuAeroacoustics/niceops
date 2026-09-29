@@ -237,8 +237,25 @@ TEST_CASE("each band's shadow boundary lies between the layered one and the fit'
     CHECK(ShadowTransition::band_boundary(r_s, r_l, z_s, z_r, 1e5, c0) < r_s + 0.15 * (r_l - r_s));
     // One boundary is itself.
     CHECK(ShadowTransition::band_boundary(r_s, r_s, z_s, z_r, 500.0, c0) == r_s);
-    CHECK(ShadowTransition::band_boundary(r_s, std::numeric_limits<double>::infinity(), z_s, z_r,
-                  500.0, c0) == r_s);
+    // A flush microphone resolves the fast layer later: its boundaries lie
+    // nearer the layered one, band for band.
+    for (const double f : {125.0, 500.0, 2000.0})
+    {
+        const double raised = ShadowTransition::band_boundary(r_s, r_l, z_s, z_r, f, c0, false);
+        const double flush = ShadowTransition::band_boundary(r_s, r_l, z_s, 0.0, f, c0, true);
+        INFO(f << " Hz: raised " << raised << " m, flush " << flush << " m");
+        CHECK(flush > r_s);
+        CHECK(flush < raised);
+    }
+    // Where the fit casts no shadow the band takes a multiple of the layered
+    // boundary, a little further out at lower frequency.
+    const double inf = std::numeric_limits<double>::infinity();
+    CHECK(ShadowTransition::band_boundary(r_s, inf, z_s, z_r, 1000.0, c0)
+            == Catch::Approx(ShadowTransition::fallback_multiple_raised * r_s));
+    CHECK(ShadowTransition::band_boundary(r_s, inf, z_s, 0.0, 1000.0, c0, true)
+            == Catch::Approx(ShadowTransition::fallback_multiple_flush * r_s));
+    CHECK(ShadowTransition::band_boundary(r_s, inf, z_s, 0.0, 125.0, c0, true)
+            > ShadowTransition::band_boundary(r_s, inf, z_s, 0.0, 2000.0, c0, true));
 }
 
 TEST_CASE("through a log-law shadow, stratified with the boundary law follows the PE", "[shadow]")
@@ -394,5 +411,137 @@ TEST_CASE("a plate's field near the boundary is the ground's plus the plate over
         // The bound covers V + K.
         CHECK(transition.max_power_ratio(e.band) >= point.max_power_ratio(e.band)
                         * std::pow(10.0, std::min(e.low, 0.0) / 10.0));
+    }
+}
+
+namespace {
+
+// Day 284 of the 2017 test, one run's upwind effective sound speed from the
+// LIDAR and the balloon, in the shape that matters: fast at the ground, a
+// steep shear through the lowest metres, a minimum at 60 m, and an inversion
+// above that makes the air aloft a little faster than at the source.
+const std::vector<double> inversion_z = {0.0, 0.3, 0.91, 3.05, 9.14, 30.5, 60.0, 122.0, 300.0};
+const std::vector<double> inversion_c = {339.19, 336.44, 335.10, 333.56, 331.97, 330.77, 330.30, 330.53,
+        331.20};
+
+} // namespace
+
+TEST_CASE("an inversion aloft leaves a ground-grazing shadow its boundary", "[shadow]")
+{
+    // Faster air above the source used to count as rays from aloft reaching
+    // the receiver, so these paths got no boundary: no transition, and the
+    // shadow came in as a 10-35 dB cliff.  A ray turned down aloft turns up
+    // again in the shear, well above a microphone near the ground; the
+    // boundary is the grazing ray's, the Snell integral down to the ground.
+    const Layers layers {inversion_z.data(), inversion_c.data(), inversion_z.size()};
+    const double z_s = 114.0, z_r = 0.003;
+    REQUIRE(layers.at(300.0) > layers.at(z_s));
+    const double c_ground = layers.at(0.0);
+    double snell = 0.0;
+    const int n = 200000;
+    for (int i = 0; i < n; i++)
+    {
+        const double z = z_r + (z_s - z_r) * (i + 0.5) / n;
+        const double cosine = layers.at(z) / c_ground;
+        snell += (z_s - z_r) / n * cosine / std::sqrt(1.0 - cosine * cosine);
+    }
+    const auto far = layered_direct_eigenray(layers, z_s, z_r, 2000.0, -0.2);
+    CHECK_FALSE(far.lit);
+    CHECK(far.boundary == Catch::Approx(snell).epsilon(0.02));
+    CHECK(far.boundary_gradient < 0.0);
+    CHECK(layered_direct_eigenray(layers, z_s, z_r, 0.99 * far.boundary, -0.2).lit);
+    // Air aloft faster than at the ground does bring rays down to the
+    // microphone, and then there is no such boundary.
+    std::vector<double> c = inversion_c;
+    c.back() = 345.0;
+    const Layers ducting {inversion_z.data(), c.data(), c.size()};
+    CHECK_FALSE(std::isfinite(layered_direct_eigenray(ducting, z_s, z_r, 2000.0, -0.2).boundary));
+}
+
+TEST_CASE("the fit's ray takes over short of the layered boundary and stays on past its own", "[shadow]")
+{
+    // Upwind on example_windy.csv, 100 m up to a flush microphone.  Short of the
+    // layered boundary the layered ray focuses into the steep lowest layer that
+    // sets it, which the PE does not show, so from handover_fraction of it on the
+    // level is the fit's ray's.  Past the fit's own boundary that ray is its
+    // limiting one, whose spreading carries on continuously.
+    auto profile = read_atmosphere_profile("atmospheres/example_windy.csv", feet, 0.0);
+    profile = profile.with_hydrostatic_pressure(reference_pressure);
+    const LayeredSoundSpeed layered(profile, 90.0);
+    const EffectiveSoundSpeed linear(profile, 90.0, 0.0, profile.top() + 20.0);
+    constexpr double z_s = 100.0, z_r = 0.003;
+    const Vec3 source(0.0, 0.0, z_s);
+    std::vector<double> scratch;
+    auto ray_at = [&](double r) {
+        const Vec3 receiver(-r, 0.0, z_r);
+        return layered_direct_ray(layered, linear, source, linear.moments(z_s), receiver,
+                linear.moments(z_r), scratch, true);
+    };
+    const double r_s = ray_at(2000.0).direct.boundary;
+    const double r_l = ray_at(2000.0).direct.linear_boundary;
+    REQUIRE(std::isfinite(r_s));
+    REQUIRE(r_l > r_s);
+    CHECK_FALSE(ray_at(0.85 * r_s).from_linear_fit);
+    CHECK(ray_at(0.95 * r_s).from_linear_fit);
+    CHECK(ray_at(0.95 * r_s).direct.lit);
+    const auto before = ray_at(0.999 * r_l);
+    const auto after = ray_at(1.001 * r_l);
+    REQUIRE(after.from_linear_fit);
+    CHECK_FALSE(after.direct.lit);
+    CHECK(after.path.range / before.path.range == Catch::Approx(1.002).epsilon(0.002));
+}
+
+TEST_CASE("scattered energy fills the shadow and leaves the lit side alone", "[shadow]")
+{
+    const std::vector<double> f = {1000.0};
+    GroundModel ground;
+    ground.impedance_model = ImpedanceModel::variable_porosity;
+    ground.flow_resistance = 200.0;
+    ground.receiver_height = 0.003;
+    const double c0 = 340.0;
+    const auto admittance = ground_impedance(ground, f, c0);
+    const ShadowAttenuation attenuation(f, admittance, 0, 1);
+    ShadowTransition coherent(f, admittance, 0.003, c0, 0, 1);
+    ShadowTransition scattering = coherent;
+    scattering.set_scattering(ShadowScattering::for_receiver(1e-5, 0.003, false));
+    // S itself: 10 lg gamma_t, held to 0 dB and to the fit's span.
+    const auto s = ShadowScattering::for_receiver(1e-5, 0.003, false);
+    CHECK(s.level(1000.0, 100.0, 100.0) == Catch::Approx(s.a_db - 50.0));
+    CHECK(s.level(1000.0, 1e6, 100.0) == s.level(1000.0, 1e4, 100.0));
+    CHECK(ShadowScattering::for_receiver(1.0, 0.003, false).level(1000.0, 1000.0, 100.0) == 0.0);
+
+    const Layers layers {inversion_z.data(), inversion_c.data(), inversion_z.size()};
+    auto profile_ray = [&](double r) {
+        RefractedRay ray;
+        ray.curved = true;
+        ray.source_z = 114.0;
+        ray.receiver_z = 0.003;
+        ray.horizontal = r;
+        ray.profile = {c0, -0.02};
+        ray.direct = layered_direct_eigenray(layers, 114.0, 0.003, r, -0.2);
+        ray.direct.linear_boundary = std::numeric_limits<double>::infinity();
+        ray.path.range = std::hypot(r, 114.0);
+        ray.shadow_depth = ray.direct.shadow_depth;
+        return ray;
+    };
+    const double r_s = profile_ray(2000.0).direct.boundary;
+    for (const double r : {0.5 * r_s, 3.0 * r_s, 6.0 * r_s})
+    {
+        const auto ray = profile_ray(r);
+        double w0 = 1.0, l0 = 0.0, w1 = 1.0, l1 = 0.0;
+        const bool on0 = coherent.apply(ray, attenuation, 20.0, 0, 1, &w0, &l0);
+        const bool on1 = scattering.apply(ray, attenuation, 20.0, 0, 1, &w1, &l1);
+        INFO(r << " m: coherent loss " << l0 << " dB, with scattering " << l1 << " dB");
+        CHECK(on0 == on1);
+        CHECK(w0 == w1);
+        if (r < r_s)
+            CHECK(l1 == l0);
+        else
+        {
+            CHECK(l1 < l0);
+            // At least the scattered level, re the ray's spreading.
+            CHECK(-l1 >= s.level(1000.0, std::hypot(r, 114.0), 114.0) - 1e-9);
+            CHECK(std::pow(10.0, -l1 / 10.0) <= scattering.max_power_ratio(0) * (1.0 + 1e-12));
+        }
     }
 }

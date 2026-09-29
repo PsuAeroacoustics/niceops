@@ -747,17 +747,62 @@ double ShadowTransition::level(std::size_t band, double xi, double s) const
     return v0 + t * (v1 - v0);
 }
 
-double ShadowTransition::band_boundary(double r_s, double r_l, double z_s, double z_r,
-        double frequency, double sound_speed)
+double ShadowScattering::level(double frequency, double slant, double source_height) const
 {
-    if (!(r_l > r_s) || !std::isfinite(r_l))
+    const double range = std::clamp(slant, 100.0, 10000.0);
+    const double height = std::clamp(source_height, 10.0, 300.0);
+    return std::min(0.0, a_db + 10.0 * std::log10(gamma_t)
+            + per_decade_frequency * std::log10(frequency / 1000.0)
+            + per_decade_range * std::log10(range / 100.0) + per_decade_height * std::log10(height / 100.0));
+}
+
+ShadowScattering ShadowScattering::for_receiver(double gamma_t, double receiver_height, bool plate)
+{
+    // Fitted to the PE with gamma_t = 3e-5 and L0 = 10 m through measured
+    // day-284 upwind profiles (LIDAR and balloon), 125 Hz - 2 kHz, over
+    // variable porosity 200, at the points deep in each shadow where the
+    // turbulent field is 10 dB clear of the still one; a third of that
+    // strength moved them by 4.82 dB against single scattering's 4.77.
+    ShadowScattering s;
+    s.gamma_t = gamma_t;
+    if (plate || receiver_height < ShadowTransition::flush_height)
+    {
+        // A microphone 3 mm up; sources 50 and 120 m up, 12 profiles, 9320
+        // points, 1.5 dB rms about the fit.
+        s.a_db = 39.18;
+        s.per_decade_frequency = -1.55;
+        s.per_decade_range = 2.10;
+        s.per_decade_height = 5.30;
+    }
+    else
+    {
+        // 1.2 m up, sources 50 m up, 6 profiles, 2703 points where stratified
+        // is 25 dB down.  The ground's interference with the scattered field
+        // tilts it up with frequency.  Only one source height, so the height
+        // term is the flush microphone's.
+        s.a_db = 36.67;
+        s.per_decade_frequency = 5.61;
+        s.per_decade_range = 5.13;
+        s.per_decade_height = 5.30;
+    }
+    return s;
+}
+
+double ShadowTransition::band_boundary(double r_s, double r_l, double z_s, double z_r,
+        double frequency, double sound_speed, bool flush)
+{
+    if (!std::isfinite(r_l) && std::isfinite(r_s))
+        return r_s * (flush ? fallback_multiple_flush : fallback_multiple_raised)
+                * std::pow(frequency / 1000.0, fallback_per_decade);
+    if (!(r_l > r_s))
         return r_s;
     const double root = std::sqrt(2.0 * std::max(z_s, 0.0)) + std::sqrt(2.0 * std::max(z_r, 0.0));
     const double a_linear = sound_speed * root * root / (r_l * r_l);
     // x: the band's diffraction length at the fit's curvature over the gap.
     const double s = std::cbrt(pi * frequency / a_linear);
     const double x = s * s * sound_speed / (pi * frequency) / (r_l - r_s);
-    return r_s + x / (x + boundary_resolution) * (r_l - r_s);
+    const double resolution = flush ? boundary_resolution_flush : boundary_resolution;
+    return r_s + x / (x + resolution) * (r_l - r_s);
 }
 
 bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& attenuation,
@@ -770,13 +815,20 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
     const double c0 = ray.profile.sound_speed;
     const double r_s = ray.direct.boundary;
     const double r_l = ray.direct.linear_boundary;
-    // Two boundaries (through layers), or one.
+    // Two boundaries (through layers); the layered one alone, where the fit
+    // casts no shadow (a multiple of it, band_boundary); or one (a linear
+    // profile).
     const bool between = std::isfinite(r_l) && r_l > r_s;
+    const bool fallback = !std::isfinite(r_l);
+    const bool flush = !plate_offset_.empty() || receiver_height_ < flush_height;
     const double root = std::sqrt(2.0 * std::max(ray.source_z, 0.0))
             + std::sqrt(2.0 * std::max(ray.receiver_z, 0.0));
     // The curvature that makes a boundary r: c0 root^2 / r^2.
     const double a_one = -ray.direct.boundary_gradient;
-    const double a_linear = between ? c0 * root * root / (r_l * r_l) : a_one;
+    const double r_weakest = fallback
+            ? band_boundary(r_s, r_l, ray.source_z, ray.receiver_z, frequencies_[first_band], c0, flush)
+            : r_l;
+    const double a_linear = between || fallback ? c0 * root * root / (r_weakest * r_weakest) : a_one;
     // Every band's boundary lies in [r_s, r_l] and its diffraction length is at
     // most the lowest band's at the weakest curvature: lit by more than xi_ray
     // of that, it is lit in every band.
@@ -791,13 +843,13 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
         double a = a_one;
         double boundary = r_s;
         double depth = ray.shadow_depth;
-        if (between)
+        if (between || fallback)
         {
-            boundary = band_boundary(r_s, r_l, ray.source_z, ray.receiver_z, f, c0);
+            boundary = band_boundary(r_s, r_l, ray.source_z, ray.receiver_z, f, c0, flush);
             a = c0 * root * root / (boundary * boundary);
             depth = std::max(ray.horizontal - boundary, 0.0);
         }
-        const LinearProfile equivalent = between ? LinearProfile {c0, -a} : one_boundary;
+        const LinearProfile equivalent = between || fallback ? LinearProfile {c0, -a} : one_boundary;
         const double creeping = depth > 0.0
                 ? std::min(attenuation.rate(band, equivalent) * depth, floor)
                 : 0.0;
@@ -818,9 +870,22 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
         const std::size_t j = std::min(static_cast<std::size_t>(x), s_nodes_ - 2);
         const double v_zero = at_boundary_[band][j]
                 + (x - static_cast<double>(j)) * (at_boundary_[band][j + 1] - at_boundary_[band][j]);
-        if (std::isfinite(v_zero))
+        if (std::isfinite(v_zero) && !scattering_.on())
             v = std::max(v, v_zero - floor);
         v += plate_offset(band, plate_azimuth);
+        if (scattering_.on())
+        {
+            // The scattered energy, from re free field at the slant range into
+            // re the ray's own spreading, as V is; the plate lifts it as it
+            // lifts the coherent field.  The sum is held to the table's largest,
+            // which is what the peak search's bound allows for.
+            const double slant = std::hypot(ray.horizontal, ray.source_z - ray.receiver_z);
+            const double spreading_db = 20.0 * std::log10(slant / ray.path.range);
+            const double scattered = scattering_.level(f, slant, ray.source_z)
+                    + plate_offset(band, plate_azimuth) - spreading_db;
+            v = std::min(10.0 * std::log10(std::pow(10.0, 0.1 * v) + std::pow(10.0, 0.1 * scattered)),
+                    10.0 * std::log10(max_power_ratio_[band]));
+        }
         if (xi >= xi_modal)
         {
             ground_weight[band] = 0.0;

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <random>
 #include <stdexcept>
 
 #include "util/constants.hpp"
@@ -23,7 +25,100 @@ double speed_at(const PeSetup& s, double z)
     return s.c[i] + (z - s.z[i]) / (s.z[i + 1] - s.z[i]) * (s.c[i + 1] - s.c[i]);
 }
 
+// In-place radix-2 transform, x_j <- sum_n x_n exp(+2 pi i n j / N); N a power of 2.
+void inverse_fft(std::vector<complex>& x)
+{
+    const std::size_t n = x.size();
+    for (std::size_t i = 1, j = 0; i < n; i++)
+    {
+        std::size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1)
+            j ^= bit;
+        j ^= bit;
+        if (i < j)
+            std::swap(x[i], x[j]);
+    }
+    for (std::size_t len = 2; len <= n; len <<= 1)
+    {
+        const double angle = 2.0 * pi / static_cast<double>(len);
+        const complex w_len(std::cos(angle), std::sin(angle));
+        for (std::size_t i = 0; i < n; i += len)
+        {
+            complex w(1.0, 0.0);
+            for (std::size_t k = 0; k < len / 2; k++)
+            {
+                const complex u = x[i + k];
+                const complex v = x[i + k + len / 2] * w;
+                x[i + k] = u + v;
+                x[i + k + len / 2] = u - v;
+                w *= w_len;
+            }
+        }
+    }
+}
+
+// Screens for one march: the spectrum's amplitudes once, a fresh draw of
+// phases per screen.
+class ScreenSource
+{
+public:
+    ScreenSource(double k, double gamma_t, double outer_scale, double thickness, double dz,
+            std::size_t count, unsigned long long seed)
+        : count_(count), rng_(seed)
+    {
+        // Twice the column, so the screen's period does not tie its top to its
+        // bottom.
+        std::size_t size = 1;
+        while (size < 2 * count)
+            size <<= 1;
+        const double dkappa = 2.0 * pi / (static_cast<double>(size) * dz);
+        const double c2 = 0.25 * gamma_t;
+        const double kappa0 = 1.0 / outer_scale;
+        // S_phi(kappa_z) = 2 pi k^2 dx 0.033 C^2 sqrt(pi) Gamma(4/3)/Gamma(11/6)
+        //                  (kappa_z^2 + kappa0^2)^(-4/3), two-sided.
+        const double scale = 2.0 * pi * k * k * thickness * 0.033 * c2 * std::sqrt(pi)
+                * std::tgamma(4.0 / 3.0) / std::tgamma(11.0 / 6.0);
+        amplitude_.assign(size / 2, 0.0);
+        for (std::size_t n = 1; n < size / 2; n++)
+        {
+            const double kappa = static_cast<double>(n) * dkappa;
+            const double spectrum = scale * std::pow(kappa * kappa + kappa0 * kappa0, -4.0 / 3.0);
+            // A cosine of amplitude a has variance a^2 / 2; each carries both
+            // signs of kappa_z.
+            amplitude_[n] = 2.0 * std::sqrt(spectrum * dkappa);
+        }
+        buffer_.resize(size);
+    }
+
+    const std::vector<double>& next()
+    {
+        std::uniform_real_distribution<double> phase(0.0, 2.0 * pi);
+        std::fill(buffer_.begin(), buffer_.end(), complex(0.0));
+        for (std::size_t n = 1; n < amplitude_.size(); n++)
+            buffer_[n] = std::polar(amplitude_[n], phase(rng_));
+        inverse_fft(buffer_);
+        screen_.resize(count_);
+        for (std::size_t j = 0; j < count_; j++)
+            screen_[j] = buffer_[j].real();
+        return screen_;
+    }
+
+private:
+    std::size_t count_;
+    std::mt19937_64 rng_;
+    std::vector<double> amplitude_;
+    std::vector<complex> buffer_;
+    std::vector<double> screen_;
+};
+
 } // namespace
+
+std::vector<double> phase_screen(double k, double gamma_t, double outer_scale, double thickness,
+        double dz, std::size_t count, unsigned long long seed)
+{
+    ScreenSource source(k, gamma_t, outer_scale, thickness, dz, count, seed);
+    return source.next();
+}
 
 PeResult solve_pe(const PeSetup& s)
 {
@@ -131,8 +226,19 @@ PeResult solve_pe(const PeSetup& s)
         psi[row] = scale * (starter(z - s.source_height) + reflection * starter(z + s.source_height));
     }
 
+    // Turbulence: a screen every `spacing` metres, below the absorbing layer.
+    const bool turbulent = s.gamma_t > 0.0;
+    const double spacing = s.screen_spacing > 0.0 ? s.screen_spacing : s.outer_scale;
+    const std::size_t screened = std::min(m, static_cast<std::size_t>(physical_top / dz));
+    std::unique_ptr<ScreenSource> screens;
+    if (turbulent)
+        screens = std::make_unique<ScreenSource>(k_a, s.gamma_t, s.outer_scale, spacing, dz, screened + 1,
+                s.seed);
+    double next_screen = 0.5 * spacing;
+
     PeResult result;
     result.relative_level.assign(s.receiver_heights.size(), {});
+    result.psi.assign(s.receiver_heights.size(), {});
     const std::size_t steps = static_cast<std::size_t>(std::ceil(s.max_range / dr));
     // psi at each receiver, linear between grid points; psi_0 from the ground
     // condition.
@@ -174,6 +280,14 @@ PeResult solve_pe(const PeSetup& s)
             psi[row] -= c_prime[row] * psi[row + 1];
 
         const double r = static_cast<double>(step) * dr;
+        // Each screen stands for the slab of turbulence centred on it.
+        while (turbulent && r >= next_screen)
+        {
+            const auto& phi = screens->next();
+            for (std::size_t row = 0; row < screened; row++)
+                psi[row] *= std::polar(1.0, phi[row + 1]);
+            next_screen += spacing;
+        }
         std::vector<complex> value(s.receiver_heights.size());
         for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
             value[k] = at_receiver(s.receiver_heights[k]);
@@ -189,6 +303,7 @@ PeResult solve_pe(const PeSetup& s)
                 const double slant = std::hypot(target, zr - s.source_height);
                 result.relative_level[k].push_back(
                         20.0 * std::log10(std::abs(v) * slant / std::sqrt(target) + 1e-300));
+                result.psi[k].push_back(v);
             }
             next_output++;
         }
@@ -207,7 +322,10 @@ PeResult solve_pe_band(PeSetup setup, double centre, int samples)
     {
         const double offset = samples == 1 ? 0.0 : (static_cast<double>(k) / (samples - 1) - 0.5) / 3.0;
         setup.frequency = centre * std::pow(2.0, offset);
+        const unsigned seed = setup.seed;
+        setup.seed = seed + static_cast<unsigned>(k);
         const auto one = solve_pe(setup);
+        setup.seed = seed;
         if (sum.range.empty())
         {
             sum.range = one.range;
@@ -223,6 +341,7 @@ PeResult solve_pe_band(PeSetup setup, double centre, int samples)
     for (auto& row : sum.relative_level)
         for (double& v : row)
             v = 10.0 * std::log10(v + 1e-300);
+    sum.psi.clear();
     return sum;
 }
 

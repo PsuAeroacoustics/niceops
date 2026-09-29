@@ -161,6 +161,7 @@ seconds, levels in dB.
 | `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity, and optionally pressure and wind, against height. Absorption is integrated through it. Spectral path only. See below. |
 | `--refraction` | `none` (default); `linear`, curved rays through the `--atmosphere` profile's effective sound speed fitted to a straight line per path; or `stratified`, through the profile's own layers. Both give shadow zones under upward refraction. See below. |
 | `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
+| `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γT, instead of `--shadow_floor`. Default 0 (off). Needs `--refraction` and `--ground_effect`. |
 | `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
@@ -405,7 +406,7 @@ path supplies:
   counts as soft on the wave's scale. The benchmark's 1 kHz ground, at 0.1 /s, is 146 dB/km
   against rigid's 70. The rate is held to the slope of the exact residue series deep in the
   shadow to 0.3%. It is capped at `--shadow_floor`, where energy scattered in by turbulence
-  takes over. A ground reactive enough to carry a surface wave into the shadow (a porosity
+  takes over; `--scattering` puts that energy in directly instead (below). A ground reactive enough to carry a surface wave into the shadow (a porosity
   rate of tens per metre, a thin hard-backed layer, low bands) takes the rigid rate in those
   bands, and the log names them.
 - **Near the shadow boundary**, with a point receiver or a flush plate microphone, the level
@@ -533,8 +534,9 @@ curvature that makes r_b. Past the layered boundary the lit level is the linear 
 The law's one constant was fitted on twelve log laws (u* 0.2–0.6 m/s, z0 0.01–0.1 m,
 sources 30 and 100 m, 125 Hz – 2 kHz) and checked on `example_windy.csv`, which was held out:
 6.8 dB rms over the shadow edge against the PE there, against 18.9 dB with the layered
-boundary as it stands. On the demo grid with a point receiver, `stratified` now averages
-3.1 dB below `linear` (5th percentile −12.4 dB), where it was 6.1 (−19). Runs without
+boundary as it stands. On the demo grid with a point receiver, `stratified` then averaged
+3.1 dB below `linear` (5th percentile −12.4 dB), where it was 6.1 (−19); with the fixes below,
+3.3 (−13.2). Runs without
 `--ground_effect` keep the layered boundary and the creeping-wave loss.
 
 **Flush plate microphones** get the same treatment:
@@ -555,6 +557,60 @@ Two faults in the layered model surfaced with flush microphones, both fixed:
 - **Receivers a few millimetres up.** The ray tube past the boundary came out 0/0. It is now
   spread as a linear profile's limiting ray.
 
+**The measured profiles of the 2017 test's windy day** (LIDAR winds and balloon temperatures,
+morning of day 284) exposed three more, all in how `stratified` meets its shadow. They were
+found by running the PE on the geometries of the microphones the model got most wrong.
+- **An inversion aloft hid the boundary.** Those mornings have an upwind shear near the
+  ground under an inversion, so the air a hundred metres up is a little faster than at the
+  source. The layered model took any faster air above the source to mean rays from aloft
+  reach the receiver, and set no boundary. With none, there was no transition and no
+  hand-over to the linear fit: the shadow came in as a 10–35 dB cliff at the layered
+  boundary, which the PE puts 30–50% further out. A ray turned down aloft turns up again
+  wherever the air is faster still, here in the shear, metres above a board. Rays from aloft
+  reach the receiver only if the air aloft outruns everything between the two, which is the
+  test now.
+- **The layered ray focuses short of its boundary.** The steep lowest layer that sets the
+  boundary also bends the rays that just clear it into a caustic, a spike of up to +10 dB the
+  PE does not show. From 0.9 of the layered boundary on, the level is the linear fit's ray.
+  Against the PE over the last half of the way to the boundary, that is 0.6 dB rms on the
+  day-284 profiles (1.4 dB handing over at the boundary itself) and 1.7 on log laws (3.3).
+- **Past the fit's own boundary the level stepped.** The model went back to the layered
+  shadow ray, whose spreading differs, by 2 dB on a log law and 10 on day 284. The fit's
+  limiting ray now carries on, with its spreading continuous.
+
+**The boundary law, refitted for flush microphones.** With those fixed, the law put flush
+microphones' boundaries about twice too far out. Fitted per case against the PE, the best
+boundary is about 0.9 of a diffraction length at the fit's curvature past the layered one on
+day 284 and 1.2 on flush log laws, where the law gave 1.7–2.7. A microphone 1.2 m up keeps
+0.363 (refitted with the day-284 profiles added: 0.387). A flush one takes 0.75, between the
+flush log laws' own optimum of 0.47 and day 284's 0.94. Where the linear fit casts no shadow
+at all, as over a strong inversion, the law has nothing to interpolate toward. There each
+band takes 1.60 (f / 1 kHz)^−0.08 of the layered boundary for a flush microphone, and 1.90
+(f / 1 kHz)^−0.08 at 1.2 m, the per-band optima pooled over the calibration set.
+
+Shadow-edge rms against the PE (from its last level above −3 dB to −25 dB), dB:
+
+| | before | now |
+| --- | --- | --- |
+| day-284 profiles, 18 cases (sources 50, 120, 250 m), flush | 12.9 | 8.1 |
+| log laws, 16 cases, 1.2 m | 6.2 | 6.0 |
+| log laws, 16 cases, flush | 7.3 | 7.6 |
+
+"Before" for day 284 already has the first fix; without it the cliff made those shadows
+worse still. The best any boundary per case can do is 2.7 dB pooled, and no smooth law found
+gets below about 6: the optimum is sharp where the shadow wall is steep, at high frequency.
+
+Against the measured day-284 SEL, held-out spheres, `stratified` on the plate (729 mic-runs,
+SNR ≥ 10 dB, records that miss the flyover left out), median / rms in dB:
+
+| | before | now |
+| --- | --- | --- |
+| upwind, peak elevation 5–10° (65) | +0.45 / 3.72 | +0.28 / 3.06 |
+| upwind, 10–20° (80) | +0.99 / 2.24 | +0.71 / 1.87 |
+| all | +0.09 / 1.85 | +0.09 / 1.70 |
+
+The calm day 286 barely moves (overall 1.46 → 1.45 dB rms): its winds cast few shadows.
+
 Costs, with a point receiver: the demo grid's acoustic loop takes 12.0 s (3.3 s linear, 2.1 s
 without refraction). A 96-microphone scattered array like `arrays/coyle_approach.csv` takes
 35 ms. Where the range is not monotonic (caustics in non-monotonic profiles), the solve finds
@@ -565,7 +621,8 @@ one arrival rather than summing all of them. Focusing at a caustic is capped at 
 `niceops_pe_compare` runs one path through all four models and writes each band's level
 relative to free field: straight rays, `linear`, `stratified`, and a wide-angle parabolic
 equation. The last is a full-wave solution, Crank–Nicolson Padé(1,1) with the ground's
-impedance written into the grid. Absorption and turbulence are left out of all four.
+impedance written into the grid. Absorption and turbulence are left out of all four,
+unless `--gamma_t` puts turbulence in the PE (below).
 
 The PE is checked against exact solutions:
 
@@ -651,10 +708,46 @@ Two things that looked like the treatment and are not:
   moved the lapse control by 20 dB at 2.5 km. The ray model is too sensitive to structure
   below the microphone for either to work.
 
-The PE's deep shadow, 40–80 dB down, is not to be believed either. With no turbulence in it,
-nothing scatters energy in, and the ray models' `--shadow_floor` stands in for exactly that.
-The next step these numbers point to is a frequency-dependent near-ground treatment for
-`stratified`, calibrated against this tool.
+The PE's deep shadow in still air, 40–80 dB down, is not to be believed either: with no
+turbulence in it, nothing scatters energy in.
+
+#### Turbulence, and the energy it scatters into shadows
+
+The PE takes turbulence as random phase screens (Gilbert, Raspet and Di 1990): `--gamma_t`
+(HARMONOISE strength), `--outer_scale` (von Kármán, default 10 m) and `--seed`, with each of
+`--samples` frequencies its own realisation, so a band level averages over the band and the
+ensemble at once. The effective index's structure parameter is γT / 4, the value for which
+Ostashev's coherence and HARMONOISE's both reduce to one form (Attenborough & Taherzadeh 2026,
+eqs. 18 and 20). One screen per outer scale of range carries the phase that slab accumulates.
+Its vertical spectrum is the 3-D one integrated across the plane, so the vertical coherence
+is the 3-D medium's. Checks, `tests/test_pe_turbulence.cpp`:
+- **The screens' variance:** 0.782 k² Δx (γT/4) L0^(5/3), to 0.06%, less the 4% the finite
+  column leaves out.
+- **The ensemble-mean field:** it falls as exp(−σ²/2) with range to within the sampling noise
+  of 300 realisations, which checks the screens and the march together.
+- **Single scattering:** a third of the strength lowers the deep-shadow level by 4.82 dB,
+  against 10 lg 3 = 4.77.
+
+At γT = 3e-5 (what the 2017 co-located pole and board pairs fit, in panam), the PE fills the
+day-284 shadows to −3 dB re free field at a board, median, only 5–10 dB below the lit level.
+`--scattering` adds that energy to the shadow-boundary field, in place of the floor:
+S = a + 10 lg γT + b lg(f / 1 kHz) + c lg(R / 100 m) + d lg(z_s / 100 m) dB re free field.
+
+| receiver | a | b | c | d | fitted on |
+| --- | --- | --- | --- | --- | --- |
+| flush (3 mm, or a plate) | 39.18 | −1.55 | 2.10 | 5.30 | 12 profiles, sources 50 and 120 m, 1.5 dB rms |
+| 1.2 m | 36.67 | +5.61 | 5.13 | 5.30 (the flush fit's) | 6 profiles, sources 50 m |
+
+S is held to 0 dB, R to 100 m–10 km and z_s to 10–300 m; a plate lifts it by K as it lifts
+the coherent field.
+
+**The measurements do not want that much.** Against the day-284 SEL, the upwind 5–10° bin
+goes +0.28 / 3.06 dB (median / rms) with the floor, +0.49 / 3.04 at γT = 1e-6, +0.95 / 3.02 at
+3e-6, +1.55 / 3.16 at 1e-5 and +2.96 / 4.00 at 3e-5. Up to about 3e-6
+is consistent with them, which is HARMONOISE's "moderate" range. The pair fit's 3e-5 is ten
+times that. It is three times HARMONOISE's maximum, and probably carries more than turbulence
+(roughness, the pole's height), or turbulence at the pole's height, where it is strongest.
+`--scattering` stays off by default, since the floor does as well on these data.
 
 #### The Attenborough et al. benchmark
 
