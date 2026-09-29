@@ -10,11 +10,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <string>
 #include <unistd.h>
 
+#include "atmosphere_profile.hpp"
+#include "sphere_database.hpp"
 #include "trajectory.hpp"
 #include "util/csv.hpp"
 
@@ -130,7 +133,7 @@ GeodeticInput demo_frame(double smoothing = 0.0)
     GeodeticInput input;
     input.frame = LocalFrame::track_aligned(
             Geodetic {records.front()[2], records.front()[3], 0.0}, 210.0);
-    input.ground_elevation_ft = 54.2651;
+    input.ground_elevation = 54.2651 * ft2m;
     input.path_smoothing = smoothing;
     return input;
 }
@@ -310,4 +313,393 @@ TEST_CASE("The AC state format is still read positionally", "[trajectory][geodet
     const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
     REQUIRE(first->latitude == Catch::Approx(records.front()[2]));
     REQUIRE(first->longitude == Catch::Approx(records.front()[3]));
+}
+
+TEST_CASE("adapt resamples onto a uniform grid and keeps the clock", "[trajectory][adapt]")
+{
+    // adapt() is the only smoothing/resampling path for the positional AC
+    // format (--path_smoothing reaches the geodetic reader only), and nothing
+    // in main calls it, so this is what keeps it honest.
+    Trajectory trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+
+    // A straight line at constant speed, which a natural cubic spline
+    // reproduces exactly: f'' = 0 everywhere already satisfies the natural end
+    // condition, so there is no boundary artefact to allow for.
+    const double speed_x = 3.0;
+    const double speed_y = -4.0;
+    const double start_utc = 43200.0; // noon
+    trajectory.states.clear();
+    for (int i = 0; i <= 100; i++)
+    {
+        State now {};
+        now.t = 0.02 * i;
+        now.utcsec = start_utc + now.t;
+        now.x = 100.0 + speed_x * now.t;
+        now.y = speed_y * now.t;
+        now.z = 250.0;
+        trajectory.states.push_back(now);
+    }
+
+    trajectory.adapt(0.1, /*smoothing=*/0.0);
+
+    // 2 s of track at 0.1 s: 21 samples, endpoint included.
+    REQUIRE(trajectory.states.size() == 21);
+    for (std::size_t i = 0; i < trajectory.states.size(); i++)
+    {
+        const auto& now = trajectory.states[i];
+        REQUIRE(now.t == Catch::Approx(0.1 * static_cast<double>(i)));
+        // UTC seconds used to be dropped here: the repacked State was
+        // value-initialised and nothing refilled utcsec, which moved the whole
+        // flight to midnight and with it --dnlfile's day/night split.
+        REQUIRE(now.utcsec == Catch::Approx(start_utc + now.t));
+        REQUIRE(now.x == Catch::Approx(100.0 + speed_x * now.t));
+        REQUIRE(now.vx == Catch::Approx(speed_x));
+        REQUIRE(now.vy == Catch::Approx(speed_y));
+        REQUIRE(now.vz == Catch::Approx(0.0).margin(1e-9));
+        // Straight and level: the load factor is gravity alone.
+        REQUIRE(now.LF == Catch::Approx(1.0));
+        REQUIRE(std::isfinite(now.CT));
+        REQUIRE(std::isfinite(now.mu));
+    }
+}
+
+TEST_CASE("adapt takes the load factor from the fitted path", "[trajectory][adapt]")
+{
+    // The load factor is the second derivative, and it is read off the spline
+    // rather than finite-differenced from the resampled positions.  A constant
+    // acceleration is the case that says so: the interior of an interpolating
+    // cubic through a parabola carries it exactly.
+    Trajectory trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+
+    const double acceleration = 2.0; // m/s^2 along x
+    trajectory.states.clear();
+    for (int i = 0; i <= 200; i++)
+    {
+        State now {};
+        now.t = 0.02 * i;
+        now.x = 0.5 * acceleration * now.t * now.t;
+        now.y = 0.0;
+        now.z = 300.0;
+        trajectory.states.push_back(now);
+    }
+
+    trajectory.adapt(0.1, /*smoothing=*/0.0);
+
+    // Skip the two end cells, where the natural boundary condition pins the
+    // curvature to zero and so cannot represent a parabola.
+    const std::size_t count = trajectory.states.size();
+    REQUIRE(count > 8);
+    for (std::size_t i = 3; i + 3 < count; i++)
+    {
+        const auto& now = trajectory.states[i];
+        REQUIRE(now.vx == Catch::Approx(acceleration * now.t).epsilon(1e-6));
+        // nx is normalised by LF, so recover the acceleration in g from both.
+        REQUIRE(now.nx * now.LF == Catch::Approx(acceleration * mps2g).epsilon(1e-6));
+        REQUIRE(now.nz * now.LF == Catch::Approx(1.0).epsilon(1e-6));
+    }
+}
+
+TEST_CASE("the default observer grid is bit-exact in feet", "[units]")
+{
+    // Every length on the command line is in feet, the grid included.  Its
+    // default is +/-1500 m in steps of 25 m spelled in feet, and the goldens
+    // encode the resulting observer positions -- so the two spellings have to
+    // generate the identical sequence, not merely endpoints that agree.
+    const double bound_ft = 4921.2598425196848;
+    const double step_ft = 82.020997375328079;
+
+    // The count comes from ceil((end - begin) / step); one ULP the wrong way
+    // would give 121 points instead of 120 and move every golden.
+    const double count = std::ceil((bound_ft - -bound_ft) / step_ft);
+    REQUIRE(count == 120.0);
+
+    for (int i = 0; i < 120; i++)
+    {
+        const double as_metres = -1500.0 + 25.0 * i;
+        const double via_feet = (-bound_ft + step_ft * i) * ft2m;
+        REQUIRE(via_feet == as_metres);
+    }
+}
+
+TEST_CASE("path_smoothing bounds the deviation, in feet", "[units][geodetic]")
+{
+    // It is an acceptable deviation per axis, not an abstract weight: the fit
+    // is allowed to sit that far from the given positions and will use the
+    // whole allowance.  Ten feet of slack has to show up as ten feet.
+    const TempCsv track(demo_track_as_geodetic("time,lat,lon,alt"));
+
+    auto rms_offset = [&](double smoothing_ft) {
+        auto input = demo_frame(smoothing_ft * ft2m);
+        Trajectory fitted(track.path, "databases/S-76D.json", input);
+        auto exact_input = demo_frame(0.0);
+        Trajectory exact(track.path, "databases/S-76D.json", exact_input);
+        REQUIRE(fitted.states.size() == exact.states.size());
+        double sum = 0.0;
+        for (std::size_t i = 0; i < fitted.states.size(); i++)
+        {
+            const double dx = fitted.states[i].x - exact.states[i].x;
+            sum += dx * dx;
+        }
+        return std::sqrt(sum / static_cast<double>(fitted.states.size())) / ft2m;
+    };
+
+    // The exact fit passes through the given points, so the offset from it is
+    // the deviation the bound allows.  Loose tolerance: the bound is on the
+    // residual against the data, and x is one axis of three.
+    REQUIRE(rms_offset(10.0) > 1.0);
+    REQUIRE(rms_offset(10.0) < 20.0);
+    // Monotone in the allowance.
+    REQUIRE(rms_offset(40.0) > rms_offset(10.0));
+}
+
+TEST_CASE("--units m reads the same flight from a metric file", "[units][geodetic]")
+{
+    // The unit system is a statement about the interface, not about the
+    // physics: the same flight written in metres and read with metres has to
+    // give the same states as the feet original read as feet.
+    const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
+    REQUIRE(records.size() > 100);
+
+    std::ostringstream metric;
+    metric << std::setprecision(17) << "utcsec,t,lat,lon,alt,x,y,z,h,i,j,vx,l,vy,n,vz,p,q,r,s,t2,"
+                                       "ax,ay,az,x1,y1,z1\n";
+    for (const auto& r : records)
+    {
+        REQUIRE(r.size() == 27);
+        auto row = r;
+        for (std::size_t c : {5u, 6u, 7u, 11u, 13u, 15u, 21u, 22u, 23u})
+            row[c] *= ft2m;
+        for (std::size_t c = 0; c < row.size(); c++)
+            metric << (c ? "," : "") << row[c];
+        metric << "\n";
+    }
+    const TempCsv metric_track(metric.str());
+
+    const Trajectory in_feet("tracks/S-76D/197421AC.csv", "databases/S-76D.json", {}, feet);
+    const Trajectory in_metres(metric_track.path, "databases/S-76D.json", {}, metres);
+
+    REQUIRE(in_metres.states.size() == in_feet.states.size());
+    for (std::size_t i = 0; i < in_feet.states.size(); i++)
+    {
+        const auto& a = in_feet.states[i];
+        const auto& b = in_metres.states[i];
+        // Positions and velocities are already metric internally, so they match
+        // to the round-off of writing the file out and reading it back.
+        REQUIRE(std::fabs(b.x - a.x) < 1e-9);
+        REQUIRE(std::fabs(b.z - a.z) < 1e-9);
+        REQUIRE(std::fabs(b.vx - a.vx) < 1e-9);
+        // The derived flight parameters are what actually index the database.
+        REQUIRE(std::fabs(b.CT - a.CT) < 1e-12);
+        REQUIRE(std::fabs(b.mu - a.mu) < 1e-12);
+    }
+}
+
+TEST_CASE("an altitude column may only claim the unit in force", "[units][geodetic]")
+{
+    // "alt_ft" under --units m would read feet as metres and fly the aircraft
+    // a third as high; refusing to match is what makes that loud instead of
+    // silent.  A bare "alt" claims nothing and is always taken.
+    const std::string body = "0,39.81,-74.43,300\n1,39.811,-74.431,299\n2,39.812,-74.432,298\n";
+    const TempCsv in_feet("time,lat,lon,alt_ft\n" + body);
+    const TempCsv in_metres("time,lat,lon,alt_m\n" + body);
+    const TempCsv unlabelled("time,lat,lon,alt\n" + body);
+
+    GeodeticInput input;
+    input.frame = LocalFrame(Geodetic {39.81, -74.43, 0.0});
+
+    REQUIRE_NOTHROW(Trajectory(in_feet.path, "databases/S-76D.json", input, feet));
+    REQUIRE_THROWS(Trajectory(in_feet.path, "databases/S-76D.json", input, metres));
+    REQUIRE_NOTHROW(Trajectory(in_metres.path, "databases/S-76D.json", input, metres));
+    REQUIRE_THROWS(Trajectory(in_metres.path, "databases/S-76D.json", input, feet));
+    REQUIRE_NOTHROW(Trajectory(unlabelled.path, "databases/S-76D.json", input, feet));
+    REQUIRE_NOTHROW(Trajectory(unlabelled.path, "databases/S-76D.json", input, metres));
+}
+
+namespace {
+// A steady 6 degree descent at 36 m/s, 0.02 s apart, with vz stored as the
+// file would: positive up (vz_positive_up) or positive down.  derive has
+// already normalised the load factor, as the reader leaves it.
+std::vector<State> steady_descent(bool vz_positive_up)
+{
+    dimensional_data vehicle;
+    vehicle.tip_speed = 230.0;
+    vehicle.radius = 5.3;
+    vehicle.weight = 2250.0 * 9.81;
+    vehicle.rho = 1.2;
+    const double v = 36.0, gamma = 6.0 * pi / 180.0;
+    std::vector<State> states;
+    for (int i = 0; i < 500; i++)
+    {
+        State now {};
+        now.t = 0.02 * i;
+        now.x = v * std::cos(gamma) * now.t;
+        now.z = 500.0 - v * std::sin(gamma) * now.t;
+        now.vx = v * std::cos(gamma);
+        now.vz = (vz_positive_up ? -1.0 : 1.0) * v * std::sin(gamma);
+        now.nz = 1.0;
+        derive_flight_parameters(now, vehicle);
+        states.push_back(now);
+    }
+    return states;
+}
+} // namespace
+
+TEST_CASE("vz stored positive down is detected and made positive up", "[trajectory][vz]")
+{
+    // The 2017 Noise Abatement AC files (all but EC130B4 day 298's) store vz
+    // positive down; read as up, every descent was flown as a climb.
+    auto states = steady_descent(false);
+    REQUIRE(states[10].fpa > 0.0); // as read: a climb
+    REQUIRE(correct_vertical_speed_sign(states, "descent_vz_down"));
+    for (const auto& s : states)
+    {
+        REQUIRE(s.vz < 0.0);
+        REQUIRE(std::fabs(s.fpa - (-6.0)) < 1e-9);
+    }
+}
+
+TEST_CASE("vz already positive up is left alone, even at a constant rate", "[trajectory][vz]")
+{
+    // A steady descent has a constant dz/dt, so a centred correlation has no
+    // variance to work with; the check has to decide from the uncentred one.
+    auto states = steady_descent(true);
+    const auto before = states;
+    REQUIRE_FALSE(correct_vertical_speed_sign(states, "descent_vz_up"));
+    for (std::size_t i = 0; i < states.size(); i++)
+    {
+        REQUIRE(states[i].vz == before[i].vz);
+        REQUIRE(states[i].fpa == before[i].fpa);
+    }
+}
+
+TEST_CASE("a level track gives no evidence and is left alone", "[trajectory][vz]")
+{
+    auto states = steady_descent(true);
+    for (auto& s : states)
+    {
+        s.z = 300.0;
+        s.vz = 0.0;
+    }
+    REQUIRE_FALSE(correct_vertical_speed_sign(states, "level"));
+}
+
+TEST_CASE("the shipped demo tracks store vz positive up and are read unchanged", "[trajectory][vz]")
+{
+    for (const auto& [track, vehicle] :
+            {std::pair {"tracks/S-76D/197421AC.csv", "databases/S-76D.json"},
+                    std::pair {"tracks/B205/190337AC.csv", "databases/B205.json"}})
+    {
+        Trajectory trajectory(track, vehicle);
+        std::vector<State> copy = trajectory.states;
+        REQUIRE_FALSE(correct_vertical_speed_sign(copy, track));
+    }
+}
+
+// --speed_reference air: mu, the path angles and the sphere's nose follow the
+// velocity through the air, the ground velocity less the wind at the state.
+namespace {
+
+std::function<std::array<double, 2>(double)> uniform_wind(double wx, double wy)
+{
+    return [=](double) { return std::array<double, 2> {wx, wy}; };
+}
+
+// One state flying +x at `speed` m/s, TPP level, taken from the demo track so
+// that its CT and the vehicle's tip speed are real ones.
+Trajectory single_state(double speed, double vz, double z = 100.0)
+{
+    Trajectory trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+    State s = trajectory.states.front();
+    s.x = 0.0;
+    s.y = 0.0;
+    s.z = z;
+    s.vx = speed;
+    s.vy = 0.0;
+    s.vz = vz;
+    s.nx = 0.0;
+    s.ny = 0.0;
+    s.nz = 1.0;
+    trajectory.states = {s};
+    // mu and the path angles for that velocity, over the ground.
+    trajectory.relative_to_air(uniform_wind(0.0, 0.0));
+    return trajectory;
+}
+
+} // namespace
+
+TEST_CASE("an air reference in calm air changes nothing, to the bit", "[trajectory][speed_reference]")
+{
+    const Trajectory ground("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+    Trajectory air = ground;
+    REQUIRE(air.relative_to_air(uniform_wind(0.0, 0.0)) == 0.0);
+    for (std::size_t i = 0; i < ground.states.size(); i++)
+    {
+        const auto& g = ground.states[i];
+        const auto& a = air.states[i];
+        REQUIRE(a.mu == g.mu);
+        REQUIRE(a.fpa == g.fpa);
+        REQUIRE(a.fpa_e == g.fpa_e);
+        REQUIRE(a.CT == g.CT);
+    }
+}
+
+TEST_CASE("a headwind raises mu and flattens the path; CT stays inertial", "[trajectory][speed_reference]")
+{
+    auto trajectory = single_state(40.0, -3.0);
+    const State before = trajectory.states.front();
+    // Blowing toward -x, into the aircraft's face, at 10 m/s.
+    REQUIRE(trajectory.relative_to_air(uniform_wind(-10.0, 0.0)) == 10.0);
+    const State& after = trajectory.states.front();
+    const double airspeed = std::hypot(50.0, 3.0);
+    REQUIRE(after.mu == Catch::Approx(airspeed / trajectory.vehicle.tip_speed));
+    REQUIRE(after.mu > before.mu);
+    REQUIRE(after.fpa == Catch::Approx(std::asin(-3.0 / airspeed) * 180.0 / pi));
+    REQUIRE(std::fabs(after.fpa) < std::fabs(before.fpa));
+    // The TPP is level, so the QSAM angle is the path angle.
+    REQUIRE(after.fpa_e == Catch::Approx(after.fpa));
+    // The thrust balances the acceleration over the ground, and the ground
+    // velocity itself is the track's.
+    REQUIRE(after.CT == before.CT);
+    REQUIRE(after.nz == before.nz);
+    REQUIRE(after.vx == 40.0);
+}
+
+TEST_CASE("a crosswind turns the sphere's nose into the relative wind", "[trajectory][speed_reference]")
+{
+    auto trajectory = single_state(40.0, 0.0);
+    // Blowing toward +y: the aircraft has to point toward -y to hold its track.
+    trajectory.relative_to_air(uniform_wind(0.0, 5.0));
+    const auto v = air_velocity(trajectory.states.front());
+    REQUIRE(v == std::array<double, 3> {40.0, -5.0, 0.0});
+    const auto frame = sphere_frame(Vec3(v[0], v[1], v[2]), Vec3(0.0, 0.0, 1.0));
+    REQUIRE(std::atan2(frame.nose.y, frame.nose.x) == Catch::Approx(std::atan2(-5.0, 40.0)));
+    REQUIRE(trajectory.states.front().mu * trajectory.vehicle.tip_speed
+            == Catch::Approx(std::hypot(40.0, 5.0)));
+}
+
+TEST_CASE("the wind is the profile's at each state's height, in the track frame",
+        "[trajectory][speed_reference]")
+{
+    // From the north, calm at the ground and 10 m/s at 100 m.
+    AtmosphereProfile profile;
+    profile.height = {0.0, 100.0};
+    profile.temperature = {288.15, 288.15};
+    profile.relative_humidity = {50.0, 50.0};
+    profile.wind_east = {0.0, 0.0};
+    profile.wind_north = {0.0, -10.0};
+    // The 2017 tracks' frame: +x along 270 (west), so +y along 180 (south),
+    // which is where a north wind blows.
+    const CompassToLocal to_local(270.0);
+    auto trajectory = single_state(40.0, 0.0, 50.0);
+    State high = trajectory.states.front();
+    high.z = 100.0;
+    trajectory.states.push_back(high);
+    const double strongest = trajectory.relative_to_air(
+            [&](double z) { return to_local(profile.wind_at(z)); });
+    REQUIRE(strongest == Catch::Approx(10.0));
+    REQUIRE(trajectory.states[0].wx == Catch::Approx(0.0).margin(1e-12));
+    REQUIRE(trajectory.states[0].wy == Catch::Approx(5.0));
+    REQUIRE(trajectory.states[1].wy == Catch::Approx(10.0));
+    REQUIRE(trajectory.states[1].mu * trajectory.vehicle.tip_speed
+            == Catch::Approx(std::hypot(40.0, 10.0)));
 }

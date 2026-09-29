@@ -6,22 +6,22 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <cstdint>
+#include <numeric>
 #include <utility>
 
 #include <netcdf.h>
 
+#include "propagation.hpp"
 #include "util/logger.hpp"
 #include "weighting.hpp"
 #include "util/paths.hpp"
+#include "util/constants.hpp"
 #include "util/rootfind.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
 
 namespace {
-
-// M_PI is not part of the C++ standard and disappears from glibc's math.h
-// under -std=c++17, so define it locally.
-constexpr double PI = 3.14159265358979323846;
 
 // RAII replacement for D's scope(exit) nc_close.  Note: intentionally does not
 // run on fatal() paths (fatal aborts the process).
@@ -98,6 +98,45 @@ int get_scalar(int ncid, const std::string& variable_name, T* value)
         }
     }
     return status;
+}
+
+// The root attribute speed_reference, as text.  Absent is the ground.  panam
+// writes it with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is
+// accepted too.
+SpeedReference read_speed_reference(int ncid)
+{
+    nc_type type = NC_NAT;
+    std::size_t length = 0;
+    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, "speed_reference", &type, &length))
+        return SpeedReference::ground;
+    std::string text;
+    if (type == NC_CHAR)
+    {
+        text.resize(length);
+        if (NC_NOERR != nc_get_att_text(ncid, NC_GLOBAL, "speed_reference", text.data()))
+            input_error("Found but could not read the database attribute speed_reference.");
+    }
+    else if (type == NC_STRING && length == 1)
+    {
+        char* value = nullptr;
+        if (NC_NOERR != nc_get_att_string(ncid, NC_GLOBAL, "speed_reference", &value))
+            input_error("Found but could not read the database attribute speed_reference.");
+        text = value == nullptr ? "" : value;
+        nc_free_string(1, &value);
+    }
+    else
+    {
+        input_error("The database attribute speed_reference is not text.");
+    }
+    // Fixed-width writers pad with NULs or blanks.
+    text.erase(text.find_last_not_of(std::string(" \0", 2)) + 1);
+    const auto reference = parse_speed_reference(text);
+    if (!reference)
+    {
+        input_error("The database attribute speed_reference is '", text,
+                "'; expected 'ground' or 'air'.");
+    }
+    return *reference;
 }
 
 // Read an integer-valued scalar, converting from whatever numeric type the
@@ -202,6 +241,20 @@ std::array<std::size_t, 2> approx_equal_range(const std::vector<double>& a, doub
 // niceops::acosc & co. undefined (breaking the unit tests at link time) and
 // makes unqualified calls here ambiguous against the using-directive above.
 namespace niceops {
+
+std::optional<SpeedReference> parse_speed_reference(const std::string& name)
+{
+    if (name == "ground")
+        return SpeedReference::ground;
+    if (name == "air")
+        return SpeedReference::air;
+    return std::nullopt;
+}
+
+const char* to_string(SpeedReference reference)
+{
+    return reference == SpeedReference::air ? "air" : "ground";
+}
 
 // Repair the azimuth labels of a sphere written by a pre-versioned builder.
 //
@@ -310,15 +363,76 @@ inline Pair load_pair(const Database::Sample& s)
     return Pair {s.dBA, s.EAA};
 }
 
+// A level at or below this carries no energy: the load-time floor
+// (no_energy_floor_db) is what -inf -- a direction ambient gating emptied, or a
+// band it masked -- is stored as.
+constexpr double empty_level_db = Database::no_energy_floor_db + 1.0;
+
+inline bool is_empty(double level, double weight)
+{
+    return weight != 0.0 && level <= empty_level_db;
+}
+
+// Blending in dB is linear in the level, so one empty entry at the floor pulls
+// the whole blend toward it in proportion to its weight: a 20% weight on
+// -1000 dB costs 200 dB.  Where a sphere simply has no measurement in a
+// direction, that turned a neighbouring measured value into silence -- the
+// narrow-strip footprints and 10-25 dB holes seen against the 2017 approach
+// data, worst where QSAM or sparse coverage pulls in a condition with large
+// gated regions.  "Not measured" is not "silent", so empty entries drop out
+// and the remaining weights are renormalised.  Only when every entry with a
+// weight is empty is the result empty.
+//
+// When nothing is empty -- the common case -- callers take the original
+// arithmetic in its original order, so every result that did not involve an
+// empty entry is unchanged to the bit.
+inline Pair blend_present(const Pair* p, const double* w)
+{
+    Pair sum {0.0, 0.0};
+    double total = 0.0;
+    for (std::size_t k = 0; k < 4; k++)
+    {
+        if (w[k] != 0.0 && p[k][0] > empty_level_db)
+        {
+            sum += p[k] * w[k];
+            total += w[k];
+        }
+    }
+    if (!(total > 0.0))
+        return Pair {Database::no_energy_floor_db, 0.0};
+    return sum * (1.0 / total);
+}
+
+// Scalar form for the spectral paths, which blend one band at a time.
+inline double blend_present(const double* v, const double* w)
+{
+    double sum = 0.0, total = 0.0;
+    for (std::size_t k = 0; k < 4; k++)
+    {
+        if (w[k] != 0.0 && v[k] > empty_level_db)
+        {
+            sum += v[k] * w[k];
+            total += w[k];
+        }
+    }
+    return total > 0.0 ? sum / total : Database::no_energy_floor_db;
+}
+
 // The four bracketing operating conditions of one grid cell, blended by their
 // barycentric weights.  `cell` points at that cell's run of conditions, which
 // the flat grid layout keeps contiguous.
 inline Pair blend_conditions(const Database::Sample* cell, const Database::Blend& blend)
 {
-    Pair blended = load_pair(cell[blend.indices[0]]) * blend.weights[0];
-    blended += load_pair(cell[blend.indices[1]]) * blend.weights[1];
-    blended += load_pair(cell[blend.indices[2]]) * blend.weights[2];
-    blended += load_pair(cell[blend.indices[3]]) * blend.weights[3];
+    const Pair p[4] = {load_pair(cell[blend.indices[0]]), load_pair(cell[blend.indices[1]]),
+            load_pair(cell[blend.indices[2]]), load_pair(cell[blend.indices[3]])};
+    const double* w = blend.weights.data();
+    if (is_empty(p[0][0], w[0]) || is_empty(p[1][0], w[1]) || is_empty(p[2][0], w[2])
+            || is_empty(p[3][0], w[3]))
+        return blend_present(p, w);
+    Pair blended = p[0] * w[0];
+    blended += p[1] * w[1];
+    blended += p[2] * w[2];
+    blended += p[3] * w[3];
     return blended;
 }
 
@@ -529,7 +643,7 @@ double DirectionBounds::narrowest_theta_bin_degrees()
     double previous = 90.0;
     for (int k = 1; k <= half; k++)
     {
-        const double edge = std::acos(std::sqrt(static_cast<double>(k) / half)) * 180.0 / PI;
+        const double edge = std::acos(std::sqrt(static_cast<double>(k) / half)) * 180.0 / pi;
         narrowest = std::min(narrowest, previous - edge);
         previous = edge;
     }
@@ -603,9 +717,9 @@ inline double phi_degrees(double up, double across)
         // undefined -- and 0/0 is a NaN, which has to be caught here rather
         // than propagated into the grid lookup.  normalized() leaves the zero
         // vector alone, so the projection form landed on acos(0).
-        return 0.5 * PI * (180.0 / PI);
+        return 0.5 * pi * (180.0 / pi);
     }
-    return phi * (180.0 / PI);
+    return phi * (180.0 / pi);
 }
 
 } // namespace
@@ -616,7 +730,7 @@ std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direct
     const double along = frame.nose.dot(direction);
     const double theta = acosc(along);
     return {phi_degrees(frame.normal.dot(direction), frame.starboard.dot(direction)),
-            theta * (180.0 / PI)};
+            theta * (180.0 / pi)};
 }
 
 std::array<double, 2> lookup_angles(const Vec3& source, const Vec3& velocity,
@@ -666,6 +780,44 @@ Database::Database(const std::string& datafile_path)
     if (!same_grid)
         input_error("same_grid == false not supported");
 
+    // Optional, absent or false in every database predating panam's
+    // load_factors=None: whether every stored sphere is the same LF=1
+    // reference condition, scaled to other load factors analytically rather
+    // than stored.  See the member comment on fixed_load_factor_.
+    fixed_load_factor_ = get_int_scalar(file_ncid, "fixed_load_factor", 0) != 0;
+    info("fixed_load_factor is set to: ", fixed_load_factor_);
+
+    // Optional, absent or false in every database predating panam's grid/band
+    // deduplication: whether phi, theta and (if present) frequency are the
+    // same on every sphere, in which case the builder wrote them once at the
+    // root instead of once per group.  Normally true -- panam completes every
+    // sphere onto a common grid and reduces every condition to the same
+    // frequency bands -- but not guaranteed (mixed microphone layouts, or
+    // per-file frequency resolution), so it is a flag panam checked at write
+    // time, not an assumption made here.
+    const bool shared_grid_and_frequency =
+            get_int_scalar(file_ncid, "shared_grid_and_frequency", 0) != 0;
+    info("shared_grid_and_frequency is set to: ", shared_grid_and_frequency);
+    std::vector<double> shared_phis_scattered, shared_thetas_scattered;
+    std::vector<double> shared_bands;
+    if (shared_grid_and_frequency)
+    {
+        const auto shared_nchannels = get_dim_length("channels", file_ncid);
+        shared_phis_scattered.resize(shared_nchannels);
+        shared_thetas_scattered.resize(shared_nchannels);
+        require_array(file_ncid, "phi", shared_nchannels, shared_phis_scattered);
+        require_array(file_ncid, "theta", shared_nchannels, shared_thetas_scattered);
+        info("Shared grid contains ", shared_nchannels, " channels.");
+        std::size_t shared_n_bands = 0;
+        if (NC_NOERR == nc_inq_dimid_len(file_ncid, "frequency", &shared_n_bands))
+        {
+            shared_bands.resize(shared_n_bands);
+            require_array(file_ncid, "frequency", shared_n_bands, shared_bands);
+            info("Shared frequency axis carries ", shared_n_bands, " bands from ",
+                    shared_bands.front(), " to ", shared_bands.back(), " Hz.");
+        }
+    }
+
     // Optional: builders since the versioned format record the rotor scale at
     // the root, which is enough to redimensionalize without a vehicle file.
     double tip_speed_value = 0.0;
@@ -674,8 +826,20 @@ Database::Database(const std::string& datafile_path)
         tip_speed_ = tip_speed_value;
         info("Database records a main rotor tip speed of ", tip_speed_, " m/s.");
     }
+    speed_reference_ = read_speed_reference(file_ncid);
+    info("Database flight conditions are referred to the ", to_string(speed_reference_), ".");
 
     auto group_ids = get_group_ids(file_ncid);
+    // Every field below is filled from the loop over these groups.  With none,
+    // the loop never runs and the tail of this function read an uninitialised
+    // sphere radius and dereferenced max_element's end() on empty condition
+    // lists -- a segfault, with nothing on stderr because the log had already
+    // recorded a plausible-looking load.  Say what is wrong instead.
+    if (group_ids.empty())
+    {
+        input_error("Database ", datafile_path, " holds no operating-condition groups; "
+                "a .nod file needs one group per sphere.");
+    }
 
     // Allocate storage for operating conditions
     std::vector<double> advance_ratios, flight_path_angles, thrust_coefficients;
@@ -730,7 +894,34 @@ Database::Database(const std::string& datafile_path)
             input_error("Database error: ShaftPower present on some spheres but not others.");
         }
 
-        auto nchannels = get_dim_length("channels", group_id);
+        std::size_t nchannels;
+        if (shared_grid_and_frequency)
+        {
+            // Already read once at the root; every sphere shares it verbatim,
+            // so there is nothing here to re-read or repair.
+            nchannels = shared_phis_scattered.size();
+            phis_scattered = shared_phis_scattered;
+            thetas_scattered = shared_thetas_scattered;
+        }
+        else
+        {
+            nchannels = get_dim_length("channels", group_id);
+            // Read THIS sphere's own channel angles.  They are not identical
+            // across spheres: in a pre-versioned database the hover spheres
+            // label their mirrored half differently from the forward-flight
+            // ones, so reusing sphere 0's arrays files their levels into the
+            // wrong grid cells.
+            phis_scattered.resize(nchannels);
+            thetas_scattered.resize(nchannels);
+            require_array(group_id, "phi", phis_scattered.size(), phis_scattered);
+            trace("The original phi values are:\n", phis_scattered);
+            require_array(group_id, "theta", thetas_scattered.size(), thetas_scattered);
+            trace("The original theta values are:\n", thetas_scattered);
+            if (database_version < 1 && repair_legacy_hover_directivity(phis_scattered))
+            {
+                repaired_spheres++;
+            }
+        }
         if (i == 0)
         {
             // Record number of channels to check for changes
@@ -740,20 +931,6 @@ Database::Database(const std::string& datafile_path)
         else if (nchannels != nchannels0)
         {
             input_error("Database error: number of channels is not constant.");
-        }
-        // Read THIS sphere's own channel angles.  They are not identical across
-        // spheres: in a pre-versioned database the hover spheres label their
-        // mirrored half differently from the forward-flight ones, so reusing
-        // sphere 0's arrays files their levels into the wrong grid cells.
-        phis_scattered.resize(nchannels);
-        thetas_scattered.resize(nchannels);
-        require_array(group_id, "phi", phis_scattered.size(), phis_scattered);
-        trace("The original phi values are:\n", phis_scattered);
-        require_array(group_id, "theta", thetas_scattered.size(), thetas_scattered);
-        trace("The original theta values are:\n", thetas_scattered);
-        if (database_version < 1 && repair_legacy_hover_directivity(phis_scattered))
-        {
-            repaired_spheres++;
         }
         if (i == 0)
         {
@@ -788,21 +965,40 @@ Database::Database(const std::string& datafile_path)
         // to carry them, so its absence is not an error -- but a database that
         // has them on some spheres and not others is malformed.
         std::size_t n_bands = 0;
-        if (NC_NOERR == nc_inq_dimid_len(group_id, "frequency", &n_bands))
+        bool has_spectrum;
+        if (shared_grid_and_frequency && !shared_bands.empty())
         {
-            std::vector<double> bands(n_bands);
-            require_array(group_id, "frequency", n_bands, bands);
+            // Already read once at the root; every sphere shares it verbatim.
+            has_spectrum = true;
+            n_bands = shared_bands.size();
             if (i == 0)
             {
-                frequencies_ = bands;
+                frequencies_ = shared_bands;
                 spectra_.assign(phis.size() * thetas.size() * group_ids.size() * n_bands, 0.0);
-                info("Database carries ", n_bands, " frequency bands from ", bands.front(),
-                        " to ", bands.back(), " Hz.");
             }
-            else if (bands != frequencies_)
+        }
+        else
+        {
+            has_spectrum = NC_NOERR == nc_inq_dimid_len(group_id, "frequency", &n_bands);
+            if (has_spectrum)
             {
-                input_error("Database error: frequency bands differ between spheres.");
+                std::vector<double> bands(n_bands);
+                require_array(group_id, "frequency", n_bands, bands);
+                if (i == 0)
+                {
+                    frequencies_ = bands;
+                    spectra_.assign(phis.size() * thetas.size() * group_ids.size() * n_bands, 0.0);
+                    info("Database carries ", n_bands, " frequency bands from ", bands.front(),
+                            " to ", bands.back(), " Hz.");
+                }
+                else if (bands != frequencies_)
+                {
+                    input_error("Database error: frequency bands differ between spheres.");
+                }
             }
+        }
+        if (has_spectrum)
+        {
             int amplitude_id = 0;
             if (NC_NOERR != nc_inq_varid(group_id, "amplitude", &amplitude_id))
                 input_error("Database error: sphere has a frequency dimension but no amplitude.");
@@ -817,8 +1013,61 @@ Database::Database(const std::string& datafile_path)
                     != nc_get_var_double(group_id, amplitude_id, sphere_amplitudes.data()))
                 input_error("Database error: could not read amplitude for sphere ", i, ".");
             const std::size_t n_conditions_total = group_ids.size();
-            for (std::size_t slot = 0; slot < sphere_amplitudes.size(); slot++)
-                spectra_[slot * n_conditions_total + i] = sphere_amplitudes[slot];
+            // Which sorted (phi, theta) cell each row and column of the array
+            // is.  The format means amplitude to be gridded over the sorted
+            // unique angles, but panam before 2026-09-25 wrote its rows in the
+            // order it completed the sphere (-90..90, then the mirrored upper
+            // surface), which read as sorted put every spectrum in the wrong
+            // direction.  When the channels are a full row-major grid -- channel
+            // r * n_theta + j is row r, column j, as both writers lay them out --
+            // their own angles say which cell each row is, and for a sorted file
+            // that is the identity.  Otherwise keep the sorted reading.
+            const std::size_t n_phi = phis.size(), n_theta = thetas.size();
+            std::vector<std::size_t> cell_of(n_phi * n_theta);
+            std::iota(cell_of.begin(), cell_of.end(), std::size_t {0});
+            if (phis_scattered.size() == n_phi * n_theta)
+            {
+                std::vector<std::size_t> mapped(n_phi * n_theta);
+                std::vector<bool> taken(n_phi * n_theta, false);
+                bool grid_layout = true;
+                for (std::size_t r = 0; r < n_phi && grid_layout; r++)
+                {
+                    for (std::size_t j = 0; j < n_theta && grid_layout; j++)
+                    {
+                        const std::size_t c = r * n_theta + j;
+                        const auto pm = approx_equal_range(phis.values(), phis_scattered[c]);
+                        const auto tm = approx_equal_range(thetas.values(), thetas_scattered[c]);
+                        if (pm[0] == pm[1] || tm[0] == tm[1]
+                                || !approx_equal(phis_scattered[c], phis_scattered[r * n_theta]))
+                        {
+                            grid_layout = false;
+                            break;
+                        }
+                        const std::size_t cell = pm[0] * n_theta + tm[0];
+                        if (taken[cell])
+                            grid_layout = false;
+                        taken[cell] = true;
+                        mapped[c] = cell;
+                    }
+                }
+                if (grid_layout)
+                    cell_of = mapped;
+                else if (i == 0)
+                    log("Sphere channels are not a full row-major grid; reading amplitude as "
+                        "gridded over the sorted angles.");
+            }
+            for (std::size_t slot = 0; slot < n_phi * n_theta; slot++)
+            {
+                for (std::size_t band = 0; band < n_bands; band++)
+                {
+                    // A band ambient gating masked arrives as -inf (or NaN):
+                    // floor it, exactly as dBA is floored above, so the blends
+                    // can tell "not measured" and no NaN reaches a level.
+                    const double a = sphere_amplitudes[slot * n_bands + band];
+                    spectra_[(cell_of[slot] * n_bands + band) * n_conditions_total + i]
+                            = std::isfinite(a) ? a : no_energy_floor_db;
+                }
+            }
         }
         else if (!frequencies_.empty())
         {
@@ -858,9 +1107,23 @@ Database::Database(const std::string& datafile_path)
             {
                 for (std::size_t n = theta_match[0]; n < theta_match[1]; n++)
                 {
-                    // Load sphere data into grid
-                    grid[(m * thetas.size() + n) * n_conditions + i]
-                            = {dBAs_scattered[c], EAAs_scattered[c]};
+                    // Load sphere data into grid.  dBA of -inf legitimately
+                    // means "no energy in this direction" (ambient gating
+                    // emptied it) and blend_conditions() must still be able
+                    // to read it under a zero barycentric weight -- which a
+                    // sparse, coarse triangulation hits routinely, e.g. any
+                    // query that lands exactly on a condition's own gamma or
+                    // mu.  IEEE 754 makes 0 * -inf a NaN that poisons the
+                    // whole blended sum regardless of weight, so floor it to
+                    // a level far below anything physical; panam already
+                    // established that swapping -inf for a very negative
+                    // finite floor changes nothing where the weight is
+                    // nonzero (byte-identical footprints), so this is free
+                    // everywhere it matters and fixes it everywhere it does.
+                    const double dBA =
+                            std::isfinite(dBAs_scattered[c]) ? dBAs_scattered[c] : no_energy_floor_db;
+                    const double EAA = std::isfinite(EAAs_scattered[c]) ? EAAs_scattered[c] : 0.0;
+                    grid[(m * thetas.size() + n) * n_conditions + i] = {dBA, EAA};
                 }
             }
         }
@@ -888,6 +1151,23 @@ Database::Database(const std::string& datafile_path)
     info("Operating condition ranges are:\n", "μ  = [", advance_ratio_min, " , ",
             advance_ratio_max, "]\n", "γ  = [", flight_path_angle_min, " , ", flight_path_angle_max,
             "]\n", "CT = [", thrust_coefficient_min, " , ", thrust_coefficient_max, "]\n");
+
+    // A fixed_load_factor database's CT is the same constant on every stored
+    // sphere by construction (panam writes only the LF=1 reference), which
+    // min/max_element already confirms: unlike same_grid, this is not
+    // trusted blindly, because the whole point of the flag is that every
+    // condition's thrust_coefficient is discarded from the triangulation --
+    // if the file lied, load factor scaling would silently stop working
+    // rather than fail loudly, so it is checked here instead.
+    if (fixed_load_factor_ && !approx_equal(thrust_coefficient_min, thrust_coefficient_max))
+    {
+        input_error("Database error: fixed_load_factor is set but thrust_coefficient is not "
+                "constant across spheres (", thrust_coefficient_min, " to ", thrust_coefficient_max,
+                ").");
+    }
+    reference_thrust_coefficient_ = thrust_coefficient_min;
+    active_condition_dims_ = fixed_load_factor_ ? 2 : condition_dims;
+
     // Normalize operating conditions
     for (auto& x : advance_ratios)
         x = (x - advance_ratio_min) / (advance_ratio_max - advance_ratio_min);
@@ -895,40 +1175,84 @@ Database::Database(const std::string& datafile_path)
     for (auto& x : flight_path_angles)
         x = (x - flight_path_angle_min) / (flight_path_angle_max - flight_path_angle_min);
     trace("Normalized γ   = ", flight_path_angles);
-    for (auto& x : thrust_coefficients)
-        x = (x - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min);
-    trace("Normalized CT  = ", thrust_coefficients);
+    // A fixed_load_factor database has thrust_coefficient_min == max, so this
+    // would divide by zero -- and there is nothing to normalize anyway, since
+    // CT plays no part in a triangulation that does not include it.
+    if (!fixed_load_factor_)
+    {
+        for (auto& x : thrust_coefficients)
+            x = (x - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min);
+        trace("Normalized CT  = ", thrust_coefficients);
+    }
 
-    // Pack the three normalized axes into the row-major point array the
-    // interpolator takes.  A fourth operating parameter would be another column
-    // here and nothing else.
-    std::vector<double> conditions(advance_ratios.size() * condition_dims);
+    // Pack the normalized axes into the row-major point array the
+    // interpolator takes -- (mu, gamma, CT) ordinarily, (mu, gamma) alone for
+    // a fixed_load_factor database, where CT carries no information and
+    // including it as a third, constant coordinate would make every point
+    // coplanar and the 3D triangulation degenerate.  A fourth operating
+    // parameter would be another column here and nothing else -- the
+    // interpolator's dimension is a constructor argument, not a fixed three.
+    std::vector<double> conditions(advance_ratios.size() * active_condition_dims_);
     for (std::size_t i = 0; i < advance_ratios.size(); i++)
     {
-        conditions[i * condition_dims + 0] = advance_ratios[i];
-        conditions[i * condition_dims + 1] = flight_path_angles[i];
-        conditions[i * condition_dims + 2] = thrust_coefficients[i];
+        conditions[i * active_condition_dims_ + 0] = advance_ratios[i];
+        conditions[i * active_condition_dims_ + 1] = flight_path_angles[i];
+        if (!fixed_load_factor_)
+            conditions[i * active_condition_dims_ + 2] = thrust_coefficients[i];
     }
-    interpolator_.build(condition_dims, advance_ratios.size(), conditions.data());
+    interpolator_.build(active_condition_dims_, advance_ratios.size(), conditions.data());
 }
 
 Database::Blend Database::blend_at(double advance_ratio, double flight_path_angle,
         double thrust_coefficient) const
 {
+    // The raw query CT, kept before it is normalized below (or, for a
+    // fixed_load_factor database, not used for normalization at all): the
+    // analytic load-factor correction compares it against
+    // reference_thrust_coefficient_ in physical units, not normalized ones.
+    const double raw_thrust_coefficient = thrust_coefficient;
+
     // Normalize flight condition and limit range to [0.0,1.0]
     advance_ratio = clamp01((advance_ratio - advance_ratio_min) / (advance_ratio_max - advance_ratio_min));
     flight_path_angle = clamp01(
             (flight_path_angle - flight_path_angle_min) / (flight_path_angle_max - flight_path_angle_min));
-    thrust_coefficient = clamp01(
-            (thrust_coefficient - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min));
-    trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
-            ", CT = ", thrust_coefficient);
 
-    // Get barycentric weights and indicies
     Blend blend;
-    const double condition[condition_dims] = {advance_ratio, flight_path_angle, thrust_coefficient};
-    interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
-    trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+    if (fixed_load_factor_)
+    {
+        // CT is not part of this triangulation -- see the member comment on
+        // fixed_load_factor_ -- so the interpolator only ever sees (mu, gamma)
+        // and writes 3 of Blend's 4 slots; the 4th is padding, weight 0,
+        // matching the existing convention for a degenerate blend (see
+        // cull_range's comment on "Skip the padding").
+        const double condition[2] = {advance_ratio, flight_path_angle};
+        interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
+        blend.weights[3] = 0.0;
+        blend.indices[3] = blend.indices[0];
+        trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+
+        // The correction only ever adds level: panam's own convention leaves
+        // load factors at or below 1 g unscaled from the stored reference
+        // rather than extrapolating them down (a descent or a light-thrust
+        // condition is not assumed to follow the same simple scaling law a
+        // maneuvering pull-up does), and there is no upper bound on how far
+        // above the reference a query may extrapolate.
+        blend.level_correction_db = raw_thrust_coefficient > reference_thrust_coefficient_
+                ? 20.0 * std::log10(raw_thrust_coefficient / reference_thrust_coefficient_)
+                : 0.0;
+        trace("Load factor correction (dB): ", blend.level_correction_db);
+    }
+    else
+    {
+        thrust_coefficient = clamp01(
+                (thrust_coefficient - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min));
+        trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
+                ", CT = ", thrust_coefficient);
+
+        const double condition[condition_dims] = {advance_ratio, flight_path_angle, thrust_coefficient};
+        interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
+        trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+    }
     return blend;
 }
 
@@ -972,11 +1296,27 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     // so splitting them would touch every cache line twice.
     const auto stencil = cell_stencil(phi_cell, theta_cell, thetas.size());
     const Sample* base = grid.data();
-    Pair corner = blend_conditions(base + stencil.corner[0] * n_conditions, blend)
-            * stencil.weight[0];
-    corner += blend_conditions(base + stencil.corner[1] * n_conditions, blend) * stencil.weight[1];
-    corner += blend_conditions(base + stencil.corner[2] * n_conditions, blend) * stencil.weight[2];
-    corner += blend_conditions(base + stencil.corner[3] * n_conditions, blend) * stencil.weight[3];
+    const Pair corners[4] = {blend_conditions(base + stencil.corner[0] * n_conditions, blend),
+            blend_conditions(base + stencil.corner[1] * n_conditions, blend),
+            blend_conditions(base + stencil.corner[2] * n_conditions, blend),
+            blend_conditions(base + stencil.corner[3] * n_conditions, blend)};
+    // The same rule across the four grid corners as across the four conditions
+    // (see blend_present): a corner with no measurement drops out rather than
+    // dragging its neighbours toward silence, so coverage ends at the edge of
+    // the last measured cell instead of fading to nothing across it.
+    Pair corner;
+    if (is_empty(corners[0][0], stencil.weight[0]) || is_empty(corners[1][0], stencil.weight[1])
+            || is_empty(corners[2][0], stencil.weight[2]) || is_empty(corners[3][0], stencil.weight[3]))
+    {
+        corner = blend_present(corners, stencil.weight);
+    }
+    else
+    {
+        corner = corners[0] * stencil.weight[0];
+        corner += corners[1] * stencil.weight[1];
+        corner += corners[2] * stencil.weight[2];
+        corner += corners[3] * stencil.weight[3];
+    }
     const auto sphere_level = corner[0];
     const auto excess_factor = corner[1];
     trace("Sphere level (dB): ", sphere_level, "\tExcess Factor (dB/km): ", excess_factor);
@@ -1007,14 +1347,54 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
     assert(std::isfinite(excess_factor));
     assert(std::isfinite(excess_attenuation));
     assert(std::isfinite(spreading_loss));
-    auto ground_level = sphere_level - spreading_loss - excess_attenuation;
+    // level_correction_db is 0 except on a fixed_load_factor database queried
+    // above its reference load factor -- see blend_at().  It is a level, not
+    // a loss like the two terms above it, so it adds rather than subtracts.
+    auto ground_level = sphere_level - spreading_loss - excess_attenuation + blend.level_correction_db;
     trace("Ground level: ", ground_level);
     return ground_level;
 }
 
+Database::PackedSpectra Database::pack_spectra(
+        const std::array<std::size_t, condition_dims + 1>& indices, std::size_t first_band,
+        std::size_t last_band) const
+{
+    const std::size_t n_bands = frequencies_.size();
+    const std::size_t n_cells = phis.size() * thetas.size();
+    constexpr std::size_t n_slots = condition_dims + 1;
+    PackedSpectra packed;
+    packed.first_band = first_band;
+    packed.last_band = std::min(last_band, n_bands);
+    packed.values.resize(n_cells * n_slots * n_bands);
+    packed.empty_bands.assign(n_cells * n_slots, 0);
+    for (std::size_t c = 0; c < n_cells; c++)
+    {
+        for (std::size_t k = 0; k < n_slots; k++)
+        {
+            double* bands = packed.values.data() + (c * n_slots + k) * n_bands;
+            for (std::size_t band = 0; band < n_bands; band++)
+            {
+                const double v = spectra_[(c * n_bands + band) * n_conditions + indices[k]];
+                bands[band] = v;
+                if (band >= packed.first_band && band < packed.last_band && v <= empty_level_db)
+                    packed.empty_bands[c * n_slots + k] |= std::uint64_t {1} << band;
+            }
+        }
+    }
+    return packed;
+}
+
 void Database::eval_spectrum(double range, double phi, double theta, const Blend& blend,
         const double* absorption, double* levels, std::size_t first_band,
-        std::size_t last_band) const
+        std::size_t last_band, const PackedSpectra* packed) const
+{
+    eval_spectrum(range, range, phi, theta, blend, absorption, levels, first_band, last_band,
+            packed);
+}
+
+void Database::eval_spectrum(double range, double absorbed_range, double phi, double theta,
+        const Blend& blend, const double* absorption, double* levels, std::size_t first_band,
+        std::size_t last_band, const PackedSpectra* packed) const
 {
     const std::size_t n_bands = frequencies_.size();
     assert(n_bands > 0);
@@ -1033,54 +1413,170 @@ void Database::eval_spectrum(double range, double phi, double theta, const Blend
     // Spreading is geometry, so it is the same for every band; absorption is
     // not, which is the whole point of propagating the spectrum.
     const double spreading_loss = 20.0 * std::log10(range / sphere_radius());
-    const double path_length = range - sphere_radius();
+    const double path_length = absorbed_range - sphere_radius();
+    const double* w = blend.weights.data();
+    const double* sw = stencil.weight;
+    constexpr std::size_t n_slots = condition_dims + 1;
 
-    for (std::size_t band = first_band; band < last_band; band++)
-    {
+    // Where one (cell, band, k) value is: across spectra_'s condition axis,
+    // or in a packed copy's band run.
+    auto value = [&](std::size_t cell, std::size_t band, std::size_t k) {
+        return packed != nullptr ? packed->values[(cell * n_slots + k) * n_bands + band]
+                                 : spectra_[(cell * n_bands + band) * n_conditions + blend.indices[k]];
+    };
+    // One band the general way, with empty entries dropped (blend_present).
+    auto general_band = [&](std::size_t band) {
         double corner_level[4];
         for (std::size_t corner = 0; corner < 4; corner++)
         {
-            // spectra_ is condition-major, so the four conditions of one cell
-            // are a long stride apart.  That is the wrong layout for this loop
-            // and the right one for interpolate_sphere; this path is opt-in and
-            // pays for it rather than making the sphere export pay.
-            // The four conditions of one (cell, band) are adjacent now, so
-            // this is one cache line rather than four misses.
-            const double* conditions
-                    = spectra_.data() + (stencil.corner[corner] * n_bands + band) * n_conditions;
-            corner_level[corner] = blend.weights[0] * conditions[blend.indices[0]]
-                    + blend.weights[1] * conditions[blend.indices[1]]
-                    + blend.weights[2] * conditions[blend.indices[2]]
-                    + blend.weights[3] * conditions[blend.indices[3]];
+            const std::size_t cell = stencil.corner[corner];
+            const double v[4] = {value(cell, band, 0), value(cell, band, 1), value(cell, band, 2),
+                    value(cell, band, 3)};
+            // Empty (gated) entries drop out, as in eval() -- see blend_present.
+            if (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
+                    || is_empty(v[3], w[3]))
+                corner_level[corner] = blend_present(v, w);
+            else
+                corner_level[corner] = w[0] * v[0] + w[1] * v[1] + w[2] * v[2] + w[3] * v[3];
         }
 
-        const double sphere_level = stencil.weight[0] * corner_level[0]
-                + stencil.weight[1] * corner_level[1] + stencil.weight[2] * corner_level[2]
-                + stencil.weight[3] * corner_level[3];
-        levels[band] = sphere_level - spreading_loss - absorption[band] * path_length;
+        const double sphere_level = (is_empty(corner_level[0], sw[0])
+                                            || is_empty(corner_level[1], sw[1])
+                                            || is_empty(corner_level[2], sw[2])
+                                            || is_empty(corner_level[3], sw[3]))
+                ? blend_present(corner_level, sw)
+                : sw[0] * corner_level[0] + sw[1] * corner_level[1] + sw[2] * corner_level[2]
+                        + sw[3] * corner_level[3];
+        // Same uniform-offset correction as eval(), applied identically to
+        // every band: panam's load_factors=None scaling shifts the whole
+        // spectrum together, not its shape (see blend_at()).
+        levels[band] = sphere_level - spreading_loss - absorption[band] * path_length
+                + blend.level_correction_db;
         assert(std::isfinite(levels[band]));
+    };
+
+    if (packed != nullptr && n_bands <= 64 && first_band >= packed->first_band
+            && last_band <= packed->last_band)
+    {
+        // Every band the plain way first: general_band's non-empty expressions,
+        // in the same order, so the same result to the bit wherever nothing is
+        // empty.  With the bands contiguous and no branch, this is one loop the
+        // compiler vectorises across bands.
+        const double* v[4][n_slots];
+        for (std::size_t corner = 0; corner < 4; corner++)
+            for (std::size_t k = 0; k < n_slots; k++)
+                v[corner][k] = packed->values.data()
+                        + (stencil.corner[corner] * n_slots + k) * n_bands;
+        const double w0 = w[0], w1 = w[1], w2 = w[2], w3 = w[3];
+        const double sw0 = sw[0], sw1 = sw[1], sw2 = sw[2], sw3 = sw[3];
+        const double offset = blend.level_correction_db;
+        double* __restrict out = levels;
+        for (std::size_t band = first_band; band < last_band; band++)
+        {
+            const double c0 = w0 * v[0][0][band] + w1 * v[0][1][band] + w2 * v[0][2][band]
+                    + w3 * v[0][3][band];
+            const double c1 = w0 * v[1][0][band] + w1 * v[1][1][band] + w2 * v[1][2][band]
+                    + w3 * v[1][3][band];
+            const double c2 = w0 * v[2][0][band] + w1 * v[2][1][band] + w2 * v[2][2][band]
+                    + w3 * v[2][3][band];
+            const double c3 = w0 * v[3][0][band] + w1 * v[3][1][band] + w2 * v[3][2][band]
+                    + w3 * v[3][3][band];
+            const double sphere_level = sw0 * c0 + sw1 * c1 + sw2 * c2 + sw3 * c3;
+            out[band] = sphere_level - spreading_loss - absorption[band] * path_length + offset;
+        }
+
+        // Then redo the bands where some weighted entry is empty -- EC130 gates
+        // its top bands in up to half its cells, and whole directions in 4% --
+        // with the empty entries dropped.  Only entries with a weight count:
+        // on a fixed_load_factor database one of the four slots never has any.
+        // An empty corner level can only come from empty entries, so these
+        // masks also cover the second (stencil) stage.
+        std::uint64_t redo = 0;
+        for (std::size_t corner = 0; corner < 4; corner++)
+        {
+            const std::uint64_t* masks = packed->empty_bands.data() + stencil.corner[corner] * n_slots;
+            for (std::size_t k = 0; k < n_slots; k++)
+                redo |= w[k] != 0.0 ? masks[k] : 0;
+        }
+        if (redo == 0)
+            return;
+        // blend_present and is_empty, straight-line: an entry counts if its
+        // weight is nonzero and it is above the floor, and the plain blend
+        // stands when no weighted entry is empty.  Absent terms enter as
+        // v * 0 -- exactly nothing -- so this matches general_band to the bit.
+        auto blend4 = [](double a0, double a1, double a2, double a3, double b0, double b1,
+                              double b2, double b3) {
+            if (!((b0 != 0.0 && a0 <= empty_level_db) || (b1 != 0.0 && a1 <= empty_level_db)
+                        || (b2 != 0.0 && a2 <= empty_level_db)
+                        || (b3 != 0.0 && a3 <= empty_level_db)))
+                return b0 * a0 + b1 * a1 + b2 * a2 + b3 * a3;
+            const double m0 = a0 > empty_level_db ? b0 : 0.0;
+            const double m1 = a1 > empty_level_db ? b1 : 0.0;
+            const double m2 = a2 > empty_level_db ? b2 : 0.0;
+            const double m3 = a3 > empty_level_db ? b3 : 0.0;
+            double sum = 0.0, total = 0.0;
+            sum += a0 * m0;
+            total += m0;
+            sum += a1 * m1;
+            total += m1;
+            sum += a2 * m2;
+            total += m2;
+            sum += a3 * m3;
+            total += m3;
+            return total > 0.0 ? sum / total : no_energy_floor_db;
+        };
+        while (redo != 0)
+        {
+            const auto band = static_cast<std::size_t>(__builtin_ctzll(redo));
+            redo &= redo - 1;
+            const double c0 = blend4(v[0][0][band], v[0][1][band], v[0][2][band], v[0][3][band],
+                    w0, w1, w2, w3);
+            const double c1 = blend4(v[1][0][band], v[1][1][band], v[1][2][band], v[1][3][band],
+                    w0, w1, w2, w3);
+            const double c2 = blend4(v[2][0][band], v[2][1][band], v[2][2][band], v[2][3][band],
+                    w0, w1, w2, w3);
+            const double c3 = blend4(v[3][0][band], v[3][1][band], v[3][2][band], v[3][3][band],
+                    w0, w1, w2, w3);
+            const double sphere_level = blend4(c0, c1, c2, c3, sw0, sw1, sw2, sw3);
+            out[band] = sphere_level - spreading_loss - absorption[band] * path_length + offset;
+        }
+        return;
     }
+
+    for (std::size_t band = first_band; band < last_band; band++)
+        general_band(band);
 }
 
-double Database::spectral_level_at_observer(const Vec3& observer, const SourceState& state,
+// The body both spectral_level_at_observer and spectral_level_along share,
+// forced inline into each.  As an ordinary call from the first -- the one the
+// straight-ray observer loop takes -- it cost 4% of the acoustic loop, measured
+// against the body written out in place.
+#if defined(__GNUC__) || defined(__clang__)
+[[gnu::always_inline]]
+#endif
+inline double Database::spectral_level_impl(const RayPath& path, const SourceState& state,
         const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
         const std::vector<std::complex<double>>* impedance, double sound_speed,
-        std::size_t first_band, std::size_t last_band) const
+        std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
+        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
+        const double* extra_loss, const double* ground_weight) const
 {
     // Reused across calls: this runs once per observer per trajectory state,
     // and the band count is fixed for the life of the database.
     thread_local std::vector<double> levels;
     levels.resize(frequencies_.size());
 
-    Vec3 r = observer - state.position;
-    const auto slant_range = r.norm();
-    if (slant_range > 0.0)
-        r /= slant_range;
-    const auto angles = lookup_angles(state.frame, r);
+    // Everything the level takes from the path (propagation.hpp).
+    const auto angles = lookup_angles(state.frame, path.direction);
     assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
 
-    eval_spectrum(slant_range, angles[0], angles[1], state.blend, absorption, levels.data(),
-            first_band, last_band);
+    eval_spectrum(path.range, path.path_length, angles[0], angles[1], state.blend, absorption,
+            levels.data(), first_band, last_band, packed);
+    if (extra_loss != nullptr)
+    {
+        for (std::size_t band = first_band; band < std::min(last_band, levels.size()); band++)
+            levels[band] -= extra_loss[band];
+    }
 
     if (ground != nullptr)
     {
@@ -1088,21 +1584,75 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
         // reflected off the surface, so it needs the geometry in the vertical
         // plane -- source height and horizontal separation -- not the slant
         // range the rest of the propagation works in.
-        const Vec3 separation = observer - state.position;
-        const double ground_distance = separation.horizontal_norm();
-        const double source_height = state.position.z;
+        //
         // Scratch, like levels above: this is the innermost loop of the whole
         // run and returning a vector here allocated 94 million times.
         thread_local std::vector<double> correction;
         correction.resize(frequencies_.size());
-        excess_ground_attenuation(*ground, *impedance, source_height, ground_distance,
-                sound_speed, frequencies_, correction.data(), first_band, last_band);
-        const std::size_t end = std::min(last_band, levels.size());
-        for (std::size_t band = first_band; band < end; band++)
-            levels[band] += correction[band];
+        if (plate != nullptr)
+        {
+            // The propagation direction, source to microphone, in the plate's
+            // frame, where the microphone is offset along +y.  This is the
+            // bearing between the two, which a ray in a stratified atmosphere
+            // keeps unless a crosswind deflects it.
+            const double azimuth = std::atan2(path.separation.y, path.separation.x)
+                    - plate_mic_azimuth + 0.5 * pi;
+            plate->power_ratio(path.source_height, path.ground_distance, azimuth,
+                    correction.data(), first_band, last_band);
+        }
+        else if (ground_table != nullptr)
+        {
+            ground_table->power_ratio(path.source_height, path.ground_distance,
+                    correction.data());
+        }
+        else
+        {
+            excess_ground_attenuation(*ground, *impedance, path.source_height,
+                    path.ground_distance, sound_speed, frequencies_, correction.data(),
+                    first_band, last_band, true);
+        }
+        if (ground_weight != nullptr)
+        {
+            // A weight scales the correction in dB, so the power ratio's power.
+            for (std::size_t band = first_band; band < std::min(last_band, correction.size()); band++)
+            {
+                const double w = ground_weight[band];
+                if (w == 0.0)
+                    correction[band] = 1.0;
+                else if (w != 1.0)
+                    correction[band] = std::pow(correction[band], w);
+            }
+        }
+        // As power ratios multiplied into the band sum: the same as adding the
+        // correction in dB, without a log and an exp per band.  Only bands in
+        // [first_band, last_band) have non-zero gains, so only they are read.
+        return weighted_level(levels.data(), gains, correction.data());
     }
 
     return weighted_level(levels.data(), gains);
+}
+
+double Database::spectral_level_at_observer(const Vec3& observer, const SourceState& state,
+        const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
+        const std::vector<std::complex<double>>* impedance, double sound_speed,
+        std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
+        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table) const
+{
+    return spectral_level_impl(straight_ray(state.position, observer), state, absorption, gains,
+            ground, impedance, sound_speed, first_band, last_band, packed, plate,
+            plate_mic_azimuth, ground_table, nullptr);
+}
+
+double Database::spectral_level_along(const RayPath& path, const SourceState& state,
+        const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
+        const std::vector<std::complex<double>>* impedance, double sound_speed,
+        std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
+        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
+        const double* extra_loss, const double* ground_weight) const
+{
+    return spectral_level_impl(path, state, absorption, gains, ground, impedance, sound_speed,
+            first_band, last_band, packed, plate, plate_mic_azimuth, ground_table, extra_loss,
+            ground_weight);
 }
 
 double Database::shaft_power(const Blend& blend) const
@@ -1138,6 +1688,10 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
         for (std::size_t n = 0; n < thetas.size(); n++)
         {
             sphere.cells[m * thetas.size() + n] = blend_cell(m, n, blend);
+            // Same correction as eval(): 0 unless this is a fixed_load_factor
+            // database queried above its reference load factor.  EAA is an
+            // attenuation-rate factor, not a level, so it is untouched.
+            sphere.cells[m * thetas.size() + n].dBA += blend.level_correction_db;
         }
     }
     if (!frequencies_.empty())
@@ -1153,14 +1707,30 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
         {
             for (std::size_t band = 0; band < n_bands; band++)
             {
-                double value = 0.0;
-                for (std::size_t k = 0; k < 4; k++)
+                const double* conditions = spectra_.data() + (cell * n_bands + band) * n_conditions;
+                const double v[4] = {conditions[blend.indices[0]], conditions[blend.indices[1]],
+                        conditions[blend.indices[2]], conditions[blend.indices[3]]};
+                double value;
+                if (is_empty(v[0], w[0]) || is_empty(v[1], w[1]) || is_empty(v[2], w[2])
+                        || is_empty(v[3], w[3]))
                 {
-                    value += w[k]
-                            * spectra_[(cell * n_bands + band) * n_conditions
-                                    + blend.indices[k]];
+                    // Empty entries drop out, as in eval() -- see blend_present.
+                    // An entry empty in every condition stays at the floor,
+                    // which AAM readers take as masked.
+                    value = blend_present(v, w.data());
+                    if (value <= empty_level_db)
+                    {
+                        sphere.amplitudes[cell * n_bands + band] = no_energy_floor_db;
+                        continue;
+                    }
                 }
-                sphere.amplitudes[cell * n_bands + band] = value;
+                else
+                {
+                    value = 0.0;
+                    for (std::size_t k = 0; k < 4; k++)
+                        value += w[k] * v[k];
+                }
+                sphere.amplitudes[cell * n_bands + band] = value + blend.level_correction_db;
             }
         }
     }
@@ -1191,10 +1761,72 @@ double Database::cull_range(const Blend& blend, double cutoff) const
     }
     if (!std::isfinite(blended_max))
         return unbounded;
+    // blend.level_correction_db is 0 except on a fixed_load_factor database
+    // queried above its reference load factor, where it only ever adds level
+    // (see blend_at()) -- so adding it here keeps this a valid upper bound
+    // rather than an approximate one.
+    blended_max += blend.level_correction_db;
 
     // Spherical spreading alone takes that peak below the cutoff at this range,
     // and excess attenuation only takes it further down.
     return sphere_radius_ * std::pow(10.0, 0.05 * (blended_max - cutoff));
+}
+
+void Database::group_blends(const std::vector<SourceState>& states, DirectionBounds& bounds,
+        std::vector<std::array<std::size_t, condition_dims + 1>>& blends) const
+{
+    // Group the states by their blend.  The tetrahedra a trajectory visits are
+    // far fewer than its states, and a table per tetrahedron is what keeps this
+    // small enough to stay in cache.
+    //
+    // On a fixed_load_factor database the triangulation is 2D (mu, gamma only
+    // -- see blend_at()), so two states can share indices while querying
+    // different load factors.  Their correction is a uniform shift in dB, so
+    // it goes into a per-state scale rather than the key: keyed on it, every
+    // state was its own group (it varies continuously with CT), and building
+    // the tables took a quarter of a broadband run.
+    bounds.blend_of_state_.assign(states.size(), 0);
+    bounds.state_scale_.assign(states.size(), 1.0);
+    blends.clear();
+    std::size_t last = 0;
+    for (std::size_t i = 0; i < states.size(); i++)
+    {
+        const auto& indices = states[i].blend.indices;
+        // Consecutive states nearly always share a tetrahedron.
+        std::size_t found = blends.size();
+        if (last < blends.size() && blends[last] == indices)
+            found = last;
+        for (std::size_t b = 0; found == blends.size() && b < blends.size(); b++)
+        {
+            if (blends[b] == indices)
+                found = b;
+        }
+        if (found == blends.size())
+            blends.push_back(indices);
+        bounds.blend_of_state_[i] = last = found;
+        const double correction = states[i].blend.level_correction_db;
+        if (correction != 0.0)
+            bounds.state_scale_[i] = std::pow(10.0, 0.1 * correction);
+    }
+}
+
+int Database::home_bin(std::size_t i_phi, std::size_t i_theta) const
+{
+    const double theta = thetas[i_theta] * pi / 180.0;
+    const double phi = phis[i_phi] * pi / 180.0;
+    return DirectionBounds::bin(std::cos(theta), std::sin(theta) * std::cos(phi),
+            std::sin(theta) * std::sin(phi), 1.0);
+}
+
+std::array<int, 2> Database::bin_padding() const
+{
+    // How many bins a single grid cell can straddle.  The bins are coarser than
+    // the grid on every shipped database, but widening by the computed number
+    // rather than by one keeps the bound valid whatever grid a database brings.
+    return {static_cast<int>(std::ceil(
+                    grid_spacing(thetas) / DirectionBounds::narrowest_theta_bin_degrees())) + 1,
+            static_cast<int>(std::ceil(
+                    grid_spacing(phis) / DirectionBounds::azimuth_bin_degrees())) + 1};
 }
 
 DirectionBounds Database::direction_bounds(const std::vector<SourceState>& states) const
@@ -1205,37 +1837,10 @@ DirectionBounds Database::direction_bounds(const std::vector<SourceState>& state
     // which is what the caller checks; nothing below it is worth allocating.
     if (!excess_attenuation_is_a_loss() || states.empty())
         return bounds;
-    bounds.blend_of_state_.assign(states.size(), 0);
-
-    // Group the states by their blend.  The tetrahedra a trajectory visits are
-    // far fewer than its states, and a table per tetrahedron is what keeps this
-    // small enough to stay in cache.
     std::vector<std::array<std::size_t, condition_dims + 1>> blends;
-    for (std::size_t i = 0; i < states.size(); i++)
-    {
-        const auto& indices = states[i].blend.indices;
-        std::size_t found = blends.size();
-        for (std::size_t b = 0; b < blends.size(); b++)
-        {
-            if (blends[b] == indices)
-            {
-                found = b;
-                break;
-            }
-        }
-        if (found == blends.size())
-            blends.push_back(indices);
-        bounds.blend_of_state_[i] = found;
-    }
+    group_blends(states, bounds, blends);
 
-    // How many bins a single grid cell can straddle.  The bins are coarser than
-    // the grid on every shipped database, but widening by the computed number
-    // rather than by one keeps the bound valid whatever grid a database brings.
-    const int theta_pad = static_cast<int>(std::ceil(
-            grid_spacing(thetas) / DirectionBounds::narrowest_theta_bin_degrees())) + 1;
-    const int azimuth_pad = static_cast<int>(std::ceil(
-            grid_spacing(phis) / DirectionBounds::azimuth_bin_degrees())) + 1;
-
+    const auto [theta_pad, azimuth_pad] = bin_padding();
     const std::size_t n_thetas = thetas.size();
     bounds.numerators_.assign(blends.size() * DirectionBounds::bin_count,
             -std::numeric_limits<double>::infinity());
@@ -1256,10 +1861,7 @@ DirectionBounds Database::direction_bounds(const std::vector<SourceState>& state
                 for (std::size_t k = 0; k < blends[b].size(); k++)
                     top = std::max(top, cell[blends[b][k]].dBA);
 
-                const double theta = thetas[n] * PI / 180.0;
-                const double phi = phis[m] * PI / 180.0;
-                const int here = DirectionBounds::bin(std::cos(theta),
-                        std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), 1.0);
+                const int here = home_bin(m, n);
                 const int theta_index = here / DirectionBounds::azimuth_bins;
                 const int azimuth_index = here % DirectionBounds::azimuth_bins;
                 // A direction reads this cell through a bilinear stencil that
@@ -1289,6 +1891,163 @@ DirectionBounds Database::direction_bounds(const std::vector<SourceState>& state
     return bounds;
 }
 
+DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceState>& states,
+        const std::vector<double>& gains) const
+{
+    // What is being bounded: eval_spectrum's per-band level S_b, less
+    // spreading and absorption, summed as L = 10 log10 sum_b g_b 10^(S_b/10).
+    // Absorption only lowers each band, so dropping it leaves an upper bound,
+    // and spreading is the numerator's r^2, as on the broadband path.  That
+    // leaves bounding the blended spectrum's weighted level, two ways:
+    //
+    //   per band -- each blended S_b is a convex combination of the stored
+    //   values it reads (empty entries dropped and the rest renormalised, which
+    //   is still a convex combination of what remains), so it is at most their
+    //   maximum, and L is increasing in every S_b.  Taking that maximum band by
+    //   band over the bin can pair a tone from one cell with a tone from
+    //   another, which is loose, but it holds whatever is empty.
+    //
+    //   per spectrum -- where nothing read is empty, the blend is one convex
+    //   combination of whole stored spectra with the same weights in every
+    //   band, and L, a log-sum-exp, is convex in the spectrum, so it is at most
+    //   the largest L of any one stored spectrum.  Much tighter, but it needs
+    //   every band the metric reads to be present in every spectrum of the
+    //   bin; an empty band renormalises that band alone and breaks the "one
+    //   combination" premise.
+    //
+    // Each bin takes the smaller of the two it is entitled to.
+    DirectionBounds bounds;
+    const std::size_t n_bands = frequencies_.size();
+    if (states.empty() || n_bands == 0 || gains.size() != n_bands)
+        return bounds;
+    std::vector<std::size_t> active;
+    for (std::size_t band = 0; band < n_bands; band++)
+    {
+        if (gains[band] > 0.0)
+            active.push_back(band);
+    }
+    if (active.empty())
+        return bounds;
+    const std::size_t n_active = active.size();
+
+    std::vector<std::array<std::size_t, condition_dims + 1>> blends;
+    group_blends(states, bounds, blends);
+
+    const std::size_t n_thetas = thetas.size();
+    const std::size_t n_cells = phis.size() * n_thetas;
+    std::vector<int> home(n_cells);
+    for (std::size_t m = 0; m < phis.size(); m++)
+        for (std::size_t n = 0; n < n_thetas; n++)
+            home[m * n_thetas + n] = home_bin(m, n);
+
+    // Weighted level of each stored spectrum, and whether it has an empty band
+    // the metric reads.  Per condition, not per group: groups share conditions,
+    // and only the conditions some group uses are ever computed.
+    constexpr double ln10_over_10 = 0.23025850929940456840;
+    std::vector<double> spectrum_level(n_cells * n_conditions, 0.0);
+    std::vector<char> spectrum_has_empty(n_cells * n_conditions, 0);
+    std::vector<char> condition_done(n_conditions, 0);
+    auto prepare_condition = [&](std::size_t k) {
+        if (condition_done[k])
+            return;
+        condition_done[k] = 1;
+        for (std::size_t c = 0; c < n_cells; c++)
+        {
+            double total = 0.0;
+            bool empty = false;
+            for (const std::size_t band : active)
+            {
+                const double v = spectra_[(c * n_bands + band) * n_conditions + k];
+                empty = empty || v <= empty_level_db;
+                total += gains[band] * std::exp(v * ln10_over_10);
+            }
+            spectrum_level[c * n_conditions + k] = 10.0 * std::log10(total);
+            spectrum_has_empty[c * n_conditions + k] = empty;
+        }
+    };
+
+    const auto [theta_pad, azimuth_pad] = bin_padding();
+    constexpr int bins = DirectionBounds::bin_count;
+    const double lowest = -std::numeric_limits<double>::infinity();
+    // Per home bin (no padding yet): the band-by-band maximum, the largest
+    // single-spectrum level, and whether any spectrum there had an empty band.
+    std::vector<double> band_max(bins * n_active);
+    std::vector<double> spectrum_max(bins);
+    std::vector<char> has_empty(bins);
+    std::vector<double> reach(n_active);
+    bounds.numerators_.assign(blends.size() * bins, lowest);
+
+    for (std::size_t b = 0; b < blends.size(); b++)
+    {
+        for (const std::size_t k : blends[b])
+            prepare_condition(k);
+        std::fill(band_max.begin(), band_max.end(), lowest);
+        std::fill(spectrum_max.begin(), spectrum_max.end(), lowest);
+        std::fill(has_empty.begin(), has_empty.end(), 0);
+        for (std::size_t c = 0; c < n_cells; c++)
+        {
+            const int h = home[c];
+            double* maxima = band_max.data() + h * n_active;
+            for (const std::size_t k : blends[b])
+            {
+                spectrum_max[h] = std::max(spectrum_max[h], spectrum_level[c * n_conditions + k]);
+                has_empty[h] = has_empty[h] || spectrum_has_empty[c * n_conditions + k];
+                for (std::size_t j = 0; j < n_active; j++)
+                {
+                    // Raw values, the floor included: a band empty in every
+                    // entry blends to the floor, not to nothing.
+                    maxima[j] = std::max(maxima[j],
+                            spectra_[(c * n_bands + active[j]) * n_conditions + k]);
+                }
+            }
+        }
+
+        // Spread each home bin over the bins its stencil can be queried from --
+        // the same reach direction_bounds() gives each cell, applied per bin.
+        double* row = bounds.numerators_.data() + b * bins;
+        for (int t = 0; t < DirectionBounds::theta_bins; t++)
+        {
+            for (int a = 0; a < DirectionBounds::azimuth_bins; a++)
+            {
+                std::fill(reach.begin(), reach.end(), lowest);
+                double whole = lowest;
+                bool empty = false;
+                for (int st = std::max(0, t - theta_pad);
+                        st <= std::min(DirectionBounds::theta_bins - 1, t + theta_pad); st++)
+                {
+                    for (int sa = std::max(0, a - azimuth_pad);
+                            sa <= std::min(DirectionBounds::azimuth_bins - 1, a + azimuth_pad);
+                            sa++)
+                    {
+                        const int h = st * DirectionBounds::azimuth_bins + sa;
+                        whole = std::max(whole, spectrum_max[h]);
+                        empty = empty || has_empty[h];
+                        const double* maxima = band_max.data() + h * n_active;
+                        for (std::size_t j = 0; j < n_active; j++)
+                            reach[j] = std::max(reach[j], maxima[j]);
+                    }
+                }
+                double total = 0.0;
+                for (std::size_t j = 0; j < n_active; j++)
+                    total += gains[active[j]] * std::exp(reach[j] * ln10_over_10);
+                double bound = total > 0.0 ? 10.0 * std::log10(total) : lowest;
+                if (!empty)
+                    bound = std::min(bound, whole);
+                row[t * DirectionBounds::azimuth_bins + a] = bound;
+            }
+        }
+    }
+
+    // The energy form, as direction_bounds().  The factor covers the rounding
+    // between this log-sum-exp and weighted_level's: the bound can be exact
+    // (a cell centre, all weight on one condition), and a state then evaluates
+    // to it within an ulp or two.
+    for (double& value : bounds.numerators_)
+        value = std::pow(10.0, 0.1 * value) * sphere_radius_ * sphere_radius_ * (1.0 + 1e-9);
+    bounds.usable_ = true;
+    return bounds;
+}
+
 double Database::level_from_geometry(double squared_range, double along, double up,
         double across, const Blend& blend) const
 {
@@ -1299,7 +2058,7 @@ double Database::level_from_geometry(double squared_range, double along, double 
     // normalised; phi is an angle between two of the components and does not
     // care about their common scale.
     const double inverse = range > 0.0 ? 1.0 / range : 0.0;
-    const double theta = acosc(along * inverse) * (180.0 / PI);
+    const double theta = acosc(along * inverse) * (180.0 / pi);
     const double phi = phi_degrees(up, across);
     trace("Looked up [phi,theta] = ", phi, ", ", theta);
     assert(std::isfinite(phi) && std::isfinite(theta));
@@ -1328,7 +2087,7 @@ double Database::level_along_bearing(double range, double bearing, double altitu
         const Vec3& velocity, const Vec3& normal, double advance_ratio,
         double flight_path_angle, double thrust_coefficient) const
 {
-    bearing *= PI / 180.0;
+    bearing *= pi / 180.0;
     // Define ground velocity, and get heading vector from it
     double ground_velocity[2] = {velocity(0), velocity(1)};
     double hnorm = std::sqrt(ground_velocity[0] * ground_velocity[0] + ground_velocity[1] * ground_velocity[1]);
@@ -1376,8 +2135,15 @@ double Database::find_range(double contour_level, double bearing, double altitud
                     flight_path_angle, thrust_coefficient);
             return level - contour_level;
         };
-        // Set maximum range bound from max_level assuming spherical spreading only
-        auto range_max = sphere_radius() * std::pow(10.0, 0.05 * (max_level_ - contour_level));
+        // Set maximum range bound from max_level assuming spherical spreading
+        // only.  max_level_ is the database's raw stored maximum, which does
+        // not know about a fixed_load_factor correction (see blend_at()); add
+        // it here or a query above the reference load factor could have a
+        // true zero-range level past this bound, and the bisection below
+        // would search short and miss the real crossing.
+        const auto correction = blend_at(advance_ratio, flight_path_angle, thrust_coefficient)
+                .level_correction_db;
+        auto range_max = sphere_radius() * std::pow(10.0, 0.05 * (max_level_ + correction - contour_level));
         trace("Max search range set to: ", range_max);
         range = bisect(residual, 0.0, range_max, threshold);
         trace("Found range: ", range);
@@ -1646,6 +2412,19 @@ void Database::self_test(const std::string& datafile_path)
     // everything else off this same file, and re-running its side effects here
     // would corrupt the object under test rather than check it.
     const int self_test_version = get_int_scalar(file_ncid, "database_version", 0);
+    // Same flag the constructor reads -- see its comment on
+    // shared_grid_and_frequency for when this holds.
+    const bool shared_grid_and_frequency =
+            get_int_scalar(file_ncid, "shared_grid_and_frequency", 0) != 0;
+    std::vector<double> shared_phi_data, shared_theta_data;
+    if (shared_grid_and_frequency)
+    {
+        const auto shared_nchannels = get_dim_length("channels", file_ncid);
+        shared_theta_data.resize(shared_nchannels);
+        require_array(file_ncid, "theta", shared_nchannels, shared_theta_data);
+        shared_phi_data.resize(shared_nchannels);
+        require_array(file_ncid, "phi", shared_nchannels, shared_phi_data);
+    }
 
     auto group_ids = get_group_ids(file_ncid);
     // Local operating parameters
@@ -1666,18 +2445,29 @@ void Database::self_test(const std::string& datafile_path)
                 ",\t radius = ", radius);
 
         // Get the data for this sphere
-        auto nchannels = get_dim_length("channels", group_id);
-        std::vector<double> theta_data(nchannels);
-        require_array(group_id, "theta", nchannels, theta_data);
-
-        std::vector<double> phi_data(nchannels);
-        require_array(group_id, "phi", nchannels, phi_data);
-        // Interpret the file exactly as the loader did, or this compares the
-        // grid built from repaired labels against queries at the raw ones.
-        if (self_test_version < 1)
+        std::vector<double> theta_data, phi_data;
+        if (shared_grid_and_frequency)
         {
-            repair_legacy_hover_directivity(phi_data);
+            theta_data = shared_theta_data;
+            phi_data = shared_phi_data;
         }
+        else
+        {
+            auto nchannels = get_dim_length("channels", group_id);
+            theta_data.resize(nchannels);
+            require_array(group_id, "theta", nchannels, theta_data);
+
+            phi_data.resize(nchannels);
+            require_array(group_id, "phi", nchannels, phi_data);
+            // Interpret the file exactly as the loader did, or this compares
+            // the grid built from repaired labels against queries at the raw
+            // ones.
+            if (self_test_version < 1)
+            {
+                repair_legacy_hover_directivity(phi_data);
+            }
+        }
+        const auto nchannels = phi_data.size();
 
         std::vector<double> dBA_data(nchannels);
         require_array(group_id, "dBA", nchannels, dBA_data);
@@ -1693,7 +2483,11 @@ void Database::self_test(const std::string& datafile_path)
         // Validate the database against the known data at sphere surface
         for (std::size_t ch = 0; ch < dBA_data.size(); ch++)
         {
-            auto dBA = dBA_data[ch];
+            // eval() can only ever read back no_energy_floor_db for a
+            // direction the constructor floored, never the original -inf --
+            // see its member comment -- so the raw file value gets the same
+            // floor applied here before the comparison means anything.
+            auto dBA = std::isfinite(dBA_data[ch]) ? dBA_data[ch] : no_energy_floor_db;
             auto level = eval(dimensional_radius, phi_data[ch], theta_data[ch], blend);
             if (!approx_equal(dBA, level))
             {

@@ -52,6 +52,12 @@ std::vector<double> a_weighting_gains(const std::vector<double>& frequencies, Ba
 // that can say something useful about the difference should check.
 double weighted_level(const double* band_levels, const std::vector<double>& gains);
 
+// The same with each band's energy also multiplied by `ratios[band]` (a power
+// ratio, such as the ground effect's): adding 10 log10(ratio) to the band
+// level first gives the same number, at the cost of a log per band.
+double weighted_level(const double* band_levels, const std::vector<double>& gains,
+        const double* ratios);
+
 // How many of these band centres fall inside the limits.  For reporting what a
 // run actually integrated over.
 std::size_t bands_in_range(const std::vector<double>& frequencies, BandLimits limits);

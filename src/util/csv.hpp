@@ -17,6 +17,56 @@
 
 namespace niceops {
 
+namespace detail {
+
+// Strip a trailing carriage return so CRLF files parse.  Without this every
+// row's last field carries a '\r', fails to convert, and the whole line is
+// silently dropped as non-numeric -- a Windows-exported CSV would read as zero
+// records rather than failing loudly.
+inline void strip_carriage_return(std::string& line)
+{
+    if (!line.empty() && line.back() == '\r')
+        line.pop_back();
+}
+
+// Split one line on commas into doubles, returning false if any field is not a
+// number.  Both readers below parse rows identically, so they share this.
+//
+// Surrounding whitespace is not "junk": std::stod already skips what precedes a
+// number, and rejecting only what follows it made the two ends behave
+// differently for no reason.  Every shipped AC track pads on the left and so
+// parsed anyway, while arrays/coyle_approach.csv pads on the right and had
+// every one of its rows dropped -- a scattered-observer run that read zero
+// observers and still exited 0.
+inline bool parse_numeric_row(const std::string& line, std::vector<double>& row)
+{
+    row.clear();
+    std::stringstream ss(line);
+    std::string field;
+    while (std::getline(ss, field, ','))
+    {
+        const auto last = field.find_last_not_of(" \t\r\n\f\v");
+        if (last == std::string::npos)
+            return false;
+        field.erase(last + 1);
+        try
+        {
+            std::size_t pos = 0;
+            const double value = std::stod(field, &pos);
+            if (pos != field.size())
+                return false;
+            row.push_back(value);
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+    }
+    return !row.empty();
+}
+
+} // namespace detail
+
 // skip_first_record mirrors D's csvReader!(double)(contents, null): passing a
 // null header makes std.csv consume the first record as a header row and
 // discard it, unconditionally -- even when it holds numbers.  Callers that
@@ -31,14 +81,10 @@ inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path
     std::vector<std::vector<double>> rows;
     std::string line;
     bool first = true;
+    std::vector<double> row;
     while (std::getline(in, line))
     {
-        // Strip a trailing carriage return so CRLF files parse.  Without this
-        // every row's last field carries a '\r', fails to convert, and the whole
-        // line is silently dropped as non-numeric -- a Windows-exported CSV
-        // would read as zero records rather than failing loudly.
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
+        detail::strip_carriage_return(line);
         if (line.empty())
             continue;
         if (first && skip_first_record)
@@ -47,28 +93,8 @@ inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path
             continue;
         }
         first = false;
-        std::vector<double> row;
-        std::stringstream ss(line);
-        std::string field;
-        bool numeric = true;
-        while (std::getline(ss, field, ','))
-        {
-            try
-            {
-                size_t pos = 0;
-                double value = std::stod(field, &pos);
-                if (pos != field.size())
-                    throw std::invalid_argument("trailing junk");
-                row.push_back(value);
-            }
-            catch (const std::exception&)
-            {
-                numeric = false;
-                break;
-            }
-        }
-        if (numeric && !row.empty())
-            rows.push_back(std::move(row));
+        if (detail::parse_numeric_row(line, row))
+            rows.push_back(row);
     }
     return rows;
 }
@@ -133,41 +159,23 @@ inline LabelledCsv read_labelled_csv(const std::string& path)
     LabelledCsv csv;
     std::string line;
     bool first = true;
+    std::vector<double> row;
     while (std::getline(in, line))
     {
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
+        detail::strip_carriage_return(line);
         if (line.empty())
             continue;
-        std::stringstream ss(line);
-        std::string field;
         if (first)
         {
             first = false;
+            std::stringstream ss(line);
+            std::string field;
             while (std::getline(ss, field, ','))
                 csv.header.push_back(field);
             continue;
         }
-        std::vector<double> row;
-        bool numeric = true;
-        while (std::getline(ss, field, ','))
-        {
-            try
-            {
-                std::size_t pos = 0;
-                double value = std::stod(field, &pos);
-                if (pos != field.size())
-                    throw std::invalid_argument("trailing junk");
-                row.push_back(value);
-            }
-            catch (const std::exception&)
-            {
-                numeric = false;
-                break;
-            }
-        }
-        if (numeric && !row.empty())
-            csv.rows.push_back(std::move(row));
+        if (detail::parse_numeric_row(line, row))
+            csv.rows.push_back(row);
     }
     return csv;
 }

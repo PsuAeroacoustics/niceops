@@ -6,25 +6,46 @@
 // level and EAA excess-attenuation factor.  eval() computes ground level:
 // geometry -> sphere angles (lookup_angles), barycentric interpolation between
 // operating conditions, periodic bilinear interpolation on the sphere grid,
-// then spherical spreading + excess attenuation (EAA x range) + a fixed 4 dB
-// ground effect.  Only same_grid == true databases are supported
-// (interpolation path is unimplemented).
+// then spherical spreading and excess attenuation, EAA * (range - r_sphere) /
+// 1000 -- EAA being the total A-weighted attenuation over the 1000 m reference
+// distance the database was built at.  No ground effect: see --ground_effect,
+// which is on the spectral path.  Only same_grid == true databases are
+// supported (interpolation path is unimplemented).
 
 #include <array>
+#include <cstdint>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <complex>
 
 #include "ground_effect.hpp"
+#include "plate_receiver.hpp"
+#include "propagation.hpp"
+#include "util/constants.hpp"
 #include "vec3.hpp"
 
 #include "interpolator.hpp"
 
 namespace niceops {
+
+// Which velocity a database's flight conditions -- mu, the path angle and the
+// sphere's azimuth reference -- were taken from: the aircraft's over the
+// ground, or its through the air.  Recorded at the root of the database as the
+// text attribute speed_reference; see Database::speed_reference().
+enum class SpeedReference
+{
+    ground,
+    air,
+};
+
+// "ground" or "air"; nullopt for anything else.
+std::optional<SpeedReference> parse_speed_reference(const std::string& name);
+const char* to_string(SpeedReference reference);
 
 
 // Check if points "wrap around" sphere, and swap inputs to bilinear
@@ -142,12 +163,12 @@ bool approx_equal(double value, double reference, double max_rel_diff = 1e-2,
 // observer, good enough to prove that the state cannot hold the peak of that
 // observer's time history -- without evaluating it.
 //
-// This is what lets the observer loop find the peak and then expand out to the
-// 10-dB-down points, instead of marching through every emission time.  The SEL
-// window is contiguous by construction (peak_range walks out from the peak and
-// stops at the first sample below the threshold), so nothing outside it needs
-// a bound at all; the bound is needed only to be sure the walk started on the
-// right peak.
+// This is what lets the observer loop find the peak and then the 10-dB-down
+// interval without evaluating every emission time.  The interval runs from the
+// first to the last sample within 10 dB of the peak (ten_db_down_interval), so
+// the bound serves twice: to be sure the peak found is the real one, and to
+// skip states it proves are below the threshold while scanning in from either
+// end for the interval's first and last samples.
 //
 // The bound is `max sphere level in this direction - spherical spreading`.
 // Dropping the excess attenuation is what makes it an upper bound, and that is
@@ -198,13 +219,18 @@ public:
     // the hot path needs no logarithm.
     double numerator(std::size_t state, int bin_index) const
     {
-        return numerators_[blend_of_state_[state] * bin_count + bin_index];
+        return numerators_[blend_of_state_[state] * bin_count + bin_index] * state_scale_[state];
     }
 
 private:
     friend class Database;
     std::vector<double> numerators_;
     std::vector<std::size_t> blend_of_state_;
+    // 10^(level_correction_db/10) per state.  The fixed_load_factor correction
+    // shifts every direction and band alike, so it factors out of the table;
+    // keeping it in the grouping key made nearly every state its own group,
+    // since it varies continuously with CT.
+    std::vector<double> state_scale_;
     bool usable_ = false;
 };
 
@@ -215,7 +241,6 @@ namespace detail {
 // function-local static: bin() runs ~94 million times a run and a function
 // static would test its guard on every one of them.
 inline const std::array<double, DirectionBounds::azimuth_bins / 2 - 1> azimuth_edge_tangents = [] {
-    constexpr double pi = 3.14159265358979323846;
     std::array<double, DirectionBounds::azimuth_bins / 2 - 1> edges {};
     for (std::size_t k = 0; k < edges.size(); k++)
         edges[k] = std::tan(pi * static_cast<double>(k + 1) / DirectionBounds::azimuth_bins);
@@ -259,10 +284,27 @@ public:
     // expensive part of an evaluation -- it is a CGAL Delaunay locate() walk --
     // and it depends only on (mu, gamma, CT), so it is hoisted out of any loop
     // that holds the operating condition fixed.
+    //
+    // A database built with panam's load_factors=None stores only the LF=1
+    // reference condition at each (mu, gamma): CT carries no information (it
+    // is the same constant on every stored sphere), so the triangulation this
+    // blends against is 2D, over (mu, gamma) alone; weights[3]/indices[3] is
+    // then padding (weight 0, matching the existing convention for a
+    // degenerate blend), and level_correction_db carries what CT alone would
+    // have contributed -- see the fixed_load_factor handling in the .cpp.
     struct Blend
     {
         std::array<double, condition_dims + 1> weights;
         std::array<std::size_t, condition_dims + 1> indices;
+        // Additive dB correction for a query load factor above what the
+        // database stores, from panam's own scaling law (dBA, and every band
+        // of a spectral database, are exactly linear in 20*log10(load_factor)
+        // -- see add_sphere_group in panam's flight_acoustics.py).  Zero for
+        // an ordinary database, and for a query at or below the reference:
+        // the correction only ever adds level, matching panam's own
+        // convention of leaving load factors at or below 1 g unscaled from
+        // the stored reference rather than extrapolating them down.
+        double level_correction_db = 0.0;
     };
 
     // Everything about one trajectory state that every observer shares: where
@@ -318,20 +360,75 @@ public:
 
     // Per-band ground levels in dB at one direction, written into `levels`,
     // which must have room for band_count() entries.  `absorption` is the
-    // dB/m coefficient for each band, from absorption_coefficients().
+    // dB/m coefficient for each band, from absorption_coefficients(), or the
+    // mean over the heights the path spans (LayeredAbsorption).
+    //
+    // `packed`, when given, is pack_spectra(blend.indices, ...): the same
+    // values gathered per blend.  The result is identical to the bit; it only
+    // changes where they are read, and lets a stencil with nothing empty take
+    // a branch-free loop across the bands.
+    struct PackedSpectra;
     void eval_spectrum(double range, double phi, double theta, const Blend& blend,
             const double* absorption, double* levels, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1),
+            const PackedSpectra* packed = nullptr) const;
+    // The same, with spreading taken over `range` and absorption over
+    // `path_length - r_sphere`: a curved ray's tube and its arc (RayPath).  The
+    // form above is this one with the two equal.
+    void eval_spectrum(double range, double path_length, double phi, double theta,
+            const Blend& blend, const double* absorption, double* levels,
+            std::size_t first_band = 0, std::size_t last_band = static_cast<std::size_t>(-1),
+            const PackedSpectra* packed = nullptr) const;
+
+    // One blend's spectra, laid out [cell][k][band] for the k-th of its four
+    // indices, with a bit mask per (cell, k) of the bands in [first_band,
+    // last_band) that are empty there (databases with more than 64 bands
+    // skip the fast path).  spectra_ interleaves every condition, so a
+    // blend's four values for one (cell, band) sit on four cache lines of a
+    // table tens of MB long; here each (cell, k) is one contiguous run of
+    // bands, which is what the vectorised loop in eval_spectrum reads.
+    // Size: cells * 4 * bands doubles.
+    struct PackedSpectra
+    {
+        std::vector<double> values;
+        std::vector<std::uint64_t> empty_bands;
+        std::size_t first_band = 0;
+        std::size_t last_band = 0;
+    };
+    PackedSpectra pack_spectra(const std::array<std::size_t, condition_dims + 1>& indices,
+            std::size_t first_band = 0,
             std::size_t last_band = static_cast<std::size_t>(-1)) const;
 
     // A-weighted, band-limited ground level at an observer, propagated per
-    // band.  `gains` comes from a_weighting_gains() and must match the band
+    // band.  With `plate` (which needs `ground` and `impedance`), the observer
+    // is a flush microphone on a ground plate whose offset points along
+    // `plate_mic_azimuth` (radians in the local frame, from +x toward +y), and
+    // the plate's level replaces the point-receiver ground effect.  `gains` comes from a_weighting_gains() and must match the band
     // count.  Returns -infinity when no band is inside the limits.
     double spectral_level_at_observer(const Vec3& observer, const SourceState& state,
             const double* absorption, const std::vector<double>& gains,
             const GroundModel* ground = nullptr,
             const std::vector<std::complex<double>>* impedance = nullptr,
             double sound_speed = 343.2, std::size_t first_band = 0,
-            std::size_t last_band = static_cast<std::size_t>(-1)) const;
+            std::size_t last_band = static_cast<std::size_t>(-1),
+            const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
+            double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr) const;
+
+    // The same along a path the caller has already formed (propagation.hpp):
+    // spectral_level_at_observer is this with straight_ray().  `extra_loss`,
+    // when given, is dB per band taken off after propagation -- the shadow
+    // zone's, under --refraction.  `ground_weight`, when given, scales the
+    // ground effect per band in dB (0 drops it): ShadowTransition hands the
+    // ground over to its own field near a shadow boundary.
+    double spectral_level_along(const RayPath& path, const SourceState& state,
+            const double* absorption, const std::vector<double>& gains,
+            const GroundModel* ground = nullptr,
+            const std::vector<std::complex<double>>* impedance = nullptr,
+            double sound_speed = 343.2, std::size_t first_band = 0,
+            std::size_t last_band = static_cast<std::size_t>(-1),
+            const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
+            double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr,
+            const double* extra_loss = nullptr, const double* ground_weight = nullptr) const;
 
     // Band centres carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centres() const
@@ -396,6 +493,14 @@ public:
         return tip_speed_;
     }
 
+    // Which velocity the flight conditions were taken from, as the root
+    // attribute speed_reference records it.  Absent means the ground, which is
+    // what every database built before the attribute existed used.
+    SpeedReference speed_reference() const
+    {
+        return speed_reference_;
+    }
+
     // Whether the database carries per-band spectra alongside the overall level.
     bool has_spectra() const
     {
@@ -426,13 +531,56 @@ public:
     // few tens of kilobytes and stays in cache under the observer loop.
     DirectionBounds direction_bounds(const std::vector<SourceState>& states) const;
 
+    // The same tables for the spectral path's A-weighted, band-limited level
+    // (spectral_level_at_observer with these `gains` and no ground effect),
+    // under the same contract: numerator >= 10^(L/10) r^2 outside the sphere.
+    // Dropping the per-band absorption is what makes it a bound, and ISO 9613-1
+    // absorption is never negative, so unlike direction_bounds() it does not
+    // depend on the EAA factors.  The ground effect can add up to ~6 dB and is
+    // not covered: a caller propagating with it must not use these.
+    DirectionBounds spectral_direction_bounds(const std::vector<SourceState>& states,
+            const std::vector<double>& gains) const;
+
     double sphere_radius() const
     {
         return sphere_radius_;
     }
 
+    // dBA of -inf legitimately means "no energy in this direction" (ambient
+    // gating emptied it), but a zero barycentric weight against -inf is a
+    // NaN under IEEE 754 that poisons an entire blended sum regardless of
+    // weight -- see the constructor's grid-fill comment. Every non-finite
+    // dBA (and spectral band) read from a file is floored to this value once,
+    // at load time, so self_test() must apply the same floor to the raw value
+    // it re-reads before comparing it against eval().  The blends treat an
+    // entry at the floor as "not measured" and leave it out (blend_present in
+    // sphere_database.cpp), so it only comes back where every entry is empty.
+    // Public so those file-local blends can name it.
+    static constexpr double no_energy_floor_db = -1000.0;
 
 private:
+
+    // What spectral_level_at_observer and spectral_level_along share; see the
+    // definition for why it is forced inline.
+    double spectral_level_impl(const RayPath& path, const SourceState& state,
+            const double* absorption, const std::vector<double>& gains,
+            const GroundModel* ground, const std::vector<std::complex<double>>* impedance,
+            double sound_speed, std::size_t first_band, std::size_t last_band,
+            const PackedSpectra* packed, const PlateReceiver* plate, double plate_mic_azimuth,
+            const GroundTable* ground_table, const double* extra_loss,
+            const double* ground_weight = nullptr) const;
+
+    // Group states by the conditions they blend, filling the bounds' per-state
+    // group and load-factor scale.  Both direction_bounds() and
+    // spectral_direction_bounds() build one table per group.
+    void group_blends(const std::vector<SourceState>& states, DirectionBounds& bounds,
+            std::vector<std::array<std::size_t, condition_dims + 1>>& blends) const;
+
+    // The DirectionBounds bin a grid cell's centre direction falls in, and how
+    // far a bilinear stencil reading that cell can reach in bins either way.
+    int home_bin(std::size_t i_phi, std::size_t i_theta) const;
+    std::array<int, 2> bin_padding() const;
+
     // Blend the four bracketing operating conditions at one grid cell.
     Sample blend_cell(std::size_t i_phi, std::size_t i_theta, const Blend& blend) const;
 
@@ -463,6 +611,18 @@ private:
     double advance_ratio_min = 0.0, advance_ratio_max = 0.0;
     double flight_path_angle_min = 0.0, flight_path_angle_max = 0.0;
     double thrust_coefficient_min = 0.0, thrust_coefficient_max = 0.0;
+    // From the root `fixed_load_factor` flag (absent or false in every
+    // database predating panam's load_factors=None): every stored sphere is
+    // the same LF=1 reference condition, so CT is constant across them
+    // rather than a real axis, and thrust_coefficient_min/max above are not
+    // used for it -- normalizing against them would divide by zero.  The
+    // triangulation is then built over (mu, gamma) alone (dims 2, not
+    // condition_dims), and blend_at() derives Blend::level_correction_db
+    // from the query CT against reference_thrust_coefficient_ analytically
+    // instead.
+    bool fixed_load_factor_ = false;
+    double reference_thrust_coefficient_ = 0.0;
+    std::size_t active_condition_dims_ = condition_dims;
     // The triangulation over this database's own operating conditions.  Owning
     // it makes several Databases independent; it used to be a file-scope global,
     // so constructing a second one re-armed the interpolator under the first.
@@ -481,6 +641,7 @@ private:
     // the loader transposes once.  Both empty unless the database carries
     // spectra.
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
+    SpeedReference speed_reference_ = SpeedReference::ground;
     std::vector<double> frequencies_;
     std::vector<double> spectra_;
 

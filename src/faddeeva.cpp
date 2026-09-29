@@ -1,7 +1,10 @@
 #include "faddeeva.hpp"
 
+#include "util/constants.hpp"
+
 #include <cmath>
 #include <iterator>
+#include <vector>
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
 
@@ -33,7 +36,7 @@ constexpr double weideman_a[32] = {
     +2.26353729990026764e+00, +2.57225340812456960e+00,
 };
 
-const double one_over_sqrt_pi = 1.0 / std::sqrt(M_PI);
+const double one_over_sqrt_pi = 1.0 / std::sqrt(pi);
 
 // The series proper, valid for Im(z) >= 0.
 //
@@ -115,18 +118,157 @@ std::complex<double> weideman(std::complex<double> z)
     return {(num_r * d2r + num_i * d2i) / d2_norm, (num_i * d2r - num_r * d2i) / d2_norm};
 }
 
+std::complex<double> weideman_everywhere(std::complex<double> z)
+{
+    if (z.imag() >= 0.0)
+        return weideman(z);
+    // Reflect: w(z) = 2 exp(-z^2) - w(-z).  See the header on why this is safe
+    // for the only caller.
+    return 2.0 * std::exp(-(z * z)) - weideman(-z);
+}
+
+// ---- Fast paths over the domain the ground model reaches -------------------
+//
+// Sampled from real runs (the Be407 demo, point and plate receivers, 480,000
+// arguments), z lies in the first quadrant, Re(z) in [0.3, 22.4] and
+// Im(z) >= -0.07, with |z| >= 6 for 44% of calls.  Two methods cover it at a
+// fraction of the Weideman series' cost, each measured against SciPy's wofz
+// on those arguments:
+//
+//  * |z| >= 6: the asymptotic series
+//        w(z) ~ i/(sqrt(pi) z) sum_n (2n-1)!! / (2 z^2)^n,
+//    12 terms, 1e-11 relative.  Valid off the negative imaginary axis; the
+//    exp(-z^2) it omits is below 1e-15 wherever it is used (x^2 - y^2 >= 36
+//    or y >= 0).
+//  * |z| < 6 inside the table: Taylor series of order 6 about the nearest node
+//    of a 0.05 grid over Re in [0, 6], Im in [-0.25, 6], 3.6e-12 relative
+//    (further below the real axis, where w grows, it loses digits: 1e-10 at
+//    Im = -1.1).
+//    Derivatives by w' = -2 z w + 2i/sqrt(pi) and
+//    w^(n+1) = -2 z w^(n) - 2 n w^(n-1), from the node's w alone, which the
+//    Weideman series fills once at start-up (15,246 nodes, 240 KB).
+//
+// Anything else falls back to the Weideman series.
+constexpr int asymptotic_terms = 12;
+constexpr double asymptotic_radius_squared = 36.0;
+constexpr double table_step = 0.05;
+constexpr double table_x_max = 6.0;
+constexpr double table_y_min = -0.25;
+constexpr double table_y_max = 6.0;
+constexpr int table_nx = static_cast<int>(table_x_max / table_step + 0.5) + 1;
+constexpr int table_ny = static_cast<int>((table_y_max - table_y_min) / table_step + 0.5) + 1;
+constexpr int taylor_order = 6;
+
+struct NodeTable
+{
+    std::vector<double> re;
+    std::vector<double> im;
+    NodeTable() : re(table_nx * table_ny), im(table_nx * table_ny)
+    {
+        for (int j = 0; j < table_ny; j++)
+        {
+            for (int i = 0; i < table_nx; i++)
+            {
+                const auto w = weideman_everywhere({i * table_step, table_y_min + j * table_step});
+                re[j * table_nx + i] = w.real();
+                im[j * table_nx + i] = w.imag();
+            }
+        }
+    }
+};
+
+const NodeTable& node_table()
+{
+    static const NodeTable table;
+    return table;
+}
+
+inline std::complex<double> asymptotic(double x, double y)
+{
+    // u = 1 / (2 z^2); sum by Horner in u, then times i / (sqrt(pi) z).
+    const double zr2 = x * x - y * y;
+    const double zi2 = 2.0 * x * y;
+    const double norm2 = zr2 * zr2 + zi2 * zi2;
+    const double ur = 0.5 * zr2 / norm2;
+    const double ui = -0.5 * zi2 / norm2;
+    // (2n-1)!! for n = 0..asymptotic_terms
+    static constexpr double coefficient[asymptotic_terms + 1] = {1.0, 1.0, 3.0, 15.0, 105.0, 945.0,
+            10395.0, 135135.0, 2027025.0, 34459425.0, 654729075.0, 13749310575.0,
+            316234143225.0};
+    double sr = coefficient[asymptotic_terms];
+    double si = 0.0;
+    for (int n = asymptotic_terms - 1; n >= 0; n--)
+    {
+        const double tr = sr * ur - si * ui + coefficient[n];
+        si = sr * ui + si * ur;
+        sr = tr;
+    }
+    // i s / (sqrt(pi) z) = i s conj(z) / (sqrt(pi) |z|^2)
+    const double scale = one_over_sqrt_pi / (x * x + y * y);
+    const double pr = sr * x + si * y;          // s * conj(z)
+    const double pi_ = si * x - sr * y;
+    return {-pi_ * scale, pr * scale};
+}
+
+inline std::complex<double> taylor(double x, double y)
+{
+    const auto& table = node_table();
+    const int i = static_cast<int>(x / table_step + 0.5);
+    const int j = static_cast<int>((y - table_y_min) / table_step + 0.5);
+    const double x0 = i * table_step;
+    const double y0 = table_y_min + j * table_step;
+    const double dr = x - x0;
+    const double di = y - y0;
+    // Derivatives w^(n) / n! by the recurrence, divided as they go.
+    double cr[taylor_order + 1];
+    double ci[taylor_order + 1];
+    cr[0] = table.re[j * table_nx + i];
+    ci[0] = table.im[j * table_nx + i];
+    // w' = -2 z0 w + 2i/sqrt(pi)
+    cr[1] = -2.0 * (x0 * cr[0] - y0 * ci[0]);
+    ci[1] = -2.0 * (x0 * ci[0] + y0 * cr[0]) + 2.0 * one_over_sqrt_pi;
+    // c_{n+1} = (-2 z0 c_n - 2 c_{n-1}) / (n + 1), with c_n = w^(n)/n!
+    for (int n = 1; n < taylor_order; n++)
+    {
+        const double inv = 1.0 / (n + 1);
+        cr[n + 1] = (-2.0 * (x0 * cr[n] - y0 * ci[n]) - 2.0 * cr[n - 1]) * inv;
+        ci[n + 1] = (-2.0 * (x0 * ci[n] + y0 * cr[n]) - 2.0 * ci[n - 1]) * inv;
+    }
+    double sr = cr[taylor_order];
+    double si = ci[taylor_order];
+    for (int n = taylor_order - 1; n >= 0; n--)
+    {
+        const double tr = sr * dr - si * di + cr[n];
+        si = sr * di + si * dr + ci[n];
+        sr = tr;
+    }
+    return {sr, si};
+}
+
 } // namespace
 
 namespace niceops {
 
+std::complex<double> faddeeva_reference(std::complex<double> z)
+{
+    return weideman_everywhere(z);
+}
+
 std::complex<double> faddeeva(std::complex<double> z)
 {
-    if (z.imag() >= 0.0)
-        return weideman(z);
-
-    // Reflect: w(z) = 2 exp(-z^2) - w(-z).  See the header on why this is safe
-    // for the only caller.
-    return 2.0 * std::exp(-(z * z)) - weideman(-z);
+    const double x = z.real();
+    const double y = z.imag();
+    const double r2 = x * x + y * y;
+    if (r2 >= asymptotic_radius_squared)
+    {
+        if (y >= 0.0 || x * x - y * y >= asymptotic_radius_squared)
+            return asymptotic(x, y);
+    }
+    else if (x >= 0.0 && y >= table_y_min && y <= table_y_max)
+    {
+        return taylor(x, y);
+    }
+    return weideman_everywhere(z);
 }
 
 } // namespace niceops

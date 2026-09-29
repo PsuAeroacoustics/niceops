@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "atmosphere.hpp"
+#include "ground_effect.hpp"
 #include "sphere_database.hpp"
 #include "weighting.hpp"
 
@@ -185,4 +186,88 @@ TEST_CASE("spectral_level_at_observer weights and band-limits", "[spectral]")
     }
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("spectral_direction_bounds really bounds the spectral level", "[spectral][bounds]")
+{
+    // As "DirectionBounds really bounds the level" does for the broadband
+    // path: the spectral peak search and --db_cutoff skip whatever this puts
+    // below a threshold, so it must never be exceeded.  AS350's spectra have
+    // empty (gated) bands in ~16% of cells, which is what the per-band half of
+    // the bound exists for; EC130's exercise the per-spectrum half.
+    for (const char* name : {"databases/AS350_fixed_load_factor.nod",
+                 "databases/EC130_fixed_load_factor.nod"})
+    {
+        if (!std::filesystem::exists(name))
+            continue;
+        Database db(name);
+        REQUIRE(db.has_spectra());
+        const auto& bands = db.band_centres();
+        const auto gains = a_weighting_gains(bands, BandLimits {});
+        const std::vector<double> no_absorption(bands.size(), 0.0);
+
+        std::vector<Database::SourceState> states;
+        for (double mu : {0.0, 0.06, 0.12, 0.2})
+            for (double gamma : {-9.0, -3.0, 0.0, 5.0})
+                for (double ct : {0.004, 0.0075, 0.011}) // below and above the reference
+                {
+                    states.push_back(db.source_state(Vec3(0.0, 0.0, 60.0),
+                            Vec3(40.0, 5.0, -3.0), Vec3(0.1, -0.05, 1.0), mu, gamma, ct));
+                    states.push_back(db.source_state(Vec3(30.0, -50.0, 250.0),
+                            Vec3(-20.0, 45.0, 2.0), Vec3(-0.08, 0.12, 1.0), mu, gamma, ct));
+                }
+        const auto bounds = db.spectral_direction_bounds(states, gains);
+        REQUIRE(bounds.usable());
+        // And with the ground effect: the gains raised by ground_gain_bounds.
+        GroundModel ground;
+        ground.receiver_height = 0.05;
+        ground.turbulence = 8e-4;
+        const auto impedance = ground_impedance(ground, bands);
+        auto ground_gains = ground_gain_bounds(ground, impedance);
+        for (std::size_t band = 0; band < bands.size(); band++)
+            ground_gains[band] *= gains[band];
+        const auto grounded = db.spectral_direction_bounds(states, ground_gains);
+        REQUIRE(grounded.usable());
+
+        const double radius = db.sphere_radius();
+        std::size_t checked = 0;
+        double tightest = std::numeric_limits<double>::infinity();
+        for (std::size_t s = 0; s < states.size(); s++)
+        {
+            const auto packed = db.pack_spectra(states[s].blend.indices);
+            for (double x = -1500.0; x <= 1500.0; x += 131.0)
+            {
+                for (double y = -1500.0; y <= 1500.0; y += 127.0)
+                {
+                    const Vec3 observer(x, y, 1.2);
+                    const Vec3 delta = observer - states[s].position;
+                    const double squared_range = delta.squaredNorm();
+                    if (squared_range <= radius * radius)
+                        continue;
+                    const int bin = DirectionBounds::bin(states[s].frame.nose.dot(delta),
+                            states[s].frame.normal.dot(delta),
+                            states[s].frame.starboard.dot(delta), squared_range);
+                    // No absorption: the tightest case the bound has to cover.
+                    const double level = db.spectral_level_at_observer(observer, states[s],
+                            no_absorption.data(), gains);
+                    const double energy = std::pow(10.0, 0.1 * level) * squared_range;
+                    REQUIRE(bounds.numerator(s, bin) >= energy);
+                    const double with_ground = db.spectral_level_at_observer(observer, states[s],
+                            no_absorption.data(), gains, &ground, &impedance, 343.2);
+                    REQUIRE(grounded.numerator(s, bin)
+                            >= std::pow(10.0, 0.1 * with_ground) * squared_range);
+                    tightest = std::min(tightest, bounds.numerator(s, bin) / energy);
+                    // The packed layout reads the same values: identical, not close.
+                    REQUIRE(db.spectral_level_at_observer(observer, states[s],
+                                    no_absorption.data(), gains, nullptr, nullptr, 343.2, 0,
+                                    bands.size(), &packed)
+                            == level);
+                    checked++;
+                }
+            }
+        }
+        REQUIRE(checked > 10000);
+        // Not vacuous: somewhere the bound is within 3 dB of the level.
+        REQUIRE(tightest < 2.0);
+    }
 }

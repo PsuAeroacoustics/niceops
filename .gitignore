@@ -17,7 +17,10 @@ build
 niceops
 *.dSYM
 *.nc
+# Ground-plate tables from panam (--plate_table); the unit tests read them.
+!plates/*.nc
 *_LAE.csv
+*.out
 # ...but keep the golden reference outputs tracked for regression comparison
 !golden/*_LAE.csv
 splinter-test
@@ -25,8 +28,6 @@ splinter-test
 /integrated/
 /niceops.trace/
 /timehistory/
-/tracks/
-/databases/
 octave-workspace
 /state/
 

@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "smoothing_spline.hpp"
+#include "util/constants.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
 #include "util/paths.hpp"
@@ -20,47 +21,6 @@
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
 
 namespace {
-
-constexpr double PI = 3.14159265358979323846;
-
-void diff(double dx, const std::vector<double>& f, std::vector<double>& df, std::vector<double>& ddf);
-
-void smoother(const std::vector<double>& x, const std::vector<double>& f,
-        const std::vector<double>& xi, std::vector<double>& fi, std::vector<double>& dfi,
-        std::vector<double>& ddfi, double smoothing, double tolerance)
-{
-    // A negative tolerance means "use the smoothing parameter"; otherwise the
-    // penalty is solved for so the fit stays within `tolerance` of the data.
-    const auto spline = tolerance >= 0.0 ? SmoothingSpline::within_tolerance(x, f, tolerance)
-                                         : SmoothingSpline::with_smoothing(x, f, smoothing);
-    // Use spline for interpolation
-    fi = spline(xi);
-    // Use finite differences to get velocity and acceleration
-    const double dx = xi[1] - xi[0];
-    diff(dx, fi, dfi, ddfi);
-}
-
-void diff(double dx, const std::vector<double>& f, std::vector<double>& df, std::vector<double>& ddf)
-{
-    // Create storage for first derivative
-    df = f;
-    // Forward diff first point
-    df[0] = (f[1] - f[0]) / dx;
-    // Central diff interior points
-    for (std::size_t i = 1; i + 1 < f.size(); i++)
-        df[i] = 0.5 * (f[i + 1] - f[i - 1]) / dx;
-    // Backward diff last point
-    df[f.size() - 1] = (f[f.size() - 1] - f[f.size() - 2]) / dx;
-    // Create storage for second derivative
-    ddf = df;
-    // Forward diff first point
-    ddf[0] = (f[2] - 2 * f[1] + f[0]) / (dx * dx);
-    // Central diff interior points
-    for (std::size_t i = 1; i + 1 < f.size(); i++)
-        ddf[i] = (f[i + 1] - 2 * f[i] + f[i - 1]) / (dx * dx);
-    // Backward diff last point
-    ddf[f.size() - 1] = (f[f.size() - 1] - 2 * f[f.size() - 2] + f[f.size() - 3]) / (dx * dx);
-}
 
 // The vehicle JSONs store every value as a quoted string, and the D original
 // read them with `.str` followed by `to!double`.  nlohmann's get<double>()
@@ -120,7 +80,7 @@ struct GeodeticColumns
     }
 };
 
-GeodeticColumns find_geodetic_columns(const LabelledCsv& csv)
+GeodeticColumns find_geodetic_columns(const LabelledCsv& csv, LengthUnit unit)
 {
     // Aliases are matched after LabelledCsv::normalise, which lower-cases,
     // drops a parenthesised unit and removes punctuation -- so "Alt (ft)",
@@ -131,13 +91,18 @@ GeodeticColumns find_geodetic_columns(const LabelledCsv& csv)
     columns.utc = csv.column({"utcsec", "utc", "utc seconds", "utc time"});
     columns.latitude = csv.column({"lat", "latitude", "lat deg", "latitude deg"});
     columns.longitude = csv.column({"lon", "long", "longitude", "lon deg", "longitude deg"});
-    // Only the spellings that agree with the unit actually read.  "alt_ft" is
-    // matched and "alt_m" deliberately is not: an unmatched altitude column
-    // makes the file fail to parse at all, which is the right answer, where
-    // matching it would read metres as feet and quietly fly the aircraft three
-    // times too high.
-    columns.altitude = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height",
-            "alt ft", "altitude ft", "alt msl ft"});
+    // Only the spellings that agree with the unit actually being read.  A file
+    // that says "alt_ft" while --units says metres is not matched, and failing
+    // to parse is the right answer: matching it would read one unit as the
+    // other and quietly fly the aircraft three times too high or too low.  The
+    // bare spellings carry no claim and are always accepted.
+    columns.altitude = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height"});
+    if (columns.altitude == LabelledCsv::npos)
+    {
+        columns.altitude = unit.to_metres == 1.0
+                ? csv.column({"alt m", "altitude m", "alt msl m"})
+                : csv.column({"alt ft", "altitude ft", "alt msl ft"});
+    }
     columns.east_speed = csv.column({"ve", "v east", "veast", "east velocity"});
     columns.north_speed = csv.column({"vn", "v north", "vnorth", "north velocity"});
     columns.up_speed = csv.column({"vu", "vup", "v up", "up velocity", "climb rate", "climb"});
@@ -160,7 +125,7 @@ SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>
 // columns of its own.
 void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         const GeodeticColumns& columns, const dimensional_data& vehicle,
-        const GeodeticInput& input, std::optional<LocalFrame>& frame,
+        const GeodeticInput& input, LengthUnit unit, std::optional<LocalFrame>& frame,
         std::vector<State>& states)
 {
     const std::size_t rows = csv.rows.size();
@@ -231,7 +196,8 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
 
         // Altitude is above mean sea level while z is height above the plane
         // the observers stand on, so the ground's elevation comes off first.
-        const double height = (data[columns.altitude] - input.ground_elevation_ft) * ft2m;
+        const double height
+                = data[columns.altitude] * unit.to_metres - input.ground_elevation;
         const Vec3 local = frame->to_local(Geodetic {latitude, longitude, height});
         x.push_back(local(0));
         y.push_back(local(1));
@@ -241,8 +207,9 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         {
             // East/north/up in ft/s, turned onto the frame's axes.  A velocity
             // is a direction, so only the rotation applies to it.
-            const Vec3 enu(data[columns.east_speed] * ft2m, data[columns.north_speed] * ft2m,
-                    data[columns.up_speed] * ft2m);
+            const Vec3 enu(data[columns.east_speed] * unit.to_metres,
+                    data[columns.north_speed] * unit.to_metres,
+                    data[columns.up_speed] * unit.to_metres);
             const Vec3 velocity = frame->from_east_north_up(enu);
             vx.push_back(velocity(0));
             vy.push_back(velocity(1));
@@ -293,16 +260,16 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         // Differentiating an interpolant twice amplifies whatever resolution the
         // coordinates were written at by 1/step^2, and the load factor is that
         // second derivative.  The shipped tracks quantise latitude at 1e-8
-        // degrees, about a millimetre, which at their 0.02 s spacing is worth
-        // a few tenths of a g -- enough to move CT by 17% and the footprint by
-        // 3 dB in the worst cell.  A path smoothing of 0.02 m takes that to
-        // 0.03 dB median and 2.4 dB worst against the same flight's measured
-        // accelerations.
+        // degrees, about a millimetre, which at their 0.02 s spacing moves the
+        // footprint by 11.6 dB at the median against the same flight's measured
+        // accelerations.  The 10 ft default takes that to 0.085 dB; asking for
+        // zero is asking for the 11.6.
         log("Geodetic trajectory ", filename, " is sampled every ", mean_step,
-                " s and is being flown through exactly (--path_smoothing 0). The load factor "
-                "is then the curvature of a path through every given point, coordinate "
-                "rounding included. For measured positions rather than planned waypoints, "
-                "pass --path_smoothing (0.02 m suits the shipped tracks' resolution).");
+                " s and --path_smoothing 0 was given, so it is flown through exactly. The "
+                "load factor is then the curvature of a path through every given point, "
+                "coordinate rounding included, which on a track this dense is mostly noise: "
+                "expect the footprint to be badly wrong. Drop the flag to use the 10 ft "
+                "default.");
     }
     if (!velocity_given && mean_step > 1.0)
     {
@@ -328,9 +295,18 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
     std::vector<SmoothingSpline> fit_velocity;
     if (velocity_given)
     {
-        fit_velocity.push_back(fit_path(time, vx, input.path_smoothing));
-        fit_velocity.push_back(fit_path(time, vy, input.path_smoothing));
-        fit_velocity.push_back(fit_path(time, vz, input.path_smoothing));
+        // Velocity gets its own tolerance, not path_smoothing.  That parameter
+        // is a distance, and passing it here silently reused the same number as
+        // a *speed* -- one value meaning both metres and metres per second.
+        // Harmless while the default was zero; at the current default it would
+        // hand every velocity column a ~3 m/s (6 kt) smoothing budget nobody
+        // asked for.  Zero interpolates the given velocities, which is what
+        // this path did by default before and what a file that bothers to carry
+        // velocity columns means by them.
+        const double velocity_tolerance = 0.0;
+        fit_velocity.push_back(fit_path(time, vx, velocity_tolerance));
+        fit_velocity.push_back(fit_path(time, vy, velocity_tolerance));
+        fit_velocity.push_back(fit_path(time, vz, velocity_tolerance));
     }
 
     // A file with its own utcsec column dates the flight itself; otherwise the
@@ -378,7 +354,7 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
 
 namespace niceops {
 
-std::optional<Geodetic> first_geodetic_position(const std::string& filename)
+std::optional<Geodetic> first_geodetic_position(const std::string& filename, LengthUnit unit)
 {
     // Parses the whole file to read one row of it, which is the price of having
     // a single parser rather than a second, subtly different one.  It happens
@@ -397,7 +373,7 @@ std::optional<Geodetic> first_geodetic_position(const std::string& filename)
     }
     if (csv.rows.empty() || csv.rows.front().size() == 27)
         return std::nullopt; // Empty, or the positional AC state format.
-    const auto columns = find_geodetic_columns(csv);
+    const auto columns = find_geodetic_columns(csv, unit);
     if (!columns.positioned() || csv.rows.front().size() < columns.width())
         return std::nullopt;
     return Geodetic {csv.rows.front()[columns.latitude], csv.rows.front()[columns.longitude], 0.0};
@@ -445,28 +421,20 @@ dimensional_data configure_vehicle(const std::string& filename)
     return vehicle;
 }
 
-// Derive the non-dimensional flight parameters from a state's raw kinematics.
-// The trajectory constructor and adapt() both need exactly this, from different
-// sources, and previously each carried its own copy.  Expects nx/ny/nz to hold
-// the un-normalised load-factor components on entry.
-void derive_flight_parameters(State& now, const dimensional_data& vehicle)
+namespace {
+
+// The two flight path angles, from the velocity the rotor sees (air_velocity:
+// the ground velocity until relative_to_air() sets a wind).  Needs nx/ny/nz
+// already normalised.
+void derive_path_angles(State& now)
 {
-    // Compute load factor
-    now.LF = std::hypot(now.nx, now.ny, now.nz);
-    // Normalize
-    now.nx /= now.LF;
-    now.ny /= now.LF;
-    now.nz /= now.LF;
-    // Non-dimensionalize
-    now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * PI
-            * vehicle.radius * vehicle.radius);
-    auto v = std::hypot(now.vx, now.vy, now.vz);
-    now.mu = v / vehicle.tip_speed;
+    const auto [ux, uy, uz] = air_velocity(now);
+    const double v = std::hypot(ux, uy, uz);
     if (v > 0.0)
     {
-        auto vn_hat = (now.vx * now.nx + now.vy * now.ny + now.vz * now.nz) / v;
-        now.fpa_e = 180.0 / PI * std::asin(vn_hat);
-        now.fpa = 180.0 / PI * std::asin(now.vz / v);
+        auto vn_hat = (ux * now.nx + uy * now.ny + uz * now.nz) / v;
+        now.fpa_e = 180.0 / pi * std::asin(vn_hat);
+        now.fpa = 180.0 / pi * std::asin(uz / v);
     }
     else
     {
@@ -481,10 +449,84 @@ void derive_flight_parameters(State& now, const dimensional_data& vehicle)
     }
 }
 
-} // namespace niceops
+} // namespace
+
+// Derive the non-dimensional flight parameters from a state's raw kinematics.
+// The trajectory constructor and adapt() both need exactly this, from different
+// sources, and previously each carried its own copy.  Expects nx/ny/nz to hold
+// the un-normalised load-factor components on entry.
+void derive_flight_parameters(State& now, const dimensional_data& vehicle)
+{
+    // Compute load factor
+    now.LF = std::hypot(now.nx, now.ny, now.nz);
+    // Normalize
+    now.nx /= now.LF;
+    now.ny /= now.LF;
+    now.nz /= now.LF;
+    // Non-dimensionalize
+    now.CT = now.LF * vehicle.weight / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * pi
+            * vehicle.radius * vehicle.radius);
+    const auto [ux, uy, uz] = air_velocity(now);
+    now.mu = std::hypot(ux, uy, uz) / vehicle.tip_speed;
+    derive_path_angles(now);
+}
+
+// The AC state format does not agree with itself about the sign of vz.  The
+// 2019 tracks (tracks/B205/190337AC.csv) store it positive up, as z is; the
+// 2017 Noise Abatement tracks store it positive DOWN while z stays positive up
+// (vz against dz/dt correlates at -0.996 on B407 run 286270) -- except the 49
+// files of EC130B4 test day 298, which are positive up.  Read as up, every
+// 2017 descent became a climb of the same angle, selecting climb spheres and
+// losing the descent's blade-vortex interaction.  az is positive up in both,
+// so only vz is affected.
+//
+// Decide from the track itself: correlate vz with the derivative of z.  A track
+// with too little vertical motion to tell is left alone -- there the sign
+// barely matters, and guessing would be worse than not.  Returns true if the
+// sign was corrected.
+bool correct_vertical_speed_sign(std::vector<State>& states, const std::string& filename)
+{
+    if (states.size() < 3)
+        return false;
+    // Uncentred -- the cosine between vz and dz/dt, not their correlation -- so
+    // a steady descent, whose dz/dt is constant and has no variance to
+    // correlate, still decides: vz . dz/dt is +|dz/dt|^2 when the two agree.
+    double s_vz_dz = 0.0, s_vz2 = 0.0, s_dz2 = 0.0;
+    std::size_t n = 0;
+    for (std::size_t i = 1; i + 1 < states.size(); i++)
+    {
+        const double dt = states[i + 1].t - states[i - 1].t;
+        if (!(dt > 0.0))
+            continue;
+        const double dz = (states[i + 1].z - states[i - 1].z) / dt;
+        const double vz = states[i].vz;
+        s_vz_dz += vz * dz;
+        s_vz2 += vz * vz;
+        s_dz2 += dz * dz;
+        n++;
+    }
+    if (n < 2)
+        return false;
+    // Below ~0.15 m/s rms of vertical speed there is nothing to decide from.
+    if (s_vz2 / n < 0.0225 || s_dz2 / n < 0.0225)
+        return false;
+    const double agreement = s_vz_dz / std::sqrt(s_vz2 * s_dz2);
+    if (agreement > -0.5)
+        return false;
+    warn("Trajectory ", filename, ": vz runs opposite to dz/dt (cosine ", agreement,
+            "), so this file stores vertical speed positive down; negating it.");
+    for (auto& now : states)
+    {
+        now.vz = -now.vz;
+        // Only the path angles depend on vz's sign.  The speed, and so mu, do
+        // not, and nx/ny/nz were already normalised when the state was derived.
+        derive_path_angles(now);
+    }
+    return true;
+}
 
 Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename,
-        const GeodeticInput& geodetic)
+        const GeodeticInput& geodetic, LengthUnit unit)
 {
     // Get vehicle data
     vehicle = configure_vehicle(vehicle_filename);
@@ -531,16 +573,23 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                     // Convert to metric
                     now.utcsec = data[0];
                     now.t = data[1];
-                    now.x = data[5] * ft2m;
-                    now.y = data[6] * ft2m;
-                    now.z = data[7] * ft2m;
-                    now.vx = data[11] * ft2m;
-                    now.vy = data[13] * ft2m;
-                    now.vz = data[15] * ft2m;
+                    now.x = data[5] * unit.to_metres;
+                    now.y = data[6] * unit.to_metres;
+                    now.z = data[7] * unit.to_metres;
+                    now.vx = data[11] * unit.to_metres;
+                    now.vy = data[13] * unit.to_metres;
+                    now.vz = data[15] * unit.to_metres;
                     // Convert to "g"
-                    now.nx = data[21] * fps2g;
-                    now.ny = data[22] * fps2g;
-                    now.nz = (data[23] * fps2g + 1.0);
+                    // Accelerations carry the file's length unit too.  Chosen
+                    // as a single constant rather than unit.to_metres * mps2g,
+                    // so the feet path multiplies by exactly the same fps2g it
+                    // always did -- the product of two constants is not the
+                    // same double as two multiplies, and the state golden is
+                    // pinned at 1e-9.
+                    const double accel_to_g = unit.to_metres == 1.0 ? mps2g : fps2g;
+                    now.nx = data[21] * accel_to_g;
+                    now.ny = data[22] * accel_to_g;
+                    now.nz = (data[23] * accel_to_g + 1.0);
                     derive_flight_parameters(now, vehicle);
                     states.push_back(now);
                     trace("Parsed state: ", states.back());
@@ -550,20 +599,22 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                     input_error("Wrong number of columns in ", filename, ".");
                 }
             }
+            correct_vertical_speed_sign(states, filename);
         }
         else
         {
-            const auto columns = find_geodetic_columns(csv);
+            const auto columns = find_geodetic_columns(csv, unit);
             if (!columns.positioned())
             {
                 input_error("Unrecognised trajectory format in ", filename,
                         ": it is neither the 27-column NASA/FAA AC state format nor a WGS84 "
                         "track. A WGS84 track needs a header naming latitude and longitude "
-                        "columns in degrees, an altitude column in feet, and a time or utcsec "
+                        "columns in degrees, an altitude column in ", unit.name, ", and a time "
+                        "or utcsec "
                         "column in seconds.");
             }
             frame_ = geodetic.frame;
-            read_geodetic_states(filename, csv, columns, vehicle, geodetic, frame_, states);
+            read_geodetic_states(filename, csv, columns, vehicle, geodetic, unit, frame_, states);
         }
     }
     else if (extension == "nc")
@@ -629,50 +680,59 @@ void Trajectory::adapt(double dt, double smoothing, double tolerance)
         y.push_back(now.y);
         z.push_back(now.z);
     }
-    // Build interpolants
+    // The resampled instants, counted by index rather than accumulated so the
+    // spacing cannot drift over a long track.
     std::vector<double> ti;
-    ti.push_back(t[0]);
-    double tnext = ti[0] + dt;
-    while (tnext <= t[t.size() - 1])
-    {
-        ti.push_back(tnext);
-        tnext += dt;
-    }
-    trace("Smoothing x.");
-    std::vector<double> xi;
-    std::vector<double> vxi;
-    std::vector<double> axi;
-    smoother(t, x, ti, xi, vxi, axi, smoothing, tolerance);
+    const double span = t.back() - t.front();
+    const auto steps = static_cast<std::size_t>(std::floor(span / dt));
+    ti.reserve(steps + 1);
+    for (std::size_t i = 0; i <= steps; i++)
+        ti.push_back(t.front() + dt * static_cast<double>(i));
 
-    trace("Smoothing y.");
-    std::vector<double> yi;
-    std::vector<double> vyi;
-    std::vector<double> ayi;
-    smoother(t, y, ti, yi, vyi, ayi, smoothing, tolerance);
+    trace("Smoothing x, y and z.");
+    const auto fit = [&t, smoothing, tolerance](const std::vector<double>& f) {
+        // A negative tolerance means "use the smoothing parameter"; otherwise
+        // the penalty is solved for so the fit stays within `tolerance`.
+        return tolerance >= 0.0 ? SmoothingSpline::within_tolerance(t, f, tolerance)
+                                : SmoothingSpline::with_smoothing(t, f, smoothing);
+    };
+    const auto fit_x = fit(x);
+    const auto fit_y = fit(y);
+    const auto fit_z = fit(z);
 
-    trace("Smoothing z.");
-    std::vector<double> zi;
-    std::vector<double> vzi;
-    std::vector<double> azi;
-    smoother(t, z, ti, zi, vzi, azi, smoothing, tolerance);
+    // UTC seconds ride along with the resampled time.  They used to be dropped:
+    // the repacked State was value-initialised and nothing refilled utcsec, so
+    // adapting a trajectory silently moved the whole flight to UTC midnight and
+    // with it the day/night classification behind --dnlfile.
+    const double utc_at_start = states.front().utcsec;
+    const double t_at_start = t.front();
 
     // Repack data into states
     states.clear();
     trace("States reset to ", states);
-    for (std::size_t i = 0; i < ti.size(); i++)
+    states.reserve(ti.size());
+    for (const double now_t : ti)
     {
         State now {};
-        now.t = ti[i];
-        now.x = xi[i];
-        now.y = yi[i];
-        now.z = zi[i];
-        now.vx = vxi[i];
-        now.vy = vyi[i];
-        now.vz = vzi[i];
-        // Convert to "g"
-        now.nx = axi[i] * mps2g;
-        now.ny = ayi[i] * mps2g;
-        now.nz = azi[i] * mps2g + 1.0;
+        now.t = now_t;
+        now.utcsec = utc_at_start + (now_t - t_at_start);
+        now.x = fit_x(now_t);
+        now.y = fit_y(now_t);
+        now.z = fit_z(now_t);
+        // Velocity and acceleration come from the spline itself rather than
+        // from finite differences over the resampled values.  Fitting a curve
+        // and then differencing its samples throws away the exact derivatives
+        // the fit already carries, and charges the resampling step's truncation
+        // error for the privilege -- the load factor, which is the second
+        // derivative, paid for that twice.  read_geodetic_states derives its
+        // states the same way.
+        now.vx = fit_x.derivative(now_t, 1);
+        now.vy = fit_y.derivative(now_t, 1);
+        now.vz = fit_z.derivative(now_t, 1);
+        // Convert to "g", with gravity added back on the vertical
+        now.nx = fit_x.derivative(now_t, 2) * mps2g;
+        now.ny = fit_y.derivative(now_t, 2) * mps2g;
+        now.nz = fit_z.derivative(now_t, 2) * mps2g + 1.0;
         derive_flight_parameters(now, vehicle);
         states.push_back(now);
         trace("Adapted state: ", states.back());
@@ -697,7 +757,25 @@ std::vector<double> Trajectory::column(const std::string& varname) const
     return x;
 }
 
-void Trajectory::watts_trim(double xstart_ft)
+double Trajectory::relative_to_air(const std::function<std::array<double, 2>(double)>& wind)
+{
+    double strongest = 0.0;
+    for (auto& now : states)
+    {
+        const auto w = wind(now.z);
+        now.wx = w[0];
+        now.wy = w[1];
+        strongest = std::max(strongest, std::hypot(w[0], w[1]));
+        // nx/ny/nz, LF and CT stay as the constructor derived them: normalised,
+        // and inertial.
+        const auto [ux, uy, uz] = air_velocity(now);
+        now.mu = std::hypot(ux, uy, uz) / vehicle.tip_speed;
+        derive_path_angles(now);
+    }
+    return strongest;
+}
+
+void Trajectory::watts_trim(double xstart_metres)
 {
     auto mu = column("mu");
     auto z = column("z");
@@ -708,7 +786,7 @@ void Trajectory::watts_trim(double xstart_ft)
     std::size_t ixmin = 0;
     for (std::size_t i = 0; i < x.size(); i++)
     {
-        if (x[i] > xstart_ft * ft2m)
+        if (x[i] > xstart_metres)
             break;
         ixmin = i;
     }
@@ -716,3 +794,5 @@ void Trajectory::watts_trim(double xstart_ft)
     std::vector<State> sub(states.begin() + ixmin, states.begin() + ixmax + 1);
     states.swap(sub);
 }
+
+} // namespace niceops

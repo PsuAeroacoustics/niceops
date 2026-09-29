@@ -70,6 +70,16 @@ Notes:
   on a literal argument** in a test: the literal gets constant-folded at build time (GCC
   folds via MPFR, correctly rounded) while the function under test reaches libm at run
   time, and the two differ by an ULP. `acosc` was written that way and only GCC noticed.
+- **`arrays/coyle_approach.csv` is the only scattered-observer set in the repo**, and it is a
+  working `-b` input again: every one of its rows was being dropped, because its fields are
+  padded *before* the comma and `read_numeric_csv` counted trailing whitespace as junk. The run
+  then evaluated zero observers and exited 0. An observer file that yields nothing is now an
+  error. All 84 shipped AC tracks pad on the *left*, which `std::stod` always skipped, so the
+  goldens never saw this.
+- **`SmoothingSpline` at lambda = 0 is the natural cubic *interpolating* spline**, not a
+  polyline. `PenalizedSystem::fit` used to short-circuit there and leave the curvature zero;
+  the lambda = 0 limit of its own system is `R gamma = Q^T y`, which has to be solved. See the
+  `--path_smoothing` note below for what that cost.
 - **`state/`, `integrated/`, `log/` and `figures/` are not tracked**, so a fresh checkout
   has none of them and every writer must create its own parent directory
   (`ensure_parent_directory` in `src/util/paths.hpp`). `Trajectory::write_state` once
@@ -187,7 +197,30 @@ Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERS
 
 Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. For the full option set see `README.md`, which documents every flag, or the CLI11 setup in `src/niceops.cpp`.
 
-Input/output files use **feet**; internal computation is metric (`ft2m = 0.3048`). Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
+**`--units` picks the length unit for the whole interface** -- `ft` (default) or `m` -- covering
+every length on the command line (`--grid`, `--gridstep`, `--trim`, `--ground_elevation`,
+`--receiver_height`, `--path_smoothing`), every file carrying a length, and the figure axes.
+Internal computation is metric (`ft2m` and `LengthUnit` in `src/util/constants.hpp`); the
+conversion is one seam in `run()`.  Four of those options used to be metric while every file was
+feet, which is the inconsistency this removes.
+
+Three things are load-bearing here:
+
+- **A default is a physical quantity, not a number in the current unit.**  Defaults are written
+  in metres and skip the conversion, which is why the seam tests CLI11's `count()` rather than
+  scaling everything.  Scale the defaults too and `--units m` shrinks the observer grid to a
+  third of its extent.
+- **`--units` declares what the files already are; it converts nothing.**  The shipped tracks are
+  feet, so `--units m` on the demo case reads feet as metres.  Nothing can detect that.  Where a
+  column header names its own unit (`alt_ft`, `alt_m`) it is checked against `--units` and a
+  disagreement fails the file; a bare `alt` is always accepted.
+- **`write_state` stays metric** whatever `--units` says: `golden/state_197421.csv` is the
+  D-derived oracle and encodes the internal values.
+
+`fps2g` is chosen as a whole constant rather than composed as `unit.to_metres * mps2g`, because
+the product of two constants is not the same double as two multiplies and the state golden is
+pinned at 1e-9.  Verified end to end: a metric twin of the demo track under `--units m`
+reproduces the golden footprint to 1.5e-12 dB. Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
 
 ## Architecture
 
@@ -367,6 +400,355 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   standard and the Python, and is the one non-SI unit in the codebase. `absorption_coefficients()`
   is the form the hot path uses: it hoists the two relaxation frequencies out of the per-band
   loop and is bit-exact against the per-frequency call.
+- `src/propagation.hpp` — the propagation seam. `straight_ray()` returns a `RayPath`: the
+  direction the sphere is looked up by, the range that spreading and absorption take, and the
+  ground model's (source height, ground distance). `spectral_level_at_observer` takes all of
+  these from it and nothing from raw geometry. It went in bit-identical on every path. A
+  refracting model returns the same record per eigenray. The header lists what such a model
+  must *also* change and that deliberately does not live there: reception time
+  (`reception_factor` differentiates straight-line range), the bounds (they subtract
+  straight-line spreading; focusing adds gain), and the broadband path, which shares its
+  geometry with the bound test and does not use the record.
+- `src/atmosphere_profile.{hpp,cpp}` — `--atmosphere`: a stratified T/RH/p profile and
+  `LayeredAbsorption`, per-band absorption integrated through it. Along a straight path a band
+  loses the coefficient's mean over the heights spanned times the path length. The mean is
+  (F_b(z_s) - F_b(z_o)) / (z_s - z_o), F being a 1 m table of alpha's running integral. The
+  things to preserve:
+  - **The hot loop pays nothing on a grid, and a subtract and a multiply per band otherwise.**
+    F at each state's height is looked up once per trajectory. When every observer shares a
+    height, as on any grid, each state's mean is formed once too (`state_absorption_mean`), and
+    the loop only reads it. Without that the profile cost ~5% of the acoustic loop. Scattered
+    observers at mixed heights take the per-pair path; `atmosphere_uniform_scattered_is_homogeneous`
+    runs `arrays/coyle_approach.csv` through it.
+  - **`Database` knows nothing about profiles.** The caller hands `spectral_level_at_observer`
+    per-band coefficients exactly as before. Without `--atmosphere` the run-wide array goes
+    through untouched, so the default output is byte-identical.
+  - **F is quadratic within a node.** Alpha is linear between nodes and F is its exact
+    integral, so the difference quotient tends smoothly to alpha as the heights meet. Within
+    1 mm it switches to alpha at the midpoint.
+  - **One level means uniform at every height.** With several levels, a trajectory above the
+    top is refused, not extrapolated.
+  - **The surface level supplies the sound speed** for the reception time and the ground
+    impedance.
+  - **Spectral path only.** `EAA` is a fitted broadband attenuation with nothing per band to
+    integrate.
+  - **`atmosphere_uniform_is_homogeneous` compares at 1e-9, not byte-for-byte.** A mean of a
+    uniform integral is the coefficient to a few ULP. Do not "fix" it by comparing bytes.
+  - **Wind columns are ignored** and named in the log.
+
+  The roadmap this starts (refraction, then urban) is in the Claude Doc "NICE-OPS:
+  Atmospheric and Urban Propagation Options".
+- `src/refraction.{hpp,cpp}` — `--refraction linear` (roadmap step 4). Per path, a
+  least-squares line through the effective sound speed c(z) + w(z).h over the heights the path
+  spans (`EffectiveSoundSpeed`: running integrals of c, w_x, w_y and z times each on a 1 m
+  table, so a fit costs a few flops per pair), then closed-form circular-arc eigenrays. The
+  things to preserve:
+  - **Numerically stable forms, not textbook ones.** The circles are centred L = c0/|a| away,
+    kilometres to 1e11 m, so every difference of squares of h = L + sigma z is formed from
+    kappa(z) = z(2L + sigma z). Reflected legs are kappa/(sum of d), travel time is one atanh of
+    the addition formula, and arc length is 2 rho asin(chord/2 rho). Written the obvious way
+    they cancel to nothing as the gradient shrinks. Gradients under 1e-9 /s take the straight
+    path.
+  - **Spreading is r / cos(launch), exactly.** In a linear profile the tube area
+    r |dr/dtheta| sin|arrival| / cos(launch) reduces to (r rho / h_s)^2.
+    `tests/test_refraction.cpp` checks it against finite differences of traced rays; keep that.
+  - **The reflected ray is a 1-D solve** on launch angle, along which the range is monotonic
+    (checked across both gradient signs). It starts from the direct ray to the receiver's image
+    below the ground and takes secant steps from there, which usually close in one or two. That
+    warm start took the point-receiver refraction run from 4.7 to 3.6 s. A bracketed Illinois
+    solve is the fallback. Under downward refraction at long range the ray is launched
+    *upward*, over its top: a separate branch of the range formula.
+  - **Ground models get an equivalent straight geometry.** A point receiver gets
+    h' = L2 sin(grazing) - h_r and d' = L2 cos(grazing) from the reflected ray; a plate gets
+    the direct ray's arrival angle and length. The ground models themselves are untouched.
+  - **The direct ray ends at the microphone**, the same point the straight path uses (see
+    Receivers below), never clamped. Scattered flush mics on sloping ground sit below the
+    plane, and clamping them once made plate runs disagree with the straight model. Uniform
+    air reproduces the straight run to 1e-9 for plates, point receivers and bare observers
+    (`refraction_uniform_*_is_straight`). The reflected ray goes to the microphone's height
+    above the plane z = 0, where the ground models put it.
+  - **The same bounds cover refraction.** The peak search and `--db_cutoff` take a refracted
+    state's geometry as its launch direction scaled by its ray tube's range, so the existing
+    DirectionBounds tables bound it unchanged. Absorption and the shadow's loss are losses, and
+    the ground's gain is bounded independently of geometry. `direct_ray` gives that geometry
+    and the travel time; `finish_ground`, with its reflected-ray solve, runs only for states
+    that survive the bound. `refraction_*_windowed_is_exact` checks the windowed run against a
+    march. On this database and track the bounds are loose even for straight rays (92–98% of
+    states get evaluated), so the windowing saves little here. The overhead of refraction is
+    the rays themselves: +0.7 s bare, +1.5 s with a point receiver, +0.7 s with a plate, on the
+    demo grid.
+  - **Every ray is checked against RK4 traces** of the ray equations: position to 1e-6 m,
+    time and arc length to 1e-9, reflected grazing angle to 1e-8 rad.
+  - **Wind directions are compass bearings** turned by `--frame_bearing` (default +x east).
+    The shipped AC tracks need 210.
+  - Shadow zones: the grazing ray's level, less the least attenuated creeping-wave mode,
+    capped at `--shadow_floor`. `ShadowAttenuation` builds it: over rigid ground (no
+    `--ground_effect`) it is `shadow_attenuation_rates` and `shadow_loss`'s old arithmetic,
+    to the bit; over the ground's admittance it is one table per band in s = (pi f / |a|)^(1/3),
+    of the first zero of Ai' + q Ai followed along q = -i w^2 beta s. Three things to keep:
+    - **It is not monotonic in the ground.** The first-order shift -q/a'_1 lowers the rate
+      for arg beta in (-90, -30) degrees, so ordinary grounds attenuate up to 12% *less*
+      than rigid at small |q| before up to 2.3x more. Do not "fix" a soft ground coming out
+      quieter than rigid in the shallow shadow.
+    - **Bands whose Re q > 0 (arg beta < -60) take the rigid rate.** There the first zero
+      turns into the surface wave and the follower loses it (measured: it runs to |t| ~ 100,
+      near q^2, and throws). Only strong porosity rates and thin layers get there, at low
+      frequency; the run logs the bands.
+    - `tests/test_shadow_attenuation.cpp` holds the rate to the exact residue series' slope
+      deep in the shadow, 0.02-0.3% on the benchmark grounds. Keep it.
+  - **`ShadowTransition`: the level near a shadow boundary** (`--refraction linear`, point
+    receivers only). Ray theory fails within a couple of diffraction lengths F = 2 k0 l^2 of
+    the boundary; its ground term at the grazing geometry was 10-25 dB low over grass and
+    ~5 dB high over rigid ground there. Per band and microphone height, a table V(xi, s) of
+    the residue series relative to the ray's own spreading, xi = (r - r_b)/F. Things to keep:
+    - **Built at a reference source height, 20 l** (0.1 s^2 when lower, keeping it under
+      R/10). V collapses over source height (within ~1 dB, 5 l-100 l, from xi = -1.5) but
+      the series itself fails for high sources at high frequency, so do not build it at
+      the actual height.
+    - **Each model at its own boundary**: the table places the exact field at the parabolic
+      boundary of k^2-linear and the ray at the circle one; NICE-OPS uses the ray's.
+    - **Ray model below xi = -2, blend to -1, V beyond**, floored at V(0) - floor and capped
+      at 20 log10 2. `max_power_ratio` feeds the peak search's ground bound, or the windowed
+      run stops being exact.
+    - `Database::spectral_level_along`'s `ground_weight` is how the ground term is faded out:
+      a power of the power ratio, per band.
+    - **Through layers, each band gets its own boundary**, r_b = r_s + w (r_l - r_s),
+      w = x / (x + boundary_resolution), x the band's diffraction length at the fit's
+      curvature over r_l - r_s (`band_boundary`). r_s is the layered boundary, r_l the linear
+      fit's, and both ride on `DirectEigenray`. Scaled by r_s alone it fell 10-20 dB too
+      fast at 125-250 Hz against the PE, because low bands do not see a log law's thin fast
+      layer. The constant 0.363 was fitted on 12 log laws and held out on example_windy
+      (6.8 dB edge rms, against 18.9 at r_s). Pooled over 16 log-law cases the edge error
+      goes 30.7 -> 6.1 dB, and the lapse control stays at 0.4.
+    - **Flush microphones take their own constant, 0.75** (`boundary_resolution_flush`,
+      chosen by the table's receiver height or plate, never the observer's terrain z). Fitted
+      per case against the PE, a flush microphone's best boundary is ~0.9 diffraction lengths
+      at the fit's curvature past r_s on the measured day-284 profiles and ~1.2 on flush log
+      laws, where 0.363 put it at 1.7-2.7. 1.2 m keeps 0.363 (0.387 refitted).
+    - **Where the fit casts no shadow (r_l infinite), each band takes a multiple of r_s**:
+      1.60 (f/1 kHz)^-0.08 flush, 1.90 (f/1 kHz)^-0.08 at 1.2 m (`fallback_multiple_*`).
+      The law has nothing to interpolate toward there, and falling back to r_s itself was
+      the cliff again. A strong inversion above the source does it: the fit over the path
+      refracts downward while the shear under it still casts a shadow.
+    - **The law cannot be made much better by fitting.** The per-case optimum is 2.7 dB
+      pooled; every smooth law tried (constant multiples, power laws in f, offsets in
+      diffraction lengths, tangent-extended profiles, regressions on f, z_s, r_l/r_s) sits
+      at 6-9 over all cases. The optimum is sharp where the wall is steep. Do not spend another day on it
+      without turbulence in the reference.
+    - **Past 0.9 r_s the lit ray is the linear fit's** (`handover_fraction`, stratified.hpp).
+      `layered_direct_ray(..., true)` hands it back (`from_linear_fit`, finished by
+      `finish_ground`) whenever r > 0.9 r_s, *not only where the layered solve fails*, and
+      keeps it past the fit's own boundary too, in its shadow. Short of r_s the layered ray
+      focuses into a caustic (+10 dB) that the PE does not show; 0.9 was the best hand-over
+      on both calibration sets (0.6 dB rms on day 284 over [0.5, 1] r_s, 1.4 at r_s). Going
+      back to the layered shadow ray past r_l stepped 2-10 dB, where the fit's limiting ray
+      is continuous. On a log law the dipping family's range is not monotonic
+      and reaches tens of metres past its end, and those near-grazing rays have no
+      reflected partner, so the ground term took the grazing geometry (-32 dB). It is
+      formed in `form_ray`, so the peak search bounds the ray whose level it takes. Only
+      for observers the transition serves; plates and no-ground runs are byte-identical.
+    - **The calibration was confounded once, so beware.** An experiment that sets a
+      boundary by hand must also set `linear_boundary` equal to it, or `apply()`'s own
+      interpolation runs on top. That run falsely suggested w = 0.
+    - Against the PE on a linear lapse: shadow-edge error 5-20 dB -> 0.1-1 dB.
+      `tests/test_shadow_transition.cpp` holds it to the exact series, and pins the law
+      against stored PE levels (example_windy, 100 m source, 500 Hz and 1 kHz).
+    - **Plates** get their own table: the field at the plate's top (its thickness as the
+      receiver height) plus K, the plate over bare ground, per band and azimuth, taken from
+      `PlateReceiver::level` at 2 degrees. K barely depends on elevation near grazing
+      (within 0.1 dB from 0.5 to 10 degrees), which is what makes one value hold through
+      the shadow. The caller passes the pair's plate-frame azimuth, the same as
+      `Database::spectral_level_along` forms it. `max_power_ratio` includes the loudest
+      K. On the 2017 day 284 this takes `stratified`'s 5-10 degree rms from 4.5 to 3.6 dB.
+    - The tables take the run's `-j` (`threads`). The harness runs a dozen `-j 1`
+      processes at once, and a table building on every core in each of them took 7 s.
+  - **`layered_direct_ray` solves for a microphone below the plane as if on it.** The
+    layers hold their lowest speed below z = 0 and the direct-ray solve knows no ground,
+    so it sent a ray grazing along under the plane: a "lit" arrival of -0.003 degrees
+    whose tube was 46 times its range, 33 dB low. Ground boards 3-10 cm under the survey
+    datum hit it on every run of the 2017 data. The ray still ends at the microphone,
+    and uniform air never reaches the layered solve, so the straight-ray equivalence
+    stands.
+  - **The layered shadow's tube can be 0/0** for a receiver a few millimetres up, where the
+    dipping family is a sliver that thin. It then falls back to r / cos(launch). Both
+    fixes have tests in `test_shadow_transition.cpp`.
+- `src/stratified.{hpp,cpp}` — `--refraction stratified` (roadmap step 6a): the effective
+  sound speed piecewise linear between the profile's own levels, circular arcs within each
+  layer, eigenrays solved per pair. The things to preserve:
+  - **A ground-grazing boundary needs only that no ray from aloft reaches the receiver**:
+    the air above the source must not outrun everything between receiver and source
+    (`fastest_above(z_s) > fastest(z_r, z_s)`, the same rule families() uses for the
+    upward arms). Testing against the source's own speed left the day-284 mornings -- an
+    inversion over an upwind shear, 330.5 m/s aloft against 339 at the ground -- with no
+    boundary, so no transition and no hand-over, and the shadow a 10-35 dB cliff the PE
+    puts 30-50% further out. It moved day 284's upwind 5-10 degree bin most of all; see the
+    README for the table.
+  - **Parametrise by the Snell invariant p, in four families.** Launched up or down, arriving
+    on the first crossing of the receiver height or on the second, after dipping below it
+    (`Arm`, `families`). The range is monotonic in p within a family. The dipping family is
+    what the linear model's unique circle includes implicitly. Without it the shadow boundary
+    comes out short by sqrt(2 L z_r), which was 170 m on a linear test profile.
+  - **Layer crossings are closed forms written stably**
+    (dx = p(c0+c1)dz/(q0+q1), plus log1p and atan2 forms for time and arc). They were checked
+    against a 200,000-point quadrature to 3e-15. At a turning point the sine is pinned to 0:
+    computing it as sqrt(1 - p^2 c^2) leaves ~1e-8 of rounding, which is 1e-7 in range.
+  - **The RK4 trace in `tests/test_stratified.cpp` is fussy, for reasons worth knowing.** A
+    finite-difference gradient rounds to 1e-8 /s, which is 1e-4 m over a km of ray. A step that
+    straddles a level integrates across the gradient's jump and drops to first order. Even a
+    step that only *lands* on a level takes its last RK4 stage from the next layer unless the
+    step is held to the gradient of the layer it starts in. With all three fixed, the trace
+    matches the layered model to 1e-10 m.
+  - **The linear model stays alongside.** It gives the warm start (usually within a fraction
+    of a degree), the fallback for a receiver at or above the source, the shadow's attenuation
+    rate (its fitted gradient), and the refracted path's `profile`.
+  - **One arrival per pair.** Non-monotonic profiles give caustics and several arrivals; the
+    solve returns the first family's root. Focusing is capped at `max_focusing_gain_db` (+10).
+  - **The log-law finding.** With zero wind at the ground, the upwind limiting ray is fixed by
+    c(z_s)/c(0) alone. On `example_windy.csv` a 100 m source's upwind shadow starts at 520 m,
+    where the linear fit puts it past 1.2 km; a test pins that. Ray theory probably overstates
+    that shadow at low frequencies, so GFPE (step 7) should adjudicate before either model's
+    shadow levels are trusted.
+  - Costs: 12 s on the demo grid with a point receiver (linear 3.3 s), 35 ms over a
+    96-microphone array.
+- `src/pe.{hpp,cpp}`, `tools/pe_compare.cpp` — roadmap step 7a: a wide-angle parabolic
+  equation as the full-wave reference, and `niceops_pe_compare`, which runs one path through
+  straight, linear, stratified and PE. Load-bearing:
+  - **Crank–Nicolson Padé(1,1), not the GFPE the roadmap named.** The impedance condition
+    dpsi/dz = -i k beta psi goes straight into the grid (psi_0 eliminated by a one-sided
+    difference), so no surface-wave pole has to be handled by hand. The convention is
+    exp(-i omega t), as in `ground_effect.cpp`, whose admittance it takes. The left-hand
+    tridiagonal matrix is factored once per run.
+  - **The march is latency-bound, and shaped for that** (2.7 ns per point per step, from
+    9.0). The Thomas sweep is a recurrence; each row waited on two dependent complex
+    multiplies. Three things, all needed:
+    - The factorisation is twisted (burn at both ends): rows below the middle eliminate
+      downward, rows above upward. Each sweep then carries two independent chains.
+    - The pivot is folded into the stored coefficients, so each row is one complex
+      multiply-add.
+    - That multiply-add is written as two explicit `std::fma` per part (`minus_mul`).
+      Left to itself the compiler contracts inside the multiply and leaves a subtract at
+      the end, which puts 11 cycles of latency on the chain where 8 will do; that alone
+      was 5.1 -> 2.7 ns.
+
+    Output matches the plain Thomas sweep to ~1e-9 dB (the same arithmetic reordered), and
+    stored PE runs reproduce to their printed digits. `solve_pe_bands` pools every (band,
+    frequency) march, highest frequency first, because cost goes as f^2 and a band at a time
+    left the 2 kHz band on a 2-thread share. A five-band `pe_compare` case went from 194 s
+    to 14 s. Summing is in frequency order afterwards, so any thread count gives the same
+    bits.
+  - **The grid is 20 points per wavelength in height and 10 in range.** Against a
+    30 x 30 reference, 10 in height was ~0.1 dB rms near the ground but 0.47 dB rms (2.2 at
+    worst) for a 1.2 m receiver at 1 kHz; 20 is 0.09 dB, for twice the cost. Rerunning the
+    stored calibration cases at 20 moved the PE by 0.16-0.39 dB rms (1.1 at worst) and did
+    not move the shadow-edge calibration fitted against it, so the fits stand. The
+    turbulent mean-field test runs at 10 in height with 1000 realisations; at 20 its
+    tolerance was too tight for its sample size. Halving the range steps costs most cases
+    only 0.02-0.03 dB, but fails `test_benchmark` by 0.2-0.4 dB at long range. Do not
+    coarsen the range step to buy speed.
+  - **Normalisation:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
+    p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the
+    exact two-ray field (0.3 dB, rigid) and to Weyl–van der Pol through NICE-OPS's own
+    `spherical_reflection_coefficient` (0.5 dB, grass), which checks the ground condition's
+    sign too.
+  - **Results land on exact multiples of `output_step`,** interpolated between range steps.
+    The range step follows the wavelength, so without that each frequency had its own grid,
+    and band averaging read past the end of one.
+  - **The shadow is checked against an exact solution** (`tests/test_pe_shadow.cpp`). For
+    k^2 = k0^2 (1 + 2z/R) over rigid ground the field is a residue series of Airy creeping
+    waves, and the PE matches it within 0.02 dB down to -47 dB at 250 Hz to 1 kHz. The complex
+    Airy function it needs is `src/airy.{hpp,cpp}`: series for |z| <= 5, asymptotic beyond,
+    with the connection formula near the negative axis. Five is where both are ~1e-7; near
+    the positive real axis the series cancels exp(4/3 z^1.5) of its digits away. The
+    reference values came from Bessel-integral quadrature, not memory, which had Ai(-10)
+    wrong.
+  - **The domain margin is at least 250 m, and the absorbing layer 100 wavelengths.** In a
+    shadow the near-ground field is a weak remainder while energy leaks upward past it.
+    With 60 wavelengths of margin (25 m at 1 kHz), reflection off the layer set a floor: the
+    PE came out 3.8 dB high at -44 dB against the residue series.
+  - **Turbulence is phase screens** (`PeSetup::gamma_t`, `outer_scale`, `screen_spacing`,
+    `seed`; `pe_compare --gamma_t`). von Karman in the effective index with C^2 = gamma_t / 4
+    -- HARMONOISE's gamma_t, the form Ostashev's and HARMONOISE's coherences both reduce to
+    -- uniform in height, one screen per outer scale of range, drawn by FFT (`ScreenSource`).
+    The screen's vertical spectrum is the 3-D spectrum integrated across the plane, so the
+    vertical coherence is 3-D's. `solve_pe_band` makes each frequency its own realisation.
+    `tests/test_pe_turbulence.cpp` checks the screens' variance (0.06%), the mean field's
+    exp(-sigma^2/2) decay (within sampling noise), and ShadowScattering against the PE.
+    Still air is untouched: gamma_t 0 skips it all.
+  - **`ShadowScattering` (`--scattering`) is fitted to it**, a + 10 lg gamma_t + b lg f +
+    c lg R + d lg z_s dB re free field, added in energy to the transition's field where it
+    runs, with the floor off. Single scattering is linear in gamma_t and the PE agrees (x3 ->
+    4.82 dB, theory 4.77). Two things to know before trusting a strength:
+    - **The pair fit's gamma_t = 3e-5 is far too strong for scattering.** It fills the
+      day-284 shadows to -3 dB re free field; the measured SEL wants <= ~3e-6
+      (HARMONOISE's "moderate"), and does as well with the floor. It is off by default for
+      that reason.
+    - The 1.2 m constants come from one source height; the height term is the flush fit's.
+  - Without `--gamma_t` the deep shadow, 40–90 dB down, is not physical. Absorption is optional
+    (`PeSetup::absorption`, Np/m, the imaginary part of k so it acts along the actual path)
+    and off in `pe_compare`, because the ray-model comparison leaves it out of all four.
+  - **Findings** (README has the tables). Downwind, `stratified` is within 0.4–2.1 dB rms of
+    the PE and the others are 1–8 dB off. Upwind, the PE's shadow onset lies between
+    `stratified` (too early) and `linear` (too late), moving toward `stratified` with
+    frequency; the per-band boundary law is that treatment.
+  - **`--no_pe`** gives the ray models' columns alone, on the PE's range grid, for
+    re-scoring a model change against stored PE runs without re-solving them.
+- `src/exact_solutions.{hpp,cpp}`, `tools/benchmark.cpp`, `tests/test_benchmark.cpp` — step 7b:
+  the Attenborough et al. benchmark (JASA 97, 173 (1995); the PDF is not in the repo) and its
+  exact solutions: direct plus image ray (case 1), the downward normal-mode series (case 2)
+  and the upward residue series (case 3), all over impedance ground with absorption as
+  Im k0. The PE reproduces the paper's figs. 11–14 in every panel. `README.md` has the
+  tables. Load-bearing:
+  - **The mode sums are derived in `exact_solutions.cpp`, not copied, because the paper's
+    eq. (11) is wrong.** Its upward ground condition, Ai'(b) + i k0 l beta w Ai(b) = 0, should
+    read Ai'(b) - i k0 l beta w² Ai(b) = 0, a factor exp(i pi/3) in the admittance term. The
+    printed form misses the PE by 1.5–12 dB at 100 Hz, and the derived one agrees to 0.02 dB.
+    Eq. (10) is right up to an overall sign. Over rigid ground the two forms coincide, so
+    `test_pe_shadow` could never have caught it. Do not "fix" the code back to the paper.
+  - **Case 2's exact profile, c0/sqrt(1 - 2z/R), turns every ray below z = R/2.** Near-vertical
+    ones fall back within R = 3.4 km like mortar rounds. The PE cannot carry them (30–45° and
+    an absorbing top), and neither can the benchmark's linear profile. Uncut, they put 5 dB
+    between the series and the PE by 1 km at 100 Hz, and features at R and 2R that the paper's
+    own normal-mode figure shows and its FFP/PE figure lacks. `downward_pressure`'s
+    `max_elevation` drops modes steeper than the cut. The test uses 75°: paths reaching 1 km
+    leave below 8.4° or above 81.6°. At 10 Hz only ~60 modes lie below 75°, too few for a
+    clean cut within 6 wavelengths, so the test uses the full series there. At 1 kHz past
+    500 m the PE's own grid is the limit, 0.8 dB at 10 points a wavelength and 0.3 at 20.
+  - **`impedance_airy_zeros` is built for |q| <= 6 and throws past it.** It follows each zero
+    of Ai' from q = 0, from a first-order seed once |a'| > 4|q|² + 10. It checks the count
+    with the argument principle on a box, which caught a zero lost to the continuation in
+    development. The benchmark reaches |q| = 4.9. At |q| = 8.5 the continuation loses its
+    way, and at 10.8 the box's edge overflows a double. The low zero at 1 kHz is the ground's
+    surface wave, near q², and the continuation reaches it. `first_impedance_airy_zero`
+    follows the first zero alone, which stays well apart from its neighbours, to any |q|
+    (checked to 1e5 against a_1 - 1/q - a_1/(3q^3)): what the shadow loss needs.
+    **Past |q| = 6 with Re q <= 0** (every upward problem over ordinary ground) the zeros
+    are seeded instead from zeta = (n - 3/4) pi - atan(q / sqrt(x)), b = -x, and polished by
+    Newton; checked to step by pi in zeta. That removed the limit for `upward_pressure`.
+    Re q > 0 past 6 (downward, and surface-wave grounds) still throws.
+  - **A mode sum returns NaN where it cannot be trusted:** terms cancelling by more than nine
+    orders (the residue series near the source, whose terms grow before decaying), or a tail
+    not yet dead at the 12000-mode cap. Callers skip NaN rather than tighten the cap.
+  - **`hankel1_0` switches from the power series to the asymptotic expansion at
+    |z| = 12 - 3 Im z / |z|.** The series loses exp(|z| + Im z) of its digits, and the
+    expansion's smallest term is exp(-2|z|). A switch on |z| alone put H0(3+6i) off by 1e-6.
+    Its test values are Mathematica's, as are the root-finder's.
+  - **The benchmark's inputs are its own:** the tabulated impedances (Z = 38.79+38.41i,
+    12.81+11.62i, 5.96+2.46i), not a NICE-OPS impedance model, and the absorption it quotes
+    (0.18 and 5.4 dB/km, ANSI S1.26-1978; ISO 9613-1 gives 0.22 and 4.98). Its profiles stop
+    at 1000 m, the height of its contour plots. Only case 2 at 10 km cares, and the paper
+    notes the same dependence. A full run is ~2.5 min.
+- **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
+  observer's point raised by its height above the ground. A flush microphone (height 0) with
+  `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its
+  height, whose ground model and `GroundTable` are built once per distinct height. An observer
+  file's fifth column (`id,x,y,z,height`) gives heights per observer, so one run mixes plates
+  and poles, as test arrays do. Without it everyone takes the run's receiver. The peak
+  search's ground bound is the larger of the plate's and the point receiver's, which does not
+  depend on height. `mixed_receivers_are_their_subsets` checks a mixed run against runs over
+  each kind (with `--exact_ground`, because a table's extent follows its run's observers).
+  The point receiver's direct path ended on the ground until this went in, while its ground
+  model put the microphone 1.2 m up. Point-receiver SEL moved by up to ±0.8 dB on the demo
+  grid, almost all from the low states; plates and the goldens did not move.
 - `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
   than a table, so it evaluates at whatever band centres a database carries) and band-limited
   energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but
@@ -397,7 +779,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   - `std::sqrt` on a `std::complex` costs an **atan2**, because libc++ evaluates it in polar
     form. `ground_effect.cpp` called it three times per band; two were provably redundant
     (`sqrt(w)` *is* the numerical-distance parameter, verified over the whole domain) and the
-    third is now `fast_sqrt`, which is algebraic. `std::abs`/`std::arg` on a complex cost a
+    third is an algebraic root written out in the band loop. `std::abs`/`std::arg` on a complex cost a
     hypot and an atan2 and are gone the same way -- `|Q|cos(p + arg Q)` is
     `Re(Q)cos p - Im(Q)sin p`, and `|w| <= 500` is `norm(parameter) <= 500`.
   - `faddeeva` is written in real arithmetic. Every `std::complex` multiply carries a branch to
@@ -462,7 +844,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   `to_geodetic` inverts the projection by Newton iteration, which is what `--latlon` output
   uses. Ported from the D `worldtransforms.d`/`wgs84tocartesian.d` pair, which had no notion of
   a rotated frame and whose inverse walked fixed 1e-5 degree increments.
-- `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `src/splines.hpp` wraps it as `Spline` for `trajectory.cpp`. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
+- `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `trajectory.cpp` uses it directly. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
 ### Geodetic trajectory input
@@ -495,18 +877,48 @@ touching it:
   from `--origin` or from the first geodetic track and hands it to each `Trajectory`.
 - **Velocity and load factor are derived, and that is the whole accuracy story.** The
   projection is not the lossy part: altitude passes through exactly and x/y to under a metre.
-  Differentiating a spline twice for the load factor is. Interpolating a *dense* track exactly
-  (`--path_smoothing 0`, the default) amplifies the coordinates' 1e-8 degree rounding by
-  1/step², which on the 0.02 s demo track moves CT by 17% and the footprint by 3 dB in the
-  worst cell; `--path_smoothing 0.02` takes that to 0.028 dB median and 2.4 dB worst. The
-  default stays at zero because a planner's waypoints are exact intent rather than
-  measurements, and the reader logs a warning when it sees dense input with no smoothing.
+  Differentiating a spline twice for the load factor is. **`--path_smoothing` defaults to 10 ft**
+  and is an acceptable deviation in feet RMS per axis, not an abstract weight -- the solver
+  spends the whole budget rather than merely staying inside it. Interpolating exactly
+  (`--path_smoothing 0`) amplifies the coordinates' 1e-8 degree rounding by 1/step² -- 2500x on
+  the 0.02 s demo track -- and moves the footprint by **11.6 dB at the median**; the 10 ft
+  default takes that to 0.085 dB. Zero is wrong for both kinds of input, which is why it is no
+  longer the default: measured positions turn into rounding noise, and sparse waypoints are a
+  statement of intent, so flying exactly through them manufactures manoeuvring that is itself a
+  noise source. 10 ft is not the optimum for any one input shape (a dense 50 Hz track does
+  better at 0.0656 ft, tuned to its own resolution) but it is the only value that is good on
+  all of them at once.
+
+  Those numbers were re-measured after `SmoothingSpline` was fixed to give the lambda = 0 case
+  its curvature. Before that, `--path_smoothing 0` returned a spline with zero second
+  derivative everywhere, so the load factor was exactly 1 g on every state, CT never moved, and
+  the amplification above never happened -- the old "17% and 3 dB" measured that bug. README
+  carries the re-measured table for all four input shapes; do not re-derive it.
   README carries the measured table for all four input shapes; do not re-derive it.
 - **Resampling never coarsens.** The sound exposure integral is a Riemann sum over whatever
   step the states end up with, so a 50 Hz file keeps its own sample times and only sparse or
   unevenly spaced input is refitted onto the `-s` grid.
 
-- `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` resamples onto a uniform dt grid, smoothing via `src/splines.hpp` (currently commented out in `main`, as is `watts_trim()`). It takes either a smoothing parameter or a `tolerance` bounding how far the smoothed path may sit from the measured one.
+- `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` resamples onto a uniform dt grid, smoothing via `src/smoothing_spline.hpp` and taking velocity and load factor from the spline's own derivatives (currently commented out in `main`; `watts_trim()` is reachable through `--trim`). It takes either a smoothing parameter or a `tolerance` bounding how far the smoothed path may sit from the measured one.
+- **`--speed_reference`** (roadmap step 3, the NICE-OPS half). It takes the flight condition
+  against the air, not the ground. The things to preserve:
+  - **Scope.** `Trajectory::relative_to_air` sets each state's wind (`State::wx`, `wy`) and
+    recomputes μ, `fpa` and `fpa_e` from `air_velocity()`. `process_trajectory` hands the same
+    air velocity to the sphere frame, so the nose follows it too. LF, CT and the load-factor
+    normal stay inertial.
+  - **Calm is bit-identical.** `vx - 0.0` is `vx`, and `speed_reference_air_calm_is_ground`
+    checks it end to end.
+  - **The database decides by default.** The root text attribute `speed_reference`, `ground`
+    or `air` (absent is ground), is read into `Database::speed_reference()`. It is settled per
+    trajectory in `refer_to_database_speed`, because each trajectory can name its own
+    database. Air with no wind in `--atmosphere` is refused, not taken as calm.
+  - **It runs after `--trim`,** whose "slowest point" is over the ground.
+  - **One rotation.** `CompassToLocal` (atmosphere_profile.hpp) turns east/north into the
+    local frame for this and for both ray models. Before it, refraction.cpp and
+    stratified.cpp each spelled the rotation out, with the same expression.
+  - **panam's side is not built yet.** It has to use the same definition, the README's
+    "Speed reference" section, and write the attribute. Until it does, every database is
+    ground-referenced, and an air run against one mixes the two.
 - `src/plotting.{hpp,cpp}` — `plt::` facade replacing the vendored matplotlib-d binding. Embeds Python via pybind11 and calls matplotlib directly; the interpreter is created lazily on first use, so non-plotting runs never pay the import cost.
 
 ### D standard-library replacements
