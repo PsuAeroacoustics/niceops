@@ -140,6 +140,10 @@ struct VerticalOperator
     double a = 0.0; // 1 / (k_a dz)^2
     complex g1, g2;
     std::size_t m = 0; // unknowns psi_1 .. psi_{n-1}
+    // The fourth-order ground condition (pade_march): psi_0 is then carried
+    // as psi[m], and the condition is psi' = (ground_slope / dz) psi.
+    bool fourth_ground = false;
+    complex ground_slope;
 };
 
 // Crank-Nicolson on the Pade(1,1) wide-angle equation:
@@ -362,6 +366,12 @@ struct PadeFactors
     std::vector<Lanes> row_weight;
     std::vector<complex> smoothed;
     complex g1, g2;
+    // The fourth-order ground condition only, per term: the ground row's
+    // right side is kappa R short of the others', and psi_0 is rebuilt from
+    // the two rows above it and R (pade_march).
+    bool fourth_ground = false;
+    std::vector<complex> kappa, from_first, from_second;
+    complex from_right;
     std::vector<complex> weight; // c_j / a
     complex constant; // c_0
 };
@@ -386,7 +396,7 @@ void pade_step(PadeFactors& factors, std::vector<complex>& psi)
         // In parts: std::complex's arithmetic would not vectorise here.
         double* __restrict const b = reinterpret_cast<double*>(factors.smoothed.data());
         const double* __restrict const f = reinterpret_cast<const double*>(psi.data());
-        const complex ground = factors.g1 * psi[0] + factors.g2 * psi[1];
+        const complex ground = factors.fourth_ground ? psi[m] : factors.g1 * psi[0] + factors.g2 * psi[1];
         const double tenth = 10.0 / 12.0, twelfth = 1.0 / 12.0;
         b[0] = tenth * f[0] + twelfth * (ground.real() + f[2]);
         b[1] = tenth * f[1] + twelfth * (ground.imag() + f[3]);
@@ -415,7 +425,23 @@ void pade_step(PadeFactors& factors, std::vector<complex>& psi)
         }
     }
     // Forward: w_r = e_r psi_r - e_r w_{r-1}.
-    for (std::size_t row = 0; row < m; row++)
+    // Row 0 a term at a time: under the fourth-order ground condition each
+    // term's right side there is its own.
+    const complex ground_before = psi[m];
+    const complex ground_right = factors.fourth_ground ? 7.0 * psi[m] + 6.0 * psi[0] - psi[1] : complex(0.0);
+    for (std::size_t term = 0; term < factors.terms; term++)
+    {
+        const std::size_t pair = term / 2, lane = term % 2;
+        complex first = right[0];
+        if (factors.fourth_ground)
+            first -= factors.kappa[term] * ground_right;
+        const complex value = complex(e[2 * pair][lane], e[2 * pair + 1][lane]) * first;
+        x_re[pair][lane] = value.real();
+        x_im[pair][lane] = value.imag();
+        w[2 * pair][lane] = value.real();
+        w[2 * pair + 1][lane] = value.imag();
+    }
+    for (std::size_t row = 1; row < m; row++)
     {
         const Lanes p_re = both(right[row].real()), p_im = both(right[row].imag());
         const Lanes* const e_row = e + row * pairs * 2;
@@ -464,7 +490,9 @@ void pade_step(PadeFactors& factors, std::vector<complex>& psi)
         }
         combine(row);
     }
-    // Row 0, whose back coefficient carries the ground.
+    // Row 0, whose back coefficient carries the ground; and psi_0 itself,
+    // where it is carried.
+    complex ground_after = constant * ground_before + factors.from_right * ground_right;
     for (std::size_t term = 0; term < factors.terms; term++)
     {
         const std::size_t pair = term / 2, lane = term % 2;
@@ -472,8 +500,12 @@ void pade_step(PadeFactors& factors, std::vector<complex>& psi)
         const complex x = complex(w[2 * pair][lane], w[2 * pair + 1][lane]) - factors.first_back[term] * x_above;
         x_re[pair][lane] = x.real();
         x_im[pair][lane] = x.imag();
+        if (factors.fourth_ground)
+            ground_after += factors.from_first[term] * x + factors.from_second[term] * x_above;
     }
     combine(0);
+    if (factors.fourth_ground)
+        psi[m] = ground_after;
 }
 
 using PadeStep = void (*)(PadeFactors&, std::vector<complex>&);
@@ -491,6 +523,21 @@ constexpr std::array<PadeStep, sizeof...(counts)> pade_steps(std::index_sequence
 // off-diagonals are one again and the same one-number-a-row factorisation
 // serves; what it costs is a weight per row, c_0's share over c, where second
 // order has one per term.
+//
+// The ground at fourth order (op.fourth_ground).  Eliminating psi_0 with a
+// three-point one-sided derivative is second order, and it was what the
+// fourth-order operator converged at.  A one-sided derivative of higher order
+// would reach past the tridiagonal, so the equation supplies the accuracy
+// instead: with F = y'' = k_a^2 (psi - D y) and y' = lambda y at the ground,
+//   y_1 - (1 + dz lambda) y_0 = dz^2 (7 F_0 + 6 F_1 - F_2) / 24 + O(dz^5),
+// Taylor's series with F' and F'' taken by differences of F.  It is a row in
+// y_0, y_1, y_2 that is linear in the pole, like Numerov's, so the solves are
+// still resolvents of one operator -- on the grid with psi_0 in it, which is
+// therefore carried (as psi[m]) instead of being derived from psi_1 and psi_2.
+// Solving that row for y_0,
+//   y_0 = G1 y_1 + G2 y_2 + H R,  R = 7 psi_0 + 6 psi_1 - psi_2,
+// puts G1 and G2 where g1 and g2 were and takes c_0 H R off row 1's right
+// side, a different amount for each term.
 March pade_march(const VerticalOperator& op, const PadePropagator& propagator, bool fourth_order)
 {
     const std::size_t m = op.m;
@@ -509,6 +556,10 @@ March pade_march(const VerticalOperator& op, const PadePropagator& propagator, b
     factors->constant = propagator.constant;
     factors->g1 = op.g1;
     factors->g2 = op.g2;
+    factors->fourth_ground = fourth_order && op.fourth_ground;
+    factors->kappa.assign(terms, 0.0);
+    factors->from_first.assign(terms, 0.0);
+    factors->from_second.assign(terms, 0.0);
     if (fourth_order)
     {
         factors->row_weight.assign(m * pairs * 2, both(0.0));
@@ -533,8 +584,21 @@ March pade_march(const VerticalOperator& op, const PadePropagator& propagator, b
                 d = (-2.0 * a + (10.0 / 12.0) * (op.epsilon[row + 1] - pole)) / c;
                 if (row == 0)
                 {
-                    d += column(0) * op.g1 / c;
-                    upper_0 = 1.0 + column(0) * op.g2 / column(2);
+                    complex share_1 = op.g1, share_2 = op.g2; // psi_0's shares of psi_1, psi_2
+                    if (factors->fourth_ground)
+                    {
+                        const complex d0 = op.epsilon[0] - pole, d1 = op.epsilon[1] - pole, d2 = op.epsilon[2] - pole;
+                        const complex alpha = -(1.0 + op.ground_slope) + 7.0 * d0 / (24.0 * a);
+                        share_1 = -(1.0 + d1 / (4.0 * a)) / alpha;
+                        share_2 = d2 / (24.0 * a) / alpha;
+                        const complex h = 1.0 / (24.0 * a * alpha);
+                        factors->kappa[j] = column(0) * h;
+                        factors->from_first[j] = propagator.residues[j] * share_1 / c;
+                        factors->from_second[j] = propagator.residues[j] * share_2 / column(2);
+                        factors->from_right += propagator.residues[j] * h;
+                    }
+                    d += column(0) * share_1 / c;
+                    upper_0 = 1.0 + column(0) * share_2 / column(2);
                 }
                 const complex weight = propagator.residues[j] / c;
                 factors->row_weight[(row * pairs + j / 2) * 2][j % 2] = weight.real();
@@ -579,7 +643,12 @@ PeResult solve_pe(const PeSetup& s)
     const double c_ref = speed_at(s, 0.0);
     const double k_a = omega / c_ref;
     const double wavelength = c_ref / s.frequency;
-    const double dz = wavelength / s.points_per_wavelength;
+    // Ten points a wavelength where everything on the grid is fourth order,
+    // twenty where anything is second (pe.hpp).
+    const bool all_fourth = s.scheme == PeScheme::split_step_pade && s.vertical_order == 4
+            && s.boundary_order == 4;
+    const double points = s.points_per_wavelength > 0.0 ? s.points_per_wavelength : (all_fourth ? 10.0 : 20.0);
+    const double dz = wavelength / points;
 
     // The domain: everything the source and receivers need, a clear margin,
     // then an absorbing layer that takes what leaves the top.  The margin is
@@ -631,6 +700,28 @@ PeResult solve_pe(const PeSetup& s)
     op.g1 = g1;
     op.g2 = g2;
     op.m = m;
+    if (s.boundary_order != 2 && s.boundary_order != 4)
+        throw std::invalid_argument("solve_pe: boundary_order is 2 or 4");
+    const bool split_step = s.scheme == PeScheme::split_step_pade;
+    // Fourth order at the boundaries: the ground condition, which needs the
+    // fourth-order operator, and the interpolation onto and off the grid.
+    const bool cubic = split_step && s.boundary_order == 4;
+    op.fourth_ground = cubic && s.vertical_order == 4;
+    op.ground_slope = -i * k_a * s.admittance * dz;
+    // Cubic weights for a point u grid spacings up, on the four nodes from
+    // `first`: the two either side and one beyond each, or the lowest four.
+    auto cubic_weights = [](double u, std::size_t& first, double weight[4]) {
+        const std::size_t below = static_cast<std::size_t>(u);
+        first = below > 0 ? below - 1 : 0;
+        const double t = u - static_cast<double>(first);
+        for (int k = 0; k < 4; k++)
+        {
+            weight[k] = 1.0;
+            for (int other = 0; other < 4; other++)
+                if (other != k)
+                    weight[k] *= (t - other) / static_cast<double>(k - other);
+        }
+    };
 
     const bool turbulent = s.gamma_t > 0.0;
     const double spacing = s.screen_spacing > 0.0 ? s.screen_spacing : s.outer_scale;
@@ -714,15 +805,39 @@ PeResult solve_pe(const PeSetup& s)
         // below it to share the delta with, and takes the Gaussian.
         if (s.starter == PeStarter::self && s.source_height >= dz)
         {
-            request.starter = true;
-            try
+            // Its fit is harder than the propagator's -- the amplitude factor
+            // rises toward the branch point -- and at a long step it can be
+            // refused where the propagator's was not.  Then the first step is
+            // taken in halves, or quarters: the starter over the first part
+            // and that length's own propagator over the rest.
+            PadeRequest first = request;
+            first.starter = true;
+            first.max_terms = static_cast<int>(2 * max_pade_pairs);
+            for (const int parts : {1, 2, 4})
             {
-                first_step = pade_march(op, pade_propagator(request), fourth_order);
-                result.self_started = true;
-            }
-            catch (const std::runtime_error&)
-            {
-                first_step = nullptr;
+                first.sigma = request.sigma / parts;
+                try
+                {
+                    const March start = pade_march(op, pade_propagator(first), fourth_order);
+                    March rest;
+                    if (parts > 1)
+                    {
+                        PadeRequest part = request;
+                        part.sigma = first.sigma;
+                        rest = pade_march(op, pade_propagator(part), fourth_order);
+                    }
+                    first_step = [start, rest, parts](std::vector<complex>& field) {
+                        start(field);
+                        for (int k = 1; k < parts; k++)
+                            rest(field);
+                    };
+                    result.self_started = true;
+                    break;
+                }
+                catch (const std::runtime_error&)
+                {
+                    first_step = nullptr;
+                }
             }
         }
     }
@@ -731,7 +846,8 @@ PeResult solve_pe(const PeSetup& s)
     // Salomons' second-order Gaussian starter, with its image in the ground
     // at the normal-incidence reflection coefficient.  Normalised so that
     // p = psi exp(i k_a r) / sqrt(r) is a unit point source, exp(ikR)/R.
-    std::vector<complex> psi(m);
+    // psi_1 .. psi_m, and psi_0 after them where the ground condition carries it.
+    std::vector<complex> psi(m + 1);
     const complex reflection = (1.0 - s.admittance) / (1.0 + s.admittance);
     const complex scale = std::sqrt(i * k_a);
     auto starter = [&](double z) {
@@ -743,6 +859,8 @@ PeResult solve_pe(const PeSetup& s)
         const double z = static_cast<double>(row + 1) * dz;
         psi[row] = scale * (starter(z - s.source_height) + reflection * starter(z + s.source_height));
     }
+    if (!first_step)
+        psi[m] = scale * (1.0 + reflection) * starter(s.source_height);
     if (first_step)
     {
         // The self-starter's delta function, shared between the two grid
@@ -755,8 +873,21 @@ PeResult solve_pe(const PeSetup& s)
         const std::size_t below = std::min(static_cast<std::size_t>(u), m - 1); // grid index j >= 1
         const double t = u - static_cast<double>(below);
         const complex weight = std::sqrt(2.0 * pi * i / k_a) / dz;
-        psi[below - 1] = weight * (1.0 - t);
-        psi[below] = weight * t;
+        std::size_t first;
+        double share[4];
+        cubic_weights(u, first, share);
+        if (cubic && (first > 0 || op.fourth_ground) && first + 3 <= m)
+        {
+            // Four nodes, so that the source sits where it is to fourth order
+            // and not second; node 0 is psi[m].
+            for (std::size_t k = 0; k < 4; k++)
+                psi[first + k > 0 ? first + k - 1 : m] = weight * share[k];
+        }
+        else
+        {
+            psi[below - 1] = weight * (1.0 - t);
+            psi[below] = weight * t;
+        }
     }
 
     // Turbulence: a screen every `spacing` metres, below the absorbing layer.
@@ -772,17 +903,27 @@ PeResult solve_pe(const PeSetup& s)
     // Crank-Nicolson's step follows the wavelength; the split-step's divides
     // the output step, up to rounding.
     const std::size_t steps = static_cast<std::size_t>(std::ceil(s.max_range / dr - 1e-9));
-    // psi at each receiver, linear between grid points; psi_0 from the ground
-    // condition.
+    // psi at each receiver, cubic or linear between grid points; psi_0 from
+    // the ground condition.
     auto at_receiver = [&](double zr) {
         const double u = zr / dz;
         const std::size_t j = std::min(static_cast<std::size_t>(u), m - 1);
         const double t = u - static_cast<double>(j);
         auto at = [&](std::size_t jj) {
             if (jj == 0)
-                return g1 * psi[0] + g2 * psi[1];
+                return op.fourth_ground ? psi[m] : g1 * psi[0] + g2 * psi[1];
             return jj <= m ? psi[jj - 1] : complex(0.0);
         };
+        if (cubic)
+        {
+            std::size_t first;
+            double share[4];
+            cubic_weights(u, first, share);
+            complex value = 0.0;
+            for (std::size_t k = 0; k < 4; k++)
+                value += share[k] * at(first + k);
+            return value;
+        }
         return (1.0 - t) * at(j) + t * at(j + 1);
     };
     // Results at exact multiples of the output step, whatever the range step,
@@ -811,6 +952,7 @@ PeResult solve_pe(const PeSetup& s)
             const auto& phi = screens->next();
             for (std::size_t row = 0; row < screened; row++)
                 psi[row] *= std::polar(1.0, phi[row + 1]);
+            psi[m] *= std::polar(1.0, phi[0]);
             next_screen += spacing;
         }
         for (std::size_t k = 0; k < s.receiver_heights.size(); k++)

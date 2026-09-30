@@ -624,9 +624,8 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     `src/pade_propagator.{hpp,cpp}`): psi(r + dr) = [c_0 + sum_j c_j (Q - p_j)^-1] psi(r), a
     rational stand-in for exp(i k_a dr (sqrt(1 + Q) - 1)). One tridiagonal solve per term,
     about ten terms for an eight-wavelength step, where Crank–Nicolson takes eighty
-    steps. 19x per march at the defaults (32x at 35 degrees, second order, Gaussian
-    starter); a five-band `pe_compare` case's PE 25.4 s -> 1.5 s, the benchmark tool
-    2.5 min -> 10 s. Things to keep:
+    steps. 39x per march at the defaults; a five-band `pe_compare` case's PE 25.4 s ->
+    0.47 s, the benchmark tool 2.5 min -> 10 s. Things to keep:
     - **The coefficients are fitted at run time, not tabulated and not Collins' Taylor
       Padé.** The step has to divide `output_step`, so k_a dr is different for every
       frequency. r is the type (n, n) interpolant of the exact propagator at Chebyshev nodes
@@ -669,7 +668,37 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
         one-number-a-row factorisation still serves. It costs a weight per term per row
         and a third more time. Second order at 20 points a wavelength is a radian of
         phase out by 35 degrees at 1 kHz from a 100 m source.
-      - Together: 0.08 dB rms or better at every elevation to 50 degrees, 0.14 to 60.
+      - Together, and with the grid's edges at fourth order (next): 0.07 dB rms or
+        better at every elevation to 60 degrees at ten points a wavelength, 0.01 to 50 at
+        twenty.
+    - **The ground condition and the interpolation are fourth order too**
+      (`boundary_order` 4), and that is what makes ten points a wavelength the default.
+      With the operator alone at fourth order the grid still converged at second. On the
+      windy profile against 80 points: second order throughout 0.02-0.04 dB rms at 20
+      points, fourth-order operator with second-order edges 0.01-0.02, fourth throughout
+      under 0.0005, and 0.001-0.002 at 10 (0.004-0.01 at 6). How:
+      - *The ground row comes from the equation, not from a wider stencil*, which would
+        leave the tridiagonal. With F = y'' = k_a^2 (psi - D y) and y' = lambda y at z = 0,
+        y_1 - (1 + dz lambda) y_0 = dz^2 (7 F_0 + 6 F_1 - F_2) / 24 + O(dz^5). It is a row
+        in y_0, y_1, y_2 that is linear in the pole, like Numerov's rows, so every solve is
+        still a resolvent of one operator -- on the grid that includes psi_0.
+      - *psi_0 is therefore carried, as `psi[m]`*, not derived from psi_1 and psi_2. Each
+        step rebuilds it from the two rows above and the old field, a few operations per
+        term; the screens turn it with the rest; the Gaussian starter sets it.
+      - *Row 1's right side differs per term* (it loses c_0 H R, R = 7 psi_0 + 6 psi_1 -
+        psi_2), so the forward sweep takes row 0 a term at a time before the paired loop.
+      - *Cubic interpolation at both ends of the path.* The receivers read four nodes,
+        and the self-starter's delta function is spread over four with the same weights:
+        by reciprocity a source placed to second order is a receiver read to second order.
+    - **`points_per_wavelength` 0 means 10 where all of that holds and 20 where anything
+      is second order** (Crank–Nicolson, `vertical_order` 2, `boundary_order` 2). Do not
+      run a second-order configuration at 10: it is 0.06-0.19 dB rms and 0.6 at worst.
+    - **The starter's first step is taken in parts if its fit is refused.** Its fit is
+      harder than the propagator's (the amplitude factor rises toward the branch point)
+      and fails at long steps on the coarse grid. It used to fall back to the Gaussian
+      silently, which showed as a 0.007 dB offset that depended on the range step; now it
+      takes the starter over a half or a quarter of the step and that length's own
+      propagator over the rest. `a long first step is still self-started` pins it.
     - **The Gaussian starter is biased for any source where k differs from k at the
       ground**, because it is normalised with k_a: 0.11-0.15 dB high at every range for a
       100 m source in the benchmark's upward column (against the residue series), 0.10 dB
@@ -678,11 +707,6 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       self-starter is within 0.04 dB. A source within a grid point of the ground, or a
       starter fit that is refused, falls back to the Gaussian; `PeResult::self_started`
       says which ran.
-    - **Fourth order has not been spent on a coarser grid.** At 14 points a wavelength it
-      is as close to a 40-point run as second order was at 20 (0.02-0.04 dB rms on the
-      windy profile) and a third cheaper, but it converges only at second order, because
-      the ground condition and the receiver's interpolation still are. The default stays
-      at 20.
     - **Compare a turbulent run with a still one marched the same way.** Turbulence caps
       the step at the screen spacing, and the field at a point whose reflected ray is
       steeper than `max_angle` depends on the step. `pe_turbulent_mean_field_decays`
@@ -692,8 +716,9 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       0.001 dB, 60 dB into a shadow, past the first few steps. Within them (the modes
       beyond `max_angle` still leaving) it is 0.1-0.4 dB. `tests/test_pade_propagator.cpp`
       holds that, agreement with Crank–Nicolson at 40 steps a wavelength (on its own
-      second-order grid and Gaussian starter), the exact field to 50 degrees, and the
-      elevated source's strength.
+      second-order grid and Gaussian starter), the exact field to 50 degrees, the elevated
+      source's strength, and fourth-order convergence in height (16x from doubling the
+      grid, against 4x with `boundary_order` 2).
     - **The kernel pairs terms into two-lane vectors by hand** (`Lanes`, as `Pair` in
       `sphere_database.cpp`), with the term count a template parameter. From scalar source
       the compiler ran one term at a time: 11.7 ns a row against 5.9 (second order, eight
@@ -734,8 +759,8 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     share. A five-band `pe_compare` case went from 194 s to 14 s that way. Summing is in
     frequency order afterwards, so any thread count gives the same bits, under either
     scheme.
-  - **The grid is 20 points per wavelength in height** (and, for Crank–Nicolson, 10 in
-    range). Against a
+  - **Crank–Nicolson's grid is 20 points per wavelength in height and 10 in range.**
+    (The split-step's is 10 in height; above.) Against a
     30 x 30 reference, 10 in height was ~0.1 dB rms near the ground but 0.47 dB rms (2.2 at
     worst) for a 1.2 m receiver at 1 kHz; 20 is 0.09 dB, for twice the cost. Rerunning the
     stored calibration cases at 20 moved the PE by 0.16-0.39 dB rms (1.1 at worst) and did
@@ -743,9 +768,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     turbulent mean-field test runs at 10 in height with 1000 realisations; at 20 its
     tolerance was too tight for its sample size. Halving Crank–Nicolson's range steps costs
     most cases only 0.02-0.03 dB, but fails `test_benchmark` by 0.2-0.4 dB at long range. Do
-    not coarsen its range step to buy speed; that is what the split-step is for. Height is
-    now where the cost is: a fourth-order vertical stencil at 10 points would halve it and
-    has not been tried.
+    not coarsen its range step to buy speed; that is what the split-step is for.
   - **Normalisation:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
     p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the
     exact two-ray field (0.3 dB, rigid) and to Weyl–van der Pol through NICE-OPS's own

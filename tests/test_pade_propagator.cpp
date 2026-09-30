@@ -338,3 +338,69 @@ TEST_CASE("the self-starter gives an elevated source its own strength", "[pade]"
     }
     CHECK(compared > 20);
 }
+
+TEST_CASE("with the ground and the interpolation at fourth order the grid converges at fourth order", "[pade]")
+{
+    // The refracting case over grass, receivers 1.2 and 20 m up, at 6 and at
+    // 12 points a wavelength against 24.  A fourth-order scheme gains a
+    // factor of 16 from the doubling, a second-order one 4 -- and with the
+    // operator at fourth order but the ground condition and the
+    // interpolation at second, that is all it gained.
+    auto error = [](double points, int boundary) {
+        PeSetup setup = refracting(500.0);
+        setup.boundary_order = 4;
+        setup.points_per_wavelength = 24.0;
+        const auto reference = solve_pe(setup);
+        setup.boundary_order = boundary;
+        setup.points_per_wavelength = points;
+        const auto pe = solve_pe(setup);
+        double sum = 0.0;
+        int count = 0;
+        for (std::size_t k = 0; k < setup.receiver_heights.size(); k++)
+        {
+            for (std::size_t q = 0; q < pe.range.size(); q++)
+            {
+                if (pe.range[q] < 100.0 || std::isnan(reference.relative_level[k][q]))
+                    continue;
+                const double d = pe.relative_level[k][q] - reference.relative_level[k][q];
+                sum += d * d;
+                count++;
+            }
+        }
+        return std::sqrt(sum / count);
+    };
+    const double fourth_6 = error(6.0, 4), fourth_12 = error(12.0, 4);
+    const double second_6 = error(6.0, 2), second_12 = error(12.0, 2);
+    INFO("fourth-order boundaries: " << fourth_6 << " dB rms at 6 points, " << fourth_12 << " at 12; second: "
+                                     << second_6 << ", " << second_12);
+    CHECK(fourth_6 / fourth_12 > 10.0);
+    CHECK(second_6 / second_12 < 6.0);
+    CHECK(fourth_12 < 0.005);
+    CHECK(second_12 > 10.0 * fourth_12);
+}
+
+TEST_CASE("the grid defaults to ten points a wavelength only where it is fourth order throughout", "[pade]")
+{
+    PeSetup setup = refracting(250.0);
+    setup.max_range = 400.0;
+    const auto chosen = solve_pe(setup);
+    setup.points_per_wavelength = 10.0;
+    const auto ten = solve_pe(setup);
+    CHECK(chosen.relative_level[0] == ten.relative_level[0]);
+    setup.points_per_wavelength = 0.0;
+    setup.boundary_order = 2;
+    const auto second = solve_pe(setup);
+    setup.points_per_wavelength = 20.0;
+    const auto twenty = solve_pe(setup);
+    CHECK(second.relative_level[0] == twenty.relative_level[0]);
+}
+
+TEST_CASE("a long first step is still self-started", "[pade]")
+{
+    // The starter's fit is refused at sixteen wavelengths on this grid; the
+    // first step is then taken in parts rather than handed to the Gaussian,
+    // which would show as a step-dependent offset of 0.007 dB here.
+    PeSetup setup = refracting(500.0);
+    setup.range_step_wavelengths = 16.0;
+    CHECK(solve_pe(setup).self_started);
+}

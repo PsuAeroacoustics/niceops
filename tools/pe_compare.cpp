@@ -53,12 +53,13 @@ int main(int argc, char** argv)
     std::string impedance_model = "delany_bazley";
     double porosity_rate = 0.0;
     int samples = 5;
-    double points_per_wavelength = 20.0;
+    double points_per_wavelength = 0.0;
     double range_points_per_wavelength = 10.0;
     std::string scheme = "pade";
     double range_step_wavelengths = 8.0;
     double max_angle = 50.0;
     int vertical_order = 4;
+    int boundary_order = 4;
     std::string starter = "self";
     bool no_pe = false;
     double gamma_t = 0.0;
@@ -76,7 +77,8 @@ int main(int argc, char** argv)
     app.add_option("--impedance_model", impedance_model, "As for niceops.");
     app.add_option("--porosity_rate", porosity_rate, "As for niceops, 1/m.");
     app.add_option("--samples", samples, "PE frequencies per band (default 5).");
-    app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 20).");
+    app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 10 where the grid is fourth order "
+            "throughout, 20 under --scheme cn or either order 2).");
     app.add_option("--scheme", scheme,
             "How the PE marches in range: pade (default), the split-step Pade march, or cn, Crank-Nicolson.")
             ->check(CLI::IsMember({"pade", "cn"}));
@@ -87,6 +89,10 @@ int main(int argc, char** argv)
             "paths from the source come out as NaN.");
     app.add_option("--vertical_order", vertical_order,
             "--scheme pade: order of the height derivative on the grid, 4 (default) or 2.")
+            ->check(CLI::IsMember({2, 4}));
+    app.add_option("--boundary_order", boundary_order,
+            "--scheme pade: order of the ground condition and of the source's and receivers' "
+            "interpolation, 4 (default) or 2.")
             ->check(CLI::IsMember({2, 4}));
     app.add_option("--starter", starter,
             "--scheme pade: self (default), the wide-angle self-starter, or gaussian.")
@@ -161,6 +167,7 @@ int main(int argc, char** argv)
         setup.range_step_wavelengths = range_step_wavelengths;
         setup.max_angle = max_angle;
         setup.vertical_order = vertical_order;
+        setup.boundary_order = boundary_order;
         setup.starter = starter == "gaussian" ? PeStarter::gaussian : PeStarter::self;
         setup.gamma_t = gamma_t;
         setup.outer_scale = outer_scale;

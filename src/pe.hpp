@@ -48,8 +48,14 @@
 //       a radian of phase by 35 degrees at 1 kHz from a 100 m source.
 //       vertical_order 4 takes d^2/dz^2 as Numerov does, which costs a weight
 //       per term per row and a third more time.
-//   Together: within 0.08 dB rms of the exact field at every elevation to 50
-//   degrees, and 0.14 to 60 with max_angle there.
+//     - the grid's edges (boundary_order 4).  With the operator alone at
+//       fourth order the grid still converged at second, because the ground
+//       condition was a three-point one-sided derivative and the source and
+//       receivers met the grid by linear interpolation.  The ground row is
+//       now fourth order too (pe.cpp, pade_march), with psi_0 carried rather
+//       than derived, and both interpolations are cubic.
+//   Together, at ten points a wavelength: within 0.07 dB rms of the exact
+//   field at every elevation to 60 degrees, and within 0.01 to 50 at twenty.
 //
 //   crank_nicolson.  The Pade(1,1) wide-angle equation marched by
 //   Crank-Nicolson (Salomons, Computational Atmospheric Acoustics, 2001,
@@ -65,21 +71,22 @@
 // zones -- and not the steep ones near the source, where refraction does not
 // matter and the straight ray is exact anyway.
 //
-// It never runs in a footprint.  One march is 19 times faster than
-// Crank-Nicolson at the defaults, 24 with max_angle 35 and 32 with second
-// order and the Gaussian starter as well.  A band's frequencies, and several
-// bands at once (solve_pe_bands), run in parallel.
+// It never runs in a footprint.  One march is 39 times faster than
+// Crank-Nicolson at the defaults.  A band's frequencies, and several bands at
+// once (solve_pe_bands), run in parallel.
 //
-// The grid is 20 points per wavelength in height.  At fourth order 14 do as
-// well as 20 did at second -- 0.02-0.04 dB rms from a 40-point run on a windy
-// profile, either way -- and give the time back; the default has not been
-// moved, because the ground condition and the receiver's interpolation are
-// second order still and were calibrated at 20.  Against a 30 x 30
-// Crank-Nicolson reference, 10 was within about 0.1 dB rms for a microphone
-// near the ground but 0.47 dB rms (2.2 dB at worst) for one 1.2 m up at 1 kHz;
-// 20 brings that to 0.09, for twice the cost.  Rerunning the stored
-// calibration cases at 20 moved the PE by 0.16-0.39 dB rms (1.1 at worst) and
-// left the shadow-edge calibration against it unchanged.
+// The grid is 10 points per wavelength in height where it is fourth order
+// throughout, which is the default, and 20 otherwise.  Fourth order is what
+// allows it: on a windy profile out to 1.5 km, against 80 points,
+//                                          20 points      10 points
+//   second order throughout                0.02-0.04 dB   0.06-0.19 dB rms
+//   operator fourth, edges second          0.01-0.02      0.05-0.09
+//   fourth order throughout                < 0.0005       0.001-0.002
+// and 6 points are still within 0.01.  (Crank-Nicolson at 10, for a
+// microphone 1.2 m up at 1 kHz, was 0.47 dB rms and 2.2 at worst from a
+// 30 x 30 reference; rerunning the stored calibration cases at 20 moved the PE
+// by 0.16-0.39 dB rms and left the shadow-edge calibration against it
+// unchanged.)
 
 #include <complex>
 #include <vector>
@@ -126,8 +133,9 @@ struct PeSetup
     // leaves it out.
     double absorption = 0.0;
     PeScheme scheme = PeScheme::split_step_pade;
-    // Grid points per wavelength in height.
-    double points_per_wavelength = 20.0;
+    // Grid points per wavelength in height.  0 chooses: 10 for the split-step
+    // march with vertical_order and boundary_order both 4, 20 otherwise.
+    double points_per_wavelength = 0.0;
     // Split-step Pade: the longest range step, in wavelengths -- the step is
     // the largest that divides output_step and does not exceed it -- the
     // elevation angle the propagator is accurate to, in degrees, and its
@@ -140,6 +148,11 @@ struct PeSetup
     PeStarter starter = PeStarter::self;
     // Split-step Pade: the order of d^2/dz^2 on the grid, 2 or 4.
     int vertical_order = 4;
+    // Split-step Pade: the order of what meets the grid at its edges, 2 or 4
+    // -- the ground condition (4 only with vertical_order 4), and the
+    // interpolation that puts the source on the grid and takes the receivers
+    // off it.
+    int boundary_order = 4;
     // Crank-Nicolson: range steps per wavelength.
     double range_points_per_wavelength = 10.0;
     // Height of the physical domain, below the absorbing layer; 0 chooses it.

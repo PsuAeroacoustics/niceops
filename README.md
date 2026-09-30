@@ -646,17 +646,31 @@ NaN** (within 83 m of the point under a 100 m source, at the default).
 Two more things make the field, and not just the propagator, good to that angle. The march
 starts from Collins' self-starter (`--starter self`): the first range step with the point
 source's modal amplitudes in it, applied to a delta function on the grid, instead of a
-narrow-angle Gaussian. And the height derivative is fourth order (`--vertical_order 4`,
-Numerov's form). Against the exact two-ray field over soft ground at 1 kHz, from a 100 m
-source:
+narrow-angle Gaussian. And the grid is fourth order in height throughout: the derivative
+(`--vertical_order 4`, Numerov's form), the ground condition, and the interpolation that puts
+the source on the grid and takes the receivers off it (`--boundary_order 4`). Against the
+exact two-ray field over soft ground at 1 kHz, from a 100 m source:
 
-| Elevation | Gaussian starter, second order | self-starter, fourth order |
-| --- | --- | --- |
-| 0–20° | 0.01–0.02 dB rms | 0.004–0.01 |
-| 20–30° | 0.14 | 0.03 |
-| 30–35° | 0.59 | 0.005 |
-| 35–40° | 0.61 | 0.08 |
-| 40–50° | 1.75 | 0.03 |
+| Elevation | Gaussian starter, second order, 20 points | self-starter, fourth order, 10 points | … 20 points |
+| --- | --- | --- | --- |
+| 0–20° | 0.01–0.02 dB rms | 0.005 | 0.005 |
+| 20–30° | 0.14 | 0.006 | 0.003 |
+| 30–35° | 0.59 | 0.01 | 0.002 |
+| 35–40° | 0.61 | 0.02 | 0.004 |
+| 40–50° | 1.75 | 0.01–0.07 | 0.001–0.007 |
+
+Fourth order is also what lets the grid be coarse. It is 10 points per wavelength by default
+(`--ppw`; 20 under `--scheme cn` or with either order set to 2). On
+`atmospheres/example_windy.csv` out to 1.5 km, 250 Hz – 2 kHz, against an 80-point run:
+
+| | 20 points | 10 points | 6 points |
+| --- | --- | --- | --- |
+| second order throughout | 0.02–0.04 dB rms (0.14 worst) | 0.06–0.19 (0.64) | |
+| derivative fourth, ground and interpolation second | 0.01–0.02 (0.06) | 0.05–0.09 (0.29) | |
+| fourth order throughout | under 0.0005 (0.001) | 0.001–0.002 (0.011) | 0.004–0.01 (0.08) |
+
+The middle row is why the ground condition and the interpolation had to follow the
+derivative: with those at second order the whole scheme converged at second order.
 
 The self-starter also corrects a bias at every angle. The Gaussian is normalised with the
 wavenumber at the ground, so a source aloft in a refracting or windy column comes out at the
@@ -674,15 +688,15 @@ by 0.7 dB rms at 25–30° and 2.1 dB at 30–35° at 1 kHz.
 | Five bands, 125 Hz – 2 kHz, 100 m source to 1.5 km, 14 cores | PE time |
 | --- | --- |
 | `--scheme cn` | 25.4 s |
-| `--scheme pade` (default: 50°, self-starter, fourth order) | 1.5 s |
-| … `--max_angle 60` | 1.8 s |
-| … `--max_angle 35` | 0.95 s |
-| … `--max_angle 35 --vertical_order 2 --starter gaussian` | 0.6 s |
+| `--scheme pade` (default: 50°, self-starter, fourth order, 10 points) | 0.47 s |
+| … `--max_angle 60` | 0.67 s |
+| … `--max_angle 35` | 0.37 s |
+| … `--ppw 20` | 1.4 s |
+| … `--ppw 20 --max_angle 35 --vertical_order 2 --boundary_order 2 --starter gaussian` | 0.6 s |
 
-(The ray models' columns take another 0.4 s.) One march is 19 times faster than
-Crank–Nicolson at the defaults. Bands and their frequencies run in parallel. The grid
-is 20 points per wavelength in height (`--ppw`); at fourth order `--ppw 14` is as close to a
-40-point run as second order was at 20, and brings the default's time down by a third. Against a
+(The ray models' columns take another 0.4 s.) One march is 39 times faster than
+Crank–Nicolson at the defaults. Bands and their frequencies run in parallel. For
+Crank–Nicolson, against a
 30 × 30 Crank–Nicolson reference, 10 in height is within about 0.1 dB rms for a receiver near the ground, but
 0.47 dB rms (2.2 dB at worst) for one 1.2 m up at 1 kHz; 20 brings that to 0.09 dB, at twice the
 cost. On the stored shadow-calibration cases the change moved the PE by 0.16–0.39 dB rms (1.1 dB
