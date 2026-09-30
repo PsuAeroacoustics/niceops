@@ -19,6 +19,7 @@
 
 #include "atmosphere.hpp"
 #include "ground_effect.hpp"
+#include "propagation.hpp"
 #include "sphere_database.hpp"
 #include "weighting.hpp"
 
@@ -183,6 +184,66 @@ TEST_CASE("spectral_level_at_observer weights and band-limits", "[spectral]")
         const double none = db.spectral_level_at_observer(observer, state,
                 no_absorption.data(), gains);
         REQUIRE(dry < none);
+    }
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("band_levels are the bands the weighted level sums", "[spectral]")
+{
+    // --band_history writes these per band.  A-weighted and summed in energy
+    // they must give back the level returned beside them, ground and extra
+    // loss included, and asking for them must not change that level.
+    const auto path = write_flat_spectral_database("niceops_flat_bands.nod");
+    Database db(path);
+
+    const auto state = db.source_state(Vec3(0.0, 0.0, 120.0), Vec3(60.0, 0.0, 0.0),
+            Vec3(0.0, 0.0, 1.0), 0.15, -4.0, 0.006);
+    const Vec3 observer(400.0, 150.0, 0.0);
+    Atmosphere air;
+    const auto alpha = absorption_coefficients(air, kBands);
+    // 125 Hz is outside the limits, so first_band is 1, as run() would find it.
+    BandLimits limits;
+    limits.low = 300.0;
+    const auto gains = a_weighting_gains(kBands, limits);
+    const std::size_t first_band = 1;
+    const std::size_t last_band = kBands.size();
+    GroundModel ground;
+    ground.receiver_height = 1.2;
+    const auto impedance = ground_impedance(ground, kBands);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    auto check = [&](const std::vector<double>& bands, double level) {
+        REQUIRE(std::isnan(bands[0]));
+        double energy = 0.0;
+        for (std::size_t band = first_band; band < last_band; band++)
+            energy += gains[band] * std::pow(10.0, 0.1 * bands[band]);
+        check_close(10.0 * std::log10(energy), level, 1e-9);
+    };
+
+    SECTION("without ground")
+    {
+        std::vector<double> bands(kBands.size(), nan);
+        const double level = db.spectral_level_at_observer(observer, state, alpha.data(), gains,
+                nullptr, nullptr, 343.2, first_band, last_band, nullptr, nullptr, 0.0, nullptr,
+                bands.data());
+        REQUIRE(level == db.spectral_level_at_observer(observer, state, alpha.data(), gains,
+                nullptr, nullptr, 343.2, first_band, last_band));
+        check(bands, level);
+    }
+
+    SECTION("with ground and an extra loss")
+    {
+        std::vector<double> bands(kBands.size(), nan);
+        const std::vector<double> loss = {0.0, 3.0, 7.0, 11.0};
+        const auto ray = straight_ray(state.position, observer);
+        const double level = db.spectral_level_along(ray, state, alpha.data(), gains, &ground,
+                &impedance, 343.2, first_band, last_band, nullptr, nullptr, 0.0, nullptr,
+                loss.data(), nullptr, bands.data());
+        REQUIRE(level == db.spectral_level_along(ray, state, alpha.data(), gains, &ground,
+                &impedance, 343.2, first_band, last_band, nullptr, nullptr, 0.0, nullptr,
+                loss.data()));
+        check(bands, level);
     }
 
     std::filesystem::remove(path);

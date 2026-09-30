@@ -412,7 +412,8 @@ public:
             double sound_speed = 343.2, std::size_t first_band = 0,
             std::size_t last_band = static_cast<std::size_t>(-1),
             const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
-            double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr) const;
+            double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr,
+            double* band_levels = nullptr) const;
 
     // The same along a path the caller has already formed (propagation.hpp):
     // spectral_level_at_observer is this with straight_ray().  `extra_loss`,
@@ -420,6 +421,11 @@ public:
     // zone's, under --refraction.  `ground_weight`, when given, scales the
     // ground effect per band in dB (0 drops it): ShadowTransition hands the
     // ground over to its own field near a shadow boundary.
+    //
+    // `band_levels`, when given, receives each band's unweighted level at the
+    // observer, dB re 20 uPa, with every term the metric sums: spreading,
+    // absorption, `extra_loss` and the ground or plate.  Only bands in
+    // [first_band, last_band) are written (--band_history).
     double spectral_level_along(const RayPath& path, const SourceState& state,
             const double* absorption, const std::vector<double>& gains,
             const GroundModel* ground = nullptr,
@@ -428,7 +434,8 @@ public:
             std::size_t last_band = static_cast<std::size_t>(-1),
             const PackedSpectra* packed = nullptr, const PlateReceiver* plate = nullptr,
             double plate_mic_azimuth = 0.0, const GroundTable* ground_table = nullptr,
-            const double* extra_loss = nullptr, const double* ground_weight = nullptr) const;
+            const double* extra_loss = nullptr, const double* ground_weight = nullptr,
+            double* band_levels = nullptr) const;
 
     // Band centres carried by the database, empty when it has no spectra.
     const std::vector<double>& band_centres() const
@@ -568,7 +575,7 @@ private:
             double sound_speed, std::size_t first_band, std::size_t last_band,
             const PackedSpectra* packed, const PlateReceiver* plate, double plate_mic_azimuth,
             const GroundTable* ground_table, const double* extra_loss,
-            const double* ground_weight = nullptr) const;
+            const double* ground_weight = nullptr, double* band_levels = nullptr) const;
 
     // Group states by the conditions they blend, filling the bounds' per-state
     // group and load-factor scale.  Both direction_bounds() and

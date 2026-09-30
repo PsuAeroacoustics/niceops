@@ -75,6 +75,15 @@ Input and output files use **feet**; the computation is metric internally.
   first two lines and then one row of levels per y.
 - `-D` — day-night level, summed over every trajectory in the run (see below).
 - `-i` — per-observer level time histories.
+- `--band_history` — per-observer band time histories, for comparing with measured spectra
+  frame by frame. One file per observer, `PREFIX_i<N>.csv`, with a row per trajectory state:
+  `emission_time`, `reception_time` (s), `range` (the ray tube's under `--refraction`),
+  `elevation` (the emission direction below horizontal, deg), the sphere's `phi` and `theta`,
+  `level_dBA` (the A-weighted, band-limited level `-i` writes), then `band_<Hz>`: each band's
+  unweighted level at the microphone, dB re 20 µPa, with spreading, absorption, the ground or
+  plate and any shadow loss applied. A-weighted and summed in energy the bands give
+  `level_dBA`. Bands outside `--band_limits` and culled states are left empty; `-a`'s ambient
+  goes into `level_dBA` only. Needs the spectral path.
 - `-m` — appends average, maximum and above-threshold counts for the case.
 - `-S` — the derived trajectory state (t, position, velocity, load factor, C<sub>T</sub>, μ, flight path angles).
 - `--powerfile` — per-state shaft power, if the database carries any.
@@ -132,6 +141,7 @@ seconds, levels in dB.
 | `-b`, `--observer` | Scattered observer file; switches off the default grid. |
 | `-S`, `--state` | Save the derived trajectory state. |
 | `-i`, `--history` | Prefix for per-observer time history files. |
+| `--band_history` | Prefix for per-observer band time history files (see Outputs). Needs the spectral path. |
 | `-m`, `--metricfile` | Append overall noise metrics to this file. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
@@ -937,7 +947,7 @@ Evaluated 66041828 of 94334400 (70.0%); the rest is provably outside every obser
 ```
 
 It is exact, not an approximation — the output is byte-identical to evaluating every state.
-The path is skipped, and every state evaluated, with `--spectral`, `-a`, `-i`, `-D` or
+The path is skipped, and every state evaluated, with `--spectral`, `-a`, `-i`, `--band_history`, `-D` or
 `--db_cutoff`; see CLAUDE.md for why each one cannot use it.
 
 ### Threads

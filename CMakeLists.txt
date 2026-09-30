@@ -340,6 +340,22 @@ add_test(NAME mixed_receivers_are_their_subsets COMMAND golden_compare integrate
 set_tests_properties(mixed_receivers_are_their_subsets PROPERTIES FIXTURES_REQUIRED "mixed_runs;mixed_expected_file")
 add_test(NAME mixed_receivers_windowed_is_exact COMMAND golden_compare integrated/mixed_receivers.csv integrated/mixed_receivers_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(mixed_receivers_windowed_is_exact PROPERTIES FIXTURES_REQUIRED mixed_runs)
+# --band_history over flush plate microphones.  Writing the bands forces a
+# march, and must leave the footprint equal to the peak search's; a refracted
+# path through uniform air must record the straight one's geometry and bands.
+# --band_limits spans every band, so no field is left empty for golden_compare
+# to skip the row over.  (That the bands re-weight to the level is a unit test,
+# "band_levels are the bands the weighted level sums".)
+add_test(NAME band_history_straight COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --band_limits 5 20000 -L warn --band_history integrated/band_history/straight -o integrated/band_history_straight.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME band_history_refracted COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --band_limits 5 20000 -L warn --atmosphere atmospheres/B407_uniform.csv --refraction linear --band_history integrated/band_history/refracted -o integrated/band_history_refracted.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME band_history_windowed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --band_limits 5 20000 -L warn -o integrated/band_history_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(band_history_straight band_history_refracted band_history_windowed PROPERTIES FIXTURES_SETUP band_history_runs)
+add_test(NAME band_history_leaves_footprint COMMAND golden_compare integrated/band_history_straight.csv integrated/band_history_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME band_history_refracted_is_straight COMMAND golden_compare integrated/band_history/refracted_i3.csv integrated/band_history/straight_i3.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(band_history_leaves_footprint band_history_refracted_is_straight PROPERTIES FIXTURES_REQUIRED band_history_runs)
+# The broadband path carries no bands to write.
+add_test(NAME band_history_needs_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --no-spectral --band_history integrated/band_history/broadband -o integrated/band_history_broadband.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(band_history_needs_spectral PROPERTIES WILL_FAIL TRUE)
 # A point receiver, refracting through uniform air, ends its ray at the
 # microphone as the straight path does: the two agree.
 add_test(NAME refraction_uniform_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --atmosphere atmospheres/B407_uniform.csv --refraction linear --gridstep 492 -L warn -o integrated/refraction_uniform_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

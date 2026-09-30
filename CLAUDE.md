@@ -365,7 +365,7 @@ sweep of source states and observers -- because the whole thing rests on that on
 The path is skipped and the loop marches every state whenever the bound does not apply:
 `--spectral` (the bound is on the broadband dBA, which does not bound the band-limited weighted
 level -- the same reason `--db_cutoff` is refused there), `-a` (the level is transformed after
-eval), `-i` (the whole history is written out), `-D` (the day-night window is found on a
+eval), `-i` and `--band_history` (the whole history is written out), `-D` (the day-night window is found on a
 penalized history, which a window found on the raw one need not cover), `--db_cutoff` (already
 culling on its own terms), and any database with a negative excess-attenuation factor, where
 dropping that term is not a loss.

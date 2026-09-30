@@ -177,6 +177,62 @@ void write_time_history_file(const std::vector<double>& time_history, double dt,
     }
 }
 
+// One observer's per-band history (--band_history): a row per trajectory
+// state, each band's unweighted level at the microphone beside the geometry it
+// was reached along, so a measured spectrum can be put against it frame by
+// frame.  Bands the run did not evaluate (outside --band_limits) and culled
+// states are left empty.
+struct BandHistoryRow
+{
+    double emission_time = 0.0;
+    double reception_time = 0.0;
+    double range = 0.0;
+    double elevation = 0.0;
+    double phi = 0.0;
+    double theta = 0.0;
+};
+
+void write_band_history_file(const std::vector<BandHistoryRow>& rows,
+        const std::vector<double>& levels, const std::vector<double>& band_levels,
+        const std::vector<double>& band_centres, std::size_t first_band, std::size_t last_band,
+        const Vec3& microphone, LengthUnit unit, const std::string& filename)
+{
+    auto file = open_output(filename);
+    file << "# NICE-OPS band history. Microphone x, y, z (" << unit.name << "): "
+         << microphone.x / unit.to_metres << ", " << microphone.y / unit.to_metres << ", "
+         << microphone.z / unit.to_metres << ". Times s, range " << unit.name
+         << ", angles deg; level_dBA is the A-weighted, band-limited level, band_<Hz> each "
+            "band's unweighted level at the microphone, dB re 20 uPa.\n";
+    file << "emission_time,reception_time,range,elevation,phi,theta,level_dBA";
+    for (auto centre : band_centres)
+        file << ",band_" << centre;
+    file << "\n";
+    file << std::setprecision(10);
+    const std::size_t nb = band_centres.size();
+    for (std::size_t it = 0; it < rows.size(); it++)
+    {
+        const auto& row = rows[it];
+        const bool evaluated = std::isfinite(levels[it]);
+        file << row.emission_time << ",";
+        if (evaluated)
+        {
+            file << row.reception_time << "," << row.range / unit.to_metres << ","
+                 << row.elevation << "," << row.phi << "," << row.theta << "," << levels[it];
+        }
+        else
+        {
+            file << ",,,,," << levels[it];
+        }
+        for (std::size_t band = 0; band < nb; band++)
+        {
+            file << ",";
+            if (evaluated && band >= first_band && band < last_band)
+                file << band_levels[it * nb + band];
+        }
+        file << "\n";
+    }
+}
+
 void append_metrics_file(const std::string& filename, const std::string& casename,
         const std::vector<double>& levels, double threshold = 65.0)
 {
@@ -540,6 +596,8 @@ struct RunOptions
     bool write_time_history = false;
     bool write_state = false;
     std::string time_history_prefix;
+    // Per-band histories (--band_history); empty for none.
+    std::string band_history_prefix;
     std::string metric_file;
     std::string power_file;
     // How WGS84 trajectory input is projected, and the frame it is projected
@@ -756,6 +814,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (!directory.empty())
             std::filesystem::create_directories(directory);
     }
+    const bool write_band_history = !options.band_history_prefix.empty();
+    if (write_band_history)
+    {
+        const auto directory = std::filesystem::path(options.band_history_prefix).parent_path();
+        if (!directory.empty())
+            std::filesystem::create_directories(directory);
+    }
 
     // Each observer's receiver, and where its level is evaluated: at the
     // microphone, the observer's point raised by the microphone's height above
@@ -918,6 +983,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     + (options.ground_effect ? " and no ground effect."
                                     : options.atmosphere ? " and no --atmosphere."
                                                          : "."));
+        }
+        if (!options.band_history_prefix.empty())
+        {
+            input_error("--band_history needs a database carrying per-band spectra; this one "
+                        "has none.");
         }
         log("Database carries no per-band spectra: propagating the broadband level with its "
             "EAA factor.");
@@ -1195,7 +1265,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // (ground_gain_bounds), which keeps it a bound with the ground included.
     const bool culling = !std::isnan(options.db_cutoff);
     const bool level_is_transformed = add_ambient;
-    const bool needs_full_history = options.write_time_history || options.want_dnl;
+    const bool needs_full_history = options.write_time_history || options.want_dnl
+            || write_band_history;
     const bool bounded = !level_is_transformed;
     DirectionBounds direction_bounds;
     if (bounded && (culling || !needs_full_history))
@@ -1294,6 +1365,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     //
     //   every sample is wanted, not just the window's:
     //     -i / --history writes the whole time history, skipped states included
+    //     --band_history the same, per band
     //     -D / --dnlfile the day-night window is found on a penalized history,
     //                    which a window found on the raw one does not cover
     //
@@ -1356,6 +1428,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> levels(nt);
         std::vector<double> ranges(nt);
         std::vector<double> penalized;
+        // --band_history: every state's band levels, and the geometry each
+        // was reached along.
+        const std::size_t history_bands = write_band_history ? database.band_centres().size() : 0;
+        std::vector<double> band_levels(nt * history_bands);
+        std::vector<BandHistoryRow> band_rows(write_band_history ? nt : 0);
+        auto record_path = [&](std::size_t it, const RayPath& path) {
+            if (!write_band_history)
+                return static_cast<double*>(nullptr);
+            auto& row = band_rows[it];
+            const auto angles = lookup_angles(source_states[it].frame, path.direction);
+            row.range = path.range;
+            row.elevation = std::asin(std::clamp(-path.direction.z, -1.0, 1.0)) * 180.0 / pi;
+            row.phi = angles[0];
+            row.theta = angles[1];
+            return band_levels.data() + it * history_bands;
+        };
         // Which states of `levels` this observer has filled, stamped by a
         // counter so the array does not have to be cleared per observer.
         std::vector<unsigned> visited(expand_from_peak ? nt : 0, 0u);
@@ -1459,6 +1547,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     : (!shadow_transitions.empty() ? &shadow_transitions[point_of[index]] : nullptr);
             auto refracted_level = [&](std::size_t it, RefractedRay ray) {
                 finish_ray(ray, ray_ground, microphone_height[index]);
+                double* bands_out = record_path(it, ray.path);
                 const double* extra_loss = nullptr;
                 const double* ground_weight = nullptr;
                 // The plate's frame, as Database::spectral_level_along takes it.
@@ -1492,7 +1581,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         absorption_for(it, observer), band_gains, ground_here,
                         &ground_impedance_bands, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
-                        extra_loss, ground_weight);
+                        extra_loss, ground_weight, bands_out);
                 if (add_ambient)
                     level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
                 return level;
@@ -1593,12 +1682,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         culled_here++;
                         continue;
                     }
+                    double* bands_out = write_band_history
+                            ? record_path(it, straight_ray(source_states[it].position, observer))
+                            : nullptr;
                     double level = spectral
                             ? database.spectral_level_at_observer(observer, source_states[it],
                                     absorption_for(it, observer), band_gains, ground_here,
                                     &ground_impedance_bands, sound_speed, first_band, last_band,
                                     packed_of_state[it], plate_receiver, plate_mic_azimuth,
-                                    table_here)
+                                    table_here, bands_out)
                             : database.level_at_observer(observer, source_states[it]);
                     if (add_ambient)
                     {
@@ -1625,6 +1717,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 auto time_history_filename = options.time_history_prefix + "_i" + std::to_string(index) + ".csv";
                 write_time_history_file(levels, integration_step, observer(0), observer(1),
                         time_history_filename, options.unit);
+            }
+            if (write_band_history)
+            {
+                for (std::size_t it = 0; it < nt; it++)
+                {
+                    band_rows[it].emission_time = trajectory.states[it].t;
+                    band_rows[it].reception_time = trajectory.states[it].t + ranges[it] / sound_speed;
+                }
+                write_band_history_file(band_rows, levels, band_levels, database.band_centres(),
+                        first_band, last_band, observer, options.unit,
+                        options.band_history_prefix + "_i" + std::to_string(index) + ".csv");
             }
         }
         culled_samples += culled_here;
@@ -1861,6 +1964,7 @@ int run(int argc, char* argv[])
     double ambient_level = std::numeric_limits<double>::quiet_NaN();
     bool write_time_history = false;
     std::string time_history_prefix = "";
+    std::string band_history_prefix;
     std::string metric_file = "";
     bool qsam = true;
     bool self_test = false;
@@ -1928,6 +2032,10 @@ int run(int argc, char* argv[])
             "The sound exposure level integral uses the trajectory's own sample interval.");
     app.add_option("-a,--ambient", ambient_level, "Ambient noise level, dB");
     app.add_option("-i,--history", time_history_prefix, "Time history file prefix.");
+    app.add_option("--band_history", band_history_prefix,
+            "Per-band time history file prefix: one file per observer, a row per trajectory "
+            "state with its emission and reception times, geometry, A-weighted level and each "
+            "band's unweighted level at the microphone. Needs the spectral path.");
     app.add_option("-m,--metricfile", metric_file, "File to append overall noise metrics.");
     app.add_option("-b,--observer", observer_file, "Observer file name.");
     app.add_flag("-q,--qsam,!--no-qsam", qsam, "Extended QSAM (default on; --no-qsam disables)");
@@ -2297,6 +2405,11 @@ int run(int argc, char* argv[])
                     "of frequency, and the broadband path (--no-spectral or --db_cutoff) has no "
                     "spectrum to apply it to.");
     }
+    if (!band_history_prefix.empty() && !spectral)
+    {
+        input_error("--band_history needs the spectral path: the broadband path (--no-spectral "
+                    "or --db_cutoff) carries no bands.");
+    }
     if (!plate_table.empty() && !ground_effect)
     {
         input_error("--plate_table needs --ground_effect: the plate's level depends on the "
@@ -2403,6 +2516,7 @@ int run(int argc, char* argv[])
     options.write_time_history = write_time_history;
     options.write_state = write_state;
     options.time_history_prefix = time_history_prefix;
+    options.band_history_prefix = band_history_prefix;
     options.metric_file = metric_file;
     options.power_file = power_file;
     options.latlon = latlon;
