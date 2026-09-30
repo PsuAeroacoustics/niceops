@@ -613,14 +613,70 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
 - `src/pe.{hpp,cpp}`, `tools/pe_compare.cpp` — roadmap step 7a: a wide-angle parabolic
   equation as the full-wave reference, and `niceops_pe_compare`, which runs one path through
   straight, linear, stratified and PE. Load-bearing:
-  - **Crank–Nicolson Padé(1,1), not the GFPE the roadmap named.** The impedance condition
+  - **A finite-difference PE, not the GFPE the roadmap named.** The impedance condition
     dpsi/dz = -i k beta psi goes straight into the grid (psi_0 eliminated by a one-sided
     difference), so no surface-wave pole has to be handled by hand. The convention is
-    exp(-i omega t), as in `ground_effect.cpp`, whose admittance it takes. The left-hand
-    tridiagonal matrix is factored once per run.
-  - **The march is latency-bound, and shaped for that** (2.7 ns per point per step, from
-    9.0). The Thomas sweep is a recurrence; each row waited on two dependent complex
-    multiplies. Three things, all needed:
+    exp(-i omega t), as in `ground_effect.cpp`, whose admittance it takes. When speed became
+    the question the answer was again not GFPE, which would have brought that pole back and
+    splits refraction from diffraction (a step limit exactly where the gradient is strong),
+    but a longer step for the same grid: the split-step Padé march below.
+  - **The default march is split-step Padé** (`PeScheme::split_step_pade`,
+    `src/pade_propagator.{hpp,cpp}`): psi(r + dr) = [c_0 + sum_j c_j (Q - p_j)^-1] psi(r), a
+    rational stand-in for exp(i k_a dr (sqrt(1 + Q) - 1)). One tridiagonal solve per term,
+    seven or eight terms for an eight-wavelength step, where Crank–Nicolson takes eighty
+    steps. 26–32x per march; a five-band `pe_compare` case 25.9 s -> 1.1 s, the benchmark
+    tool 2.5 min -> 9 s. Things to keep:
+    - **The coefficients are fitted at run time, not tabulated and not Collins' Taylor
+      Padé.** The step has to divide `output_step`, so k_a dr is different for every
+      frequency. r is the type (n, n) interpolant of the exact propagator at Chebyshev nodes
+      on the interval of x the run needs: elevation to `max_angle` (35 degrees), shifted by
+      the profile's range of k(z), plus room for the surface wave. A Taylor Padé is exact
+      at x = 0 and degrades outward, which is the wrong shape for that.
+    - **Two of the nodes sit among the evanescent modes (x = -1.5 and -6), and they are
+      not optional.** Interpolating a function of modulus one gives an all-pass r, |r| = 1
+      along the whole axis, whose phase is right only on the interval. Steeper modes then
+      travel upward at a twentieth of their true speed, linger, and come back as several dB
+      of noise (3-5 dB rms on the rigid still-air test, which is how it was found). Pinned
+      out there r falls away below the interval and they die in a few steps. Two is the
+      number: three or four overshoot, |r| > 1 by 1e-4 to more than 1 between the interval
+      and the first node. This is Collins' stability constraint.
+    - **Nothing in the construction guarantees stability, so it is measured.** Every fit is
+      checked on dense samples: error on the interval, |r| <= 1 over the whole spectrum
+      including the absorbing layer's imaginary parts, every pole below the axis. The fewest
+      terms that pass are used; if none up to 16 does, the step is shortened. Do not remove
+      the check to save the milliseconds.
+    - **Results are never interpolated in range.** The step is `output_step` over a whole
+      number, so the march lands on every output. Over eight wavelengths psi turns through
+      radians and linear interpolation is meaningless.
+    - **A path steeper than `max_angle` from the source is NaN**, because those modes are
+      absorbed and the number would be hundreds of dB down. Crank–Nicolson reported a
+      plausible-looking level there with the wrong phase. Raising `max_angle` alone buys
+      nothing: past 25-30 degrees the error is the Gaussian starter's (0.6 dB rms at 30-35
+      degrees at 1 kHz against the exact two-ray field, the same at `max_angle` 50).
+    - **The result does not depend on the step**: 2 to 32 wavelengths moves it by under
+      0.001 dB, 60 dB into a shadow, past the first few steps. Within them (the modes
+      beyond `max_angle` still leaving) it is 0.1-0.4 dB. `tests/test_pade_propagator.cpp`
+      holds both that and agreement with Crank–Nicolson at 40 steps a wavelength.
+    - **The kernel pairs terms into two-lane vectors by hand** (`Lanes`, as `Pair` in
+      `sphere_database.cpp`), with the term count a template parameter. From scalar source
+      the compiler ran one term at a time: 11.7 ns a row against 5.9. Each solve stores one
+      complex number per row (e_r = a / pivot; the off-diagonals are all a, so the forward
+      and back coefficients coincide), which halves what a step streams through the cache.
+    - **Not twisted.** Eight interleaved terms are throughput-bound (16 cycles of
+      arithmetic a row against 16 of latency), so the two-ended factorisation below would
+      buy nothing here.
+    - **Turbulence caps the step at the screen spacing.**
+    - **The 10 Hz benchmark legs start at 50 m, not 20.** That is inside a wavelength and a
+      half of the source. The converged march is 0.29 dB over the exact field at 25 m;
+      Crank–Nicolson's own error happened to bring it inside 0.2. No other tolerance moved.
+  - **`PeScheme::crank_nicolson` is the march this replaced, kept as an independent
+    check**: Padé(1,1) at ten steps a wavelength, good to about 30 degrees. It
+    differs from the split-step by 0.03-0.12 dB rms on `example_windy.csv` to 1.5 km, and
+    against the exact still-air field the error is its own (0.7 dB rms at 25-30 degrees,
+    2.1 at 30-35, where the split-step has 0.1 and 0.6). Its left-hand tridiagonal matrix
+    is factored once per run. It is latency-bound, and shaped for that (2.7 ns per point
+    per step, from 9.0). The Thomas sweep is a recurrence; each row waited on two dependent
+    complex multiplies. Three things, all needed:
     - The factorisation is twisted (burn at both ends): rows below the middle eliminate
       downward, rows above upward. Each sweep then carries two independent chains.
     - The pivot is folded into the stored coefficients, so each row is one complex
@@ -631,28 +687,33 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       was 5.1 -> 2.7 ns.
 
     Output matches the plain Thomas sweep to ~1e-9 dB (the same arithmetic reordered), and
-    stored PE runs reproduce to their printed digits. `solve_pe_bands` pools every (band,
-    frequency) march, highest frequency first, because cost goes as f^2 and a band at a time
-    left the 2 kHz band on a 2-thread share. A five-band `pe_compare` case went from 194 s
-    to 14 s. Summing is in frequency order afterwards, so any thread count gives the same
-    bits.
-  - **The grid is 20 points per wavelength in height and 10 in range.** Against a
+    PE runs stored before the split-step reproduce to their printed digits under
+    `--scheme cn`. `solve_pe_bands` pools every (band, frequency) march, highest frequency
+    first, because cost goes as f^2 and a band at a time left the 2 kHz band on a 2-thread
+    share. A five-band `pe_compare` case went from 194 s to 14 s that way. Summing is in
+    frequency order afterwards, so any thread count gives the same bits, under either
+    scheme.
+  - **The grid is 20 points per wavelength in height** (and, for Crank–Nicolson, 10 in
+    range). Against a
     30 x 30 reference, 10 in height was ~0.1 dB rms near the ground but 0.47 dB rms (2.2 at
     worst) for a 1.2 m receiver at 1 kHz; 20 is 0.09 dB, for twice the cost. Rerunning the
     stored calibration cases at 20 moved the PE by 0.16-0.39 dB rms (1.1 at worst) and did
     not move the shadow-edge calibration fitted against it, so the fits stand. The
     turbulent mean-field test runs at 10 in height with 1000 realisations; at 20 its
-    tolerance was too tight for its sample size. Halving the range steps costs most cases
-    only 0.02-0.03 dB, but fails `test_benchmark` by 0.2-0.4 dB at long range. Do not
-    coarsen the range step to buy speed.
+    tolerance was too tight for its sample size. Halving Crank–Nicolson's range steps costs
+    most cases only 0.02-0.03 dB, but fails `test_benchmark` by 0.2-0.4 dB at long range. Do
+    not coarsen its range step to buy speed; that is what the split-step is for. Height is
+    now where the cost is: a fourth-order vertical stencil at 10 points would halve it and
+    has not been tried.
   - **Normalisation:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
     p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the
     exact two-ray field (0.3 dB, rigid) and to Weyl–van der Pol through NICE-OPS's own
     `spherical_reflection_coefficient` (0.5 dB, grass), which checks the ground condition's
     sign too.
-  - **Results land on exact multiples of `output_step`,** interpolated between range steps.
-    The range step follows the wavelength, so without that each frequency had its own grid,
-    and band averaging read past the end of one.
+  - **Results land on exact multiples of `output_step`.** Crank–Nicolson's range step
+    follows the wavelength, so it interpolates between steps; without that each frequency
+    had its own grid, and band averaging read past the end of one. The split-step lands on
+    them (above).
   - **The shadow is checked against an exact solution** (`tests/test_pe_shadow.cpp`). For
     k^2 = k0^2 (1 + 2z/R) over rigid ground the field is a residue series of Airy creeping
     waves, and the PE matches it within 0.02 dB down to -47 dB at 250 Hz to 1 kHz. The complex
@@ -736,7 +797,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     12.81+11.62i, 5.96+2.46i), not a NICE-OPS impedance model, and the absorption it quotes
     (0.18 and 5.4 dB/km, ANSI S1.26-1978; ISO 9613-1 gives 0.22 and 4.98). Its profiles stop
     at 1000 m, the height of its contour plots. Only case 2 at 10 km cares, and the paper
-    notes the same dependence. A full run is ~2.5 min.
+    notes the same dependence. A full run is ~9 s (2.5 min under Crank–Nicolson).
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its

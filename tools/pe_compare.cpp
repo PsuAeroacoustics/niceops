@@ -11,7 +11,9 @@
 //   straight     straight rays and the spherical-wave ground model
 //   linear       --refraction linear's rays and the same ground model
 //   stratified   --refraction stratified's rays and the same ground model
-//   pe           the wide-angle parabolic equation (pe.hpp), band-averaged
+//   pe           the wide-angle parabolic equation (pe.hpp), band-averaged;
+//                NaN where the path from the source is steeper than
+//                --max_angle, which the split-step march does not carry
 // Absorption is left out of all four, as is turbulence: the PE has neither, so
 // the ground model runs with a coherent atmosphere too.  Lengths are in
 // --units (feet by default), bearings in degrees.
@@ -53,6 +55,9 @@ int main(int argc, char** argv)
     int samples = 5;
     double points_per_wavelength = 20.0;
     double range_points_per_wavelength = 10.0;
+    std::string scheme = "pade";
+    double range_step_wavelengths = 8.0;
+    double max_angle = 35.0;
     bool no_pe = false;
     double gamma_t = 0.0;
     double outer_scale = 10.0;
@@ -70,8 +75,16 @@ int main(int argc, char** argv)
     app.add_option("--porosity_rate", porosity_rate, "As for niceops, 1/m.");
     app.add_option("--samples", samples, "PE frequencies per band (default 5).");
     app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 20).");
+    app.add_option("--scheme", scheme,
+            "How the PE marches in range: pade (default), the split-step Pade march, or cn, Crank-Nicolson.")
+            ->check(CLI::IsMember({"pade", "cn"}));
+    app.add_option("--range_step", range_step_wavelengths,
+            "--scheme pade: longest range step, in wavelengths (default 8).");
+    app.add_option("--max_angle", max_angle,
+            "--scheme pade: elevation angle the march is accurate to, degrees (default 35).  Steeper "
+            "paths from the source come out as NaN.");
     app.add_option("--range_ppw", range_points_per_wavelength,
-            "PE range steps per wavelength (default 10).");
+            "--scheme cn: range steps per wavelength (default 10).");
     app.add_flag("--no_pe", no_pe, "Only the ray models; the pe columns are NaN.");
     app.add_option("--gamma_t", gamma_t,
             "Turbulence in the PE (HARMONOISE strength; 0, the default, is none).  Each of --samples "
@@ -136,6 +149,9 @@ int main(int argc, char** argv)
         setup.c = c;
         setup.points_per_wavelength = points_per_wavelength;
         setup.range_points_per_wavelength = range_points_per_wavelength;
+        setup.scheme = scheme == "cn" ? PeScheme::crank_nicolson : PeScheme::split_step_pade;
+        setup.range_step_wavelengths = range_step_wavelengths;
+        setup.max_angle = max_angle;
         setup.gamma_t = gamma_t;
         setup.outer_scale = outer_scale;
         setup.seed = seed + 1000u * static_cast<unsigned>(b);

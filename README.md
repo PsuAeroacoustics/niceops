@@ -630,19 +630,39 @@ one arrival rather than summing all of them. Focusing at a caustic is capped at 
 
 `niceops_pe_compare` runs one path through all four models and writes each band's level
 relative to free field: straight rays, `linear`, `stratified`, and a wide-angle parabolic
-equation. The last is a full-wave solution, Crank–Nicolson Padé(1,1) with the ground's
-impedance written into the grid. Absorption and turbulence are left out of all four,
-unless `--gamma_t` puts turbulence in the PE (below).
+equation. The last is a full-wave solution, with the ground's impedance written into the
+grid. Absorption and turbulence are left out of all four, unless `--gamma_t` puts turbulence
+in the PE (below).
 
-It runs at 2.7 ns per grid point per range step. Its bands and their frequencies run in
-parallel: a five-band case from a 50 m source out to 3 km takes 14 s on 14 cores, where the
-original single-threaded solver took 194 s (both on a grid of 10 points per wavelength in height). The
-grid is 20 points per wavelength in height and 10 in range (`--ppw`, `--range_ppw`). Against a
-30 × 30 reference, 10 in height is within about 0.1 dB rms for a receiver near the ground, but
+The PE is marched in range by a split-step Padé method (Collins, JASA 93, 1736 (1993)): one
+range step applies the one-way equation's exact propagator, replaced by a rational function
+that is accurate to 1e-7 for every wave within 35° of horizontal (`--max_angle`) and costs one
+tridiagonal solve per term. A step is eight wavelengths long (`--range_step`) and takes seven
+or eight terms. The result does not depend on the step: between 2 and 32 wavelengths it moves
+by less than 0.001 dB, 60 dB into a shadow. Waves steeper than `--max_angle` are absorbed
+rather than carried, so **a level on a path steeper than that from the source is written as
+NaN** (within 140 m of the point under a 100 m source, at the default).
+
+`--scheme cn` is the march this replaced, Crank–Nicolson on the Padé(1,1) wide-angle equation
+at ten steps per wavelength (`--range_ppw`), kept as an independent check. It is good to about
+30°, and its phase error builds with range. Through `atmospheres/example_windy.csv` from a
+100 m source out to 1.5 km, 125 Hz – 2 kHz, the two differ by 0.03–0.12 dB rms; against the
+exact field in still air it is Crank–Nicolson that is off, by 0.7 dB rms at 25–30° and 2.1 dB
+at 30–35° at 1 kHz where the split-step is within 0.1 and 0.6 dB. What remains near the angle
+limit is the starting field, which is a far-field one.
+
+| Five bands, 125 Hz – 2 kHz, 100 m source to 1.5 km, 14 cores | time |
+| --- | --- |
+| `--scheme cn` | 25.9 s |
+| `--scheme pade` (default) | 1.1 s |
+
+One march is 26–32 times faster: 6 ns per grid point per step with eight terms, against
+2.7 ns for a step a seventieth as long. Bands and their frequencies run in parallel. The grid
+is 20 points per wavelength in height (`--ppw`). Against a
+30 × 30 Crank–Nicolson reference, 10 in height is within about 0.1 dB rms for a receiver near the ground, but
 0.47 dB rms (2.2 dB at worst) for one 1.2 m up at 1 kHz; 20 brings that to 0.09 dB, at twice the
 cost. On the stored shadow-calibration cases the change moved the PE by 0.16–0.39 dB rms (1.1 dB
-at worst) and left the calibration's edge error against it unchanged. Coarser range steps are
-not a safe saving: five per wavelength fails the benchmark below by 0.2–0.4 dB at long range.
+at worst) and left the calibration's edge error against it unchanged.
 
 The PE is checked against exact solutions:
 
@@ -651,7 +671,7 @@ The PE is checked against exact solutions:
 | Two rays over rigid ground | within 0.3 dB | `tests/test_pe.cpp` |
 | Weyl–van der Pol field over grass | within 0.5 dB | `tests/test_pe.cpp` |
 | Residue series in an upward-refraction shadow, rigid ground | within 0.02 dB at 250, 500 and 1000 Hz, down to 47 dB below free field | `tests/test_pe_shadow.cpp` |
-| Benchmark case 1: direct and image rays over the benchmark's ground | within 0.2 dB at 10 Hz and 0.08 dB at 100 Hz and 1 kHz, 20 m to 1 km | `tests/test_benchmark.cpp` |
+| Benchmark case 1: direct and image rays over the benchmark's ground | within 0.2 dB at 10 Hz from 50 m (0.29 dB at 25 m, inside a wavelength of the source) and 0.08 dB at 100 Hz and 1 kHz from 20 m, to 1 km | `tests/test_benchmark.cpp` |
 | Benchmark case 2: normal-mode series, downward refraction | within 0.06 dB at 100 Hz to 1 km and 1 kHz to 500 m, 0.2 dB at 10 Hz | `tests/test_benchmark.cpp` |
 | Benchmark case 3: residue series, upward refraction, impedance ground | within 0.03 dB at 100 Hz and 1 kHz, to 60 dB below free field | `tests/test_benchmark.cpp` |
 
@@ -786,7 +806,7 @@ tabulates, absorption at 20 °C and 70% RH, and four profiles:
 `niceops_benchmark` runs all four to 200 m and to 10 km with the PE and, where one exists,
 the exact solution (`src/exact_solutions.hpp`). `tools/plot_benchmark.py DIR` draws them in
 the paper's layout, so each figure sits beside their figs. 11–14, and prints how far the PE is
-from the exact solution. A full run takes about 2.5 minutes, most of it the 1 kHz PE to 10 km.
+from the exact solution. A full run takes about 9 seconds.
 
 ```sh
 niceops_benchmark --out figures/benchmark
@@ -795,7 +815,7 @@ build/pyenv/bin/python tools/plot_benchmark.py figures/benchmark
 
 Set beside the paper's FFP and PE curves, all four cases agree in every panel. Where there is
 an exact solution, the PE is within 0.3 dB of it past 20 m on every 200 m panel. On the 10 km
-panels it is within 0.2 dB for case 1, and for case 3 within 0.1 dB, or 0.5 dB at 10 Hz,
+panels it is within 0.3 dB for case 1, and for case 3 within 0.1 dB, or 0.5 dB at 10 Hz,
 where the linear profile and the exact solution's profile part company within a few Airy
 lengths of the ground. Case 2 at 10 km is the exception, covered below. Case 4 has no exact
 solution; it reproduces the paper's curve feature for feature, down to the 100 Hz humps at

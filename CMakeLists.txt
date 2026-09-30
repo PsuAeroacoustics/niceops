@@ -162,6 +162,7 @@ add_library(niceops_core STATIC
   src/atmosphere_profile.cpp
   src/refraction.cpp
   src/stratified.cpp
+  src/pade_propagator.cpp
   src/pe.cpp
   src/airy.cpp
   src/exact_solutions.cpp
@@ -212,6 +213,7 @@ add_executable(niceops_unit_tests
   tests/test_atmosphere_profile.cpp
   tests/test_refraction.cpp
   tests/test_stratified.cpp
+  tests/test_pade_propagator.cpp
   tests/test_pe.cpp
   tests/test_pe_shadow.cpp
   tests/test_pe_turbulence.cpp

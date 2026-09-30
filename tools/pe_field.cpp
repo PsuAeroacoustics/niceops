@@ -44,6 +44,9 @@ int main(int argc, char** argv)
     int samples = 5;
     double points_per_wavelength = 20.0;
     double range_points_per_wavelength = 10.0;
+    std::string scheme = "pade";
+    double range_step_wavelengths = 8.0;
+    double max_angle = 35.0;
     double gamma_t = 0.0;
     double outer_scale = 10.0;
     unsigned seed = 1;
@@ -60,7 +63,16 @@ int main(int argc, char** argv)
     app.add_option("--impedance_model", impedance_model, "As for niceops.");
     app.add_option("--samples", samples, "PE frequencies per band (default 5).");
     app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 20).");
-    app.add_option("--range_ppw", range_points_per_wavelength, "PE range steps per wavelength (default 10).");
+    app.add_option("--scheme", scheme,
+            "How the PE marches in range: pade (default), the split-step Pade march, or cn, Crank-Nicolson.")
+            ->check(CLI::IsMember({"pade", "cn"}));
+    app.add_option("--range_step", range_step_wavelengths,
+            "--scheme pade: longest range step, in wavelengths (default 8).");
+    app.add_option("--max_angle", max_angle,
+            "--scheme pade: elevation angle the march is accurate to, degrees (default 35).  Steeper "
+            "paths from the source come out as NaN.");
+    app.add_option("--range_ppw", range_points_per_wavelength,
+            "--scheme cn: range steps per wavelength (default 10).");
     app.add_option("--gamma_t", gamma_t, "Turbulence in the PE, as for niceops_pe_compare (default 0).");
     app.add_option("--outer_scale", outer_scale, "von Karman outer scale, m (default 10).");
     app.add_option("--seed", seed, "First realisation's seed (default 1).");
@@ -104,6 +116,9 @@ int main(int argc, char** argv)
         setup.c = c;
         setup.points_per_wavelength = points_per_wavelength;
         setup.range_points_per_wavelength = range_points_per_wavelength;
+        setup.scheme = scheme == "cn" ? PeScheme::crank_nicolson : PeScheme::split_step_pade;
+        setup.range_step_wavelengths = range_step_wavelengths;
+        setup.max_angle = max_angle;
         setup.gamma_t = gamma_t;
         setup.outer_scale = outer_scale;
         setup.seed = seed + 1000u * static_cast<unsigned>(b);

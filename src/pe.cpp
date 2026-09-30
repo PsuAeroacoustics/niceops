@@ -1,11 +1,16 @@
 #include "pe.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <random>
 #include <stdexcept>
+#include <utility>
 
+#include "pade_propagator.hpp"
 #include "util/constants.hpp"
 #include "util/parallel.hpp"
 
@@ -121,65 +126,33 @@ std::vector<double> phase_screen(double k, double gamma_t, double outer_scale, d
     return source.next();
 }
 
-PeResult solve_pe(const PeSetup& s)
+namespace {
+
+// One range step, psi(r) -> psi(r + dr), on rows psi_1 .. psi_{n-1}.
+using March = std::function<void(std::vector<complex>&)>;
+
+// The vertical operator both schemes share: Q psi_j = a (psi_{j+1} - 2 psi_j +
+// psi_{j-1}) + epsilon_j psi_j on rows j = 1 .. n-1, with psi_0 = g1 psi_1 +
+// g2 psi_2 from the ground condition and psi_n = 0.
+struct VerticalOperator
 {
-    if (s.z.empty() || s.z.size() != s.c.size())
-        throw std::invalid_argument("solve_pe: the sound-speed profile is empty or uneven");
-    if (!(s.frequency > 0.0) || !(s.max_range > 0.0) || s.receiver_heights.empty())
-        throw std::invalid_argument("solve_pe: frequency, range and receivers are required");
+    std::vector<complex> epsilon; // (k_j^2 - k_a^2) / k_a^2 at j = 0 .. n
+    double a = 0.0; // 1 / (k_a dz)^2
+    complex g1, g2;
+    std::size_t m = 0; // unknowns psi_1 .. psi_{n-1}
+};
 
-    const double omega = 2.0 * pi * s.frequency;
-    const double c_ref = speed_at(s, 0.0);
-    const double k_a = omega / c_ref;
-    const double wavelength = c_ref / s.frequency;
-    const double dz = wavelength / s.points_per_wavelength;
-    const double dr = wavelength / s.range_points_per_wavelength;
-
-    // The domain: everything the source and receivers need, a clear margin,
-    // then an absorbing layer that takes what leaves the top.  The margin is
-    // generous on purpose.  In a shadow the field near the ground is a weak
-    // remainder, while energy leaks upward past it; what the layer sends back
-    // down lands on that remainder as a floor.  With 60 wavelengths of margin,
-    // 25 m at 1 kHz, the exact residue series (tests/test_pe_shadow.cpp) found
-    // the PE 3.8 dB high at -44 dB; with 250 m it agrees to hundredths.
-    const double highest = std::max(s.source_height,
-            *std::max_element(s.receiver_heights.begin(), s.receiver_heights.end()));
-    const double physical_top = s.domain_height > 0.0
-            ? s.domain_height
-            : highest + std::max({60.0 * wavelength, 0.5 * highest, 250.0});
-    const double layer = s.layer_wavelengths * wavelength;
-    const double top = physical_top + layer;
-    const std::size_t n = static_cast<std::size_t>(std::ceil(top / dz)); // psi_n = 0
-
-    // epsilon_j = (k_j^2 - k_a^2) / k_a^2, complex with the absorption, and
-    // with the absorbing layer: a quadratic ramp to Im k ~ k_a / 10 at the top.
-    std::vector<complex> epsilon(n + 1);
-    for (std::size_t j = 0; j <= n; j++)
-    {
-        const double z = static_cast<double>(j) * dz;
-        const complex k(omega / speed_at(s, z), s.absorption);
-        double ramp = 0.0;
-        if (z > physical_top)
-        {
-            const double t = (z - physical_top) / layer;
-            ramp = 0.2 * t * t;
-        }
-        epsilon[j] = (k * k - k_a * k_a) / (k_a * k_a) + complex(0.0, ramp);
-    }
-
-    // Rows j = 1 .. n-1 (psi_0 from the ground condition, psi_n = 0).
-    // Q psi_j = a (psi_{j+1} - 2 psi_j + psi_{j-1}) + epsilon_j psi_j.
-    const double a = 1.0 / (k_a * k_a * dz * dz);
+// Crank-Nicolson on the Pade(1,1) wide-angle equation:
+//   [1 + (1/4 - i k_a dr/4) Q] psi(r + dr) = [1 + (1/4 + i k_a dr/4) Q] psi(r).
+March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
+{
+    const std::vector<complex>& epsilon = op.epsilon;
+    const double a = op.a;
+    const complex g1 = op.g1, g2 = op.g2;
+    const std::size_t m = op.m;
     const complex i(0.0, 1.0);
     const complex alpha_lhs = 0.25 - i * k_a * dr / 4.0;
     const complex alpha_rhs = 0.25 + i * k_a * dr / 4.0;
-    // Ground: (-3 psi_0 + 4 psi_1 - psi_2) / (2 dz) = -i k beta psi_0, so
-    // psi_0 = (4 psi_1 - psi_2) / (3 - 2 i k beta dz) = g1 psi_1 + g2 psi_2.
-    const complex denominator = 3.0 - 2.0 * i * k_a * s.admittance * dz;
-    const complex g1 = 4.0 / denominator;
-    const complex g2 = -1.0 / denominator;
-
-    const std::size_t m = n - 1; // unknowns psi_1 .. psi_{n-1}
     auto diagonal = [&](complex alpha, std::size_t j) { return 1.0 + alpha * (-2.0 * a + epsilon[j]); };
 
     // The left side does not change with range: factor it once, from both ends
@@ -238,83 +211,32 @@ PeResult solve_pe(const PeSetup& s)
     const complex rhs_main_0 = rhs_main[0] + alpha_rhs * a * g1;
     const complex rhs_upper_0 = alpha_rhs * a + alpha_rhs * a * g2;
 
-    // Salomons' second-order Gaussian starter, with its image in the ground
-    // at the normal-incidence reflection coefficient.  Normalised so that
-    // p = psi exp(i k_a r) / sqrt(r) is a unit point source, exp(ikR)/R.
-    std::vector<complex> psi(m);
-    const complex reflection = (1.0 - s.admittance) / (1.0 + s.admittance);
-    const complex scale = std::sqrt(i * k_a);
-    auto starter = [&](double z) {
-        const double u = k_a * k_a * z * z;
-        return (1.3717 - 0.3701 * u) * std::exp(-u / 3.0);
-    };
-    for (std::size_t row = 0; row < m; row++)
-    {
-        const double z = static_cast<double>(row + 1) * dz;
-        psi[row] = scale * (starter(z - s.source_height) + reflection * starter(z + s.source_height));
-    }
-
-    // Turbulence: a screen every `spacing` metres, below the absorbing layer.
-    const bool turbulent = s.gamma_t > 0.0;
-    const double spacing = s.screen_spacing > 0.0 ? s.screen_spacing : s.outer_scale;
-    const std::size_t screened = std::min(m, static_cast<std::size_t>(physical_top / dz));
-    std::unique_ptr<ScreenSource> screens;
-    if (turbulent)
-        screens = std::make_unique<ScreenSource>(k_a, s.gamma_t, s.outer_scale, spacing, dz, screened + 1,
-                s.seed);
-    double next_screen = 0.5 * spacing;
-
-    PeResult result;
-    result.relative_level.assign(s.receiver_heights.size(), {});
-    result.psi.assign(s.receiver_heights.size(), {});
-    const std::size_t steps = static_cast<std::size_t>(std::ceil(s.max_range / dr));
-    // psi at each receiver, linear between grid points; psi_0 from the ground
-    // condition.
-    auto at_receiver = [&](double zr) {
-        const double u = zr / dz;
-        const std::size_t j = std::min(static_cast<std::size_t>(u), m - 1);
-        const double t = u - static_cast<double>(j);
-        auto at = [&](std::size_t jj) {
-            if (jj == 0)
-                return g1 * psi[0] + g2 * psi[1];
-            return jj <= m ? psi[jj - 1] : complex(0.0);
+    std::vector<complex> w(m);
+    return [=](std::vector<complex>& psi) mutable {
+        // Complex arithmetic written out: std::complex's multiply carries a branch
+        // for NaN and infinity that cannot arise here, and it sits in the chain.
+        auto mul = [](complex x, complex y) {
+            return complex(x.real() * y.real() - x.imag() * y.imag(), x.real() * y.imag() + x.imag() * y.real());
         };
-        return (1.0 - t) * at(j) + t * at(j + 1);
-    };
-    // Results at exact multiples of the output step, whatever the range step
-    // (which follows the wavelength), so every frequency lands on one grid:
-    // psi interpolated between the two range steps either side.
-    std::vector<complex> previous_value(s.receiver_heights.size());
-    for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
-        previous_value[k] = at_receiver(s.receiver_heights[k]);
-    std::size_t next_output = 1;
-    std::vector<complex> w(m), value(s.receiver_heights.size());
-    // Complex arithmetic written out: std::complex's multiply carries a branch
-    // for NaN and infinity that cannot arise here, and it sits in the chain.
-    auto mul = [](complex x, complex y) {
-        return complex(x.real() * y.real() - x.imag() * y.imag(), x.real() * y.imag() + x.imag() * y.real());
-    };
-    // e - c x, as two dependent fused multiply-adds per part: the recurrences
-    // run at their latency, and the compiler otherwise leaves a subtract at the
-    // end of each.
-    auto minus_mul = [](complex e, complex c, complex x) {
-        return complex(std::fma(c.imag(), x.imag(), std::fma(-c.real(), x.real(), e.real())),
-                std::fma(-c.imag(), x.real(), std::fma(-c.real(), x.imag(), e.imag())));
-    };
-    // Right side [1 + alpha_rhs Q] psi at a row, psi_0 from the ground
-    // condition and psi_n = 0.
-    auto rhs = [&](std::size_t row) {
-        if (row == 0)
-            return mul(rhs_main_0, psi[0]) + mul(rhs_upper_0, psi[1]);
-        if (row + 1 == m)
-            return mul(rhs_off, psi[m - 2]) + mul(rhs_main[m - 1], psi[m - 1]);
-        return mul(rhs_off, psi[row - 1] + psi[row + 1]) + mul(rhs_main[row], psi[row]);
-    };
-    const std::size_t down = p;         // rows 0 .. p-1
-    const std::size_t up = m - 1 - p;   // rows m-1 .. p+1
-    const std::size_t both = std::min(down, up);
-    for (std::size_t step = 1; step <= steps; step++)
-    {
+        // e - c x, as two dependent fused multiply-adds per part: the recurrences
+        // run at their latency, and the compiler otherwise leaves a subtract at the
+        // end of each.
+        auto minus_mul = [](complex e, complex c, complex x) {
+            return complex(std::fma(c.imag(), x.imag(), std::fma(-c.real(), x.real(), e.real())),
+                    std::fma(-c.imag(), x.real(), std::fma(-c.real(), x.imag(), e.imag())));
+        };
+        // Right side [1 + alpha_rhs Q] psi at a row, psi_0 from the ground
+        // condition and psi_n = 0.
+        auto rhs = [&](std::size_t row) {
+            if (row == 0)
+                return mul(rhs_main_0, psi[0]) + mul(rhs_upper_0, psi[1]);
+            if (row + 1 == m)
+                return mul(rhs_off, psi[m - 2]) + mul(rhs_main[m - 1], psi[m - 1]);
+            return mul(rhs_off, psi[row - 1] + psi[row + 1]) + mul(rhs_main[row], psi[row]);
+        };
+        const std::size_t down = p;         // rows 0 .. p-1
+        const std::size_t up = m - 1 - p;   // rows m-1 .. p+1
+        const std::size_t both = std::min(down, up);
         // Eliminate: both chains a row at a time, from the ends inward.  The
         // end rows carry the boundary conditions and go first; inside, the
         // right side is the plain three-point stencil.
@@ -363,6 +285,420 @@ PeResult solve_pe(const PeSetup& s)
             const std::size_t rb = p + 1 + k;
             psi[rb] = bottom = minus_mul(w[rb], back[rb], bottom);
         }
+    };
+}
+
+// Split-step Pade: psi(r + dr) = [c_0 + sum_j c_j (Q - p_j)^-1] psi(r), the
+// propagator of pade_propagator.hpp, so a step is one tridiagonal solve per
+// term and may be several wavelengths long.
+//
+// Each solve is the Thomas algorithm against a matrix factored once.  Written
+// for a x' = x, the scaled unknown, the factorisation leaves one stored number
+// per row, e_r = a / d_r with d_r the pivot: forward w_r = e_r (psi_r -
+// w_{r-1}), back x'_r = w_r - e_r x'_{r+1}.  The terms are independent, so the
+// loops run term-innermost and the sweeps are as many interleaved recurrences
+// as there are terms -- throughput-bound, where Crank-Nicolson's single solve
+// waits on its own latency.  Storage is term-innermost to match, two doubles
+// of factor and two of w per term per row.
+// Two terms' worth of one real quantity.  The compiler would not vectorise the
+// march across terms from scalar code -- it came out one term at a time, a
+// third as fast -- so the pairing is explicit: the GCC/Clang vector type where
+// there is one, and a plain struct that says the same thing where there is not.
+#if defined(__GNUC__)
+
+typedef double Lanes __attribute__((vector_size(2 * sizeof(double))));
+
+#else
+
+struct Lanes
+{
+    double v[2];
+
+    double operator[](std::size_t lane) const
+    {
+        return v[lane];
+    }
+    double& operator[](std::size_t lane)
+    {
+        return v[lane];
+    }
+};
+
+inline Lanes operator+(Lanes a, Lanes b)
+{
+    return Lanes {{a.v[0] + b.v[0], a.v[1] + b.v[1]}};
+}
+
+inline Lanes operator-(Lanes a, Lanes b)
+{
+    return Lanes {{a.v[0] - b.v[0], a.v[1] - b.v[1]}};
+}
+
+inline Lanes operator*(Lanes a, Lanes b)
+{
+    return Lanes {{a.v[0] * b.v[0], a.v[1] * b.v[1]}};
+}
+
+#endif
+
+inline Lanes both(double value)
+{
+    return Lanes {value, value};
+}
+
+constexpr std::size_t max_pade_pairs = 12;
+
+// The factored solves, two terms to a Lanes; an odd term count is padded with
+// a term of zero weight.
+struct PadeFactors
+{
+    std::size_t m = 0;
+    std::size_t terms = 0;
+    // [(row * pairs + pair) * 2 + part], part 0 real and 1 imaginary.
+    std::vector<Lanes> e, w;
+    std::vector<complex> first_back; // row 0's back coefficient, upper_0 / d_0
+    std::vector<complex> weight; // c_j / a
+    complex constant; // c_0
+};
+
+// One step, with the number of pairs a compile-time constant so that the
+// inner loops have a known, short trip count and unroll.
+//
+// Both recurrences are written as e - c x, which contracts to two fused
+// multiply-adds per part; e (psi - w) would put a subtract on the chain as
+// well.  With the terms interleaved the sweeps are no longer waiting on that
+// chain, though -- eight terms is sixteen cycles of arithmetic a row against
+// sixteen of latency -- which is why the single Crank-Nicolson solve's twisted
+// factorisation is not repeated here.
+template <std::size_t pairs>
+void pade_step(PadeFactors& factors, std::vector<complex>& psi)
+{
+    const std::size_t m = factors.m;
+    const Lanes* __restrict const e = factors.e.data();
+    Lanes* __restrict const w = factors.w.data();
+    complex* __restrict const field = psi.data();
+    // The row in hand for each term, and the terms' weights, on the stack
+    // where nothing else can alias them.
+    Lanes x_re[pairs], x_im[pairs], weight_re[pairs], weight_im[pairs];
+    for (std::size_t pair = 0; pair < pairs; pair++)
+    {
+        x_re[pair] = both(0.0);
+        x_im[pair] = both(0.0);
+        for (std::size_t lane = 0; lane < 2; lane++)
+        {
+            const std::size_t term = 2 * pair + lane;
+            weight_re[pair][lane] = term < factors.terms ? factors.weight[term].real() : 0.0;
+            weight_im[pair][lane] = term < factors.terms ? factors.weight[term].imag() : 0.0;
+        }
+    }
+    // Forward: w_r = e_r psi_r - e_r w_{r-1}.
+    for (std::size_t row = 0; row < m; row++)
+    {
+        const Lanes p_re = both(field[row].real()), p_im = both(field[row].imag());
+        const Lanes* const e_row = e + row * pairs * 2;
+        Lanes* const w_row = w + row * pairs * 2;
+        for (std::size_t pair = 0; pair < pairs; pair++)
+        {
+            const Lanes e_re = e_row[2 * pair], e_im = e_row[2 * pair + 1];
+            const Lanes t_re = e_re * p_re - e_im * p_im;
+            const Lanes t_im = e_re * p_im + e_im * p_re;
+            const Lanes re = t_re - e_re * x_re[pair] + e_im * x_im[pair];
+            const Lanes im = t_im - e_re * x_im[pair] - e_im * x_re[pair];
+            x_re[pair] = re;
+            x_im[pair] = im;
+            w_row[2 * pair] = re;
+            w_row[2 * pair + 1] = im;
+        }
+    }
+    // Back: x_r = w_r - e_r x_{r+1}, summed into psi as it is formed.  The top
+    // row's x is its w, which the forward sweep left in x.
+    const complex constant = factors.constant;
+    auto combine = [&](std::size_t row) {
+        Lanes sum_re = both(0.0), sum_im = both(0.0);
+        for (std::size_t pair = 0; pair < pairs; pair++)
+        {
+            sum_re = sum_re + weight_re[pair] * x_re[pair] - weight_im[pair] * x_im[pair];
+            sum_im = sum_im + weight_re[pair] * x_im[pair] + weight_im[pair] * x_re[pair];
+        }
+        const double p_re = field[row].real(), p_im = field[row].imag();
+        field[row] = complex(constant.real() * p_re - constant.imag() * p_im + (sum_re[0] + sum_re[1]),
+                constant.real() * p_im + constant.imag() * p_re + (sum_im[0] + sum_im[1]));
+    };
+    combine(m - 1);
+    for (std::size_t row = m - 1; row-- > 1;)
+    {
+        const Lanes* const e_row = e + row * pairs * 2;
+        const Lanes* const w_row = w + row * pairs * 2;
+        for (std::size_t pair = 0; pair < pairs; pair++)
+        {
+            const Lanes e_re = e_row[2 * pair], e_im = e_row[2 * pair + 1];
+            const Lanes re = w_row[2 * pair] - e_re * x_re[pair] + e_im * x_im[pair];
+            const Lanes im = w_row[2 * pair + 1] - e_re * x_im[pair] - e_im * x_re[pair];
+            x_re[pair] = re;
+            x_im[pair] = im;
+        }
+        combine(row);
+    }
+    // Row 0, whose back coefficient carries the ground.
+    for (std::size_t term = 0; term < factors.terms; term++)
+    {
+        const std::size_t pair = term / 2, lane = term % 2;
+        const complex x_above(x_re[pair][lane], x_im[pair][lane]);
+        const complex x = complex(w[2 * pair][lane], w[2 * pair + 1][lane]) - factors.first_back[term] * x_above;
+        x_re[pair][lane] = x.real();
+        x_im[pair][lane] = x.imag();
+    }
+    combine(0);
+}
+
+using PadeStep = void (*)(PadeFactors&, std::vector<complex>&);
+
+template <std::size_t... counts>
+constexpr std::array<PadeStep, sizeof...(counts)> pade_steps(std::index_sequence<counts...>)
+{
+    return {&pade_step<counts + 1>...};
+}
+
+March pade_march(const VerticalOperator& op, const PadePropagator& propagator)
+{
+    const std::size_t m = op.m;
+    const std::size_t terms = propagator.poles.size();
+    const std::size_t pairs = (terms + 1) / 2;
+    if (terms == 0 || pairs > max_pade_pairs)
+        throw std::invalid_argument("solve_pe: the propagator has no terms, or too many");
+    const double a = op.a;
+    auto factors = std::make_shared<PadeFactors>();
+    factors->m = m;
+    factors->terms = terms;
+    factors->e.assign(m * pairs * 2, both(0.0));
+    factors->w.assign(m * pairs * 2, both(0.0));
+    factors->first_back.resize(terms);
+    factors->weight.resize(terms);
+    factors->constant = propagator.constant;
+    for (std::size_t j = 0; j < terms; j++)
+    {
+        const complex pole = propagator.poles[j];
+        factors->weight[j] = propagator.residues[j] / a;
+        // Row 0 carries the ground: its diagonal gains a g1, its upper
+        // neighbour's coefficient is a (1 + g2).
+        const complex upper_0 = a * (1.0 + op.g2);
+        complex e = 0.0;
+        for (std::size_t row = 0; row < m; row++)
+        {
+            complex d = -2.0 * a + op.epsilon[row + 1] - pole;
+            if (row == 0)
+                d += a * op.g1;
+            else
+                d -= (row == 1 ? upper_0 : complex(a)) * e;
+            e = a / d;
+            if (!std::isfinite(std::norm(e)))
+                throw std::runtime_error("solve_pe: a Pade term's factorisation broke down");
+            factors->e[(row * pairs + j / 2) * 2][j % 2] = e.real();
+            factors->e[(row * pairs + j / 2) * 2 + 1][j % 2] = e.imag();
+            if (row == 0)
+                factors->first_back[j] = upper_0 / d;
+        }
+    }
+    static constexpr auto steps = pade_steps(std::make_index_sequence<max_pade_pairs>());
+    const PadeStep step = steps[pairs - 1];
+    return [factors, step](std::vector<complex>& psi) { step(*factors, psi); };
+}
+
+} // namespace
+
+PeResult solve_pe(const PeSetup& s)
+{
+    if (s.z.empty() || s.z.size() != s.c.size())
+        throw std::invalid_argument("solve_pe: the sound-speed profile is empty or uneven");
+    if (!(s.frequency > 0.0) || !(s.max_range > 0.0) || s.receiver_heights.empty())
+        throw std::invalid_argument("solve_pe: frequency, range and receivers are required");
+
+    const double omega = 2.0 * pi * s.frequency;
+    const double c_ref = speed_at(s, 0.0);
+    const double k_a = omega / c_ref;
+    const double wavelength = c_ref / s.frequency;
+    const double dz = wavelength / s.points_per_wavelength;
+
+    // The domain: everything the source and receivers need, a clear margin,
+    // then an absorbing layer that takes what leaves the top.  The margin is
+    // generous on purpose.  In a shadow the field near the ground is a weak
+    // remainder, while energy leaks upward past it; what the layer sends back
+    // down lands on that remainder as a floor.  With 60 wavelengths of margin,
+    // 25 m at 1 kHz, the exact residue series (tests/test_pe_shadow.cpp) found
+    // the PE 3.8 dB high at -44 dB; with 250 m it agrees to hundredths.
+    const double highest = std::max(s.source_height,
+            *std::max_element(s.receiver_heights.begin(), s.receiver_heights.end()));
+    const double physical_top = s.domain_height > 0.0
+            ? s.domain_height
+            : highest + std::max({60.0 * wavelength, 0.5 * highest, 250.0});
+    const double layer = s.layer_wavelengths * wavelength;
+    const double top = physical_top + layer;
+    const std::size_t n = static_cast<std::size_t>(std::ceil(top / dz)); // psi_n = 0
+
+    // epsilon_j = (k_j^2 - k_a^2) / k_a^2, complex with the absorption, and
+    // with the absorbing layer: a quadratic ramp to Im k ~ k_a / 10 at the top.
+    VerticalOperator op;
+    std::vector<complex>& epsilon = op.epsilon;
+    epsilon.resize(n + 1);
+    for (std::size_t j = 0; j <= n; j++)
+    {
+        const double z = static_cast<double>(j) * dz;
+        const complex k(omega / speed_at(s, z), s.absorption);
+        double ramp = 0.0;
+        if (z > physical_top)
+        {
+            const double t = (z - physical_top) / layer;
+            ramp = 0.2 * t * t;
+        }
+        epsilon[j] = (k * k - k_a * k_a) / (k_a * k_a) + complex(0.0, ramp);
+    }
+
+    // Rows j = 1 .. n-1 (psi_0 from the ground condition, psi_n = 0).
+    // Q psi_j = a (psi_{j+1} - 2 psi_j + psi_{j-1}) + epsilon_j psi_j.
+    const double a = 1.0 / (k_a * k_a * dz * dz);
+    const complex i(0.0, 1.0);
+    // Ground: (-3 psi_0 + 4 psi_1 - psi_2) / (2 dz) = -i k beta psi_0, so
+    // psi_0 = (4 psi_1 - psi_2) / (3 - 2 i k beta dz) = g1 psi_1 + g2 psi_2.
+    const complex denominator = 3.0 - 2.0 * i * k_a * s.admittance * dz;
+    const complex g1 = 4.0 / denominator;
+    const complex g2 = -1.0 / denominator;
+    const std::size_t m = n - 1; // unknowns psi_1 .. psi_{n-1}
+    if (m < 3)
+        throw std::invalid_argument("solve_pe: the grid is too small");
+    op.a = a;
+    op.g1 = g1;
+    op.g2 = g2;
+    op.m = m;
+
+    const bool turbulent = s.gamma_t > 0.0;
+    const double spacing = s.screen_spacing > 0.0 ? s.screen_spacing : s.outer_scale;
+
+    PeResult result;
+    double dr = 0.0;
+    double steepest = 0.0; // tan of the split-step's max_angle; 0 for Crank-Nicolson
+    March march;
+    if (s.scheme == PeScheme::crank_nicolson)
+    {
+        dr = wavelength / s.range_points_per_wavelength;
+        march = crank_nicolson_march(op, k_a, dr);
+    }
+    else
+    {
+        // A whole number of steps per output interval, so results are taken
+        // where the march lands and never interpolated: over steps this long
+        // psi turns through radians between them.  No step spans more than one
+        // phase screen.
+        double longest = s.range_step_wavelengths * wavelength;
+        if (turbulent)
+            longest = std::min(longest, spacing);
+        std::size_t per_output = static_cast<std::size_t>(std::ceil(s.output_step / longest - 1e-9));
+        per_output = std::max<std::size_t>(per_output, 1);
+
+        // Where the propagator must be accurate: every mode travelling within
+        // max_angle of horizontal, anywhere below the absorbing layer.  A wave
+        // at elevation theta where the index is k has x = epsilon - (1 +
+        // epsilon) sin^2 theta.  Above zero, room for the ground's surface
+        // wave, whose horizontal wavenumber exceeds k: x = -beta^2.
+        double epsilon_low = epsilon[0].real(), epsilon_high = epsilon[0].real();
+        double spectrum_low = epsilon[0].real(), spectrum_imag = 0.0;
+        for (std::size_t j = 0; j <= n; j++)
+        {
+            if (static_cast<double>(j) * dz <= physical_top)
+            {
+                epsilon_low = std::min(epsilon_low, epsilon[j].real());
+                epsilon_high = std::max(epsilon_high, epsilon[j].real());
+            }
+            spectrum_low = std::min(spectrum_low, epsilon[j].real());
+            spectrum_imag = std::max(spectrum_imag, epsilon[j].imag());
+        }
+        const double cosine = std::cos(s.max_angle * pi / 180.0);
+        steepest = std::tan(s.max_angle * pi / 180.0);
+        PadeRequest request;
+        // Short of x = -1, the propagator's branch point, which no rational
+        // function follows: a column whose index falls that far keeps less
+        // than max_angle at its top.
+        request.accurate_low = std::max((1.0 + epsilon_low) * cosine * cosine - 1.0, -0.75);
+        request.accurate_high = epsilon_high + 0.02 + std::max(0.0, -(s.admittance * s.admittance).real());
+        request.spectrum_low = spectrum_low - 4.0 * a - 0.5;
+        request.spectrum_imag = spectrum_imag;
+        request.tolerance = s.propagator_tolerance;
+        PadePropagator propagator;
+        for (int attempt = 0;; attempt++)
+        {
+            dr = s.output_step / static_cast<double>(per_output);
+            request.sigma = k_a * dr;
+            try
+            {
+                propagator = pade_propagator(request);
+                break;
+            }
+            catch (const std::runtime_error&)
+            {
+                // Too long a step for this interval: shorten it.
+                if (attempt == 8)
+                    throw;
+                per_output += (per_output + 1) / 2;
+            }
+        }
+        result.pade_terms = static_cast<int>(propagator.poles.size());
+        march = pade_march(op, propagator);
+    }
+    result.range_step = dr;
+
+    // Salomons' second-order Gaussian starter, with its image in the ground
+    // at the normal-incidence reflection coefficient.  Normalised so that
+    // p = psi exp(i k_a r) / sqrt(r) is a unit point source, exp(ikR)/R.
+    std::vector<complex> psi(m);
+    const complex reflection = (1.0 - s.admittance) / (1.0 + s.admittance);
+    const complex scale = std::sqrt(i * k_a);
+    auto starter = [&](double z) {
+        const double u = k_a * k_a * z * z;
+        return (1.3717 - 0.3701 * u) * std::exp(-u / 3.0);
+    };
+    for (std::size_t row = 0; row < m; row++)
+    {
+        const double z = static_cast<double>(row + 1) * dz;
+        psi[row] = scale * (starter(z - s.source_height) + reflection * starter(z + s.source_height));
+    }
+
+    // Turbulence: a screen every `spacing` metres, below the absorbing layer.
+    const std::size_t screened = std::min(m, static_cast<std::size_t>(physical_top / dz));
+    std::unique_ptr<ScreenSource> screens;
+    if (turbulent)
+        screens = std::make_unique<ScreenSource>(k_a, s.gamma_t, s.outer_scale, spacing, dz, screened + 1,
+                s.seed);
+    double next_screen = 0.5 * spacing;
+
+    result.relative_level.assign(s.receiver_heights.size(), {});
+    result.psi.assign(s.receiver_heights.size(), {});
+    // Crank-Nicolson's step follows the wavelength; the split-step's divides
+    // the output step, up to rounding.
+    const std::size_t steps = static_cast<std::size_t>(std::ceil(s.max_range / dr - 1e-9));
+    // psi at each receiver, linear between grid points; psi_0 from the ground
+    // condition.
+    auto at_receiver = [&](double zr) {
+        const double u = zr / dz;
+        const std::size_t j = std::min(static_cast<std::size_t>(u), m - 1);
+        const double t = u - static_cast<double>(j);
+        auto at = [&](std::size_t jj) {
+            if (jj == 0)
+                return g1 * psi[0] + g2 * psi[1];
+            return jj <= m ? psi[jj - 1] : complex(0.0);
+        };
+        return (1.0 - t) * at(j) + t * at(j + 1);
+    };
+    // Results at exact multiples of the output step, whatever the range step,
+    // so every frequency lands on one grid: psi interpolated between the two
+    // range steps either side.  The split-step march lands on them, and the
+    // interpolation then takes the later step whole.
+    std::vector<complex> previous_value(s.receiver_heights.size());
+    for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
+        previous_value[k] = at_receiver(s.receiver_heights[k]);
+    std::size_t next_output = 1;
+    std::vector<complex> value(s.receiver_heights.size());
+    for (std::size_t step = 1; step <= steps; step++)
+    {
+        march(psi);
 
         const double r = static_cast<double>(step) * dr;
         // Each screen stands for the slab of turbulence centred on it.
@@ -385,8 +721,13 @@ PeResult solve_pe(const PeSetup& s)
                 const complex v = (1.0 - t) * previous_value[k] + t * value[k];
                 const double zr = s.receiver_heights[k];
                 const double slant = std::hypot(target, zr - s.source_height);
-                result.relative_level[k].push_back(
-                        20.0 * std::log10(std::abs(v) * slant / std::sqrt(target) + 1e-300));
+                // Steeper than the propagator reaches there is no field to
+                // report: it absorbs those modes (pade_propagator.cpp), so the
+                // number would be hundreds of dB down and mean nothing.
+                const bool too_steep = steepest > 0.0 && std::abs(zr - s.source_height) > steepest * target;
+                result.relative_level[k].push_back(too_steep
+                        ? std::numeric_limits<double>::quiet_NaN()
+                        : 20.0 * std::log10(std::abs(v) * slant / std::sqrt(target) + 1e-300));
                 result.psi[k].push_back(v);
             }
             next_output++;
