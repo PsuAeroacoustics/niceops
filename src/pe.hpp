@@ -23,15 +23,33 @@
 //   split_step_pade (the default).  psi(r + dr) = exp(i k_a dr (sqrt(1 + Q) -
 //   1)) psi(r) exactly, the exponential replaced by a sum of resolvents of Q
 //   (Collins 1993; pade_propagator.hpp), so a step is a handful of tridiagonal
-//   solves and is eight wavelengths long: seven or eight solves where
+//   solves and is eight wavelengths long: about ten solves where
 //   Crank-Nicolson takes eighty steps.  It is accurate to 1e-7 a step for
-//   every mode within max_angle of horizontal, 35 degrees, whatever the step:
+//   every mode within max_angle of horizontal, 50 degrees, whatever the step:
 //   from 2 to 32 wavelengths a step the result does not move by 0.001 dB,
 //   60 dB into a shadow.  Steeper modes it absorbs, where Crank-Nicolson
 //   carries them at the wrong speed; a level on a path steeper than max_angle
-//   from the source is reported as NaN.  What is left between it and the
-//   exact field is the starter, which is a far-field one and good to about
-//   0.5 dB at 30 degrees: raising max_angle alone buys nothing.
+//   from the source is reported as NaN.
+//
+//   A propagator good to 50 degrees is not by itself a field good to 50
+//   degrees.  Two other things had to change, and with max_angle alone raised
+//   the error at 30-50 degrees stayed where it was, 0.6-1.7 dB rms against the
+//   exact two-ray field at 1 kHz:
+//     - the starter.  The Gaussian is a far-field, narrow-angle source, and it
+//       is normalised with the ground's wavenumber.  The self-starter
+//       (PeStarter::self) is the first range step itself with the point
+//       source's modal amplitudes in it, applied to a delta function on the
+//       grid: exact to max_angle like every other step.  It also gives a
+//       source aloft its own strength.  Where k at the source is 3% from k at
+//       the ground the Gaussian is 0.11-0.15 dB off at every range, against
+//       the residue series; the self-starter is within 0.04.
+//     - the grid.  Second-order differences misplace a wave at elevation
+//       theta by (k dz sin theta)^2 / 12 of its vertical wavenumber squared,
+//       a radian of phase by 35 degrees at 1 kHz from a 100 m source.
+//       vertical_order 4 takes d^2/dz^2 as Numerov does, which costs a weight
+//       per term per row and a third more time.
+//   Together: within 0.08 dB rms of the exact field at every elevation to 50
+//   degrees, and 0.14 to 60 with max_angle there.
 //
 //   crank_nicolson.  The Pade(1,1) wide-angle equation marched by
 //   Crank-Nicolson (Salomons, Computational Atmospheric Acoustics, 2001,
@@ -47,12 +65,16 @@
 // zones -- and not the steep ones near the source, where refraction does not
 // matter and the straight ray is exact anyway.
 //
-// It never runs in a footprint.  The split-step costs 6 ns per grid point per
-// step with eight terms, Crank-Nicolson 2.7 for a step a seventieth as long:
-// a kilometre at 1 kHz from a 100 m source is 60 ms, against 1.7 s.  A band's
-// frequencies, and several bands at once (solve_pe_bands), run in parallel.
+// It never runs in a footprint.  One march is 19 times faster than
+// Crank-Nicolson at the defaults, 24 with max_angle 35 and 32 with second
+// order and the Gaussian starter as well.  A band's frequencies, and several
+// bands at once (solve_pe_bands), run in parallel.
 //
-// The grid is 20 points per wavelength in height.  Against a 30 x 30
+// The grid is 20 points per wavelength in height.  At fourth order 14 do as
+// well as 20 did at second -- 0.02-0.04 dB rms from a 40-point run on a windy
+// profile, either way -- and give the time back; the default has not been
+// moved, because the ground condition and the receiver's interpolation are
+// second order still and were calibrated at 20.  Against a 30 x 30
 // Crank-Nicolson reference, 10 was within about 0.1 dB rms for a microphone
 // near the ground but 0.47 dB rms (2.2 dB at worst) for one 1.2 m up at 1 kHz;
 // 20 brings that to 0.09, for twice the cost.  Rerunning the stored
@@ -69,6 +91,20 @@ enum class PeScheme
 {
     split_step_pade,
     crank_nicolson,
+};
+
+// The field the march starts from.
+enum class PeStarter
+{
+    // Collins' self-starter: the first step is the propagator with the point
+    // source's modal amplitudes, applied to a delta function on the grid.  It
+    // is exact to max_angle like every later step, and the ground enters
+    // through the grid's own condition.
+    self,
+    // Salomons' second-order Gaussian at r = 0, with its image in the ground
+    // at the normal-incidence reflection coefficient: a far-field, narrow-
+    // angle source.
+    gaussian,
 };
 
 struct PeSetup
@@ -97,8 +133,13 @@ struct PeSetup
     // elevation angle the propagator is accurate to, in degrees, and its
     // tolerance per step, as |r - exact| for every mode within that angle.
     double range_step_wavelengths = 8.0;
-    double max_angle = 35.0;
+    double max_angle = 50.0;
     double propagator_tolerance = 1e-7;
+    // Split-step Pade: how the field is started.  Crank-Nicolson always takes
+    // the Gaussian.
+    PeStarter starter = PeStarter::self;
+    // Split-step Pade: the order of d^2/dz^2 on the grid, 2 or 4.
+    int vertical_order = 4;
     // Crank-Nicolson: range steps per wavelength.
     double range_points_per_wavelength = 10.0;
     // Height of the physical domain, below the absorbing layer; 0 chooses it.
@@ -140,6 +181,9 @@ struct PeResult
     // terms (0 for Crank-Nicolson).  solve_pe_band leaves them unset.
     double range_step = 0.0;
     int pade_terms = 0;
+    // Whether the self-starter was used.  It is not for Crank-Nicolson, for a
+    // source within a grid point of the ground, or if its fit was refused.
+    bool self_started = false;
 };
 
 PeResult solve_pe(const PeSetup& setup);

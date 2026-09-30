@@ -46,7 +46,9 @@ int main(int argc, char** argv)
     double range_points_per_wavelength = 10.0;
     std::string scheme = "pade";
     double range_step_wavelengths = 8.0;
-    double max_angle = 35.0;
+    double max_angle = 50.0;
+    int vertical_order = 4;
+    std::string starter = "self";
     double gamma_t = 0.0;
     double outer_scale = 10.0;
     unsigned seed = 1;
@@ -69,8 +71,14 @@ int main(int argc, char** argv)
     app.add_option("--range_step", range_step_wavelengths,
             "--scheme pade: longest range step, in wavelengths (default 8).");
     app.add_option("--max_angle", max_angle,
-            "--scheme pade: elevation angle the march is accurate to, degrees (default 35).  Steeper "
+            "--scheme pade: elevation angle the march is accurate to, degrees (default 50, at most 60).  Steeper "
             "paths from the source come out as NaN.");
+    app.add_option("--vertical_order", vertical_order,
+            "--scheme pade: order of the height derivative on the grid, 4 (default) or 2.")
+            ->check(CLI::IsMember({2, 4}));
+    app.add_option("--starter", starter,
+            "--scheme pade: self (default), the wide-angle self-starter, or gaussian.")
+            ->check(CLI::IsMember({"self", "gaussian"}));
     app.add_option("--range_ppw", range_points_per_wavelength,
             "--scheme cn: range steps per wavelength (default 10).");
     app.add_option("--gamma_t", gamma_t, "Turbulence in the PE, as for niceops_pe_compare (default 0).");
@@ -119,6 +127,8 @@ int main(int argc, char** argv)
         setup.scheme = scheme == "cn" ? PeScheme::crank_nicolson : PeScheme::split_step_pade;
         setup.range_step_wavelengths = range_step_wavelengths;
         setup.max_angle = max_angle;
+        setup.vertical_order = vertical_order;
+        setup.starter = starter == "gaussian" ? PeStarter::gaussian : PeStarter::self;
         setup.gamma_t = gamma_t;
         setup.outer_scale = outer_scale;
         setup.seed = seed + 1000u * static_cast<unsigned>(b);

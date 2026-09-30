@@ -218,7 +218,10 @@ TEST_CASE("case 2: the PE is the normal-mode series in downward refraction", "[b
     // At 10 Hz there are only ~60 modes below the cut, too few for it to be
     // clean within 6 wavelengths of the source: there the full series, whose
     // returns are still weak, and the cut one only from 500 m; and from 50 m,
-    // past the source's near field (case 1).  At 1 kHz the
+    // past the source's near field (case 1).  At 100 Hz the grid is ten points a
+    // wavelength, 0.34 m under a 1 m receiver, and the PE closes on the series
+    // as 1/r: 0.16 dB under at 15 m, 0.10 at 20, 0.07 at 25, where the
+    // comparison starts.  At 1 kHz the
     // PE's own grid is the limit past 500 m -- 0.8 dB at ten points a
     // wavelength by 1 km, 0.3 at twenty -- so the comparison stops there.
     struct Leg
@@ -226,7 +229,7 @@ TEST_CASE("case 2: the PE is the normal-mode series in downward refraction", "[b
         double f, from, to, cut;
     };
     for (const Leg leg : {Leg {10.0, 50.0, 200.0, 90.0}, Leg {10.0, 500.0, 1000.0, 75.0},
-                 Leg {100.0, 20.0, 1000.0, 75.0}, Leg {1000.0, 20.0, 500.0, 75.0}})
+                 Leg {100.0, 25.0, 1000.0, 75.0}, Leg {1000.0, 20.0, 500.0, 75.0}})
     {
         PeSetup s = pe_at(leg.f, leg.to, 5.0);
         airy_profile(s, -1.0, 1600.0);

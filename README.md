@@ -636,29 +636,53 @@ in the PE (below).
 
 The PE is marched in range by a split-step Padé method (Collins, JASA 93, 1736 (1993)): one
 range step applies the one-way equation's exact propagator, replaced by a rational function
-that is accurate to 1e-7 for every wave within 35° of horizontal (`--max_angle`) and costs one
-tridiagonal solve per term. A step is eight wavelengths long (`--range_step`) and takes seven
-or eight terms. The result does not depend on the step: between 2 and 32 wavelengths it moves
+that is accurate to 1e-7 for every wave within 50° of horizontal (`--max_angle`, up to 60) and
+costs one tridiagonal solve per term. A step is eight wavelengths long (`--range_step`) and
+takes about ten terms. The result does not depend on the step: between 2 and 32 wavelengths it moves
 by less than 0.001 dB, 60 dB into a shadow. Waves steeper than `--max_angle` are absorbed
 rather than carried, so **a level on a path steeper than that from the source is written as
-NaN** (within 140 m of the point under a 100 m source, at the default).
+NaN** (within 83 m of the point under a 100 m source, at the default).
+
+Two more things make the field, and not just the propagator, good to that angle. The march
+starts from Collins' self-starter (`--starter self`): the first range step with the point
+source's modal amplitudes in it, applied to a delta function on the grid, instead of a
+narrow-angle Gaussian. And the height derivative is fourth order (`--vertical_order 4`,
+Numerov's form). Against the exact two-ray field over soft ground at 1 kHz, from a 100 m
+source:
+
+| Elevation | Gaussian starter, second order | self-starter, fourth order |
+| --- | --- | --- |
+| 0–20° | 0.01–0.02 dB rms | 0.004–0.01 |
+| 20–30° | 0.14 | 0.03 |
+| 30–35° | 0.59 | 0.005 |
+| 35–40° | 0.61 | 0.08 |
+| 40–50° | 1.75 | 0.03 |
+
+The self-starter also corrects a bias at every angle. The Gaussian is normalised with the
+wavenumber at the ground, so a source aloft in a refracting or windy column comes out at the
+wrong strength: 0.11–0.15 dB high against the exact residue series for a 100 m source where
+the sound speed is 3% lower than at the ground, and 0.10 dB on `example_windy.csv`. The
+self-starter is within 0.04 dB.
 
 `--scheme cn` is the march this replaced, Crank–Nicolson on the Padé(1,1) wide-angle equation
 at ten steps per wavelength (`--range_ppw`), kept as an independent check. It is good to about
 30°, and its phase error builds with range. Through `atmospheres/example_windy.csv` from a
-100 m source out to 1.5 km, 125 Hz – 2 kHz, the two differ by 0.03–0.12 dB rms; against the
-exact field in still air it is Crank–Nicolson that is off, by 0.7 dB rms at 25–30° and 2.1 dB
-at 30–35° at 1 kHz where the split-step is within 0.1 and 0.6 dB. What remains near the angle
-limit is the starting field, which is a far-field one.
+100 m source out to 1.5 km, 125 Hz – 2 kHz, the two differ by 0.03–0.12 dB rms with the same
+starter and grid order; against the exact field in still air it is Crank–Nicolson that is off,
+by 0.7 dB rms at 25–30° and 2.1 dB at 30–35° at 1 kHz.
 
-| Five bands, 125 Hz – 2 kHz, 100 m source to 1.5 km, 14 cores | time |
+| Five bands, 125 Hz – 2 kHz, 100 m source to 1.5 km, 14 cores | PE time |
 | --- | --- |
-| `--scheme cn` | 25.9 s |
-| `--scheme pade` (default) | 1.1 s |
+| `--scheme cn` | 25.4 s |
+| `--scheme pade` (default: 50°, self-starter, fourth order) | 1.5 s |
+| … `--max_angle 60` | 1.8 s |
+| … `--max_angle 35` | 0.95 s |
+| … `--max_angle 35 --vertical_order 2 --starter gaussian` | 0.6 s |
 
-One march is 26–32 times faster: 6 ns per grid point per step with eight terms, against
-2.7 ns for a step a seventieth as long. Bands and their frequencies run in parallel. The grid
-is 20 points per wavelength in height (`--ppw`). Against a
+(The ray models' columns take another 0.4 s.) One march is 19 times faster than
+Crank–Nicolson at the defaults. Bands and their frequencies run in parallel. The grid
+is 20 points per wavelength in height (`--ppw`); at fourth order `--ppw 14` is as close to a
+40-point run as second order was at 20, and brings the default's time down by a third. Against a
 30 × 30 Crank–Nicolson reference, 10 in height is within about 0.1 dB rms for a receiver near the ground, but
 0.47 dB rms (2.2 dB at worst) for one 1.2 m up at 1 kHz; 20 brings that to 0.09 dB, at twice the
 cost. On the stored shadow-calibration cases the change moved the PE by 0.16–0.39 dB rms (1.1 dB
@@ -806,7 +830,7 @@ tabulates, absorption at 20 °C and 70% RH, and four profiles:
 `niceops_benchmark` runs all four to 200 m and to 10 km with the PE and, where one exists,
 the exact solution (`src/exact_solutions.hpp`). `tools/plot_benchmark.py DIR` draws them in
 the paper's layout, so each figure sits beside their figs. 11–14, and prints how far the PE is
-from the exact solution. A full run takes about 9 seconds.
+from the exact solution. A full run takes about 10 seconds.
 
 ```sh
 niceops_benchmark --out figures/benchmark

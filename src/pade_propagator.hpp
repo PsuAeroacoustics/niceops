@@ -47,9 +47,18 @@ struct PadePropagator
 // modes (x < -1) and for absorption (Im x > 0): the cut runs down from -1.
 std::complex<double> exact_propagator(std::complex<double> x, double sigma);
 
+// (1 + x)^(-1/4) exp(i sigma (sqrt(1 + x) - 1)) on the same branch: the
+// self-starter's operator (Collins, JASA 92, 2069 (1992)).  A point source's
+// field one step out is this applied to a delta function at its height --
+// each mode launched with the amplitude the Hankel function gives it,
+// k_n^(-1/2), rather than the one a Gaussian assumes.
+std::complex<double> starter_propagator(std::complex<double> x, double sigma);
+
 struct PadeRequest
 {
     double sigma = 0.0; // k_a dr
+    // Fit starter_propagator rather than exact_propagator.
+    bool starter = false;
     // The interval of real x on which r must match the exact propagator.
     double accurate_low = 0.0;
     double accurate_high = 0.0;

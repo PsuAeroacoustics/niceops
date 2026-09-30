@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "exact_solutions.hpp"
 #include "ground_effect.hpp"
 #include "pade_propagator.hpp"
 #include "pe.hpp"
@@ -152,8 +153,13 @@ TEST_CASE("the split-step march is Crank-Nicolson's with a fine enough step", "[
 {
     // Low angles, where Crank-Nicolson's Pade(1,1) equation is good and only
     // its range step stands between the two: forty steps a wavelength.
+    // Like for like: Crank-Nicolson's own second-order grid and Gaussian
+    // starter, so that the range arithmetic is all that differs.
     PeSetup setup = refracting(250.0);
+    setup.vertical_order = 2;
+    setup.starter = PeStarter::gaussian;
     const auto pade = solve_pe(setup);
+    CHECK(!pade.self_started);
     setup.scheme = PeScheme::crank_nicolson;
     setup.range_points_per_wavelength = 40.0;
     const auto reference = solve_pe(setup);
@@ -175,7 +181,7 @@ TEST_CASE("the split-step march is Crank-Nicolson's with a fine enough step", "[
 
 TEST_CASE("the split-step march reports no level steeper than it reaches", "[pade]")
 {
-    // A 100 m source over a 1.2 m receiver: 35 degrees is 141 m out.
+    // A 100 m source over a 1.2 m receiver: 50 degrees is 83 m out.
     PeSetup setup;
     setup.frequency = 250.0;
     setup.source_height = 100.0;
@@ -188,7 +194,7 @@ TEST_CASE("the split-step march reports no level steeper than it reaches", "[pad
     for (std::size_t q = 0; q < pade.range.size(); q++)
     {
         INFO("r = " << pade.range[q]);
-        if (pade.range[q] < 141.0)
+        if (pade.range[q] < 82.9)
             CHECK(std::isnan(pade.relative_level[0][q]));
         else
             CHECK(std::abs(pade.relative_level[0][q]) < 10.0);
@@ -198,4 +204,137 @@ TEST_CASE("the split-step march reports no level steeper than it reaches", "[pad
     const auto cn = solve_pe(setup);
     for (const double level : cn.relative_level[0])
         CHECK(std::isfinite(level));
+}
+
+TEST_CASE("the self-started, fourth-order march is the exact field out to its angle", "[pade]")
+{
+    // A 100 m source over soft ground in still air at 1 kHz, from directly
+    // below the angle limit outward: the direct and reflected rays with the
+    // spherical-wave reflection coefficient.  A Gaussian starter on a
+    // second-order grid is 0.5-1.2 dB off between 30 and 50 degrees here; the
+    // two changes together bring that under 0.1.
+    const double c = 340.0, f = 1000.0, z_s = 100.0, z_r = 1.0;
+    GroundModel ground;
+    ground.flow_resistance = 200.0;
+    const auto admittance = ground_impedance(ground, {f}, c)[0];
+    PeSetup setup;
+    setup.frequency = f;
+    setup.source_height = z_s;
+    setup.receiver_heights = {z_r};
+    setup.max_range = 600.0;
+    setup.output_step = 5.0;
+    setup.z = {0.0};
+    setup.c = {c};
+    setup.admittance = admittance;
+    auto exact = [&](double r) {
+        const double r1 = std::hypot(r, z_s - z_r), r2 = std::hypot(r, z_s + z_r);
+        const auto q = spherical_reflection_coefficient((z_s + z_r) / r2, pi * f * r2 / c, admittance, true);
+        const complex field = 1.0 + complex(q[0], q[1]) * (r1 / r2) * std::exp(complex(0.0, 2.0 * pi * f / c * (r2 - r1)));
+        return 20.0 * std::log10(std::abs(field));
+    };
+    // rms over the ranges whose direct path lies between the two elevations,
+    // leaving out the interference minima.
+    auto rms = [&](const PeResult& pe, double steepest, double shallowest) {
+        double sum = 0.0;
+        int count = 0;
+        for (std::size_t q = 0; q < pe.range.size(); q++)
+        {
+            const double angle = std::atan2(z_s - z_r, pe.range[q]) * 180.0 / pi;
+            const double level = exact(pe.range[q]);
+            if (angle > steepest || angle < shallowest || level < -10.0)
+                continue;
+            const double d = pe.relative_level[0][q] - level;
+            sum += d * d;
+            count++;
+        }
+        REQUIRE(count > 8);
+        return std::sqrt(sum / count);
+    };
+    const auto wide = solve_pe(setup);
+    CHECK(wide.self_started);
+    const double wide_steep = rms(wide, 50.0, 30.0), wide_shallow = rms(wide, 30.0, 9.0);
+    // What it replaces, for the size of the difference.
+    setup.starter = PeStarter::gaussian;
+    setup.vertical_order = 2;
+    const auto narrow = solve_pe(setup);
+    const double narrow_steep = rms(narrow, 50.0, 30.0);
+    INFO("30-50 degrees: " << wide_steep << " dB rms, Gaussian on second order " << narrow_steep
+                           << "; 9-30 degrees: " << wide_shallow);
+    CHECK(wide_steep < 0.15);
+    CHECK(wide_shallow < 0.05);
+    CHECK(narrow_steep > 3.0 * wide_steep);
+}
+
+TEST_CASE("fourth order in height converges from fewer points", "[pade]")
+{
+    // The refracting case at 10 and at 20 points a wavelength: fourth order
+    // moves less between them than second order does.
+    auto spread = [](int order) {
+        PeSetup setup = refracting(500.0);
+        setup.vertical_order = order;
+        setup.points_per_wavelength = 10.0;
+        const auto coarse = solve_pe(setup);
+        setup.points_per_wavelength = 20.0;
+        const auto fine = solve_pe(setup);
+        double sum = 0.0;
+        int count = 0;
+        for (std::size_t q = 0; q < fine.range.size(); q++)
+        {
+            if (fine.range[q] < 100.0 || std::isnan(fine.relative_level[1][q]))
+                continue;
+            const double d = coarse.relative_level[1][q] - fine.relative_level[1][q];
+            sum += d * d;
+            count++;
+        }
+        return std::sqrt(sum / count);
+    };
+    const double second = spread(2), fourth = spread(4);
+    INFO("second order " << second << " dB rms, fourth order " << fourth);
+    CHECK(fourth < 0.5 * second);
+    CHECK(fourth < 0.1);
+}
+
+TEST_CASE("the self-starter gives an elevated source its own strength", "[pade]")
+{
+    // The benchmark's upward-refracting column (test_benchmark.cpp) with the
+    // source 100 m up, where k is 3% above its value at the ground, against
+    // the residue series.  The Gaussian starter is normalised with the
+    // ground's wavenumber and comes out 0.11-0.15 dB high at every range; the
+    // self-starter launches each mode with its own k_n^(-1/2).
+    const double c0 = 343.23, radius = c0 / 0.1, f = 100.0;
+    ExactProblem problem;
+    problem.frequency = f;
+    problem.sound_speed = c0;
+    problem.admittance = 1.0 / complex(12.81, 11.62);
+    problem.source_height = 100.0;
+    problem.receiver_height = 1.0;
+    PeSetup setup;
+    setup.frequency = f;
+    setup.source_height = 100.0;
+    setup.receiver_heights = {1.0};
+    setup.max_range = 2000.0;
+    setup.output_step = 50.0;
+    setup.admittance = problem.admittance;
+    for (double z = 0.0; z <= 1600.0; z += 0.1)
+    {
+        setup.z.push_back(z);
+        setup.c.push_back(c0 / std::sqrt(1.0 + 2.0 * z / radius));
+    }
+    const auto self = solve_pe(setup);
+    setup.starter = PeStarter::gaussian;
+    const auto gaussian = solve_pe(setup);
+    const auto series = upward_pressure(problem, radius, self.range);
+    int compared = 0;
+    for (std::size_t q = 0; q < self.range.size(); q++)
+    {
+        const double r = self.range[q];
+        if (r < 400.0 || std::isnan(series[q].real()))
+            continue;
+        const double exact = 20.0 * std::log10(std::abs(series[q]) * std::hypot(r, 99.0));
+        INFO("r = " << r << ", exact " << exact);
+        CHECK(self.relative_level[0][q] == Catch::Approx(exact).margin(0.05));
+        CHECK(gaussian.relative_level[0][q] - exact > 0.08);
+        compared++;
+    }
+    CHECK(compared > 20);
 }

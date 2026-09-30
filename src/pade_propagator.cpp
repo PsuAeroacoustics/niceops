@@ -124,6 +124,11 @@ bool chebyshev_roots(const std::vector<complex>& coefficients, std::vector<compl
 // |r| > 1, between the interval and the first of them.
 const std::vector<double> evanescent_nodes = {-1.5, -6.0};
 
+complex target(const PadeRequest& request, complex x)
+{
+    return request.starter ? starter_propagator(x, request.sigma) : exact_propagator(x, request.sigma);
+}
+
 // The type (terms, terms) interpolant, or false if it does not meet the
 // request.
 bool fit(const PadeRequest& request, int terms, PadePropagator& out)
@@ -148,7 +153,7 @@ bool fit(const PadeRequest& request, int terms, PadePropagator& out)
                 ? mid + half * std::cos(pi * (static_cast<double>(k) + 0.5) / static_cast<double>(inside))
                 : evanescent_nodes[k - inside];
         const double t = (x - mid) / half;
-        const complex f = exact_propagator(x, request.sigma);
+        const complex f = target(request, x);
         basis[0] = 1.0;
         basis[1] = t;
         for (std::size_t j = 2; j <= n; j++)
@@ -196,7 +201,7 @@ bool fit(const PadeRequest& request, int terms, PadePropagator& out)
     {
         const double x = request.accurate_low
                 + (request.accurate_high - request.accurate_low) * k / accuracy_samples;
-        out.error = std::max(out.error, std::abs(out(x) - exact_propagator(x, request.sigma)));
+        out.error = std::max(out.error, std::abs(out(x) - target(request, x)));
     }
     if (!(out.error <= request.tolerance))
         return false;
@@ -216,7 +221,13 @@ bool fit(const PadeRequest& request, int terms, PadePropagator& out)
         if (request.spectrum_imag <= 0.0)
             break;
     }
-    return out.largest_modulus <= 1.0 + 10.0 * request.tolerance;
+    // The starter's own modulus is (1 + x)^(-1/4), which rises toward the
+    // branch point, and r follows it a little way below the interval before
+    // it falls.  It is applied once, so it has only to stay bounded.
+    const double bound = request.starter
+            ? 2.0 * std::abs(starter_propagator(request.accurate_low, request.sigma))
+            : 1.0;
+    return out.largest_modulus <= bound + 10.0 * request.tolerance;
 }
 
 } // namespace
@@ -235,6 +246,12 @@ std::complex<double> exact_propagator(std::complex<double> x, double sigma)
     // exp(i pi/4) sqrt(-i (1 + x)).
     const complex root = std::polar(1.0, 0.25 * pi) * std::sqrt(complex(0.0, -1.0) * (1.0 + x));
     return std::exp(complex(0.0, sigma) * (root - 1.0));
+}
+
+std::complex<double> starter_propagator(std::complex<double> x, double sigma)
+{
+    const complex root = std::polar(1.0, 0.25 * pi) * std::sqrt(complex(0.0, -1.0) * (1.0 + x));
+    return std::exp(complex(0.0, sigma) * (root - 1.0)) / std::sqrt(root);
 }
 
 PadePropagator pade_propagator(const PadeRequest& request)

@@ -357,6 +357,11 @@ struct PadeFactors
     // [(row * pairs + pair) * 2 + part], part 0 real and 1 imaginary.
     std::vector<Lanes> e, w;
     std::vector<complex> first_back; // row 0's back coefficient, upper_0 / d_0
+    // Fourth order in height only: each term's weight row by row, laid out as
+    // e is, and the right side (1 + delta^2 / 12) psi, which the terms share.
+    std::vector<Lanes> row_weight;
+    std::vector<complex> smoothed;
+    complex g1, g2;
     std::vector<complex> weight; // c_j / a
     complex constant; // c_0
 };
@@ -370,10 +375,28 @@ struct PadeFactors
 // chain, though -- eight terms is sixteen cycles of arithmetic a row against
 // sixteen of latency -- which is why the single Crank-Nicolson solve's twisted
 // factorisation is not repeated here.
-template <std::size_t pairs>
+template <std::size_t pairs, bool fourth_order>
 void pade_step(PadeFactors& factors, std::vector<complex>& psi)
 {
     const std::size_t m = factors.m;
+    if (fourth_order)
+    {
+        // b_j = (psi_{j-1} + 10 psi_j + psi_{j+1}) / 12, psi_0 from the ground
+        // condition and psi_n = 0.
+        // In parts: std::complex's arithmetic would not vectorise here.
+        double* __restrict const b = reinterpret_cast<double*>(factors.smoothed.data());
+        const double* __restrict const f = reinterpret_cast<const double*>(psi.data());
+        const complex ground = factors.g1 * psi[0] + factors.g2 * psi[1];
+        const double tenth = 10.0 / 12.0, twelfth = 1.0 / 12.0;
+        b[0] = tenth * f[0] + twelfth * (ground.real() + f[2]);
+        b[1] = tenth * f[1] + twelfth * (ground.imag() + f[3]);
+        for (std::size_t k = 2; k + 2 < 2 * m; k++)
+            b[k] = tenth * f[k] + twelfth * (f[k - 2] + f[k + 2]);
+        b[2 * m - 2] = tenth * f[2 * m - 2] + twelfth * f[2 * m - 4];
+        b[2 * m - 1] = tenth * f[2 * m - 1] + twelfth * f[2 * m - 3];
+    }
+    const complex* __restrict const right = fourth_order ? factors.smoothed.data() : psi.data();
+    const Lanes* __restrict const row_weight = factors.row_weight.data();
     const Lanes* __restrict const e = factors.e.data();
     Lanes* __restrict const w = factors.w.data();
     complex* __restrict const field = psi.data();
@@ -394,7 +417,7 @@ void pade_step(PadeFactors& factors, std::vector<complex>& psi)
     // Forward: w_r = e_r psi_r - e_r w_{r-1}.
     for (std::size_t row = 0; row < m; row++)
     {
-        const Lanes p_re = both(field[row].real()), p_im = both(field[row].imag());
+        const Lanes p_re = both(right[row].real()), p_im = both(right[row].imag());
         const Lanes* const e_row = e + row * pairs * 2;
         Lanes* const w_row = w + row * pairs * 2;
         for (std::size_t pair = 0; pair < pairs; pair++)
@@ -417,8 +440,10 @@ void pade_step(PadeFactors& factors, std::vector<complex>& psi)
         Lanes sum_re = both(0.0), sum_im = both(0.0);
         for (std::size_t pair = 0; pair < pairs; pair++)
         {
-            sum_re = sum_re + weight_re[pair] * x_re[pair] - weight_im[pair] * x_im[pair];
-            sum_im = sum_im + weight_re[pair] * x_im[pair] + weight_im[pair] * x_re[pair];
+            const Lanes g_re = fourth_order ? row_weight[(row * pairs + pair) * 2] : weight_re[pair];
+            const Lanes g_im = fourth_order ? row_weight[(row * pairs + pair) * 2 + 1] : weight_im[pair];
+            sum_re = sum_re + g_re * x_re[pair] - g_im * x_im[pair];
+            sum_im = sum_im + g_re * x_im[pair] + g_im * x_re[pair];
         }
         const double p_re = field[row].real(), p_im = field[row].imag();
         field[row] = complex(constant.real() * p_re - constant.imag() * p_im + (sum_re[0] + sum_re[1]),
@@ -453,13 +478,20 @@ void pade_step(PadeFactors& factors, std::vector<complex>& psi)
 
 using PadeStep = void (*)(PadeFactors&, std::vector<complex>&);
 
-template <std::size_t... counts>
+template <bool fourth_order, std::size_t... counts>
 constexpr std::array<PadeStep, sizeof...(counts)> pade_steps(std::index_sequence<counts...>)
 {
-    return {&pade_step<counts + 1>...};
+    return {&pade_step<counts + 1, fourth_order>...};
 }
 
-March pade_march(const VerticalOperator& op, const PadePropagator& propagator)
+// `fourth_order` takes d^2/dz^2 as Numerov does, delta^2 / (1 + delta^2 / 12)
+// over dz^2, so that (Q - p) y = psi becomes
+//   [a delta^2 + (1 + delta^2 / 12) D] y = (1 + delta^2 / 12) psi,  D = epsilon - p.
+// Its off-diagonal entry in column s is c_s = a + D_s / 12, so in y' = c y the
+// off-diagonals are one again and the same one-number-a-row factorisation
+// serves; what it costs is a weight per row, c_0's share over c, where second
+// order has one per term.
+March pade_march(const VerticalOperator& op, const PadePropagator& propagator, bool fourth_order)
 {
     const std::size_t m = op.m;
     const std::size_t terms = propagator.poles.size();
@@ -475,32 +507,62 @@ March pade_march(const VerticalOperator& op, const PadePropagator& propagator)
     factors->first_back.resize(terms);
     factors->weight.resize(terms);
     factors->constant = propagator.constant;
+    factors->g1 = op.g1;
+    factors->g2 = op.g2;
+    if (fourth_order)
+    {
+        factors->row_weight.assign(m * pairs * 2, both(0.0));
+        factors->smoothed.resize(m);
+    }
     for (std::size_t j = 0; j < terms; j++)
     {
         const complex pole = propagator.poles[j];
         factors->weight[j] = propagator.residues[j] / a;
-        // Row 0 carries the ground: its diagonal gains a g1, its upper
-        // neighbour's coefficient is a (1 + g2).
-        const complex upper_0 = a * (1.0 + op.g2);
-        complex e = 0.0;
+        // In units where the off-diagonals are one: second order divides the
+        // row by a, fourth order by the column's c.  Row 0 carries the ground:
+        // its diagonal gains psi_0's g1 share, its upper neighbour's
+        // coefficient psi_0's g2 share.
+        auto column = [&](std::size_t grid) { return a + (op.epsilon[grid] - pole) / 12.0; };
+        complex upper_0, e = 0.0;
         for (std::size_t row = 0; row < m; row++)
         {
-            complex d = -2.0 * a + op.epsilon[row + 1] - pole;
-            if (row == 0)
-                d += a * op.g1;
+            complex d;
+            if (fourth_order)
+            {
+                const complex c = column(row + 1);
+                d = (-2.0 * a + (10.0 / 12.0) * (op.epsilon[row + 1] - pole)) / c;
+                if (row == 0)
+                {
+                    d += column(0) * op.g1 / c;
+                    upper_0 = 1.0 + column(0) * op.g2 / column(2);
+                }
+                const complex weight = propagator.residues[j] / c;
+                factors->row_weight[(row * pairs + j / 2) * 2][j % 2] = weight.real();
+                factors->row_weight[(row * pairs + j / 2) * 2 + 1][j % 2] = weight.imag();
+            }
             else
-                d -= (row == 1 ? upper_0 : complex(a)) * e;
-            e = a / d;
+            {
+                d = -2.0 + (op.epsilon[row + 1] - pole) / a;
+                if (row == 0)
+                {
+                    d += op.g1;
+                    upper_0 = 1.0 + op.g2;
+                }
+            }
+            if (row > 0)
+                d -= (row == 1 ? upper_0 : complex(1.0)) * e;
+            e = 1.0 / d;
             if (!std::isfinite(std::norm(e)))
                 throw std::runtime_error("solve_pe: a Pade term's factorisation broke down");
             factors->e[(row * pairs + j / 2) * 2][j % 2] = e.real();
             factors->e[(row * pairs + j / 2) * 2 + 1][j % 2] = e.imag();
             if (row == 0)
-                factors->first_back[j] = upper_0 / d;
+                factors->first_back[j] = upper_0 * e;
         }
     }
-    static constexpr auto steps = pade_steps(std::make_index_sequence<max_pade_pairs>());
-    const PadeStep step = steps[pairs - 1];
+    static constexpr auto second = pade_steps<false>(std::make_index_sequence<max_pade_pairs>());
+    static constexpr auto fourth = pade_steps<true>(std::make_index_sequence<max_pade_pairs>());
+    const PadeStep step = (fourth_order ? fourth : second)[pairs - 1];
     return [factors, step](std::vector<complex>& psi) { step(*factors, psi); };
 }
 
@@ -573,10 +635,14 @@ PeResult solve_pe(const PeSetup& s)
     const bool turbulent = s.gamma_t > 0.0;
     const double spacing = s.screen_spacing > 0.0 ? s.screen_spacing : s.outer_scale;
 
+    const bool fourth_order = s.vertical_order == 4;
+    if (s.vertical_order != 2 && s.vertical_order != 4)
+        throw std::invalid_argument("solve_pe: vertical_order is 2 or 4");
     PeResult result;
     double dr = 0.0;
     double steepest = 0.0; // tan of the split-step's max_angle; 0 for Crank-Nicolson
     March march;
+    March first_step; // the self-starter, when it is used
     if (s.scheme == PeScheme::crank_nicolson)
     {
         dr = wavelength / s.range_points_per_wavelength;
@@ -619,7 +685,8 @@ PeResult solve_pe(const PeSetup& s)
         // than max_angle at its top.
         request.accurate_low = std::max((1.0 + epsilon_low) * cosine * cosine - 1.0, -0.75);
         request.accurate_high = epsilon_high + 0.02 + std::max(0.0, -(s.admittance * s.admittance).real());
-        request.spectrum_low = spectrum_low - 4.0 * a - 0.5;
+        // The grid's last mode: -4a at second order, -6a at fourth.
+        request.spectrum_low = spectrum_low - (fourth_order ? 6.0 : 4.0) * a - 0.5;
         request.spectrum_imag = spectrum_imag;
         request.tolerance = s.propagator_tolerance;
         PadePropagator propagator;
@@ -641,7 +708,23 @@ PeResult solve_pe(const PeSetup& s)
             }
         }
         result.pade_terms = static_cast<int>(propagator.poles.size());
-        march = pade_march(op, propagator);
+        march = pade_march(op, propagator, fourth_order);
+        // The self-starter: the same step with the source's modal amplitudes
+        // folded in.  A source within a grid point of the ground has no node
+        // below it to share the delta with, and takes the Gaussian.
+        if (s.starter == PeStarter::self && s.source_height >= dz)
+        {
+            request.starter = true;
+            try
+            {
+                first_step = pade_march(op, pade_propagator(request), fourth_order);
+                result.self_started = true;
+            }
+            catch (const std::runtime_error&)
+            {
+                first_step = nullptr;
+            }
+        }
     }
     result.range_step = dr;
 
@@ -655,10 +738,25 @@ PeResult solve_pe(const PeSetup& s)
         const double u = k_a * k_a * z * z;
         return (1.3717 - 0.3701 * u) * std::exp(-u / 3.0);
     };
-    for (std::size_t row = 0; row < m; row++)
+    for (std::size_t row = 0; row < m && !first_step; row++)
     {
         const double z = static_cast<double>(row + 1) * dz;
         psi[row] = scale * (starter(z - s.source_height) + reflection * starter(z + s.source_height));
+    }
+    if (first_step)
+    {
+        // The self-starter's delta function, shared between the two grid
+        // points either side of the source.  psi one step out is
+        // sqrt(2 pi i / k_a) (1 + Q)^(-1/4) exp(i k_a dr (sqrt(1 + Q) - 1))
+        // delta(z - z_s): the modal sum of i pi H0(k_n r), each Hankel
+        // function in its far field.  The Gaussian's area is the same
+        // constant.
+        const double u = s.source_height / dz;
+        const std::size_t below = std::min(static_cast<std::size_t>(u), m - 1); // grid index j >= 1
+        const double t = u - static_cast<double>(below);
+        const complex weight = std::sqrt(2.0 * pi * i / k_a) / dz;
+        psi[below - 1] = weight * (1.0 - t);
+        psi[below] = weight * t;
     }
 
     // Turbulence: a screen every `spacing` metres, below the absorbing layer.
@@ -698,7 +796,13 @@ PeResult solve_pe(const PeSetup& s)
     std::vector<complex> value(s.receiver_heights.size());
     for (std::size_t step = 1; step <= steps; step++)
     {
-        march(psi);
+        if (step == 1 && first_step)
+        {
+            first_step(psi);
+            first_step = nullptr; // and its factors with it
+        }
+        else
+            march(psi);
 
         const double r = static_cast<double>(step) * dr;
         // Each screen stands for the slab of turbulence centred on it.

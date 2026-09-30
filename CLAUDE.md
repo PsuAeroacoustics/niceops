@@ -623,13 +623,14 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   - **The default march is split-step Padé** (`PeScheme::split_step_pade`,
     `src/pade_propagator.{hpp,cpp}`): psi(r + dr) = [c_0 + sum_j c_j (Q - p_j)^-1] psi(r), a
     rational stand-in for exp(i k_a dr (sqrt(1 + Q) - 1)). One tridiagonal solve per term,
-    seven or eight terms for an eight-wavelength step, where Crank–Nicolson takes eighty
-    steps. 26–32x per march; a five-band `pe_compare` case 25.9 s -> 1.1 s, the benchmark
-    tool 2.5 min -> 9 s. Things to keep:
+    about ten terms for an eight-wavelength step, where Crank–Nicolson takes eighty
+    steps. 19x per march at the defaults (32x at 35 degrees, second order, Gaussian
+    starter); a five-band `pe_compare` case's PE 25.4 s -> 1.5 s, the benchmark tool
+    2.5 min -> 10 s. Things to keep:
     - **The coefficients are fitted at run time, not tabulated and not Collins' Taylor
       Padé.** The step has to divide `output_step`, so k_a dr is different for every
       frequency. r is the type (n, n) interpolant of the exact propagator at Chebyshev nodes
-      on the interval of x the run needs: elevation to `max_angle` (35 degrees), shifted by
+      on the interval of x the run needs: elevation to `max_angle` (50 degrees), shifted by
       the profile's range of k(z), plus room for the surface wave. A Taylor Padé is exact
       at x = 0 and degrades outward, which is the wrong shape for that.
     - **Two of the nodes sit among the evanescent modes (x = -1.5 and -6), and they are
@@ -650,25 +651,65 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       radians and linear interpolation is meaningless.
     - **A path steeper than `max_angle` from the source is NaN**, because those modes are
       absorbed and the number would be hundreds of dB down. Crank–Nicolson reported a
-      plausible-looking level there with the wrong phase. Raising `max_angle` alone buys
-      nothing: past 25-30 degrees the error is the Gaussian starter's (0.6 dB rms at 30-35
-      degrees at 1 kHz against the exact two-ray field, the same at `max_angle` 50).
+      plausible-looking level there with the wrong phase. `max_angle` stops at 60 degrees
+      (the interval is clamped at x = -0.75, short of the branch point at -1).
+    - **Wide-angle accuracy took three things, and the propagator was the least of
+      them.** With `max_angle` alone raised from 35 to 50 the error against the exact
+      two-ray field at 30-50 degrees did not move (0.6-1.7 dB rms at 1 kHz). Doubling the
+      grid with the Gaussian starter barely moved it either. What it took:
+      - *The self-starter* (`PeStarter::self`, Collins 1992): the first step is the
+        propagator times (1 + Q)^(-1/4), applied to a delta function shared between two
+        grid points, psi = sqrt(2 pi i / k_a) (1 + Q)^(-1/4) exp(...) delta. It is fitted
+        and checked exactly as the propagator is (`PadeRequest::starter`), except that
+        its modulus is bounded by twice its own value at the interval's low end rather
+        than by one: it rises toward the branch point and is applied once.
+      - *Fourth order in height* (`vertical_order` 4, Numerov). (Q - p) y = psi becomes
+        [a delta^2 + (1 + delta^2/12) D] y = (1 + delta^2/12) psi; in y' = c y, with
+        c = a + D/12 the column's off-diagonal, the off-diagonals are one again and the
+        one-number-a-row factorisation still serves. It costs a weight per term per row
+        and a third more time. Second order at 20 points a wavelength is a radian of
+        phase out by 35 degrees at 1 kHz from a 100 m source.
+      - Together: 0.08 dB rms or better at every elevation to 50 degrees, 0.14 to 60.
+    - **The Gaussian starter is biased for any source where k differs from k at the
+      ground**, because it is normalised with k_a: 0.11-0.15 dB high at every range for a
+      100 m source in the benchmark's upward column (against the residue series), 0.10 dB
+      on `example_windy.csv`. Every PE level from before the self-starter carries that,
+      so do not take a 0.1 dB offset against a stored run for a regression. The
+      self-starter is within 0.04 dB. A source within a grid point of the ground, or a
+      starter fit that is refused, falls back to the Gaussian; `PeResult::self_started`
+      says which ran.
+    - **Fourth order has not been spent on a coarser grid.** At 14 points a wavelength it
+      is as close to a 40-point run as second order was at 20 (0.02-0.04 dB rms on the
+      windy profile) and a third cheaper, but it converges only at second order, because
+      the ground condition and the receiver's interpolation still are. The default stays
+      at 20.
+    - **Compare a turbulent run with a still one marched the same way.** Turbulence caps
+      the step at the screen spacing, and the field at a point whose reflected ray is
+      steeper than `max_angle` depends on the step. `pe_turbulent_mean_field_decays`
+      takes its still field with `gamma_t = 1e-30` for that reason; with 0 the two
+      differed by 8% before any turbulence.
     - **The result does not depend on the step**: 2 to 32 wavelengths moves it by under
       0.001 dB, 60 dB into a shadow, past the first few steps. Within them (the modes
       beyond `max_angle` still leaving) it is 0.1-0.4 dB. `tests/test_pade_propagator.cpp`
-      holds both that and agreement with Crank–Nicolson at 40 steps a wavelength.
+      holds that, agreement with Crank–Nicolson at 40 steps a wavelength (on its own
+      second-order grid and Gaussian starter), the exact field to 50 degrees, and the
+      elevated source's strength.
     - **The kernel pairs terms into two-lane vectors by hand** (`Lanes`, as `Pair` in
       `sphere_database.cpp`), with the term count a template parameter. From scalar source
-      the compiler ran one term at a time: 11.7 ns a row against 5.9. Each solve stores one
+      the compiler ran one term at a time: 11.7 ns a row against 5.9 (second order, eight
+      terms). Each solve stores one
       complex number per row (e_r = a / pivot; the off-diagonals are all a, so the forward
       and back coefficients coincide), which halves what a step streams through the cache.
     - **Not twisted.** Eight interleaved terms are throughput-bound (16 cycles of
       arithmetic a row against 16 of latency), so the two-ended factorisation below would
       buy nothing here.
     - **Turbulence caps the step at the screen spacing.**
-    - **The 10 Hz benchmark legs start at 50 m, not 20.** That is inside a wavelength and a
-      half of the source. The converged march is 0.29 dB over the exact field at 25 m;
-      Crank–Nicolson's own error happened to bring it inside 0.2. No other tolerance moved.
+    - **The 10 Hz benchmark legs start at 50 m, not 20, and case 2's 100 Hz leg at 25.**
+      The first is inside a wavelength and a half of the source: the converged march is
+      0.29 dB over the exact field at 25 m, and Crank–Nicolson's own error happened to
+      bring it inside 0.2. The second runs at ten points a wavelength and closes on the
+      series as 1/r, 0.100 dB under at 20 m against a 0.1 margin. No other tolerance
+      moved.
   - **`PeScheme::crank_nicolson` is the march this replaced, kept as an independent
     check**: Padé(1,1) at ten steps a wavelength, good to about 30 degrees. It
     differs from the split-step by 0.03-0.12 dB rms on `example_windy.csv` to 1.5 km, and
@@ -797,7 +838,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     12.81+11.62i, 5.96+2.46i), not a NICE-OPS impedance model, and the absorption it quotes
     (0.18 and 5.4 dB/km, ANSI S1.26-1978; ISO 9613-1 gives 0.22 and 4.98). Its profiles stop
     at 1000 m, the height of its contour plots. Only case 2 at 10 km cares, and the paper
-    notes the same dependence. A full run is ~9 s (2.5 min under Crank–Nicolson).
+    notes the same dependence. A full run is ~10 s (2.5 min under Crank–Nicolson).
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its
