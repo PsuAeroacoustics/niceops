@@ -241,6 +241,10 @@ add_executable(golden_compare tests/golden_compare.cpp)
 # a research tool, not part of a run.
 add_executable(niceops_pe_compare tools/pe_compare.cpp)
 target_link_libraries(niceops_pe_compare niceops_core CLI11::CLI11)
+# The refracted ray's geometry for a batch of pairs, for evaluating ground models
+# outside niceops on the same rays (tools/ray_geometry.cpp):
+add_executable(niceops_ray_geometry tools/ray_geometry.cpp)
+target_link_libraries(niceops_ray_geometry niceops_core CLI11::CLI11)
 add_executable(niceops_pe_field tools/pe_field.cpp)
 target_link_libraries(niceops_pe_field niceops_core CLI11::CLI11)
 add_executable(niceops_propagation_table tools/propagation_table.cpp)
