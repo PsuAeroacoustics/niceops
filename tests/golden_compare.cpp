@@ -67,11 +67,14 @@ std::vector<double> parse_csv(const std::string& filename)
 
 int main(int argc, char** argv)
 {
-    if (argc != 3)
+    if (argc != 3 && argc != 4)
     {
-        std::cerr << "Usage: " << argv[0] << " <candidate.csv> <golden.csv>\n";
+        std::cerr << "Usage: " << argv[0] << " <candidate.csv> <golden.csv> [absolute tolerance]\n";
         return 1;
     }
+    // An absolute tolerance, for comparing two runs that are meant to agree
+    // to within an approximation rather than to the bit.
+    const double absolute = argc == 4 ? std::atof(argv[3]) : 0.0;
 
     std::vector<double> candidate, golden;
     try
@@ -97,7 +100,7 @@ int main(int argc, char** argv)
     for (std::size_t i = 0; i < golden.size(); i++)
     {
         auto scale = std::max(1.0, std::max(std::abs(candidate[i]), std::abs(golden[i])));
-        if (std::abs(candidate[i] - golden[i]) > tolerance * scale)
+        if (std::abs(candidate[i] - golden[i]) > std::max(tolerance * scale, absolute))
         {
             std::cerr << "golden_compare: mismatch at value " << i << ": candidate "
                       << candidate[i] << " vs golden " << golden[i] << "\n";
@@ -105,7 +108,8 @@ int main(int argc, char** argv)
         }
     }
 
-    std::cout << "golden_compare: " << golden.size()
-              << " values agree within " << tolerance << " relative tolerance.\n";
+    std::cout << "golden_compare: " << golden.size() << " values agree within "
+              << (absolute > 0.0 ? absolute : tolerance) << (absolute > 0.0 ? " absolute" : " relative")
+              << " tolerance.\n";
     return 0;
 }

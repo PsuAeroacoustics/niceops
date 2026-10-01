@@ -862,6 +862,38 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     (0.18 and 5.4 dB/km, ANSI S1.26-1978; ISO 9613-1 gives 0.22 and 4.98). Its profiles stop
     at 1000 m, the height of its contour plots. Only case 2 at 10 km cares, and the paper
     notes the same dependence. A full run is ~10 s (2.5 min under Crank–Nicolson).
+- `src/propagation_table.{hpp,cpp}`, `tools/propagation_table.cpp` -- `--propagation_table`: a
+  table of each band's level re free field at the straight-line distance, by (bearing, source
+  height, receiver height, range, band), for one stratified atmosphere over uniform ground.
+  Built by `niceops_propagation_table` from the PE or from the straight-ray ground model; the
+  format (netCDF, `propagation_table_version` 1) is the specification, so other methods can
+  write it. Things to keep:
+  - **It enters through the existing seam.** A covered pair is `spectral_level_along` on the
+    straight ray with no ground model and `extra_loss` = minus the table: sphere by the
+    straight-line direction, spreading over the straight-line range, absorption as the run
+    applies it (zeros if the table `includes_absorption`). Nothing else in the evaluation knows
+    the table exists.
+  - **Uncovered pairs fall back, per pair, to the run's own model**: `--ground_effect` if on,
+    free field if not. A pair is uncovered if any corner it would interpolate is NaN (the PE
+    past its angle), or it is outside an axis. Zero-weight corners are not read, so a point
+    on the grid beside a NaN is still covered. Microphone heights outside the table are
+    refused up front, not dropped to the fallback.
+  - **The peak search's bound takes max(ground model's gain, table's largest value) per band**
+    (`path_gains` in the bound setup), since a pair may take either.
+    `propagation_table_windowed_is_exact` holds it; the PE table was checked the same way by
+    hand.
+  - **`BandMap` is per run, not in the table**, because the table is loaded once
+    (`RunOptions::propagation_table`, shared) and each trajectory can name its own database.
+  - **Bearings are compass, toward.** The run turns the local separation back to east/north by
+    inverting `CompassToLocal` at `--frame_bearing` (90, +x east, when unset).
+  - **Microphone height comes from `--receiver_height` under a table**, as under
+    `--ground_effect`; before, a run without either put microphones on the ground.
+  - **The plumbing check is the ground-model table.** It reproduces `--ground_effect
+    --exact_ground` to the table's interpolation, 0.19 dB at worst at 10 ft spacing, 0.02 at
+    5. The mean error falls fourfold per halving, which is what says it is interpolation.
+  - **Not done:** plates (a different ground geometry; refused), `--refraction` with a table
+    (refused: the table is the refraction), ground elevation (flat ground at z = 0), and a
+    sphere lookup along a refracted launch direction (the table cannot say what it is).
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its

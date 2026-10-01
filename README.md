@@ -175,11 +175,12 @@ seconds, levels in dB.
 | `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
-| `--receiver_height`, `--turbulence` | Point receiver's microphone height (in `--units`, default 1.2 m; an observer file's fifth column overrides it per observer) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`. |
+| `--receiver_height`, `--turbulence` | Point receiver's microphone height (in `--units`, default 1.2 m; an observer file's fifth column overrides it per observer) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`; the height also places the microphone for `--propagation_table`. |
 | `--impedance_model` | Ground impedance: `delany_bazley` (default), `miki`, `variable_porosity` (with `--porosity_rate`, 1/m) or `delany_bazley_layer` (with `--layer_depth`, in `--units`). `--flow_resistance` is the (effective) flow resistivity. |
 | `--turbulence_model`, `--gamma_t` | `chessell` (default, `--turbulence`) or `harmonoise`, whose coherence takes `--gamma_t` (~1e-6 moderate, ~1e-5 strong). |
 | `--roughness` | RMS roughness height, in `--units`: the coherent reflection falls by exp(−2(kσ cos θ)²). Default 0. |
 | `--plate_table` | Observers are flush microphones on a rigid ground plate (GRAS 67AX in a GR1425 plate). Takes a netCDF table from panam; needs `--ground_effect` over the ground the table was built for. See below. |
+| `--propagation_table` | A propagation loss table (netCDF, from `niceops_propagation_table`): each band's level relative to free field by bearing, source height, receiver height and range, for one stratified atmosphere over uniform ground. Replaces the ground and ray models wherever it covers a pair. Spectral path; not with `--refraction` or `--plate_table`. See below. |
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state instead of interpolating per-trajectory tables of it: 3-4x slower, for checking the tables. |
 | `--plate_mic_azimuth` | Which way the microphone is offset on its plate: `outboard` (default, away from the track) or degrees in the local frame from +x toward +y. |
 
@@ -915,6 +916,78 @@ on the ground even though its ground model put the microphone 1.2 m up. Correcti
 point-receiver SEL on the demo grid by up to about ±0.8 dB (median 0). Almost all of it comes
 from the low states at the end of the approach, where 1.2 m is a sizeable fraction of the
 source's height. Plate and free-field results did not change.
+
+#### Propagation loss tables
+
+`--propagation_table` takes what the path does to each band from a table computed elsewhere,
+so that a full-wave method -- the parabolic equation above, or something else later -- can
+carry a footprint. The table holds each band's level relative to a point source's free field
+at the straight-line distance: the ground, refraction, shadows and diffraction, everything
+beyond spherical spreading. The run then takes, per band,
+
+    L = L_sphere(straight-line direction) - spreading(straight-line range) - absorption + table
+
+which is the composition `--ground_effect` uses, with the table where the ground model and
+the ray model were. Atmospheric absorption stays the run's (homogeneous, or layered through
+`--atmosphere`) unless the table says it includes it.
+
+It assumes one stratified atmosphere over flat, uniform ground, for now. The level then
+depends on where the observer is only through the compass bearing and horizontal range from
+the source and the two heights above the ground, which are the table's axes:
+
+| Axis | |
+| --- | --- |
+| `bearing` | compass bearing the sound travels toward, degrees, uniform from 0 over 360; one value means the same in every direction |
+| `source_height`, `receiver_height` | above the ground, m, ascending |
+| `range` | horizontal, m, ascending |
+| `band` | band centres, Hz; the run's bands within `--band_limits` must all be there |
+
+Values are interpolated linearly in dB along each axis. A NaN means the method has no value
+there. A pair the table does not cover, by a NaN among the values it would interpolate or by
+falling outside an axis, takes the run's own propagation instead: `--ground_effect` if it is
+on, free field if not. The log says how many did. Receivers are the exception: a microphone
+height outside the table's is refused, since that table was built for another run. Bearings
+are compass bearings, so a run in a rotated frame needs `--frame_bearing`, as with wind.
+
+The file is netCDF, SI whatever `--units` says: a `relative_level(bearing, source_height,
+receiver_height, range, band)` array, one coordinate variable per axis, and global attributes
+`propagation_table_version` (1), `method`, `includes_absorption` and `provenance_*`.
+Anything that can fill that array can be read; `src/propagation_table.hpp` is the
+specification.
+
+`niceops_propagation_table` writes one, by either of two methods:
+
+```sh
+# The parabolic equation through a profile, 36 bearings where it has wind
+niceops_propagation_table --method pe --atmosphere atmospheres/example_windy.csv \
+    --database databases/B407_fixed_load_factor.nod --band_limits 20 2000 \
+    --source_heights 40 90 140 190 240 --receiver_heights 3.937 \
+    --max_range 15000 --step 10 -o tables/windy.nc
+
+# The straight-ray ground model --ground_effect uses: the same footprint, through a table
+niceops_propagation_table --method ground_model --database databases/B407_fixed_load_factor.nod \
+    --sound_speed 335.636 --flow_resistance 225 --source_heights 40 50 60 ... 1130 \
+    --receiver_heights 3.937 --max_range 15000 --step 10 -o tables/ground_model.nc
+```
+
+The second is the check on the plumbing. On the demo case its footprint matches
+`--ground_effect --exact_ground` to -0.002 dB mean and 0.19 dB at worst with 10 ft spacing,
+and to 0.02 dB at worst with 5 ft spacing. The ground effect itself moves cells by up to
+4.3 dB. CTest runs that comparison (`propagation_table_is_the_ground_model`), and checks that
+the peak search stays exact with a table that adds gain (`propagation_table_windowed_is_exact`):
+the search's bound takes each band's largest table value.
+
+With `--method pe` through `atmospheres/isa.csv`, 21 bands from 20 Hz to 2 kHz, 23 source
+heights every 50 ft and ranges to 15,000 ft every 10 ft, the table takes 103 s on 14 cores. The
+footprint's acoustic loop goes from 0.06 to 0.08 s. The table covered 99.7% of evaluations; the
+rest were steeper than the PE's 50 degrees and took the ground model. Against the ray model's
+footprint it reads -0.32 dB mean (-0.9 to 0 dB, 5th to 95th percentile; -2.8 dB at worst), the
+standard lapse rate's mild upward refraction thinning the field at long range.
+
+Interpolating between source heights in dB is where the table's error is. Over the ground model it
+shrinks fourfold as the spacing halves, but the PE's band-averaged field is only as smooth as
+its band. Build tables a few wavelengths apart at the highest band, or densely at the lowest
+heights, where the interference changes fastest.
 
 #### Ground-plane microphones
 

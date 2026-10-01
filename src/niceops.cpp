@@ -34,6 +34,7 @@
 #include "stratified.hpp"
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
+#include "propagation_table.hpp"
 #include "weighting.hpp"
 #include "sphere_database.hpp"
 #include "trajectory.hpp"
@@ -560,6 +561,11 @@ struct RunOptions
     // bound to each trajectory's atmosphere.  Needs ground_effect.
     std::optional<PlateReceiver> plate;
     PlateOrientation plate_orientation;
+    // A propagation loss table (--propagation_table), read once for the run:
+    // where it covers a pair it replaces the ground model and the ray model
+    // (propagation_table.hpp).
+    std::shared_ptr<const PropagationTable> propagation_table;
+    std::string propagation_table_path;
     // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
     // whatever the file said".
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -839,8 +845,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<std::size_t> point_of(observer_count, 0);
     {
         const double run_height = options.plate ? 0.0
-                : options.ground_effect         ? options.ground.receiver_height
-                                                : 0.0;
+                : options.ground_effect || options.propagation_table ? options.ground.receiver_height
+                                                                     : 0.0;
         for (std::size_t i = 0; i < observer_count; i++)
         {
             const double height = microphone_heights.empty() ? run_height : microphone_heights[i];
@@ -935,6 +941,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // sorted, so the limits always select a range rather than a scattered set.
     std::size_t first_band = 0;
     std::size_t last_band = 0;
+    // --propagation_table: where the run's bands sit in it, and, for a table
+    // that already includes absorption, the zero coefficients that keep the
+    // run from taking it twice.
+    PropagationTable::BandMap table_bands;
+    std::vector<double> table_absorption;
 
     // The atmosphere is needed on every path now, not only the spectral one:
     // its sound speed turns the emission-time level history into reception time
@@ -972,11 +983,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     bool spectral = options.spectral;
     if (spectral && !database.has_spectra())
     {
-        if (options.spectral_explicit || options.ground_effect || options.atmosphere)
+        if (options.spectral_explicit || options.ground_effect || options.atmosphere
+                || options.propagation_table)
         {
-            const std::string asked = options.ground_effect ? "--ground_effect"
-                    : options.atmosphere                    ? "--atmosphere"
-                                                            : "--spectral";
+            const std::string asked = options.propagation_table ? "--propagation_table"
+                    : options.ground_effect                     ? "--ground_effect"
+                    : options.atmosphere                        ? "--atmosphere"
+                                                                : "--spectral";
             input_error(asked
                     + " needs a database carrying per-band spectra; this one has none. Rebuild "
                       "it with spectra, or propagate the broadband level with --no-spectral"
@@ -1154,6 +1167,50 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                         + " deg.");
             }
         }
+
+        if (options.propagation_table)
+        {
+            const PropagationTable& table = *options.propagation_table;
+            try
+            {
+                table_bands = table.match_bands(bands, first_band, last_band);
+            }
+            catch (const std::runtime_error& e)
+            {
+                input_error("--propagation_table ", options.propagation_table_path, ": ", e.what(), ".");
+            }
+            // Receivers it does not reach are refused rather than handed to
+            // the fallback wholesale: a table that misses the run's microphones
+            // was built for another run.
+            std::vector<double> uncovered;
+            for (const double height : microphone_height)
+                if (!table.covers_receiver(height)
+                        && std::find(uncovered.begin(), uncovered.end(), height) == uncovered.end())
+                    uncovered.push_back(height);
+            if (!uncovered.empty())
+            {
+                std::ostringstream heights;
+                for (std::size_t k = 0; k < uncovered.size(); k++)
+                    heights << (k ? ", " : "") << uncovered[k] / options.unit.to_metres;
+                input_error("--propagation_table ", options.propagation_table_path, " holds receivers from ",
+                        table.axes().receiver_heights.front() / options.unit.to_metres, " to ",
+                        table.axes().receiver_heights.back() / options.unit.to_metres, " ", options.unit.name,
+                        "; this run's microphones are also at ", heights.str(), " ", options.unit.name,
+                        ". Build the table with those receiver heights.");
+            }
+            if (table.includes_absorption())
+                table_absorption.assign(bands.size(), 0.0);
+            log("  propagation table ", options.propagation_table_path, ": ", table.method(), "; ",
+                    table.axes().bearings.size(), " bearings, source heights ",
+                    table.axes().source_heights.front(), " to ", table.axes().source_heights.back(),
+                    " m, ranges to ", table.axes().ranges.back(), " m; absorption ",
+                    table.includes_absorption() ? "included in it" : "applied by the run", ". Pairs it "
+                    "does not cover take ", ground_model ? "the ground model" : "free-field propagation", ".");
+            if (!table.isotropic() && std::isnan(options.frame_bearing))
+                log("  the table's bearings are compass bearings, and this run takes +x as east. If "
+                    "its x/y are rotated -- the shipped AC tracks run +x along 210 degrees -- give "
+                    "--frame_bearing.");
+        }
     }
 
     // --refraction linear: the effective sound speed tabulated for the
@@ -1277,6 +1334,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (spectral)
         {
             std::vector<double> bound_gains = band_gains;
+            // What the path can add above spherical spreading, a power ratio
+            // per band.
+            std::vector<double> path_gains(bound_gains.size(), 1.0);
             if (ground_model != nullptr)
             {
                 // The loudest the ground can make any observer: a plate's, a
@@ -1304,9 +1364,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             ground_gains[band] = std::max(ground_gains[band],
                                     transition.max_power_ratio(band));
                 }
-                for (std::size_t band = 0; band < bound_gains.size(); band++)
-                    bound_gains[band] *= ground_gains[band];
+                path_gains = ground_gains;
             }
+            // A pair the table covers can gain as much as its largest value;
+            // one it does not, as much as the ground model above.
+            if (options.propagation_table)
+            {
+                const auto table_gains = options.propagation_table->max_power_ratio(table_bands);
+                for (std::size_t band = 0; band < path_gains.size(); band++)
+                    path_gains[band] = std::max(path_gains[band], table_gains[band]);
+            }
+            for (std::size_t band = 0; band < bound_gains.size(); band++)
+                bound_gains[band] *= path_gains[band];
             direction_bounds = database.spectral_direction_bounds(source_states, bound_gains);
         }
         else
@@ -1418,6 +1487,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
     std::atomic<std::size_t> evaluated_samples {0};
     std::atomic<std::size_t> shadowed_samples {0};
+    std::atomic<std::size_t> table_samples {0};
+    std::atomic<std::size_t> fallback_samples {0};
+    // The table's bearings are compass bearings; the run's x/y are turned from
+    // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
+    const double frame_bearing = (std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing) * pi / 180.0;
+    const double frame_sin = std::sin(frame_bearing), frame_cos = std::cos(frame_bearing);
 
     const auto acoustics_start = std::chrono::steady_clock::now();
 
@@ -1513,6 +1588,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // Refraction: the moments at each observer's receiver, and the shadow
         // zone's per-band loss.
         std::vector<double> shadow(effective_sound_speed ? database.band_centres().size() : 0, 0.0);
+        std::vector<double> table_loss(options.propagation_table ? database.band_centres().size() : 0, 0.0);
+        std::size_t tabled_here = 0, fallback_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
         std::size_t shadowed_here = 0;
         for (std::size_t index = begin; index < end; index++)
@@ -1532,6 +1609,35 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const double plate_mic_azimuth = flush && options.plate_orientation.outboard
                     ? outboard_azimuth(observer, source_states)
                     : options.plate_orientation.azimuth;
+            // The straight-ray spectral level: from --propagation_table where
+            // it covers the pair, with the table's level in place of the ground
+            // model's and spreading and absorption as ever; otherwise the run's
+            // own model.
+            auto straight_level = [&](std::size_t it, double* bands_out) {
+                if (options.propagation_table && !flush)
+                {
+                    const Vec3& source = source_states[it].position;
+                    const Vec3 separation = observer - source;
+                    const double east = frame_sin * separation.x - frame_cos * separation.y;
+                    const double north = frame_cos * separation.x + frame_sin * separation.y;
+                    if (options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, source.z,
+                                microphone_height[index], separation.horizontal_norm(), table_bands,
+                                table_loss.data()))
+                    {
+                        for (std::size_t band = first_band; band < last_band; band++)
+                            table_loss[band] = -table_loss[band];
+                        tabled_here++;
+                        return database.spectral_level_along(straight_ray(source, observer), source_states[it],
+                                table_absorption.empty() ? absorption_for(it, observer) : table_absorption.data(),
+                                band_gains, nullptr, nullptr, sound_speed, first_band, last_band,
+                                packed_of_state[it], nullptr, 0.0, nullptr, table_loss.data(), nullptr, bands_out);
+                    }
+                    fallback_here++;
+                }
+                return database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
+                        band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
+                        packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, bands_out);
+            };
             const GroundGeometry ray_ground = ground_model == nullptr ? GroundGeometry::none
                     : flush                                           ? GroundGeometry::plate
                                                                       : GroundGeometry::point;
@@ -1627,11 +1733,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             source_states, direction_bounds, observer, integration_step,
                             sound_speed, levels, visited, generation, evaluated_here,
                             [&](std::size_t it, const StateGeometry&) {
-                                return database.spectral_level_at_observer(observer,
-                                        source_states[it], absorption_for(it, observer), band_gains,
-                                        ground_here, &ground_impedance_bands, sound_speed,
-                                        first_band, last_band, packed_of_state[it],
-                                        plate_receiver, plate_mic_azimuth, table_here);
+                                return straight_level(it, nullptr);
                             });
                 }
                 else
@@ -1685,13 +1787,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     double* bands_out = write_band_history
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
-                    double level = spectral
-                            ? database.spectral_level_at_observer(observer, source_states[it],
-                                    absorption_for(it, observer), band_gains, ground_here,
-                                    &ground_impedance_bands, sound_speed, first_band, last_band,
-                                    packed_of_state[it], plate_receiver, plate_mic_azimuth,
-                                    table_here, bands_out)
-                            : database.level_at_observer(observer, source_states[it]);
+                    double level = spectral ? straight_level(it, bands_out)
+                                            : database.level_at_observer(observer, source_states[it]);
                     if (add_ambient)
                     {
                         // Add ambient noise
@@ -1733,7 +1830,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         culled_samples += culled_here;
         evaluated_samples += evaluated_here;
         shadowed_samples += shadowed_here;
+        table_samples += tabled_here;
+        fallback_samples += fallback_here;
     });
+
+    if (options.propagation_table)
+    {
+        const auto looked_up = table_samples.load() + fallback_samples.load();
+        log("The propagation table covered ", table_samples.load(), " of the ", looked_up, " evaluations made (",
+                100.0 * static_cast<double>(table_samples.load()) / static_cast<double>(std::max<std::size_t>(looked_up, 1)),
+                "%); the rest -- outside its ranges or source heights, or where it has no value, as "
+                "steeper than a PE's angle limit -- took ",
+                ground_model ? "the ground model." : "free-field propagation.");
+    }
 
     if (effective_sound_speed)
     {
@@ -1983,6 +2092,7 @@ int run(int argc, char* argv[])
     double gamma_t = 0.0;
     double roughness = 0.0;          // m
     std::string plate_table;
+    std::string propagation_table;
     std::string plate_mic_azimuth = "outboard";
     bool exact_ground = false;
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -2176,6 +2286,12 @@ int run(int argc, char* argv[])
     app.add_option("--plate_mic_azimuth", plate_mic_azimuth,
             "Direction the microphone is offset on its plate: 'outboard' (default; away from "
             "the track) or degrees in the local frame, from +x toward +y.");
+    app.add_option("--propagation_table", propagation_table,
+            "A propagation loss table (netCDF; tools/propagation_table.cpp builds one with the "
+            "parabolic equation): each band's level re free field by bearing, source and receiver "
+            "height and range, for one stratified atmosphere over uniform ground. It replaces the "
+            "ground and ray models wherever it covers a pair; elsewhere --ground_effect (or free "
+            "field) applies. Spectral path only; not with --refraction or --plate_table.");
 
     try
     {
@@ -2410,6 +2526,11 @@ int run(int argc, char* argv[])
         input_error("--band_history needs the spectral path: the broadband path (--no-spectral "
                     "or --db_cutoff) carries no bands.");
     }
+    if (!propagation_table.empty() && (!spectral || refraction != "none" || !plate_table.empty()))
+    {
+        input_error("--propagation_table needs the spectral path, and replaces --refraction and the "
+                    "point receiver; it does not model a ground plate (--plate_table).");
+    }
     if (!plate_table.empty() && !ground_effect)
     {
         input_error("--plate_table needs --ground_effect: the plate's level depends on the "
@@ -2472,6 +2593,11 @@ int run(int argc, char* argv[])
     options.ground.gamma_t = gamma_t;
     options.ground.roughness = roughness;
     options.exact_ground = exact_ground;
+    if (!propagation_table.empty())
+    {
+        options.propagation_table = std::make_shared<const PropagationTable>(PropagationTable::load(propagation_table));
+        options.propagation_table_path = propagation_table;
+    }
     if (!plate_table.empty())
     {
         options.plate = PlateReceiver::load(plate_table);
