@@ -160,6 +160,29 @@ enum class GroundGeometry
     plate,
 };
 
+// One eigenray besides a pair's primary, under --refraction stratified: in a
+// duct, rays that have bounced off the ground `bounces` times before arriving
+// from above, and the direct rays of families other than the primary's.  Each
+// is a level of its own -- its own launch direction on the sphere, its own ray
+// tube -- summed with the primary's in energy, since a band averages away
+// their phases.  The ground term at the receiver is the same model as the
+// primary's, through the same equivalent straight geometry; each earlier bounce
+// costs the plane-wave |R|^2 at `grazing`.
+struct Arrival
+{
+    int bounces = 0;
+    double launch = 0.0;  // rad above the horizontal at the source
+    double arrival = 0.0; // rad, negative descending
+    // Angle to the ground where the ray meets it, rad; 0 for one that turns
+    // above the ground and never reaches it, which takes no ground term.
+    double grazing = 0.0;
+    double spreading_range = 0.0;
+    double path_length = 0.0;
+    double travel_time = 0.0;
+    // Formed by layered_direct_ray; its ground geometry by the ground's finish.
+    RayPath path;
+};
+
 // One source-observer pair under --refraction linear: the RayPath for the
 // level, and what else the run needs from the ray.
 struct RefractedRay
@@ -179,6 +202,15 @@ struct RefractedRay
     // Set by layered_direct_ray when it hands back the linear fit's ray past
     // the layered shadow boundary (see there); finished as a linear ray.
     bool from_linear_fit = false;
+    // --refraction stratified in a surface duct, past the reach of every ray
+    // that arrives without touching the ground: the primary is then the
+    // strongest bounced arrival, having met the ground `bounces` times at
+    // `ground_grazing` before its last descent.
+    int bounces = 0;
+    double ground_grazing = 0.0;
+    // The pair's other eigenrays (Arrival).  Empty but for --refraction
+    // stratified, and there only where more than one ray arrives.
+    std::vector<Arrival> extra;
 };
 
 // The refracted path from `source` to the microphone at `receiver` --

@@ -166,6 +166,16 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
 std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, double kappa,
         std::complex<double> admittance, bool boundary_loss = true);
 
+// Per band, what `bounces` earlier reflections at grazing angle `grazing`
+// (radians) take off a ray that arrives after them, dB: -10 lg |R_p|^2 each,
+// the plane-wave coefficient.  Added into `loss` for bands in
+// [first_band, last_band).  A passive ground has |R_p| <= 1, so it is never a
+// gain.  For --refraction stratified's bounced arrivals (refraction.hpp,
+// Arrival); the last bounce, beside the receiver, is the ground model's.
+void add_bounce_loss(double grazing, int bounces,
+        const std::vector<std::complex<double>>& admittance, std::size_t first_band,
+        std::size_t last_band, double* loss);
+
 // The point-receiver ground effect tabulated over the geometry, for the
 // observer loop.  The model depends on the geometry only through the source
 // height h_s and horizontal distance d (the receiver height is fixed for a

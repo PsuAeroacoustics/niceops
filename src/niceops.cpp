@@ -1537,6 +1537,33 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             return StateGeometry {path.range * path.range, frame.nose.dot(d), frame.normal.dot(d),
                     frame.starboard.dot(d)};
         };
+        // With more than one eigenray (Arrival), a geometry whose bound covers
+        // their sum: each is bounded by its own direction's numerator over its
+        // own squared range, so the largest of those numerators over the
+        // harmonic sum of the squared ranges bounds them all.
+        auto bound_geometry = [&](std::size_t it, const RefractedRay& ray) {
+            const StateGeometry primary = equivalent_geometry(it, ray.path);
+            if (ray.extra.empty())
+                return primary;
+            double inverse = 1.0 / primary.squared_range;
+            StateGeometry pick = primary;
+            double best = direction_bounds.numerator(it, DirectionBounds::bin(primary.along, primary.up,
+                    primary.across, primary.squared_range));
+            for (const Arrival& a : ray.extra)
+            {
+                const StateGeometry g = equivalent_geometry(it, a.path);
+                inverse += 1.0 / g.squared_range;
+                const double n = direction_bounds.numerator(it,
+                        DirectionBounds::bin(g.along, g.up, g.across, g.squared_range));
+                if (n > best)
+                {
+                    best = n;
+                    pick = g;
+                }
+            }
+            const double scale = std::sqrt(1.0 / (inverse * pick.squared_range));
+            return StateGeometry {1.0 / inverse, pick.along * scale, pick.up * scale, pick.across * scale};
+        };
         struct RefractedGeometry
         {
             double squared_range, along, up, across;
@@ -1592,6 +1619,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::size_t tabled_here = 0, fallback_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
         std::size_t shadowed_here = 0;
+        // --refraction stratified's other eigenrays: each one's loss from its
+        // earlier bounces, its band levels, and a ground weight of zero for one
+        // that never reaches the ground.
+        std::vector<double> arrival_loss(shadow.size(), 0.0);
+        std::vector<double> arrival_bands(shadow.size(), 0.0);
+        const std::vector<double> no_ground(shadow.size(), 0.0);
         for (std::size_t index = begin; index < end; index++)
         {
             // Evaluated at the microphone, with this observer's receiver.
@@ -1683,11 +1716,50 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     extra_loss = shadow.data();
                     shadowed_here++;
                 }
+                // A primary that bounced before arriving (a duct, past every
+                // direct ray) loses what those bounces took.
+                if (ray.bounces > 0 && ground_here != nullptr)
+                {
+                    if (extra_loss != nullptr)
+                        std::copy(extra_loss, extra_loss + shadow.size(), arrival_loss.begin());
+                    else
+                        std::fill(arrival_loss.begin(), arrival_loss.end(), 0.0);
+                    add_bounce_loss(ray.ground_grazing, ray.bounces, ground_impedance_bands, first_band,
+                            last_band, arrival_loss.data());
+                    extra_loss = arrival_loss.data();
+                }
                 double level = database.spectral_level_along(ray.path, source_states[it],
                         absorption_for(it, observer), band_gains, ground_here,
                         &ground_impedance_bands, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
                         extra_loss, ground_weight, bands_out);
+                if (!ray.extra.empty())
+                {
+                    // The other eigenrays, each its own level, summed in energy.
+                    double energy = std::pow(10.0, 0.1 * level);
+                    for (const Arrival& a : ray.extra)
+                    {
+                        std::fill(arrival_loss.begin(), arrival_loss.end(), 0.0);
+                        if (ground_here != nullptr)
+                            add_bounce_loss(a.grazing, a.bounces, ground_impedance_bands, first_band,
+                                    last_band, arrival_loss.data());
+                        const bool grounded = a.grazing > 0.0 || flush;
+                        const double here = database.spectral_level_along(a.path, source_states[it],
+                                absorption_for(it, observer), band_gains, ground_here,
+                                &ground_impedance_bands, sound_speed, first_band, last_band,
+                                packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
+                                arrival_loss.data(), grounded ? nullptr : no_ground.data(),
+                                bands_out != nullptr ? arrival_bands.data() : nullptr);
+                        energy += std::pow(10.0, 0.1 * here);
+                        if (bands_out != nullptr)
+                        {
+                            for (std::size_t band = first_band; band < last_band; band++)
+                                bands_out[band] = 10.0 * std::log10(std::pow(10.0, 0.1 * bands_out[band])
+                                        + std::pow(10.0, 0.1 * arrival_bands[band]));
+                        }
+                    }
+                    level = 10.0 * std::log10(energy);
+                }
                 if (add_ambient)
                     level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
                 return level;
@@ -1709,7 +1781,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             [&](std::size_t it) {
                                 RefractedGeometry g;
                                 g.ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
-                                const auto e = equivalent_geometry(it, g.ray.path);
+                                const auto e = bound_geometry(it, g.ray);
                                 g.squared_range = e.squared_range;
                                 g.along = e.along;
                                 g.up = e.up;
@@ -1758,7 +1830,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     ranges[it] = sound_speed * ray.travel_time;
                     if (culling)
                     {
-                        const auto g = equivalent_geometry(it, ray.path);
+                        const auto g = bound_geometry(it, ray);
                         if (g.squared_range > sphere_radius_squared
                                 && direction_bounds.numerator(it,
                                            DirectionBounds::bin(g.along, g.up, g.across, g.squared_range))

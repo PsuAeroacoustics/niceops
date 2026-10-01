@@ -211,6 +211,25 @@ int main(int argc, char** argv)
             }
             return spreading_db + ground_db - shadow_db;
         };
+        // The layered model's level: its primary, as above, less what earlier
+        // bounces took from it, and every other eigenray in energy (Arrival).
+        std::vector<double> bounce(bands.size());
+        auto layered_relative = [&](const RefractedRay& ray, std::size_t b) {
+            std::fill(bounce.begin(), bounce.end(), 0.0);
+            add_bounce_loss(ray.ground_grazing, ray.bounces, admittance, 0, bands.size(), bounce.data());
+            double energy = std::pow(10.0, 0.1 * (relative(ray, b) - bounce[b]));
+            for (const Arrival& a : ray.extra)
+            {
+                std::fill(bounce.begin(), bounce.end(), 0.0);
+                add_bounce_loss(a.grazing, a.bounces, admittance, 0, bands.size(), bounce.data());
+                const double ground_db = a.grazing > 0.0
+                        ? excess_ground_attenuation(ground, a.path.source_height, a.path.ground_distance,
+                                  sound_speed, {bands[b]})[0]
+                        : 0.0;
+                energy += std::pow(10.0, 0.1 * (20.0 * std::log10(slant / a.path.range) + ground_db - bounce[b]));
+            }
+            return 10.0 * std::log10(energy);
+        };
         RefractedRay straight;
         straight.path = straight_ray(source, receiver);
         RefractedRay by_linear = direct_ray(linear, source, at_source, receiver, at_receiver);
@@ -223,7 +242,7 @@ int main(int argc, char** argv)
         for (std::size_t b = 0; b < bands.size(); b++)
         {
             std::cout << "," << relative(straight, b) << "," << relative(by_linear, b) << ","
-                      << relative(by_layers, b) << "," << pe[b].relative_level[0][q];
+                      << layered_relative(by_layers, b) << "," << pe[b].relative_level[0][q];
         }
         std::cout << "\n";
     }

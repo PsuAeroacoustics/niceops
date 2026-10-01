@@ -97,6 +97,33 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
 ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, double z_r,
         double r, double guess);
 
+// Every ray that reaches the receiver from above, but the primary: the direct
+// rays of the families after the one layered_direct_eigenray takes (`primary`
+// is its result, which counts only if lit), and, in a surface duct, the rays
+// that bounce off the ground first.  With `bounced_only`, only those.
+//
+// A duct is air above the source faster than all of it below, so that a ray
+// that reaches the ground turns aloft and comes back down.  A ray of
+// invariant p that bounces m times before its last descent travels
+//   X_m(p) = X_0(p) + m L(p),
+// X_0 its direct range and L the hop from the ground up to its turning height
+// and back.  Only rays arriving from above are listed: the one rising to the
+// receiver from the next bounce is the partner the ground model pairs each
+// with, as the primary's reflected ray is the primary's.  X_0 rises with p
+// where L falls, so X_m is not monotonic and has caustics: the arms are
+// sampled once, together, in launch angle (the hops reuse the samples) and
+// every crossing of r is solved for.  A ray whose hops alone already outrun r
+// is skipped without a trace, which leaves nothing to do for a source above
+// the duct or a path shorter than its first hop.
+//
+// Past the reach of every direct ray in a duct -- the single-hop skip
+// distance, ~2.4 km for a 30 m source under day 286's morning inversion --
+// these are the only rays there are.  Leaving them out, the level sat 8-54 dB
+// under the parabolic equation's there (which stays within a few dB of free
+// field) and fell into the gaps between hops.
+std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z_r, double r,
+        const DirectEigenray& primary, bool bounced_only = false);
+
 // --refraction stratified's counterparts of direct_ray() and finish_ground().
 // `linear` supplies the warm start; `scratch` holds the path's effective sound
 // speed at each level between the two calls, so is per thread.

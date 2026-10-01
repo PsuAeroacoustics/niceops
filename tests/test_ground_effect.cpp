@@ -367,6 +367,46 @@ TEST_CASE("a thin low-resistivity Delany-Bazley layer is refused as non-passive"
     REQUIRE_NOTHROW(ground_impedance(ground, {200.0, 1000.0}, 343.0));
 }
 
+TEST_CASE("grazing past the boundary-loss cutoff keeps the loss, not a total cancellation",
+          "[ground_effect]")
+{
+    // A refracted ray arriving level at a flush receiver puts both ends on the
+    // ground.  The plane coefficient is then -1, and the |w| = 500 cutoff used
+    // to leave 1 + Q = 0, which threw.  Past the cutoff 1 + Q = 2F(w) ~ -1/w:
+    // it has to join the Faddeeva path below the cutoff continuously.
+    GroundModel ground;
+    ground.impedance_model = ImpedanceModel::variable_porosity;
+    ground.flow_resistance = 200.0;
+    for (const double f : {125.0, 1000.0, 4000.0})
+    {
+        const auto beta = ground_impedance(ground, {f}, 343.2)[0];
+        // At grazing |w| = kappa |beta|^2.
+        const auto scaled_gap = [&](double w_abs) {
+            const auto q = spherical_reflection_coefficient(0.0, w_abs / std::norm(beta), beta, true);
+            return std::abs(std::complex<double>(1.0 + q[0], q[1])) * w_abs;
+        };
+        const double below = scaled_gap(499.99);
+        const double above = scaled_gap(500.01);
+        REQUIRE(std::fabs(below - 1.0) < 1e-2);
+        REQUIRE(std::fabs(above - below) < 1e-6);
+    }
+
+    ground.receiver_height = 0.0;
+    std::vector<double> level;
+    REQUIRE_NOTHROW(level = excess_ground_attenuation(ground, 0.0, 3000.0, 343.2, kBands));
+    // Within rounding of grazing, not at it: a refracted ray's equivalent
+    // source came out 1e-9 m up, where the plane coefficient alone cancels to
+    // nothing and the model threw.
+    std::vector<double> nearly;
+    REQUIRE_NOTHROW(nearly = excess_ground_attenuation(ground, 1e-9, 3000.0, 343.2, kBands));
+    for (std::size_t b = 0; b < kBands.size(); b++)
+        REQUIRE(std::fabs(nearly[b] - level[b]) < 1e-3);
+    for (const double l : level)
+        REQUIRE(std::isfinite(l));
+    // Low bands keep a ground wave (+6 dB as w -> 0); high bands sink toward 20 lg(1/|w|).
+    REQUIRE(level.front() > level.back() + 20.0);
+}
+
 TEST_CASE("GroundTable interpolates the model to within its stated accuracy, inside its bound",
         "[ground_effect]")
 {

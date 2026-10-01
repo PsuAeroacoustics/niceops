@@ -411,6 +411,19 @@ add_test(NAME stratified_windowed_is_exact COMMAND golden_compare integrated/str
 set_tests_properties(stratified_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_runs)
 add_test(NAME stratified_uniform_point_is_straight COMMAND golden_compare integrated/stratified_uniform_point.csv integrated/straight_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_uniform_point_is_straight PROPERTIES FIXTURES_REQUIRED "stratified_runs;refraction_point_runs")
+# A calm morning inversion capped near 350 ft (day 286's, run 286276, without its
+# wind): a surface duct.  Past the reach of every direct ray only rays that bounced
+# arrive (layered_arrivals), several per pair, and the peak search bounds their
+# sum by the loudest one's direction over the harmonic sum of their ranges; a
+# skipped state must change nothing.
+add_test(NAME stratified_duct_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --gridstep 984 -L warn -o integrated/stratified_duct_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_point_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --gridstep 984 -L warn -D integrated/stratified_duct_point_dnl.csv -o integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 -L warn -o integrated/stratified_duct_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 -L warn -D integrated/stratified_duct_plate_dnl.csv -o integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_duct_point stratified_duct_point_marched stratified_duct_plate stratified_duct_plate_marched PROPERTIES FIXTURES_SETUP stratified_duct_runs)
+add_test(NAME stratified_duct_point_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_plate.csv integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_duct_point_windowed_is_exact stratified_duct_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
 add_test(NAME refraction_point_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_point.csv integrated/refraction_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME refraction_plate_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_plate.csv integrated/refraction_windy_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(refraction_point_windowed_is_exact refraction_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED refraction_windy_runs)

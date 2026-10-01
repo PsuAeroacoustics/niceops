@@ -517,8 +517,47 @@ Eigenrays are solved per source–observer pair, over four families of rays:
 - launched up, turning aloft, then arriving from above;
 - launched up, turning aloft, then dipping.
 
-The range is monotonic along each family. The solve starts from the linear model's answer. A
+The primary arrival is the first family's root, found from the linear model's answer. A
 receiver at or above the source is left to the linear model.
+
+The range need not be monotonic along a family, so the pair can have more arrivals than that.
+A source at a local maximum of the sound speed is one way. Its shallowest rays skim the slow
+layer and travel far, its steepest turn high and travel far, and the arrivals lie between. The
+other families are sampled at 32 launch angles and every crossing of the range is solved for.
+Each arrival is a level of its own, through its own launch direction on the sphere and its own
+ray tube, and they are summed in energy.
+
+**Surface ducts.** When the air above the source outruns all of the air below it, a ray that
+reaches the ground turns aloft and comes back down. A morning inversion does this. A ray that
+bounces m times before its last descent travels X_0(p) + m L(p), where L is one hop from the
+ground to its turning height and back. Those bounced rays are found the same way, from the same
+samples. Each earlier bounce costs the plane-wave reflection loss, and the last is the ground
+model's, as for the primary. Beyond the reach of every direct ray, about 2.4 km for a 30 m
+source under day 286's morning inversion, the bounced rays are all there is. The strongest
+becomes the primary. `atmospheres/example_inversion.csv` is that profile, from run 286276,
+without its 1–3 kt of wind: 3.5 K of inversion capped near 350 ft.
+
+Without them, `stratified` was 8–24 dB under the PE past 4,000 ft on day 286's profiles for
+100–330 ft sources, and up to 54 dB under it at single ranges. The table compares the energy
+mean over 50 Hz – 2 kHz against the PE, per range bin, for a flush receiver:
+
+| day 286, source 100 ft | 1,000–4,000 ft | 4,000–8,000 ft | 8,000–13,000 ft |
+| --- | --- | --- | --- |
+| run 286264 | +0.4 | −1.1 (was −12.2) | −0.5 (was −24.3) |
+| run 286270 | 0.0 | +0.8 (was −7.2) | −2.5 (was −8.1) |
+| run 286276 | −0.7 | −1.5 (was −10.7) | −1.1 (was −9.2) |
+| run 286282 | +4.4 | +0.2 | −3.1 (was −17.1) |
+
+Downwind on `example_windy.csv` and a log law, at 100 ft, the far third of a 10,000 ft path goes
+from 4.0–6.5 dB under the PE to within 1 dB of it. Upwind, the linear lapse and the day-284
+profiles do not move.
+
+Two limits remain. Within one pair of samples, two close arrivals at a caustic can still be
+missed: 32 against 128 samples moves about 5% of pairs under the inversion by more than 1 dB.
+Day 286's last profile (run 286288) has warm, calm air at the ground under a weak inversion at
+70–120 ft. There, every ray turned back from aloft turns up again within the lowest metre. It
+reaches a 1.2 m microphone but never a flush one, which stays on the shadow's floor 21 dB
+under the PE, while the wave diffracts through that sub-wavelength layer.
 
 It is checked two ways. On a linear profile it reproduces the linear model's closed forms,
 the shadow boundary included. On layered profiles its rays match numerically traced ones to a
@@ -622,10 +661,13 @@ SNR ≥ 10 dB, records that miss the flyover left out), median / rms in dB:
 
 The calm day 286 barely moves (overall 1.46 → 1.45 dB rms): its winds cast few shadows.
 
-Costs, with a point receiver: the demo grid's acoustic loop takes 12.0 s (3.3 s linear, 2.1 s
-without refraction). A 96-microphone scattered array like `arrays/coyle_approach.csv` takes
-35 ms. Where the range is not monotonic (caustics in non-monotonic profiles), the solve finds
-one arrival rather than summing all of them. Focusing at a caustic is capped at +10 dB.
+Costs, with a point receiver: the demo grid's acoustic loop took 12.0 s when `stratified` went
+in (3.3 s linear, 2.1 s without refraction). A 96-microphone scattered array like
+`arrays/coyle_approach.csv` takes 35 ms. Searching for every arrival costs about half as much
+again. A whole demo-grid run (B407, `--ground_effect`, `--frame_bearing 210`, 14 threads) goes
+from 23.6 to 37 s on `example_windy.csv` and from 57.5 to 86 s on `example_inversion.csv`. The
+search is skipped past the hand-over to the linear fit, unless a duct gives bounced rays to
+look for. Focusing at a caustic is capped at +10 dB.
 
 #### Checking the refraction models against a parabolic equation
 

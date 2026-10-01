@@ -601,8 +601,42 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   - **The linear model stays alongside.** It gives the warm start (usually within a fraction
     of a degree), the fallback for a receiver at or above the source, the shadow's attenuation
     rate (its fitted gradient), and the refracted path's `profile`.
-  - **One arrival per pair.** Non-monotonic profiles give caustics and several arrivals; the
-    solve returns the first family's root. Focusing is capped at `max_focusing_gain_db` (+10).
+  - **Every arrival, summed in energy** (`layered_arrivals`, `Arrival` in refraction.hpp).
+    The primary is the first family's root. The other families are not monotonic in general,
+    so they are sampled at 32 launch angles and every crossing of r is solved. In a surface
+    duct (air above the source faster than all of it below) the bounced rays come too:
+    X_m(p) = X_0(p) + m L(p), from the same samples. Each earlier bounce costs the plane-wave
+    |R|^2 (`add_bounce_loss`), and past every direct ray's reach the strongest is promoted to
+    primary. Day 286's inversion was 8–24 dB under the PE past 4,000 ft without them, and is
+    now mostly within 3 dB. Focusing is capped at `max_focusing_gain_db` (+10). Things to keep:
+    - **`solve` refuses a bracket that does not land** (residual over 1e-6 r). A family whose
+      end ray never arrives stands in as an infinity, so it brackets falsely. In a duct that
+      reported the duct's top as a lit ray, 55 dB low.
+    - **`Jumps`: the range is discontinuous** wherever 1/p passes a local maximum of c that
+      is the fastest air yet met above z_s, or below z_r. There the turning point leaps.
+      `solve` splits its bracket there. Before that, a sign change at a jump alone ran the
+      full 200 iterations to be refused, under a convergence test (`hi - lo <= 1e-17 hi`)
+      that a double cannot meet. That was a third of the solves in a duct and 90% of their
+      cost; the test is now that the estimate no longer falls inside the bracket.
+    - **The samples are shared across families** (`Row`: down, up, dip, ground pieces at one
+      p). Per family they repeated the walks 3–5 times in a duct.
+    - **32 samples is not generous.** Against 128, 5% of pairs under the inversion move by
+      more than 1 dB, from caustic pairs inside one interval. 16 is far worse. Do not trade
+      samples for speed.
+    - **The primary's bracket is split around it, not solved whole.** Whole, it returned the
+      primary or one of the caustic pair beside it, at random.
+    - **Past the hand-over to the linear fit only bounced rays are searched** (`bounced_only`).
+      A finite ground-grazing boundary already means no ray turned back from aloft arrives,
+      so the fit stands for every direct ray. Upwind that skips the search entirely.
+    - **The peak search bounds the sum** by the loudest arrival's direction over the harmonic
+      sum of their squared ranges (`bound_geometry` in niceops.cpp).
+      `stratified_duct_*_windowed_is_exact` holds it.
+    - **Not fixed: a flush microphone under warm, calm ground air** (day 286, run 286288).
+      Rays turned back from aloft turn up again within the lowest metre and never reach
+      z = 0; the PE diffracts through that layer. 21 dB low at 8,000–13,000 ft.
+    - Cost: about +55% on a stratified run (demo grid, B407, `--ground_effect`: 23.6 -> 37 s
+      on `example_windy.csv`, 57.5 -> 86 s on `example_inversion.csv`). It was +107% and +76%
+      before the jumps, the shared samples and the hand-over skip.
   - **The log-law finding.** With zero wind at the ground, the upwind limiting ray is fixed by
     c(z_s)/c(0) alone. On `example_windy.csv` a 100 m source's upwind shadow starts at 520 m,
     where the linear fit puts it past 1.2 km; a test pins that. Ray theory probably overstates
@@ -975,6 +1009,13 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   no matter how many terms are taken -- so it cannot hold the 1e-9 dB pinning against panam at
   any cutoff in range. Roughly 9% of the ground path, for the loss of the property that proves
   the port. Not worth it; do not re-derive it.
+
+  **It is used in one place, past the cutoff, where panam's answer is no answer.** A refracted
+  ray arriving level at a flush receiver puts both ends on the ground, the plane coefficient
+  tends to -1, and dropping the term past |w| = 500 (as panam does) cancels the two paths to
+  rounding, so the model threw. Where |1 + R_p|^2 < 1e-4 past the cutoff,
+  `reflection_coefficient` keeps three terms of the series instead. Everywhere else is panam's
+  to the bit. `tests/test_ground_effect.cpp` checks it joins the exact path at the cutoff.
 - **The 4x EAA multiplier is gone, and the goldens moved with it.** `eval` used to compute
   `4.0 * EAA * (range - r)/1000` under a `//TODO Add ground effects`, inherited verbatim from
   the D original (`c74bab3`). panam *writes* that EAA as `SPLA - SPLAa` over a 1000 m reference

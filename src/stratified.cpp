@@ -185,6 +185,62 @@ struct Path
     }
 };
 
+// The invariants at which a ray's range jumps.  A ray going up from z_s turns
+// at the first height where c reaches 1/p, so as 1/p passes the speed at a
+// local maximum of c that is the fastest air yet met above z_s, the turning
+// point leaps from just under that maximum to wherever the air is next as
+// fast -- and the range with it.  The same holds going down from z_r for the
+// rays that dip.  A family is continuous between these, not across them, and
+// a bracket straddling one can change sign with no root inside.
+//
+// Listed ascending.  Only a performance matter: an extra entry costs solve()
+// two evaluations, a missing one (past the capacity) leaves solve() to find
+// out the slow way.
+struct Jumps
+{
+    static constexpr int capacity = 32;
+    double p[capacity];
+    int count = 0;
+
+    Jumps(const Layers& L, double z_s, double z_r)
+    {
+        const double* begin = L.z;
+        const double* end = L.z + L.levels;
+        double fastest = L.at(z_s);
+        for (const double* level = std::upper_bound(begin, end, z_s); level + 1 < end; ++level)
+        {
+            const std::size_t k = level - begin;
+            if (L.c[k] > fastest)
+            {
+                fastest = L.c[k];
+                if (L.c[k + 1] <= L.c[k])
+                    add(1.0 / L.c[k]);
+            }
+        }
+        fastest = L.at(z_r);
+        for (const double* level = std::lower_bound(begin, end, z_r); level != begin;)
+        {
+            --level;
+            if (*level <= 0.0)
+                break;
+            const std::size_t k = level - begin;
+            if (L.c[k] > fastest)
+            {
+                fastest = L.c[k];
+                if ((level == begin ? L.at(0.0) : L.c[k - 1]) <= L.c[k])
+                    add(1.0 / L.c[k]);
+            }
+        }
+        std::sort(p, p + count);
+    }
+
+    void add(double value)
+    {
+        if (count < capacity)
+            p[count++] = value;
+    }
+};
+
 // A ray with Snell invariant p from z_s: launched up (turning aloft first) or
 // down, and arriving at z_r either on its first crossing, from above, or on
 // its second -- after dipping below z_r and turning back up without touching
@@ -302,9 +358,11 @@ Families families(const Path& path, double z_s, double z_r, bool reflected)
 }
 
 // Solve range(p) = r along a family, starting from p_guess when it lies in
-// it.  NaN if r is outside the family's reach.
+// it.  NaN if r is outside the family's reach.  `jumps`, when given, are where
+// the range may be discontinuous (Jumps).
 template <typename Range>
-double solve(Range&& range, double r, const Family& family, double p_guess)
+double solve(Range&& range, double r, const Family& family, double p_guess,
+        const Jumps* jumps = nullptr)
 {
     const double sign = family.rising ? 1.0 : -1.0;
     auto f = [&](double p) {
@@ -357,15 +415,44 @@ double solve(Range&& range, double r, const Family& family, double p_guess)
             f_lo = f_probe;
         }
     }
+    // Narrow the bracket to the first continuous piece of it across which f
+    // changes sign.  Without this a sign change at a jump alone took the full
+    // 200 iterations to be refused: a third of the solves in a surface duct,
+    // and nine-tenths of their cost.
+    if (jumps != nullptr)
+    {
+        for (const double* j = std::upper_bound(jumps->p, jumps->p + jumps->count, lo);
+                j != jumps->p + jumps->count && *j < hi; ++j)
+        {
+            const double below = *j * (1.0 - 1e-12);
+            const double above = *j * (1.0 + 1e-12);
+            if (!(below > lo && above < hi))
+                continue;
+            const double f_below = f(below);
+            if (f_lo <= 0.0 && f_below >= 0.0)
+            {
+                hi = below;
+                f_hi = f_below;
+                break;
+            }
+            lo = above;
+            f_lo = f(above);
+        }
+        if (!(f_lo <= 0.0) || !(f_hi >= 0.0))
+            return nan;
+    }
     const double tolerance = 1e-10 * std::max(r, 1.0);
     double p = 0.5 * (lo + hi);
     int side = 0;
+    double value = nan;
     for (int iteration = 0; iteration < 200; iteration++)
     {
         p = std::isfinite(f_lo) && std::isfinite(f_hi) ? (lo * f_hi - hi * f_lo) / (f_hi - f_lo)
                                                        : 0.5 * (lo + hi);
-        const double value = f(p);
-        if (std::fabs(value) <= tolerance || hi - lo <= 1e-17 * hi)
+        value = f(p);
+        // Stop, too, once the bracket has closed to adjacent doubles and the
+        // next estimate cannot fall strictly inside it.
+        if (std::fabs(value) <= tolerance || !(p > lo && p < hi))
             break;
         if (value > 0.0)
         {
@@ -384,6 +471,14 @@ double solve(Range&& range, double r, const Family& family, double p_guess)
             side = -1;
         }
     }
+    // A bracket can be false.  A ray that never gets there stands in as an
+    // infinity of the right sign, so a family whose end is such a ray passes
+    // the test above even when its reach stops short of r, and the iteration
+    // then closes on that end instead of a root.  In a surface duct that
+    // handed back the ray grazing the duct's top as a lit arrival 575 times
+    // its range away, 55 dB low.  Only a ray that lands is a root.
+    if (!(std::fabs(value) <= 1e-6 * std::max(r, 1.0)))
+        return nan;
     return p;
 }
 
@@ -463,6 +558,7 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     const double c_s = layers.at(z_s);
     const double c_r = layers.at(z_r);
     const auto fams = families(path, z_s, z_r, false);
+    const Jumps jumps(layers, z_s, z_r);
     const double p_guess = std::cos(guess) / c_s;
     const double chord = std::hypot(r, z_s - z_r);
     const double focus_floor = chord * std::pow(10.0, -max_focusing_gain_db / 20.0);
@@ -497,7 +593,7 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     {
         const Family& family = fams.list[k];
         auto range = [&](double p) { return trace_p<false>(path, z_s, z_r, p, family.arm, false).dx; };
-        const double p = solve(range, r, family, p_guess);
+        const double p = solve(range, r, family, p_guess, &jumps);
         if (std::isnan(p))
             continue;
         const auto full = trace_p<true>(path, z_s, z_r, p, family.arm, false);
@@ -549,13 +645,14 @@ ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, d
     const Path path {layers};
     const double c_s = layers.at(z_s);
     const auto fams = families(path, z_s, z_r, true);
+    const Jumps jumps(layers, z_s, z_r);
     const double p_guess = std::cos(guess) / c_s;
     ReflectedEigenray out;
     for (int k = 0; k < fams.count; k++)
     {
         const Family& family = fams.list[k];
         auto range = [&](double p) { return trace_p<false>(path, z_s, z_r, p, family.arm, true).dx; };
-        const double p = solve(range, r, family, p_guess);
+        const double p = solve(range, r, family, p_guess, &jumps);
         if (std::isnan(p))
             continue;
         const auto full = trace_p<true>(path, z_s, z_r, p, family.arm, true);
@@ -564,6 +661,258 @@ ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, d
         out.grazing = std::asin(sine(p, layers.at(0.0)));
         out.path_length = full.ds;
         return out;
+    }
+    return out;
+}
+
+namespace {
+
+// One hop of a ray with invariant p that reaches the ground from z_s: up from
+// the ground to its turning height and back down.  NaN range if it never turns.
+template <bool full>
+Crossing hop(const Path& path, double z_s, double p)
+{
+    Crossing out;
+    // Nothing between the ground and z_s turns it, so it first turns above z_s.
+    const double top = path.turning_above(p, z_s);
+    if (std::isnan(top))
+    {
+        out.dx = nan;
+        return out;
+    }
+    const auto up = path.between<full>(p, 0.0, top, false, true);
+    out.dx = 2.0 * up.dx;
+    out.dt = 2.0 * up.dt;
+    out.ds = 2.0 * up.ds;
+    return out;
+}
+
+// The most arrivals kept per pair, nearest-spread first.  A source a few metres
+// up in a deep duct has hops of a hundred metres and could otherwise list
+// dozens of near-grazing rays at long range, each a sphere lookup.
+constexpr std::size_t max_arrivals = 24;
+
+} // namespace
+
+std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z_r, double r,
+        const DirectEigenray& primary, bool bounced_only)
+{
+    std::vector<Arrival> out;
+    const Path path {layers};
+    const Jumps jumps(layers, z_s, z_r);
+    const double c_s = layers.at(z_s);
+    const double c_r = layers.at(z_r);
+    const double c_0 = layers.at(0.0);
+    const double chord = std::hypot(r, z_s - z_r);
+    const double focus_floor = chord * std::pow(10.0, -max_focusing_gain_db / 20.0);
+    // A ray going down past the receiver meets the ground only if nothing below
+    // the receiver turns it first.
+    const double c_0r = path.fastest(0.0, z_r);
+
+    // The duct: rays that reach the ground from the source and turn aloft.
+    const double c_0s = path.fastest(0.0, z_s);
+    const double c_up = path.fastest_above(z_s);
+    constexpr double inset = 1e-12;
+    const double duct_lo = 1.0 / c_up * (1.0 + inset);
+    const double duct_hi = 1.0 / c_0s * (1.0 - inset);
+    const bool duct = c_up > c_0s && duct_hi > duct_lo;
+    // dx/dz = p c / q grows with p, so the duct's steepest ray crosses any
+    // height interval in the least distance: every hop is at least twice its
+    // crossing of [0, z_s], every first descent at least its crossing of
+    // [z_r, z_s].  A path shorter than that has no bounced arrival.
+    int m_max = 0;
+    if (duct)
+    {
+        const double leg = path.between<false>(duct_lo, 0.0, z_s).dx;
+        const double approach = path.between<false>(duct_lo, z_r, z_s).dx;
+        if (leg > 0.0)
+            m_max = static_cast<int>(std::min((r - approach) / (2.0 * leg), 64.0));
+    }
+
+    auto add = [&](const Arm& arm, int m, double p, const Family& whole, auto&& range) {
+        const auto first = trace_p<true>(path, z_s, z_r, p, arm, false);
+        Arrival a;
+        a.bounces = m;
+        a.launch = launch_of(p, c_s, arm.up);
+        const double rising = std::asin(sine(p, c_r));
+        a.arrival = arm.second ? rising : -rising;
+        a.grazing = !arm.second && 1.0 / p > c_0r ? std::asin(sine(p, c_0)) : 0.0;
+        a.path_length = first.ds;
+        a.travel_time = first.dt;
+        if (m > 0)
+        {
+            const auto hops = hop<true>(path, z_s, p);
+            a.path_length += m * hops.ds;
+            a.travel_time += m * hops.dt;
+        }
+        a.spreading_range = std::max(tube_range(range, whole, p, c_s, r, a.arrival), focus_floor);
+        out.push_back(a);
+    };
+
+    // Every family that reaches the receiver directly, and each first-crossing
+    // arm's bounced rays.  The downward first-crossing family alone is
+    // monotonic (its range is one crossing of [z_r, z_s]); the rest are
+    // sampled in launch angle, every crossing of r solved for.  A
+    // family turning aloft is not monotonic when the source sits at a local
+    // maximum of the sound speed with faster air above: its shallowest rays
+    // skim the near-isovelocity layer and travel far, its steepest turn high
+    // and travel far, and the arrivals lie between -- a bracket on the ends
+    // misses them all.
+    //
+    // Every family's range is assembled from the same few pieces of a ray of
+    // invariant p -- down from the source to the receiver, up from the source
+    // to its turning height, the dip below the receiver, and the ground to the
+    // receiver for a hop -- so the samples are taken once, on one grid in
+    // launch angle over all the families, and shared.  Sampled family by
+    // family, a duct's walks through the layers were repeated 3-5 times over.
+    constexpr int samples = 32;
+    const auto fams = families(path, z_s, z_r, false);
+    struct Sampled
+    {
+        Family family; // over the p it is sampled on
+        bool hops;
+    };
+    Sampled sampled[4];
+    int n_sampled = 0;
+    bool need_up = false, need_dip = false, need_ground = false;
+    double p_min = std::numeric_limits<double>::infinity(), p_max = 0.0;
+    for (int k = 0; k < fams.count; k++)
+    {
+        const Family& family = fams.list[k];
+        const Arm arm = family.arm;
+        const bool monotonic = !arm.up && !arm.second;
+        const bool hops = duct && !arm.second && m_max >= 1;
+        // The downward family's own direct ray is never an extra:
+        // layered_direct_eigenray tries that family first, so its root, if it
+        // has one, is the primary.
+        if ((monotonic || bounced_only) && !hops)
+            continue;
+        // The downward family is sampled only for its hops, so over the duct;
+        // the others over all of themselves.
+        const double p_a = monotonic ? std::max(family.p_lo, duct_lo) : family.p_lo;
+        const double p_b = monotonic ? std::min(family.p_hi, duct_hi) : family.p_hi;
+        if (!(p_b > p_a))
+            continue;
+        sampled[n_sampled++] = {Family {arm, p_a, p_b, family.rising}, hops};
+        need_up = need_up || arm.up || hops;
+        need_dip = need_dip || arm.second;
+        need_ground = need_ground || hops;
+        p_min = std::min(p_min, p_a);
+        p_max = std::max(p_max, p_b);
+    }
+    if (n_sampled == 0)
+        return out;
+
+    // The pieces at one p; NaN where the ray does not turn there.
+    struct Row
+    {
+        double p, down, up, dip, ground;
+    };
+    auto row = [&](double p) {
+        Row w {p, path.between<false>(p, z_r, z_s).dx, nan, nan, nan};
+        if (need_up)
+        {
+            const double top = path.turning_above(p, z_s);
+            if (!std::isnan(top))
+                w.up = path.between<false>(p, z_s, top, false, true).dx;
+        }
+        if (need_dip)
+        {
+            const double bottom = path.turning_below(p, z_r);
+            if (!std::isnan(bottom))
+                w.dip = path.between<false>(p, bottom, z_r, true, false).dx;
+        }
+        if (need_ground && p > duct_lo && p < duct_hi)
+            w.ground = path.between<false>(p, 0.0, z_r).dx;
+        return w;
+    };
+    // Shallowest first, as each family's samples run.
+    Row grid[samples];
+    {
+        const double t_a = std::acos(std::min(1.0, p_max * c_s));
+        const double t_b = std::acos(std::min(1.0, p_min * c_s));
+        for (int j = 0; j < samples; j++)
+        {
+            const double t = t_a + (t_b - t_a) * j / (samples - 1);
+            grid[j] = row(std::clamp(std::cos(t) / c_s, p_min, p_max));
+        }
+    }
+
+    std::vector<Row> s;
+    for (int k = 0; k < n_sampled; k++)
+    {
+        const Family& whole = sampled[k].family;
+        const Arm arm = whole.arm;
+        const bool monotonic = !arm.up && !arm.second;
+        const bool hops = sampled[k].hops;
+        // Whether this arm's own direct rays are listed.
+        const bool direct = !monotonic && !bounced_only;
+        // Its own ends, and the shared samples strictly between.
+        s.clear();
+        s.push_back(whole.p_hi == p_max ? grid[0] : row(whole.p_hi));
+        for (const Row& w : grid)
+        {
+            if (w.p < whole.p_hi && w.p > whole.p_lo)
+                s.push_back(w);
+        }
+        s.push_back(whole.p_lo == p_min ? grid[samples - 1] : row(whole.p_lo));
+        auto direct_of = [arm](const Row& w) {
+            return w.down + (arm.up ? 2.0 * w.up : 0.0) + (arm.second ? 2.0 * w.dip : 0.0);
+        };
+        auto hop_of = [](const Row& w) { return 2.0 * (w.ground + w.down + w.up); };
+        auto direct_range = [&](double p) { return trace_p<false>(path, z_s, z_r, p, arm, false).dx; };
+        // The primary's own bracket is split around it (below): this is the
+        // primary's arm if it was launched and arrives the same way.
+        const bool primary_arm = primary.lit && (primary.launch > 0.0) == arm.up
+                && (primary.arrival > 0.0) == arm.second;
+        const double p_primary = std::cos(primary.launch) / c_s;
+        for (int m = direct ? 0 : 1; m <= (hops ? m_max : 0); m++)
+        {
+            auto range = [&](double p) {
+                return m == 0 ? direct_range(p) : direct_range(p) + m * hop<false>(path, z_s, p).dx;
+            };
+            auto offset = [&](const Row& w) { return direct_of(w) + (m == 0 ? 0.0 : m * hop_of(w)) - r; };
+            // Solve between lo < hi, where range - r is f_lo and f_hi.
+            auto solve_between = [&](double lo, double f_lo, double hi, double f_hi) {
+                if (!(std::isfinite(f_lo) && std::isfinite(f_hi) && (f_lo < 0.0) != (f_hi < 0.0)))
+                    return;
+                const double p = solve(range, r, Family {arm, lo, hi, f_hi > f_lo}, nan, &jumps);
+                if (!std::isnan(p)
+                        && !(m == 0 && primary.lit && std::fabs(launch_of(p, c_s, arm.up) - primary.launch) < 1e-7))
+                    add(arm, m, p, whole, range);
+            };
+            double before = offset(s[0]);
+            for (std::size_t j = 1; j < s.size(); j++)
+            {
+                // p falls along the samples; each bracket runs up in p.
+                const double here = offset(s[j]);
+                const double lo = s[j].p, hi = s[j - 1].p;
+                if (m == 0 && primary_arm && p_primary > lo && p_primary < hi)
+                {
+                    // The primary is a root here already.  Either side of it,
+                    // f changes sign again only if there are others: near a
+                    // caustic, two more.  Solving the whole bracket returned
+                    // the primary, or one of them, at random.
+                    const double gap = 1e-6 * (hi - lo);
+                    const double left = std::max(p_primary - gap, lo), right = std::min(p_primary + gap, hi);
+                    if (left > lo)
+                        solve_between(lo, here, left, range(left) - r);
+                    if (right < hi)
+                        solve_between(right, range(right) - r, hi, before);
+                }
+                else
+                {
+                    solve_between(lo, here, hi, before);
+                }
+                before = here;
+            }
+        }
+    }
+    if (out.size() > max_arrivals)
+    {
+        std::partial_sort(out.begin(), out.begin() + max_arrivals, out.end(),
+                [](const Arrival& a, const Arrival& b) { return a.spreading_range < b.spreading_range; });
+        out.resize(max_arrivals);
     }
     return out;
 }
@@ -617,8 +966,29 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
         return straight;
     }
     const double guess = ray.curved ? ray.direct.launch : std::atan2(z_r - z_s, r);
-    const auto direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
+    auto direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
     const double linear_boundary = ray.direct.boundary;
+    // See below.  The fit's ray then stands for every direct ray: a finite
+    // ground-grazing boundary means no ray turned back from aloft reaches the
+    // receiver (layered_direct_eigenray), so the direct rays left are the
+    // downward ones it replaces, and only bounced rays are looked for.
+    const bool handover = linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
+            && linear_boundary > direct.boundary;
+    auto arrivals = layered_arrivals(layers, z_s, z_r, r, direct, handover);
+    // The pair's path, for the arrivals to start from: its separation is theirs.
+    auto form_arrivals = [&](RefractedRay& into) {
+        for (Arrival& a : arrivals)
+        {
+            a.path = into.path;
+            const double horizontal = std::cos(a.launch);
+            a.path.direction = Vec3(horizontal * hx, horizontal * hy, std::sin(a.launch));
+            a.path.range = a.spreading_range;
+            a.path.path_length = a.path_length;
+            a.path.source_height = z_s;
+            a.path.ground_distance = r;
+        }
+        into.extra = std::move(arrivals);
+    };
     // From handover_fraction of the layered boundary on, not only where the
     // layered solve fails.  On a log law the dipping family's range is not
     // monotonic, and reaches some tens of metres past its end, where its
@@ -632,14 +1002,38 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     // Its limiting ray carries its lit spreading on continuously, where going
     // back to the layered shadow ray there stepped by its different spreading,
     // ~2 dB on a log law.
-    if (linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
-            && linear_boundary > direct.boundary)
+    if (handover)
     {
         ray.direct.boundary = direct.boundary;
         ray.direct.linear_boundary = linear_boundary;
         ray.direct.boundary_gradient = direct.boundary_gradient;
         ray.from_linear_fit = true;
+        form_arrivals(ray);
         return ray;
+    }
+    // In a duct, past the reach of every direct ray, the "shadow" is only the
+    // gap before the bounced rays: it has no boundary (none of the ground-grazing
+    // kind), and what arrives is those rays.  The strongest becomes the primary.
+    std::size_t promoted = arrivals.size();
+    if (!direct.lit && !std::isfinite(direct.boundary) && !arrivals.empty())
+    {
+        promoted = 0;
+        for (std::size_t k = 1; k < arrivals.size(); k++)
+        {
+            if (arrivals[k].spreading_range < arrivals[promoted].spreading_range)
+                promoted = k;
+        }
+        const Arrival& a = arrivals[promoted];
+        direct.lit = true;
+        direct.shadow_depth = 0.0;
+        direct.launch = a.launch;
+        direct.arrival = a.arrival;
+        direct.spreading_range = a.spreading_range;
+        direct.path_length = a.path_length;
+        direct.travel_time = a.travel_time;
+        ray.bounces = a.bounces;
+        ray.ground_grazing = a.grazing;
+        arrivals.erase(arrivals.begin() + static_cast<std::ptrdiff_t>(promoted));
     }
     ray.curved = true;
     ray.direct = direct;
@@ -655,6 +1049,7 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     ray.shadow_depth = direct.shadow_depth;
     // ray.profile stays the path's linear fit: the shadow's attenuation rate
     // reads its gradient as the path's overall refraction.
+    form_arrivals(ray);
     return ray;
 }
 
@@ -663,6 +1058,23 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
 {
     if (!ray.curved)
         return;
+    // The arrivals' ground geometry is the primary's construction, taken from
+    // the ray itself: its partner rising from the next bounce meets the ground
+    // at the same invariant, so at the same grazing angle, and its length
+    // differs by the receiver's few metres.
+    for (Arrival& a : ray.extra)
+    {
+        if (ground == GroundGeometry::point && a.grazing > 0.0)
+        {
+            a.path.source_height = std::max(a.path_length * std::sin(a.grazing) - microphone_height, 0.0);
+            a.path.ground_distance = a.path_length * std::cos(a.grazing);
+        }
+        else if (ground == GroundGeometry::plate)
+        {
+            a.path.source_height = a.path_length * std::sin(std::fabs(a.arrival));
+            a.path.ground_distance = a.path_length * std::cos(a.arrival);
+        }
+    }
     if (ray.from_linear_fit)
     {
         finish_ground(ray, ground, microphone_height);
@@ -670,7 +1082,13 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
     }
     RayPath& path = ray.path;
     const DirectEigenray& direct = ray.direct;
-    if (ground == GroundGeometry::point && ray.source_z > microphone_height)
+    if (ground == GroundGeometry::point && ray.ground_grazing > 0.0)
+    {
+        // A primary promoted from the arrivals: their construction.
+        path.source_height = std::max(direct.path_length * std::sin(ray.ground_grazing) - microphone_height, 0.0);
+        path.ground_distance = direct.path_length * std::cos(ray.ground_grazing);
+    }
+    else if (ground == GroundGeometry::point && ray.source_z > microphone_height)
     {
         const double r = ray.horizontal;
         const double hx = path.separation.x / r;
@@ -680,8 +1098,21 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
                 ? layered_reflected_eigenray(layers, ray.source_z, microphone_height, r,
                           -std::atan2(ray.source_z + microphone_height, r))
                 : ReflectedEigenray {};
-        const double grazing = reflected.exists ? reflected.grazing : 0.0;
+        double grazing = reflected.exists ? reflected.grazing : 0.0;
         const double length = reflected.exists ? reflected.path_length : direct.path_length;
+        if (!reflected.exists && direct.lit && direct.arrival < 0.0)
+        {
+            // The reflected solve takes its families to be monotonic, so it
+            // misses its ray wherever the direct one is not (a source at a
+            // local maximum of the sound speed), and grazing 0 put the pair in
+            // the ground's null.  The partner of a ray arriving from above
+            // meets the ground at its own invariant's angle, as the arrivals'
+            // do, if nothing below the receiver turns it first.
+            const Path through {layers};
+            const double p = std::cos(direct.launch) / layers.at(ray.source_z);
+            if (1.0 / p > through.fastest(0.0, microphone_height))
+                grazing = std::asin(sine(p, layers.at(0.0)));
+        }
         path.source_height = std::max(length * std::sin(grazing) - microphone_height, 0.0);
         path.ground_distance = length * std::cos(grazing);
     }
