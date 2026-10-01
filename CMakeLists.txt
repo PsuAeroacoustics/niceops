@@ -162,7 +162,9 @@ add_library(niceops_core STATIC
   src/atmosphere_profile.cpp
   src/refraction.cpp
   src/stratified.cpp
+  src/pade_propagator.cpp
   src/pe.cpp
+  src/propagation_table.cpp
   src/airy.cpp
   src/exact_solutions.cpp
   src/weighting.cpp
@@ -212,6 +214,8 @@ add_executable(niceops_unit_tests
   tests/test_atmosphere_profile.cpp
   tests/test_refraction.cpp
   tests/test_stratified.cpp
+  tests/test_pade_propagator.cpp
+  tests/test_propagation_table.cpp
   tests/test_pe.cpp
   tests/test_pe_shadow.cpp
   tests/test_pe_turbulence.cpp
@@ -239,6 +243,8 @@ add_executable(niceops_pe_compare tools/pe_compare.cpp)
 target_link_libraries(niceops_pe_compare niceops_core CLI11::CLI11)
 add_executable(niceops_pe_field tools/pe_field.cpp)
 target_link_libraries(niceops_pe_field niceops_core CLI11::CLI11)
+add_executable(niceops_propagation_table tools/propagation_table.cpp)
+target_link_libraries(niceops_propagation_table niceops_core CLI11::CLI11)
 # The Attenborough et al. (1995) benchmark cases by the PE and the exact
 # solutions (tools/benchmark.cpp); tools/plot_benchmark.py draws them.
 add_executable(niceops_benchmark tools/benchmark.cpp)
@@ -277,6 +283,29 @@ add_test(NAME plate_marched COMMAND niceops -d databases/B407_fixed_load_factor.
 set_tests_properties(plate_windowed plate_marched PROPERTIES FIXTURES_SETUP plate_runs)
 add_test(NAME plate_windowed_is_exact COMMAND golden_compare integrated/plate_windowed.csv integrated/plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED plate_runs)
+# --propagation_table, end to end: a table built by niceops_propagation_table
+# from the straight-ray ground model must give the footprint --ground_effect
+# gives, to within the table's interpolation (10 ft in height and range: 0.19 dB
+# at worst on this grid, 0.02 at 5 ft).  It checks the generator, the file, the lookup and the
+# footprint's use of it together.  Source heights span the demo track's.
+add_test(NAME propagation_table_build COMMAND niceops_propagation_table --method ground_model
+    --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --flow_resistance 225
+    --source_heights 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040 1050 1060 1070 1080 1090 1100 1110 1120 1130
+    --receiver_heights 3.93701 --max_range 15000 --step 10 -o tables/ground_model_test.nc
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --propagation_table tables/ground_model_test.nc --gridstep 492 -L warn -o integrated/propagation_table.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_reference COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --exact_ground --gridstep 492 -L warn -o integrated/propagation_table_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_build PROPERTIES FIXTURES_SETUP propagation_table_file)
+set_tests_properties(propagation_table_run PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP propagation_table_runs)
+set_tests_properties(propagation_table_reference PROPERTIES FIXTURES_SETUP propagation_table_runs)
+# The peak search with a table: its bound takes the table's largest gain per
+# band, so a windowed run must equal a marched one (-D forces the march) to the bit.
+add_test(NAME propagation_table_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --propagation_table tables/ground_model_test.nc --gridstep 492 -L warn -D integrated/propagation_table_dnl.csv -o integrated/propagation_table_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_marched PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP propagation_table_runs)
+add_test(NAME propagation_table_windowed_is_exact COMMAND golden_compare integrated/propagation_table.csv integrated/propagation_table_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_windowed_is_exact PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
+add_test(NAME propagation_table_is_the_ground_model COMMAND golden_compare integrated/propagation_table.csv integrated/propagation_table_reference.csv 0.25 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_is_the_ground_model PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
 # --atmosphere through a single-level profile holding the vehicle file's own
 # atmosphere has to reproduce the homogeneous run: the whole layered-absorption
 # path (the table, the per-state and per-observer integrals, the per-path mean)
@@ -340,6 +369,22 @@ add_test(NAME mixed_receivers_are_their_subsets COMMAND golden_compare integrate
 set_tests_properties(mixed_receivers_are_their_subsets PROPERTIES FIXTURES_REQUIRED "mixed_runs;mixed_expected_file")
 add_test(NAME mixed_receivers_windowed_is_exact COMMAND golden_compare integrated/mixed_receivers.csv integrated/mixed_receivers_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(mixed_receivers_windowed_is_exact PROPERTIES FIXTURES_REQUIRED mixed_runs)
+# --band_history over flush plate microphones.  Writing the bands forces a
+# march, and must leave the footprint equal to the peak search's; a refracted
+# path through uniform air must record the straight one's geometry and bands.
+# --band_limits spans every band, so no field is left empty for golden_compare
+# to skip the row over.  (That the bands re-weight to the level is a unit test,
+# "band_levels are the bands the weighted level sums".)
+add_test(NAME band_history_straight COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --band_limits 5 20000 -L warn --band_history integrated/band_history/straight -o integrated/band_history_straight.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME band_history_refracted COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --band_limits 5 20000 -L warn --atmosphere atmospheres/B407_uniform.csv --refraction linear --band_history integrated/band_history/refracted -o integrated/band_history_refracted.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME band_history_windowed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --band_limits 5 20000 -L warn -o integrated/band_history_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(band_history_straight band_history_refracted band_history_windowed PROPERTIES FIXTURES_SETUP band_history_runs)
+add_test(NAME band_history_leaves_footprint COMMAND golden_compare integrated/band_history_straight.csv integrated/band_history_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME band_history_refracted_is_straight COMMAND golden_compare integrated/band_history/refracted_i3.csv integrated/band_history/straight_i3.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(band_history_leaves_footprint band_history_refracted_is_straight PROPERTIES FIXTURES_REQUIRED band_history_runs)
+# The broadband path carries no bands to write.
+add_test(NAME band_history_needs_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --no-spectral --band_history integrated/band_history/broadband -o integrated/band_history_broadband.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(band_history_needs_spectral PROPERTIES WILL_FAIL TRUE)
 # A point receiver, refracting through uniform air, ends its ray at the
 # microphone as the straight path does: the two agree.
 add_test(NAME refraction_uniform_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --atmosphere atmospheres/B407_uniform.csv --refraction linear --gridstep 492 -L warn -o integrated/refraction_uniform_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

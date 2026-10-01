@@ -1559,7 +1559,7 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
         const std::vector<std::complex<double>>* impedance, double sound_speed,
         std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
         const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
-        const double* extra_loss, const double* ground_weight) const
+        const double* extra_loss, const double* ground_weight, double* band_levels) const
 {
     // Reused across calls: this runs once per observer per trajectory state,
     // and the band count is fixed for the life of the database.
@@ -1623,12 +1623,22 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
                     correction[band] = std::pow(correction[band], w);
             }
         }
+        if (band_levels != nullptr)
+        {
+            for (std::size_t band = first_band; band < std::min(last_band, levels.size()); band++)
+                band_levels[band] = levels[band] + 10.0 * std::log10(correction[band]);
+        }
         // As power ratios multiplied into the band sum: the same as adding the
         // correction in dB, without a log and an exp per band.  Only bands in
         // [first_band, last_band) have non-zero gains, so only they are read.
         return weighted_level(levels.data(), gains, correction.data());
     }
 
+    if (band_levels != nullptr)
+    {
+        for (std::size_t band = first_band; band < std::min(last_band, levels.size()); band++)
+            band_levels[band] = levels[band];
+    }
     return weighted_level(levels.data(), gains);
 }
 
@@ -1636,11 +1646,12 @@ double Database::spectral_level_at_observer(const Vec3& observer, const SourceSt
         const double* absorption, const std::vector<double>& gains, const GroundModel* ground,
         const std::vector<std::complex<double>>* impedance, double sound_speed,
         std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
-        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table) const
+        const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
+        double* band_levels) const
 {
     return spectral_level_impl(straight_ray(state.position, observer), state, absorption, gains,
             ground, impedance, sound_speed, first_band, last_band, packed, plate,
-            plate_mic_azimuth, ground_table, nullptr);
+            plate_mic_azimuth, ground_table, nullptr, nullptr, band_levels);
 }
 
 double Database::spectral_level_along(const RayPath& path, const SourceState& state,
@@ -1648,11 +1659,11 @@ double Database::spectral_level_along(const RayPath& path, const SourceState& st
         const std::vector<std::complex<double>>* impedance, double sound_speed,
         std::size_t first_band, std::size_t last_band, const PackedSpectra* packed,
         const PlateReceiver* plate, double plate_mic_azimuth, const GroundTable* ground_table,
-        const double* extra_loss, const double* ground_weight) const
+        const double* extra_loss, const double* ground_weight, double* band_levels) const
 {
     return spectral_level_impl(path, state, absorption, gains, ground, impedance, sound_speed,
             first_band, last_band, packed, plate, plate_mic_azimuth, ground_table, extra_loss,
-            ground_weight);
+            ground_weight, band_levels);
 }
 
 double Database::shaft_power(const Blend& blend) const

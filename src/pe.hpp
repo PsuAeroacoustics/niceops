@@ -5,43 +5,114 @@
 //
 // Sound from a point source over a locally reacting ground, in one vertical
 // plane through a horizontally stratified atmosphere, taken in the
-// effective-sound-speed approximation like the ray models.  The Pade(1,1)
-// wide-angle equation marched in range by Crank-Nicolson (Salomons,
-// Computational Atmospheric Acoustics, 2001, appendix F):
-//   [1 + (1/4 - i k_a dr/4) Q] psi(r + dr) = [1 + (1/4 + i k_a dr/4) Q] psi(r),
+// effective-sound-speed approximation like the ray models.  The one-way wave
+// equation for psi = p sqrt(r) exp(-i k_a r),
+//   d psi / dr = i k_a (sqrt(1 + Q) - 1) psi,
 //   Q = (d^2/dz^2 + k^2(z) - k_a^2) / k_a^2,
-// with the ground's impedance condition dpsi/dz = -i k beta psi at z = 0 written
-// into the grid, so the ground wave comes out of it with no special handling.
-// That is why this rather than the Green's-function PE the roadmap named:
-// the GFPE's surface-wave term is where a sign convention goes wrong unseen,
-// and speed does not matter for a reference.  The time convention is
-// exp(-i omega t), as in ground_effect.cpp, whose admittance it takes.
+// on a grid in height, with the ground's impedance condition
+// dpsi/dz = -i k beta psi at z = 0 written into the grid, so the ground wave
+// comes out of it with no special handling.  That is why this rather than the
+// Green's-function PE the roadmap named: the GFPE's surface-wave term is where
+// a sign convention goes wrong unseen, and it splits refraction from
+// diffraction, which limits its step where the gradient is strong -- near the
+// ground, where the shadows are.  The time convention is exp(-i omega t), as in
+// ground_effect.cpp, whose admittance it takes.
 //
-// It is valid for elevation angles up to about 30 degrees from the source.
-// That covers the long, grazing paths where refraction matters -- the shadow
+// Two ways to march it in range (PeSetup::scheme):
+//
+//   split_step_pade (the default).  psi(r + dr) = exp(i k_a dr (sqrt(1 + Q) -
+//   1)) psi(r) exactly, the exponential replaced by a sum of resolvents of Q
+//   (Collins 1993; pade_propagator.hpp), so a step is a handful of tridiagonal
+//   solves and is eight wavelengths long: about ten solves where
+//   Crank-Nicolson takes eighty steps.  It is accurate to 1e-7 a step for
+//   every mode within max_angle of horizontal, 50 degrees, whatever the step:
+//   from 2 to 32 wavelengths a step the result does not move by 0.001 dB,
+//   60 dB into a shadow.  Steeper modes it absorbs, where Crank-Nicolson
+//   carries them at the wrong speed; a level on a path steeper than max_angle
+//   from the source is reported as NaN.
+//
+//   A propagator good to 50 degrees is not by itself a field good to 50
+//   degrees.  Two other things had to change, and with max_angle alone raised
+//   the error at 30-50 degrees stayed where it was, 0.6-1.7 dB rms against the
+//   exact two-ray field at 1 kHz:
+//     - the starter.  The Gaussian is a far-field, narrow-angle source, and it
+//       is normalised with the ground's wavenumber.  The self-starter
+//       (PeStarter::self) is the first range step itself with the point
+//       source's modal amplitudes in it, applied to a delta function on the
+//       grid: exact to max_angle like every other step.  It also gives a
+//       source aloft its own strength.  Where k at the source is 3% from k at
+//       the ground the Gaussian is 0.11-0.15 dB off at every range, against
+//       the residue series; the self-starter is within 0.04.
+//     - the grid.  Second-order differences misplace a wave at elevation
+//       theta by (k dz sin theta)^2 / 12 of its vertical wavenumber squared,
+//       a radian of phase by 35 degrees at 1 kHz from a 100 m source.
+//       vertical_order 4 takes d^2/dz^2 as Numerov does, which costs a weight
+//       per term per row and a third more time.
+//     - the grid's edges (boundary_order 4).  With the operator alone at
+//       fourth order the grid still converged at second, because the ground
+//       condition was a three-point one-sided derivative and the source and
+//       receivers met the grid by linear interpolation.  The ground row is
+//       now fourth order too (pe.cpp, pade_march), with psi_0 carried rather
+//       than derived, and both interpolations are cubic.
+//   Together, at ten points a wavelength: within 0.07 dB rms of the exact
+//   field at every elevation to 60 degrees, and within 0.01 to 50 at twenty.
+//
+//   crank_nicolson.  The Pade(1,1) wide-angle equation marched by
+//   Crank-Nicolson (Salomons, Computational Atmospheric Acoustics, 2001,
+//   appendix F), ten steps a wavelength:
+//     [1 + (1/4 - i k_a dr/4) Q] psi(r + dr) = [1 + (1/4 + i k_a dr/4) Q] psi(r).
+//   What this was before the split-step, kept as an independent check on it.
+//   Good to about 30 degrees, and its phase error builds with range: five
+//   steps a wavelength fails the Attenborough benchmark by 0.2-0.4 dB at long
+//   range.  The two agree to 0.03-0.12 dB rms on a windy profile out to
+//   1.5 km, all of it Crank-Nicolson's.
+//
+// Either covers the long, grazing paths where refraction matters -- the shadow
 // zones -- and not the steep ones near the source, where refraction does not
 // matter and the straight ray is exact anyway.
 //
-// It is slow by the observer loop's standards and never runs in a footprint:
-// 2.7 ns per grid point per range step, so a kilometre at 1 kHz from a 100 m
-// source is about a second.  A band's frequencies, and several bands at once
-// (solve_pe_bands), run in parallel.
+// It never runs in a footprint.  One march is 39 times faster than
+// Crank-Nicolson at the defaults.  A band's frequencies, and several bands at
+// once (solve_pe_bands), run in parallel.
 //
-// The grid is 20 points per wavelength in height and 10 per wavelength in
-// range.  Against a 30 x 30 reference, 10 in height was within about 0.1 dB rms
-// for a microphone near the ground but 0.47 dB rms (2.2 dB at worst) for one
-// 1.2 m up at 1 kHz; 20 brings that to 0.09, for twice the cost.  Rerunning
-// the stored calibration cases at 20 moved the PE by 0.16-0.39 dB rms (1.1 at
-// worst) and left the shadow-edge calibration against it unchanged.  Five per
-// wavelength in range would halve the cost and moves most cases by only
-// 0.02-0.03 dB rms, but it fails the Attenborough benchmark by 0.2-0.4 dB at
-// long range, where Crank-Nicolson's phase error builds up over hundreds of
-// wavelengths, so it is not the default.
+// The grid is 10 points per wavelength in height where it is fourth order
+// throughout, which is the default, and 20 otherwise.  Fourth order is what
+// allows it: on a windy profile out to 1.5 km, against 80 points,
+//                                          20 points      10 points
+//   second order throughout                0.02-0.04 dB   0.06-0.19 dB rms
+//   operator fourth, edges second          0.01-0.02      0.05-0.09
+//   fourth order throughout                < 0.0005       0.001-0.002
+// and 6 points are still within 0.01.  (Crank-Nicolson at 10, for a
+// microphone 1.2 m up at 1 kHz, was 0.47 dB rms and 2.2 at worst from a
+// 30 x 30 reference; rerunning the stored calibration cases at 20 moved the PE
+// by 0.16-0.39 dB rms and left the shadow-edge calibration against it
+// unchanged.)
 
 #include <complex>
 #include <vector>
 
 namespace niceops {
+
+// How the equation is marched in range (the header comment has both).
+enum class PeScheme
+{
+    split_step_pade,
+    crank_nicolson,
+};
+
+// The field the march starts from.
+enum class PeStarter
+{
+    // Collins' self-starter: the first step is the propagator with the point
+    // source's modal amplitudes, applied to a delta function on the grid.  It
+    // is exact to max_angle like every later step, and the ground enters
+    // through the grid's own condition.
+    self,
+    // Salomons' second-order Gaussian at r = 0, with its image in the ground
+    // at the normal-incidence reflection coefficient: a far-field, narrow-
+    // angle source.
+    gaussian,
+};
 
 struct PeSetup
 {
@@ -61,8 +132,28 @@ struct PeSetup
     // sound actually takes.  0, as in the comparisons with the ray models,
     // leaves it out.
     double absorption = 0.0;
-    // Grid points per wavelength, vertically and in range.
-    double points_per_wavelength = 20.0;
+    PeScheme scheme = PeScheme::split_step_pade;
+    // Grid points per wavelength in height.  0 chooses: 10 for the split-step
+    // march with vertical_order and boundary_order both 4, 20 otherwise.
+    double points_per_wavelength = 0.0;
+    // Split-step Pade: the longest range step, in wavelengths -- the step is
+    // the largest that divides output_step and does not exceed it -- the
+    // elevation angle the propagator is accurate to, in degrees, and its
+    // tolerance per step, as |r - exact| for every mode within that angle.
+    double range_step_wavelengths = 8.0;
+    double max_angle = 50.0;
+    double propagator_tolerance = 1e-7;
+    // Split-step Pade: how the field is started.  Crank-Nicolson always takes
+    // the Gaussian.
+    PeStarter starter = PeStarter::self;
+    // Split-step Pade: the order of d^2/dz^2 on the grid, 2 or 4.
+    int vertical_order = 4;
+    // Split-step Pade: the order of what meets the grid at its edges, 2 or 4
+    // -- the ground condition (4 only with vertical_order 4), and the
+    // interpolation that puts the source on the grid and takes the receivers
+    // off it.
+    int boundary_order = 4;
+    // Crank-Nicolson: range steps per wavelength.
     double range_points_per_wavelength = 10.0;
     // Height of the physical domain, below the absorbing layer; 0 chooses it.
     double domain_height = 0.0;
@@ -99,6 +190,13 @@ struct PeResult
     // psi at each receiver and output range, [receiver][range]: for ensemble
     // means of the complex field (tests).  solve_pe_band leaves it empty.
     std::vector<std::vector<std::complex<double>>> psi;
+    // What the march took: its range step, m, and the split-step propagator's
+    // terms (0 for Crank-Nicolson).  solve_pe_band leaves them unset.
+    double range_step = 0.0;
+    int pade_terms = 0;
+    // Whether the self-starter was used.  It is not for Crank-Nicolson, for a
+    // source within a grid point of the ground, or if its fit was refused.
+    bool self_started = false;
 };
 
 PeResult solve_pe(const PeSetup& setup);

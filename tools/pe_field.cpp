@@ -42,8 +42,14 @@ int main(int argc, char** argv)
     double flow_resistance = flow_resistance::grassy_field;
     std::string impedance_model = "delany_bazley";
     int samples = 5;
-    double points_per_wavelength = 20.0;
+    double points_per_wavelength = 0.0;
     double range_points_per_wavelength = 10.0;
+    std::string scheme = "pade";
+    double range_step_wavelengths = 8.0;
+    double max_angle = 50.0;
+    int vertical_order = 4;
+    int boundary_order = 4;
+    std::string starter = "self";
     double gamma_t = 0.0;
     double outer_scale = 10.0;
     unsigned seed = 1;
@@ -59,8 +65,28 @@ int main(int argc, char** argv)
     app.add_option("--flow_resistance", flow_resistance, "Ground flow resistance, kPa s/m^2.");
     app.add_option("--impedance_model", impedance_model, "As for niceops.");
     app.add_option("--samples", samples, "PE frequencies per band (default 5).");
-    app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 20).");
-    app.add_option("--range_ppw", range_points_per_wavelength, "PE range steps per wavelength (default 10).");
+    app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 10 where the grid is fourth order "
+            "throughout, 20 under --scheme cn or either order 2).");
+    app.add_option("--scheme", scheme,
+            "How the PE marches in range: pade (default), the split-step Pade march, or cn, Crank-Nicolson.")
+            ->check(CLI::IsMember({"pade", "cn"}));
+    app.add_option("--range_step", range_step_wavelengths,
+            "--scheme pade: longest range step, in wavelengths (default 8).");
+    app.add_option("--max_angle", max_angle,
+            "--scheme pade: elevation angle the march is accurate to, degrees (default 50, at most 60).  Steeper "
+            "paths from the source come out as NaN.");
+    app.add_option("--vertical_order", vertical_order,
+            "--scheme pade: order of the height derivative on the grid, 4 (default) or 2.")
+            ->check(CLI::IsMember({2, 4}));
+    app.add_option("--boundary_order", boundary_order,
+            "--scheme pade: order of the ground condition and of the source's and receivers' "
+            "interpolation, 4 (default) or 2.")
+            ->check(CLI::IsMember({2, 4}));
+    app.add_option("--starter", starter,
+            "--scheme pade: self (default), the wide-angle self-starter, or gaussian.")
+            ->check(CLI::IsMember({"self", "gaussian"}));
+    app.add_option("--range_ppw", range_points_per_wavelength,
+            "--scheme cn: range steps per wavelength (default 10).");
     app.add_option("--gamma_t", gamma_t, "Turbulence in the PE, as for niceops_pe_compare (default 0).");
     app.add_option("--outer_scale", outer_scale, "von Karman outer scale, m (default 10).");
     app.add_option("--seed", seed, "First realisation's seed (default 1).");
@@ -104,6 +130,12 @@ int main(int argc, char** argv)
         setup.c = c;
         setup.points_per_wavelength = points_per_wavelength;
         setup.range_points_per_wavelength = range_points_per_wavelength;
+        setup.scheme = scheme == "cn" ? PeScheme::crank_nicolson : PeScheme::split_step_pade;
+        setup.range_step_wavelengths = range_step_wavelengths;
+        setup.max_angle = max_angle;
+        setup.vertical_order = vertical_order;
+        setup.boundary_order = boundary_order;
+        setup.starter = starter == "gaussian" ? PeStarter::gaussian : PeStarter::self;
         setup.gamma_t = gamma_t;
         setup.outer_scale = outer_scale;
         setup.seed = seed + 1000u * static_cast<unsigned>(b);

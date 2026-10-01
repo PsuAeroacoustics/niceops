@@ -76,9 +76,14 @@ TEST_CASE("pe_turbulent_mean_field_decays", "[pe_turbulence]")
     const double k = 2.0 * pi * setup.frequency / 340.0;
     setup.outer_scale = 10.0;
     setup.gamma_t = 1.0 / (0.7817 * k * k * 300.0 * 0.25 * std::pow(setup.outer_scale, 5.0 / 3.0));
+    // The still field, by the same march: screens of no strength rather than
+    // none, so that it takes the turbulent runs' range step.  The reflected
+    // ray at 50 m is steeper than max_angle, and how much of it is left there
+    // depends on the step (pe.hpp); with gamma_t = 0 and its longer step the
+    // two fields differed by 8% before any turbulence.
     const auto still = [&] {
         PeSetup s = setup;
-        s.gamma_t = 0.0;
+        s.gamma_t = 1e-30;
         return solve_pe(s);
     }();
     // The mean of N unit phasors scatters by about sqrt((1 - |mean|^2) / 2N):
