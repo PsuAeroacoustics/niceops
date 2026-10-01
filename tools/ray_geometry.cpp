@@ -24,6 +24,10 @@
 //                 the equivalent straight geometry the ground model takes, in
 //                 --units: from the reflected ray for --ground point, from the
 //                 direct ray's arrival for --ground plate
+//   range         the distance spherical spreading equals: the ray tube's, in
+//                 --units (the straight-line distance in uniform air)
+//   path_length   arc length, in --units, for absorption
+//   travel_time   seconds, at the profile's own sound speeds
 //
 // The ground model, the transition near a shadow boundary and absorption are
 // not applied: this is the geometry only, for evaluating ground models outside
@@ -120,6 +124,8 @@ int main(int argc, char** argv)
         z_top = std::max(z_top, std::max(p.z_s, p.z_r));
     z_top += 2.0 * EffectiveSoundSpeed::min_fit_span;
     const EffectiveSoundSpeed linear(profile, frame_bearing, 0.0, z_top);
+    // Straight rays (uniform air) take the surface's speed, as niceops does.
+    const double sound_speed = profile.at(0.0).sound_speed();
     const bool layered = refraction == "stratified";
     std::unique_ptr<LayeredSoundSpeed> layers;
     if (layered)
@@ -163,12 +169,14 @@ int main(int argc, char** argv)
                  << (curved ? ray.direct.boundary / unit.to_metres : inf) << "," << (ray.from_linear_fit ? 1 : 0)
                  << "," << ray.bounces << "," << ray.extra.size() << ","
                  << (extra > 0.0 ? 10.0 * std::log10(extra) : -inf) << ","
-                 << ray.path.source_height / unit.to_metres << "," << ray.path.ground_distance / unit.to_metres;
+                 << ray.path.source_height / unit.to_metres << "," << ray.path.ground_distance / unit.to_metres
+                 << "," << ray.path.range / unit.to_metres << "," << ray.path.path_length / unit.to_metres << ","
+                 << (curved ? ray.travel_time : slant / sound_speed);
             lines[k] = line.str();
         }
     });
     std::cout << "id,lit,launch_deg,arrival_deg,spreading_db,shadow,boundary,from_fit,bounces,extras,extra_db,"
-                 "source_height,ground_distance\n";
+                 "source_height,ground_distance,range,path_length,travel_time\n";
     for (const auto& line : lines)
         std::cout << line << "\n";
     return 0;
