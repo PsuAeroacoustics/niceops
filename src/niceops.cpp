@@ -17,11 +17,13 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <CLI/CLI.hpp>
+#include "util/iota.hpp"
 #include "vec3.hpp"
 
 #include "plotting.hpp"
@@ -50,17 +52,6 @@ namespace {
 
 // ft2m comes from trajectory.hpp (niceops::ft2m); defining a second one
 // here made every use ambiguous under the using-directive above.
-
-// D's iota(begin, end, step): evenly spaced values from `begin`, EXCLUSIVE of
-// `end`.  Counted by index rather than accumulated, so the spacing cannot drift.
-std::vector<double> iota_exclusive(double begin, double end, double step)
-{
-    const auto count = static_cast<std::size_t>(std::ceil((end - begin) / step));
-    std::vector<double> values(count);
-    for (std::size_t i = 0; i < count; i++)
-        values[i] = begin + step * static_cast<double>(i);
-    return values;
-}
 
 // Open a file for writing, creating its parent directory first.  All three
 // writers below need exactly this, and Logger does the same for its log file.
@@ -848,6 +839,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (!directory.empty())
             std::filesystem::create_directories(directory);
     }
+    // The observer index restarts at 0 for every trajectory, so with several in
+    // one run a bare prefix has each trajectory overwrite the files of the one
+    // before it -- silently, with exit status 0, and only the last flight's
+    // histories survive.  A run of one keeps the plain names; with more, each
+    // file is named for its track as well (run() has checked the stems differ).
+    const std::string history_infix = job.count == 1
+            ? std::string()
+            : "_" + std::filesystem::path(job.trajectory).stem().string();
 
     // Each observer's receiver, and where its level is evaluated: at the
     // microphone, the observer's point raised by the microphone's height above
@@ -1904,7 +1903,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (options.write_time_history)
             {
                 // Write out time history files
-                auto time_history_filename = options.time_history_prefix + "_i" + std::to_string(index) + ".csv";
+                auto time_history_filename = options.time_history_prefix + history_infix + "_i"
+                        + std::to_string(index) + ".csv";
                 write_time_history_file(levels, integration_step, observer(0), observer(1),
                         time_history_filename, options.unit);
             }
@@ -1917,7 +1917,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 write_band_history_file(band_rows, levels, band_levels, database.band_centres(),
                         first_band, last_band, observer, options.unit,
-                        options.band_history_prefix + "_i" + std::to_string(index) + ".csv");
+                        options.band_history_prefix + history_infix + "_i" + std::to_string(index)
+                                + ".csv");
             }
         }
         culled_samples += culled_here;
@@ -2224,7 +2225,8 @@ int run(int argc, char* argv[])
     app.add_option("-v,--vehicle", vehicle_files,
             "JSON vehicle definition file. Once, or once per trajectory.");
     app.add_option("-o,--output", out_files,
-            "Output file name. Once per trajectory; derived from the track name if omitted.");
+            "Output file name, once per trajectory. Default integrated/197421_LAE.csv; with several "
+            "trajectories and one name (or the default), each is named after its track.");
     app.add_flag("-p,--plotting", plotting, "Enable plotting.");
     app.add_option("-f,--figfile", figure_file, "Filename to save figure.");
     app.add_option("-F,--statefigfile", state_figure_file, "Filename to save state figures.");
@@ -2243,7 +2245,8 @@ int run(int argc, char* argv[])
     app.add_option("-b,--observer", observer_file, "Observer file name.");
     app.add_flag("-q,--qsam,!--no-qsam", qsam, "Extended QSAM (default on; --no-qsam disables)");
     app.add_option("-S,--state", state_files,
-            "Filename to save state data. Once per trajectory.");
+            "Filename to save state data, once per trajectory. With several trajectories and one "
+            "name, each is named after its track (<stem>_state.csv).");
     app.add_flag("--self_test", self_test, "Run self tests.");
     app.add_option("-j,--threads", thread_count,
             "Worker threads for the observer loop (0 = one per hardware thread).");
@@ -2432,11 +2435,47 @@ int run(int argc, char* argv[])
             out_files.push_back((directory / (stem + "_LAE.csv")).string());
         }
     }
+    if (state_files.size() == 1 && path_count > 1)
+    {
+        // The same goes for the state file: one name for several tracks would
+        // be rewritten by each in turn, leaving only the last one's.
+        const auto directory = std::filesystem::path(state_files.front()).parent_path();
+        state_files.clear();
+        for (const auto& path : path_files)
+        {
+            const auto stem = std::filesystem::path(path).stem().string();
+            state_files.push_back((directory / (stem + "_state.csv")).string());
+        }
+    }
     expand_per_path(database_files, "database files");
     expand_per_path(vehicle_files, "vehicle files");
     expand_per_path(out_files, "output files");
     if (!state_files.empty())
         expand_per_path(state_files, "state files");
+    // Two trajectories writing one file is never what was meant: the later
+    // overwrites the earlier and the run still exits 0.  This catches equal
+    // track stems (tracks from two directories) and an explicit -o or -S given
+    // the same name twice.
+    auto require_distinct = [](const std::vector<std::string>& names, const char* what) {
+        std::set<std::string> seen;
+        for (const auto& name : names)
+            if (!seen.insert(std::filesystem::path(name).lexically_normal().string()).second)
+                input_error("Two trajectories would write the same ", what, " (", name,
+                        "). Name them apart.");
+    };
+    if (path_count > 1)
+    {
+        require_distinct(out_files, "output file");
+        if (!state_files.empty())
+            require_distinct(state_files, "state file");
+        if (!time_history_prefix.empty() || !band_history_prefix.empty())
+        {
+            std::vector<std::string> stems;
+            for (const auto& path : path_files)
+                stems.push_back(std::filesystem::path(path).stem().string());
+            require_distinct(stems, "history file name (their tracks share a file name)");
+        }
+    }
 
     if (grid_bounds.empty())
     {
@@ -2479,6 +2518,13 @@ int run(int argc, char* argv[])
     // makes that true.
     if (!(path_smoothing >= 0.0))
         input_error("--path_smoothing must not be negative, got ", path_smoothing, ".");
+    // Settled before anything that reads a length: the run's frame is found by
+    // reading the first row of a geodetic track, and which altitude spellings
+    // that read accepts depends on the unit (alt_m exists only under --units m).
+    // This was declared further down and the origin lookup took the default, so
+    // a metric track headed alt_m looked unpositioned, the frame was never
+    // settled, and --frame_bearing was silently dropped.
+    const LengthUnit unit = unit_name == "m" ? metres : feet;
     std::optional<LocalFrame> frame;
     std::optional<Geodetic> reference;
     if (!origin.empty())
@@ -2497,7 +2543,7 @@ int run(int argc, char* argv[])
         // Cartesian.
         for (const auto& path : path_files)
         {
-            if (auto first = first_geodetic_position(path))
+            if (auto first = first_geodetic_position(path, unit))
             {
                 reference = *first;
                 log("Taking the local origin from the first position of ", path, ": ",
@@ -2570,7 +2616,6 @@ int run(int argc, char* argv[])
     // physical quantity already written in metres above, and scaling it here
     // would make --units m move the observer grid by 3.28x rather than just
     // renaming its axis.  CLI11's count() is what tells the two apart.
-    const LengthUnit unit = unit_name == "m" ? metres : feet;
     log("Lengths are in ", unit.name, ".");
     auto to_metres = [&unit](const CLI::Option* option, double& value) {
         if (option->count() > 0)

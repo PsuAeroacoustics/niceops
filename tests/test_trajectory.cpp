@@ -305,10 +305,25 @@ TEST_CASE("The AC state format is still read positionally", "[trajectory][geodet
     // that dispatched on the header alone would take a state file for a WGS84
     // track -- and get its position from columns whose x/y origin the file does
     // not record.  Width decides first, and first_geodetic_position agrees.
-    REQUIRE_FALSE(first_geodetic_position("tracks/S-76D/197421AC.csv").has_value());
+    REQUIRE_FALSE(first_geodetic_position("tracks/S-76D/197421AC.csv", feet).has_value());
 
     const TempCsv track(demo_track_as_geodetic("time,lat,lon,alt", 500));
-    const auto first = first_geodetic_position(track.path);
+    const auto first = first_geodetic_position(track.path, feet);
+    REQUIRE(first.has_value());
+    const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
+    REQUIRE(first->latitude == Catch::Approx(records.front()[2]));
+    REQUIRE(first->longitude == Catch::Approx(records.front()[3]));
+}
+
+TEST_CASE("The run frame is found for a metric geodetic track", "[trajectory][geodetic][units]")
+{
+    // run() settles the frame by reading the first row before it loads anything.
+    // It once did so in feet whatever --units said, so a track headed alt_m (a
+    // spelling that exists only in metres) looked unpositioned: no frame, and
+    // --frame_bearing silently ignored.
+    const TempCsv metric(demo_track_as_geodetic("time,lat,lon,alt_m", 500));
+    REQUIRE_FALSE(first_geodetic_position(metric.path, feet).has_value());
+    const auto first = first_geodetic_position(metric.path, metres);
     REQUIRE(first.has_value());
     const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
     REQUIRE(first->latitude == Catch::Approx(records.front()[2]));

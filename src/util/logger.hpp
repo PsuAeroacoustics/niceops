@@ -164,6 +164,13 @@ public:
         {
             file_ << line;
             file_.flush();
+            // The file is where a run's whole story goes, but nobody watches it
+            // while the run is going: a skipped trajectory, a rejected option or
+            // a fatal() abort used to leave the terminal empty and the exit
+            // status the only sign anything was wrong.  Warnings and worse are
+            // echoed to stderr as well; -L still decides what is written at all.
+            if (level >= LogLevel::warn)
+                std::cerr << line;
         }
         else
         {

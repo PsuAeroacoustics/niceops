@@ -208,6 +208,8 @@ target_link_libraries(niceops niceops_core CLI11::CLI11 Threads::Threads)
 # Unit tests (Catch2)
 add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
+  tests/test_parallel.cpp
+  tests/test_iota.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
   tests/test_atmosphere.cpp
@@ -270,6 +272,43 @@ add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CUR
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME state_golden COMMAND golden_compare state/ci_state.csv golden/state_197421.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(regression_golden state_golden PROPERTIES FIXTURES_REQUIRED demo_run)
+# golden_compare is what every equivalence test below stands on, so it is tested
+# itself.  A NaN or an infinity once compared equal to anything, which would have
+# passed a footprint of nan.  The reject cases pass on the mismatch message
+# (PASS_REGULAR_EXPRESSION replaces the exit status), so a usage error or a
+# missing file cannot satisfy them.
+add_test(NAME golden_compare_rejects_nan COMMAND golden_compare tests/data/compare_nan.csv tests/data/compare_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME golden_compare_rejects_inf COMMAND golden_compare tests/data/compare_inf.csv tests/data/compare_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME golden_compare_accepts_matching_inf COMMAND golden_compare tests/data/compare_same_inf.csv tests/data/compare_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(golden_compare_rejects_nan PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value 5: candidate nan")
+set_tests_properties(golden_compare_rejects_inf PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value 8: candidate inf")
+# A failure used to reach only log/niceops.log, so a skipped trajectory left the
+# terminal empty with exit status 1 as the only sign.  Warnings and worse are now
+# echoed to stderr; the case passes on that text.
+add_test(NAME missing_track_is_reported COMMAND niceops -t tracks/does_not_exist.csv -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(missing_track_is_reported PROPERTIES PASS_REGULAR_EXPRESSION "Skipping tracks/does_not_exist.csv: Unable to open CSV file")
+# An exception in an observer-loop worker must skip the trajectory, not abort the
+# process.  Making the first history file's name a directory makes opening it
+# throw inside a worker; the case passes only on the "Skipping" line that
+# run()'s handler writes, which a std::terminate never reaches.
+add_test(NAME worker_exception_clean_clean COMMAND ${CMAKE_COMMAND} -E remove_directory integrated/blocked_hist WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME worker_exception_clean_block COMMAND ${CMAKE_COMMAND} -E make_directory integrated/blocked_hist/h_i0.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME worker_exception_is_skipped COMMAND niceops -S state/ci_state.csv --gridstep 1640 -j 4 -i integrated/blocked_hist/h -o integrated/blocked_hist_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(worker_exception_clean_clean PROPERTIES FIXTURES_SETUP blocked_hist_clean)
+set_tests_properties(worker_exception_clean_block PROPERTIES FIXTURES_REQUIRED blocked_hist_clean FIXTURES_SETUP blocked_hist_ready)
+set_tests_properties(worker_exception_is_skipped PROPERTIES FIXTURES_REQUIRED blocked_hist_ready PASS_REGULAR_EXPRESSION "Skipping tracks/S-76D/197421AC.csv: Unable to open file for writing")
+# With several trajectories every observer index restarts at 0, so -i and
+# --band_history files named only by index were overwritten by each trajectory in
+# turn.  They are now named for their track as well; and two trajectories asked
+# to write one file are refused up front rather than silently overwriting.
+add_test(NAME multi_trajectory_history_clean COMMAND ${CMAKE_COMMAND} -E remove_directory integrated/multi_hist WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME multi_trajectory_history_run COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197405AC.csv --gridstep 1640 -L warn -i integrated/multi_hist/h -o integrated/multi_a.csv -o integrated/multi_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME multi_trajectory_history_names COMMAND ${CMAKE_COMMAND} "-DFILES=integrated/multi_hist/h_197421AC_i0.csv;integrated/multi_hist/h_197405AC_i0.csv;integrated/multi_hist/h_197421AC_i48.csv;integrated/multi_hist/h_197405AC_i48.csv" "-DABSENT=integrated/multi_hist/h_i0.csv" -P tests/check_files.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multi_trajectory_history_clean PROPERTIES FIXTURES_SETUP multi_history_clean)
+set_tests_properties(multi_trajectory_history_run PROPERTIES FIXTURES_REQUIRED multi_history_clean FIXTURES_SETUP multi_history_run)
+set_tests_properties(multi_trajectory_history_names PROPERTIES FIXTURES_REQUIRED multi_history_run)
+add_test(NAME duplicate_output_names_rejected COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197405AC.csv --gridstep 1640 -o integrated/same.csv -o integrated/same.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(duplicate_output_names_rejected PROPERTIES PASS_REGULAR_EXPRESSION "Two trajectories would write the same output file")
 # The spectral peak search and --db_cutoff skip what a bound puts below a
 # threshold; with --ground_effect the bound includes the most the ground can
 # add.  A skipped state must change nothing, so a run through the peak search

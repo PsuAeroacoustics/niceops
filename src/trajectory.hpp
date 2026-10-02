@@ -154,8 +154,10 @@ struct GeodeticInput
 // The first WGS84 position in a labelled geodetic trajectory file, or nullopt
 // when `filename` is not one.  Reads the header and one row, so a run can
 // settle its frame before committing to loading anything.
-std::optional<Geodetic> first_geodetic_position(
-        const std::string& filename, LengthUnit unit = feet);
+//
+// The unit is not defaulted: which altitude spellings are positioned depends on
+// it, and a caller that forgot it silently looked for the feet spellings only.
+std::optional<Geodetic> first_geodetic_position(const std::string& filename, LengthUnit unit);
 
 // Read the vehicle JSON into its dimensional parameters.  Exported because the
 // sphere export needs the tip speed to turn an advance ratio back into an
