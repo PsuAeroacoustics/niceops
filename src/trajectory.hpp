@@ -18,6 +18,7 @@
 
 #include <array>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -59,6 +60,10 @@ struct State
     // velocity.  Last, so that brace-initialising the fields above still works.
     double wx = 0.0;
     double wy = 0.0;
+    // Compass heading of the nose, degrees from true north: the AC format's
+    // column 8.  NaN where the file carries none (the geodetic formats).  Only
+    // the sphere's orientation at hover reads it (nose_direction).
+    double heading = std::numeric_limits<double>::quiet_NaN();
 };
 
 // The velocity the rotor sees: the ground velocity less the wind, the vertical
@@ -67,6 +72,26 @@ inline std::array<double, 3> air_velocity(const State& s)
 {
     return {s.vx - s.wx, s.vy - s.wy, s.vz};
 }
+
+// Below this horizontal speed (5 kt) the velocity's direction is drift, not
+// where the aircraft points: a hover's GPS velocity is a few tenths of a knot in
+// any direction, and the sphere's nose went wherever it pointed.  Below it the
+// nose is the heading.  Shipped tracks never fly this slowly.
+constexpr double heading_nose_speed = 5.0 * 1852.0 / 3600.0; // m/s
+
+// The local frame's angle atan2(y, x) of compass heading h is offset - h; this
+// is that offset, radians.  Inferred from the track, as the circular mean of
+// atan2(vy, vx) + heading over its states faster than 20 kt, when it has 50
+// such -- which also folds in the few degrees an INS heading sits off the
+// ground track, so the nose does not step where the switch to velocity is
+// made.  Otherwise from `frame_bearing` (degrees, NaN when not given), the
+// bearing of +x, where the offset is the bearing itself.  nullopt when neither
+// is available or the file carries no heading.
+std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing);
+
+// The direction the sphere's nose takes for a state: its air velocity, or
+// below heading_nose_speed and with an offset, the heading, horizontal.
+std::array<double, 3> nose_direction(const State& state, std::optional<double> offset);
 
 inline std::ostream& operator<<(std::ostream& os, const State& s)
 {

@@ -579,6 +579,7 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                     now.vx = data[11] * unit.to_metres;
                     now.vy = data[13] * unit.to_metres;
                     now.vz = data[15] * unit.to_metres;
+                    now.heading = data[8];
                     // Convert to "g"
                     // Accelerations carry the file's length unit too.  Chosen
                     // as a single constant rather than unit.to_metres * mps2g,
@@ -793,6 +794,44 @@ void Trajectory::watts_trim(double xstart_metres)
     info("Trimming trajectory from x = ", x[ixmin], " to ", x[ixmax]);
     std::vector<State> sub(states.begin() + ixmin, states.begin() + ixmax + 1);
     states.swap(sub);
+}
+
+std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing)
+{
+    constexpr double fast = 20.0 * 1852.0 / 3600.0; // m/s
+    constexpr std::size_t enough = 50;
+    double sum_cos = 0.0, sum_sin = 0.0;
+    std::size_t count = 0;
+    bool has_heading = false;
+    for (const auto& s : states)
+    {
+        if (std::isnan(s.heading))
+            continue;
+        has_heading = true;
+        const auto v = air_velocity(s);
+        if (std::hypot(v[0], v[1]) < fast)
+            continue;
+        const double offset = std::atan2(v[1], v[0]) + s.heading * pi / 180.0;
+        sum_cos += std::cos(offset);
+        sum_sin += std::sin(offset);
+        count++;
+    }
+    if (!has_heading)
+        return std::nullopt;
+    if (count >= enough)
+        return std::atan2(sum_sin, sum_cos);
+    if (!std::isnan(frame_bearing))
+        return frame_bearing * pi / 180.0;
+    return std::nullopt;
+}
+
+std::array<double, 3> nose_direction(const State& state, std::optional<double> offset)
+{
+    const auto v = air_velocity(state);
+    if (!offset || std::isnan(state.heading) || std::hypot(v[0], v[1]) >= heading_nose_speed)
+        return v;
+    const double angle = *offset - state.heading * pi / 180.0;
+    return {std::cos(angle), std::sin(angle), 0.0};
 }
 
 } // namespace niceops

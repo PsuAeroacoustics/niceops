@@ -703,3 +703,48 @@ TEST_CASE("the wind is the profile's at each state's height, in the track frame"
     REQUIRE(trajectory.states[1].mu * trajectory.vehicle.tip_speed
             == Catch::Approx(std::hypot(40.0, 10.0)));
 }
+
+TEST_CASE("at hover the sphere's nose is the heading, turned into the local frame", "[trajectory]")
+{
+    // A local frame with +x along compass 270 and +y along 180, as the 2017 AC
+    // tracks are.  Fast states fly west on heading 274 (an INS heading 4 degrees
+    // off the ground track), so the offset inferred from them folds that in.
+    auto state = [](double vx, double vy, double heading) {
+        State s {};
+        s.vx = vx;
+        s.vy = vy;
+        s.heading = heading;
+        return s;
+    };
+    std::vector<State> states;
+    for (int i = 0; i < 60; i++)
+        states.push_back(state(40.0, 0.0, 274.0));
+    const auto inferred = heading_offset(states, std::numeric_limits<double>::quiet_NaN());
+    REQUIRE(inferred.has_value());
+    CHECK(std::remainder(*inferred * 180.0 / pi - 274.0, 360.0) == Catch::Approx(0.0).margin(1e-9));
+    // A hovering state drifting, nose north: north is local -y in this frame.
+    const auto nose = nose_direction(state(0.1, -0.1, 4.0), inferred);
+    CHECK(nose[0] == Catch::Approx(0.0).margin(1e-12));
+    CHECK(nose[1] == Catch::Approx(-1.0));
+    CHECK(nose[2] == 0.0);
+    // Faster than heading_nose_speed it is the velocity, unchanged.
+    const State moving = state(3.0, 1.0, 4.0);
+    const auto along = nose_direction(moving, inferred);
+    CHECK(along[0] == moving.vx);
+    CHECK(along[1] == moving.vy);
+    // A hover-only track has no fast states: the frame bearing supplies it,
+    // and without one there is none.
+    std::vector<State> hover(100, state(0.1, 0.0, 90.0));
+    CHECK(std::remainder(*heading_offset(hover, 270.0) * 180.0 / pi - 270.0, 360.0)
+            == Catch::Approx(0.0).margin(1e-9));
+    CHECK_FALSE(heading_offset(hover, std::numeric_limits<double>::quiet_NaN()).has_value());
+    // East on that frame is local -x.
+    const auto east = nose_direction(hover.front(), heading_offset(hover, 270.0));
+    CHECK(east[0] == Catch::Approx(-1.0));
+    CHECK(east[1] == Catch::Approx(0.0).margin(1e-12));
+    // No heading column: the velocity.
+    State bare {};
+    bare.vx = 0.1;
+    CHECK_FALSE(heading_offset(std::vector<State>(60, bare), 270.0).has_value());
+    CHECK(nose_direction(bare, 1.0)[0] == 0.1);
+}

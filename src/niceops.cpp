@@ -757,15 +757,36 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     for (std::size_t it = 0; it < night.size(); it++)
         night[it] = is_night(trajectory.states[it].utcsec, options.utc_offset) ? 1 : 0;
 
+    // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
+    const auto offset = heading_offset(trajectory.states, options.frame_bearing);
+    std::size_t by_heading = 0, slow = 0;
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
     {
         const auto velocity = air_velocity(state);
+        const auto nose = nose_direction(state, offset);
+        if (std::hypot(velocity[0], velocity[1]) < heading_nose_speed)
+        {
+            slow++;
+            if (nose != velocity)
+                by_heading++;
+        }
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
-                Vec3(velocity[0], velocity[1], velocity[2]),
+                Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
                 options.qsam ? state.fpa_e : state.fpa, state.CT));
+    }
+    if (slow > 0)
+    {
+        if (by_heading > 0)
+            info(by_heading, " of ", slow, " states under 5 kt take the sphere's nose from the heading, turned "
+                    "into the local frame by ", *offset * 180.0 / pi, " degrees.");
+        else
+            warn(slow, " states under 5 kt orient the sphere by their drift: ",
+                    std::isnan(trajectory.states.front().heading)
+                            ? "the track carries no heading."
+                            : "too few fast states to relate heading to the frame, and no --frame_bearing.");
     }
 
     if (!options.power_file.empty())

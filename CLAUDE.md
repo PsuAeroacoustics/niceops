@@ -1123,6 +1123,15 @@ touching it:
   unevenly spaced input is refitted onto the `-s` grid.
 
 - `src/trajectory.{hpp,cpp}` — `Trajectory` class. Parses the 27-column CSV into `State` records (metric), computing non-dimensional flight parameters: CT = LF·W/(ρ·V_tip²·πR²), μ = v/V_tip, and flight path angles `fpa` (vertical) vs `fpa_e` (relative to the TPP normal). The `qsam` CLI flag selects `fpa_e` (default on). `adapt()` resamples onto a uniform dt grid, smoothing via `src/smoothing_spline.hpp` and taking velocity and load factor from the spline's own derivatives (currently commented out in `main`; `watts_trim()` is reachable through `--trim`). It takes either a smoothing parameter or a `tolerance` bounding how far the smoothed path may sit from the measured one.
+- **At hover the sphere's nose is the heading** (`nose_direction`, `heading_offset` in
+  `src/trajectory.cpp`). Below 5 kt (`heading_nose_speed`) the velocity is drift, a few tenths
+  of a knot in any direction, and the nose went wherever it pointed. The AC format's column 8
+  (`State::heading`, compass, NaN for the geodetic formats) is turned into the local frame by
+  an offset inferred from the track's states over 20 kt -- the circular mean of the velocity's
+  angle plus the heading, which folds in the INS heading's few degrees off the ground track --
+  or, for a track with none (a hover), by `--frame_bearing`. Neither: the drift, with a warning.
+  No shipped track goes under 10 kt and no day-286 approach under 13, so neither the goldens
+  nor the approaches move; the 2017 hover runs (H1-H12) do.
 - **`--speed_reference`** (roadmap step 3, the NICE-OPS half). It takes the flight condition
   against the air, not the ground. The things to preserve:
   - **Scope.** `Trajectory::relative_to_air` sets each state's wind (`State::wx`, `wy`) and
