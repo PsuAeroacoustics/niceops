@@ -515,8 +515,13 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       beyond (`cramped` in `apply`). There the source is a few l up at most, under the 5 l the
       collapse was checked to, and the table has no lit zone to hand over from. A 30-50 ft
       source under a weak upwind gradient has it at every band to 500 Hz: V put the whole
-      path 2-5 dB under the PE, which matched straight rays. Ray model into the shadow too was
-      worse deep in it (day-286 PE matrix, 50-160 Hz: 5.7 dB rms against 5.1).
+      path 2-5 dB under the PE, which matched straight rays. The blend leaves the creeping-wave
+      loss out: it is valid only deep in the shadow, and near the boundary it put a 30 m
+      source in the linear lapse 6 dB under the PE at 250 Hz. Ray model into the shadow too was
+      worse deep in it (day-286 PE matrix, 50-160 Hz: 5.7 dB rms against 5.1), and so was the
+      ray model with only V's fall past the boundary. Cost: that lapse case is 0.1 dB rms worse
+      at 200-630 Hz (its old lit side was 1.3 dB low, its old shadow right); day 284's PE cases
+      do not move.
     - `Database::spectral_level_along`'s `ground_weight` is how the ground term is faded out:
       a power of the power ratio, per band.
     - **Through layers, each band gets its own boundary**, r_b = r_s + w (r_l - r_s),

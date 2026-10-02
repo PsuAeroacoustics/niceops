@@ -871,7 +871,10 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
         // path 2-5 dB under the parabolic equation, which matched straight
         // rays.  Keeping the ray model into the shadow as well was worse deep
         // in it (50-160 Hz 5.7 dB rms against the PE on the day-286 matrix,
-        // against 5.1 this way) and through 200-630 Hz near it (4.0 against 2.6).
+        // against 5.1 this way) and through 200-630 Hz near it (4.0 against
+        // 2.4); so was the ray model with only V's fall past the boundary.  A
+        // 30 m source in a linear lapse comes out 0.1 dB rms worse at
+        // 200-630 Hz (the old lit side was 1.3 dB low, the old shadow right).
         const bool cramped = boundary * pi * f / (s * s * c0) < -xi_ray;
         if (cramped && xi <= 0.0)
             continue;
@@ -911,7 +914,10 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
         {
             const double t = (xi - blend_from) / (blend_to - blend_from);
             ground_weight[band] = 1.0 - t;
-            loss[band] = (1.0 - t) * creeping - t * v;
+            // A cramped band blends from the ray model at its boundary, where
+            // the creeping-wave loss, valid only deep in the shadow, has no
+            // place yet.
+            loss[band] = (1.0 - t) * (cramped ? 0.0 : creeping) - t * v;
         }
     }
     return true;
