@@ -861,6 +861,22 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
         const double xi = (ray.horizontal - boundary) * pi * f / (s * s * c0); // F = 2 s^2 / k0
         if (xi <= xi_ray)
             continue;
+        // A boundary nearer the source than the ray model's own reach, -xi_ray
+        // diffraction lengths, leaves no lit zone for the table to hand over
+        // from: the source is then a few l up at most, under the 5 l the table's
+        // collapse over source height was checked down to.  Such a band keeps
+        // the ray model up to its boundary and blends to the table over the
+        // diffraction length past it.  A source 10 m up under a weak upwind
+        // gradient has it at every band to 500 Hz, and there V put the whole
+        // path 2-5 dB under the parabolic equation, which matched straight
+        // rays.  Keeping the ray model into the shadow as well was worse deep
+        // in it (50-160 Hz 5.7 dB rms against the PE on the day-286 matrix,
+        // against 5.1 this way) and through 200-630 Hz near it (4.0 against 2.6).
+        const bool cramped = boundary * pi * f / (s * s * c0) < -xi_ray;
+        if (cramped && xi <= 0.0)
+            continue;
+        const double blend_from = cramped ? 0.0 : xi_ray;
+        const double blend_to = cramped ? 1.0 : xi_modal;
         double v = level(band, xi, s);
         if (std::isnan(v))
             continue;
@@ -886,14 +902,14 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
             v = std::min(10.0 * std::log10(std::pow(10.0, 0.1 * v) + std::pow(10.0, 0.1 * scattered)),
                     10.0 * std::log10(max_power_ratio_[band]));
         }
-        if (xi >= xi_modal)
+        if (xi >= blend_to)
         {
             ground_weight[band] = 0.0;
             loss[band] = -v;
         }
         else
         {
-            const double t = (xi - xi_ray) / (xi_modal - xi_ray);
+            const double t = (xi - blend_from) / (blend_to - blend_from);
             ground_weight[band] = 1.0 - t;
             loss[band] = (1.0 - t) * creeping - t * v;
         }

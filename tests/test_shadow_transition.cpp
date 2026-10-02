@@ -217,6 +217,54 @@ TEST_CASE("the transition leaves lit rays alone and keeps to its floor and cap",
         CHECK(transition.max_power_ratio(b) <= 4.0 * (1.0 + 1e-12));
 }
 
+TEST_CASE("a band whose boundary is within the ray model's reach of the source keeps the ray model to it", "[shadow]")
+{
+    // A source 5 m up: at 125 Hz the boundary (390 m) is nearer than two
+    // diffraction lengths (690 m), so there is no lit zone for the table to
+    // take over from, and the source is under 1 l up.  That band keeps its
+    // ray model and ground term to the boundary, blends to the table over the
+    // diffraction length past it, and takes the table beyond.  2 kHz, whose
+    // diffraction length is 140 m, takes the table throughout.
+    constexpr double c0 = 343.0, z_r = 1.2, a = 0.05, z_s = 5.0;
+    const std::vector<double> bands = {125.0, 2000.0};
+    const std::vector<complex> beta(bands.size(), soft);
+    const ShadowTransition transition(bands, beta, z_r, c0, 0, bands.size());
+    const ShadowAttenuation attenuation(bands, beta, 0, bands.size());
+    const LinearProfile profile {c0, -a};
+    const double r_b = shadow_boundary(profile, z_s, z_r);
+    auto diffraction = [&](double f) { return std::pow(std::cbrt(pi * f / a), 2) * c0 / (pi * f); };
+    const double f_lo = diffraction(bands[0]);
+    REQUIRE(r_b < 2.0 * f_lo);
+    REQUIRE(r_b > 2.0 * diffraction(bands[1]));
+    auto make = [&](double r) {
+        RefractedRay ray;
+        ray.curved = true;
+        ray.profile = profile;
+        ray.horizontal = r;
+        ray.source_z = z_s;
+        ray.receiver_z = z_r;
+        ray.direct = direct_eigenray(profile, z_s, z_r, r);
+        ray.shadow_depth = ray.direct.shadow_depth;
+        return ray;
+    };
+    std::vector<double> weight(bands.size()), loss(bands.size());
+    // Short of the boundary: the ray model in the low band, the table's lit
+    // side in the high one.
+    REQUIRE(transition.apply(make(0.9 * r_b), attenuation, 20.0, 0, bands.size(), weight.data(), loss.data()));
+    CHECK(weight[0] == 1.0);
+    CHECK(loss[0] == 0.0);
+    CHECK(weight[1] == 0.0);
+    // Half a diffraction length past it: half way.
+    REQUIRE(transition.apply(make(r_b + 0.5 * f_lo), attenuation, 20.0, 0, bands.size(), weight.data(),
+            loss.data()));
+    CHECK(weight[0] == Catch::Approx(0.5).margin(1e-9));
+    // Deep in it: the table.
+    REQUIRE(transition.apply(make(r_b + 2.0 * f_lo), attenuation, 20.0, 0, bands.size(), weight.data(),
+            loss.data()));
+    CHECK(weight[0] == 0.0);
+    CHECK(weight[1] == 0.0);
+}
+
 TEST_CASE("each band's shadow boundary lies between the layered one and the fit's", "[shadow]")
 {
     // example_windy.csv's upwind geometry from 100 m: the layered boundary is
@@ -450,12 +498,30 @@ TEST_CASE("an inversion aloft leaves a ground-grazing shadow its boundary", "[sh
     CHECK(far.boundary == Catch::Approx(snell).epsilon(0.02));
     CHECK(far.boundary_gradient < 0.0);
     CHECK(layered_direct_eigenray(layers, z_s, z_r, 0.99 * far.boundary, -0.2).lit);
+    CHECK_FALSE(far.boundary_under_aloft);
     // Air aloft faster than at the ground does bring rays down to the
-    // microphone, and then there is no such boundary.
+    // microphone, but only past their skip distance.  Short of it the shadow is
+    // the same ground-grazing one, so it keeps its boundary, marked as standing
+    // under faster air; where a ray from aloft arrives, there is none.
     std::vector<double> c = inversion_c;
     c.back() = 345.0;
     const Layers ducting {inversion_z.data(), c.data(), c.size()};
-    CHECK_FALSE(std::isfinite(layered_direct_eigenray(ducting, z_s, z_r, 2000.0, -0.2).boundary));
+    const auto gap = layered_direct_eigenray(ducting, z_s, z_r, 2000.0, -0.2);
+    CHECK_FALSE(gap.lit);
+    CHECK(gap.boundary_under_aloft);
+    CHECK(gap.boundary == Catch::Approx(far.boundary).epsilon(1e-9));
+    bool reached = false;
+    for (double r = 2000.0; r < 40000.0 && !reached; r += 250.0)
+    {
+        const auto ray = layered_direct_eigenray(ducting, z_s, z_r, r, -0.2);
+        if (ray.lit && ray.launch > 0.0)
+        {
+            reached = true;
+            CHECK_FALSE(std::isfinite(ray.boundary));
+            CHECK_FALSE(ray.boundary_under_aloft);
+        }
+    }
+    CHECK(reached);
 }
 
 TEST_CASE("the fit's ray takes over short of the layered boundary and stays on past its own", "[shadow]")

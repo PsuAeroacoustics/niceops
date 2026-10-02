@@ -81,6 +81,11 @@ struct DirectEigenray
     // `boundary`, r_b = sqrt(2 R z_s) + sqrt(2 R z_r): for --refraction linear the
     // profile's own.  0 where there is no boundary.
     double boundary_gradient = 0.0;
+    // --refraction stratified: the boundary was set although air above the
+    // source outruns the ground, so rays turned back from aloft (or bounced
+    // along a duct) may arrive beyond it.  It stands only where none does;
+    // layered_direct_ray takes it back where one does.
+    bool boundary_under_aloft = false;
 };
 
 DirectEigenray direct_eigenray(const LinearProfile& profile, double z_s, double z_r, double r);

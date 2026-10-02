@@ -628,6 +628,32 @@ found by running the PE on the geometries of the microphones the model got most 
   shadow ray, whose spreading differs, by 2 dB on a log law and 10 on day 284. The fit's
   limiting ray now carries on, with its spreading continuous.
 
+**The day-286 approaches' hovering end** (sources 15–50 ft, under 20 kt) showed two more.
+`stratified` was 6.5 dB over straight rays there on the measured frames, 63–250 Hz, at
+microphones 150–450 ft away; the PE on those paths agreed with straight rays.
+- **Faster air aloft still hid the boundary near the source.** The test above is right about
+  whether rays from aloft reach the receiver at all, but they come down only past their skip
+  distance, kilometres out. Short of it the boundary now stands, and is taken back where a ray
+  from aloft or along a duct does arrive. Without it the shadow took the layered shadow ray,
+  focused 6.5 dB by the log law's lowest metres, plus the whole ground term: 12 dB over free
+  field at 63 Hz where the PE gives 4.
+- **A low source leaves the transition no room.** When a band's boundary is nearer the
+  source than two diffraction lengths, the table has no lit zone to hand over from, and the
+  source is under the 5 l the table was checked to. Such a band keeps the ray model to its
+  boundary and blends to the table over the next diffraction length.
+
+Together, on the measured frames:
+
+| 63–630 Hz energy-mean error | before | after | straight rays |
+| --- | --- | --- | --- |
+| sources under 100 ft and 20 kt | +8.9 dB | +4.4 dB | +3.8 dB |
+| within 2,000 ft, 2–5° | +4.7 dB | +3.1 dB | +2.4 dB |
+| every other height, speed, range or elevation cell | | within 0.2 dB of before | |
+
+The 4 dB left at the hover is in straight rays too, so it is the source. On the day-286 PE
+matrix past 1,000 ft, `stratified` against the PE went from 9.5 to 7.5 dB rms at 200–630 Hz
+and 11.7 to 9.2 at 800–2,000 Hz (5.4 to 5.1 at 50–160).
+
 **The boundary law, refitted for flush microphones.** With those fixed, the law put flush
 microphones' boundaries about twice too far out. Fitted per case against the PE, the best
 boundary is about 0.9 of a diffraction length at the fit's curvature past the layered one on

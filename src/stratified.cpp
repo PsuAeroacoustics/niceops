@@ -580,14 +580,26 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     // ShadowTransition does not take it at face value: a log law's steep
     // lowest metres set it, and the wave resolves them only at high frequency
     // (see there, and layered_direct_ray's linear_boundary).
-    if (fams.count > 0 && !(path.fastest_above(z_s) > path.fastest(z_r, z_s))
-            && !(path.fastest(0.0, z_s) > layers.at(0.0)))
+    //
+    // And when the air aloft does outrun it, the rays it turns back come down
+    // only past their skip distance, kilometres out for an inversion a few
+    // hundred feet up.  Short of that the receiver is in the same ground-grazing
+    // shadow, so the boundary is set there too (boundary_under_aloft), and
+    // taken back by layered_direct_ray where a ray from aloft or along a duct
+    // does arrive.  Without it a source 10 m up, upwind under a morning
+    // inversion, had no boundary 200 m out: no transition and no hand-over, but
+    // the layered shadow ray's tube, focused by the log law's lowest metres,
+    // 6.5 dB over its range, plus the whole ground term -- 12 dB over free
+    // field at 63 Hz where the parabolic equation gives 4.
+    const bool aloft = path.fastest_above(z_s) > path.fastest(z_r, z_s);
+    if (fams.count > 0 && !(path.fastest(0.0, z_s) > layers.at(0.0)))
     {
         const Family& limit = fams.list[fams.limiting];
         out.boundary = trace_p<false>(path, z_s, z_r, fams.limiting_p, limit.arm, false).dx;
         const double root = std::sqrt(2.0 * std::max(z_s, 0.0)) + std::sqrt(2.0 * std::max(z_r, 0.0));
         if (out.boundary > 0.0)
             out.boundary_gradient = -layers.at(0.0) * root * root / (out.boundary * out.boundary);
+        out.boundary_under_aloft = aloft;
     }
     for (int k = 0; k < fams.count; k++)
     {
@@ -596,6 +608,13 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
         const double p = solve(range, r, family, p_guess, &jumps);
         if (std::isnan(p))
             continue;
+        if (family.arm.up)
+        {
+            // Turned back from aloft: no ground-grazing shadow about it.
+            out.boundary = std::numeric_limits<double>::infinity();
+            out.boundary_gradient = 0.0;
+            out.boundary_under_aloft = false;
+        }
         const auto full = trace_p<true>(path, z_s, z_r, p, family.arm, false);
         const double rising = std::asin(sine(p, c_r));
         out.launch = launch_of(p, c_s, family.arm.up);
@@ -784,8 +803,10 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
         const bool hops = duct && !arm.second && m_max >= 1;
         // The downward family's own direct ray is never an extra:
         // layered_direct_eigenray tries that family first, so its root, if it
-        // has one, is the primary.
-        if ((monotonic || bounced_only) && !hops)
+        // has one, is the primary.  `bounced_only` drops the dipping family's
+        // direct rays too, which the linear fit stands for, but not those
+        // turned back from aloft, which it does not.
+        if ((monotonic || (bounced_only && !arm.up)) && !hops)
             continue;
         // The downward family is sampled only for its hops, so over the duct;
         // the others over all of themselves.
@@ -846,7 +867,7 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
         const bool monotonic = !arm.up && !arm.second;
         const bool hops = sampled[k].hops;
         // Whether this arm's own direct rays are listed.
-        const bool direct = !monotonic && !bounced_only;
+        const bool direct = !monotonic && (!bounced_only || arm.up);
         // Its own ends, and the shared samples strictly between.
         s.clear();
         s.push_back(whole.p_hi == p_max ? grid[0] : row(whole.p_hi));
@@ -968,13 +989,27 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     const double guess = ray.curved ? ray.direct.launch : std::atan2(z_r - z_s, r);
     auto direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
     const double linear_boundary = ray.direct.boundary;
-    // See below.  The fit's ray then stands for every direct ray: a finite
-    // ground-grazing boundary means no ray turned back from aloft reaches the
-    // receiver (layered_direct_eigenray), so the direct rays left are the
-    // downward ones it replaces, and only bounced rays are looked for.
-    const bool handover = linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
+    // See below.  The fit's ray then stands for every downward direct ray, so
+    // only bounced rays and those turned back from aloft are looked for; the
+    // latter exist only under a boundary_under_aloft.
+    bool handover = linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
             && linear_boundary > direct.boundary;
     auto arrivals = layered_arrivals(layers, z_s, z_r, r, direct, handover);
+    // A boundary set under faster air aloft stands only where nothing from
+    // aloft or along a duct arrives (layered_direct_eigenray).  Where something
+    // does, past the direct rays' reach, this is the duct's gap and is handled
+    // as one, below, exactly as before such boundaries were set.
+    if (direct.boundary_under_aloft && !direct.lit && !arrivals.empty())
+    {
+        direct.boundary = std::numeric_limits<double>::infinity();
+        direct.boundary_gradient = 0.0;
+        direct.boundary_under_aloft = false;
+        if (handover)
+        {
+            handover = false;
+            arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false);
+        }
+    }
     // The pair's path, for the arrivals to start from: its separation is theirs.
     auto form_arrivals = [&](RefractedRay& into) {
         for (Arrival& a : arrivals)

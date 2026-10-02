@@ -510,6 +510,13 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     - **Ray model below xi = -2, blend to -1, V beyond**, floored at V(0) - floor and capped
       at 20 log10 2. `max_power_ratio` feeds the peak search's ground bound, or the windowed
       run stops being exact.
+    - **A band whose boundary is nearer the source than two diffraction lengths keeps the
+      ray model to the boundary**, blends to V over the next diffraction length, and takes V
+      beyond (`cramped` in `apply`). There the source is a few l up at most, under the 5 l the
+      collapse was checked to, and the table has no lit zone to hand over from. A 30-50 ft
+      source under a weak upwind gradient has it at every band to 500 Hz: V put the whole
+      path 2-5 dB under the PE, which matched straight rays. Ray model into the shadow too was
+      worse deep in it (day-286 PE matrix, 50-160 Hz: 5.7 dB rms against 5.1).
     - `Database::spectral_level_along`'s `ground_weight` is how the ground term is faded out:
       a power of the power ratio, per band.
     - **Through layers, each band gets its own boundary**, r_b = r_s + w (r_l - r_s),
@@ -583,6 +590,18 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     boundary, so no transition and no hand-over, and the shadow a 10-35 dB cliff the PE
     puts 30-50% further out. It moved day 284's upwind 5-10 degree bin most of all; see the
     README for the table.
+  - **And where the air aloft does outrun it, the boundary stands short of the skip
+    distance** (`boundary_under_aloft`). Rays turned back from aloft come down only past it,
+    kilometres out for an inversion a few hundred feet up; short of it the shadow is the same
+    ground-grazing one. `layered_direct_ray` takes the boundary back where a ray from aloft
+    or along a duct does arrive in the shadow, which leaves the duct's promotion as it was.
+    Without it a 30 ft source hovering upwind on day 286 got no boundary 600 ft out: no
+    transition, no hand-over, the layered shadow ray's tube focused 6.5 dB by the log law's
+    lowest metres, and the whole ground term -- 12 dB over free field at 63 Hz where the PE
+    gives 4. On day 286's measured frames (63-630 Hz) the states under 100 ft and 20 kt went
+    from +8.9 to +4.4 dB against straight rays' +3.8, so what is left there is the source; no
+    other height, speed, range or elevation cell moved by more than 0.2. On the day-286 PE matrix
+    past 1000 ft it took 200-630 Hz from 9.5 to 7.5 dB rms and 800-2000 Hz from 11.7 to 9.2.
   - **Parametrise by the Snell invariant p, in four families.** Launched up or down, arriving
     on the first crossing of the receiver height or on the second, after dipping below it
     (`Arm`, `families`). The range is monotonic in p within a family. The dipping family is
@@ -625,9 +644,10 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       samples for speed.
     - **The primary's bracket is split around it, not solved whole.** Whole, it returned the
       primary or one of the caustic pair beside it, at random.
-    - **Past the hand-over to the linear fit only bounced rays are searched** (`bounced_only`).
-      A finite ground-grazing boundary already means no ray turned back from aloft arrives,
-      so the fit stands for every direct ray. Upwind that skips the search entirely.
+    - **Past the hand-over to the linear fit only bounced rays, and rays turned back from
+      aloft, are searched** (`bounced_only`). The fit stands for every downward direct ray;
+      rays from aloft exist there only under a `boundary_under_aloft`. Upwind under a lapse
+      that skips the search entirely.
     - **The peak search bounds the sum** by the loudest arrival's direction over the harmonic
       sum of their squared ranges (`bound_geometry` in niceops.cpp).
       `stratified_duct_*_windowed_is_exact` holds it.
