@@ -1150,16 +1150,15 @@ emission time: it finds the peak with a per-direction bound on the level, and ev
 states that bound cannot rule out of the window. The run logs how much it evaluated:
 
 ```
-Evaluated 88610720 of 94334400 (93.9%); the rest is provably outside every observer's 10 dB window.
+Evaluated N of M (P%); the rest is provably outside every observer's 10 dB window.
 ```
 
 It is exact, not an approximation — the output is byte-identical to evaluating every state. It
-does not save much on a broadband run, where an evaluation costs about 20 ns and the bound
-proves only about 6% of the pairs outside the window below the threshold (the run costs a few
-percent more CPU than marching); it pays on `--spectral` and `--ground_effect`, where an
-evaluation costs 150 ns to a microsecond. It applies to every path whose level has a bound,
-and is skipped, with every state evaluated, for `-a`, `-i`, `--band_history`, `-D` and
-`--db_cutoff`; see CLAUDE.md for why each one cannot use it.
+is used on the spectral path (`--spectral`, `--ground_effect`, plates, refraction, tables), where
+an evaluation costs 150 ns to a microsecond; a broadband run, where an evaluation costs about 20
+ns and the bound proves only about 6% of the pairs outside the window, marches every state
+instead. It is skipped, with every state evaluated, for `-a`, `-i`, `--band_history`, `-D` and
+`--db_cutoff` as well; see CLAUDE.md for why each one cannot use it.
 
 ### Threads
 

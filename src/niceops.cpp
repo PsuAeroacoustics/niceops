@@ -283,7 +283,8 @@ struct StateGeometry
 template <typename GeometryOf, typename LevelOf, typename RangeAt>
 double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
         double sphere_radius_squared, double step, double sound_speed, std::vector<double>& levels,
-        std::vector<unsigned>& visited, unsigned generation, std::size_t& evaluated,
+        std::vector<unsigned>& visited, std::vector<double>& skipped_numerator,
+        std::vector<double>& skipped_squared_range, unsigned generation, std::size_t& evaluated,
         GeometryOf&& geometry_of, LevelOf&& level_of, RangeAt&& range_at)
 {
     // A coarse sweep seeds the peak search; the stride is not sensitive -- 16
@@ -322,11 +323,22 @@ double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
         const Geometry g = geometry_of(it);
         // The bound subtracts spherical spreading, which is only a loss outside
         // the sphere; inside it, evaluate rather than trust it.
-        if (g.squared_range > sphere_radius_squared
-                && bounds.numerator(it,
-                           DirectionBounds::bin(g.along, g.up, g.across, g.squared_range))
-                        < best_energy * g.squared_range)
-            continue;
+        if (g.squared_range > sphere_radius_squared)
+        {
+            const double numerator = bounds.numerator(
+                    it, DirectionBounds::bin(g.along, g.up, g.across, g.squared_range));
+            if (numerator < best_energy * g.squared_range)
+            {
+                // Kept for the scans below.  Every state this pass leaves
+                // unevaluated is skipped here, so they all have these two by the
+                // time the window's ends are looked for; recomputing them there
+                // (a full ray solve, under refraction) was 30 percent of the
+                // bound work and the reason this path lost to marching.
+                skipped_numerator[it] = numerator;
+                skipped_squared_range[it] = g.squared_range;
+                continue;
+            }
+        }
         const double level = evaluate_with(it, g);
         if (level > best)
         {
@@ -351,10 +363,10 @@ double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
     auto certainly_below = [&](std::size_t it) {
         if (visited[it] == generation)
             return levels[it] < threshold;
-        const Geometry g = geometry_of(it);
-        return g.squared_range > sphere_radius_squared
-                && bounds.numerator(it, DirectionBounds::bin(g.along, g.up, g.across, g.squared_range))
-                        < threshold_energy * g.squared_range;
+        // Not evaluated, so the main pass skipped it outside the sphere, and left
+        // its numerator and squared range: the same test as before, on the same
+        // two numbers, so the same answer.
+        return skipped_numerator[it] < threshold_energy * skipped_squared_range[it];
     };
     const auto index = ten_db_down_interval(nt, threshold, evaluate, certainly_below);
     return sel_over_window(index[0], index[1], step, evaluate, [&](std::size_t it) {
@@ -367,12 +379,14 @@ template <typename LevelOf>
 double windowed_sound_exposure_level(const Database& database,
         const std::vector<Database::SourceState>& states, const DirectionBounds& bounds,
         const Vec3& observer, double step, double sound_speed, std::vector<double>& levels,
-        std::vector<unsigned>& visited, unsigned generation, std::size_t& evaluated,
+        std::vector<unsigned>& visited, std::vector<double>& skipped_numerator,
+        std::vector<double>& skipped_squared_range, unsigned generation, std::size_t& evaluated,
         LevelOf&& level_of)
 {
     return windowed_exposure(
             states.size(), bounds, database.sphere_radius() * database.sphere_radius(), step,
-            sound_speed, levels, visited, generation, evaluated,
+            sound_speed, levels, visited, skipped_numerator, skipped_squared_range, generation,
+            evaluated,
             [&](std::size_t it) {
                 const Vec3 delta = observer - states[it].position;
                 return StateGeometry {delta.squaredNorm(), states[it].frame.nose.dot(delta),
@@ -1425,7 +1439,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             || write_band_history;
     const bool bounded = !level_is_transformed;
     DirectionBounds direction_bounds;
-    if (bounded && (culling || !needs_full_history))
+    // Only the spectral path has a bound worth building.  A broadband evaluation
+    // costs about 20 ns, and the bound test costs more than the evaluations it
+    // saves: under the outermost-crossing window the search evaluates 94 percent
+    // of the pairs on the demo, and ran 4.6 percent slower than marching every
+    // state (output identical).  A spectral evaluation is 150 ns, a ground-effect
+    // one a microsecond, and there the same search pays.  Broadband --db_cutoff
+    // culls on a per-state range (cull_range) and needs no direction table.
+    if (bounded && spectral && (culling || !needs_full_history))
     {
         // Both report themselves unusable on an empty trajectory, so nt > 0
         // does not need testing here as well.
@@ -1476,10 +1497,6 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             for (std::size_t band = 0; band < bound_gains.size(); band++)
                 bound_gains[band] *= path_gains[band];
             direction_bounds = database.spectral_direction_bounds(source_states, bound_gains);
-        }
-        else
-        {
-            direction_bounds = database.direction_bounds(source_states);
         }
         log("Direction bounds built in ",
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - bounds_start)
@@ -1621,6 +1638,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // Which states of `levels` this observer has filled, stamped by a
         // counter so the array does not have to be cleared per observer.
         std::vector<unsigned> visited(expand_from_peak ? nt : 0, 0u);
+        // What the peak search's main pass saw of each state it skipped (see
+        // windowed_exposure); valid for a state exactly when it is not visited.
+        std::vector<double> skipped_numerator(expand_from_peak ? nt : 0);
+        std::vector<double> skipped_squared_range(expand_from_peak ? nt : 0);
         // Refraction through the peak search: each state's reception range,
         // kept from when its ray was formed, and stamped like `visited`.
         const bool windowed_refraction = expand_from_peak && effective_sound_speed.has_value();
@@ -1876,7 +1897,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 {
                     integrated_levels[index] = windowed_exposure(nt, direction_bounds,
                             sphere_radius_squared, integration_step, sound_speed, levels, visited,
-                            generation, evaluated_here,
+                            skipped_numerator, skipped_squared_range, generation, evaluated_here,
                             [&](std::size_t it) {
                                 RefractedGeometry g;
                                 g.ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
@@ -1898,23 +1919,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                 return sound_speed * form_ray(it, observer, at_receiver, transition_here != nullptr).travel_time;
                             });
                 }
-                else if (spectral)
-                {
-                    integrated_levels[index] = windowed_sound_exposure_level(database,
-                            source_states, direction_bounds, observer, integration_step,
-                            sound_speed, levels, visited, generation, evaluated_here,
-                            [&](std::size_t it, const StateGeometry&) {
-                                return straight_level(it, nullptr);
-                            });
-                }
                 else
                 {
+                    // expand_from_peak holds only when the spectral bound was built.
                     integrated_levels[index] = windowed_sound_exposure_level(database,
                             source_states, direction_bounds, observer, integration_step,
-                            sound_speed, levels, visited, generation, evaluated_here,
-                            [&](std::size_t it, const StateGeometry& g) {
-                                return database.level_from_geometry(g.squared_range, g.along,
-                                        g.up, g.across, source_states[it].blend);
+                            sound_speed, levels, visited, skipped_numerator,
+                            skipped_squared_range, generation, evaluated_here,
+                            [&](std::size_t it, const StateGeometry&) {
+                                return straight_level(it, nullptr);
                             });
                 }
                 continue;

@@ -359,8 +359,9 @@ grid, observer set, receiver and thread count tried -- because the integral and 
 the shared `ten_db_down_interval()` and `sel_over_window()`, templated on a level accessor (a
 filled array for `peak_range`, a memoizing lambda here), not a second copy.
 
-It runs whenever the bound applies: broadband, `--spectral`, `--ground_effect`, plates, the
-propagation table (whose largest value per band enters the bound), and `--refraction` (the
+It runs on the **spectral** path only: `--spectral` (the default whenever the database carries
+spectra), `--ground_effect`, plates, the propagation table (whose largest value per band enters
+the bound), and `--refraction` (the
 bound is taken along each ray's launch direction at its ray tube's range; for a sum of
 stratified arrivals, the loudest arrival's direction over the harmonic sum of their squared
 ranges, `bound_geometry`). It is skipped, and the loop marches every state, for `-a` (the level
@@ -370,14 +371,16 @@ need not cover), `--db_cutoff` (which culls on its own terms), and any database 
 excess-attenuation factor, where dropping that term is not a loss.
 
 What it saves depends on how dear an evaluation is. Under the outermost-crossing rule it
-evaluates most of what it is shown: on the broadband demo case `Evaluated 88610720 of 94334400
-(93.9%)` -- the window itself is 59%, and the bound proves only about 6% of the pairs outside
-it -- and there it is a small net *loss*, about 4.6% more user CPU than marching every state
-(measured twice, output identical), because `certainly_below` recomputes geometry for the
-skipped states. It still pays where an evaluation costs 150 ns (`--spectral`) to a microsecond
-(`--ground_effect`). Two ways to buy the broadband loss back were found and not taken: skip the
-path for broadband-only runs, or cache each skipped state's numerator and squared range from the
-main pass so `certainly_below` stops recomputing (bit-identical, about 2% on the demo).
+evaluates most of what it is shown: on the broadband demo case it evaluated 93.9% of the pairs
+(the window itself is 59%, and the bound proves only about 6% of the pairs outside it) and ran
+about 4.6% *slower* than marching every state (measured twice, output identical), so **broadband
+runs no longer build the table or use the search**; `Database::direction_bounds`, the broadband
+builder, remains, tested, for a broadband search that pays. A spectral evaluation costs 150 ns
+and a `--ground_effect` one a microsecond, and there the search pays. The main pass keeps each
+skipped state's numerator and squared range (`skipped_numerator`, `skipped_squared_range`) so
+that `certainly_below` does not recompute the geometry -- a full ray solve under refraction --
+for the 30 to 40% of states it is asked about; the answers are the same two numbers compared the
+same way, so the output is unchanged.
 
 Three things had to hold, and each was measured before any of it was written:
 
