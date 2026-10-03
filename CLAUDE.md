@@ -871,6 +871,13 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     tolerance was too tight for its sample size. Halving Crank–Nicolson's range steps costs
     most cases only 0.02-0.03 dB, but fails `test_benchmark` by 0.2-0.4 dB at long range. Do
     not coarsen its range step to buy speed; that is what the split-step is for.
+  - **The band average takes the midpoints of `samples` equal slices of the third-octave band**
+    (`solve_pe_bands`), one sample being the centre. It once put the first and last sample on the band
+    edges with a full 1/N weight each, which read 0.16 to 0.47 dB rms off the true band mean downwind
+    (bias +0.1 to +0.35 dB) and 0.4 to 1.5 upwind, and the stored PE tables and the shadow-edge
+    constants below were fitted against that. They stand within their tolerances (every PE-pinned test
+    passes), but anything fitted to PE band levels should be re-scored against fresh PE runs
+    (`--no_pe` re-scores the ray models against stored ones without re-solving).
   - **Normalisation:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
     p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the
     exact two-ray field (0.3 dB, rigid) and to Weyl–van der Pol through NICE-OPS's own

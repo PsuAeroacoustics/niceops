@@ -1008,7 +1008,13 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
     for (std::size_t b = 0; b < centres.size(); b++)
         for (std::size_t k = 0; k < per_band; k++)
         {
-            const double offset = samples <= 1 ? 0.0 : (static_cast<double>(k) / (samples - 1) - 0.5) / 3.0;
+            // The midpoint of each of `samples` equal slices of the band's width in
+            // log frequency, a third of an octave.  The samples used to sit at
+            // k/(N-1), which puts the first and last on the band edges with a full
+            // 1/N weight each: 0.16 to 0.47 dB rms off the true band mean downwind
+            // (bias +0.1 to +0.35 dB) and 0.4 to 1.5 upwind, against 0.015 to 0.04
+            // and 0.1 to 1 with the midpoints.  One sample is the centre.
+            const double offset = ((static_cast<double>(k) + 0.5) / static_cast<double>(per_band) - 0.5) / 3.0;
             tasks.push_back({b, k, centres[b] * std::pow(2.0, offset)});
         }
     std::stable_sort(tasks.begin(), tasks.end(),
