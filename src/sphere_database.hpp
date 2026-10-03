@@ -536,6 +536,18 @@ public:
         return !frequencies_.empty();
     }
 
+    // Whether this is a fixed_load_factor build, and the thrust coefficient of
+    // its reference condition (load factor 1).  Together they fix the analytic
+    // load-factor law, 20 lg(C_T / C_T,ref).
+    bool fixed_load_factor() const
+    {
+        return fixed_load_factor_;
+    }
+    double reference_thrust_coefficient() const
+    {
+        return reference_thrust_coefficient_;
+    }
+
     // Whether the database carries a per-condition shaft power.
     bool has_shaft_power() const
     {

@@ -276,7 +276,7 @@ target_link_libraries(niceops_benchmark niceops_core CLI11::CLI11 Threads::Threa
 # Add testing with CTest
 enable_testing()
 # One default run feeds both the LAE and state golden comparisons
-add_test(NAME regression_default COMMAND niceops -S state/ci_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME regression_default COMMAND niceops -S state/ci_state.csv --no-spectral --no-ground_effect WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # The two golden comparisons read files this run writes.  CI happens to run the
 # suite serially and in declaration order, but nothing said so: `ctest -j` was
 # free to diff last run's output, or a file that did not exist yet.
@@ -302,7 +302,7 @@ set_tests_properties(golden_compare_rejects_inf PROPERTIES PASS_REGULAR_EXPRESSI
 # -a mixes an ambient level in energy.  A negligible one (-200 dB) leaves the demo
 # at the golden, which checks the plumbing of the marched, transformed-level path
 # that -a forces; the arithmetic itself is a unit test (level_with_ambient).
-add_test(NAME ambient_negligible_is_the_golden COMMAND niceops -S state/ci_state.csv -a -200 -o integrated/ambient_negligible.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ambient_negligible_is_the_golden COMMAND niceops -S state/ci_state.csv --no-spectral --no-ground_effect -a -200 -o integrated/ambient_negligible.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME ambient_negligible_matches COMMAND golden_compare integrated/ambient_negligible.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(ambient_negligible_is_the_golden PROPERTIES FIXTURES_SETUP ambient_run)
 set_tests_properties(ambient_negligible_matches PROPERTIES FIXTURES_REQUIRED ambient_run)
@@ -359,9 +359,13 @@ add_test(NAME observer_on_the_source_survives COMMAND niceops -b tests/data/obse
 # said.  All three are warnings now.  The B407 file and database are a matched
 # pair (the weights differ by panam's g = 9.82, 0.14 percent) and must stay quiet.
 set(B407_RUN -d databases/B407_fixed_load_factor.nod -t tracks/S-76D/197421AC.csv --gridstep 1640 --humidity 20 -o integrated/vehicle_check.csv)
-add_test(NAME vehicle_tip_speed_mismatch_warns COMMAND niceops ${B407_RUN} -v databases/S-76D.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME vehicle_tip_speed_mismatch_warns COMMAND niceops ${B407_RUN} -v databases/S-76D.json --accept_vehicle_mismatch WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(vehicle_tip_speed_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle main rotor tip speed disagrees")
-add_test(NAME vehicle_weight_mismatch_warns COMMAND niceops ${B407_RUN} -v tests/data/B407_heavy.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME vehicle_weight_mismatch_warns COMMAND niceops ${B407_RUN} -v tests/data/B407_heavy.json --accept_vehicle_mismatch WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME vehicle_weight_mismatch_refused COMMAND niceops ${B407_RUN} -v tests/data/B407_heavy.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(vehicle_weight_mismatch_refused PROPERTIES PASS_REGULAR_EXPRESSION "percent off")
+add_test(NAME load_factor_is_held_at_the_ceiling COMMAND niceops ${B407_RUN} -v databases/B407.json --max_load_factor 1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(load_factor_is_held_at_the_ceiling PROPERTIES PASS_REGULAR_EXPRESSION "exceed 1 g on a fixed_load_factor database")
 set_tests_properties(vehicle_weight_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle weight disagrees")
 add_test(NAME matched_vehicle_is_silent COMMAND niceops ${B407_RUN} -v databases/B407.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(matched_vehicle_is_silent PROPERTIES FAIL_REGULAR_EXPRESSION "disagrees;Relative humidity is not set")

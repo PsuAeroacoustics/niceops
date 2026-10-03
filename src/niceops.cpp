@@ -541,9 +541,19 @@ struct RunOptions
     bool spectral = true;
     bool spectral_explicit = false;
     BandLimits band_limits;
-    // Excess ground attenuation, off unless asked for: it is the single most
-    // expensive thing in the evaluation.
-    bool ground_effect = false;
+    // Excess ground attenuation.  On by default, but applied only where the
+    // spectral path runs on a database with spectra (process_trajectory decides
+    // that per trajectory); ground_effect_given says the user asked for it, so a
+    // request that cannot be honored is an error rather than a silent no-op.
+    // It is the single most expensive thing in the evaluation.
+    bool ground_effect = true;
+    bool ground_effect_given = false;
+    // A fixed_load_factor database's load-factor law is an extrapolation above
+    // the load factors its source supports; it is held at this many g.
+    double max_load_factor = 2.0;
+    // Warn, rather than refuse, a vehicle file that disagrees with the database
+    // by more than 2 percent.
+    bool accept_vehicle_mismatch = false;
     GroundModel ground;
     // Evaluate the point-receiver ground effect directly, not from GroundTable.
     bool exact_ground = false;
@@ -683,6 +693,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 {
     // Create trajectory from CSV data
     Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
+    // Ground effect is on by default, but it acts on per-band levels, so it is
+    // applied only where the spectral path runs on a database that has spectra.
+    const bool ground_effect = options.ground_effect && options.spectral && database.has_spectra();
 
     // mu and CT are non-dimensionalized by the vehicle JSON's tip speed, and
     // they index the database's operating conditions -- which were generated at
@@ -699,10 +712,23 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // stderr.  The weight is compared at 1 percent: panam builds with g = 9.82
     // and this program uses 9.80665, a 0.14 percent difference that is not a
     // disagreement.
+    // Past 2 percent the run is refused, since the footprint would be wrong by
+    // more than the grid's own error; between 1 and 2 it warns.  The refusal
+    // names the same check as the warning, and --accept_vehicle_mismatch turns
+    // it back into a warning.
     const auto vehicle_disagrees = [&](const char* what, const char* unit_text,
                                            double from_file, double from_database) {
         if (std::isnan(from_database) || approx_equal(from_file, from_database))
             return;
+        const double relative = std::fabs(from_file - from_database) / std::fabs(from_database);
+        if (relative > 0.02 && !options.accept_vehicle_mismatch)
+        {
+            input_error("Vehicle ", what, " disagrees: ", job.vehicle, " gives ", from_file, " ",
+                    unit_text, " but the database was built at ", from_database, " ", unit_text,
+                    ", ", relative * 100.0, " percent off. mu and CT would index the wrong "
+                    "conditions, so the run is refused. Give the right vehicle file, or "
+                    "--accept_vehicle_mismatch to propagate it anyway.");
+        }
         warn("Vehicle ", what, " disagrees: ", job.vehicle, " gives ", from_file, " ", unit_text,
                 " but the database was built at ", from_database, " ", unit_text,
                 ". mu and CT will index the wrong conditions.");
@@ -710,6 +736,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     vehicle_disagrees("main rotor tip speed", "m/s", trajectory.vehicle.tip_speed, database.tip_speed());
     vehicle_disagrees("main rotor radius", "m", trajectory.vehicle.radius, database.rotor_radius());
     vehicle_disagrees("weight", "N", trajectory.vehicle.weight, database.vehicle_weight());
+    // The thrust coefficient the vehicle file gives at a load factor of 1,
+    // against a fixed_load_factor database's reference.  It folds in the
+    // density, which no check above sees.
+    if (database.fixed_load_factor())
+    {
+        const auto& vehicle = trajectory.vehicle;
+        const double ct_at_one_g = vehicle.weight
+                / (vehicle.rho * vehicle.tip_speed * vehicle.tip_speed * pi * vehicle.radius * vehicle.radius);
+        vehicle_disagrees("thrust coefficient at 1 g", "", ct_at_one_g, database.reference_thrust_coefficient());
+    }
 
     // Trim trajectory (per Mike): crop from the given x to whichever comes
     // first, the lowest or the slowest point.  Off unless asked for -- it
@@ -785,7 +821,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
     // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
     const auto offset = heading_offset(trajectory.states, options.frame_bearing);
-    std::size_t by_heading = 0, slow = 0;
+    std::size_t by_heading = 0, slow = 0, load_capped = 0;
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
@@ -798,10 +834,29 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (nose != velocity)
                 by_heading++;
         }
+        // On a fixed_load_factor database the load-factor law is the analytic
+        // correction 20 lg(C_T / C_T,ref), an extrapolation above the load
+        // factors its source supports.  It is held at --max_load_factor.
+        double thrust_coefficient = state.CT;
+        if (database.fixed_load_factor())
+        {
+            const double ceiling = options.max_load_factor * database.reference_thrust_coefficient();
+            if (thrust_coefficient > ceiling)
+            {
+                thrust_coefficient = ceiling;
+                load_capped++;
+            }
+        }
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
                 Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
-                options.qsam ? state.fpa_e : state.fpa, state.CT));
+                options.qsam ? state.fpa_e : state.fpa, thrust_coefficient));
+    }
+    if (load_capped > 0)
+    {
+        warn(load_capped, " of ", nt, " states exceed ", options.max_load_factor, " g on a "
+                "fixed_load_factor database, where the load-factor correction is an extrapolation. "
+                "Held at ", options.max_load_factor, " g (--max_load_factor).");
     }
     if (slow > 0)
     {
@@ -901,7 +956,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<std::size_t> point_of(observer_count, 0);
     {
         const double run_height = options.plate ? 0.0
-                : options.ground_effect || options.propagation_table ? options.ground.receiver_height
+                : ground_effect || options.propagation_table ? options.ground.receiver_height
                                                                      : 0.0;
         for (std::size_t i = 0; i < observer_count; i++)
         {
@@ -909,7 +964,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             microphone_height[i] = height;
             microphones[i] = observers[i] + Vec3(0.0, 0.0, height);
             on_plate[i] = options.plate && height == 0.0 ? 1 : 0;
-            if (options.ground_effect && !on_plate[i])
+            if (ground_effect && !on_plate[i])
             {
                 const auto found = std::find(point_heights.begin(), point_heights.end(), height);
                 point_of[i] = static_cast<std::size_t>(found - point_heights.begin());
@@ -920,7 +975,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
     const bool any_plate = std::any_of(on_plate.begin(), on_plate.end(), [](char c) { return c != 0; });
     const bool any_point = !point_heights.empty();
-    if (options.ground_effect || !microphone_heights.empty())
+    if (ground_effect || !microphone_heights.empty())
     {
         std::vector<std::size_t> at_height(point_heights.size(), 0);
         std::size_t flush_count = 0;
@@ -929,7 +984,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         {
             if (on_plate[i])
                 flush_count++;
-            else if (options.ground_effect)
+            else if (ground_effect)
                 at_height[point_of[i]]++;
             else
                 bare_count++;
@@ -1042,17 +1097,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     bool spectral = options.spectral;
     if (spectral && !database.has_spectra())
     {
-        if (options.spectral_explicit || options.ground_effect || options.atmosphere
+        if (options.spectral_explicit || options.ground_effect_given || options.atmosphere
                 || options.propagation_table)
         {
             const std::string asked = options.propagation_table ? "--propagation_table"
-                    : options.ground_effect                     ? "--ground_effect"
+                    : options.ground_effect_given               ? "--ground_effect"
                     : options.atmosphere                        ? "--atmosphere"
                                                                 : "--spectral";
             input_error(asked
                     + " needs a database carrying per-band spectra; this one has none. Rebuild "
                       "it with spectra, or propagate the broadband level with --no-spectral"
-                    + (options.ground_effect ? " and no ground effect."
+                    + (options.ground_effect_given ? " and no ground effect."
                                     : options.atmosphere ? " and no --atmosphere."
                                                          : "."));
         }
@@ -1064,6 +1119,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         log("Database carries no per-band spectra: propagating the broadband level with its "
             "EAA factor.");
         spectral = false;
+    }
+    {
+        // What this trajectory is propagated with, on stdout, so a footprint
+        // states its own configuration rather than leaving it in the log file.
+        const char* humidity_from = !std::isnan(options.humidity_override) ? "--humidity"
+                : trajectory.vehicle.humidity_given ? "vehicle file" : "default, not given";
+        const double receiver = options.ground.receiver_height / options.unit.to_meters;
+        std::cout << "Physics: "
+                  << (spectral ? "spectral, per-band ISO 9613-1 absorption" : "broadband, database EAA factor")
+                  << "; ground "
+                  << (ground_effect ? "on, receiver " + std::to_string(receiver) + " " + options.unit.name + " up"
+                                    : std::string("off"))
+                  << "; air " << air.temperature << " K, " << air.pressure << " kPa, "
+                  << air.relative_humidity << " % RH (" << humidity_from << ")"
+                  << (profile ? ", layered profile" : "")
+                  << (options.refraction ? "; refraction on" : "") << ".\n";
     }
     if (spectral)
     {
@@ -1178,7 +1249,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     " dB/m at the top.");
         }
 
-        if (options.ground_effect)
+        if (ground_effect)
         {
             ground_model = &options.ground;
             ground_impedance_bands = ground_impedance(options.ground, bands, sound_speed);
@@ -2310,7 +2381,9 @@ int run(int argc, char* argv[])
     double db_cutoff = std::numeric_limits<double>::quiet_NaN();
     bool spectral = true;
     std::vector<double> band_limits;
-    bool ground_effect = false;
+    bool ground_effect = true;
+    double max_load_factor = 2.0;
+    bool accept_vehicle_mismatch = false;
     double flow_resistance = flow_resistance::grassy_field;
     double receiver_height = 1.2; // meters
     double turbulence = 0.0;
@@ -2425,6 +2498,13 @@ int run(int argc, char* argv[])
     app.add_option("--band_limits", band_limits,
             "Frequency range integrated into the metric, Hz: low high. Default 20 20000.")
             ->expected(2);
+    app.add_option("--max_load_factor", max_load_factor,
+            "Largest load factor, in g, a fixed_load_factor database's load-factor correction "
+            "is taken to. Above it the correction is held, and the run says so (default 2).")
+            ->check(CLI::PositiveNumber);
+    app.add_flag("--accept_vehicle_mismatch", accept_vehicle_mismatch,
+            "Warn, rather than refuse, a vehicle file that disagrees with the database by more "
+            "than 2 percent.");
     app.add_option("--humidity", humidity_override,
             "Relative humidity in percent, overriding the vehicle file.");
     app.add_option("--temperature", temperature_override,
@@ -2456,9 +2536,10 @@ int run(int argc, char* argv[])
             "Fill refraction shadows with the energy turbulence scatters into them instead of "
             "--shadow_floor: the HARMONOISE strength gamma_T = C_T^2/T0^2 + 22 C_v^2/(3 c0^2) "
             "(0, the default, is off). Needs --refraction and --ground_effect.");
-    app.add_flag("--ground_effect", ground_effect,
+    auto* ground_effect_option = app.add_flag("--ground_effect,!--no-ground_effect", ground_effect,
             "Add excess ground attenuation (Chien-Soroka over a Delany-Bazley impedance) to "
-            "the spectral path (the default). Cannot be combined with --no-spectral.");
+            "the spectral path. On by default wherever the spectral path runs; "
+            "--no-ground_effect turns it off. Asking for it with --no-spectral is an error.");
     app.add_option("--flow_resistance", flow_resistance,
             "Specific flow resistance of the ground, kPa s/m^2. 30 snow, 225 grass (default), "
             "650 soil, 3000 dirt, 10000 concrete, 50000 asphalt.");
@@ -2837,7 +2918,8 @@ int run(int argc, char* argv[])
     // The flag combinations that cannot be served, checked before anything is
     // built from them.
     const bool spectral_explicit = spectral_option->count() > 0 && spectral;
-    if (ground_effect && !spectral)
+    const bool ground_explicit = ground_effect_option->count() > 0 && ground_effect;
+    if (ground_explicit && !spectral)
     {
         input_error("--ground_effect needs the spectral path: the ground effect is a function "
                     "of frequency, and the broadband path (--no-spectral or --db_cutoff) has no "
@@ -2902,6 +2984,9 @@ int run(int argc, char* argv[])
     if (band_limits.size() == 2)
         options.band_limits = BandLimits {band_limits[0], band_limits[1]};
     options.ground_effect = ground_effect;
+    options.ground_effect_given = ground_explicit;
+    options.max_load_factor = max_load_factor;
+    options.accept_vehicle_mismatch = accept_vehicle_mismatch;
     options.ground.flow_resistance = flow_resistance;
     options.ground.receiver_height = receiver_height;
     options.ground.turbulence = turbulence;
