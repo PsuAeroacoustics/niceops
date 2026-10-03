@@ -1229,3 +1229,32 @@ TEST_CASE("two spheres at one operating condition are refused", "[sphere_databas
     REQUIRE(problem.find("Spheres 1 and 4 are at the same operating condition")
             != std::string::npos);
 }
+
+TEST_CASE("an observer at the source has a finite level", "[sphere_database]")
+{
+    // Spherical spreading is extrapolated inward, 1/r, which diverges at r = 0: an
+    // observer exactly at a source position (a helicopter touching down on a grid
+    // point) got +inf in the CSV, and with the asserts live it aborted the run.
+    // The range is floored at a hundredth of the sphere's radius.
+    if (!std::filesystem::exists("databases/S-76D_M3.nod"))
+        return;
+    Database db("databases/S-76D_M3.nod");
+    const double radius = db.sphere_radius();
+    const auto blend = db.blend_at(0.1, 0.0, 0.006);
+    for (double range : {0.0, 1e-12, 1e-6, 0.001 * radius, 0.0099 * radius})
+    {
+        const double level = db.eval(range, 20.0, 60.0, blend);
+        INFO("range " << range);
+        REQUIRE(std::isfinite(level));
+        REQUIRE(level == db.eval(0.01 * radius, 20.0, 60.0, blend));
+    }
+    // Above the floor the level still falls with range, as it always did.
+    double previous = db.eval(0.01 * radius, 20.0, 60.0, blend);
+    for (double fraction : {0.02, 0.1, 0.5, 1.0, 2.0, 10.0})
+    {
+        const double level = db.eval(fraction * radius, 20.0, 60.0, blend);
+        INFO("range " << fraction << " radii");
+        REQUIRE(level < previous);
+        previous = level;
+    }
+}

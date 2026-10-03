@@ -332,6 +332,10 @@ set_tests_properties(duplicate_output_names_rejected PROPERTIES PASS_REGULAR_EXP
 add_test(NAME dnl_needs_a_clock COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -D integrated/noclock_dnl.csv -o integrated/noclock_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(dnl_needs_a_clock PROPERTIES PASS_REGULAR_EXPRESSION "-D needs the time of day")
 add_test(NAME dnl_with_start_utc COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --start_utc 43200 -D integrated/dated_dnl.csv -o integrated/dated_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# An observer exactly at a source position: spherical spreading diverges at r = 0.
+# The level was +inf in the CSV, and with the asserts live the run aborted.  The
+# case passes only if the run finishes.
+add_test(NAME observer_on_the_source_survives COMMAND niceops -b tests/data/observer_on_source.csv -o integrated/observer_on_source.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # The vehicle file against the database it is run with.  Only the tip speed was
 # ever compared, in an info line; weight and radius set CT in the same way, and a
 # vehicle file 10 percent heavy moved the footprint 0.75 dB median with nothing

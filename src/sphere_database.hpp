@@ -669,6 +669,13 @@ private:
     // be on one cache line.  The netCDF file stores them the other way round and
     // the loader transposes once.  Both empty unless the database carries
     // spectra.
+    // The nearest range spherical spreading is taken to.  Inside the sphere the law
+    // is extrapolated (1/r), which diverges at r = 0: an observer exactly at a
+    // source position gave +inf, written to the CSV, and with the asserts live it
+    // aborts the whole run.  A hundredth of the sphere's radius is far inside
+    // anything the footprint meets (the demo's closest approach is half a radius),
+    // so no shipped result changes, and it keeps the level finite.
+    double min_spreading_range_ = 0.0;
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
     double rotor_radius_ = std::numeric_limits<double>::quiet_NaN();
     double vehicle_weight_newtons_ = std::numeric_limits<double>::quiet_NaN();

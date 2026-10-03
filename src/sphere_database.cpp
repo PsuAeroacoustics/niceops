@@ -1154,6 +1154,7 @@ Database::Database(const std::string& datafile_path)
     // Set sphere_radius to dimensional_radius
     sphere_radius_ = dimensional_radius;
     inv_sphere_radius_ = 1.0 / sphere_radius_;
+    min_spreading_range_ = 0.01 * sphere_radius_;
     info("Sphere radius set to ", sphere_radius_);
     // Find range of conditions
     advance_ratio_max = *std::max_element(advance_ratios.begin(), advance_ratios.end());
@@ -1318,6 +1319,10 @@ Database::Sample Database::blend_cell(std::size_t i_phi, std::size_t i_theta,
 
 double Database::eval(double range, double phi, double theta, const Blend& blend) const
 {
+    // Floored once, so the spreading and the excess attenuation below agree on
+    // the range; a no-op above it, so no shipped result moves.  See
+    // min_spreading_range_.
+    range = std::max(range, min_spreading_range_);
     // Find the sphere grid cell containing the desired phi, theta, and where in
     // it they sit.  locate() gives the bracketing indices and the interpolation
     // weight together, so nothing below has to read the knot arrays back.
@@ -1450,7 +1455,7 @@ void Database::eval_spectrum(double range, double absorbed_range, double phi, do
 
     // Spreading is geometry, so it is the same for every band; absorption is
     // not, which is the whole point of propagating the spectrum.
-    const double spreading_loss = 20.0 * std::log10(range / sphere_radius());
+    const double spreading_loss = 20.0 * std::log10(std::max(range, min_spreading_range_) / sphere_radius());
     const double path_length = absorbed_range - sphere_radius();
     const double* w = blend.weights.data();
     const double* sw = stencil.weight;
