@@ -33,6 +33,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j8
 ```
 
+This configuration ships: `assert()` is compiled out, as CMake's Release normally has it. To test
+the way CI does, keep the asserts live with `-DNICEOPS_ASSERTS=ON`.
+
 On macOS with Command Line Tools but no full Xcode, add
 `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`.
 

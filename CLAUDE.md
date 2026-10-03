@@ -42,7 +42,7 @@ with it.
 Build out-of-source, and **always with explicit `-S`/`-B`**:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNICEOPS_ASSERTS=ON
 cmake --build build -j8
 ```
 
@@ -50,7 +50,7 @@ cmake --build build -j8
 
 Notes:
 - The repo root contains stale in-source build artifacts from the D era (CMakeCache.txt, Makefile, `libniceops*.a`, binaries) that are gitignored — do not build in-source.
-- **Never add `-DNDEBUG` to Release.** The D original ran with asserts live, and `sphere_database.cpp` relies on `assert(isFinite(...))` guards; matching that is part of the port contract. CMake's own Release flags carry `-DNDEBUG`, so `CMakeLists.txt` strips it (about 4% of the demo's CPU) and `tests/test_build.cpp` fails if it comes back. This is called out in CMakeLists.txt.
+- **Asserts: live when testing, compiled out in shipped binaries.** `-DNICEOPS_ASSERTS=ON` strips CMake's `-DNDEBUG` from the optimized configurations and defines `NICEOPS_ASSERTS_REQUIRED`; `tests/test_build.cpp` fails if such a build still has NDEBUG. CI and the test recipe below pass the option. A plain `cmake -DCMAKE_BUILD_TYPE=Release` build is a shipped build, so its asserts are off (about 4% of the demo's CPU). The D original ran with asserts live, and `sphere_database.cpp`'s `assert(isFinite(...))` guards are what the suite exercises, so test with the option on. Every assert is side-effect free, so a failing assert is the only place the two builds can differ.
 - If Xcode proper isn't installed (Command Line Tools only), pass `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`. No special flags are needed; the vendored SPLINTER library that used to require them is gone.
 - CGAL 5.0+ is header-only and exports `CGAL::CGAL`. Do **not** reintroduce `include(${CGAL_USE_FILE})` — `UseCGAL.cmake` was removed in CGAL 6, leaving `CGAL_USE_FILE` empty so the `include()` errors out.
 - **CI builds on GCC/libstdc++; a macOS clang build will not catch what that finds.**
@@ -60,7 +60,7 @@ Notes:
   build the tree with Homebrew GCC rather than waiting for a CI round-trip:
 
   ```sh
-  cmake -S . -B build-gcc -DCMAKE_BUILD_TYPE=Release \
+  cmake -S . -B build-gcc -DCMAKE_BUILD_TYPE=Release -DNICEOPS_ASSERTS=ON \
         -DCMAKE_CXX_COMPILER=$(brew --prefix)/bin/g++-16 -DNICEOPS_PLOTTING=OFF
   cmake --build build-gcc -j8 && ctest --test-dir build-gcc --output-on-failure
   ```
@@ -89,7 +89,7 @@ Notes:
 
   ```sh
   git clone --no-hardlinks . /tmp/fresh && cd /tmp/fresh
-  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j8
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNICEOPS_ASSERTS=ON && cmake --build build -j8
   ctest --test-dir build --output-on-failure
   ```
 

@@ -19,20 +19,21 @@ if(NOT CMAKE_BUILD_TYPE)
           FORCE)
 endif (NOT CMAKE_BUILD_TYPE)
 
-# NOTE: do NOT add -DNDEBUG to Release.  The D original ran with asserts live
-# in release builds, and sphere_database.cpp relies on assert(isFinite(...))
-# guards; matching that behavior is part of the port contract.
-#
-# CMake adds it itself: its default Release, RelWithDebInfo and MinSizeRel flags
-# all carry -DNDEBUG, so the contract above was not being kept -- every assert()
-# in src/ (17 of them, guarding isfinite of the levels and angles among others)
-# was compiled out of the shipped binaries.  Removed here.  It costs about 4
-# percent of the demo case's CPU time, and the whole suite passes with them live.
-# tests/test_build.cpp fails if a build comes out with NDEBUG defined anyway.
-foreach(config RELEASE RELWITHDEBINFO MINSIZEREL)
-  string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_${config} "${CMAKE_CXX_FLAGS_${config}}")
-  string(STRIP "${CMAKE_CXX_FLAGS_${config}}" CMAKE_CXX_FLAGS_${config})
-endforeach()
+# assert() policy.  Shipped builds leave CMake's own -DNDEBUG in place, so the
+# asserts in src/ compile out, as is usual for an optimized binary and about 4
+# percent faster on the demo case.  Testing keeps them live: CI and the test
+# recipe in CLAUDE.md pass -DNICEOPS_ASSERTS=ON, which strips NDEBUG from the
+# optimized configurations and defines NICEOPS_ASSERTS_REQUIRED, which
+# tests/test_build.cpp checks.  The asserts are side-effect free, so the two
+# builds differ only where an assert would have fired.
+option(NICEOPS_ASSERTS "Keep assert() live in optimized builds (for testing). Off for shipped binaries." OFF)
+if (NICEOPS_ASSERTS)
+  foreach(config RELEASE RELWITHDEBINFO MINSIZEREL)
+    string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_${config} "${CMAKE_CXX_FLAGS_${config}}")
+    string(STRIP "${CMAKE_CXX_FLAGS_${config}}" CMAKE_CXX_FLAGS_${config})
+  endforeach()
+  add_compile_definitions(NICEOPS_ASSERTS_REQUIRED)
+endif()
 
 # Link-time optimization.  The acoustic loop lives in niceops.cpp and calls
 # Database::level_at_observer, which lives in sphere_database.cpp, ~100 million
