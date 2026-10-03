@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include "logger.hpp"
@@ -171,6 +172,23 @@ inline double sound_exposure_level(const std::vector<double>& levels, double T,
     const bool reception = ranges.size() == levels.size() && c > 0.0;
     return sel_over_window(
             index[0], index[1], T, [&levels](std::size_t i) { return levels[i]; },
+            [&](std::size_t i) {
+                return reception ? reception_factor(i, ranges.size(), T, c,
+                                           [&ranges](std::size_t k) { return ranges[k]; })
+                                 : 1.0;
+            });
+}
+
+// The same integral over the whole history, rather than the event's 10 dB-down
+// window (--full_history).  Every sample counts, dips included.
+inline double full_sound_exposure_level(const std::vector<double>& levels, double T,
+        const std::vector<double>& ranges = {}, double c = 0.0)
+{
+    if (levels.empty())
+        return -std::numeric_limits<double>::infinity();
+    const bool reception = ranges.size() == levels.size() && c > 0.0;
+    return sel_over_window(
+            0, levels.size() - 1, T, [&levels](std::size_t i) { return levels[i]; },
             [&](std::size_t i) {
                 return reception ? reception_factor(i, ranges.size(), T, c,
                                            [&ranges](std::size_t k) { return ranges[k]; })

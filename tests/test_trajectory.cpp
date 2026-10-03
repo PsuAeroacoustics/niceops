@@ -742,11 +742,33 @@ TEST_CASE("at hover the sphere's nose is the heading, turned into the local fram
     CHECK(nose[0] == Catch::Approx(0.0).margin(1e-12));
     CHECK(nose[1] == Catch::Approx(-1.0));
     CHECK(nose[2] == 0.0);
-    // Faster than heading_nose_speed it is the velocity, unchanged.
-    const State moving = state(3.0, 1.0, 4.0);
+    // Faster than velocity_nose_speed it is the velocity, unchanged.
+    const State moving = state(5.0, 1.0, 4.0);
     const auto along = nose_direction(moving, inferred);
     CHECK(along[0] == moving.vx);
     CHECK(along[1] == moving.vy);
+    // Between the two the nose turns continuously from the heading to the
+    // velocity: no step anywhere in the band, and the endpoints are exact.
+    // The heading here is west (274), the velocity north-east, so the turn
+    // is the short way round.
+    const auto unit_nose = [](const std::array<double, 3>& n) {
+        const double horizontal = std::hypot(n[0], n[1]);
+        return std::array<double, 2> {n[0] / horizontal, n[1] / horizontal};
+    };
+    double previous_angle = std::numeric_limits<double>::quiet_NaN();
+    for (int i = 0; i <= 500; i++)
+    {
+        const double speed = (2.0 + 0.012 * i) * 1852.0 / 3600.0; // 2 kt to 8 kt
+        const State s = state(speed * std::cos(1.0), speed * std::sin(1.0), 274.0);
+        const auto n = unit_nose(nose_direction(s, inferred));
+        const double angle = std::atan2(n[1], n[0]);
+        if (!std::isnan(previous_angle))
+            CHECK(std::fabs(std::remainder(angle - previous_angle, 2.0 * pi)) < 0.02);
+        previous_angle = angle;
+    }
+    const auto below = unit_nose(nose_direction(state(1.0, 0.0, 274.0), inferred));
+    CHECK(std::fabs(std::remainder(std::atan2(below[1], below[0]) * 180.0 / pi
+                  - (*inferred * 180.0 / pi - 274.0), 360.0)) == Catch::Approx(0.0).margin(1e-6));
     // A hover-only track has no fast states: the frame bearing supplies it,
     // and without one there is none.
     std::vector<State> hover(100, state(0.1, 0.0, 90.0));

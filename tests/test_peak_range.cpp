@@ -151,3 +151,22 @@ TEST_CASE("an ambient level is added in energy", "[sel][ambient]")
     // A negligible ambient changes nothing at the golden's tolerance.
     REQUIRE(level_with_ambient(75.0, std::pow(10.0, -20.0)) == Catch::Approx(75.0).epsilon(1e-12));
 }
+
+TEST_CASE("full-history SEL counts the tails the 10 dB-down window leaves out", "[sel]")
+{
+    // Fifty samples of tail either side of a 100-sample event at 70 dB, every
+    // sample T = 0.02 s apart.  The window keeps the event (every sample at or
+    // above 60 dB) and drops the 40 dB tails; the full history keeps them.
+    const double T = 0.02;
+    std::vector<double> levels(200, 40.0);
+    for (std::size_t i = 50; i < 150; i++)
+        levels[i] = 70.0;
+    const double windowed = niceops::sound_exposure_level(levels, T);
+    const double full = niceops::full_sound_exposure_level(levels, T);
+    CHECK(windowed == Catch::Approx(10.0 * std::log10(T * 100.0 * 1e7)));
+    CHECK(full == Catch::Approx(10.0 * std::log10(T * (100.0 * 1e7 + 100.0 * 1e4))));
+    CHECK(full > windowed);
+    // With nothing to drop the two agree exactly.
+    const std::vector<double> flat(40, 65.0);
+    CHECK(niceops::full_sound_exposure_level(flat, T) == niceops::sound_exposure_level(flat, T));
+}

@@ -229,20 +229,21 @@ void append_metrics_file(const std::string& filename, const std::string& casenam
         const std::vector<double>& levels, double threshold = 65.0)
 {
     auto file = open_output(filename, std::ios::app);
-    double average = 0;
+    double energy = 0;
     double maximum = -std::numeric_limits<double>::infinity();
     std::size_t count = 0;
-    // Iterate over range and compute average and maximum value
+    // The average is an energy mean, 10 lg of the mean of 10^(L/10): an
+    // arithmetic mean of decibels is not an average of noise.
     for (auto level : levels)
     {
-        average += level;
+        energy += std::pow(10.0, 0.1 * level);
         maximum = std::max(maximum, level);
         if (level >= threshold)
         {
             count++;
         }
     }
-    average /= levels.size();
+    const double average = 10.0 * std::log10(energy / levels.size());
     auto area = double(count) / levels.size();
     file << casename << "," << average << "," << maximum << "," << area << "\n";
 }
@@ -602,6 +603,8 @@ struct RunOptions
     double utc_offset = 0.0;
     bool scattered = false;
     bool want_dnl = false;
+    bool want_lamax = false;
+    bool full_history = false;
     bool write_time_history = false;
     bool write_state = false;
     std::string time_history_prefix;
@@ -689,7 +692,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const RunOptions& options, const std::vector<Vec3>& observers,
         const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
         const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
-        std::vector<double>& dnl_energy)
+        std::vector<double>& dnl_energy, std::vector<double>& lamax)
 {
     // Create trajectory from CSV data
     Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
@@ -828,7 +831,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     {
         const auto velocity = air_velocity(state);
         const auto nose = nose_direction(state, offset);
-        if (std::hypot(velocity[0], velocity[1]) < heading_nose_speed)
+        if (std::hypot(velocity[0], velocity[1]) < velocity_nose_speed)
         {
             slow++;
             if (nose != velocity)
@@ -861,10 +864,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (slow > 0)
     {
         if (by_heading > 0)
-            info(by_heading, " of ", slow, " states under 5 kt take the sphere's nose from the heading, turned "
-                    "into the local frame by ", *offset * 180.0 / pi, " degrees.");
+            info(by_heading, " of ", slow, " states under 8 kt turn the sphere's nose from the velocity "
+                    "toward the heading (all of the way below 3 kt), turned into the local frame by ",
+                    *offset * 180.0 / pi, " degrees.");
         else
-            warn(slow, " states under 5 kt orient the sphere by their drift: ",
+            warn(slow, " states under 8 kt orient the sphere by their drift: ",
                     std::isnan(trajectory.states.front().heading)
                             ? "the track carries no heading."
                             : "too few fast states to relate heading to the frame, and no --frame_bearing.");
@@ -1507,6 +1511,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     const bool culling = !std::isnan(options.db_cutoff);
     const bool level_is_transformed = add_ambient;
     const bool needs_full_history = options.write_time_history || options.want_dnl
+            || options.full_history || options.want_lamax
             || write_band_history;
     const bool bounded = !level_is_transformed;
     DirectionBounds direction_bounds;
@@ -2095,7 +2100,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     levels[it] = level;
                 }
             }
-            integrated_levels[index] = sound_exposure_level(levels, integration_step, ranges, sound_speed);
+            integrated_levels[index] = options.full_history
+                    ? full_sound_exposure_level(levels, integration_step, ranges, sound_speed)
+                    : sound_exposure_level(levels, integration_step, ranges, sound_speed);
+            if (options.want_lamax)
+            {
+                // The history is complete here (needs_full_history), so this is
+                // the true peak over the whole operation, not a windowed one.
+                lamax[index] = std::max(lamax[index], *std::max_element(levels.begin(), levels.end()));
+            }
             if (options.want_dnl)
             {
                 // Energies add across operations; the logarithm comes at the
@@ -2337,6 +2350,8 @@ int run(int argc, char* argv[])
     std::vector<std::string> out_files = {"integrated/197421_LAE.csv"};
     std::vector<std::string> state_files;
     std::string dnl_file = "";
+    std::string lamax_file = "";
+    bool full_history = false;
     double utc_offset = 0.0;
     double trim_start = std::numeric_limits<double>::quiet_NaN();
     // Lengths on this command line are in whatever --units selects, feet by
@@ -2476,7 +2491,14 @@ int run(int argc, char* argv[])
     auto* gridstep_option = app.add_option("--gridstep", grid_step,
             "Observer grid spacing, in --units (default 25 m, = 82.021 ft).");
     app.add_option("-D,--dnlfile", dnl_file,
-            "Write the day-night level, summed over every trajectory, to this file.");
+            "Write the day-night level (DNL: the energy average over a 24-hour day, night "
+            "penalized), summed over every trajectory, to this file.");
+    app.add_option("--lamax_file", lamax_file,
+            "Write each observer's LAmax, the highest A-weighted level over the operation, "
+            "dB, to this file.");
+    app.add_flag("--full_history", full_history,
+            "Integrate each SEL over the whole history rather than the event's 10 dB-down "
+            "window, as full-history tools do. Slower: no window is found.");
     app.add_option("--utc_offset", utc_offset,
             "Hours from UTC to local time, for the 22:00-07:00 DNL night window.");
     app.add_option("--powerfile", power_file,
@@ -2910,6 +2932,9 @@ int run(int argc, char* argv[])
     // trajectory's day-night level is an energy, and they sum.
     const bool want_dnl = !dnl_file.empty();
     std::vector<double> dnl_energy(want_dnl ? observers.size() : 0, 0.0);
+    const bool want_lamax = !lamax_file.empty();
+    std::vector<double> lamax(want_lamax ? observers.size() : 0,
+            -std::numeric_limits<double>::infinity());
 
     // Outlives the loop so the plotting block below, which only runs for a
     // single trajectory, can still reach it.
@@ -3047,6 +3072,8 @@ int run(int argc, char* argv[])
     options.utc_offset = utc_offset;
     options.scattered = scattered;
     options.want_dnl = want_dnl;
+    options.want_lamax = want_lamax;
+    options.full_history = full_history;
     options.write_time_history = write_time_history;
     options.write_state = write_state;
     options.time_history_prefix = time_history_prefix;
@@ -3086,7 +3113,8 @@ int run(int argc, char* argv[])
             job.state = state_files.empty() ? std::string() : state_files[path_index];
             job.count = path_count;
             trajectory_holder = process_trajectory(database, job, options, observers,
-                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, dnl_energy);
+                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, dnl_energy,
+                    lamax);
         }
         catch (const std::exception& problem)
         {
@@ -3102,14 +3130,26 @@ int run(int argc, char* argv[])
 
     if (want_dnl)
     {
+        // DNL is the energy average over a 24-hour day: the summed event energies
+        // over 86 400 s, not their raw sum (which reads 49.37 dB high).
+        constexpr double seconds_per_day = 86400.0;
         std::vector<double> dnl(dnl_energy.size());
         for (std::size_t i = 0; i < dnl_energy.size(); i++)
-            dnl[i] = 10.0 * std::log10(dnl_energy[i]);
+            dnl[i] = 10.0 * std::log10(dnl_energy[i] / seconds_per_day);
         log("Writing day-night level over ", path_count,
                 path_count == 1 ? " operation to " : " operations to ", dnl_file);
         write_levels(x_obs, y_obs, dnl, dnl_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, dnl, *frame, latlon_companion(dnl_file), scattered);
+    }
+
+    if (want_lamax)
+    {
+        log("Writing LAmax over ", path_count,
+                path_count == 1 ? " operation to " : " operations to ", lamax_file);
+        write_levels(x_obs, y_obs, lamax, lamax_file, scattered, unit);
+        if (latlon)
+            write_geodetic_levels(x_obs, y_obs, lamax, *frame, latlon_companion(lamax_file), scattered);
     }
 
     if (path_count > 1 && want_plots)

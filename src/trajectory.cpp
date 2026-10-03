@@ -994,10 +994,23 @@ std::optional<double> heading_offset(const std::vector<State>& states, double fr
 std::array<double, 3> nose_direction(const State& state, std::optional<double> offset)
 {
     const auto v = air_velocity(state);
-    if (!offset || std::isnan(state.heading) || std::hypot(v[0], v[1]) >= heading_nose_speed)
+    if (!offset || std::isnan(state.heading))
         return v;
-    const double angle = *offset - state.heading * pi / 180.0;
-    return {std::cos(angle), std::sin(angle), 0.0};
+    const double speed = std::hypot(v[0], v[1]);
+    if (speed >= velocity_nose_speed)
+        return v;
+    const double heading_angle = *offset - state.heading * pi / 180.0;
+    if (speed <= heading_nose_speed)
+        return {std::cos(heading_angle), std::sin(heading_angle), 0.0};
+    // The horizontal angle turns from the heading to the velocity along the
+    // short way round, by a smoothstep weight on the speed, so the nose moves
+    // continuously through the band.  The vertical part of the velocity is
+    // carried by the same weight, scaled to the horizontal unit length.
+    const double s = (speed - heading_nose_speed) / (velocity_nose_speed - heading_nose_speed);
+    const double w = s * s * (3.0 - 2.0 * s);
+    const double turn = std::remainder(std::atan2(v[1], v[0]) - heading_angle, 2.0 * pi);
+    const double angle = heading_angle + w * turn;
+    return {std::cos(angle), std::sin(angle), w * v[2] / speed};
 }
 
 } // namespace niceops

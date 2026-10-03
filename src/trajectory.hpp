@@ -74,11 +74,15 @@ inline std::array<double, 3> air_velocity(const State& s)
     return {s.vx - s.wx, s.vy - s.wy, s.vz};
 }
 
-// Below this horizontal speed (5 kt) the velocity's direction is drift, not
-// where the aircraft points: a hover's GPS velocity is a few tenths of a knot in
-// any direction, and the sphere's nose went wherever it pointed.  Below it the
-// nose is the heading.  Shipped tracks never fly this slowly.
-constexpr double heading_nose_speed = 5.0 * 1852.0 / 3600.0; // m/s
+// The sphere's nose turns from the heading to the velocity as the horizontal
+// speed rises through this band, on a smoothstep weight.  Below the lower edge
+// (3 kt) the velocity's direction is drift, not where the aircraft points: a
+// hover's GPS velocity is a few tenths of a knot in any direction.  Above the
+// upper edge (8 kt) the nose is the velocity.  Shipped tracks never fly under
+// 10 kt.  Before this, a hard switch at 5 kt stepped the level 2.2-4.4 dB for a
+// nose rotated 30-90 degrees between the two.
+constexpr double heading_nose_speed = 3.0 * 1852.0 / 3600.0; // m/s
+constexpr double velocity_nose_speed = 8.0 * 1852.0 / 3600.0; // m/s
 
 // The local frame's angle atan2(y, x) of compass heading h is offset - h; this
 // is that offset, radians.  Inferred from the track, as the circular mean of
@@ -90,8 +94,9 @@ constexpr double heading_nose_speed = 5.0 * 1852.0 / 3600.0; // m/s
 // is available or the file carries no heading.
 std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing);
 
-// The direction the sphere's nose takes for a state: its air velocity, or
-// below heading_nose_speed and with an offset, the heading, horizontal.
+// The direction the sphere's nose takes for a state: its air velocity above
+// velocity_nose_speed, the heading (horizontal) below heading_nose_speed, and
+// between them the horizontal angle turned from one to the other.
 std::array<double, 3> nose_direction(const State& state, std::optional<double> offset);
 
 inline std::ostream& operator<<(std::ostream& os, const State& s)

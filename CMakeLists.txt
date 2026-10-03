@@ -364,6 +364,8 @@ set_tests_properties(vehicle_tip_speed_mismatch_warns PROPERTIES PASS_REGULAR_EX
 add_test(NAME vehicle_weight_mismatch_warns COMMAND niceops ${B407_RUN} -v tests/data/B407_heavy.json --accept_vehicle_mismatch WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME vehicle_weight_mismatch_refused COMMAND niceops ${B407_RUN} -v tests/data/B407_heavy.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(vehicle_weight_mismatch_refused PROPERTIES PASS_REGULAR_EXPRESSION "percent off")
+add_test(NAME lamax_file_is_written COMMAND sh -c "rm -f integrated/lamax.csv && $<TARGET_FILE:niceops> -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --gridstep 1640 --lamax_file integrated/lamax.csv -o integrated/lamax_run.csv && test -s integrated/lamax.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME full_history_runs COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --gridstep 1640 --full_history -o integrated/full_history.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME load_factor_is_held_at_the_ceiling COMMAND niceops ${B407_RUN} -v databases/B407.json --max_load_factor 1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(load_factor_is_held_at_the_ceiling PROPERTIES PASS_REGULAR_EXPRESSION "exceed 1 g on a fixed_load_factor database")
 set_tests_properties(vehicle_weight_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle weight disagrees")
