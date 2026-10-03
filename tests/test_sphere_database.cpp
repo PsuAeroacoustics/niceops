@@ -1657,3 +1657,54 @@ TEST_CASE("The unmeasured share follows the channels the builder did not measure
     CHECK(recorded.unmeasured_share({-5.0, 60.0}, state.blend) == Catch::Approx(0.5).margin(1e-9));
     std::filesystem::remove(path);
 }
+
+TEST_CASE("Grid-shaped coverage marks a cell unmeasured if any of its bands is",
+        "[sphere_database][coverage]")
+{
+    // A spectral sphere, with coverage laid out as its amplitude is:
+    // (PHI, THETA, frequency).  Above the plane the lowest band is unmeasured,
+    // so those cells are unmeasured whatever the other bands say.
+    const Database plain("databases/S-76D_M3.nod");
+    auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
+    const std::size_t bands = 4;
+    sphere.frequencies = {100.0, 200.0, 400.0, 800.0};
+    sphere.amplitudes.assign(sphere.cells.size() * bands, 1.0);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_grid_coverage.nod").string();
+    write_sphere(sphere, path);
+
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    int group = 0;
+    REQUIRE(nc_inq_grp_ncid(ncid, "sphere0", &group) == NC_NOERR);
+    // Dimensions for the coverage, in the group: the sphere's own axes, and
+    // the frequency dimension write_sphere already defined.
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    int dims[3] = {0, 0, 0};
+    REQUIRE(nc_def_dim(group, "coverage_phi", sphere.phis.size(), &dims[0]) == NC_NOERR);
+    REQUIRE(nc_def_dim(group, "coverage_theta", sphere.thetas.size(), &dims[1]) == NC_NOERR);
+    REQUIRE(nc_inq_dimid(group, "frequency", &dims[2]) == NC_NOERR);
+    const std::size_t n_phi = sphere.phis.size();
+    const std::size_t n_theta = sphere.thetas.size();
+    const std::size_t n_bands = bands;
+    const auto& phi = sphere.phis;
+    std::vector<int> coverage(n_phi * n_theta * n_bands);
+    for (std::size_t p = 0; p < n_phi; p++)
+        for (std::size_t t = 0; t < n_theta; t++)
+            for (std::size_t b = 0; b < n_bands; b++)
+                coverage[(p * n_theta + t) * n_bands + b] = (phi[p] < 0.0 || b != 0) ? 1 : 0;
+    int coverage_var = 0;
+    REQUIRE(nc_def_var(group, "coverage", NC_INT, 3, dims, &coverage_var) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_var_int(group, coverage_var, coverage.data()) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+
+    const Database recorded(path);
+    REQUIRE(recorded.has_spectra());
+    REQUIRE(recorded.has_coverage());
+    const auto state = recorded.source_state(Vec3(0.0, 0.0, 150.0), Vec3(60.0, 10.0, 2.0),
+            Vec3(0.1, -0.05, 1.0), 0.1, 0.0, 0.006);
+    CHECK(recorded.unmeasured_share({-45.0, 60.0}, state.blend) == Catch::Approx(0.0).margin(1e-12));
+    CHECK(recorded.unmeasured_share({45.0, 60.0}, state.blend) == Catch::Approx(1.0).margin(1e-12));
+    CHECK(recorded.unmeasured_share({-5.0, 60.0}, state.blend) == Catch::Approx(0.5).margin(1e-9));
+    std::filesystem::remove(path);
+}

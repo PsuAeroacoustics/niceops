@@ -137,20 +137,31 @@ std::optional<double> read_double_attribute(int ncid, const char* name)
     return value;
 }
 
-// A group's per-channel coverage, if it carries one: 1 where the builder
-// measured the channel, 0 where the gate zeroed it or it was filled from
-// elsewhere.  It runs along the channels, as dBA does.
-bool read_channel_coverage(int group_id, std::vector<int>& coverage)
+// A group's coverage, if it carries one: 1 where the builder measured the bin,
+// 0 where the gate zeroed it or it was filled from elsewhere.  It is flattened
+// in its own dimension order -- along the channels when the group has no
+// spectra (as dBA is), or (phi, theta, frequency) when it does (as amplitude
+// is) -- and the caller decides which it is by the length.
+bool read_coverage(int group_id, std::vector<int>& coverage)
 {
     int varid = 0;
     if (NC_NOERR != nc_inq_varid(group_id, "coverage", &varid))
         return false;
-    int dimid = 0;
-    std::size_t length = 0;
-    if (NC_NOERR != nc_inq_vardimid(group_id, varid, &dimid)
-            || NC_NOERR != nc_inq_dimlen(group_id, dimid, &length) || length != coverage.size())
-        input_error("The coverage variable does not run along the group's ", coverage.size(),
-                " channels.");
+    int ndims = 0;
+    if (NC_NOERR != nc_inq_varndims(group_id, varid, &ndims))
+        input_error("Found but could not read the dimensions of the variable coverage.");
+    std::vector<int> dimids(ndims);
+    if (ndims > 0 && NC_NOERR != nc_inq_vardimid(group_id, varid, dimids.data()))
+        input_error("Found but could not read the dimensions of the variable coverage.");
+    std::size_t total = 1;
+    for (const int dimid : dimids)
+    {
+        std::size_t length = 0;
+        if (NC_NOERR != nc_inq_dimlen(group_id, dimid, &length))
+            input_error("Found but could not read the dimensions of the variable coverage.");
+        total *= length;
+    }
+    coverage.resize(total);
     if (NC_NOERR != nc_get_var_int(group_id, varid, coverage.data()))
         input_error("Found but could not read the variable coverage.");
     return true;
@@ -996,6 +1007,7 @@ Database::Database(const std::string& datafile_path)
     std::size_t repaired_spheres = 0;
     std::size_t groups_with_upper = 0;
     std::size_t groups_with_coverage = 0;
+    bool any_coverage_variable = false;
     std::vector<int> coverage_scattered;
     // Which grid cells each channel falls in.  It depends only on the channels'
     // angle labels, and every sphere shares one layout but the legacy hover
@@ -1094,8 +1106,13 @@ Database::Database(const std::string& datafile_path)
         if (std::any_of(phis_scattered.begin(), phis_scattered.end(),
                     [](double phi) { return std::fabs(phi) > 90.0; }))
             groups_with_upper++;
-        coverage_scattered.assign(nchannels, 0);
-        if (read_channel_coverage(group_id, coverage_scattered))
+        // Channel-shaped coverage is placed with the channels below.  Grid-shaped
+        // coverage (with spectra) is read in the spectral block, which knows the
+        // cell order it has to follow, and counts there.
+        const bool group_has_coverage = read_coverage(group_id, coverage_scattered);
+        const bool channel_coverage = group_has_coverage && coverage_scattered.size() == nchannels;
+        any_coverage_variable = any_coverage_variable || group_has_coverage;
+        if (channel_coverage)
             groups_with_coverage++;
         if (i == 0)
         {
@@ -1279,6 +1296,27 @@ Database::Database(const std::string& datafile_path)
                 }
                 cached_cell_of_valid = true;
             }
+            // Grid-shaped coverage, laid out as amplitude is, so the same cell_of
+            // permutation applies.  A cell counts as measured only if every band
+            // of it was, which is the conservative reading of one flag per cell.
+            if (group_has_coverage && !channel_coverage)
+            {
+                if (coverage_scattered.size() != n_phi * n_theta * n_bands)
+                    input_error("Database error: sphere ", i, " has a coverage variable that matches "
+                            "neither its channels nor its spectral grid.");
+                std::vector<std::uint8_t> measured_in_every_band(n_phi * n_theta, 1);
+                for (std::size_t slot = 0; slot < n_phi * n_theta; slot++)
+                {
+                    for (std::size_t band = 0; band < n_bands; band++)
+                    {
+                        if (coverage_scattered[slot * n_bands + band] == 0)
+                            measured_in_every_band[cell_of[slot]] = 0;
+                    }
+                }
+                for (std::size_t cell = 0; cell < n_phi * n_theta; cell++)
+                    measured_[cell * n_conditions + i] = measured_in_every_band[cell];
+                groups_with_coverage++;
+            }
             for (std::size_t slot = 0; slot < n_phi * n_theta; slot++)
             {
                 for (std::size_t band = 0; band < n_bands; band++)
@@ -1347,8 +1385,9 @@ Database::Database(const std::string& datafile_path)
                             std::isfinite(dBAs_scattered[c]) ? dBAs_scattered[c] : no_energy_floor_db;
                     const double EAA = std::isfinite(EAAs_scattered[c]) ? EAAs_scattered[c] : 0.0;
                     grid[(m * thetas.size() + n) * n_conditions + i] = {dBA, EAA};
-                    measured_[(m * thetas.size() + n) * n_conditions + i] =
-                            coverage_scattered[c] != 0 ? 1 : 0;
+                    if (channel_coverage)
+                        measured_[(m * thetas.size() + n) * n_conditions + i] =
+                                coverage_scattered[c] != 0 ? 1 : 0;
                 }
             }
         }
@@ -1367,7 +1406,12 @@ Database::Database(const std::string& datafile_path)
                 "Propagating them unshifted would be wrong by up to about 2 dB in tonal bands; refused.");
     has_coverage_ = !group_ids.empty() && groups_with_coverage == group_ids.size();
     if (!has_coverage_)
+    {
         measured_.clear();
+        if (any_coverage_variable)
+            warn("Database ", datafile_path, " has a coverage variable that is not used: it must "
+                    "be in every group, along its channels or along its spectral grid.");
+    }
     upper_hemisphere_measured_ = !group_ids.empty() && groups_with_upper == group_ids.size();
     if (!upper_hemisphere_measured_)
         info("Not every sphere stores its upper half: directions above the plane read the mirror image.");
