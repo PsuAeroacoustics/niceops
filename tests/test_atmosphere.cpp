@@ -145,3 +145,36 @@ TEST_CASE("absorption_coefficients matches the per-frequency call", "[atmosphere
 
     REQUIRE(absorption_coefficients(atmosphere, {}).empty());
 }
+
+TEST_CASE("implausible air is named, with the likely unit slip", "[atmosphere][validation]")
+{
+    // Each of these once ran: Celsius for kelvin moved a footprint 6 dB, Pa for
+    // kPa 4 dB, a humidity fraction 4.8 dB, and a temperature or pressure of zero
+    // made every level NaN, all with exit status 0.
+    REQUIRE(temperature_problem(280.37).empty());
+    REQUIRE(temperature_problem(150.0).empty());
+    REQUIRE(temperature_problem(350.0).empty());
+    REQUIRE_FALSE(temperature_problem(15.0).empty());
+    REQUIRE(temperature_problem(15.0).find("Celsius") != std::string::npos);
+    REQUIRE_FALSE(temperature_problem(0.0).empty());
+    REQUIRE_FALSE(temperature_problem(-5.0).empty());
+    REQUIRE_FALSE(temperature_problem(std::nan("")).empty());
+    REQUIRE_FALSE(temperature_problem(500.0).empty());
+
+    REQUIRE(pressure_problem(101.325).empty());
+    REQUIRE(pressure_problem(86.1138).empty());
+    REQUIRE_FALSE(pressure_problem(101325.0).empty());
+    REQUIRE(pressure_problem(101325.0).find("Pa") != std::string::npos);
+    REQUIRE_FALSE(pressure_problem(0.0).empty());
+    REQUIRE_FALSE(pressure_problem(-1.0).empty());
+    REQUIRE_FALSE(pressure_problem(std::nan("")).empty());
+
+    REQUIRE(humidity_problem(20.0).empty());
+    REQUIRE(humidity_problem(100.0).empty());
+    REQUIRE(humidity_problem(0.0).empty()); // completely dry air is allowed
+    REQUIRE_FALSE(humidity_problem(0.5).empty());
+    REQUIRE(humidity_problem(0.5).find("fraction") != std::string::npos);
+    REQUIRE_FALSE(humidity_problem(-5.0).empty());
+    REQUIRE_FALSE(humidity_problem(250.0).empty());
+    REQUIRE_FALSE(humidity_problem(std::nan("")).empty());
+}

@@ -500,6 +500,20 @@ public:
         return tip_speed_;
     }
 
+    // The rotor radius (m) and the weight (N) the database was built for, from
+    // the root variables main_rotor_radius_meters and vehicle_weight_newtons, or
+    // NaN when the file does not carry them.  With the tip speed these are what
+    // the vehicle file has to agree with for mu and CT to index the right
+    // conditions; only the tip speed used to be compared.
+    double rotor_radius() const
+    {
+        return rotor_radius_;
+    }
+    double vehicle_weight() const
+    {
+        return vehicle_weight_newtons_;
+    }
+
     // Which velocity the flight conditions were taken from, as the root
     // attribute speed_reference records it.  Absent means the ground, which is
     // what every database built before the attribute existed used.
@@ -648,6 +662,8 @@ private:
     // the loader transposes once.  Both empty unless the database carries
     // spectra.
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
+    double rotor_radius_ = std::numeric_limits<double>::quiet_NaN();
+    double vehicle_weight_newtons_ = std::numeric_limits<double>::quiet_NaN();
     SpeedReference speed_reference_ = SpeedReference::ground;
     std::vector<double> frequencies_;
     std::vector<double> spectra_;

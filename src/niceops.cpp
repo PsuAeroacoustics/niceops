@@ -397,7 +397,31 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
     trace("Reading observers from ", observer_file, ".");
     // D reads this with csvReader!(double)(contents, null), which consumes the
     // first record as a header and discards it whether or not it is numeric.
-    auto records = read_numeric_csv(observer_file, /*skip_first_record=*/true);
+    CsvReport report;
+    auto records = read_numeric_csv(observer_file, /*skip_first_record=*/true, &report);
+    // A row that did not parse used to be dropped without a word, so a typo
+    // ("4oo") removed an observer and everything after it moved up a place.
+    if (report.dropped > 0)
+    {
+        input_error("Observer file ", observer_file, ": line ", report.first_dropped_line,
+                " is not a row of numbers", report.dropped > 1
+                        ? " (and " + std::to_string(report.dropped - 1) + " more are not)"
+                        : std::string(),
+                ". After the header every line must be x,y,z, id,x,y,z or id,x,y,z,height.");
+    }
+    // One shape for the whole file: a 3-field row is x,y,z and a 4-field one is
+    // id,x,y,z, and the width was decided row by row, so a row cut short became
+    // an observer at the wrong coordinates (x,y,z of "4,700,800" is 4 ft east,
+    // 700 ft north, 800 ft up).
+    for (std::size_t row = 1; row < records.size(); row++)
+    {
+        if (records[row].size() != records.front().size())
+        {
+            input_error("Observer file ", observer_file, ": row ", row + 2, " has ",
+                    records[row].size(), " fields where the first has ", records.front().size(),
+                    ". Every row must have the same columns.");
+        }
+    }
     for (const auto& data : records)
     {
         if (data.size() == 3)
@@ -680,13 +704,25 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // checking because the two are easy to state in different units:
     // S-76D_M3.nod was built at 220 m/s, and 600 is that same figure read as
     // ft/s, which puts the tip at Mach 1.7.
-    if (!std::isnan(database.tip_speed())
-            && !approx_equal(trajectory.vehicle.tip_speed, database.tip_speed()))
-    {
-        log("Main rotor tip speed disagrees: ", job.vehicle, " gives ",
-                trajectory.vehicle.tip_speed, " m/s but the database was built at ",
-                database.tip_speed(), " m/s. mu and CT will index the wrong conditions.");
-    }
+    //
+    // Weight and rotor radius set CT and mu in the same way and the database
+    // records them too, but only the tip speed was ever compared: a vehicle file
+    // 10 percent heavy moved the footprint 0.75 dB median with nothing said, and
+    // a tip speed 4.6 percent off moved it 1.1 dB.  All three are warnings, on
+    // stderr.  The weight is compared at 1 percent: panam builds with g = 9.82
+    // and this program uses 9.80665, a 0.14 percent difference that is not a
+    // disagreement.
+    const auto vehicle_disagrees = [&](const char* what, const char* unit_text,
+                                           double from_file, double from_database) {
+        if (std::isnan(from_database) || approx_equal(from_file, from_database))
+            return;
+        warn("Vehicle ", what, " disagrees: ", job.vehicle, " gives ", from_file, " ", unit_text,
+                " but the database was built at ", from_database, " ", unit_text,
+                ". mu and CT will index the wrong conditions.");
+    };
+    vehicle_disagrees("main rotor tip speed", "m/s", trajectory.vehicle.tip_speed, database.tip_speed());
+    vehicle_disagrees("main rotor radius", "m", trajectory.vehicle.radius, database.rotor_radius());
+    vehicle_disagrees("weight", "N", trajectory.vehicle.weight, database.vehicle_weight());
 
     // Trim trajectory (per Mike): crop from the given x to whichever comes
     // first, the lowest or the slowest point.  Off unless asked for -- it
@@ -746,7 +782,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // seconds column shifted into local time.
     std::vector<char> night(options.want_dnl ? nt : 0);
     for (std::size_t it = 0; it < night.size(); it++)
+    {
+        if (std::isnan(trajectory.states[it].utcsec))
+        {
+            // A NaN fails both halves of is_night's window test, so a track with
+            // no clock was classed as daytime -- or, when the start defaulted to
+            // zero, as UTC midnight, i.e. night: +10 dB on the whole footprint,
+            // silently.  Either way the answer was made up.
+            input_error("-D needs the time of day, and ", job.trajectory, " does not carry one: "
+                    "it has no utcsec column. Give --start_utc <seconds since UTC midnight at "
+                    "t = 0>.");
+        }
         night[it] = is_night(trajectory.states[it].utcsec, options.utc_offset) ? 1 : 0;
+    }
 
     // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
     const auto offset = heading_offset(trajectory.states, options.frame_bearing);
@@ -1046,10 +1094,31 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         while (last_band > first_band && band_gains[last_band - 1] == 0.0)
             last_band--;
 
+        // Where each value came from, so a default is not mistaken for a
+        // measurement: the vehicle file usually gives a temperature and a
+        // density, derives the pressure from them, and gives no humidity at all.
+        const auto origin = [](bool overridden, const char* option, bool given, const char* otherwise) {
+            return std::string(overridden ? option : given ? "vehicle file" : otherwise);
+        };
+        const auto& vehicle = trajectory.vehicle;
+        const std::string temperature_from = origin(!std::isnan(options.temperature_override),
+                "--temperature", vehicle.temperature_given, "default");
+        const std::string pressure_from = origin(!std::isnan(options.pressure_override), "--pressure",
+                vehicle.pressure_given, "from the vehicle file's density and temperature");
+        const std::string humidity_from = origin(!std::isnan(options.humidity_override), "--humidity",
+                vehicle.humidity_given, "default");
         log("Propagating spectra: ", retained, " of ", bands.size(), " bands within ",
                 options.band_limits.low, " to ", options.band_limits.high, " Hz, at ",
-                air.temperature, " K, ", air.pressure, " kPa, ", air.relative_humidity,
-                "% RH", profile ? " at the ground" : "", ".");
+                air.temperature, " K (", temperature_from, "), ", air.pressure, " kPa (",
+                pressure_from, "), ", air.relative_humidity, "% RH (", humidity_from, ")",
+                profile ? ", the ground values" : "", ".");
+        if (!profile && humidity_from == "default")
+        {
+            warn("Relative humidity is not set (no --humidity, and ", job.vehicle, " gives none), so ",
+                    air.relative_humidity, " percent is assumed. Absorption depends strongly on it: "
+                    "going from 20 to 50 percent moved a footprint 2 dB. Give --humidity or add "
+                    "\"relative humidity\" to the Atmosphere section.");
+        }
         // Say what that atmosphere costs at the extremes actually in play, so a
         // wrong humidity is visible in the log rather than only in the answer.
         log("  absorption spans ", absorption.front(), " dB/m at ", bands.front(), " Hz to ",
@@ -2205,7 +2274,7 @@ int run(int argc, char* argv[])
     std::vector<double> origin;
     double frame_bearing = std::numeric_limits<double>::quiet_NaN();
     double ground_elevation = 0.0;
-    double start_utc = 0.0;
+    double start_utc = std::numeric_limits<double>::quiet_NaN();
     // Waypoints state intent, not a constraint to be met to the inch: forcing
     // a path exactly through them manufactures curvature, and the load factor
     // is that curvature, so it lands in CT and then in the levels.  Ten feet is
@@ -2339,7 +2408,8 @@ int run(int argc, char* argv[])
             "(default 0).");
     app.add_option("--start_utc", start_utc,
             "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
-            "window. Ignored when the file carries its own utcsec column.");
+            "window (-D). Required with -D when the track has no utcsec column; ignored "
+            "when it has one.");
     auto* path_smoothing_option = app.add_option("--path_smoothing", path_smoothing,
             "How far, in feet RMS, the path fitted through a geodetic track may sit from "
             "the given positions, per axis. Default 10. Zero flies through them exactly, "
@@ -2485,6 +2555,17 @@ int run(int argc, char* argv[])
     {
         input_error("--gridstep must be positive, got ", grid_step, ".");
     }
+    // The atmosphere overrides are checked where they are read, before anything
+    // loads: a bad one used to run the whole case and write a footprint.
+    if (!std::isnan(temperature_override))
+        if (const auto problem = temperature_problem(temperature_override); !problem.empty())
+            input_error("--temperature: ", problem);
+    if (!std::isnan(pressure_override))
+        if (const auto problem = pressure_problem(pressure_override); !problem.empty())
+            input_error("--pressure: ", problem);
+    if (!std::isnan(humidity_override))
+        if (const auto problem = humidity_problem(humidity_override); !problem.empty())
+            input_error("--humidity: ", problem);
     if (grid_bounds[1] <= grid_bounds[0] || grid_bounds[3] <= grid_bounds[2])
     {
         input_error("--grid needs xmin < xmax and ymin < ymax.");

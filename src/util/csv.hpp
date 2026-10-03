@@ -67,13 +67,24 @@ inline bool parse_numeric_row(const std::string& line, std::vector<double>& row)
 
 } // namespace detail
 
+// What a read set aside.  A text line before the first number is a header (or a
+// units line under one) and is expected; a text line AFTER the data has begun is
+// a row that did not parse -- a typo, a short row cut off mid-field -- and used
+// to vanish without a word, shifting every row after it up and leaving the run
+// to evaluate whatever was left.
+struct CsvReport
+{
+    std::size_t dropped = 0;
+    std::size_t first_dropped_line = 0; // 1-based, in the file
+};
+
 // skip_first_record mirrors D's csvReader!(double)(contents, null): passing a
 // null header makes std.csv consume the first record as a header row and
 // discard it, unconditionally -- even when it holds numbers.  Callers that
 // port such a csvReader must pass true, or they will read one extra observer
 // that the D original silently dropped.
 inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path,
-        bool skip_first_record = false)
+        bool skip_first_record = false, CsvReport* report = nullptr)
 {
     std::ifstream in(path);
     if (!in)
@@ -82,8 +93,10 @@ inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path
     std::string line;
     bool first = true;
     std::vector<double> row;
+    std::size_t line_number = 0;
     while (std::getline(in, line))
     {
+        line_number++;
         detail::strip_carriage_return(line);
         if (line.empty())
             continue;
@@ -94,7 +107,14 @@ inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path
         }
         first = false;
         if (detail::parse_numeric_row(line, row))
+        {
             rows.push_back(row);
+        }
+        else if (report && !rows.empty())
+        {
+            if (report->dropped++ == 0)
+                report->first_dropped_line = line_number;
+        }
     }
     return rows;
 }
@@ -129,6 +149,30 @@ struct LabelledCsv
         return npos;
     }
 
+    // The unit a header declares for column `index`, lower-cased: the first word
+    // inside its parentheses or brackets ("Alt (ft)" gives "ft", "Climb Rate
+    // [fpm]" gives "fpm", "Altitude (m MSL)" gives "m"), or empty when it
+    // declares none.  normalise() discards it so that the name matches, which
+    // left every declared unit unchecked.
+    std::string unit_token(std::size_t index) const
+    {
+        const std::string& field = header[index];
+        const auto open = field.find_first_of("([");
+        if (open == std::string::npos)
+            return "";
+        std::size_t begin = field.find_first_not_of(" \t", open + 1);
+        if (begin == std::string::npos)
+            return "";
+        std::size_t end = begin;
+        while (end < field.size() && field[end] != ' ' && field[end] != '\t' && field[end] != ')'
+                && field[end] != ']')
+            end++;
+        std::string token = field.substr(begin, end - begin);
+        std::transform(token.begin(), token.end(), token.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return token;
+    }
+
     // Lower-case, drop any parenthesised or bracketed unit, and keep only
     // letters and digits.  That makes "Alt (ft)", "alt_ft" and "ALT" one name,
     // without the alias lists having to spell every punctuation variant.
@@ -151,7 +195,7 @@ struct LabelledCsv
 // every fully numeric line after it is a row.  Non-numeric lines are dropped as
 // read_numeric_csv drops them, so a file with a units line under its header
 // still reads.
-inline LabelledCsv read_labelled_csv(const std::string& path)
+inline LabelledCsv read_labelled_csv(const std::string& path, CsvReport* report = nullptr)
 {
     std::ifstream in(path);
     if (!in)
@@ -160,8 +204,10 @@ inline LabelledCsv read_labelled_csv(const std::string& path)
     std::string line;
     bool first = true;
     std::vector<double> row;
+    std::size_t line_number = 0;
     while (std::getline(in, line))
     {
+        line_number++;
         detail::strip_carriage_return(line);
         if (line.empty())
             continue;
@@ -175,7 +221,14 @@ inline LabelledCsv read_labelled_csv(const std::string& path)
             continue;
         }
         if (detail::parse_numeric_row(line, row))
+        {
             csv.rows.push_back(row);
+        }
+        else if (report && !csv.rows.empty())
+        {
+            if (report->dropped++ == 0)
+                report->first_dropped_line = line_number;
+        }
     }
     return csv;
 }

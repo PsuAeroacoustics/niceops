@@ -826,6 +826,11 @@ Database::Database(const std::string& datafile_path)
         tip_speed_ = tip_speed_value;
         info("Database records a main rotor tip speed of ", tip_speed_, " m/s.");
     }
+    double root_value = 0.0;
+    if (NC_NOERR == get_scalar(file_ncid, "main_rotor_radius_meters", &root_value))
+        rotor_radius_ = root_value;
+    if (NC_NOERR == get_scalar(file_ncid, "vehicle_weight_newtons", &root_value))
+        vehicle_weight_newtons_ = root_value;
     speed_reference_ = read_speed_reference(file_ncid);
     info("Database flight conditions are referred to the ", to_string(speed_reference_), ".");
 

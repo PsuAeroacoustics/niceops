@@ -19,6 +19,7 @@
 #include <array>
 #include <functional>
 #include <limits>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -110,6 +111,12 @@ struct dimensional_data
     // Atmospheric state for the spectral propagation path, from the same file's
     // "Atmosphere" section.  Unused by CT and mu, which need only rho.
     Atmosphere atmosphere;
+    // Which of the atmosphere's values the file actually gave, so the run can say
+    // which ones it filled in: humidity above all defaults to 20 percent, and
+    // that moves the spectral footprint by 1 to 3 dB.
+    bool temperature_given = false;
+    bool pressure_given = false;
+    bool humidity_given = false;
 };
 
 inline std::ostream& operator<<(std::ostream& os, const dimensional_data& v)
@@ -137,8 +144,12 @@ struct GeodeticInput
     // observers, which is what a planner working in AGL already means.
     double ground_elevation = 0.0; // metres
     // Seconds since UTC midnight at t = 0.  Only the day-night window reads it,
-    // and a file carrying its own utcsec column supplies it instead.
-    double start_utc = 0.0;
+    // and a file carrying its own utcsec column supplies it instead.  NaN means
+    // neither did: the states then have no clock and -D refuses them.  It
+    // defaulted to 0, which dates the flight at UTC midnight -- night in every
+    // timezone but the one a few hours west -- so a clockless track got the 10 dB
+    // night penalty silently.
+    double start_utc = std::numeric_limits<double>::quiet_NaN();
     // Resampling step in seconds, used when the samples are unevenly spaced or
     // coarser than this.  It never coarsens -- a 50 Hz file keeps its own
     // sample times -- because the sound exposure integral is a Riemann sum over

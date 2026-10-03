@@ -309,6 +309,44 @@ set_tests_properties(multi_trajectory_history_run PROPERTIES FIXTURES_REQUIRED m
 set_tests_properties(multi_trajectory_history_names PROPERTIES FIXTURES_REQUIRED multi_history_run)
 add_test(NAME duplicate_output_names_rejected COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197405AC.csv --gridstep 1640 -o integrated/same.csv -o integrated/same.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(duplicate_output_names_rejected PROPERTIES PASS_REGULAR_EXPRESSION "Two trajectories would write the same output file")
+# -D on a geodetic track with no utcsec column and no --start_utc used to date the
+# flight at UTC midnight and add the night penalty (+10 dB) without a word.  It is
+# refused now, and a start time makes the same run work.
+add_test(NAME dnl_needs_a_clock COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -D integrated/noclock_dnl.csv -o integrated/noclock_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(dnl_needs_a_clock PROPERTIES PASS_REGULAR_EXPRESSION "-D needs the time of day")
+add_test(NAME dnl_with_start_utc COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --start_utc 43200 -D integrated/dated_dnl.csv -o integrated/dated_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The vehicle file against the database it is run with.  Only the tip speed was
+# ever compared, in an info line; weight and radius set CT in the same way, and a
+# vehicle file 10 percent heavy moved the footprint 0.75 dB median with nothing
+# said.  All three are warnings now.  The B407 file and database are a matched
+# pair (the weights differ by panam's g = 9.82, 0.14 percent) and must stay quiet.
+set(B407_RUN -d databases/B407_fixed_load_factor.nod -t tracks/S-76D/197421AC.csv --gridstep 1640 --humidity 20 -o integrated/vehicle_check.csv)
+add_test(NAME vehicle_tip_speed_mismatch_warns COMMAND niceops ${B407_RUN} -v databases/S-76D.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(vehicle_tip_speed_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle main rotor tip speed disagrees")
+add_test(NAME vehicle_weight_mismatch_warns COMMAND niceops ${B407_RUN} -v tests/data/B407_heavy.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(vehicle_weight_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle weight disagrees")
+add_test(NAME matched_vehicle_is_silent COMMAND niceops ${B407_RUN} -v databases/B407.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(matched_vehicle_is_silent PROPERTIES FAIL_REGULAR_EXPRESSION "disagrees;Relative humidity is not set")
+# Humidity is the one atmosphere value that is usually defaulted (the vehicle
+# files give a temperature and a density, not a humidity) and absorption is very
+# sensitive to it, so a defaulted one is said aloud; the other values say where
+# they came from in the log.
+add_test(NAME humidity_default_is_warned COMMAND niceops -d databases/B407_fixed_load_factor.nod -t tracks/S-76D/197421AC.csv --gridstep 1640 -v databases/B407.json -o integrated/humidity_default.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(humidity_default_is_warned PROPERTIES PASS_REGULAR_EXPRESSION "Relative humidity is not set")
+# Unit slips in the atmosphere options are refused before anything loads.
+add_test(NAME temperature_in_celsius_rejected COMMAND niceops --temperature 15 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(temperature_in_celsius_rejected PROPERTIES PASS_REGULAR_EXPRESSION "--temperature: a temperature of 15.* is it in Celsius")
+add_test(NAME pressure_in_pascals_rejected COMMAND niceops --pressure 101325 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pressure_in_pascals_rejected PROPERTIES PASS_REGULAR_EXPRESSION "--pressure: a pressure of 101325.* is it in Pa or hPa")
+add_test(NAME humidity_as_fraction_rejected COMMAND niceops --humidity 0.5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(humidity_as_fraction_rejected PROPERTIES PASS_REGULAR_EXPRESSION "--humidity: a relative humidity of 0.5.* not as a fraction")
+# An observer file with a row that does not parse, or with rows of different
+# widths, used to run on the rows that did: a typo removed an observer, a short
+# row became an observer at the wrong coordinates.
+add_test(NAME observer_typo_rejected COMMAND niceops -b tests/data/observers_typo.csv -o integrated/observers_typo.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(observer_typo_rejected PROPERTIES PASS_REGULAR_EXPRESSION "line 3 is not a row of numbers")
+add_test(NAME observer_mixed_widths_rejected COMMAND niceops -b tests/data/observers_mixed_widths.csv -o integrated/observers_mixed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(observer_mixed_widths_rejected PROPERTIES PASS_REGULAR_EXPRESSION "has 2 fields where the first has 3")
 # The spectral peak search and --db_cutoff skip what a bound puts below a
 # threshold; with --ground_effect the bound includes the most the ground can
 # add.  A skipped state must change nothing, so a run through the peak search
