@@ -408,3 +408,87 @@ TEST_CASE("an end with too little data in its window stays natural", "[spline][e
         REQUIRE(freed.derivative(at, 2) == plain.derivative(at, 2));
     }
 }
+
+TEST_CASE("a tolerance beyond the line's residual returns the exact weighted line", "[spline][spaps]")
+{
+    // Closed form, not a limit: the line the penalty tends to is the weighted
+    // least-squares fit, and that is what comes back, curvature exactly zero.
+    const auto x = linspace(0.0, 6.0, 40);
+    const auto y = noisy_curve(x);
+    std::vector<double> w(x.size(), 1.0);
+    for (std::size_t i = 0; i < w.size(); i += 3)
+        w[i] = 4.0;
+    const auto spline = SmoothingSpline::within_tolerance(x, y, 1e9, w);
+    // The normal equations, written out.
+    double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (std::size_t i = 0; i < x.size(); i++)
+    {
+        sw += w[i];
+        sx += w[i] * x[i];
+        sy += w[i] * y[i];
+        sxx += w[i] * x[i] * x[i];
+        sxy += w[i] * x[i] * y[i];
+    }
+    const double slope = (sw * sxy - sx * sy) / (sw * sxx - sx * sx);
+    const double intercept = (sy - slope * sx) / sw;
+    for (std::size_t i = 0; i < x.size(); i++)
+    {
+        REQUIRE(spline.fitted()[i] == Catch::Approx(intercept + slope * x[i]).margin(1e-12));
+        REQUIRE(spline.derivative(x[i], 2) == 0.0);
+    }
+    // And it is what a very stiff penalty approaches.
+    const auto stiff = SmoothingSpline::with_smoothing(x, y, 1e8, w);
+    REQUIRE(max_abs_difference(stiff.fitted(), spline.fitted()) < 1e-6);
+}
+
+TEST_CASE("long, straight and level tracks are fitted, not refused", "[spline][spaps]")
+{
+    // Fifty-hertz level flight with a millimetre of noise and a budget of
+    // metres.  The search used to climb lambda to 1e200 and, from about 30,000
+    // samples, lose positive definiteness on the way and reject the input.
+    for (const std::size_t n : {std::size_t(6551), std::size_t(30000), std::size_t(60000)})
+    {
+        std::vector<double> t(n), y(n);
+        for (std::size_t i = 0; i < n; i++)
+        {
+            t[i] = 0.02 * static_cast<double>(i);
+            y[i] = 65.0 + 1e-3 * jitter(i);
+        }
+        const double budget = 3.048 * 3.048 * static_cast<double>(n);
+        const auto spline = SmoothingSpline::within_tolerance(t, y, budget);
+        INFO("n = " << n);
+        REQUIRE(spline.residual() <= budget);
+        REQUIRE(std::fabs(spline.derivative(0.5 * t.back(), 2)) < 1e-12);
+        REQUIRE(std::fabs(spline.derivative(0.5 * t.back(), 1)) < 1e-5);
+    }
+    // A single tiny time gap used to do the same at n = 6551.
+    std::vector<double> t(6551), y(6551);
+    for (std::size_t i = 0; i < t.size(); i++)
+    {
+        t[i] = 0.02 * static_cast<double>(i) + (i > 3000 ? 1e-6 : 0.0);
+        y[i] = 65.0 + 1e-3 * jitter(i);
+    }
+    REQUIRE_NOTHROW(SmoothingSpline::within_tolerance(t, y, 3.048 * 3.048 * 6551.0));
+}
+
+TEST_CASE("a budget the factorization cannot reach on a long track is kept, not refused", "[spline][spaps]")
+{
+    // The residual approaches the line's slowly, so a tolerance just under it
+    // asks for a lambda past what the n^4-conditioned system can solve at this
+    // length (about 40,000 points).  The answer is then the last lambda that
+    // could be solved: inside the tolerance, which is the constraint, if less
+    // smooth than asked for.
+    const std::size_t n = 50000;
+    std::vector<double> t(n), y(n);
+    for (std::size_t i = 0; i < n; i++)
+    {
+        t[i] = 0.02 * static_cast<double>(i);
+        y[i] = 0.3 * std::sin(0.01 * t[i]) + 1e-3 * jitter(i);
+    }
+    const auto line = SmoothingSpline::within_tolerance(t, y, 1e30);
+    const double hair = line.residual() * (1.0 - 1e-9);
+    const auto spline = SmoothingSpline::within_tolerance(t, y, hair);
+    REQUIRE(spline.residual() <= hair);
+    REQUIRE(spline.residual() > 0.0);
+    REQUIRE(std::isfinite(spline.derivative(500.0, 2)));
+}

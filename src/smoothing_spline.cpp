@@ -142,6 +142,44 @@ double weighted_residual(const std::vector<double>& y, const std::vector<double>
     return total;
 }
 
+// The weighted least-squares line through (x, y), and its weighted squared
+// residual, which is what any smoothing spline's residual tends to as lambda
+// grows.  Centred on the weighted mean, so the slope does not lose digits to a
+// large offset in x.
+struct LeastSquaresLine
+{
+    double mean_x = 0.0, mean_y = 0.0, slope = 0.0, residual = 0.0;
+};
+
+LeastSquaresLine weighted_line(const std::vector<double>& x, const std::vector<double>& y,
+        const std::vector<double>& w)
+{
+    LeastSquaresLine line;
+    double total = 0.0;
+    for (std::size_t i = 0; i < x.size(); i++)
+    {
+        total += w[i];
+        line.mean_x += w[i] * x[i];
+        line.mean_y += w[i] * y[i];
+    }
+    line.mean_x /= total;
+    line.mean_y /= total;
+    double sxx = 0.0, sxy = 0.0;
+    for (std::size_t i = 0; i < x.size(); i++)
+    {
+        const double dx = x[i] - line.mean_x;
+        sxx += w[i] * dx * dx;
+        sxy += w[i] * dx * (y[i] - line.mean_y);
+    }
+    line.slope = sxx > 0.0 ? sxy / sxx : 0.0;
+    for (std::size_t i = 0; i < x.size(); i++)
+    {
+        const double r = y[i] - line.mean_y - line.slope * (x[i] - line.mean_x);
+        line.residual += w[i] * r * r;
+    }
+    return line;
+}
+
 // Everything in Reinsch's construction that does not depend on lambda: the knot
 // spacings, the three nonzeros of each Q column, the Gram bands R, the penalty
 // bands Q^T W^-1 Q and the right-hand side Q^T y.  within_tolerance refits some
@@ -209,8 +247,22 @@ public:
         gamma_.resize(m);
     }
 
-    // Fills `fitted` and `curvature` for this lambda.
+    // Fills `fitted` and `curvature` for this lambda; an input error if the
+    // system cannot be factored.
     void fit(double lambda, std::vector<double>& fitted, std::vector<double>& curvature)
+    {
+        if (!solve(lambda, fitted, curvature))
+        {
+            input_error("SmoothingSpline: penalised system is not positive definite; check that x is "
+                  "strictly increasing and weights are positive.");
+        }
+    }
+
+    // As fit(), but false rather than an error when the system loses positive
+    // definiteness.  That is the input's fault at a moderate lambda; at a huge
+    // one it is rounding (R is negligible beside lambda Q^T W^-1 Q, whose
+    // condition number goes as n^4), and within_tolerance's search wants to know.
+    bool solve(double lambda, std::vector<double>& fitted, std::vector<double>& curvature)
     {
         fitted = y_;
         curvature.assign(n_, 0.0);
@@ -229,7 +281,7 @@ public:
         // whose load factor is the second derivative, so every WGS84 track
         // flew at exactly 1 g and its CT never moved.
         if (n_ < 3)
-            return;
+            return true;
 
         const std::size_t m = n_ - 2;
         for (std::size_t j = 0; j < m; j++)
@@ -244,10 +296,7 @@ public:
         gamma_ = qty_;
 
         if (!solve_pentadiagonal(bands_, lu_, gamma_))
-        {
-            input_error("SmoothingSpline: penalised system is not positive definite; check that x is "
-                  "strictly increasing and weights are positive.");
-        }
+            return false;
 
         // f = y - lambda * W^-1 Q gamma, and f'' = gamma at the interior knots.
         for (std::size_t i = 0; i < n_; i++)
@@ -263,6 +312,7 @@ public:
         }
         for (std::size_t j = 0; j < m; j++)
             curvature[j + 1] = gamma_[j];
+        return true;
     }
 
 private:
@@ -326,10 +376,35 @@ SmoothingSpline SmoothingSpline::within_tolerance(const std::vector<double>& x,
         return fit(x, y, w, 0.0);
 
     // The residual grows monotonically with lambda, from 0 (interpolation) to the
-    // residual of the weighted least-squares line.  Bracket, then bisect on
-    // log(lambda), which behaves far better than lambda itself: the useful range
-    // spans many orders of magnitude and the response is roughly logarithmic.
+    // residual of the weighted least-squares line, which is where it stops.  If
+    // the tolerance reaches that, the line is the answer, and it is a closed
+    // form.  The search it replaces climbed lambda by decades to 1e200 and
+    // returned a line only to rounding; at ~30,000 samples and more the system
+    // stops being positive definite on the way (R is negligible beside
+    // lambda Q^T W^-1 Q), and a level, straight leg was refused with an error that
+    // blamed the input.
     std::vector<double> fitted, curvature;
+    {
+        const LeastSquaresLine line = weighted_line(x, y, w);
+        if (tolerance >= line.residual)
+        {
+            trace("SmoothingSpline: tolerance ", tolerance, " exceeds the least-squares residual; "
+                  "returning the straight-line fit.");
+            SmoothingSpline spline;
+            spline.knots_ = x;
+            spline.fitted_.resize(x.size());
+            for (std::size_t i = 0; i < x.size(); i++)
+                spline.fitted_[i] = line.mean_y + line.slope * (x[i] - line.mean_x);
+            spline.curvature_.assign(x.size(), 0.0);
+            spline.lambda_ = std::numeric_limits<double>::infinity();
+            spline.residual_ = weighted_residual(y, spline.fitted_, w);
+            return spline;
+        }
+    }
+
+    // Bracket, then bisect on log(lambda), which behaves far better than lambda
+    // itself: the useful range spans many orders of magnitude and the response is
+    // roughly logarithmic.
     PenalizedSystem system(x, y, w);
 
     auto residual_at = [&](double lambda) {
@@ -337,24 +412,31 @@ SmoothingSpline SmoothingSpline::within_tolerance(const std::vector<double>& x,
         return weighted_residual(y, fitted, w);
     };
 
-    // Expand upward until the residual exceeds the tolerance.
+    // Expand upward until the residual exceeds the tolerance.  The tolerance is
+    // below the line's residual, so this ends; but on a long track the
+    // factorization can give out first, and the residual approaches the line's
+    // slowly (a decade of lambda moves it by 1e-4 of itself at 1e10).  The last
+    // lambda that was solved is then the answer: its residual is inside the
+    // tolerance, which is the constraint, though short of spending the budget.
     double upper = 1.0;
     double upper_residual = residual_at(upper);
     int expansions = 0;
     while (upper_residual < tolerance && expansions < 200)
     {
-        upper *= 10.0;
-        upper_residual = residual_at(upper);
+        const double next = upper * 10.0;
+        if (!system.solve(next, fitted, curvature))
+        {
+            warn("SmoothingSpline: ", x.size(), " points are too many to reach the requested tolerance ",
+                  tolerance, ": the system stops being solvable at lambda ", next, ".  Using ", upper,
+                  ", whose residual is ", upper_residual, "; the fit is less smooth than asked for.");
+            return fit(x, y, w, upper);
+        }
+        upper = next;
+        upper_residual = weighted_residual(y, fitted, w);
         expansions++;
     }
     if (upper_residual < tolerance)
-    {
-        // Even a nearly rigid line stays inside the tolerance; that line is the
-        // smoothest answer available, so take it.
-        trace("SmoothingSpline: tolerance ", tolerance, " exceeds the least-squares residual; "
-              "returning the straight-line fit.");
         return fit(x, y, w, upper);
-    }
 
     // Walk down if the first probe already overshot.  Keeping the residual in a
     // variable matters here: evaluating it in the loop condition refits the very
