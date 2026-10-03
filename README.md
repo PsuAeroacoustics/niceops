@@ -530,7 +530,8 @@ receiver at or above the source is left to the linear model.
 The range need not be monotonic along a family, so the pair can have more arrivals than that.
 A source at a local maximum of the sound speed is one way. Its shallowest rays skim the slow
 layer and travel far, its steepest turn high and travel far, and the arrivals lie between. The
-other families are sampled at 32 launch angles and every crossing of the range is solved for.
+other families are sampled in launch angle, 32 times plus 8 for each bounce the path can hold
+(at most 512), and every crossing of the range is solved for.
 Each arrival is a level of its own, through its own launch direction on the sphere and its own
 ray tube, and they are summed in energy.
 
@@ -560,7 +561,10 @@ from 4.0–6.5 dB under the PE to within 1 dB of it. Upwind, the linear lapse an
 profiles do not move.
 
 Two limits remain. Within one pair of samples, two close arrivals at a caustic can still be
-missed: 32 against 128 samples moves about 5% of pairs under the inversion by more than 1 dB.
+missed. Against a 2048-sample reference (12 bearings, sources 5–300 m, 50 m to 10 km), 2.9% of
+pairs under `example_inversion.csv` are still more than 1 dB out, and 0.01% under
+`example_windy.csv`; a fixed 32 samples left 11.3% and 1.05%. Scaling the count with the hops
+cost 4–8% of a stratified run.
 Day 286's last profile (run 286288) has warm, calm air at the ground under a weak inversion at
 70–120 ft. There, every ray turned back from aloft turns up again within the lowest metre. It
 reaches a 1.2 m microphone but never a flush one, which stays on the shadow's floor 21 dB

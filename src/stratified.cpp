@@ -719,7 +719,7 @@ constexpr std::size_t max_arrivals = 24;
 } // namespace
 
 std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z_r, double r,
-        const DirectEigenray& primary, bool bounced_only)
+        const DirectEigenray& primary, bool bounced_only, int sample_count)
 {
     std::vector<Arrival> out;
     const Path path {layers};
@@ -789,7 +789,23 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
     // receiver for a hop -- so the samples are taken once, on one grid in
     // launch angle over all the families, and shared.  Sampled family by
     // family, a duct's walks through the layers were repeated 3-5 times over.
-    constexpr int samples = 32;
+    //
+    // How many samples is a matter of how fast the range oscillates in p: a ray
+    // that bounces m times travels X_0(p) + m L(p), and the m L(p) term turns
+    // the same sampling interval through m times as many wiggles, so a
+    // multi-hop root is missed or, worse, bracketed twice over and lost.  The
+    // count grows with the most hops the path can hold; a path with no duct
+    // keeps 32.  Against a 2048-sample reference (12 bearings, sources 5-300 m,
+    // receivers 0.3 and 1.2 m, 50 m to 10 km, example_inversion.csv), the pairs
+    // more than 1 dB out fell from 11.3% to 2.9%, and example_windy.csv's from
+    // 1.05% to 0.01%.  The grid is also bunched toward the shallow end, where
+    // the rays travel far and the range turns fastest in launch angle: free,
+    // and 0.05% instead of 1.05% on the windy profile with 32 samples.
+    constexpr int base_samples = 32;
+    constexpr int samples_per_hop = 8;
+    constexpr int max_samples = 512;
+    const int samples = sample_count > 0 ? std::clamp(sample_count, 2, max_samples)
+                                         : std::clamp(base_samples + samples_per_hop * m_max, base_samples, max_samples);
     const auto fams = families(path, z_s, z_r, false);
     struct Sampled
     {
@@ -853,13 +869,14 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
         return w;
     };
     // Shallowest first, as each family's samples run.
-    Row grid[samples];
+    Row grid[max_samples];
     {
         const double t_a = std::acos(std::min(1.0, p_max * c_s));
         const double t_b = std::acos(std::min(1.0, p_min * c_s));
         for (int j = 0; j < samples; j++)
         {
-            const double t = t_a + (t_b - t_a) * j / (samples - 1);
+            const double u = static_cast<double>(j) / (samples - 1);
+            const double t = t_a + (t_b - t_a) * (u * u);
             grid[j] = row(std::clamp(std::cos(t) / c_s, p_min, p_max));
         }
     }
@@ -876,8 +893,9 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
         // Its own ends, and the shared samples strictly between.
         s.clear();
         s.push_back(whole.p_hi == p_max ? grid[0] : row(whole.p_hi));
-        for (const Row& w : grid)
+        for (int j = 0; j < samples; j++)
         {
+            const Row& w = grid[j];
             if (w.p < whole.p_hi && w.p > whole.p_lo)
                 s.push_back(w);
         }

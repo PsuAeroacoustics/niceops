@@ -121,8 +121,13 @@ ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, d
 // these are the only rays there are.  Leaving them out, the level sat 8-54 dB
 // under the parabolic equation's there (which stays within a few dB of free
 // field) and fell into the gaps between hops.
+//
+// The launch angles are sampled 32 times, plus 8 for each bounce the path can
+// hold (at most 512 in all), bunched toward the shallow end.  `samples`, if
+// positive, replaces that count, and exists so that a test can ask whether the
+// answer has converged in it.
 std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z_r, double r,
-        const DirectEigenray& primary, bool bounced_only = false);
+        const DirectEigenray& primary, bool bounced_only = false, int samples = 0);
 
 // --refraction stratified's counterparts of direct_ray() and finish_ground().
 // `linear` supplies the warm start; `scratch` holds the path's effective sound

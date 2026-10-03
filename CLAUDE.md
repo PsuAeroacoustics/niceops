@@ -670,7 +670,8 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     rate (its fitted gradient), and the refracted path's `profile`.
   - **Every arrival, summed in energy** (`layered_arrivals`, `Arrival` in refraction.hpp).
     The primary is the first family's root. The other families are not monotonic in general,
-    so they are sampled at 32 launch angles and every crossing of r is solved. In a surface
+    so they are sampled in launch angle (32 + 8 per hop the path can hold, at most 512) and every
+    crossing of r is solved. In a surface
     duct (air above the source faster than all of it below) the bounced rays come too:
     X_m(p) = X_0(p) + m L(p), from the same samples. Each earlier bounce costs the plane-wave
     |R|^2 (`add_bounce_loss`), and past every direct ray's reach the strongest is promoted to
@@ -687,9 +688,21 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       cost; the test is now that the estimate no longer falls inside the bracket.
     - **The samples are shared across families** (`Row`: down, up, dip, ground pieces at one
       p). Per family they repeated the walks 3–5 times in a duct.
-    - **32 samples is not generous.** Against 128, 5% of pairs under the inversion move by
-      more than 1 dB, from caustic pairs inside one interval. 16 is far worse. Do not trade
-      samples for speed.
+    - **The sample count scales with the hops, and 32 is not generous.** A ray that bounces m
+      times travels X_0(p) + m L(p), so the same interval holds m times the wiggles: aliasing
+      in the hop count, not near-zero intervals (refining those helped 30%). Against a
+      2048-sample reference (12 bearings x 8 source heights 5-300 m x 2 receiver heights x 120
+      ranges to 10 km), pairs more than 1 dB out: inversion 11.3% at a fixed 32, 2.6% at 128,
+      0.47% at 512, **2.9% at `32 + 8*m_max` (cap 512)**; windy 1.05%, 0.27%, 0.07%, **0.01%**.
+      The grid is bunched toward the shallow end (t = t_a + (t_b - t_a) u^2), free, and worth
+      most of the windy gain; the inversion's remainder is what is left at that cost (`+16/hop`
+      gets 1.8% for another 20% of the arrival time, a cosine bunching 2.6% at +8). It costs
+      4-8% of a stratified run. Against the PE (4 bands, 12 geometries, beyond 1000 ft) the
+      inversion's agreement moved 0.1-0.2 dB rms for the better on average (100 ft source:
+      4.1 -> 3.6, 3.8 -> 3.3, 3.4 -> 2.7, 3.6 -> 2.9; 30 ft: 5.1 -> 5.2, 3.5 -> 3.6, 2.5 -> 2.6,
+      2.7 -> 2.8), the windy's not at all. `layered_arrivals`' `samples` argument exists for
+      `the arrival search has converged in its sample count`. A base of 16 is far worse. Do not
+      trade samples for speed.
     - **The primary's bracket is split around it, not solved whole.** Whole, it returned the
       primary or one of the caustic pair beside it, at random.
     - **Past the hand-over to the linear fit only bounced rays, and rays turned back from

@@ -436,6 +436,49 @@ TEST_CASE("every arrival in a surface duct lands where layered_arrivals says", "
     CHECK(bounced_arrivals > 0);
 }
 
+namespace {
+
+// The level re free field of a pair's arrivals summed in energy, the primary
+// counted as free field if it is lit.  The floor stands for "nothing arrives".
+double arrivals_level(const Layers& layers, double z_s, double z_r, double r, int samples)
+{
+    const auto direct = layered_direct_eigenray(layers, z_s, z_r, r, std::atan2(z_r - z_s, r));
+    const auto arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false, samples);
+    const double chord = std::hypot(r, z_s - z_r);
+    double energy = direct.lit ? 1.0 : 0.0;
+    for (const auto& a : arrivals)
+        energy += std::pow(chord / a.spreading_range, 2);
+    return 10.0 * std::log10(std::max(energy, 1e-6));
+}
+
+} // namespace
+
+TEST_CASE("the arrival search has converged in its sample count", "[stratified]")
+{
+    // A ray that bounces m times travels X_0(p) + m L(p), which turns through m
+    // times as many wiggles per sample interval as a direct one, so a fixed 32
+    // samples lost multi-hop arrivals, whole rays that arrive nowhere else: over
+    // the pairs below, 10 of 385 came out more than 1 dB from the answer at 512
+    // samples (11% of a wider sweep, with the grid not yet bunched toward the
+    // shallow end as it now is).  The count now grows with the hops the path can
+    // hold, and 3 of the 385 are left.  Sources of 10-60 m, ranges to 8 km:
+    const Duct duct;
+    const Layers layers = duct.layers();
+    int pairs = 0, off_by_1db = 0;
+    for (const double z_s : {10.0, 20.0, 30.48, 45.0, 60.0})
+    {
+        for (double r = 400.0; r <= 8000.0; r += 100.0)
+        {
+            const double got = arrivals_level(layers, z_s, 1.2, r, 0);
+            const double converged = arrivals_level(layers, z_s, 1.2, r, 512);
+            pairs++;
+            off_by_1db += std::fabs(got - converged) > 1.0;
+        }
+    }
+    INFO(off_by_1db << " of " << pairs << " pairs differ by more than 1 dB");
+    CHECK(off_by_1db <= 0.015 * pairs);
+}
+
 TEST_CASE("the direct solve reports no ray that does not land", "[stratified]")
 {
     // A family whose end ray never reaches the receiver brackets falsely: that
