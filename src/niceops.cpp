@@ -872,10 +872,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
     }
     // The ambient level stays NaN unless -a was given, which is how D's default-NaN
-    // double suppressed the ambient mix-in.  The reference pressure it converts
-    // to is loop-invariant; it used to be a pow() per evaluation.
+    // double suppressed the ambient mix-in.  The energy it converts to is
+    // loop-invariant; it used to be a pow() per evaluation.  It is mixed in as
+    // energy (level_with_ambient), not as the pressure amplitude D summed.
     const bool add_ambient = !std::isnan(options.ambient_level);
-    const double ambient_pressure = add_ambient ? std::pow(10.0, options.ambient_level / 20.) : 0.0;
+    const double ambient_energy = add_ambient ? std::pow(10.0, 0.1 * options.ambient_level) : 0.0;
 
     // Observers are independent of one another: each reads the database and the
     // source_states array, which are finished and const by now, and writes only
@@ -1881,7 +1882,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     level = 10.0 * std::log10(energy);
                 }
                 if (add_ambient)
-                    level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
+                    level = level_with_ambient(level, ambient_energy);
                 return level;
             };
             if (expand_from_peak)
@@ -1976,7 +1977,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     if (add_ambient)
                     {
                         // Add ambient noise
-                        level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
+                        level = level_with_ambient(level, ambient_energy);
                     }
                     levels[it] = level;
                 }
@@ -2327,7 +2328,8 @@ int run(int argc, char* argv[])
     app.add_option("--cstep", contour_step, "Contour level step, dB.");
     app.add_option("-s,--step", dt, "Resampling time step for --adapt, in seconds. "
             "The sound exposure level integral uses the trajectory's own sample interval.");
-    app.add_option("-a,--ambient", ambient_level, "Ambient noise level, dB");
+    app.add_option("-a,--ambient", ambient_level,
+            "Ambient noise level, dB, added to every sample's level in energy.");
     app.add_option("-i,--history", time_history_prefix, "Time history file prefix.");
     app.add_option("--band_history", band_history_prefix,
             "Per-band time history file prefix: one file per observer, a row per trajectory "

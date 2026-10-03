@@ -156,7 +156,7 @@ seconds, levels in dB.
 
 | Option | Meaning |
 | --- | --- |
-| `-a`, `--ambient` | Ambient level in dB, mixed into every sample. Off unless given. |
+| `-a`, `--ambient` | Ambient level in dB, added to every sample's level in energy (two equal levels give +3 dB). Off unless given. It used to be added as pressure amplitude, as the D original did, which read up to 3 dB high. |
 | `-q`, `--qsam` / `--no-qsam` | Use the flight path angle relative to the tip-path-plane normal rather than the vertical. On by default. |
 | `-s`, `--step` | Resampling step for trajectory adaptation. **Not** the SEL integration step, which comes from the trajectory's own sampling. |
 | `--units` | Length unit for the command line and for every file carrying a length: `ft` (default) or `m`. See **Units**. |

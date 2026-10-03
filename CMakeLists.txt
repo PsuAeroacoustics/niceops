@@ -299,6 +299,13 @@ add_test(NAME golden_compare_rejects_inf COMMAND golden_compare tests/data/compa
 add_test(NAME golden_compare_accepts_matching_inf COMMAND golden_compare tests/data/compare_same_inf.csv tests/data/compare_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(golden_compare_rejects_nan PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value 5: candidate nan")
 set_tests_properties(golden_compare_rejects_inf PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value 8: candidate inf")
+# -a mixes an ambient level in energy.  A negligible one (-200 dB) leaves the demo
+# at the golden, which checks the plumbing of the marched, transformed-level path
+# that -a forces; the arithmetic itself is a unit test (level_with_ambient).
+add_test(NAME ambient_negligible_is_the_golden COMMAND niceops -S state/ci_state.csv -a -200 -o integrated/ambient_negligible.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ambient_negligible_matches COMMAND golden_compare integrated/ambient_negligible.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ambient_negligible_is_the_golden PROPERTIES FIXTURES_SETUP ambient_run)
+set_tests_properties(ambient_negligible_matches PROPERTIES FIXTURES_REQUIRED ambient_run)
 # A failure used to reach only log/niceops.log, so a skipped trajectory left the
 # terminal empty with exit status 1 as the only sign.  Warnings and worse are now
 # echoed to stderr; the case passes on that text.

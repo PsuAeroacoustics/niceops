@@ -1,9 +1,11 @@
 // Ported from the unittest block in niceops.d (peak_range).
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "util/sel.hpp"
@@ -129,4 +131,23 @@ TEST_CASE("day_night_level penalises night operations by 10 dB", "[sel]")
     // is unchanged because a constant shift moves the peak and the threshold
     // together.
     REQUIRE(std::fabs(day_night_level(levels, T, all_night, scratch) - (sel + 10.0)) < 1e-12);
+}
+
+TEST_CASE("an ambient level is added in energy", "[sel][ambient]")
+{
+    // Aircraft and ambient noise are uncorrelated, so their energies add.  The D
+    // original summed pressure amplitudes, which put two equal levels 6.02 dB up
+    // and a level 10 dB below the ambient 2.4 dB up, where energy gives 3.01 and 0.41.
+    const double ambient = 60.0;
+    const double energy = std::pow(10.0, 0.1 * ambient);
+    REQUIRE(level_with_ambient(60.0, energy) - 60.0 == Catch::Approx(10.0 * std::log10(2.0)).margin(1e-12));
+    REQUIRE(level_with_ambient(50.0, energy) - 60.0 == Catch::Approx(10.0 * std::log10(1.1)).margin(1e-12));
+    REQUIRE(level_with_ambient(80.0, energy) - 80.0 == Catch::Approx(10.0 * std::log10(1.01)).margin(1e-12));
+    // Never below either part, and a culled state (-inf) leaves the ambient alone.
+    for (double level : {-30.0, 0.0, 40.0, 59.9, 60.1, 90.0})
+        REQUIRE(level_with_ambient(level, energy) > std::max(level, ambient));
+    REQUIRE(level_with_ambient(-std::numeric_limits<double>::infinity(), energy)
+            == Catch::Approx(ambient).margin(1e-12));
+    // A negligible ambient changes nothing at the golden's tolerance.
+    REQUIRE(level_with_ambient(75.0, std::pow(10.0, -20.0)) == Catch::Approx(75.0).epsilon(1e-12));
 }
