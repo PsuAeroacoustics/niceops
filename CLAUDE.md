@@ -504,7 +504,11 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     r |dr/dtheta| sin|arrival| / cos(launch) reduces to (r rho / h_s)^2.
     `tests/test_refraction.cpp` checks it against finite differences of traced rays; keep that.
   - **The reflected ray is a 1-D solve** on launch angle, along which the range is monotonic
-    (checked across both gradient signs). It starts from the direct ray to the receiver's image
+    (checked across both gradient signs; for a receiver *above* the source under downward
+    refraction it is monotonic on each side of a window |theta| < acos(h_s/h_r) whose launches
+    never climb to the receiver, and the solve takes the side the range at the window's edge
+    says, or reports none: a root of the clamped continuation inside the window is not a ray,
+    and one past the ray's apex is a second, descending crossing, which this is not). It starts from the direct ray to the receiver's image
     below the ground and takes secant steps from there, which usually close in one or two. That
     warm start took the point-receiver refraction run from 4.7 to 3.6 s. A bracketed Illinois
     solve is the fallback. Under downward refraction at long range the ray is launched

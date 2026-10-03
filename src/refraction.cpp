@@ -161,6 +161,20 @@ ReflectedEigenray reflected_eigenray(const LinearProfile& profile, double z_s, d
     };
     const double tolerance = 1e-10 * std::max(r, 1.0);
 
+    // A launch angle gives a ray only if its circle reaches the receiver's height:
+    // rho = h_s / cos(theta) >= h(z_r).  Below that v is negative, d() clamps it to
+    // zero, and miss() is a continuation of the range that is not monotonic, whose
+    // zeros are not rays -- a receiver above the source in a gradient that bends
+    // sound down (a = 0.01, z_s = 2, z_r = 3, r = 800 m) came back with a launch
+    // whose traced ray ended 1.1 m short of the receiver and a grazing angle 19%
+    // low.  Launches with |theta| under `window` miss it.  That binds only where
+    // sound bends down and the receiver is above the source (h grows with z): where
+    // it bends up, h(z_r) > h_s means the receiver is below the source, and the
+    // shadow's edge on the launch angle (`hi` below) is already the stricter limit.
+    const double h_r = c.h(z_r);
+    const double window = c.sigma > 0.0 && h_r > h_s ? std::acos(h_s / h_r) : 0.0;
+    auto reaches = [&](double theta) { return std::fabs(theta) >= window * (1.0 - 1e-9); };
+
     // First, from a close guess: the direct ray to the receiver's image, z_r
     // below the ground, which the reflected ray becomes as z_r shrinks.  In
     // the medium continued below ground that is the circle through the two
@@ -187,7 +201,7 @@ ReflectedEigenray reflected_eigenray(const LinearProfile& profile, double z_s, d
             theta1 = theta2;
             f1 = miss(theta1);
         }
-        if (std::fabs(f1) <= tolerance)
+        if (std::fabs(f1) <= tolerance && reaches(theta1))
         {
             const auto l = legs(theta1);
             ray.exists = true;
@@ -213,15 +227,33 @@ ReflectedEigenray reflected_eigenray(const LinearProfile& profile, double z_s, d
         hi = -std::asin(c.grazing_half_chord(z_s) / c.L);
     else
         hi = 0.5 * pi - near_vertical;
+    // The angles that reach the receiver are two pieces either side of the window,
+    // the range monotonic along each; the root is on the lower if the range at its
+    // edge is already past r, else on the upper.
+    if (window > 0.0 && lo < window && hi > -window)
+    {
+        if (lo < -window && miss(-window) >= 0.0)
+            hi = -window;
+        else if (hi > window)
+            lo = window;
+        else
+            return ray;
+    }
     const double image = -std::atan2(z_s + z_r, r);
+    bool walk_up = false;
     if (image > lo && image < hi)
     {
         if (miss(image) < 0.0)
+        {
             lo = image;
+            walk_up = true;
+        }
         else
             hi = image;
     }
-    if (c.sigma > 0.0 && lo == image)
+    else if (lo == window && window > 0.0)
+        walk_up = true;
+    if (c.sigma > 0.0 && walk_up)
     {
         // Walk up from the image angle rather than bisecting all the way to
         // vertical, where the range grows without limit.
@@ -268,6 +300,8 @@ ReflectedEigenray reflected_eigenray(const LinearProfile& profile, double z_s, d
         }
     }
 
+    if (!reaches(theta))
+        return ray;
     const auto l = legs(theta);
     ray.exists = true;
     ray.launch = theta;

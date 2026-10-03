@@ -417,3 +417,50 @@ TEST_CASE("read_atmosphere_profile reads wind", "[refraction]")
     TempCsv half("z, T_K, RH, wind_speed_mps\n0, 288, 50, 10\n");
     CHECK_THROWS_AS(read_atmosphere_profile(half.path, metres, 0.0), std::runtime_error);
 }
+
+TEST_CASE("reflected_eigenray reaches a receiver above the source, or reports none", "[refraction]")
+{
+    // With sound bending down and the receiver above the source, launches steeper
+    // than a window about the horizontal never climb to the receiver's height.  The
+    // solve used to accept a zero of the clamped continuation there: a = 0.01,
+    // z_s = 2, z_r = 3, r = 800 m returned a launch whose traced ray ended 1.1 m
+    // short, with a grazing angle 19% low.  Every ray it reports must land.
+    int found = 0, reported_none = 0;
+    for (const double a : {0.003, 0.01, 0.03, 0.1})
+    {
+        for (const double z_s : {2.0, 5.0, 20.0})
+        {
+            for (const double z_r : {3.0, 8.0, 40.0})
+            {
+                if (!(z_r > z_s))
+                    continue;
+                for (double r = 60.0; r <= 3000.0; r += 140.0)
+                {
+                    const auto ray = reflected_eigenray({c0, a}, z_s, z_r, r);
+                    INFO("a = " << a << ", z_s = " << z_s << ", z_r = " << z_r << ", r = " << r);
+                    if (!ray.exists)
+                    {
+                        reported_none++;
+                        continue;
+                    }
+                    const auto traced = trace(a, z_s, ray.launch, r, true);
+                    REQUIRE(traced.grazing > 0.0);
+                    CHECK(traced.z == Catch::Approx(z_r).margin(1e-5));
+                    CHECK(traced.grazing == Catch::Approx(ray.grazing).margin(1e-7));
+                    CHECK(traced.length == Catch::Approx(ray.path_length).epsilon(1e-8));
+                    found++;
+                }
+            }
+        }
+    }
+    CHECK(found > 200);
+    // The case that returned a non-ray has none to return: at 800 m the only launches
+    // that put the traced ray at 3 m are the ones that rise past it, turn over (its
+    // apex is 3.3 m) and come back down -- a second crossing, arriving from above,
+    // which this ray (the first, ascending one) is not.  At 500 m there is a first.
+    CHECK_FALSE(reflected_eigenray({c0, 0.01}, 2.0, 3.0, 800.0).exists);
+    const auto near = reflected_eigenray({c0, 0.01}, 2.0, 3.0, 500.0);
+    REQUIRE(near.exists);
+    CHECK(trace(0.01, 2.0, near.launch, 500.0, true).z == Catch::Approx(3.0).margin(1e-5));
+    INFO(reported_none << " pairs had no reflected ray");
+}
