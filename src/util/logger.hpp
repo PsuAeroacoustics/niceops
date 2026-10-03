@@ -131,6 +131,14 @@ public:
         file_.open(path, std::ios::app);
     }
 
+    // Back to stderr, as before any set_file.
+    void close_file()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (file_.is_open())
+            file_.close();
+    }
+
     void set_level(LogLevel level)
     {
         detail::min_level = level;

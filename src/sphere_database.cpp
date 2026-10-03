@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <numeric>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 
 #include <netcdf.h>
@@ -36,12 +37,13 @@ struct NcGuard
         if (id >= 0)
             nc_close(id);
     }
-    // Closes now, for a caller with something to do alongside nc_close.
-    void close()
+    // Closes now, and says how it went: with HDF5's buffering a failed write
+    // (a full disk, a quota) surfaces only here, so a writer has to look.
+    int close()
     {
-        if (id >= 0)
-            nc_close(id);
+        const int status = id >= 0 ? nc_close(id) : NC_NOERR;
         id = -1;
+        return status;
     }
 };
 
@@ -105,7 +107,14 @@ int get_scalar(int ncid, const std::string& variable_name, T* value, bool option
     }
     else
     {
-        status = nc_get_var(ncid, varid, value);
+        // As double, whatever the file stores (nc_get_var copies the external
+        // type's bytes unconverted: a float32 file loaded as garbage, and the
+        // exit status was 0), and element 0 only (it read the whole variable, so
+        // a "scalar" with a longer dimension overran the one double it was
+        // handed).
+        static_assert(std::is_same_v<T, double>, "scalars are read as double");
+        const std::size_t first[NC_MAX_VAR_DIMS] = {};
+        status = nc_get_var1_double(ncid, varid, first, value);
         if (NC_NOERR != status)
         {
             input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
@@ -196,7 +205,8 @@ int get_array(int ncid, const std::string& variable_name, std::size_t countp, st
     {
         std::size_t startp = 0;
         values.resize(countp);
-        status = nc_get_vara(ncid, varid, &startp, &countp, values.data());
+        static_assert(std::is_same_v<T, double>, "arrays are read as double");
+        status = nc_get_vara_double(ncid, varid, &startp, &countp, values.data());
         if (NC_NOERR != status)
         {
             input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
@@ -705,6 +715,17 @@ SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal)
     // Project velocity vector onto TPP to get a "nose" vector
     const Vec3 v = velocity.normalized();
     frame.nose = v - v.dot(frame.normal) * frame.normal;
+    if (!(frame.nose.norm() > 1e-9))
+    {
+        // No velocity, or one along the thrust axis (hover without a heading, a
+        // pure climb): there is no direction to project, and a zero nose made both
+        // frame vectors zero, so every observer was looked up at (phi 0, theta
+        // 90) -- the same point of the sphere from every side.  Any direction in
+        // the plane will do; take +x's projection (or +y's if the thrust axis is
+        // along x), so the frame is a proper one and the same each time.
+        const Vec3 axis = std::fabs(frame.normal.x) < 0.9 ? Vec3(1.0, 0.0, 0.0) : Vec3(0.0, 1.0, 0.0);
+        frame.nose = axis - axis.dot(frame.normal) * frame.normal;
+    }
     frame.nose.normalize();
     // Define starboard as the cross product of the "nose" and the TPP normal
     frame.starboard = frame.nose.cross(frame.normal);
@@ -894,6 +915,7 @@ Database::Database(const std::string& datafile_path)
     std::vector<ChannelCells> placement;
     std::vector<double> placed_phis, placed_thetas;
     bool placed = false;
+    std::size_t layout_warnings = 0;
     // The spectral amplitude layout is a function of the same labels.
     std::vector<std::size_t> cached_cell_of;
     bool cached_cell_of_valid = false;
@@ -1009,6 +1031,34 @@ Database::Database(const std::string& datafile_path)
             placed_thetas = thetas_scattered;
             placed = true;
             cached_cell_of_valid = false;
+            // Whether this layout fills the grid.  A cell no channel reaches stays
+            // 0 dBA, which blends read as a real level; a channel that matches no
+            // grid angle (the axes come from sphere 0 alone) is dropped.  Neither
+            // used to be mentioned anywhere.
+            std::size_t dropped = 0;
+            std::vector<char> reached(phis.size() * thetas.size(), 0);
+            for (const auto& channel : placement)
+            {
+                if (channel.phi[0] == channel.phi[1] || channel.theta[0] == channel.theta[1])
+                {
+                    dropped++;
+                    continue;
+                }
+                for (std::size_t m = channel.phi[0]; m < channel.phi[1]; m++)
+                    for (std::size_t n = channel.theta[0]; n < channel.theta[1]; n++)
+                        reached[m * thetas.size() + n] = 1;
+            }
+            const std::size_t unreached = static_cast<std::size_t>(std::count(reached.begin(), reached.end(), 0));
+            if (dropped > 0 || unreached > 0)
+            {
+                if (++layout_warnings <= 3)
+                {
+                    warn("Database ", datafile_path, ": sphere ", i, " leaves ", unreached, " of ", reached.size(),
+                            " (phi, theta) cells without a channel, which read as 0 dBA, and drops ", dropped,
+                            " of ", placement.size(), " channels that match no angle of the grid (taken from "
+                            "sphere 0).");
+                }
+            }
         }
         // Fetch scattered acoustic data for each sphere
         dBAs_scattered.resize(nchannels);
@@ -1188,6 +1238,8 @@ Database::Database(const std::string& datafile_path)
             }
         }
     }
+    if (layout_warnings > 3)
+        warn("Database ", datafile_path, ": ", layout_warnings - 3, " more sphere layouts leave cells unfilled or drop channels.");
     info("ShaftPower ", shaft_power_.empty() ? "is not in this database." : "is in this database.");
     if (repaired_spheres > 0)
     {
@@ -1486,7 +1538,8 @@ Database::PackedSpectra Database::pack_spectra(
             {
                 const double v = spectra_[(c * n_bands + band) * n_conditions + indices[k]];
                 bands[band] = v;
-                if (band >= packed.first_band && band < packed.last_band && v <= empty_level_db)
+                // The mask holds 64 bands; eval_spectrum takes the general path past that.
+                if (band >= packed.first_band && band < packed.last_band && band < 64 && v <= empty_level_db)
                     packed.empty_bands[c * n_slots + k] |= std::uint64_t {1} << band;
             }
         }
@@ -2432,6 +2485,7 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
                 "writing amplitude");
     }
 
+    nc_check(guard.close(), "closing " + path);
     log("Wrote interpolated sphere to ", path, " (", n_channels, " channels).");
 }
 
@@ -2539,6 +2593,7 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     std::vector<float> amplitude(sphere.amplitudes.begin(), sphere.amplitudes.end());
     nc_check(nc_put_var_float(file, amplitude_var, amplitude.data()), "writing AMPLITUDE");
 
+    nc_check(guard.close(), "closing " + path);
     log("Wrote AAM sphere to ", path, " (", sphere.phis.size(), " x ", sphere.thetas.size(),
             " x ", sphere.frequencies.size(), ").");
 }
