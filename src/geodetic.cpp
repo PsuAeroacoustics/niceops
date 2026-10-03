@@ -10,6 +10,8 @@ using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the 
 namespace {
 
 constexpr double HALF_PI = pi / 2.0;
+// Farther from the frame's origin than this is not a flight; see to_local.
+constexpr double max_distance_from_origin = 1.0e6; // m
 constexpr double EPSILON10 = 1.0e-10;
 constexpr double EPSILON12 = 1.0e-12;
 
@@ -121,10 +123,25 @@ Vec3 LocalFrame::to_local(const Geodetic& position) const
         lat = lat < 0.0 ? -HALF_PI : HALF_PI;
     }
     lon -= reference_.longitude * deg_to_rad;
+    // The difference of two longitudes is an angle, not a number to project: a
+    // track across the antimeridian (reference 179.99 E, point 179.995 W) came out
+    // 32,000 km away.  remainder() leaves a difference already within half a turn
+    // exactly as it was, so nothing that worked before moves.
+    lon = std::remainder(lon, 2.0 * pi);
 
     const auto projected = project(lat, lon, meridian_at_reference_);
     const double east = EQUATOR_RADIUS * projected.east;
     const double north = EQUATOR_RADIUS * projected.north;
+    // This is a local frame.  A position a thousand kilometres from its origin is
+    // a wrong coordinate or a sign-flipped --origin, not a flight, and projecting
+    // it anyway (it used to) gave a plausible-looking footprint for nowhere.
+    if (std::hypot(east, north) > max_distance_from_origin)
+    {
+        input_error("Position (latitude ", position.latitude, ", longitude ", position.longitude,
+                ") is ", std::hypot(east, north) / 1000.0, " km from the frame's origin (",
+                reference_.latitude, ", ", reference_.longitude, "), too far for a local frame. "
+                "Check the coordinate, and the sign of --origin.");
+    }
     return {east * cos_rotation_ + north * sin_rotation_,
             -east * sin_rotation_ + north * cos_rotation_, position.altitude};
 }
