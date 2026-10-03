@@ -1849,8 +1849,30 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.flight_path_angle = flight_path_angle;
     sphere.thrust_coefficient = thrust_coefficient;
     sphere.radius = sphere_radius_;
+    sphere.speed_reference = speed_reference_;
+    sphere.tip_speed = tip_speed_;
+    sphere.rotor_radius = rotor_radius_;
+    sphere.vehicle_weight_newtons = vehicle_weight_newtons_;
     sphere.phis = phis.values();
     sphere.thetas = thetas.values();
+    // blend_at() clamps the condition into the database's envelope, so a request
+    // outside it (a 3 for a 0.3) gets the edge sphere while the file says what
+    // was asked for.  Say so.
+    {
+        const bool inside = advance_ratio >= advance_ratio_min && advance_ratio <= advance_ratio_max
+                && flight_path_angle >= flight_path_angle_min && flight_path_angle <= flight_path_angle_max
+                && (fixed_load_factor_ || (thrust_coefficient >= thrust_coefficient_min
+                        && thrust_coefficient <= thrust_coefficient_max));
+        if (!inside)
+        {
+            warn("The requested condition (mu ", advance_ratio, ", gamma ", flight_path_angle, ", CT ",
+                    thrust_coefficient, ") lies outside the database's envelope (mu ", advance_ratio_min, " to ",
+                    advance_ratio_max, ", gamma ", flight_path_angle_min, " to ", flight_path_angle_max,
+                    fixed_load_factor_ ? "" : ", CT ", fixed_load_factor_ ? "" : std::to_string(thrust_coefficient_min),
+                    fixed_load_factor_ ? "" : " to ", fixed_load_factor_ ? "" : std::to_string(thrust_coefficient_max),
+                    "): the sphere is the nearest one in it, labelled with the condition asked for.");
+        }
+    }
 
     // Same blend eval() applies at one direction, carried out at every cell, so
     // a sphere exported at an operating condition the database already holds
@@ -2399,6 +2421,27 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     int version_var = 0;
     nc_check(nc_def_var(file, "database_version", NC_INT, 1, &scalar_dim, &version_var),
             "defining database_version");
+    // The rest of the root the loader reads, where the source had it: the
+    // sphere reloads with the same speed reference and rotor, and so the same
+    // wind requirement, nose and vehicle-file checks, as the database it came from.
+    struct RootScalar
+    {
+        const char* name;
+        double value;
+        int var;
+    };
+    RootScalar root_scalars[] = {{"main_rotor_tip_speed_meters_per_sec", sphere.tip_speed, 0},
+            {"main_rotor_radius_meters", sphere.rotor_radius, 0},
+            {"vehicle_weight_newtons", sphere.vehicle_weight_newtons, 0}};
+    for (auto& scalar : root_scalars)
+    {
+        if (std::isfinite(scalar.value))
+            nc_check(nc_def_var(file, scalar.name, NC_DOUBLE, 1, &scalar_dim, &scalar.var),
+                    std::string("defining ") + scalar.name);
+    }
+    const std::string reference = to_string(sphere.speed_reference);
+    nc_check(nc_put_att_text(file, NC_GLOBAL, "speed_reference", reference.size(), reference.c_str()),
+            "writing speed_reference");
 
     int group = 0;
     nc_check(nc_def_grp(file, "sphere0", &group), "defining group sphere0");
@@ -2443,6 +2486,11 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     const int version = 1;
     nc_check(nc_put_var_short(file, same_grid_var, &same_grid), "writing same_grid");
     nc_check(nc_put_var_int(file, version_var, &version), "writing database_version");
+    for (const auto& scalar : root_scalars)
+    {
+        if (scalar.var != 0)
+            nc_check(nc_put_var_double(file, scalar.var, &scalar.value), std::string("writing ") + scalar.name);
+    }
 
     // The loader multiplies radius by rotor_scale, so put the whole dimensional
     // radius in the first and leave the second at unity.

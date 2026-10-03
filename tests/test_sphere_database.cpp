@@ -1334,3 +1334,140 @@ TEST_CASE("a frame with no velocity is still a frame", "[sphere_database][valida
     CHECK(moving.nose.x == Catch::Approx(0.6).margin(1e-12));
     CHECK(moving.nose.y == Catch::Approx(0.8).margin(1e-12));
 }
+
+TEST_CASE("an exported sphere reloads as the sphere it was, cell for cell", "[sphere_database][export]")
+{
+    // Every level and EAA of the exported sphere, and what the root says about the
+    // vehicle and its speed reference, comes back exactly.  Swapped dBA and EAA, a
+    // dropped load-factor correction or a transposed grid all passed the whole
+    // suite before this.
+    Database source("databases/S-76D_M3.nod");
+    const auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_round_trip.nod").string();
+    write_sphere(sphere, path);
+    const Database reloaded(path);
+    const auto again = reloaded.interpolate_sphere(0.15, -4.0, 0.006);
+    REQUIRE(again.phis == sphere.phis);
+    REQUIRE(again.thetas == sphere.thetas);
+    REQUIRE(again.cells.size() == sphere.cells.size());
+    double eaa_sum = 0.0;
+    for (std::size_t c = 0; c < sphere.cells.size(); c++)
+    {
+        REQUIRE(again.cells[c].dBA == sphere.cells[c].dBA);
+        REQUIRE(again.cells[c].EAA == sphere.cells[c].EAA);
+        eaa_sum += std::fabs(sphere.cells[c].EAA);
+    }
+    // The test means something only if the two differ: dBA and EAA are not the same field.
+    REQUIRE(eaa_sum > 0.0);
+    REQUIRE(sphere.cells[0].dBA != sphere.cells[0].EAA);
+    // What the root records.
+    CHECK(reloaded.speed_reference() == source.speed_reference());
+    if (!std::isnan(source.tip_speed()))
+        CHECK(reloaded.tip_speed() == source.tip_speed());
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("an exported sphere keeps its speed reference and rotor", "[sphere_database][export]")
+{
+    // The loader decides how to read a run's flight conditions from the root's
+    // speed_reference, and checks the vehicle file against the rotor it records; an
+    // export that dropped both reloaded as ground-referenced with no rotor, and the
+    // run neither refused nor referred to the air.
+    const auto source_path = write_fixed_load_factor_test_database(
+            "niceops_air_source.nod", fixed_load_factor_conditions, true);
+    int ncid = 0;
+    REQUIRE(nc_open(source_path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "speed_reference", 3, "air") == NC_NOERR);
+    int scalar_dim = 0;
+    REQUIRE(nc_inq_dimid(ncid, "scalar", &scalar_dim) == NC_NOERR);
+    int tip_var = 0, radius_var = 0, weight_var = 0;
+    REQUIRE(nc_def_var(ncid, "main_rotor_tip_speed_meters_per_sec", NC_DOUBLE, 1, &scalar_dim, &tip_var) == NC_NOERR);
+    REQUIRE(nc_def_var(ncid, "main_rotor_radius_meters", NC_DOUBLE, 1, &scalar_dim, &radius_var) == NC_NOERR);
+    REQUIRE(nc_def_var(ncid, "vehicle_weight_newtons", NC_DOUBLE, 1, &scalar_dim, &weight_var) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    const double tip = 213.4, radius = 6.7, weight = 49033.2;
+    REQUIRE(nc_put_var_double(ncid, tip_var, &tip) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, radius_var, &radius) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, weight_var, &weight) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+
+    const Database source(source_path);
+    REQUIRE(source.speed_reference() == SpeedReference::air);
+    // Above the reference thrust coefficient, so the load-factor correction is in
+    // the exported levels as well.
+    const auto sphere = source.interpolate_sphere(0.2, 0.2, 2.0 * test_ct_reference);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_air_export.nod").string();
+    write_sphere(sphere, path);
+    const Database reloaded(path);
+    CHECK(reloaded.speed_reference() == SpeedReference::air);
+    CHECK(reloaded.tip_speed() == tip);
+    CHECK(reloaded.rotor_radius() == radius);
+    CHECK(reloaded.vehicle_weight() == weight);
+    // The correction survived: 20 log10 of the load factor (2), on levels of 100-120 dB.
+    const auto again = reloaded.interpolate_sphere(0.2, 0.2, 2.0 * test_ct_reference);
+    for (std::size_t c = 0; c < sphere.cells.size(); c++)
+        REQUIRE(again.cells[c].dBA == Catch::Approx(sphere.cells[c].dBA).margin(1e-9));
+    const auto uncorrected = source.interpolate_sphere(0.2, 0.2, test_ct_reference);
+    CHECK(sphere.cells[0].dBA - uncorrected.cells[0].dBA == Catch::Approx(20.0 * std::log10(2.0)).margin(1e-9));
+    std::filesystem::remove(path);
+    std::filesystem::remove(source_path);
+}
+
+TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "[sphere_database][export]")
+{
+    // AMPLITUDE(PHI, THETA, FREQUENCY), the axes in degrees and hertz, RADIUS in feet
+    // and SPEED in knots from the advance ratio and the tip speed.  Nothing read an
+    // AAM file back before this.
+    Database source("databases/S-76D_M3.nod");
+    auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    const std::size_t bands = 3;
+    sphere.frequencies = {125.0, 250.0, 500.0};
+    sphere.amplitudes.resize(sphere.cells.size() * bands);
+    for (std::size_t cell = 0; cell < sphere.cells.size(); cell++)
+        for (std::size_t band = 0; band < bands; band++)
+            sphere.amplitudes[cell * bands + band] = 40.0 + 0.5 * static_cast<double>(cell % 97) + 10.0 * band;
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_aam_export.nc").string();
+    const double tip_speed = 213.0;
+    write_aam_sphere(sphere, path, tip_speed);
+
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR);
+    auto length = [&](const char* name) {
+        int dim = 0;
+        std::size_t n = 0;
+        REQUIRE(nc_inq_dimid(ncid, name, &dim) == NC_NOERR);
+        REQUIRE(nc_inq_dimlen(ncid, dim, &n) == NC_NOERR);
+        return n;
+    };
+    REQUIRE(length("PHI") == sphere.phis.size());
+    REQUIRE(length("THETA") == sphere.thetas.size());
+    REQUIRE(length("FREQUENCY") == bands);
+    auto read_floats = [&](const char* name, std::size_t n) {
+        int var = 0;
+        REQUIRE(nc_inq_varid(ncid, name, &var) == NC_NOERR);
+        std::vector<float> values(n);
+        REQUIRE(nc_get_var_float(ncid, var, values.data()) == NC_NOERR);
+        return values;
+    };
+    const auto phi = read_floats("PHI", sphere.phis.size());
+    const auto theta = read_floats("THETA", sphere.thetas.size());
+    const auto frequency = read_floats("FREQUENCY", bands);
+    for (std::size_t i = 0; i < phi.size(); i++)
+        CHECK(phi[i] == static_cast<float>(sphere.phis[i]));
+    for (std::size_t i = 0; i < theta.size(); i++)
+        CHECK(theta[i] == static_cast<float>(sphere.thetas[i]));
+    CHECK(frequency[1] == 250.0f);
+    // Element order: phi slowest, then theta, then frequency.
+    const auto amplitude = read_floats("AMPLITUDE", sphere.cells.size() * bands);
+    for (std::size_t m = 0; m < phi.size(); m += 5)
+        for (std::size_t n = 0; n < theta.size(); n += 3)
+            for (std::size_t f = 0; f < bands; f++)
+                REQUIRE(amplitude[(m * theta.size() + n) * bands + f]
+                        == static_cast<float>(sphere.amplitudes[(m * theta.size() + n) * bands + f]));
+    CHECK(read_floats("RADIUS", 1)[0] == Catch::Approx(sphere.radius / 0.3048).epsilon(1e-6));
+    CHECK(read_floats("SPEED", 1)[0] == Catch::Approx(0.15 * tip_speed * 1.94384).epsilon(1e-6));
+    CHECK(read_floats("FLIGHT_PATH_ANGLE", 1)[0] == Catch::Approx(-4.0).margin(1e-6));
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    std::filesystem::remove(path);
+}

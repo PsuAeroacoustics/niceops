@@ -2694,6 +2694,20 @@ int run(int argc, char* argv[])
 
     if (!sphere_file.empty() || !aam_file.empty())
     {
+        // The writers create with NC_CLOBBER.  `-d X --export_sphere X` replaced a
+        // database built over hours in panam with a one-sphere file, and exited 0.
+        for (const auto* output : {&sphere_file, &aam_file})
+        {
+            std::error_code ignored;
+            if (output->empty() || !std::filesystem::exists(*output, ignored))
+                continue;
+            for (const auto& source : database_files)
+            {
+                if (std::filesystem::equivalent(*output, source, ignored))
+                    input_error("--export_sphere/--export_aam would overwrite the database it reads, ", source,
+                                ". Give another file name.");
+            }
+        }
         // A standalone job: interpolate the database down to one operating
         // condition and write that sphere out.  No trajectory is involved.
         const auto sphere = database.interpolate_sphere(

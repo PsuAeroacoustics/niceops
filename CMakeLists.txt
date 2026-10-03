@@ -311,6 +311,12 @@ set_tests_properties(ambient_negligible_matches PROPERTIES FIXTURES_REQUIRED amb
 # echoed to stderr; the case passes on that text.
 add_test(NAME missing_track_is_reported COMMAND niceops -t tracks/does_not_exist.csv -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(missing_track_is_reported PROPERTIES PASS_REGULAR_EXPRESSION "Skipping tracks/does_not_exist.csv: Unable to open CSV file")
+# --export_sphere writes with NC_CLOBBER: giving it the database it reads replaced that
+# database with a one-sphere file and exited 0.
+add_test(NAME export_guard_copy COMMAND ${CMAKE_COMMAND} -E copy databases/S-76D_fixed_load_factor.nod integrated/export_guard.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME export_over_the_database_is_refused COMMAND niceops -d integrated/export_guard.nod --export_sphere integrated/export_guard.nod --sphere_condition 0.1 0 0.006 -S state/ci_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(export_guard_copy PROPERTIES FIXTURES_SETUP export_guard_file)
+set_tests_properties(export_over_the_database_is_refused PROPERTIES FIXTURES_REQUIRED export_guard_file PASS_REGULAR_EXPRESSION "would overwrite the database it reads")
 # A negative --receiver_height was taken as typed (the ground model assumes the microphone is
 # at or above the plane, and its table disagrees with the exact model below it).
 add_test(NAME negative_receiver_height_is_refused COMMAND niceops --ground_effect --receiver_height -3.937 -S state/ci_state.csv -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

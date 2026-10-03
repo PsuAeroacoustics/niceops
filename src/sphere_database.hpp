@@ -481,6 +481,14 @@ public:
         // Mechanical shaft power for this condition, when the database carries
         // it.  NaN means the database has none.
         double shaft_power = std::numeric_limits<double>::quiet_NaN();
+        // What the database records at its root and the loader interprets, carried
+        // so an exported sphere reloads as what it was cut from: its flight
+        // conditions' reference (air or ground), and the rotor it was built for.
+        // NaN where the source had none.
+        SpeedReference speed_reference = SpeedReference::ground;
+        double tip_speed = std::numeric_limits<double>::quiet_NaN();
+        double rotor_radius = std::numeric_limits<double>::quiet_NaN();
+        double vehicle_weight_newtons = std::numeric_limits<double>::quiet_NaN();
         std::vector<double> phis;
         std::vector<double> thetas;
         // Row-major over (phi, theta): cells[i_phi * thetas.size() + i_theta].
