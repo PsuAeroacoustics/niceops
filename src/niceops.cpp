@@ -2413,7 +2413,8 @@ int run(int argc, char* argv[])
             "650 soil, 3000 dirt, 10000 concrete, 50000 asphalt.");
     auto* receiver_height_option = app.add_option("--receiver_height", receiver_height,
             "Receiver height above ground for --ground_effect, in --units (default 1.2 m, "
-            "= 3.937 ft).");
+            "= 3.937 ft).")
+            ->check(CLI::NonNegativeNumber);
     app.add_option("--origin", origin,
             "WGS84 reference for the local frame: latitude longitude, in degrees. "
             "Defaults to the first position of the first geodetic trajectory.")

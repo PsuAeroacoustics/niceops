@@ -311,6 +311,10 @@ set_tests_properties(ambient_negligible_matches PROPERTIES FIXTURES_REQUIRED amb
 # echoed to stderr; the case passes on that text.
 add_test(NAME missing_track_is_reported COMMAND niceops -t tracks/does_not_exist.csv -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(missing_track_is_reported PROPERTIES PASS_REGULAR_EXPRESSION "Skipping tracks/does_not_exist.csv: Unable to open CSV file")
+# A negative --receiver_height was taken as typed (the ground model assumes the microphone is
+# at or above the plane, and its table disagrees with the exact model below it).
+add_test(NAME negative_receiver_height_is_refused COMMAND niceops --ground_effect --receiver_height -3.937 -S state/ci_state.csv -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(negative_receiver_height_is_refused PROPERTIES PASS_REGULAR_EXPRESSION "--receiver_height: Value -3.937 not in range")
 # An exception in an observer-loop worker must skip the trajectory, not abort the
 # process.  Making the first history file's name a directory makes opening it
 # throw inside a worker; the case passes only on the "Skipping" line that
