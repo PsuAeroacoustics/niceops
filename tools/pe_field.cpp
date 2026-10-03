@@ -57,7 +57,7 @@ int main(int argc, char** argv)
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("--toward", toward, "Compass bearing the sound travels along, degrees.")->required();
     app.add_option("--source_height", source_height, "Source height, in --units.")->required();
-    app.add_option("--bands", bands, "One-third-octave band centres, Hz (default 250 500 1000).");
+    app.add_option("--bands", bands, "One-third-octave band centers, Hz (default 250 500 1000).");
     app.add_option("--max_range", max_range, "Farthest range, in --units.")->required();
     app.add_option("--step", step, "Range spacing of the output, in --units (default max_range / 200).");
     app.add_option("--top", top, "Highest height written, in --units (default twice the source's).");
@@ -89,16 +89,16 @@ int main(int argc, char** argv)
             "--scheme cn: range steps per wavelength (default 10).");
     app.add_option("--gamma_t", gamma_t, "Turbulence in the PE, as for niceops_pe_compare (default 0).");
     app.add_option("--outer_scale", outer_scale, "von Karman outer scale, m (default 10).");
-    app.add_option("--seed", seed, "First realisation's seed (default 1).");
+    app.add_option("--seed", seed, "First realization's seed (default 1).");
     CLI11_PARSE(app, argc, argv);
 
     Logger::instance().set_file("log/pe_field.log");
-    const LengthUnit unit = units == "m" ? metres : feet;
-    const double z_s = source_height * unit.to_metres;
-    const double r_max = max_range * unit.to_metres;
-    const double dr_out = step > 0.0 ? step * unit.to_metres : r_max / 200.0;
-    const double z_top = top > 0.0 ? top * unit.to_metres : 2.0 * z_s;
-    const double dz = dz_out > 0.0 ? dz_out * unit.to_metres : z_top / 150.0;
+    const LengthUnit unit = units == "m" ? meters : feet;
+    const double z_s = source_height * unit.to_meters;
+    const double r_max = max_range * unit.to_meters;
+    const double dr_out = step > 0.0 ? step * unit.to_meters : r_max / 200.0;
+    const double z_top = top > 0.0 ? top * unit.to_meters : 2.0 * z_s;
+    const double dz = dz_out > 0.0 ? dz_out * unit.to_meters : z_top / 150.0;
 
     auto profile = read_atmosphere_profile(atmosphere_file, unit, 0.0);
     if (!profile.has_pressure())
@@ -148,7 +148,7 @@ int main(int argc, char** argv)
     for (std::size_t b = 0; b < bands.size(); b++)
         for (std::size_t q = 0; q < pe[b].range.size(); q++)
             for (std::size_t k = 0; k < heights.size(); k++)
-                std::cout << bands[b] << "," << pe[b].range[q] / unit.to_metres << "," << heights[k] / unit.to_metres
+                std::cout << bands[b] << "," << pe[b].range[q] / unit.to_meters << "," << heights[k] / unit.to_meters
                           << "," << pe[b].relative_level[k][q] << "\n";
     return 0;
 }

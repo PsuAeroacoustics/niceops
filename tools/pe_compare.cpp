@@ -71,7 +71,7 @@ int main(int argc, char** argv)
     app.add_option("--toward", toward, "Compass bearing the sound travels along, degrees.")->required();
     app.add_option("--source_height", source_height, "Source height, in --units.")->required();
     app.add_option("--receiver_height", receiver_height, "Receiver height, in --units.")->required();
-    app.add_option("--bands", bands, "One-third-octave band centres, Hz.");
+    app.add_option("--bands", bands, "One-third-octave band centers, Hz.");
     app.add_option("--max_range", max_range, "Farthest range, in --units.")->required();
     app.add_option("--step", step, "Output range spacing, in --units (default max_range / 100).");
     app.add_option("--flow_resistance", flow_resistance, "Ground flow resistance, kPa s/m^2.");
@@ -103,19 +103,19 @@ int main(int argc, char** argv)
     app.add_flag("--no_pe", no_pe, "Only the ray models; the pe columns are NaN.");
     app.add_option("--gamma_t", gamma_t,
             "Turbulence in the PE (HARMONOISE strength; 0, the default, is none).  Each of --samples "
-            "frequencies is then its own realisation, so give it 20 or so.");
+            "frequencies is then its own realization, so give it 20 or so.");
     app.add_option("--outer_scale", outer_scale, "von Karman outer scale of the PE's turbulence, m (default 10).");
-    app.add_option("--seed", seed, "First realisation's seed (default 1).");
-    app.add_flag("--tunnelling", waves.tunnelling, "stratified: as niceops --tunnelling.");
+    app.add_option("--seed", seed, "First realization's seed (default 1).");
+    app.add_flag("--tunneling", waves.tunneling, "stratified: as niceops --tunneling.");
     app.add_flag("--skip_fill", waves.skip_fill, "stratified: as niceops --skip_fill.");
     CLI11_PARSE(app, argc, argv);
 
     Logger::instance().set_file("log/pe_compare.log");
-    const LengthUnit unit = units == "m" ? metres : feet;
-    const double z_s = source_height * unit.to_metres;
-    const double z_r = receiver_height * unit.to_metres;
-    const double r_max = max_range * unit.to_metres;
-    const double dr_out = (step > 0.0 ? step * unit.to_metres : r_max / 100.0);
+    const LengthUnit unit = units == "m" ? meters : feet;
+    const double z_s = source_height * unit.to_meters;
+    const double z_r = receiver_height * unit.to_meters;
+    const double r_max = max_range * unit.to_meters;
+    const double dr_out = (step > 0.0 ? step * unit.to_meters : r_max / 100.0);
 
     auto profile = read_atmosphere_profile(atmosphere_file, unit, 0.0);
     if (!profile.has_pressure())
@@ -242,7 +242,7 @@ int main(int argc, char** argv)
                 at_receiver, scratch, true, waves);
         layered_finish_ground(layered, by_layers, GroundGeometry::point, z_r, scratch);
 
-        std::cout << r / unit.to_metres;
+        std::cout << r / unit.to_meters;
         for (std::size_t b = 0; b < bands.size(); b++)
         {
             std::cout << "," << relative(straight, b) << "," << relative(by_linear, b) << ","

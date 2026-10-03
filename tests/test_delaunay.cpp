@@ -90,7 +90,7 @@ TEST_CASE("A regular lattice, which is maximally degenerate", "[delaunay]")
     REQUIRE(mesh.simplex_count() > 0);
 
     // Interior queries, including ones sitting exactly on lattice planes and
-    // exactly at cube centres.
+    // exactly at cube centers.
     check_barycentric(mesh, points, {1.5, 1.5, 1.5}, 1e-9);
     check_barycentric(mesh, points, {1.0, 1.5, 2.0}, 1e-9);
     check_barycentric(mesh, points, {2.25, 1.75, 0.5}, 1e-9);

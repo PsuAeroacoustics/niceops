@@ -4,9 +4,9 @@
 // propagation roadmap (--refraction linear).
 //
 // Where the sound speed along the path is c(z) = c0 + a z, every ray is an arc
-// of a circle centred on the line where c would vanish, z = -c0/a.  So the
+// of a circle centerd on the line where c would vanish, z = -c0/a.  So the
 // eigenrays between a source and a receiver have closed forms:
-//   - the direct ray is the one circle through both points with its centre on
+//   - the direct ray is the one circle through both points with its center on
 //     that line;
 //   - the ground-reflected ray is found by a one-dimensional solve on the
 //     launch angle, along which its range is monotonic;
@@ -24,7 +24,7 @@
 // stratified model, planned for later, uses the moving-medium invariants
 // instead, and this one is the oracle it will be tested against.
 //
-// Everything here is metres, seconds and radians.
+// Everything here is meters, seconds and radians.
 
 #include <array>
 #include <cmath>
@@ -49,7 +49,7 @@ struct LinearProfile
 // The direct eigenray from a source at height z_s to a receiver at z_r, a
 // horizontal distance r > 0 away.  Past the limiting ray (a < 0 only) there is
 // no direct ray; the fields then describe the limiting ray to the shadow
-// boundary, continued `shadow_depth` metres along the ground, which is where
+// boundary, continued `shadow_depth` meters along the ground, which is where
 // the diffracted and scattered energy that does arrive comes from.
 struct DirectEigenray
 {
@@ -65,7 +65,7 @@ struct DirectEigenray
     // Arc length, and travel time along it.
     double path_length = 0.0;
     double travel_time = 0.0;
-    // Metres past the shadow boundary, 0 when lit.
+    // Meters past the shadow boundary, 0 when lit.
     double shadow_depth = 0.0;
     // The shadow boundary itself: the horizontal range from the source at which
     // the limiting ray, grazing the ground, comes back up to the receiver's
@@ -74,7 +74,7 @@ struct DirectEigenray
     double boundary = std::numeric_limits<double>::infinity();
     // The path's linear fit's own boundary.  For --refraction linear it is
     // `boundary`; through layers it lies beyond, since a log law's steep lowest
-    // metres bring the layered boundary in.  ShadowTransition puts each band's
+    // meters bring the layered boundary in.  ShadowTransition puts each band's
     // effective boundary between the two.
     double linear_boundary = std::numeric_limits<double>::infinity();
     // The gradient (1/s, negative) of the linear profile whose grazing ray makes
@@ -121,7 +121,7 @@ public:
     using Moments = std::array<double, 6>;
 
     EffectiveSoundSpeed() = default;
-    // Tabulate over [z_low, z_high] metres.  The wind is turned into the local
+    // Tabulate over [z_low, z_high] meters.  The wind is turned into the local
     // frame, whose +x axis points along compass bearing `frame_bearing`, in
     // degrees.  A profile without wind is still air.  The profile must carry
     // pressure (with_hydrostatic_pressure).
@@ -165,7 +165,7 @@ enum class GroundGeometry
     plate,
 };
 
-// What ray theory leaves out of an arrival that --tunnelling or --skip_fill
+// What ray theory leaves out of an arrival that --tunneling or --skip_fill
 // adds (stratified.hpp, layered_wave_arrivals), as a per-band loss on top of its
 // ray tube.  Both are Airy tails, and both grow with frequency:
 //   - evanescent: the ray turns at z_t above the receiver, which it reaches as
@@ -217,7 +217,7 @@ struct Arrival
     double spreading_range = 0.0;
     double path_length = 0.0;
     double travel_time = 0.0;
-    // --tunnelling, --skip_fill: an arrival ray theory does not have, and its
+    // --tunneling, --skip_fill: an arrival ray theory does not have, and its
     // per-band loss.  One that tunnels takes no ground term, plate or not.
     WaveCorrection wave;
     // Formed by layered_direct_ray; its ground geometry by the ground's finish.
@@ -320,7 +320,7 @@ std::vector<double> shadow_attenuation_rates(const std::vector<double>& frequenc
 // to.  Upward it needs Re q > 0, which is arg beta < -60 degrees.  Delany-Bazley,
 // Miki and variable porosity without a porosity rate never go below -57, at
 // 10 Hz - 10 kHz and 10 - 10000 kPa s/m^2 (tests/test_shadow_attenuation.cpp).
-// A porosity rate of tens per metre, or a thin hard-backed layer, does, in the
+// A porosity rate of tens per meter, or a thin hard-backed layer, does, in the
 // low bands.  Along such a q the first zero turns into the surface wave (it
 // runs out toward q^2) and cannot be followed, so those bands take the rigid
 // rate, and admits_surface_wave() names them for the run's log.
@@ -331,7 +331,7 @@ public:
     // Rigid ground: exactly shadow_attenuation_rates().
     ShadowAttenuation(const std::vector<double>& frequencies, std::size_t first_band,
             std::size_t last_band);
-    // Ground whose normalised admittance in each band is admittance[band]
+    // Ground whose normalized admittance in each band is admittance[band]
     // (ground_impedance()); 0 is rigid.
     ShadowAttenuation(const std::vector<double>& frequencies,
             const std::vector<std::complex<double>>& admittance, std::size_t first_band,
@@ -366,7 +366,7 @@ private:
 };
 
 // Fill `loss` (dB per band, bands in [first_band, last_band)) for a ray
-// `ray.shadow_depth` metres into the shadow: the creeping-wave decay, capped at
+// `ray.shadow_depth` meters into the shadow: the creeping-wave decay, capped at
 // `floor` dB, where energy scattered in by turbulence takes over from it.
 void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, double floor,
         std::size_t first_band, std::size_t last_band, double* loss);
@@ -399,7 +399,7 @@ void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, 
 // profile near the ground is not what the table assumes.
 //
 // Through layers there are two boundaries: the layered model's r_s, set by a
-// log law's steep lowest metres, and the path's linear fit's r_l, beyond it.
+// log law's steep lowest meters, and the path's linear fit's r_l, beyond it.
 // Against the parabolic equation the shadow begins between them, near r_l at
 // low frequency and moving toward r_s as the frequency rises, but reaching it
 // by no means even at 2 kHz: the wave does not resolve the thin fast layer
@@ -446,7 +446,7 @@ struct ShadowScattering
     bool on() const { return gamma_t > 0.0; }
     double level(double frequency, double slant, double source_height) const;
     // The fitted constants for a flush microphone (under 5 cm up, or on a
-    // plate) or one receiver_height metres up.
+    // plate) or one receiver_height meters up.
     static ShadowScattering for_receiver(double gamma_t, double receiver_height, bool plate);
 };
 

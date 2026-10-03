@@ -368,7 +368,7 @@ TEST_CASE("through a log-law shadow, stratified with the boundary law follows th
 
 TEST_CASE("a microphone just under the plane is solved for on it", "[shadow]")
 {
-    // Ground boards sit a few centimetres below the survey datum.  The layers
+    // Ground boards sit a few centimeters below the survey datum.  The layers
     // hold their lowest speed below z = 0 and the direct-ray solve knows no
     // ground, so it used to send a ray grazing along under the plane to such a
     // microphone: 33 dB low on day 284 of the 2017 test.  Now it is the pair on
@@ -399,7 +399,7 @@ TEST_CASE("a microphone just under the plane is solved for on it", "[shadow]")
         }
 }
 
-TEST_CASE("a receiver millimetres up still spreads finitely in the shadow", "[shadow]")
+TEST_CASE("a receiver millimeters up still spreads finitely in the shadow", "[shadow]")
 {
     // 3 mm up, the dipping family covers a sliver of heights that deep, and its
     // tube used to come out 0 / 0 past the boundary.
@@ -466,7 +466,7 @@ namespace {
 
 // Day 284 of the 2017 test, one run's upwind effective sound speed from the
 // LIDAR and the balloon, in the shape that matters: fast at the ground, a
-// steep shear through the lowest metres, a minimum at 60 m, and an inversion
+// steep shear through the lowest meters, a minimum at 60 m, and an inversion
 // above that makes the air aloft a little faster than at the source.
 const std::vector<double> inversion_z = {0.0, 0.3, 0.91, 3.05, 9.14, 30.5, 60.0, 122.0, 300.0};
 const std::vector<double> inversion_c = {339.19, 336.44, 335.10, 333.56, 331.97, 330.77, 330.30, 330.53,

@@ -114,11 +114,11 @@ struct GroundModel
     bool boundary_loss_correction = true;
 };
 
-// Per-band normalised surface admittance beta = 1/Z of the ground, from its
+// Per-band normalized surface admittance beta = 1/Z of the ground, from its
 // impedance model.  (Named "impedance" throughout for history; it is the
 // admittance the reflection coefficient takes.)
 //
-// It depends only on the band centres and the surface, both fixed for a run,
+// It depends only on the band centers and the surface, both fixed for a run,
 // but it costs two pow() and a complex divide per band -- so it is computed
 // once here rather than inside the observer loop, which reaches this 94 million
 // times on the demo case.  `sound_speed` (m/s) enters the variable-porosity and
@@ -161,7 +161,7 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
 
 // The spherical-wave reflection coefficient Q = R_p + F(w)(1 - R_p) the model
 // uses, as (real, imaginary), at grazing cosine `cos_grazing` (from the surface
-// normal), kappa = pi f R_image / c, and normalised surface admittance
+// normal), kappa = pi f R_image / c, and normalized surface admittance
 // `admittance`.  No roughness or turbulence: those enter the model outside Q.
 std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, double kappa,
         std::complex<double> admittance, bool boundary_loss = true);
@@ -233,14 +233,14 @@ private:
     std::vector<float> values_;
 };
 
-// Excess ground attenuation in dB for each band centre, for a source at
-// `source_height` metres and a receiver `ground_distance` metres away
+// Excess ground attenuation in dB for each band center, for a source at
+// `source_height` meters and a receiver `ground_distance` meters away
 // horizontally.  `sound_speed` is m/s.
 //
 // Broadband form (Chessell's equations 20 and 21): the third-octave average
 // rather than the pure-tone interference pattern, which is what a band level
 // wants.  Pure-tone mode is deliberately not ported -- the database carries
-// bands, and the pure-tone expression at a band centre would put a full
+// bands, and the pure-tone expression at a band center would put a full
 // interference null where the band average has a shallow dip.
 std::vector<double> excess_ground_attenuation(const GroundModel& ground, double source_height,
         double ground_distance, double sound_speed, const std::vector<double>& frequencies);

@@ -68,7 +68,7 @@ void Delaunay::build_enclosing_simplex()
 
     Simplex root;
     root.vertices.resize(dim_ + 1);
-    root.neighbours.assign(dim_ + 1, -1);
+    root.neighbors.assign(dim_ + 1, -1);
     for (std::size_t v = 0; v <= dim_; v++)
         root.vertices[v] = count_ + v;
     // Store every simplex positively oriented, so the walk below can test a
@@ -140,7 +140,7 @@ long Delaunay::locate(const double* query) const
         {
             if (orientation_against(simplex, facet, query) < 0)
             {
-                const long next = simplex.neighbours[facet];
+                const long next = simplex.neighbors[facet];
                 if (next < 0)
                     return -1; // walked off the triangulation entirely
                 current = next;
@@ -182,10 +182,10 @@ void Delaunay::insert(std::size_t point)
         stack.pop_back();
         for (std::size_t facet = 0; facet <= dim_; facet++)
         {
-            const long neighbour = simplices_[current].neighbours[facet];
-            if (neighbour < 0)
+            const long neighbor = simplices_[current].neighbors[facet];
+            if (neighbor < 0)
                 continue;
-            const auto index = static_cast<std::size_t>(neighbour);
+            const auto index = static_cast<std::size_t>(neighbor);
             if (in_cavity[index])
                 continue;
             const Simplex& candidate = simplices_[index];
@@ -217,23 +217,23 @@ void Delaunay::insert(std::size_t point)
         const Simplex& simplex = simplices_[index];
         for (std::size_t facet = 0; facet <= dim_; facet++)
         {
-            const long neighbour = simplex.neighbours[facet];
-            if (neighbour >= 0 && in_cavity[static_cast<std::size_t>(neighbour)])
+            const long neighbor = simplex.neighbors[facet];
+            if (neighbor >= 0 && in_cavity[static_cast<std::size_t>(neighbor)])
                 continue;
             Boundary entry;
-            entry.outside = neighbour;
+            entry.outside = neighbor;
             entry.outside_facet = 0;
             for (std::size_t v = 0; v <= dim_; v++)
             {
                 if (v != facet)
                     entry.vertices.push_back(simplex.vertices[v]);
             }
-            if (neighbour >= 0)
+            if (neighbor >= 0)
             {
-                const Simplex& outside = simplices_[static_cast<std::size_t>(neighbour)];
+                const Simplex& outside = simplices_[static_cast<std::size_t>(neighbor)];
                 for (std::size_t v = 0; v <= dim_; v++)
                 {
-                    if (outside.neighbours[v] == static_cast<long>(index))
+                    if (outside.neighbors[v] == static_cast<long>(index))
                     {
                         entry.outside_facet = v;
                         break;
@@ -261,7 +261,7 @@ void Delaunay::insert(std::size_t point)
         Simplex simplex;
         simplex.vertices = entry.vertices;
         simplex.vertices.push_back(point);
-        simplex.neighbours.assign(dim_ + 1, -1);
+        simplex.neighbors.assign(dim_ + 1, -1);
         simplex.alive = true;
         if (simplex_orientation(simplex) < 0)
             std::swap(simplex.vertices[0], simplex.vertices[1]);
@@ -291,9 +291,9 @@ void Delaunay::insert(std::size_t point)
                 break;
             }
         }
-        simplices_[slot].neighbours[opposite_new_point] = entry.outside;
+        simplices_[slot].neighbors[opposite_new_point] = entry.outside;
         if (entry.outside >= 0)
-            simplices_[static_cast<std::size_t>(entry.outside)].neighbours[entry.outside_facet]
+            simplices_[static_cast<std::size_t>(entry.outside)].neighbors[entry.outside_facet]
                     = static_cast<long>(slot);
     }
 
@@ -320,8 +320,8 @@ void Delaunay::insert(std::size_t point)
             else
             {
                 const auto other = found->second;
-                simplices_[slot].neighbours[facet] = static_cast<long>(other.first);
-                simplices_[other.first].neighbours[other.second] = static_cast<long>(slot);
+                simplices_[slot].neighbors[facet] = static_cast<long>(other.first);
+                simplices_[other.first].neighbors[other.second] = static_cast<long>(slot);
                 open_facets.erase(found);
             }
         }

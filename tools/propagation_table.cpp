@@ -86,8 +86,8 @@ int main(int argc, char** argv)
     app.add_option("--sound_speed", sound_speed_override,
             "Sound speed at the ground, m/s, for the ground's impedance and the ground model (default: the "
             "profile's at the ground, else 343.2).  Match the run's: niceops logs it.");
-    app.add_option("--database", database_file, "Take the band centres from this database.");
-    app.add_option("--bands", bands, "Band centres, Hz, instead of --database's.");
+    app.add_option("--database", database_file, "Take the band centers from this database.");
+    app.add_option("--bands", bands, "Band centers, Hz, instead of --database's.");
     app.add_option("--band_limits", band_limits, "Keep only bands from LOW to HIGH Hz.")->expected(2);
     app.add_option("--source_heights", source_heights, "Source heights above the ground, in --units.")->required();
     app.add_option("--receiver_heights", receiver_heights, "Receiver heights above the ground, in --units.")
@@ -110,15 +110,15 @@ int main(int argc, char** argv)
     Logger::instance().set_file("log/propagation_table.log");
     try
     {
-        const LengthUnit unit = units == "m" ? metres : feet;
+        const LengthUnit unit = units == "m" ? meters : feet;
         for (double& h : source_heights)
-            h *= unit.to_metres;
+            h *= unit.to_meters;
         for (double& h : receiver_heights)
-            h *= unit.to_metres;
+            h *= unit.to_meters;
         std::sort(source_heights.begin(), source_heights.end());
         std::sort(receiver_heights.begin(), receiver_heights.end());
-        const double r_max = max_range * unit.to_metres;
-        const double dr = step * unit.to_metres;
+        const double r_max = max_range * unit.to_meters;
+        const double dr = step * unit.to_meters;
         if (!(dr > 0.0) || !(r_max >= dr))
             throw std::runtime_error("--step must be positive and no more than --max_range");
 
@@ -129,7 +129,7 @@ int main(int argc, char** argv)
             const Database database(database_file);
             if (!database.has_spectra())
                 throw std::runtime_error(database_file + " carries no spectra");
-            bands = database.band_centres();
+            bands = database.band_centers();
         }
         if (!band_limits.empty())
         {

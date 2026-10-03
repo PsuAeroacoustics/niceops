@@ -207,17 +207,17 @@ feet, which is the inconsistency this removes.
 Three things are load-bearing here:
 
 - **A default is a physical quantity, not a number in the current unit.**  Defaults are written
-  in metres and skip the conversion, which is why the seam tests CLI11's `count()` rather than
+  in meters and skip the conversion, which is why the seam tests CLI11's `count()` rather than
   scaling everything.  Scale the defaults too and `--units m` shrinks the observer grid to a
   third of its extent.
 - **`--units` declares what the files already are; it converts nothing.**  The shipped tracks are
-  feet, so `--units m` on the demo case reads feet as metres.  Nothing can detect that.  Where a
+  feet, so `--units m` on the demo case reads feet as meters.  Nothing can detect that.  Where a
   column header names its own unit (`alt_ft`, `alt_m`) it is checked against `--units` and a
   disagreement fails the file; a bare `alt` is always accepted.
 - **`write_state` stays metric** whatever `--units` says: `golden/state_197421.csv` is the
   D-derived oracle and encodes the internal values.
 
-`fps2g` is chosen as a whole constant rather than composed as `unit.to_metres * mps2g`, because
+`fps2g` is chosen as a whole constant rather than composed as `unit.to_meters * mps2g`, because
 the product of two constants is not the same double as two multiplies and the state golden is
 pinned at 1e-9.  Verified end to end: a metric twin of the demo track under `--units m`
 reproduces the golden footprint to 1.5e-12 dB. Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
@@ -232,14 +232,14 @@ A default run evaluates 14,400 observers × 6,551 states = 94.3M times, so anyth
 
 - **`Database::SourceState` is built once per trajectory state, in `main`, and reused across every observer.** It carries the source position, the `SphereFrame` (unit TPP normal, nose, starboard) and the `Blend` (four bracketing spheres + barycentric weights). The `Blend` is a CGAL Delaunay `locate()` walk and was ~60% of the whole run when it sat inside `eval`. Anything that depends only on (μ, γ, CT) or on attitude belongs here, not in `eval`.
 - **`lookup_angles` is split**: `sphere_frame(velocity, normal)` is per state, `lookup_angles(frame, direction)` is per observer. The four-argument overload still exists for the unit tests and composes the two.
-- **`lookup_angles` takes three dot products and no projection.** `{nose, normal, starboard}` is orthonormal, so the propagation direction's components in the plane normal to the nose are just `normal.dot(d)` and `starboard.dot(d)`; forming the projected vector and normalising it (a square root and three divides) scaled both by the same positive length, which the angle does not depend on. `phi` is then `atan(across / |up|)` — `atan`, not `atan2`, which costs twice as much for quadrant handling a non-negative second argument does not need, and gives the right half of pi from the infinity the division produces when `up` is zero. The 0/0 case at the poles is caught explicitly.
+- **`lookup_angles` takes three dot products and no projection.** `{nose, normal, starboard}` is orthonormal, so the propagation direction's components in the plane normal to the nose are just `normal.dot(d)` and `starboard.dot(d)`; forming the projected vector and normalizing it (a square root and three divides) scaled both by the same positive length, which the angle does not depend on. `phi` is then `atan(across / |up|)` — `atan`, not `atan2`, which costs twice as much for quadrant handling a non-negative second argument does not need, and gives the right half of pi from the infinity the division produces when `up` is zero. The 0/0 case at the poles is caught explicitly.
 - **The level grid is one flat `vector<Sample>`** (`{dBA, EAA}` pairs), indexed `(i_phi * n_theta + i_theta) * n_conditions + condition`, not `vector<vector<vector<double>>>`. Both metrics are read together, so they share a cache line. A condition-major layout was tried and is *worse* — it also breaks bit-exactness via different FMA contraction.
-- **`GridAxis` replaces a binary search** with arithmetic when the axis is uniform, then corrects the estimate against the neighbouring knots so the answer provably equals `upper_bound`'s. The searches alone were about a third of the loop. `tests/test_sphere_database.cpp` sweeps both paths against each other; keep that test if you touch it.
+- **`GridAxis` replaces a binary search** with arithmetic when the axis is uniform, then corrects the estimate against the neighboring knots so the answer provably equals `upper_bound`'s. The searches alone were about a third of the loop. `tests/test_sphere_database.cpp` sweeps both paths against each other; keep that test if you touch it.
 - **`DirectionBounds::bin` lives in the header.** The observer loop calls it ~94 million times from `niceops.cpp` while it is defined in `sphere_database.cpp`, so out of line it inlined only when `NICEOPS_LTO` was on and the toolchain supported it. It is fifteen instructions and should not depend on a build option; its tangent table is an `inline const` variable rather than a function-local static, which would test a guard on every call. The bin geometry — `bin`, the tangents, `narrowest_theta_bin_degrees`, `azimuth_bin_degrees` — sits on `DirectionBounds` together, because the table build has to pad by the same binning the hot path queries with, and three independent spellings of it is how that silently stops covering.
 - **`GridAxis::locate` gives the cell and the interpolation weight together**, and is what `eval` and `eval_spectrum` call. Going through `bracket()` meant reading four knots back out of `values_`, four subtractions and a divide by the cell area, all to recover a number the uniform spacing already implies; `locate` returns the bracketing pair plus the fraction of the way across the cell, so the four corner weights are products of `(1-f)` and `f` and already sum to one. Worth 18% of the loop. It skips `bracket`'s correction loops, which is why it needs the tighter `exactly_uniform_` test in `reset()` rather than the tenth-of-a-step one: round-off can only put the estimate on the wrong side of a *knot*, where the two cells interpolate to the same value anyway. The wrap-around cell at the ends is not uniform and falls back to the knots. `tests/test_sphere_database.cpp` sweeps `locate` against `periodic_bilinear_interp` over uniform, irregular and wrapping cells — the two derivations have to agree, and that test is what says so.
 - **Both `eval` and `eval_spectrum` build their stencil with `cell_stencil`.** It turns the two `GridAxis::Cell`s into the four corner indices and the four bilinear weights. Sharing `locate` alone got them the same *cell* but left each deriving its own weights, which is what keeps the claim below — that a broadband/spectral disagreement is the physics and never the interpolation — true rather than merely intended. `periodic_bilinear_interp` is no longer on either path; it is the reference `locate` is swept against in `tests/test_sphere_database.cpp`, and the cell/apply split it used to have (`BilinearCell`, `bilinear_apply`) existed only for the old `eval` and is gone.
 - **The interpolation carries `{dBA, EAA}` as a two-lane vector** (`Pair` in `sphere_database.cpp`). Every step applies the same weight to both metrics, and a `Sample` is exactly a two-double vector in memory, so blending the four conditions at four corners and then the corners themselves is half as many instructions. Clang would not do it on its own from the scalar form or from a two-element array; the GCC/Clang `vector_size` spelling is explicit, with a plain-struct fallback that compiles to what the code said before.
-- **Divides in the loop are multiplications by a stored reciprocal**: `inv_sphere_radius_`, `1e-3` for the EAA scaling, and one reciprocal for normalising the propagation direction instead of three divides. A double divide is about four times a multiply. These move the result by an ULP, which is the only thing in this round that does.
+- **Divides in the loop are multiplications by a stored reciprocal**: `inv_sphere_radius_`, `1e-3` for the EAA scaling, and one reciprocal for normalizing the propagation direction instead of three divides. A double divide is about four times a multiply. These move the result by an ULP, which is the only thing in this round that does.
 - **The observer loop's chunks are dealt out on demand, not divided up front** (`src/util/parallel.hpp`). An equal split gives every worker the same slice, so the wall time is the slowest core's -- and the cores are not interchangeable. On an M4 Pro (10 performance + 4 efficiency) the old equal split ran no faster on all 14 threads than on 10, the efficiency cores' slices being the critical path; pulling chunks lets the fast cores take more of them and gets the 14-thread run back under the 10-thread one. Chunk size is `count / (8 * workers)`, which is fine-grained enough to balance and coarse enough that the per-chunk scratch allocation stays noise. The output still does not depend on the split -- every observer writes only its own slot -- so runs at any thread count remain byte-for-byte identical.
 - **`trace()` is force-inlined and `Logger::write` is `noinline`** (`src/util/logger.hpp`). `eval` and `level_at_observer` make ~7 trace calls each; as ordinary calls that was a sixth of the loop spent entering functions that immediately returned. The level lives in `detail::min_level`, outside the `Logger` singleton, so testing it does not touch a function-local static's guard.
 - **The database grid fill walks channels and places them**, rather than scanning all 1,406 channels for each of the 1,332 cells (2.5 billion `approx_equal` probes, most of the load time). Two semantics are load-bearing and preserved: a later channel still wins a shared cell, and `dba_max` covers matched channels only.
@@ -384,7 +384,7 @@ Two suggested optimizations were deliberately **not** taken:
 
 **The per-state slab was built and measured; do not rebuild it.** Collapsing the database to one blended 36×37 slab per trajectory state (with the observer loop blocked so `state` can be the outer loop) works and is bit-exact, but it buys only 6.8% of the acoustic loop for +131 MB of resident memory, and the condition-major grid layout it requires makes the ordinary blend path — `self_test`, and any observer set below the break-even block size — about 6% *slower*. Block size barely moves it, and a single 768 MB block is the worst configuration of all, because the level buffer's own bandwidth then dominates. The work is preserved on the `slab-experiment` branch with the full numbers.
 
-The reason the intuition fails is worth keeping: observers sweep a 120×120 ground grid, so consecutive evaluations land on neighbouring (phi, θ) cells and the gather is already cache-resident. It was never miss-bound. Measuring the ceiling first — point `eval` at a fixed L1-resident slab and time it — costs ten minutes and would have shown this before any restructuring.
+The reason the intuition fails is worth keeping: observers sweep a 120×120 ground grid, so consecutive evaluations land on neighboring (phi, θ) cells and the gather is already cache-resident. It was never miss-bound. Measuring the ceiling first — point `eval` at a fixed L1-resident slab and time it — costs ten minutes and would have shown this before any restructuring.
 
 **The SEL integral takes its time step from the trajectory, not from `-s`.** `sound_exposure_level` weights every sample by a time step, and `-s` is only the resampling step for `adapt()` — the two coincide *only* when `adapt()` actually resamples onto that grid, and it is commented out in `main`. Every shipped track is sampled at 0.02 s, so using the 0.5 s default as the weight overstated every level by exactly `10*log10(0.5/0.02) = 13.98 dB`. `main` now derives the step via `uniform_sample_interval()` and logs it, warning if the sampling is not uniform. If you re-enable `adapt()`, it resamples to `-s` and the derived step follows automatically.
 
@@ -443,8 +443,8 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   spans (`EffectiveSoundSpeed`: running integrals of c, w_x, w_y and z times each on a 1 m
   table, so a fit costs a few flops per pair), then closed-form circular-arc eigenrays. The
   things to preserve:
-  - **Numerically stable forms, not textbook ones.** The circles are centred L = c0/|a| away,
-    kilometres to 1e11 m, so every difference of squares of h = L + sigma z is formed from
+  - **Numerically stable forms, not textbook ones.** The circles are centerd L = c0/|a| away,
+    kilometers to 1e11 m, so every difference of squares of h = L + sigma z is formed from
     kappa(z) = z(2L + sigma z). Reflected legs are kappa/(sum of d), travel time is one atanh of
     the addition formula, and arc length is 2 rho asin(chord/2 rho). Written the obvious way
     they cancel to nothing as the gradient shrinks. Gradients under 1e-9 /s take the straight
@@ -555,7 +555,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       on both calibration sets (0.6 dB rms on day 284 over [0.5, 1] r_s, 1.4 at r_s). Going
       back to the layered shadow ray past r_l stepped 2-10 dB, where the fit's limiting ray
       is continuous. On a log law the dipping family's range is not monotonic
-      and reaches tens of metres past its end, and those near-grazing rays have no
+      and reaches tens of meters past its end, and those near-grazing rays have no
       reflected partner, so the ground term took the grazing geometry (-32 dB). It is
       formed in `form_ray`, so the peak search bounds the ray whose level it takes. Only
       for observers the transition serves; plates and no-ground runs are byte-identical.
@@ -581,7 +581,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     datum hit it on every run of the 2017 data. The ray still ends at the microphone,
     and uniform air never reaches the layered solve, so the straight-ray equivalence
     stands.
-  - **The layered shadow's tube can be 0/0** for a receiver a few millimetres up, where the
+  - **The layered shadow's tube can be 0/0** for a receiver a few millimeters up, where the
     dipping family is a sliver that thin. It then falls back to r / cos(launch). Both
     fixes have tests in `test_shadow_transition.cpp`.
 - `src/stratified.{hpp,cpp}` — `--refraction stratified` (roadmap step 6a): the effective
@@ -597,17 +597,17 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     README for the table.
   - **And where the air aloft does outrun it, the boundary stands short of the skip
     distance** (`boundary_under_aloft`). Rays turned back from aloft come down only past it,
-    kilometres out for an inversion a few hundred feet up; short of it the shadow is the same
+    kilometers out for an inversion a few hundred feet up; short of it the shadow is the same
     ground-grazing one. `layered_direct_ray` takes the boundary back where a ray from aloft
     or along a duct does arrive in the shadow, which leaves the duct's promotion as it was.
     Without it a 30 ft source hovering upwind on day 286 got no boundary 600 ft out: no
     transition, no hand-over, the layered shadow ray's tube focused 6.5 dB by the log law's
-    lowest metres, and the whole ground term -- 12 dB over free field at 63 Hz where the PE
+    lowest meters, and the whole ground term -- 12 dB over free field at 63 Hz where the PE
     gives 4. On day 286's measured frames (63-630 Hz) the states under 100 ft and 20 kt went
     from +8.9 to +4.4 dB against straight rays' +3.8, so what is left there is the source; no
     other height, speed, range or elevation cell moved by more than 0.2. On the day-286 PE matrix
     past 1000 ft it took 200-630 Hz from 9.5 to 7.5 dB rms and 800-2000 Hz from 11.7 to 9.2.
-  - **Parametrise by the Snell invariant p, in four families.** Launched up or down, arriving
+  - **Parametrize by the Snell invariant p, in four families.** Launched up or down, arriving
     on the first crossing of the receiver height or on the second, after dipping below it
     (`Arm`, `families`). The range is monotonic in p within a family. The dipping family is
     what the linear model's unique circle includes implicitly. Without it the shadow boundary
@@ -671,7 +671,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       50–630 Hz; none of those frames is in an SEL window. Harness
       `propagation/micro_shadow.py`, `micro_shadow_frames.py`.
     - **Three opt-in treatments of it, compared** (README, "Micro-shadows and skip zones";
-      harness `micro_shadow_fixes.py`, `micro_shadow_frames.py`): `--tunnelling` and
+      harness `micro_shadow_fixes.py`, `micro_shadow_frames.py`): `--tunneling` and
       `--skip_fill` (`layered_wave_arrivals`, stratified.cpp), and a PE `--propagation_table`
       beside the ray model. Both Airy options together take the deficit frames from -10.5 /
       -15.5 to -2.1 / -5.0 dB at 50-160 / 200-630 Hz and barely touch 800-2000 (-20.6 ->
@@ -681,8 +681,8 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       tube taken at `wave_reference_frequency` (10 kHz), so the loss is never negative and
       the peak search's bound on the tube still bounds them. They stay out of the
       boundary's removal and the promotion to primary in `layered_direct_ray`, which only
-      ray arrivals take. A tunnelled one takes no ground term, plate or not.
-    - **Near a tunnelled family's caustic the coalescing pair is replaced by the caustic's
+      ray arrivals take. A tunneled one takes no ground term, plate or not.
+    - **Near a tunneled family's caustic the coalescing pair is replaced by the caustic's
       band-averaged Airy field.** Left to the +10 dB focusing cap it put the return 5-12 dB
       over the PE at 250 Hz-2 kHz.
     - Cost: about +55% on a stratified run (demo grid, B407, `--ground_effect`: 23.6 -> 37 s
@@ -750,7 +750,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       - *Fourth order in height* (`vertical_order` 4, Numerov). (Q - p) y = psi becomes
         [a delta^2 + (1 + delta^2/12) D] y = (1 + delta^2/12) psi; in y' = c y, with
         c = a + D/12 the column's off-diagonal, the off-diagonals are one again and the
-        one-number-a-row factorisation still serves. It costs a weight per term per row
+        one-number-a-row factorization still serves. It costs a weight per term per row
         and a third more time. Second order at 20 points a wavelength is a radian of
         phase out by 35 degrees at 1 kHz from a 100 m source.
       - Together, and with the grid's edges at fourth order (next): 0.07 dB rms or
@@ -785,7 +785,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       takes the starter over a half or a quarter of the step and that length's own
       propagator over the rest. `a long first step is still self-started` pins it.
     - **The Gaussian starter is biased for any source where k differs from k at the
-      ground**, because it is normalised with k_a: 0.11-0.15 dB high at every range for a
+      ground**, because it is normalized with k_a: 0.11-0.15 dB high at every range for a
       100 m source in the benchmark's upward column (against the residue series), 0.10 dB
       on `example_windy.csv`. Every PE level from before the self-starter carries that,
       so do not take a 0.1 dB offset against a stored run for a regression. The
@@ -811,7 +811,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
       complex number per row (e_r = a / pivot; the off-diagonals are all a, so the forward
       and back coefficients coincide), which halves what a step streams through the cache.
     - **Not twisted.** Eight interleaved terms are throughput-bound (16 cycles of
-      arithmetic a row against 16 of latency), so the two-ended factorisation below would
+      arithmetic a row against 16 of latency), so the two-ended factorization below would
       buy nothing here.
     - **Turbulence caps the step at the screen spacing.**
     - **The 10 Hz benchmark legs start at 50 m, not 20, and case 2's 100 Hz leg at 25.**
@@ -828,7 +828,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     is factored once per run. It is latency-bound, and shaped for that (2.7 ns per point
     per step, from 9.0). The Thomas sweep is a recurrence; each row waited on two dependent
     complex multiplies. Three things, all needed:
-    - The factorisation is twisted (burn at both ends): rows below the middle eliminate
+    - The factorization is twisted (burn at both ends): rows below the middle eliminate
       downward, rows above upward. Each sweep then carries two independent chains.
     - The pivot is folded into the stored coefficients, so each row is one complex
       multiply-add.
@@ -850,11 +850,11 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     worst) for a 1.2 m receiver at 1 kHz; 20 is 0.09 dB, for twice the cost. Rerunning the
     stored calibration cases at 20 moved the PE by 0.16-0.39 dB rms (1.1 at worst) and did
     not move the shadow-edge calibration fitted against it, so the fits stand. The
-    turbulent mean-field test runs at 10 in height with 1000 realisations; at 20 its
+    turbulent mean-field test runs at 10 in height with 1000 realizations; at 20 its
     tolerance was too tight for its sample size. Halving Crank–Nicolson's range steps costs
     most cases only 0.02-0.03 dB, but fails `test_benchmark` by 0.2-0.4 dB at long range. Do
     not coarsen its range step to buy speed; that is what the split-step is for.
-  - **Normalisation:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
+  - **Normalization:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
     p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the
     exact two-ray field (0.3 dB, rigid) and to Weyl–van der Pol through NICE-OPS's own
     `spherical_reflection_coefficient` (0.5 dB, grass), which checks the ground condition's
@@ -880,7 +880,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     -- HARMONOISE's gamma_t, the form Ostashev's and HARMONOISE's coherences both reduce to
     -- uniform in height, one screen per outer scale of range, drawn by FFT (`ScreenSource`).
     The screen's vertical spectrum is the 3-D spectrum integrated across the plane, so the
-    vertical coherence is 3-D's. `solve_pe_band` makes each frequency its own realisation.
+    vertical coherence is 3-D's. `solve_pe_band` makes each frequency its own realization.
     `tests/test_pe_turbulence.cpp` checks the screens' variance (0.06%), the mean field's
     exp(-sigma^2/2) decay (within sampling noise), and ShadowScattering against the PE.
     Still air is untouched: gamma_t 0 skips it all.
@@ -929,13 +929,13 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     development. The benchmark reaches |q| = 4.9. At |q| = 8.5 the continuation loses its
     way, and at 10.8 the box's edge overflows a double. The low zero at 1 kHz is the ground's
     surface wave, near q², and the continuation reaches it. `first_impedance_airy_zero`
-    follows the first zero alone, which stays well apart from its neighbours, to any |q|
+    follows the first zero alone, which stays well apart from its neighbors, to any |q|
     (checked to 1e5 against a_1 - 1/q - a_1/(3q^3)): what the shadow loss needs.
     **Past |q| = 6 with Re q <= 0** (every upward problem over ordinary ground) the zeros
     are seeded instead from zeta = (n - 3/4) pi - atan(q / sqrt(x)), b = -x, and polished by
     Newton; checked to step by pi in zeta. That removed the limit for `upward_pressure`.
     Re q > 0 past 6 (downward, and surface-wave grounds) still throws.
-  - **A mode sum returns NaN where it cannot be trusted:** terms cancelling by more than nine
+  - **A mode sum returns NaN where it cannot be trusted:** terms canceling by more than nine
     orders (the residue series near the source, whose terms grow before decaying), or a tail
     not yet dead at the 12000-mode cap. Callers skip NaN rather than tighten the cap.
   - **`hankel1_0` switches from the power series to the asymptotic expansion at
@@ -996,7 +996,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   model put the microphone 1.2 m up. Point-receiver SEL moved by up to ±0.8 dB on the demo
   grid, almost all from the low states; plates and the goldens did not move.
 - `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
-  than a table, so it evaluates at whatever band centres a database carries) and band-limited
+  than a table, so it evaluates at whatever band centers a database carries) and band-limited
   energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but
   -1.49e-6 dB; a test asserting exact 0 there will fail. `a_weighting_gains()` folds the
   weighting and the band limit into one per-band multiply, with excluded bands exactly zero.
@@ -1037,7 +1037,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     and its band-invariant branches (boundary loss on/off, the sinc, turbulence) are hoisted so
     the body stays straight-line.
   - Bands outside the metric's limits are not computed at all. `first_band`/`last_band` bound a
-    contiguous run, which is always what the limits select because band centres are sorted.
+    contiguous run, which is always what the limits select because band centers are sorted.
   - The Weideman series behind `faddeeva` runs as four interleaved Horner chains rather than
     one; see `src/faddeeva.cpp`. It was 53% of the ground path on its own and is latency-
     bound, not throughput-bound.
@@ -1107,29 +1107,29 @@ state format; `README.md` documents the format and the options. Things worth kno
 touching it:
 
 - **The format is decided by width, not by the header.** 27 columns is the positional AC
-  format; anything else is read by the names in its header (`read_labelled_csv` in
+  format; anything else is read by the names in its header (`read_labeled_csv` in
   `src/util/csv.hpp`). That order is load-bearing: the AC format's *own* header names `lat`,
   `lon` and `alt` columns, so a reader dispatching on the header alone takes a state file for a
   WGS84 track — and its x/y origin, which the file does not record, is about 2.5 km back along
   the track. `first_geodetic_position` applies the same width test, and a test pins it.
-- **The AC path is byte-identical.** `read_labelled_csv` keeps the first record as the header
+- **The AC path is byte-identical.** `read_labeled_csv` keeps the first record as the header
   instead of discarding it, but drops exactly the rows `read_numeric_csv(path, true)` dropped,
   so the goldens are untouched. Verified.
-- **`alt_m` is deliberately not a recognised altitude spelling.** Altitude is read in feet;
-  matching a metre spelling would read metres as feet and fly the aircraft three times too
+- **`alt_m` is deliberately not a recognized altitude spelling.** Altitude is read in feet;
+  matching a meter spelling would read meters as feet and fly the aircraft three times too
   high, where leaving it unmatched fails the file with a message naming the units.
 - **Altitude is MSL and z is height above the observers.** `--ground_elevation` is the
   difference. In `tracks/S-76D/197421AC.csv` it is a constant 54.2651 ft, which is how that
   file's own alt and z columns relate.
 - **The shipped AC tracks' local frame runs +x along a compass bearing of 210°** — the approach
   heading, not the instantaneous heading in column 8, which wanders over 25°. With that bearing
-  the projection reproduces that file's own x/y to under a metre over 3.2 km, which is the
+  the projection reproduces that file's own x/y to under a meter over 3.2 km, which is the
   check that the port of the transform is the one its producer used.
 - **One frame per run, settled before anything loads.** Every trajectory in a run shares the
   observers, so a position in one has to mean the same place as in another. `run()` resolves it
   from `--origin` or from the first geodetic track and hands it to each `Trajectory`.
 - **Velocity and load factor are derived, and that is the whole accuracy story.** The
-  projection is not the lossy part: altitude passes through exactly and x/y to under a metre.
+  projection is not the lossy part: altitude passes through exactly and x/y to under a meter.
   Differentiating a spline twice for the load factor is. **`--path_smoothing` defaults to 10 ft**
   and is an acceptable deviation in feet RMS per axis, not an abstract weight -- the solver
   spends the whole budget rather than merely staying inside it. Interpolating exactly
@@ -1137,7 +1137,7 @@ touching it:
   the 0.02 s demo track -- and moves the footprint by **11.6 dB at the median**; the 10 ft
   default takes that to 0.085 dB. Zero is wrong for both kinds of input, which is why it is no
   longer the default: measured positions turn into rounding noise, and sparse waypoints are a
-  statement of intent, so flying exactly through them manufactures manoeuvring that is itself a
+  statement of intent, so flying exactly through them manufactures maneuvering that is itself a
   noise source. 10 ft is not the optimum for any one input shape (a dense 50 Hz track does
   better at 0.0656 ft, tuned to its own resolution) but it is the only value that is good on
   all of them at once.
@@ -1191,7 +1191,7 @@ The port swapped each D dependency for a small local equivalent; when a behavior
 | --- | --- |
 | `std.getopt` | CLI11 |
 | `std.json` | nlohmann_json |
-| `std.csv` `csvReader!(double)` | `src/util/csv.hpp` (`read_numeric_csv`, plus `read_labelled_csv` for the header-named formats, which have no D original) |
+| `std.csv` `csvReader!(double)` | `src/util/csv.hpp` (`read_numeric_csv`, plus `read_labeled_csv` for the header-named formats, which have no D original) |
 | `std.experimental.logger` | `src/util/logger.hpp` (`log`/`info`/`trace`/`fatal`) |
 | `std.numeric.findRoot` | `src/util/rootfind.hpp` (bisection) |
 | `std.math.approxEqual` | `approx_equal()` in `sphere_database.hpp` |
@@ -1232,10 +1232,10 @@ General rule: when a D construct looks obvious, check it against Phobos semantic
   regenerating the golden outputs, and say so explicitly. The exception is the 4x EAA multiplier,
   removed above: it was a physics error rather than a quirk, it was measured against the model it
   stood in for before being removed, and `golden/197421_LAE.csv` was regenerated from the C++.
-  That is the bar for departing from D — a measured case that the D behaviour is wrong, not a
+  That is the bar for departing from D — a measured case that the D behavior is wrong, not a
   reading that it looks wrong.
   - Contour defaults are 65/100, not c74bab3's 45/90: the older pair puts its top level below the demo case's 93.6 dB peak, leaving it unfilled, and the shipped reference figures use 65/100. Figures only -- the goldens are CSV.
-  - `watts_trim` and the observer grid extent are now CLI options (`--trim`, `--grid`), both defaulting to the port's behaviour so the goldens are untouched. With `--trim -6000 --grid -2000 1100 -1500 1600` the demo case reproduces the June 2020 reference figures to within 1.05 dB on every cell.
+  - `watts_trim` and the observer grid extent are now CLI options (`--trim`, `--grid`), both defaulting to the port's behavior so the goldens are untouched. With `--trim -6000 --grid -2000 1100 -1500 1600` the demo case reproduces the June 2020 reference figures to within 1.05 dB on every cell.
   - D's `iota` is EXCLUSIVE of the stop value; observer grids and contour levels reconstruct that off-by-one deliberately (`iota_exclusive` in `src/niceops.cpp`).
   - `write_levels` emits one extra trailing newline because the D original did.
   - `level_along_bearing` uses `heading[0]` twice where the second component wants `heading[1]`; that is the D original's latent bug, kept.

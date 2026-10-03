@@ -52,7 +52,7 @@ TEST_CASE("A-weighting matches panam", "[weighting]")
     check_close(a_weighting(1000.0), 0.0, 1e-5);
 
     // Non-positive frequencies are floored rather than allowed to go to -inf,
-    // so a band centre of zero cannot poison a sum.
+    // so a band center of zero cannot poison a sum.
     REQUIRE(a_weighting(0.0) == -300.0);
     REQUIRE(a_weighting(-5.0) == -300.0);
 }

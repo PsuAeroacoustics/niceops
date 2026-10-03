@@ -109,7 +109,7 @@ TEST_CASE("is_night applies the 22:00-07:00 local window", "[sel]")
     REQUIRE(is_night(noon, -13.0)); // 23:00 local the previous day
 }
 
-TEST_CASE("day_night_level penalises night operations by 10 dB", "[sel]")
+TEST_CASE("day_night_level penalizes night operations by 10 dB", "[sel]")
 {
     // A history with a clear peak, so the 10-dB-down window is well defined.
     std::vector<double> levels;

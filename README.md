@@ -103,7 +103,7 @@ The computation is metric throughout. The conversion happens once, where the com
 parsed, and nothing downstream of that seam sees anything else.
 
 **`--units` says what your files already are; it does not convert them.** The shipped tracks and
-observer sets are in feet, so running them with `--units m` reads feet as metres and flies the
+observer sets are in feet, so running them with `--units m` reads feet as meters and flies the
 aircraft three times too far. Nothing can detect that, so the flag is a declaration you have to
 get right. Where a file names its own unit in a column header — `alt_ft`, `alt_m` — the name is
 checked against `--units` and a disagreement fails the file rather than being silently believed;
@@ -124,7 +124,7 @@ resistance in kPa (ISO 9613-1 is written in kPa), frequency in Hz, angles in deg
 seconds, levels in dB.
 
 > Before this flag existed, `--grid`, `--gridstep`, `--receiver_height` and `--path_smoothing`
-> were metres while `--trim` and `--ground_elevation` were feet and every file was feet. Scripts
+> were meters while `--trim` and `--ground_elevation` were feet and every file was feet. Scripts
 > written against that need those four converting, or `--units m` adding.
 
 ## Command line arguments
@@ -171,7 +171,7 @@ seconds, levels in dB.
 | `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity, and optionally pressure and wind, against height. Absorption is integrated through it. Spectral path only. See below. |
 | `--refraction` | `none` (default); `linear`, curved rays through the `--atmosphere` profile's effective sound speed fitted to a straight line per path; or `stratified`, through the profile's own layers. Both give shadow zones under upward refraction. See below. |
 | `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
-| `--tunnelling` | `--refraction stratified`: also take the rays turned back from aloft that turn again just above the microphone, which the wave reaches through the layer below them (an Airy tail per band). Off by default; see "Micro-shadows and skip zones" below. |
+| `--tunneling` | `--refraction stratified`: also take the rays turned back from aloft that turn again just above the microphone, which the wave reaches through the layer below them (an Airy tail per band). Off by default; see "Micro-shadows and skip zones" below. |
 | `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail per band. Off by default; see below. |
 | `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γT, instead of `--shadow_floor`. Default 0 (off). Needs `--refraction` and `--ground_effect`. |
 | `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
@@ -401,7 +401,7 @@ to at least 10 m. This is the equivalent linear profile of Harmonoise and Nord20
 linear profile every ray is an arc of a circle, so the eigenrays have closed forms, and the
 path supplies:
 
-- **The sphere's direction:** the direct ray's launch angle. At kilometre ranges it is a few
+- **The sphere's direction:** the direct ray's launch angle. At kilometer ranges it is a few
   degrees from the straight line, which is a large fraction of the database's 5° grid.
 - **Spreading:** from the ray tube's area, which in a linear profile is exactly
   r / cos(launch angle).
@@ -420,7 +420,7 @@ path supplies:
   against rigid's 70. The rate is held to the slope of the exact residue series deep in the
   shadow to 0.3%. It is capped at `--shadow_floor`, where energy scattered in by turbulence
   takes over; `--scattering` puts that energy in directly instead (below). A ground reactive enough to carry a surface wave into the shadow (a porosity
-  rate of tens per metre, a thin hard-backed layer, low bands) takes the rigid rate in those
+  rate of tens per meter, a thin hard-backed layer, low bands) takes the rigid rate in those
   bands, and the log names them.
 - **Near the shadow boundary**, with a point receiver or a flush plate microphone, the level
   comes from the exact field instead. Within a couple of diffraction lengths of the boundary
@@ -448,7 +448,7 @@ with the B407 database and `--frame_bearing 210`, compared with the same profile
 | `--plate_table` | | | | | 6.1 s (5.4 s without) |
 
 Most of the upwind loss comes from the low states near the end of the approach. From 10 m up,
-the shadow begins about a kilometre upwind.
+the shadow begins about a kilometer upwind.
 
 What to know before relying on it:
 
@@ -456,7 +456,7 @@ What to know before relying on it:
   whose default is +x east. The shipped AC tracks run +x along 210°, so without
   `--frame_bearing 210` their wind is read 120° off. The log says so whenever wind is present
   and the bearing was not given.
-- **One gradient per path.** A log-law profile's steep lowest metres are averaged into it.
+- **One gradient per path.** A log-law profile's steep lowest meters are averaged into it.
   Equivalent-linear models have been found up to 10 dB off a parabolic-equation solution near
   the ground at 500–2000 Hz (van Maercke & Salomons 2009). The general stratified model
   planned as step 6 removes this approximation.
@@ -569,7 +569,7 @@ frames are far from each microphone's peak and do not move the SEL.
 
 It is checked two ways. On a linear profile it reproduces the linear model's closed forms,
 the shadow boundary included. On layered profiles its rays match numerically traced ones to a
-micrometre. Everything else follows `--refraction linear`: the ray tube, the ground geometry,
+micrometer. Everything else follows `--refraction linear`: the ray tube, the ground geometry,
 reception time, the shadow's decay and floor, and the peak search.
 
 What the layers change is near the ground. A log-law wind is zero at the ground, so for
@@ -581,13 +581,13 @@ upwind shadow begins 535 m out, where a fitted line puts it past 1.6 km.
 **The wave does not take that boundary at face value.** Rays follow the thin near-ground
 shear layer, but the wave resolves it only once its diffraction length is short against the
 distance between the two boundaries. At 125 Hz the parabolic equation below shows no shadow
-until about a kilometre, and even at 2 kHz it has not reached the layered boundary. So with a
+until about a kilometer, and even at 2 kHz it has not reached the layered boundary. So with a
 point receiver each band gets an effective boundary between the two,
 r_b = r_s + w (r_l − r_s), where w = x / (x + 0.363) and x is the band's diffraction length
 at the linear fit's curvature over r_l − r_s. The boundary field is then scaled by the
 curvature that makes r_b. Past the layered boundary the lit level is the linear fit's ray:
 - The layered model's near-grazing rays there have no reflected partner.
-- On a log law its dipping family reaches tens of metres past its own end.
+- On a log law its dipping family reaches tens of meters past its own end.
 
 The law's one constant was fitted on twelve log laws (u* 0.2–0.6 m/s, z0 0.01–0.1 m,
 sources 30 and 100 m, 125 Hz – 2 kHz) and checked on `example_windy.csv`, which was held out:
@@ -608,23 +608,23 @@ boundary as it stands. On the demo grid with a point receiver, `stratified` then
   constant that suits both heights together is 0.39, only 0.1 dB better than 0.363.
 
 Two faults in the layered model surfaced with flush microphones, both fixed:
-- **Microphones just below the plane.** Ground boards sit a few centimetres below the survey
+- **Microphones just below the plane.** Ground boards sit a few centimeters below the survey
   datum. The layers hold their lowest speed below z = 0 and the direct-ray solve knew no
   ground, so it sent a ray grazing along under the plane. On the 2017 test's windy day that
   was 33 dB low. Such a microphone is now solved for on the plane.
-- **Receivers a few millimetres up.** The ray tube past the boundary came out 0/0. It is now
+- **Receivers a few millimeters up.** The ray tube past the boundary came out 0/0. It is now
   spread as a linear profile's limiting ray.
 
 **The measured profiles of the 2017 test's windy day** (LIDAR winds and balloon temperatures,
 morning of day 284) exposed three more, all in how `stratified` meets its shadow. They were
 found by running the PE on the geometries of the microphones the model got most wrong.
 - **An inversion aloft hid the boundary.** Those mornings have an upwind shear near the
-  ground under an inversion, so the air a hundred metres up is a little faster than at the
+  ground under an inversion, so the air a hundred meters up is a little faster than at the
   source. The layered model took any faster air above the source to mean rays from aloft
   reach the receiver, and set no boundary. With none, there was no transition and no
   hand-over to the linear fit: the shadow came in as a 10–35 dB cliff at the layered
   boundary, which the PE puts 30–50% further out. A ray turned down aloft turns up again
-  wherever the air is faster still, here in the shear, metres above a board. Rays from aloft
+  wherever the air is faster still, here in the shear, meters above a board. Rays from aloft
   reach the receiver only if the air aloft outruns everything between the two, which is the
   test now.
 - **The layered ray focuses short of its boundary.** The steep lowest layer that sets the
@@ -641,9 +641,9 @@ found by running the PE on the geometries of the microphones the model got most 
 microphones 150–450 ft away; the PE on those paths agreed with straight rays.
 - **Faster air aloft still hid the boundary near the source.** The test above is right about
   whether rays from aloft reach the receiver at all, but they come down only past their skip
-  distance, kilometres out. Short of it the boundary now stands, and is taken back where a ray
+  distance, kilometers out. Short of it the boundary now stands, and is taken back where a ray
   from aloft or along a duct does arrive. Without it the shadow took the layered shadow ray,
-  focused 6.5 dB by the log law's lowest metres, plus the whole ground term: 12 dB over free
+  focused 6.5 dB by the log law's lowest meters, plus the whole ground term: 12 dB over free
   field at 63 Hz where the PE gives 4.
 - **A low source leaves the transition no room.** When a band's boundary is nearer the
   source than two diffraction lengths, the table has no lit zone to hand over from, and the
@@ -749,7 +749,7 @@ Fourth order is also what lets the grid be coarse. It is 10 points per wavelengt
 The middle row is why the ground condition and the interpolation had to follow the
 derivative: with those at second order the whole scheme converged at second order.
 
-The self-starter also corrects a bias at every angle. The Gaussian is normalised with the
+The self-starter also corrects a bias at every angle. The Gaussian is normalized with the
 wavenumber at the ground, so a source aloft in a refracting or windy column comes out at the
 wrong strength: 0.11–0.15 dB high against the exact residue series for a 100 m source where
 the sound speed is 3% lower than at the ground, and 0.10 dB on `example_windy.csv`. The
@@ -859,7 +859,7 @@ for `linear`, with the lapse control at 0.5 dB. By band, 125 Hz is the worst (10
 Two things that looked like the treatment and are not:
 - **Clipping the profile below a fixed height.** Once the height passes the microphone, the
   microphone sits in the clipped layer and shadows at every range.
-- **Smoothing the profile per band.** A linear profile smoothed only over its lowest metres
+- **Smoothing the profile per band.** A linear profile smoothed only over its lowest meters
   moved the lapse control by 20 dB at 2.5 km. The ray model is too sensitive to structure
   below the microphone for either to work.
 
@@ -870,7 +870,7 @@ turbulence in it, nothing scatters energy in.
 
 The PE takes turbulence as random phase screens (Gilbert, Raspet and Di 1990): `--gamma_t`
 (HARMONOISE strength), `--outer_scale` (von Kármán, default 10 m) and `--seed`, with each of
-`--samples` frequencies its own realisation, so a band level averages over the band and the
+`--samples` frequencies its own realization, so a band level averages over the band and the
 ensemble at once. The effective index's structure parameter is γT / 4, the value for which
 Ostashev's coherence and HARMONOISE's both reduce to one form (Attenborough & Taherzadeh 2026,
 eqs. 18 and 20). One screen per outer scale of range carries the phase that slab accumulates.
@@ -879,7 +879,7 @@ is the 3-D medium's. Checks, `tests/test_pe_turbulence.cpp`:
 - **The screens' variance:** 0.782 k² Δx (γT/4) L0^(5/3), to 0.06%, less the 4% the finite
   column leaves out.
 - **The ensemble-mean field:** it falls as exp(−σ²/2) with range to within the sampling noise
-  of 300 realisations, which checks the screens and the march together.
+  of 300 realizations, which checks the screens and the march together.
 - **Single scattering:** a third of the strength lowers the deep-shadow level by 4.82 dB,
   against 10 lg 3 = 4.77.
 
@@ -1016,7 +1016,7 @@ the source and the two heights above the ground, which are the table's axes:
 | `bearing` | compass bearing the sound travels toward, degrees, uniform from 0 over 360; one value means the same in every direction |
 | `source_height`, `receiver_height` | above the ground, m, ascending |
 | `range` | horizontal, m, ascending |
-| `band` | band centres, Hz; the run's bands within `--band_limits` must all be there |
+| `band` | band centers, Hz; the run's bands within `--band_limits` must all be there |
 
 Values are interpolated linearly in dB along each axis. A NaN means the method has no value
 there. A pair the table does not cover, by a NaN among the values it would interpolate or by
@@ -1046,7 +1046,7 @@ to neither a flush nor a 1.2 m microphone; and short of where it first comes dow
 layer (flattening it moves the PE by under 1 dB to 250 Hz) and fills the skip zone from the
 caustic. Three treatments were built and compared (harness `propagation/micro_shadow*.py`):
 
-- `--tunnelling` adds the rays that turn within reach of the microphone, each with the Airy
+- `--tunneling` adds the rays that turn within reach of the microphone, each with the Airy
   tail below its turning point, Ai^2((3/2 omega I)^(2/3)), I the integral of
   sqrt(p^2 - 1/c^2) from the microphone to the turning height. Near the family's caustic the
   pair of rays is replaced by the caustic's band-averaged Airy field.
@@ -1059,7 +1059,7 @@ caustic. Three treatments were built and compared (harness `propagation/micro_sh
 | 100 ft source, flush, 2,000-13,000 ft; `stratified` - PE, mean / rms dB | 50-160 Hz | 200-630 Hz | 800-2,000 Hz |
 | --- | --- | --- | --- |
 | Day-286 PE matrix (five profiles), neither | -5.4 / 9.8 | -6.1 / 11.1 | -3.6 / 9.9 |
-| `--tunnelling` | -3.4 / 7.3 | -3.8 / 8.5 | -1.4 / 7.3 |
+| `--tunneling` | -3.4 / 7.3 | -3.8 / 8.5 | -1.4 / 7.3 |
 | `--skip_fill` | -4.5 / 8.9 | -5.6 / 10.5 | -2.7 / 9.2 |
 | both | -1.7 / 5.1 | -2.3 / 6.5 | +0.3 / 6.7 |
 
@@ -1067,7 +1067,7 @@ Against measured day-286 frames where `stratified` predicts at least 10 dB under
 (1.4% of frame-bands to 2 kHz; sources under 300 ft, 0.4-2 degrees, 4-9 kft), energy-mean
 predicted - measured:
 
-| | straight | `stratified` | `--tunnelling` | `--skip_fill` | both | PE table (5 runs) |
+| | straight | `stratified` | `--tunneling` | `--skip_fill` | both | PE table (5 runs) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 25 runs, 50-160 Hz | +3.8 | -10.5 | -7.3 | -3.6 | -2.1 | |
 | 25 runs, 200-630 Hz | -0.1 | -15.5 | -10.7 | -7.2 | -5.0 | |
@@ -1077,7 +1077,7 @@ predicted - measured:
 None moves the SEL: the exposure within 10 dB of each microphone's measured peak is unchanged
 to 0.02 dB under every option. All three are off by default. What they leave:
 
-- The tails above 800 Hz. The tunnelled field at the ground and the skip zone's edge short of
+- The tails above 800 Hz. The tunneled field at the ground and the skip zone's edge short of
   the direct rays' reach (a duct's direct family ends without a caustic, and the PE diffracts
   past it) are still 10-20 dB low there.
 - On run 286276's far frames (150-330 ft sources, 6-20 kft) every model but plain `stratified`
@@ -1086,7 +1086,7 @@ to 0.02 dB under every option. All three are off by default. What they leave:
   within about 1 dB of a direct PE run at 63-250 Hz but 5 dB rms overall in this duct, almost
   all at 1-2 kHz, where the return's caustic moves between nodes. Each run's table took
   2.5 minutes to build.
-- Cost on a day-286 run: `--tunnelling` about +20%, `--skip_fill` 2-4x, a table about the
+- Cost on a day-286 run: `--tunneling` about +20%, `--skip_fill` 2-4x, a table about the
   ray model's own.
 
 `niceops_propagation_table` writes one, by either of two methods:
@@ -1145,10 +1145,10 @@ refuses any other. Two tables are shipped in `plates/`:
 
 Build another with panam's `axisymmetric_bem.table(bands, …)` and `write_netcdf`. A table at
 the databases' 31 bands takes about 20 s on 14 cores. Turbulence and roughness do not apply to
-the plate, because its reflection is millimetres from its direct path.
+the plate, because its reflection is millimeters from its direct path.
 
 Q is taken as quadratic in log frequency across each band, through the band's edges and
-centre. This is within 0.07 dB of evaluating Q at every sub-frequency wherever the level is
+center. This is within 0.07 dB of evaluating Q at every sub-frequency wherever the level is
 above −15 dB. The exact per-sub-frequency form (`PlateReceiver::level_exact`) matches panam's
 `board_level` to 1e-6 dB in `tests/test_plate_receiver.cpp`. Its cost on the full demo grid
 (S-76D track, B407 fixed-load-factor database, 94.3 M evaluations, 14 threads):
@@ -1241,7 +1241,7 @@ time,lat,lon,alt
 
 Both formats are read by `-t`, and which one a file is is decided by its width: 27 columns is
 the positional AC format, anything else is read by the names in its header. Column order does
-not matter and unrecognised headers are an error rather than a guess.
+not matter and unrecognized headers are an error rather than a guess.
 
 | Column | Meaning |
 | --- | --- |
@@ -1250,9 +1250,9 @@ not matter and unrecognised headers are an error rather than a guess.
 | `alt` | **Feet above mean sea level.** `--ground_elevation` gives the elevation of the ground the observers stand on, which is subtracted to get height above them. |
 | `vE`, `vN`, `vUp` | Optional, ft/s. Used when all three are present; otherwise velocity is differentiated from the path. |
 
-Names are matched case-insensitively, ignoring punctuation and a parenthesised unit, so
-`Latitude`, `LAT` and `lat (deg)` are one column. `alt_ft` is recognised and `alt_m` is
-deliberately *not*: a file naming metres fails to load rather than being read as feet.
+Names are matched case-insensitively, ignoring punctuation and a parenthesized unit, so
+`Latitude`, `LAT` and `lat (deg)` are one column. `alt_ft` is recognized and `alt_m` is
+deliberately *not*: a file naming meters fails to load rather than being read as feet.
 
 **Where the frame sits.** `--origin <lat> <lon>` fixes the local x/y origin; without it, the
 first position of the first geodetic track is used. `--frame_bearing` turns the axes so +x runs
@@ -1269,7 +1269,7 @@ the fit will use 10 ft of slack, not merely stay under it.
 The default is 10 ft. Zero interpolates exactly, and exact interpolation is the wrong thing for
 both kinds of input: measured positions make the second derivative track coordinate rounding,
 and sparse waypoints are a statement of intent rather than a constraint to be met to the inch —
-flying precisely through them manufactures aggressive manoeuvring, which is itself a noise
+flying precisely through them manufactures aggressive maneuvering, which is itself a noise
 source.
 
 Feeding the demo track's own lat/lon/alt columns back in, against the footprint computed from
@@ -1283,7 +1283,7 @@ its full inertial state:
 | 50 Hz positions and velocity columns, default | 0.014 dB | 0.42 | 2.25 | 18 |
 | Waypoints 10 s apart, resampled to 0.1 s, default | 0.096 dB | 0.95 | 2.10 | 107 |
 
-The projection itself is not the lossy part: it reproduces that file's own x/y to under a metre
+The projection itself is not the lossy part: it reproduces that file's own x/y to under a meter
 over 3.2 km, and altitude passes through exactly. What costs is differentiating twice.
 
 The default is not the best row in the table — a dense 50 Hz track does better at 0.0656 ft,
@@ -1294,7 +1294,7 @@ uniformly catastrophic on measured input, and a value tuned for one sampling rat
 another. Tune it down if you know your coordinate resolution; leave it alone otherwise.
 
 Sparse waypoints are resampled onto the `-s` grid first — never coarsened — and their load
-factor is an artefact of the interpolant, which is logged.
+factor is an artifact of the interpolant, which is logged.
 
 > The `--path_smoothing 0` row was, until recently, reported as 0.196 dB. That measured a bug:
 > `SmoothingSpline` short-circuited at λ = 0 and returned zero curvature, so the load factor
@@ -1314,7 +1314,7 @@ file is always scattered, never gridded.
 
 **The transform.** `src/geodetic.hpp` is a transverse Mercator about the reference point, with
 altitude carried through as z — a map projection with a height attached rather than a true ENU
-frame. Over the few kilometres a footprint spans the difference is far below the modelling
+frame. Over the few kilometers a footprint spans the difference is far below the modeling
 error. `from_east_north_up` applies the frame's rotation without its translation, for
 velocities; `to_geodetic` inverts the projection by Newton iteration, and is what `--latlon`
 uses.
@@ -1358,7 +1358,7 @@ difference anywhere is **1.05 dB**, 99% of cells are within 0.5 dB, and the peak
 0.07 dB. Contour levels now default to 65–100, the values the references were drawn with; the old
 45–90 put its top level below the peak of the demo case, leaving the loudest patch unfilled.
 
-## Licence
+## License
 
 NICE-OPS is under the MIT License; see `LICENSE`. Every third-party component it
 builds against is permissive — BSD, MIT or the Boost Software License — and none carries a

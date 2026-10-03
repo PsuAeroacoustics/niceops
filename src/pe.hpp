@@ -36,7 +36,7 @@
 //   the error at 30-50 degrees stayed where it was, 0.6-1.7 dB rms against the
 //   exact two-ray field at 1 kHz:
 //     - the starter.  The Gaussian is a far-field, narrow-angle source, and it
-//       is normalised with the ground's wavenumber.  The self-starter
+//       is normalized with the ground's wavenumber.  The self-starter
 //       (PeStarter::self) is the first range step itself with the point
 //       source's modal amplitudes in it, applied to a delta function on the
 //       grid: exact to max_angle like every other step.  It also gives a
@@ -121,7 +121,7 @@ struct PeSetup
     std::vector<double> receiver_heights; // m
     double max_range = 0.0; // m
     double output_step = 10.0; // m, range spacing of the results
-    // Normalised ground admittance 1/Z, exp(-i omega t); 0 is rigid.
+    // Normalized ground admittance 1/Z, exp(-i omega t); 0 is rigid.
     std::complex<double> admittance {0.0, 0.0};
     // The effective sound speed along the plane: linear between (z, c)
     // nodes, constant outside them.
@@ -166,11 +166,11 @@ struct PeSetup
     // spherical-wave coherence Ostashev's form (Attenborough & Taherzadeh 2026,
     // eq. 20) and HARMONOISE's (eq. 18) both reduce to.  The spectrum is von
     // Karman's with outer scale `outer_scale`, 0.033 C^2 (kappa^2 + 1/L0^2)^(-11/6),
-    // uniform in height.  One screen every `screen_spacing` metres of range (0:
+    // uniform in height.  One screen every `screen_spacing` meters of range (0:
     // the outer scale) carries the phase a slab that thick accumulates, which
     // is the Markov approximation; its vertical spectrum is the 3-D one
     // integrated across the plane, so the vertical coherence is the 3-D
-    // medium's.  Each realisation draws its screens from `seed`.
+    // medium's.  Each realization draws its screens from `seed`.
     double gamma_t = 0.0;
     double outer_scale = 10.0; // m
     double screen_spacing = 0.0; // m
@@ -202,24 +202,24 @@ struct PeResult
 PeResult solve_pe(const PeSetup& setup);
 
 // The same averaged in energy over `samples` frequencies spread evenly in
-// log frequency across the one-third-octave band centred on `centre`: what a
+// log frequency across the one-third-octave band centerd on `center`: what a
 // band level sees, rather than one tone's interference pattern.
-// With turbulence each frequency is also its own realisation (seed + k), so the
+// With turbulence each frequency is also its own realization (seed + k), so the
 // average is over the band and the ensemble at once.  The frequencies are
 // independent marches and run in parallel (PeSetup::threads); they are summed
 // in order afterwards, so the result is the same on any thread count.
-PeResult solve_pe_band(PeSetup setup, double centre, int samples = 5);
+PeResult solve_pe_band(PeSetup setup, double center, int samples = 5);
 
-// solve_pe_band for several bands at once, band b from setups[b] at centres[b]:
+// solve_pe_band for several bands at once, band b from setups[b] at centers[b]:
 // every (band, frequency) march is one task in a single pool, the highest
 // frequencies -- the longest marches, their cost going as f^2 -- dealt out
 // first.  The same result as a band at a time, sooner.  Threads from
 // setups[0].threads.
-std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const std::vector<double>& centres,
+std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const std::vector<double>& centers,
         int samples = 5);
 
 // The PE's phase screen: phi(z_j) at z_j = j dz, j = 0 .. count - 1, for a slab
-// `thickness` metres deep at wavenumber k.  Its variance is
+// `thickness` meters deep at wavenumber k.  Its variance is
 // 0.782 k^2 thickness (gamma_t / 4) outer_scale^(5/3), less what the finite
 // column leaves out (tests).
 std::vector<double> phase_screen(double k, double gamma_t, double outer_scale, double thickness,

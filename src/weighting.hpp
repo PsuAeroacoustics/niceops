@@ -3,7 +3,7 @@
 // Frequency weighting and band-limited integration of a spectrum.
 //
 // Ported from panam's dBAw() in flight_acoustics.py -- the IEC 61672 pole-zero
-// form, not a table lookup, so it evaluates at whatever band centres a database
+// form, not a table lookup, so it evaluates at whatever band centers a database
 // happens to carry.
 //
 // Band limiting is deliberate rather than incidental.  A database's bands cover
@@ -41,7 +41,7 @@ struct BandLimits
 // one outside.
 //
 // Precomputed because the acoustic loop evaluates this for every observer at
-// every trajectory state; the weighting depends only on the band centres.
+// every trajectory state; the weighting depends only on the band centers.
 std::vector<double> a_weighting_gains(const std::vector<double>& frequencies, BandLimits limits);
 
 // Overall level in dB from per-band levels and gains from a_weighting_gains.
@@ -58,7 +58,7 @@ double weighted_level(const double* band_levels, const std::vector<double>& gain
 double weighted_level(const double* band_levels, const std::vector<double>& gains,
         const double* ratios);
 
-// How many of these band centres fall inside the limits.  For reporting what a
+// How many of these band centers fall inside the limits.  For reporting what a
 // run actually integrated over.
 std::size_t bands_in_range(const std::vector<double>& frequencies, BandLimits limits);
 

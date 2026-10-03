@@ -4,7 +4,7 @@
 //
 // Eigen was the last library the build required beyond netCDF, and NICE-OPS
 // used about a hundredth of it: positions, velocities and TPP normals, with
-// dot, cross, norm and normalise.  Nothing here templates over size or defers
+// dot, cross, norm and normalize.  Nothing here templates over size or defers
 // evaluation, because nothing needs to.
 //
 // The arithmetic is written to match what Eigen did operation for operation --

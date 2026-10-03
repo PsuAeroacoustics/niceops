@@ -72,8 +72,8 @@ TEST_CASE("Orientation is exact where double precision is not", "[predicates]")
 
 TEST_CASE("In-sphere on the cube's circumsphere", "[predicates]")
 {
-    // Four corners of the unit cube.  Their circumsphere is centred on the cube
-    // centre and passes through all eight corners -- so every other corner is
+    // Four corners of the unit cube.  Their circumsphere is centerd on the cube
+    // center and passes through all eight corners -- so every other corner is
     // *exactly* on it, and the predicate must say so rather than guess.
     const double simplex[12] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
 
@@ -84,9 +84,9 @@ TEST_CASE("In-sphere on the cube's circumsphere", "[predicates]")
     const double and_again[3] = {0, 1, 1};
     REQUIRE(in_sphere(simplex, and_again, 3) == 0);
 
-    // The centre is inside, a distant point is outside.
-    const double centre[3] = {0.5, 0.5, 0.5};
-    REQUIRE(in_sphere(simplex, centre, 3) == 1);
+    // The center is inside, a distant point is outside.
+    const double center[3] = {0.5, 0.5, 0.5};
+    REQUIRE(in_sphere(simplex, center, 3) == 1);
     const double far[3] = {2, 2, 2};
     REQUIRE(in_sphere(simplex, far, 3) == -1);
 
@@ -103,9 +103,9 @@ TEST_CASE("In-sphere does not depend on vertex order", "[predicates]")
     // "is this point inside the circumsphere" must not change with it.
     const double simplex[12] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
     const double swapped[12] = {1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1};
-    const double centre[3] = {0.5, 0.5, 0.5};
+    const double center[3] = {0.5, 0.5, 0.5};
     const double far[3] = {5, 5, 5};
-    REQUIRE(in_sphere(simplex, centre, 3) == in_sphere(swapped, centre, 3));
+    REQUIRE(in_sphere(simplex, center, 3) == in_sphere(swapped, center, 3));
     REQUIRE(in_sphere(simplex, far, 3) == in_sphere(swapped, far, 3));
 }
 
@@ -115,8 +115,8 @@ TEST_CASE("In-sphere works in two dimensions", "[predicates]")
     const double triangle[6] = {0, 0, 1, 0, 0, 1};
     const double fourth_corner[2] = {1, 1};
     REQUIRE(in_sphere(triangle, fourth_corner, 2) == 0);
-    const double centre[2] = {0.5, 0.5};
-    REQUIRE(in_sphere(triangle, centre, 2) == 1);
+    const double center[2] = {0.5, 0.5};
+    REQUIRE(in_sphere(triangle, center, 2) == 1);
     const double outside[2] = {3, 3};
     REQUIRE(in_sphere(triangle, outside, 2) == -1);
 }

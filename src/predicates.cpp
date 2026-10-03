@@ -330,7 +330,7 @@ int in_sphere(const double* points, const double* query, std::size_t dim)
         sign = sign_of(exact_determinant(exact, size));
     }
 
-    // Normalise out the simplex's own orientation, so the answer means "inside"
+    // Normalize out the simplex's own orientation, so the answer means "inside"
     // however the vertices happen to be ordered.
     const int simplex_orientation = orientation(points, dim);
     if (simplex_orientation == 0)

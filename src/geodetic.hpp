@@ -9,10 +9,10 @@
 // altitude carried straight through as z.  That makes it a map projection with
 // a height attached rather than a true ENU frame: it does not rotate the
 // horizontal axes with height, and it does not account for the Earth curving
-// away beneath a distant observer.  Over the few kilometres a noise footprint
-// spans, both effects are far below the modelling error, and it is the
+// away beneath a distant observer.  Over the few kilometers a noise footprint
+// spans, both effects are far below the modeling error, and it is the
 // projection the shipped trajectory files were built with -- their x/y columns
-// agree with it to a few centimetres.
+// agree with it to a few centimeters.
 
 #include <string>
 
@@ -20,7 +20,7 @@
 
 namespace niceops {
 
-// A WGS84 position.  Angles in degrees, altitude in metres.
+// A WGS84 position.  Angles in degrees, altitude in meters.
 struct Geodetic
 {
     double latitude = 0.0;
@@ -28,8 +28,8 @@ struct Geodetic
     double altitude = 0.0;
 };
 
-// Projects WGS84 positions onto a local Cartesian frame centred on a reference
-// point: x east, y north, z up, all in metres.
+// Projects WGS84 positions onto a local Cartesian frame centerd on a reference
+// point: x east, y north, z up, all in meters.
 class LocalFrame
 {
 public:
@@ -53,7 +53,7 @@ public:
         return reference_;
     }
 
-    // Geodetic -> local Cartesian metres.  Throws for a position outside the
+    // Geodetic -> local Cartesian meters.  Throws for a position outside the
     // projection's domain; the D original quietly returned the origin instead,
     // which silently teleports a bad coordinate to the reference point.
     Vec3 to_local(const Geodetic& position) const;
@@ -66,7 +66,7 @@ public:
     // ...and back.  Newton iteration on the forward projection, which converges
     // to the last bit in a handful of steps.  The D original walked latitude
     // and then longitude in fixed 1e-5 degree increments until the error
-    // stopped shrinking, stopping a centimetre out after thousands of forward
+    // stopped shrinking, stopping a centimeter out after thousands of forward
     // evaluations.
     Geodetic to_geodetic(const Vec3& local) const;
 

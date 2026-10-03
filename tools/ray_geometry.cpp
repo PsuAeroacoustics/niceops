@@ -63,12 +63,12 @@ struct Pair
     double dx = 0.0, dy = 0.0, z_s = 0.0, z_r = 0.0;
 };
 
-std::vector<Pair> read_pairs(const std::string& path, double to_metres)
+std::vector<Pair> read_pairs(const std::string& path, double to_meters)
 {
-    const auto table = read_labelled_csv(path);
+    const auto table = read_labeled_csv(path);
     auto column = [&](const char* name) {
         const std::size_t k = table.column({name});
-        if (k == LabelledCsv::npos)
+        if (k == LabeledCsv::npos)
             fatal("--paths ", path, " has no `", name, "` column");
         return k;
     };
@@ -80,11 +80,11 @@ std::vector<Pair> read_pairs(const std::string& path, double to_metres)
     {
         const auto& r = table.rows[row];
         Pair p;
-        p.id = id != LabelledCsv::npos ? r[id] : static_cast<double>(row);
-        p.dx = r[dx] * to_metres;
-        p.dy = r[dy] * to_metres;
-        p.z_s = r[zs] * to_metres;
-        p.z_r = r[zr] * to_metres;
+        p.id = id != LabeledCsv::npos ? r[id] : static_cast<double>(row);
+        p.dx = r[dx] * to_meters;
+        p.dy = r[dy] * to_meters;
+        p.z_s = r[zs] * to_meters;
+        p.z_r = r[zr] * to_meters;
         out.push_back(p);
     }
     return out;
@@ -113,8 +113,8 @@ int main(int argc, char** argv)
     CLI11_PARSE(app, argc, argv);
 
     Logger::instance().set_file("log/ray_geometry.log");
-    const LengthUnit unit = units == "m" ? metres : feet;
-    const auto pairs = read_pairs(paths_file, unit.to_metres);
+    const LengthUnit unit = units == "m" ? meters : feet;
+    const auto pairs = read_pairs(paths_file, unit.to_meters);
 
     auto profile = read_atmosphere_profile(atmosphere_file, unit, 0.0);
     if (!profile.has_pressure())
@@ -165,12 +165,12 @@ int main(int argc, char** argv)
             std::ostringstream line;
             line << std::setprecision(10) << p.id << "," << (ray.shadow_depth > 0.0 ? 0 : 1) << ","
                  << launch * 180.0 / pi << "," << arrival * 180.0 / pi << ","
-                 << 20.0 * std::log10(slant / ray.path.range) << "," << ray.shadow_depth / unit.to_metres << ","
-                 << (curved ? ray.direct.boundary / unit.to_metres : inf) << "," << (ray.from_linear_fit ? 1 : 0)
+                 << 20.0 * std::log10(slant / ray.path.range) << "," << ray.shadow_depth / unit.to_meters << ","
+                 << (curved ? ray.direct.boundary / unit.to_meters : inf) << "," << (ray.from_linear_fit ? 1 : 0)
                  << "," << ray.bounces << "," << ray.extra.size() << ","
                  << (extra > 0.0 ? 10.0 * std::log10(extra) : -inf) << ","
-                 << ray.path.source_height / unit.to_metres << "," << ray.path.ground_distance / unit.to_metres
-                 << "," << ray.path.range / unit.to_metres << "," << ray.path.path_length / unit.to_metres << ","
+                 << ray.path.source_height / unit.to_meters << "," << ray.path.ground_distance / unit.to_meters
+                 << "," << ray.path.range / unit.to_meters << "," << ray.path.path_length / unit.to_meters << ","
                  << (curved ? ray.travel_time : slant / sound_speed);
             lines[k] = line.str();
         }

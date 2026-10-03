@@ -4,7 +4,7 @@
 //
 // Each screen is the phase a slab `dx` deep accumulates, so its variance is
 // 2 pi k^2 dx times the 3-D spectrum integrated over the plane normal to the
-// path: 0.782 k^2 dx C^2 L0^(5/3) with C^2 = gamma_t / 4.  After r metres of
+// path: 0.782 k^2 dx C^2 L0^(5/3) with C^2 = gamma_t / 4.  After r meters of
 // screens the phase along any path has variance 0.782 k^2 r C^2 L0^(5/3), and
 // with it Gaussian the mean field is the still-air field times exp(-sigma^2/2),
 // both rays of it alike.  The mean field's decay therefore checks the screens'
@@ -89,14 +89,14 @@ TEST_CASE("pe_turbulent_mean_field_decays", "[pe_turbulence]")
     // The mean of N unit phasors scatters by about sqrt((1 - |mean|^2) / 2N):
     // 0.02 at N = 1000, so 0.07 is 3-4 sigma at every range checked.  (300 of
     // them, at 0.035, failed by chance once the grid changed the draws.)
-    constexpr int realisations = 1000;
+    constexpr int realizations = 1000;
     std::vector<std::complex<double>> mean(still.range.size(), 0.0);
-    for (int i = 0; i < realisations; i++)
+    for (int i = 0; i < realizations; i++)
     {
         setup.seed = 7 + static_cast<unsigned>(i);
         const auto one = solve_pe(setup);
         for (std::size_t q = 0; q < mean.size(); q++)
-            mean[q] += one.psi[0][q] / static_cast<double>(realisations);
+            mean[q] += one.psi[0][q] / static_cast<double>(realizations);
     }
     for (std::size_t q = 0; q < mean.size(); q++)
     {
@@ -112,9 +112,9 @@ TEST_CASE("deep in a shadow the turbulent PE is at the scattering model's level"
 {
     // A measured day-284 upwind profile (the one tests/test_shadow_transition.cpp
     // uses), source 50 m up, microphone 3 mm up over the site's ground, 500 Hz,
-    // gamma_t 3e-5: past a kilometre the still field is 20+ dB below the
+    // gamma_t 3e-5: past a kilometer the still field is 20+ dB below the
     // turbulent one, which ShadowScattering was fitted to on twelve such
-    // profiles.  Twelve realisations, spread across the band.
+    // profiles.  Twelve realizations, spread across the band.
     PeSetup setup;
     setup.source_height = 50.0;
     setup.receiver_heights = {0.003};

@@ -38,7 +38,7 @@ Traced trace(const Layers& layers, double z_s, double launch, double r, int refl
 {
     auto c = [&](double z) { return layers.at(z); };
     // The layer's own gradient: a finite difference here rounds to ~1e-8 /s,
-    // which over a kilometre of ray is a tenth of a millimetre.
+    // which over a kilometer of ray is a tenth of a millimeter.
     // Exactly on a level -- where the trace lands on purpose -- the layer is
     // the one the ray is heading into.
     auto dcdz = [&](double z, bool down) {
@@ -452,7 +452,7 @@ struct Elevated
 
 } // namespace
 
-TEST_CASE("tunnelled arrivals carry the evanescent integral below their turning point", "[stratified]")
+TEST_CASE("tunneled arrivals carry the evanescent integral below their turning point", "[stratified]")
 {
     // A 100 ft source 12,000 ft out: the duct's return, whose rays turn back up
     // a few feet above a flush microphone.  Each one's integral is checked

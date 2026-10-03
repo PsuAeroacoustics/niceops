@@ -23,7 +23,7 @@
 //   source_height    above the ground, m, ascending
 //   receiver_height  above the ground, m, ascending
 //   range            horizontal, m, ascending
-//   band             band centre, Hz; the run's bands are found among these
+//   band             band center, Hz; the run's bands are found among these
 // Values are interpolated linearly along each axis -- in dB, which suits a
 // band-averaged level and not a single tone's interference pattern -- and a
 // NaN means the method has no value there (the PE's field steeper than its

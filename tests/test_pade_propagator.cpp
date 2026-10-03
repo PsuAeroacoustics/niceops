@@ -298,7 +298,7 @@ TEST_CASE("the self-starter gives an elevated source its own strength", "[pade]"
 {
     // The benchmark's upward-refracting column (test_benchmark.cpp) with the
     // source 100 m up, where k is 3% above its value at the ground, against
-    // the residue series.  The Gaussian starter is normalised with the
+    // the residue series.  The Gaussian starter is normalized with the
     // ground's wavenumber and comes out 0.11-0.15 dB high at every range; the
     // self-starter launches each mode with its own k_n^(-1/2).
     const double c0 = 343.23, radius = c0 / 0.1, f = 100.0;

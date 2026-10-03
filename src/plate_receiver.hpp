@@ -27,7 +27,7 @@
 // P_d and P_r are interpolated bilinearly, real and imaginary parts, in
 // elevation and azimuth; below the table's lowest elevation they are held.
 //
-// Turbulence and roughness do not enter: the plate's image path is millimetres
+// Turbulence and roughness do not enter: the plate's image path is millimeters
 // longer than the direct one, so neither decorrelates it.
 //
 // The table is netCDF, from panam's axisymmetric_bem.write_netcdf():
@@ -39,7 +39,7 @@
 //   of the geometry for the log.
 // Azimuth is that of the horizontal propagation direction, source to
 // microphone, in the plate's frame, where the microphone is offset from the
-// plate's centre along +y.
+// plate's center along +y.
 
 #include <array>
 #include <complex>
@@ -58,7 +58,7 @@ public:
     // Read a table.  Not usable until bound().
     static PlateReceiver load(const std::string& path);
 
-    // A copy for one trajectory, checked against the database's band centres,
+    // A copy for one trajectory, checked against the database's band centers,
     // the bands [first_band, last_band) the run uses, and the run's ground
     // model.  `sound_speed` (m/s) is the trajectory's atmosphere's: it sets
     // the admittance at the sub-frequencies (variable porosity and the layer)
@@ -74,7 +74,7 @@ public:
     // file comment).
     //
     // Q is taken as quadratic in log frequency across each band, through its
-    // values at the band's edges and centre (shared edges: 2n + 1 evaluations
+    // values at the band's edges and center (shared edges: 2n + 1 evaluations
     // for n bands, not 5n).  Against level_exact(), over random geometries on
     // the GR1425 tables: within 0.07 dB wherever the level is above -15 dB re
     // free field; up to ~1.5 dB in the deep near-grazing cancellations, some
@@ -83,8 +83,8 @@ public:
     void level(double source_height, double ground_distance, double azimuth,
             double* correction, std::size_t first_band, std::size_t last_band) const;
 
-    // Tabulate the fast path's Q values (band edges and centres) over the
-    // image path's grazing cosine and length, up to `r_max` metres, so that
+    // Tabulate the fast path's Q values (band edges and centers) over the
+    // image path's grazing cosine and length, up to `r_max` meters, so that
     // level() and power_ratio() interpolate them instead of evaluating the
     // reflection coefficient (a Faddeeva evaluation each).  Q varies smoothly
     // with the geometry -- the plate's interference is in P_d and P_r -- so
@@ -118,11 +118,11 @@ private:
             double* correction, std::size_t first_band, std::size_t last_band) const;
 
     std::vector<double> edges_;    // band edges, n_bands + 1
-    std::vector<double> lagrange_; // [sub][lower edge, centre, upper edge]
+    std::vector<double> lagrange_; // [sub][lower edge, center, upper edge]
     std::vector<std::complex<double>> edge_admittance_;
-    std::vector<std::complex<double>> centre_admittance_;
+    std::vector<std::complex<double>> center_admittance_;
     // Q table: [r][s][point][re, im], point 2b the lower edge of band b, 2b+1
-    // its centre, 2n the top edge; s = sqrt(cos), cos the image path's
+    // its center, 2n the top edge; s = sqrt(cos), cos the image path's
     // grazing cosine.
     std::vector<float> q_table_;
     int q_n_s_ = 0;
@@ -138,7 +138,7 @@ private:
     // [elevation][azimuth][band][sub][P_d re, P_d im, P_r re, P_r im]: a
     // bilinear stencil reads four contiguous runs.
     std::shared_ptr<const std::vector<double>> values_;
-    std::vector<double> centres_;
+    std::vector<double> centers_;
     std::string ground_model_;
     double flow_resistance_ = 0.0;
     double porosity_rate_ = 0.0;

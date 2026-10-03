@@ -5,13 +5,13 @@
 //
 // --refraction linear fits one straight line to the effective sound speed of
 // each path.  That averages away exactly what shapes near-ground propagation:
-// a log-law wind's steep lowest metres, an inversion.  This takes the effective
+// a log-law wind's steep lowest meters, an inversion.  This takes the effective
 // sound speed c(z) + w(z).h as piecewise linear between the profile's own
 // levels, held constant below the lowest and above the highest.  Within each
 // layer a ray is still a circular arc, so crossing a layer has a closed form,
 // and a ray through the whole profile is a sum over its layers.
 //
-// Rays are parametrised by launch elevation theta.  In a horizontally
+// Rays are parametrized by launch elevation theta.  In a horizontally
 // stratified medium the Snell invariant p = cos(theta) / c(z_s) fixes the
 // whole ray.  Two branches reach a receiver below the source from above:
 //   A  launched downward, reaching the receiver before turning;
@@ -27,7 +27,7 @@
 // The ray tube -- the spreading -- comes from finite differences of the range
 // in launch angle:
 //   r_eq^2 = r |dr/dtheta| sin|arrival| / cos(launch),
-// which for a linear profile is exactly (r / cos(launch))^2.  Where neighbouring
+// which for a linear profile is exactly (r / cos(launch))^2.  Where neighboring
 // rays cross, at a caustic, it goes to zero.  The focusing it implies is capped
 // at max_focusing_gain_db, a stand-in for the Airy function's finite peak.
 //
@@ -127,7 +127,7 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
 // Two wave effects the rays above leave out, each behind its own option
 // (WaveCorrection, refraction.hpp, gives the loss):
 //
-// tunnelling: a ray turned back from aloft that turns again just above the
+// tunneling: a ray turned back from aloft that turns again just above the
 //   receiver never reaches it, and ray theory leaves the receiver in silence.
 //   The wave reaches it as the field's tail below the turning point.  Under day
 //   286's last profile the turning height is 1-20 ft, inside the log-law wind
@@ -148,15 +148,15 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
 //   caustic's Airy tail: I = C Ai^2(x), C = 4 pi omega^(1/3) /
 //   (2^(1/3) G X''^(2/3)), G = r |dp/dtheta| sin|arrival| / cos(launch), which
 //   matches the two rays' summed energy on the lit side.  The families are the
-//   ones from aloft (direct, bounced along a duct, and with tunnelling the
-//   tunnelled ones); a downward family's interior extrema are a log law's, and
+//   ones from aloft (direct, bounced along a duct, and with tunneling the
+//   tunneled ones); a downward family's interior extrema are a log law's, and
 //   the hand-over to the linear fit stands for those.
 struct WaveOptions
 {
-    bool tunnelling = false;
+    bool tunneling = false;
     bool skip_fill = false;
 
-    bool any() const { return tunnelling || skip_fill; }
+    bool any() const { return tunneling || skip_fill; }
 };
 
 std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, double z_r, double r,

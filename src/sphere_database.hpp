@@ -189,7 +189,7 @@ public:
     static constexpr int azimuth_bins = 8;
     static constexpr int bin_count = theta_bins * azimuth_bins;
 
-    // Which bin a propagation direction falls in, from the *unnormalised* dot
+    // Which bin a propagation direction falls in, from the *unnormalized* dot
     // products with the sphere frame and the squared range.
     //
     // Deliberately free of both a square root and any inverse trig: a state
@@ -264,7 +264,7 @@ inline int DirectionBounds::bin(double along, double up, double across, double s
     theta_index = along >= 0.0 ? half_theta + theta_index : half_theta - 1 - theta_index;
 
     // Azimuth: |across| against |up| scaled by tan of each sector edge, which
-    // needs neither the angle nor a normalised direction.
+    // needs neither the angle nor a normalized direction.
     constexpr int half_azimuth = azimuth_bins / 2;
     const double magnitude = std::fabs(across);
     const double reference = std::fabs(up);
@@ -334,7 +334,7 @@ public:
     double level_at_observer(const Vec3& observer, const SourceState& state) const;
 
     // Ground level from geometry that has already been formed: the squared
-    // range, and the three *unnormalised* dot products of the displacement with
+    // range, and the three *unnormalized* dot products of the displacement with
     // the sphere frame.  The observer loop's bound test computes exactly these,
     // so sharing them is what makes skipping states pay -- a state that
     // survives the test costs no more than it would have without one.
@@ -386,7 +386,7 @@ public:
     // skip the fast path).  spectra_ interleaves every condition, so a
     // blend's four values for one (cell, band) sit on four cache lines of a
     // table tens of MB long; here each (cell, k) is one contiguous run of
-    // bands, which is what the vectorised loop in eval_spectrum reads.
+    // bands, which is what the vectorized loop in eval_spectrum reads.
     // Size: cells * 4 * bands doubles.
     struct PackedSpectra
     {
@@ -437,8 +437,8 @@ public:
             const double* extra_loss = nullptr, const double* ground_weight = nullptr,
             double* band_levels = nullptr) const;
 
-    // Band centres carried by the database, empty when it has no spectra.
-    const std::vector<double>& band_centres() const
+    // Band centers carried by the database, empty when it has no spectra.
+    const std::vector<double>& band_centers() const
     {
         return frequencies_;
     }
@@ -477,7 +477,7 @@ public:
         double advance_ratio = 0.0;
         double flight_path_angle = 0.0;
         double thrust_coefficient = 0.0;
-        double radius = 0.0; // dimensional, metres
+        double radius = 0.0; // dimensional, meters
         // Mechanical shaft power for this condition, when the database carries
         // it.  NaN means the database has none.
         double shaft_power = std::numeric_limits<double>::quiet_NaN();
@@ -485,7 +485,7 @@ public:
         std::vector<double> thetas;
         // Row-major over (phi, theta): cells[i_phi * thetas.size() + i_theta].
         std::vector<Sample> cells;
-        // Band centres, and the per-band level at every cell laid out as
+        // Band centers, and the per-band level at every cell laid out as
         // amplitudes[cell * frequencies.size() + band].  Both empty when the
         // database carries no spectra.
         std::vector<double> frequencies;
@@ -583,7 +583,7 @@ private:
     void group_blends(const std::vector<SourceState>& states, DirectionBounds& bounds,
             std::vector<std::array<std::size_t, condition_dims + 1>>& blends) const;
 
-    // The DirectionBounds bin a grid cell's centre direction falls in, and how
+    // The DirectionBounds bin a grid cell's center direction falls in, and how
     // far a bilinear stencil reading that cell can reach in bins either way.
     int home_bin(std::size_t i_phi, std::size_t i_theta) const;
     std::array<int, 2> bin_padding() const;
@@ -639,7 +639,7 @@ private:
     // attenuation factor anywhere in the database.  Together they bound how
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
-    // Band centres shared by every sphere, and the per-band levels laid out as
+    // Band centers shared by every sphere, and the per-band levels laid out as
     // spectra_[(cell * frequencies_.size() + band) * n_conditions + condition].
     //
     // Condition innermost, matching grid above and for the same reason: the

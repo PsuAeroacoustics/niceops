@@ -376,11 +376,11 @@ inline bool is_empty(double level, double weight)
 // Blending in dB is linear in the level, so one empty entry at the floor pulls
 // the whole blend toward it in proportion to its weight: a 20% weight on
 // -1000 dB costs 200 dB.  Where a sphere simply has no measurement in a
-// direction, that turned a neighbouring measured value into silence -- the
+// direction, that turned a neighboring measured value into silence -- the
 // narrow-strip footprints and 10-25 dB holes seen against the 2017 approach
 // data, worst where QSAM or sparse coverage pulls in a condition with large
 // gated regions.  "Not measured" is not "silent", so empty entries drop out
-// and the remaining weights are renormalised.  Only when every entry with a
+// and the remaining weights are renormalized.  Only when every entry with a
 // weight is empty is the result empty.
 //
 // When nothing is empty -- the common case -- callers take the original
@@ -766,7 +766,7 @@ Database::Database(const std::string& datafile_path)
 
     // Check for "same_grid" flag to determine if interpolation is required.
     // Missing is fatal rather than silently undefined -- it used to be read
-    // into an uninitialised int, so an older or hand-made file could take
+    // into an uninitialized int, so an older or hand-made file could take
     // either branch at random.
     const int same_grid_flag = get_int_scalar(file_ncid, "same_grid", -1);
     if (same_grid_flag < 0)
@@ -831,7 +831,7 @@ Database::Database(const std::string& datafile_path)
 
     auto group_ids = get_group_ids(file_ncid);
     // Every field below is filled from the loop over these groups.  With none,
-    // the loop never runs and the tail of this function read an uninitialised
+    // the loop never runs and the tail of this function read an uninitialized
     // sphere radius and dereferenced max_element's end() on empty condition
     // lists -- a segfault, with nothing on stderr because the log had already
     // recorded a plausible-looking load.  Say what is wrong instead.
@@ -1302,7 +1302,7 @@ double Database::eval(double range, double phi, double theta, const Blend& blend
             blend_conditions(base + stencil.corner[3] * n_conditions, blend)};
     // The same rule across the four grid corners as across the four conditions
     // (see blend_present): a corner with no measurement drops out rather than
-    // dragging its neighbours toward silence, so coverage ends at the edge of
+    // dragging its neighbors toward silence, so coverage ends at the edge of
     // the last measured cell instead of fading to nothing across it.
     Pair corner;
     if (is_empty(corners[0][0], stencil.weight[0]) || is_empty(corners[1][0], stencil.weight[1])
@@ -1461,7 +1461,7 @@ void Database::eval_spectrum(double range, double absorbed_range, double phi, do
         // Every band the plain way first: general_band's non-empty expressions,
         // in the same order, so the same result to the bit wherever nothing is
         // empty.  With the bands contiguous and no branch, this is one loop the
-        // compiler vectorises across bands.
+        // compiler vectorizes across bands.
         const double* v[4][n_slots];
         for (std::size_t corner = 0; corner < 4; corner++)
             for (std::size_t k = 0; k < n_slots; k++)
@@ -1912,7 +1912,7 @@ DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceStat
     // leaves bounding the blended spectrum's weighted level, two ways:
     //
     //   per band -- each blended S_b is a convex combination of the stored
-    //   values it reads (empty entries dropped and the rest renormalised, which
+    //   values it reads (empty entries dropped and the rest renormalized, which
     //   is still a convex combination of what remains), so it is at most their
     //   maximum, and L is increasing in every S_b.  Taking that maximum band by
     //   band over the bin can pair a tone from one cell with a tone from
@@ -1923,7 +1923,7 @@ DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceStat
     //   band, and L, a log-sum-exp, is convex in the spectrum, so it is at most
     //   the largest L of any one stored spectrum.  Much tighter, but it needs
     //   every band the metric reads to be present in every spectrum of the
-    //   bin; an empty band renormalises that band alone and breaks the "one
+    //   bin; an empty band renormalizes that band alone and breaks the "one
     //   combination" premise.
     //
     // Each bin takes the smaller of the two it is entitled to.
@@ -2051,7 +2051,7 @@ DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceStat
 
     // The energy form, as direction_bounds().  The factor covers the rounding
     // between this log-sum-exp and weighted_level's: the bound can be exact
-    // (a cell centre, all weight on one condition), and a state then evaluates
+    // (a cell center, all weight on one condition), and a state then evaluates
     // to it within an ulp or two.
     for (double& value : bounds.numerators_)
         value = std::pow(10.0, 0.1 * value) * sphere_radius_ * sphere_radius_ * (1.0 + 1e-9);
@@ -2066,7 +2066,7 @@ double Database::level_from_geometry(double squared_range, double along, double 
     trace("R = ", range);
     // The frame is orthonormal, so `along`, `up` and `across` are the
     // displacement's components in it.  Only theta needs the direction
-    // normalised; phi is an angle between two of the components and does not
+    // normalized; phi is an angle between two of the components and does not
     // care about their common scale.
     const double inverse = range > 0.0 ? 1.0 / range : 0.0;
     const double theta = acosc(along * inverse) * (180.0 / pi);

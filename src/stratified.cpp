@@ -581,17 +581,17 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     // with no boundary, so no transition, and the shadow came in as a cliff.
     //
     // ShadowTransition does not take it at face value: a log law's steep
-    // lowest metres set it, and the wave resolves them only at high frequency
+    // lowest meters set it, and the wave resolves them only at high frequency
     // (see there, and layered_direct_ray's linear_boundary).
     //
     // And when the air aloft does outrun it, the rays it turns back come down
-    // only past their skip distance, kilometres out for an inversion a few
+    // only past their skip distance, kilometers out for an inversion a few
     // hundred feet up.  Short of that the receiver is in the same ground-grazing
     // shadow, so the boundary is set there too (boundary_under_aloft), and
     // taken back by layered_direct_ray where a ray from aloft or along a duct
     // does arrive.  Without it a source 10 m up, upwind under a morning
     // inversion, had no boundary 200 m out: no transition and no hand-over, but
-    // the layered shadow ray's tube, focused by the log law's lowest metres,
+    // the layered shadow ray's tube, focused by the log law's lowest meters,
     // 6.5 dB over its range, plus the whole ground term -- 12 dB over free
     // field at 63 Hz where the parabolic equation gives 4.
     const bool aloft = path.fastest_above(z_s) > path.fastest(z_r, z_s);
@@ -649,7 +649,7 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     const double tube = tube_range(range, family, p_inside, c_s, reach,
             family.arm.second ? rising : -rising);
     out.shadow_depth = std::max(r - full.dx, 0.0);
-    // A receiver a few millimetres up leaves the dipping family a sliver of
+    // A receiver a few millimeters up leaves the dipping family a sliver of
     // heights that deep, whose tube comes out 0 / 0; the limiting ray is then
     // spread as a linear profile's, r / cos(launch).
     const double carried = std::isfinite(tube) && tube > 0.0 && reach > 0.0
@@ -709,8 +709,8 @@ Crossing hop(const Path& path, double z_s, double p)
     return out;
 }
 
-// The most arrivals kept per pair, nearest-spread first.  A source a few metres
-// up in a deep duct has hops of a hundred metres and could otherwise list
+// The most arrivals kept per pair, nearest-spread first.  A source a few meters
+// up in a deep duct has hops of a hundred meters and could otherwise list
 // dozens of near-grazing rays at long range, each a sphere lookup.
 constexpr std::size_t max_arrivals = 24;
 
@@ -1011,7 +1011,7 @@ double airy_squared(double x)
 
 constexpr double airy_zero_squared = 0.355028053887817239 * 0.355028053887817239; // Ai(0)^2
 // Ai's largest value, at its first maximum x = -1.0188, squared: what a caustic's
-// tube is normalised by, lit side included.
+// tube is normalized by, lit side included.
 constexpr double airy_peak_squared = 0.535656656015700 * 0.535656656015700;
 
 // Ai^2 averaged over a third-octave band about f, at x = (omega / omega_f)^power x_f:
@@ -1034,7 +1034,7 @@ double band_airy_squared(double f, Argument&& argument)
 }
 
 // The Airy length at a turning point where the sound speed is c and falls at
-// |g| per metre going up, at wave_reference_frequency: (c^3 / (2 |g| omega^2))^(1/3).
+// |g| per meter going up, at wave_reference_frequency: (c^3 / (2 |g| omega^2))^(1/3).
 double reference_airy_length(double c, double g)
 {
     const double omega = 2.0 * pi * wave_reference_frequency;
@@ -1113,18 +1113,18 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
     constexpr int samples = 48;
     constexpr int max_cycles = 16;
 
-    // A family: its rays' range to the receiver (or, tunnelled, to their last
+    // A family: its rays' range to the receiver (or, tunneled, to their last
     // turning point above it) as a function of p, over [p_lo, p_hi].
     enum class Kind
     {
         direct,
-        tunnelled
+        tunneled
     };
     struct Spec
     {
         Kind kind;
         Arm arm;
-        int m; // hops (direct) or cycles (tunnelled)
+        int m; // hops (direct) or cycles (tunneled)
         double p_lo, p_hi;
     };
     // The ray's lowest turning point above the receiver, or NaN.
@@ -1167,7 +1167,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
     };
 
     // Each family once, its rays' range written as base(p) + m cycle(p): for
-    // the direct families the hops of a duct, for the tunnelled ones the cycles
+    // the direct families the hops of a duct, for the tunneled ones the cycles
     // between their two turning heights.  Sampled once, shared over m.
     struct Group
     {
@@ -1200,7 +1200,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
             }
         }
     }
-    if (options.tunnelling)
+    if (options.tunneling)
     {
         // Rays that pass the source, turn aloft, and turn again between the
         // receiver and the source: 1/p over c_s, at most c_up, under c_rs.
@@ -1208,8 +1208,8 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
         const double p_hi = (1.0 / c_s) * (1.0 - inset);
         if (p_hi > p_lo)
         {
-            groups.push_back({Kind::tunnelled, {true, false}, 0, max_cycles, p_lo, p_hi});
-            groups.push_back({Kind::tunnelled, {false, false}, 1, max_cycles, p_lo, p_hi});
+            groups.push_back({Kind::tunneled, {true, false}, 0, max_cycles, p_lo, p_hi});
+            groups.push_back({Kind::tunneled, {false, false}, 1, max_cycles, p_lo, p_hi});
         }
     }
 
@@ -1221,7 +1221,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
         a.launch = launch_of(p, c_s, s.arm.up);
         a.path_length = full.ds;
         a.travel_time = full.dt;
-        if (s.kind == Kind::tunnelled)
+        if (s.kind == Kind::tunneled)
         {
             // Its tube a reference Airy length above the turning point, where
             // the ray is still a ray.
@@ -1284,7 +1284,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
             const Spec s {group.kind, group.arm, m, group.p_lo, group.p_hi};
             const auto range = range_of(s);
             const Family whole {s.arm, s.p_lo, s.p_hi, false};
-            const bool tunnelled = s.kind == Kind::tunnelled;
+            const bool tunneled = s.kind == Kind::tunneled;
             double x[samples];
             for (int j = 0; j < samples; j++)
                 x[j] = m == 0 ? base[j] : base[j] + m * cycle[j];
@@ -1348,7 +1348,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
             auto caustic_arrival = [&](const Extremum& e, double depth) {
                 Arrival arrival = make(s, e.p);
                 arrival.spreading_range = 0.0;
-                if (tunnelled && !(arrival.wave.evanescent <= max_evanescent))
+                if (tunneled && !(arrival.wave.evanescent <= max_evanescent))
                     return arrival;
                 const double theta = arrival.launch;
                 const double g = e.x * std::fabs(std::sin(theta)) / c_s * std::sin(std::fabs(arrival.arrival))
@@ -1356,11 +1356,11 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
                 if (!(g > 0.0))
                     return arrival;
                 // C Ai_peak^2 at the reference frequency, so that the band's
-                // Airy factor is at most 1; a tunnelled caustic also takes the
+                // Airy factor is at most 1; a tunneled caustic also takes the
                 // turning point's 4 pi Ai(0)^2.
                 double intensity = 4.0 * pi * std::cbrt(omega_ref)
                         / (std::cbrt(2.0) * g * std::cbrt(e.second * e.second)) * airy_peak_squared;
-                if (tunnelled)
+                if (tunneled)
                     intensity *= 4.0 * pi * airy_zero_squared;
                 arrival.spreading_range = 1.0 / std::sqrt(intensity);
                 arrival.wave.caustic = true;
@@ -1380,9 +1380,9 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
                 }
                 else
                 {
-                    // Lit side: only the tunnelled pair beside its caustic,
+                    // Lit side: only the tunneled pair beside its caustic,
                     // whose tubes coalesce there and would take the cap.
-                    if (!tunnelled || !options.tunnelling)
+                    if (!tunneled || !options.tunneling)
                         continue;
                     const double reach = std::max(std::fabs(x[e.j - 1] - e.x), std::fabs(x[e.j + 1] - e.x));
                     if (!(std::fabs(r - e.x) <= reach))
@@ -1394,7 +1394,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
                     out.push_back(arrival);
             }
 
-            if (tunnelled && options.tunnelling)
+            if (tunneled && options.tunneling)
             {
                 // Every other crossing of r.
                 for (int j = 1; j < samples; j++)
@@ -1413,7 +1413,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
                     const double tube = tube_range(range, whole, root, c_s, r, a.arrival);
                     if (!(std::isfinite(tube) && tube > 0.0))
                         continue;
-                    // Normalised so that the Airy factor's largest value is 1
+                    // Normalized so that the Airy factor's largest value is 1
                     // (add_wave_loss): at the turning point the field is
                     // 4 pi Ai(0)^2 times one ray's.
                     a.spreading_range = tube / std::sqrt(4.0 * pi * airy_zero_squared);
@@ -1442,7 +1442,7 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     RefractedRay ray = direct_ray(linear, source, at_source, receiver, at_receiver);
     const double r = ray.horizontal;
     const double z_s = source.z;
-    // A microphone a few centimetres below the plane -- a ground board on
+    // A microphone a few centimeters below the plane -- a ground board on
     // ground just under the survey datum -- is solved for on the plane.  The
     // layers hold their lowest speed below z = 0, and the direct-ray solve
     // knows no ground, so it would otherwise send a ray grazing along under
@@ -1492,7 +1492,7 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
             arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false);
         }
     }
-    // --tunnelling, --skip_fill: arrivals ray theory does not have.  Kept out
+    // --tunneling, --skip_fill: arrivals ray theory does not have.  Kept out
     // of `arrivals` until now, so they take no part in the boundary's removal
     // or the promotion to primary below: each carries a per-band loss that only
     // an extra arrival is given.
@@ -1519,7 +1519,7 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     };
     // From handover_fraction of the layered boundary on, not only where the
     // layered solve fails.  On a log law the dipping family's range is not
-    // monotonic, and reaches some tens of metres past its end, where its
+    // monotonic, and reaches some tens of meters past its end, where its
     // near-grazing rays have no reflected partner and the ground term would
     // take the grazing geometry.  Short of the boundary the layered ray is
     // worse still: the steep lowest layer that sets the boundary also focuses
@@ -1589,7 +1589,7 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
     // The arrivals' ground geometry is the primary's construction, taken from
     // the ray itself: its partner rising from the next bounce meets the ground
     // at the same invariant, so at the same grazing angle, and its length
-    // differs by the receiver's few metres.
+    // differs by the receiver's few meters.
     for (Arrival& a : ray.extra)
     {
         if (ground == GroundGeometry::point && a.grazing > 0.0)

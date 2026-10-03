@@ -164,7 +164,7 @@ TEST_CASE("ground effect behaves the way the physics requires", "[ground_effect]
 
     SECTION("soft ground puts an interference dip in the mid bands")
     {
-        // Grass over a few hundred metres: the classic ground dip, which the
+        // Grass over a few hundred meters: the classic ground dip, which the
         // hard-surface case above does not have.
         GroundModel grass;
         grass.flow_resistance = flow_resistance::grassy_field;
@@ -440,7 +440,7 @@ TEST_CASE("GroundTable interpolates the model to within its stated accuracy, ins
             // A source at least 1 m up.  Right at the ground, HARMONOISE's
             // gamma_p = h_s h_r / (h_s + h_r) goes to zero and the turbulence with
             // it, leaving a coherent null the table cannot resolve -- a source on
-            // the ground kilometres away, which matters to nothing.
+            // the ground kilometers away, which matters to nothing.
             if (hs < 1.0)
                 continue;
             excess_ground_attenuation(ground, impedance, hs, d, 343.0, bands, exact.data(), 2, 29);

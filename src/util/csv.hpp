@@ -105,7 +105,7 @@ inline std::vector<std::vector<double>> read_numeric_csv(const std::string& path
 // the simpler trajectory formats are meant to be produced by whatever a mission
 // planner already has, so they are read by column name instead -- any order,
 // and only the columns that file actually carries.
-struct LabelledCsv
+struct LabeledCsv
 {
     static constexpr std::size_t npos = static_cast<std::size_t>(-1);
 
@@ -113,26 +113,26 @@ struct LabelledCsv
     std::vector<std::vector<double>> rows;
 
     // Index of the first column whose name matches any of `names`, or npos.
-    // Both sides are normalised first (see normalise below), so "Latitude",
+    // Both sides are normalized first (see normalize below), so "Latitude",
     // " lat (deg) " and "LAT" all find the same column.
     std::size_t column(std::initializer_list<const char*> names) const
     {
         for (std::size_t i = 0; i < header.size(); i++)
         {
-            const std::string field = normalise(header[i]);
+            const std::string field = normalize(header[i]);
             for (const char* name : names)
             {
-                if (field == normalise(name))
+                if (field == normalize(name))
                     return i;
             }
         }
         return npos;
     }
 
-    // Lower-case, drop any parenthesised or bracketed unit, and keep only
+    // Lower-case, drop any parenthesized or bracketed unit, and keep only
     // letters and digits.  That makes "Alt (ft)", "alt_ft" and "ALT" one name,
     // without the alias lists having to spell every punctuation variant.
-    static std::string normalise(const std::string& field)
+    static std::string normalize(const std::string& field)
     {
         std::string out;
         for (char c : field)
@@ -147,16 +147,16 @@ struct LabelledCsv
     }
 };
 
-// Read `path` as a labelled CSV: the first non-empty line names the columns and
+// Read `path` as a labeled CSV: the first non-empty line names the columns and
 // every fully numeric line after it is a row.  Non-numeric lines are dropped as
 // read_numeric_csv drops them, so a file with a units line under its header
 // still reads.
-inline LabelledCsv read_labelled_csv(const std::string& path)
+inline LabeledCsv read_labeled_csv(const std::string& path)
 {
     std::ifstream in(path);
     if (!in)
         throw std::runtime_error("Unable to open CSV file: " + path);
-    LabelledCsv csv;
+    LabeledCsv csv;
     std::string line;
     bool first = true;
     std::vector<double> row;

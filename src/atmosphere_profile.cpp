@@ -19,7 +19,7 @@ constexpr double standard_gravity = 9.80665; // m/s^2
 constexpr double dry_air_gas_constant = 287.05; // J/(kg K)
 
 // Plausible ranges, in the stored units, for telling a unit from the values
-// and for catching a column labelled with the wrong one.  They do not overlap:
+// and for catching a column labeled with the wrong one.  They do not overlap:
 // no air is 150 K cold or 70 C hot.
 constexpr double kelvin_low = 150.0;
 constexpr double kelvin_high = 350.0;
@@ -120,20 +120,20 @@ AtmosphereProfile AtmosphereProfile::with_hydrostatic_pressure(double surface_pr
 AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit unit,
         double ground_elevation)
 {
-    LabelledCsv csv;
+    LabeledCsv csv;
     try
     {
-        csv = read_labelled_csv(path);
+        csv = read_labeled_csv(path);
     }
     catch (const std::exception& e)
     {
         input_error("--atmosphere: ", e.what());
     }
 
-    const bool metric = unit.to_metres == 1.0;
+    const bool metric = unit.to_meters == 1.0;
     std::vector<bool> used(csv.header.size(), false);
     auto take = [&used](std::size_t column) {
-        if (column != LabelledCsv::npos)
+        if (column != LabeledCsv::npos)
             used[column] = true;
         return column;
     };
@@ -143,17 +143,17 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
     // run speaks feet fails rather than being read three times too large.
     bool above_sea_level = false;
     std::size_t height_column = csv.column({"z", "agl", "z agl", "height agl"});
-    if (height_column == LabelledCsv::npos)
+    if (height_column == LabeledCsv::npos)
     {
         height_column = metric ? csv.column({"z m", "agl m", "z agl m", "height agl m"})
                                : csv.column({"z ft", "agl ft", "z agl ft", "height agl ft"});
     }
-    if (height_column == LabelledCsv::npos)
+    if (height_column == LabeledCsv::npos)
     {
         above_sea_level = true;
         height_column = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height",
                                           "height msl"});
-        if (height_column == LabelledCsv::npos)
+        if (height_column == LabeledCsv::npos)
         {
             height_column = metric
                     ? csv.column({"alt m", "altitude m", "alt msl m", "height m", "height msl m"})
@@ -161,7 +161,7 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
                                         "height msl ft"});
         }
     }
-    if (height_column == LabelledCsv::npos)
+    if (height_column == LabeledCsv::npos)
     {
         input_error("--atmosphere ", path, " names no height column. Give height above the "
                 "observers as \"z\" (or \"agl\"), or altitude above sea level as \"alt\", in ",
@@ -173,18 +173,18 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
     Unit temperature_unit = Unit::named;
     bool celsius = false;
     std::size_t temperature_column = csv.column({"t k", "temp k", "temperature k"});
-    if (temperature_column == LabelledCsv::npos)
+    if (temperature_column == LabeledCsv::npos)
     {
         temperature_column = csv.column({"t c", "temp c", "temperature c", "t degc",
                                                "temperature degc"});
-        celsius = temperature_column != LabelledCsv::npos;
+        celsius = temperature_column != LabeledCsv::npos;
     }
-    if (temperature_column == LabelledCsv::npos)
+    if (temperature_column == LabeledCsv::npos)
     {
         temperature_column = csv.column({"t", "temp", "temperature"});
         temperature_unit = Unit::inferred;
     }
-    if (temperature_column == LabelledCsv::npos)
+    if (temperature_column == LabeledCsv::npos)
     {
         input_error("--atmosphere ", path, " names no temperature column. Give \"T_K\" or "
                 "\"T_C\".");
@@ -193,7 +193,7 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
 
     const std::size_t humidity_column
             = take(csv.column({"rh", "relative humidity", "humidity", "rh pct", "rh percent"}));
-    if (humidity_column == LabelledCsv::npos)
+    if (humidity_column == LabeledCsv::npos)
     {
         input_error("--atmosphere ", path, " names no relative humidity column. Give \"RH\", "
                 "in percent.");
@@ -204,32 +204,32 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
     Unit pressure_unit = Unit::named;
     double pressure_to_kpa = 1.0;
     std::size_t pressure_column = csv.column({"p kpa", "pressure kpa", "pres kpa"});
-    if (pressure_column == LabelledCsv::npos)
+    if (pressure_column == LabeledCsv::npos)
     {
         pressure_column = csv.column({"p hpa", "pressure hpa", "pres hpa", "p mb", "pressure mb",
                                             "p mbar", "pressure mbar"});
-        if (pressure_column != LabelledCsv::npos)
+        if (pressure_column != LabeledCsv::npos)
             pressure_to_kpa = 0.1;
     }
-    if (pressure_column == LabelledCsv::npos)
+    if (pressure_column == LabeledCsv::npos)
     {
         pressure_column = csv.column({"p pa", "pressure pa", "pres pa"});
-        if (pressure_column != LabelledCsv::npos)
+        if (pressure_column != LabeledCsv::npos)
             pressure_to_kpa = 1e-3;
     }
-    if (pressure_column == LabelledCsv::npos)
+    if (pressure_column == LabeledCsv::npos)
     {
         pressure_column = csv.column({"p", "pressure", "pres"});
         pressure_unit = Unit::inferred;
     }
     take(pressure_column);
-    const bool have_pressure = pressure_column != LabelledCsv::npos;
+    const bool have_pressure = pressure_column != LabeledCsv::npos;
 
     // Wind, as speed and the direction it blows from, or as east and north
     // components.  Its unit has to be named: m/s and knots cover the same
     // values, so unlike temperature nothing in the numbers can tell them apart.
     constexpr double knot = 1852.0 / 3600.0; // m/s
-    constexpr std::size_t npos = LabelledCsv::npos;
+    constexpr std::size_t npos = LabeledCsv::npos;
     double speed_to_mps = 1.0;
     std::size_t speed_column = csv.column({"wind speed mps", "wind speed ms", "wspd mps",
             "wspd ms", "ws mps", "ws ms"});
@@ -301,7 +301,7 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
         }
     }
     auto height_of = [&](std::size_t row) {
-        const double raw = csv.rows[row][height_column] * unit.to_metres;
+        const double raw = csv.rows[row][height_column] * unit.to_meters;
         return above_sea_level ? raw - ground_elevation : raw;
     };
     std::sort(order.begin(), order.end(),
@@ -348,7 +348,7 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
         if (!(profile.height[i] > profile.height[i - 1]))
         {
             input_error("--atmosphere ", path, " gives two levels at ",
-                    profile.height[i] / unit.to_metres, " ", unit.name, ".");
+                    profile.height[i] / unit.to_meters, " ", unit.name, ".");
         }
     }
 
@@ -423,7 +423,7 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
             if (profile.pressure[i] > profile.pressure[i - 1])
             {
                 input_error("--atmosphere ", path, ": pressure rises with height at ",
-                        profile.height[i] / unit.to_metres, " ", unit.name, ".");
+                        profile.height[i] / unit.to_meters, " ", unit.name, ".");
             }
         }
     }
@@ -443,8 +443,8 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
     if (profile.height.size() == 1)
         levels << "1 level, uniform at every height";
     else
-        levels << profile.height.size() << " levels from " << profile.bottom() / unit.to_metres
-               << " to " << profile.top() / unit.to_metres << " " << unit.name
+        levels << profile.height.size() << " levels from " << profile.bottom() / unit.to_meters
+               << " to " << profile.top() / unit.to_meters << " " << unit.name
                << " above the observers";
     log("Atmosphere profile ", path, ": ", levels.str(),
             above_sea_level ? " (read as altitude, less --ground_elevation)" : "",
@@ -480,7 +480,7 @@ LayeredAbsorption::LayeredAbsorption(const AtmosphereProfile& profile,
         throw std::logic_error("LayeredAbsorption needs z_high >= z_low");
     bands_ = last_band_ - first_band_;
 
-    // A metre apart: alpha changes by parts in a thousand over that, so the
+    // A meter apart: alpha changes by parts in a thousand over that, so the
     // linear interpolant between nodes is exact to far below anything the
     // level can show.  Past 20 km of span the step widens rather than the
     // table growing without limit, which no helicopter trajectory reaches.

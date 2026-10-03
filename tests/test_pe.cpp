@@ -5,7 +5,7 @@
 // wave reflection coefficient ground_effect.cpp already computes (and pins
 // against panam).  The PE shares neither's derivation -- it marches a wave
 // equation on a grid, with the impedance condition in the grid -- so agreement
-// checks its normalisation, its ground condition's sign convention and its
+// checks its normalization, its ground condition's sign convention and its
 // absorbing top together.
 
 #include <catch2/catch_test_macros.hpp>

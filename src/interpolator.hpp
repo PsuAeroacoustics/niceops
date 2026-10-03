@@ -44,7 +44,7 @@ public:
     // Build over `count` points of `dim` coordinates, row-major.
     //
     // `extend_domain_by` widens the triangulation past the unit cube the
-    // coordinates are normalised into: any point already sitting on a face of
+    // coordinates are normalized into: any point already sitting on a face of
     // that cube is duplicated out at the widened bound, carrying the same data
     // index, so that queries at the very edge of the operating envelope still
     // land inside a finite simplex instead of falling off the hull.

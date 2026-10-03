@@ -16,10 +16,10 @@ namespace niceops {
 namespace {
 
 // Gradients below this bend a ray by less than a nanoradian over 10 km: treated
-// as straight, which also keeps the closed forms away from centres at infinity.
+// as straight, which also keeps the closed forms away from centers at infinity.
 constexpr double straight_gradient = 1e-9; // 1/s
 
-// The circles every ray lies on are centred on the line c = 0, at z = -c0/a.
+// The circles every ray lies on are centerd on the line c = 0, at z = -c0/a.
 // With sigma the gradient's sign and L = c0/|a|, a point at height z sits
 // h(z) = L + sigma z from that line, and the sound speed there is |a| h(z).
 struct Circles
@@ -93,13 +93,13 @@ DirectEigenray direct_eigenray(const LinearProfile& profile, double z_s, double 
         }
     }
 
-    // The circle through (0, z_s) and (r, z_r) centred on the line c = 0 at
-    // horizontal position x_c.  Equal distances from the centre give
+    // The circle through (0, z_s) and (r, z_r) centerd on the line c = 0 at
+    // horizontal position x_c.  Equal distances from the center give
     // 2 r x_c = r^2 + h_r^2 - h_s^2.
     const double x_c = (r * r + c.sigma * (c.kappa(z_r) - c.kappa(z_s))) / (2.0 * r);
     const double rho = std::hypot(x_c, h_s);
     // Tangents, oriented from source to receiver.  On the upper half-circle
-    // (downward refraction) travel is clockwise; on the lower, anticlockwise.
+    // (downward refraction) travel is clockwise; on the lower, counterclockwise.
     ray.launch = std::atan2(c.sigma * x_c, h_s);
     ray.arrival = std::atan2(-c.sigma * (r - x_c), h_r);
     // The ray tube: r |dr/d(launch)| sin|arrival| / cos(launch) works out to
@@ -108,7 +108,7 @@ DirectEigenray direct_eigenray(const LinearProfile& profile, double z_s, double 
     const double chord = std::hypot(r, z_s - z_r);
     ray.path_length = 2.0 * rho * std::asin(std::min(1.0, chord / (2.0 * rho)));
     // dt = ds / c = dphi / (|a| cos phi), phi the angle from the vertical through
-    // the centre, so t = atanh(sin phi) / |a| between the two ends.  Written as
+    // the center, so t = atanh(sin phi) / |a| between the two ends.  Written as
     // one atanh of the addition formula, whose argument simplifies to
     // r rho / (h_s^2 + x_c r) -- a difference of two atanh would cancel.
     ray.travel_time = std::atanh(r * rho / (h_s * h_s + x_c * r)) / c.a;
@@ -128,7 +128,7 @@ ReflectedEigenray reflected_eigenray(const LinearProfile& profile, double z_s, d
     const double kappa_r = c.kappa(z_r);
 
     // Launched at elevation theta the ray's circle has radius rho = h_s/cos
-    // theta, and at height z sits d(z) = sqrt(rho^2 - h(z)^2) from its centre
+    // theta, and at height z sits d(z) = sqrt(rho^2 - h(z)^2) from its center
     // horizontally.  Down to the ground and up to the receiver on the mirrored
     // circle, the horizontal legs are differences of those d, formed without
     // cancellation as kappa / (sum of d).  One exception: a ray launched upward
@@ -271,7 +271,7 @@ ReflectedEigenray reflected_eigenray(const LinearProfile& profile, double z_s, d
     const auto l = legs(theta);
     ray.exists = true;
     ray.launch = theta;
-    // At the ground the ray is d(0) from its centre horizontally and h(0) = L
+    // At the ground the ray is d(0) from its center horizontally and h(0) = L
     // vertically, so its tangent makes this angle with the ground.
     ray.grazing = std::atan2(l.d0, c.L);
     auto arc = [&](double horizontal, double vertical) {
@@ -682,7 +682,7 @@ ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
 
     if (plate == nullptr)
         return;
-    // K: the plate over bare ground at its top, 2 degrees up, a kilometre out.
+    // K: the plate over bare ground at its top, 2 degrees up, a kilometer out.
     plate_offset_.assign(frequencies.size(), std::vector<double>(plate_azimuths, 0.0));
     GroundModel bare = *ground;
     bare.receiver_height = receiver_height;

@@ -43,7 +43,7 @@ struct Factorization
 };
 
 // Solve a symmetric positive-definite pentadiagonal system in place via LDL^T.
-// Returns false if the factorisation breaks down (non-positive pivot).
+// Returns false if the factorization breaks down (non-positive pivot).
 bool solve_pentadiagonal(const Bands& bands, Factorization& lu, std::vector<double>& rhs)
 {
     const std::size_t m = bands.diagonal.size();
@@ -245,7 +245,7 @@ public:
 
         if (!solve_pentadiagonal(bands_, lu_, gamma_))
         {
-            input_error("SmoothingSpline: penalised system is not positive definite; check that x is "
+            input_error("SmoothingSpline: penalized system is not positive definite; check that x is "
                   "strictly increasing and weights are positive.");
         }
 
