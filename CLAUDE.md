@@ -1018,6 +1018,13 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     (`path_gains` in the bound setup), since a pair may take either.
     `propagation_table_windowed_is_exact` holds it; the PE table was checked the same way by
     hand.
+  - **`lookup` finds an even axis's cell by arithmetic and corrects it against the knots**
+    (`AxisLocator`), so it is the cell a binary search gives, bit for bit; the fmod on the
+    bearing is skipped inside [0, 360). -20% CPU on a table run, output byte-identical.
+    `lookup finds the same cell on even and uneven axes` sweeps knots, midpoints and a hair
+    either side of them against a plain search. What is still on the table: the source's cell
+    is constant over a state's 14,400 observers and could be located once per state (the
+    review measured 87 -> 13 ns per call that way); it needs the call site to carry it.
   - **`BandMap` is per run, not in the table**, because the table is loaded once
     (`RunOptions::propagation_table`, shared) and each trajectory can name its own database.
   - **Bearings are compass, toward.** The run turns the local separation back to east/north by

@@ -165,3 +165,119 @@ TEST_CASE("a propagation table refuses axes it cannot interpolate", "[propagatio
     CHECK_THROWS_AS(PropagationTable(bad, std::vector<double>(count, 0.0), "", false), std::invalid_argument);
     CHECK_THROWS_AS(PropagationTable(axes, std::vector<double>(count - 1, 0.0), "", false), std::invalid_argument);
 }
+
+namespace {
+
+// The cell and weight by plain search, independent of the table's own.
+bool reference_cell(const std::vector<double>& axis, double x, std::size_t& lower, double& fraction)
+{
+    if (axis.size() == 1)
+    {
+        lower = 0;
+        fraction = 0.0;
+        return std::abs(x - axis[0]) <= 1e-6 * std::max(1.0, std::abs(axis[0]));
+    }
+    if (x < axis.front() || x > axis.back())
+        return false;
+    lower = 0;
+    while (lower + 2 < axis.size() && axis[lower + 1] <= x)
+        lower++;
+    fraction = (x - axis[lower]) / (axis[lower + 1] - axis[lower]);
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("lookup finds the same cell on even and uneven axes, at the knots and between", "[propagation_table]")
+{
+    // Even axes are indexed by arithmetic; uneven ones by search.  Both must give
+    // the cell a search gives, including exactly at a knot and at the axis's ends,
+    // where round-off in the arithmetic estimate could put it a cell off.
+    for (const bool even : {true, false})
+    {
+        PropagationTable::Axes axes;
+        for (std::size_t b = 0; b < 12; b++)
+            axes.bearings.push_back(30.0 * static_cast<double>(b));
+        for (int k = 0; k < 17; k++)
+        {
+            axes.source_heights.push_back(even ? 3.0 + 7.0 * k : 3.0 + 7.0 * k * (1.0 + 0.02 * k));
+            axes.receiver_heights.push_back(even ? 0.1 * k : 0.1 * k * k);
+        }
+        for (int k = 0; k < 40; k++)
+            axes.ranges.push_back(even ? 50.0 + 12.5 * k : 50.0 * std::pow(1.07, k));
+        axes.bands = {100.0, 200.0};
+        std::vector<double> values;
+        for (std::size_t b = 0; b < axes.bearings.size(); b++)
+            for (std::size_t s = 0; s < axes.source_heights.size(); s++)
+                for (std::size_t h = 0; h < axes.receiver_heights.size(); h++)
+                    for (std::size_t r = 0; r < axes.ranges.size(); r++)
+                        for (std::size_t f = 0; f < 2; f++)
+                            values.push_back(std::sin(0.7 * static_cast<double>(b + 3 * s + 5 * h + 7 * r + f)));
+        const PropagationTable table(axes, values, "test", false);
+        const auto bands = table.match_bands({100.0, 200.0}, 0, 2);
+        auto at_cell = [&](std::size_t b, std::size_t s, std::size_t h, std::size_t r, std::size_t f) {
+            return table.at(b % axes.bearings.size(), s, h, r, f);
+        };
+        // Queries: every knot of every axis, the midpoints, and a spread between.
+        std::vector<double> sources, receivers, ranges;
+        auto spread = [](const std::vector<double>& axis, std::vector<double>& out) {
+            for (std::size_t k = 0; k < axis.size(); k++)
+            {
+                out.push_back(axis[k]);
+                if (k + 1 < axis.size())
+                {
+                    out.push_back(0.5 * (axis[k] + axis[k + 1]));
+                    out.push_back(axis[k] + 0.999999 * (axis[k + 1] - axis[k]));
+                    out.push_back(axis[k] + 1e-7 * (axis[k + 1] - axis[k]));
+                }
+            }
+        };
+        spread(axes.source_heights, sources);
+        spread(axes.receiver_heights, receivers);
+        spread(axes.ranges, ranges);
+        int checked = 0;
+        for (const double bearing : {0.0, 17.5, 90.0, 359.0, -45.0, 725.0})
+        {
+            for (std::size_t i = 0; i < sources.size(); i += 3)
+            {
+                for (std::size_t j = 0; j < receivers.size(); j += 5)
+                {
+                    for (std::size_t k = 0; k < ranges.size(); k += 2)
+                    {
+                        std::size_t s0, h0, r0;
+                        double fs, fh, fr;
+                        REQUIRE(reference_cell(axes.source_heights, sources[i], s0, fs));
+                        REQUIRE(reference_cell(axes.receiver_heights, receivers[j], h0, fh));
+                        REQUIRE(reference_cell(axes.ranges, ranges[k], r0, fr));
+                        double u = std::fmod(bearing, 360.0);
+                        if (u < 0.0)
+                            u += 360.0;
+                        u /= 30.0;
+                        const std::size_t b0 = std::min(static_cast<std::size_t>(u), std::size_t(11));
+                        const double fb = u - static_cast<double>(b0);
+                        double expected[2] = {0.0, 0.0};
+                        for (std::size_t f = 0; f < 2; f++)
+                            for (int cb = 0; cb < 2; cb++)
+                                for (int cs = 0; cs < 2; cs++)
+                                    for (int ch = 0; ch < 2; ch++)
+                                        for (int cr = 0; cr < 2; cr++)
+                                        {
+                                            const double weight = (cb ? fb : 1.0 - fb) * (cs ? fs : 1.0 - fs)
+                                                    * (ch ? fh : 1.0 - fh) * (cr ? fr : 1.0 - fr);
+                                            if (weight != 0.0)
+                                                expected[f] += weight * at_cell(b0 + cb, s0 + cs, h0 + ch, r0 + cr, f);
+                                        }
+                        double out[2] = {};
+                        INFO("even " << even << " bearing " << bearing << " source " << sources[i] << " receiver "
+                                     << receivers[j] << " range " << ranges[k]);
+                        REQUIRE(table.lookup(bearing, sources[i], receivers[j], ranges[k], bands, out));
+                        REQUIRE(out[0] == Catch::Approx(expected[0]).margin(1e-12));
+                        REQUIRE(out[1] == Catch::Approx(expected[1]).margin(1e-12));
+                        checked++;
+                    }
+                }
+            }
+        }
+        CHECK(checked > 1000);
+    }
+}

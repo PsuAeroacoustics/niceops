@@ -40,11 +40,31 @@ void check_axes(const PropagationTable::Axes& axes, std::size_t values)
         throw std::invalid_argument("propagation table: the values do not fill the axes");
 }
 
-// The cell of an ascending axis that holds x, and the weight of its upper
-// end; false outside the axis.  A one-point axis holds only its point.
-bool locate(const std::vector<double>& axis, double x, std::size_t& lower, double& fraction)
+PropagationTable::AxisLocator make_locator(const std::vector<double>& axis)
 {
-    if (axis.size() == 1)
+    PropagationTable::AxisLocator locator;
+    const std::size_t n = axis.size();
+    if (n < 3)
+        return locator;
+    const double step = (axis.back() - axis.front()) / static_cast<double>(n - 1);
+    for (std::size_t k = 0; k < n; k++)
+        if (std::abs(axis[k] - (axis.front() + step * static_cast<double>(k))) > 0.1 * step)
+            return locator;
+    locator.uniform = true;
+    locator.inverse_step = 1.0 / step;
+    return locator;
+}
+
+// The cell of an ascending axis that holds x, and the weight of its upper
+// end; false outside the axis.  A one-point axis holds only its point.  The
+// cell is the last one whose lower knot is at or below x (the last cell, for
+// the axis's own end), found by arithmetic on an even axis and corrected
+// against the knots, so it is the binary search's cell either way.
+bool locate(const std::vector<double>& axis, const PropagationTable::AxisLocator& locator, double x,
+        std::size_t& lower, double& fraction)
+{
+    const std::size_t n = axis.size();
+    if (n == 1)
     {
         lower = 0;
         fraction = 0.0;
@@ -52,8 +72,20 @@ bool locate(const std::vector<double>& axis, double x, std::size_t& lower, doubl
     }
     if (!(x >= axis.front()) || !(x <= axis.back()))
         return false;
-    const auto upper = std::upper_bound(axis.begin(), axis.end(), x);
-    lower = std::min(static_cast<std::size_t>(upper - axis.begin()), axis.size() - 1) - 1;
+    if (locator.uniform)
+    {
+        std::size_t k = std::min(static_cast<std::size_t>((x - axis.front()) * locator.inverse_step), n - 2);
+        while (k > 0 && axis[k] > x)
+            k--;
+        while (k + 2 < n && axis[k + 1] <= x)
+            k++;
+        lower = k;
+    }
+    else
+    {
+        const auto upper = std::upper_bound(axis.begin(), axis.end(), x);
+        lower = std::min(static_cast<std::size_t>(upper - axis.begin()), n - 1) - 1;
+    }
     fraction = (x - axis[lower]) / (axis[lower + 1] - axis[lower]);
     return true;
 }
@@ -75,6 +107,9 @@ PropagationTable::PropagationTable(Axes axes, std::vector<double> values, std::s
     , provenance_(std::move(provenance))
 {
     check_axes(axes_, values_.size());
+    source_locator_ = make_locator(axes_.source_heights);
+    receiver_locator_ = make_locator(axes_.receiver_heights);
+    range_locator_ = make_locator(axes_.ranges);
 }
 
 void PropagationTable::save(const std::string& path) const
@@ -232,7 +267,7 @@ bool PropagationTable::covers_receiver(double height) const
 {
     std::size_t lower = 0;
     double fraction = 0.0;
-    return locate(axes_.receiver_heights, height, lower, fraction);
+    return locate(axes_.receiver_heights, receiver_locator_, height, lower, fraction);
 }
 
 bool PropagationTable::lookup(double bearing_degrees, double source_height, double receiver_height, double range,
@@ -240,8 +275,9 @@ bool PropagationTable::lookup(double bearing_degrees, double source_height, doub
 {
     std::size_t s0 = 0, h0 = 0, r0 = 0;
     double fs = 0.0, fh = 0.0, fr = 0.0;
-    if (!locate(axes_.source_heights, source_height, s0, fs) || !locate(axes_.receiver_heights, receiver_height, h0, fh)
-            || !locate(axes_.ranges, range, r0, fr))
+    if (!locate(axes_.source_heights, source_locator_, source_height, s0, fs)
+            || !locate(axes_.receiver_heights, receiver_locator_, receiver_height, h0, fh)
+            || !locate(axes_.ranges, range_locator_, range, r0, fr))
         return false;
     // Bearing: periodic, uniform.
     const std::size_t nb = axes_.bearings.size();
@@ -249,7 +285,9 @@ bool PropagationTable::lookup(double bearing_degrees, double source_height, doub
     double fb = 0.0;
     if (nb > 1)
     {
-        double u = std::fmod(bearing_degrees, 360.0);
+        // fmod is the identity on [0, 360), which is nearly every call.
+        double u = bearing_degrees >= 0.0 && bearing_degrees < 360.0 ? bearing_degrees
+                                                                      : std::fmod(bearing_degrees, 360.0);
         if (u < 0.0)
             u += 360.0;
         u *= static_cast<double>(nb) / 360.0;
