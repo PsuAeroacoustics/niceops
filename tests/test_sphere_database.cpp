@@ -1230,27 +1230,30 @@ TEST_CASE("two spheres at one operating condition are refused", "[sphere_databas
             != std::string::npos);
 }
 
-TEST_CASE("an observer at the source has a finite level", "[sphere_database]")
+TEST_CASE("inside the sphere the level is the surface's", "[sphere_database]")
 {
-    // Spherical spreading is extrapolated inward, 1/r, which diverges at r = 0: an
-    // observer exactly at a source position (a helicopter touching down on a grid
-    // point) got +inf in the CSV, and with the asserts live it aborted the run.
-    // The range is floored at a hundredth of the sphere's radius.
+    // Spherical spreading extrapolated inward grows as 1/r and diverges at r = 0:
+    // an observer exactly at a source position got +inf in the CSV, an observer
+    // within the 30 m sphere up to 4.4 dB more than at its surface, and with the
+    // asserts live the r = 0 case aborted the run.  The sphere is the source's own
+    // volume, so spreading and absorption start at its surface and the level inside
+    // is the surface's.
     if (!std::filesystem::exists("databases/S-76D_M3.nod"))
         return;
     Database db("databases/S-76D_M3.nod");
     const double radius = db.sphere_radius();
     const auto blend = db.blend_at(0.1, 0.0, 0.006);
-    for (double range : {0.0, 1e-12, 1e-6, 0.001 * radius, 0.0099 * radius})
+    const double at_surface = db.eval(radius, 20.0, 60.0, blend);
+    for (double fraction : {0.0, 1e-12, 1e-6, 0.01, 0.1, 0.5, 0.99, 1.0})
     {
-        const double level = db.eval(range, 20.0, 60.0, blend);
-        INFO("range " << range);
+        const double level = db.eval(fraction * radius, 20.0, 60.0, blend);
+        INFO("range " << fraction << " radii");
         REQUIRE(std::isfinite(level));
-        REQUIRE(level == db.eval(0.01 * radius, 20.0, 60.0, blend));
+        REQUIRE(level == at_surface);
     }
-    // Above the floor the level still falls with range, as it always did.
-    double previous = db.eval(0.01 * radius, 20.0, 60.0, blend);
-    for (double fraction : {0.02, 0.1, 0.5, 1.0, 2.0, 10.0})
+    // Beyond the surface the level still falls with range, as it always did.
+    double previous = at_surface;
+    for (double fraction : {1.01, 1.5, 2.0, 10.0, 100.0})
     {
         const double level = db.eval(fraction * radius, 20.0, 60.0, blend);
         INFO("range " << fraction << " radii");

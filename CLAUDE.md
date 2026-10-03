@@ -140,6 +140,14 @@ C++ build at the commit that removed the multiplier. The port's agreement with D
 before that change and that verification stands on its own; D is retired as an oracle for the
 propagation path.
 
+`golden/197421_LAE.csv` was regenerated a second time when spherical spreading was capped at the
+sphere's surface (`Database::eval` and `eval_spectrum` take `max(range, R)`, and absorption starts at
+the surface): 27 of the 14400 cells change, by at most 2.0 dB in SEL, and they are exactly the
+observers within about 45 m of the track, whose closest approach to a source state is inside the 30.48 m
+sphere. Before that, the spreading law was extrapolated inward (1/r) and put those observers up to 4.4
+dB above the sphere-surface level in the instantaneous level, and diverged at r = 0. It, too, was made
+from the C++ build, the one that carries the change; `golden/state_197421.csv` did not move.
+
 `regression_golden` and `state_golden` both pass.
 
 To regenerate them, follow the `regenerate-goldens` skill
