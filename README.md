@@ -84,7 +84,7 @@ Input and output files use **feet**; the computation is metric internally.
   plate and any shadow loss applied. A-weighted and summed in energy the bands give
   `level_dBA`. Bands outside `--band_limits` and culled states are left empty; `-a`'s ambient
   goes into `level_dBA` only. Needs the spectral path.
-- `-m` — appends average, maximum and above-threshold counts for the case.
+- `-m` — appends the energy-mean SEL, maximum and above-threshold counts for the case.
 - `-S` — the derived trajectory state (t, position, velocity, load factor, C<sub>T</sub>, μ, flight path angles).
 - `--powerfile` — per-state shaft power, if the database carries any.
 - `--latlon` — writes a `_latlon` companion beside every level file above, as latitude, longitude, level.
@@ -142,7 +142,7 @@ seconds, levels in dB.
 | `-S`, `--state` | Save the derived trajectory state. With several tracks and one name, each is saved as `<track>_state.csv` beside it. |
 | `-i`, `--history` | Prefix for per-observer time history files, `<prefix>_i<N>.csv`. With several tracks each file is also named for its track, `<prefix>_<track>_i<N>.csv`, so they do not overwrite one another. |
 | `--band_history` | Prefix for per-observer band time history files (see Outputs), named as `-i` names its files. Needs the spectral path. |
-| `-m`, `--metricfile` | Append overall noise metrics to this file. |
+| `-m`, `--metricfile` | Append overall noise metrics to this file: the case name, the energy mean of the per-observer SELs (10 lg of the mean of 10^(L/10), not a mean of decibels), their maximum, and the share above 65 dB. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
 | `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. |
@@ -162,7 +162,9 @@ seconds, levels in dB.
 | `--units` | Length unit for the command line and for every file carrying a length: `ft` (default) or `m`. See **Units**. |
 | `--trim` | Crop each trajectory from this x, in `--units`, to its lowest/slowest point. Off by default; it changes which part of the flight is integrated. |
 | `--grid`, `--gridstep` | Observer grid bounds and spacing, in `--units`. Default ±1500 m (±4921.26 ft), step 25 m (82.021 ft) — a fixed extent either way. |
-| `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory. |
+| `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory: the energy average over a 24-hour day, with the 22:00–07:00 night penalized. A daytime operation reads its SEL less 49.37 dB. |
+| `--lamax_file` | Write each observer's LAmax: the highest A-weighted level over the operation, dB. Forces the whole history, so the peak is exact. |
+| `--full_history` | Integrate each SEL over the whole history rather than the event's 10 dB-down window. Slower, since no window is found. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
 | `--spectral`, `--no-spectral` | On by default when the database carries spectra: propagate its per-band spectra to the ground with ISO 9613-1 absorption. `--no-spectral` takes one broadband level with the database's EAA factor instead (databases without spectra always do). |
@@ -175,7 +177,9 @@ seconds, levels in dB.
 | `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail per band. Off by default; see below. |
 | `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γT, instead of `--shadow_floor`. Default 0 (off). Needs `--refraction` and `--ground_effect`. |
 | `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
-| `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs the spectral path, i.e. a database that carries spectra. |
+| `--ground_effect`, `--no-ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. On by default wherever the spectral path runs on a database that carries spectra; `--no-ground_effect` turns it off. Asking for it with `--no-spectral` is an error. |
+| `--max_load_factor` | Largest load factor, in g, that a `fixed_load_factor` database's load-factor correction is taken to (default 2). Above it the correction is held, and the run says how many states it held. |
+| `--accept_vehicle_mismatch` | A vehicle file that disagrees with the database by more than 2 percent in tip speed, rotor radius, weight or thrust coefficient at 1 g is refused. Between 1 and 2 percent it is a warning; this flag turns the refusal into a warning. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
 | `--receiver_height`, `--turbulence` | Point receiver's microphone height (in `--units`, default 1.2 m; an observer file's fifth column overrides it per observer) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`; the height also places the microphone for `--propagation_table`. |
 | `--impedance_model` | Ground impedance: `delany_bazley` (default), `miki`, `variable_porosity` (with `--porosity_rate`, 1/m) or `delany_bazley_layer` (with `--layer_depth`, in `--units`). `--flow_resistance` is the (effective) flow resistivity. |
@@ -218,7 +222,9 @@ trajectory, or one per trajectory.
 DNL is a property of a set of operations rather than of one flight: each trajectory's SEL-style
 integral gains a 10 dB penalty on samples flown at night, and the results are summed as energy.
 Night is 22:00–07:00 local; `--utc_offset` shifts the trajectory's UTC seconds into local time.
-With one daytime operation the DNL equals the SEL exactly.
+The sum is normalized to a 24-hour day, as the DNL is defined: a single daytime operation
+gives the SEL less 10 lg 86 400 = 49.37 dB. (Before the normalization, `-D` wrote the raw sum,
+which read 49.37 dB high.)
 
 Plotting is skipped for multi-trajectory runs, since one figure file cannot hold several paths.
 
@@ -253,7 +259,9 @@ does, `--export_aam` can write an interpolated sphere back out in the AAM/RNM he
 format the source spheres arrive in. Without spectra the flag refuses, since
 `AMPLITUDE(PHI, THETA, FREQUENCY)` is the whole payload of that format.
 
-None of the databases in `databases/` carries spectra. Build one with panam's
+Six of the databases in `databases/` carry spectra: the AS350, B407, Be206L3, EC130, RO-44 and
+RO-66 `_fixed_load_factor` files. The S-76D demo database does not, so the demo runs the
+broadband path. To build one with spectra, use panam's
 `build_empirical_database(..., include_spectra=True)`, which now carries the per-band
 amplitudes through from the source spheres. Band-limit it — `infreqs=(10.0, 3500.0)` —
 because the top few bands of a measured sphere are usually noise-floor artifacts.
@@ -261,8 +269,8 @@ because the top few bands of a measured sphere are usually noise-floor artifacts
 The AAM/RNM source spheres live in the group's OneDrive under `Data/Sphere_Database`, one
 directory of `.nc` files per aircraft (AS350, Be206L3, Be407, Be430, EC130, MD-902, Mi-8, R-44,
 R-66, SH-60B), each with its own `vehicle.cfg` and `vehicle.json`. `Be407_spectral.nod` sits
-beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. Databases are not tracked in
-this repository; they are far too large and are derived products.
+beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. The built `.nod` files in
+`databases/` are tracked; the source spheres are far too large and stay in OneDrive.
 
 #### A note on levels changing
 
