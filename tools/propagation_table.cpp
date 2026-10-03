@@ -92,8 +92,8 @@ int main(int argc, char** argv)
     app.add_option("--source_heights", source_heights, "Source heights above the ground, in --units.")->required();
     app.add_option("--receiver_heights", receiver_heights, "Receiver heights above the ground, in --units.")
             ->required();
-    app.add_option("--max_range", max_range, "Farthest horizontal range, in --units.")->required();
-    app.add_option("--step", step, "Range spacing, in --units.")->required();
+    app.add_option("--max_range", max_range, "Farthest horizontal range, in --units.")->required()->check(CLI::PositiveNumber);
+    app.add_option("--step", step, "Range spacing, in --units.")->required()->check(CLI::PositiveNumber);
     app.add_option("--bearings", bearings,
             "Bearings, evenly from 0 over 360 degrees (default 36; 1 when the profile has no wind).");
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
@@ -101,9 +101,9 @@ int main(int argc, char** argv)
     app.add_option("--impedance_model", impedance_model, "As for niceops.");
     app.add_option("--porosity_rate", porosity_rate, "As for niceops, 1/m.");
     app.add_option("--layer_depth", layer_depth, "As for niceops, m.");
-    app.add_option("--samples", samples, "pe: frequencies per band (default 5).");
-    app.add_option("--max_angle", max_angle, "pe: angle limit, degrees (default 50).");
-    app.add_option("--ppw", points_per_wavelength, "pe: grid points per wavelength in height (default: the PE's).");
+    app.add_option("--samples", samples, "pe: frequencies per band (default 5).")->check(CLI::PositiveNumber);
+    app.add_option("--max_angle", max_angle, "pe: angle limit, degrees (default 50).")->check(CLI::Range(0.1, 60.0));
+    app.add_option("--ppw", points_per_wavelength, "pe: grid points per wavelength in height (default: the PE's).")->check(CLI::NonNegativeNumber);
     app.add_option("-o,--output", output, "The table to write (netCDF).")->required();
     CLI11_PARSE(app, argc, argv);
 

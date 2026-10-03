@@ -347,6 +347,20 @@ add_test(NAME observer_typo_rejected COMMAND niceops -b tests/data/observers_typ
 set_tests_properties(observer_typo_rejected PROPERTIES PASS_REGULAR_EXPRESSION "line 3 is not a row of numbers")
 add_test(NAME observer_mixed_widths_rejected COMMAND niceops -b tests/data/observers_mixed_widths.csv -o integrated/observers_mixed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(observer_mixed_widths_rejected PROPERTIES PASS_REGULAR_EXPRESSION "has 2 fields where the first has 3")
+# The PE tools took numeric options unchecked: --source_height 0 without --top
+# looped until it had eaten 21 GB, --max_range 0 and --range_step 0 threw inside a
+# worker thread (an abort), --samples 0 divided by zero and wrote a table of
+# +Infinity with exit status 0, and --max_angle above the documented 60 degrees
+# reported paths the march cannot carry instead of NaN.  Each is refused.
+set(PE_FIELD_BASE --atmosphere atmospheres/example_windy.csv --toward 312)
+add_test(NAME pe_field_zero_source_height_needs_top COMMAND niceops_pe_field ${PE_FIELD_BASE} --source_height 0 --bands 500 --max_range 2000 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pe_field_zero_source_height_needs_top PROPERTIES PASS_REGULAR_EXPRESSION "gives no default for --top")
+add_test(NAME pe_field_rejects_zero_range COMMAND niceops_pe_field ${PE_FIELD_BASE} --source_height 100 --max_range 0 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pe_field_rejects_zero_range PROPERTIES PASS_REGULAR_EXPRESSION "--max_range: Value 0 not in range")
+add_test(NAME pe_field_rejects_zero_samples COMMAND niceops_pe_field ${PE_FIELD_BASE} --source_height 100 --max_range 1000 --samples 0 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pe_field_rejects_zero_samples PROPERTIES PASS_REGULAR_EXPRESSION "--samples: Value 0 not in range")
+add_test(NAME pe_field_rejects_steep_max_angle COMMAND niceops_pe_field ${PE_FIELD_BASE} --source_height 100 --max_range 1000 --max_angle 75 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pe_field_rejects_steep_max_angle PROPERTIES PASS_REGULAR_EXPRESSION "--max_angle: Value 75 not in range")
 # The spectral peak search and --db_cutoff skip what a bound puts below a
 # threshold; with --ground_effect the bound includes the most the ground can
 # add.  A skipped state must change nothing, so a run through the peak search

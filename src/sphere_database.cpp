@@ -652,6 +652,15 @@ double DirectionBounds::narrowest_theta_bin_degrees()
 
 namespace {
 
+// (x - low) / (high - low), or 0 on an axis that does not vary, where it was 0/0.
+// The expression is the one that was written inline, so every axis that does
+// vary scales to the same bits as before.
+double unit_interval(double x, double low, double high)
+{
+    const double span = high - low;
+    return span > 0.0 ? (x - low) / span : 0.0;
+}
+
 // Widest gap between adjacent knots of an axis, in degrees.
 double grid_spacing(const GridAxis& axis)
 {
@@ -1173,12 +1182,36 @@ Database::Database(const std::string& datafile_path)
     reference_thrust_coefficient_ = thrust_coefficient_min;
     active_condition_dims_ = fixed_load_factor_ ? 2 : condition_dims;
 
+    // An axis that does not vary cannot be scaled to [0, 1]: (x - min) / 0 is 0/0,
+    // NaN, and a triangulation built on NaN answered every query with one
+    // arbitrary sphere, silently (a level-flight-only build gave 114.0 dB at four
+    // conditions whose true levels were 100 to 112). The triangulation needs every
+    // axis it uses to vary, so a database of several spheres that does not is
+    // refused here, naming the axis; a single sphere has nothing to triangulate
+    // and takes the nearest-condition path, whatever its axes do.
+    if (advance_ratios.size() >= 2)
+    {
+        const auto require_varying = [&](const char* axis, double low, double high) {
+            if (!(high > low))
+            {
+                input_error("Database ", datafile_path, ": the ", axis, " is ", low,
+                        " in all ", advance_ratios.size(), " spheres, so the operating conditions "
+                        "cannot be interpolated over it. The triangulation needs the advance "
+                        "ratio and the flight path angle to vary (and the thrust coefficient too, "
+                        "unless the database is fixed_load_factor).");
+            }
+        };
+        require_varying("advance ratio", advance_ratio_min, advance_ratio_max);
+        require_varying("flight path angle", flight_path_angle_min, flight_path_angle_max);
+        if (!fixed_load_factor_)
+            require_varying("thrust coefficient", thrust_coefficient_min, thrust_coefficient_max);
+    }
     // Normalize operating conditions
     for (auto& x : advance_ratios)
-        x = (x - advance_ratio_min) / (advance_ratio_max - advance_ratio_min);
+        x = unit_interval(x, advance_ratio_min, advance_ratio_max);
     trace("Normalized μ   = ", advance_ratios);
     for (auto& x : flight_path_angles)
-        x = (x - flight_path_angle_min) / (flight_path_angle_max - flight_path_angle_min);
+        x = unit_interval(x, flight_path_angle_min, flight_path_angle_max);
     trace("Normalized γ   = ", flight_path_angles);
     // A fixed_load_factor database has thrust_coefficient_min == max, so this
     // would divide by zero -- and there is nothing to normalize anyway, since
@@ -1186,7 +1219,7 @@ Database::Database(const std::string& datafile_path)
     if (!fixed_load_factor_)
     {
         for (auto& x : thrust_coefficients)
-            x = (x - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min);
+            x = unit_interval(x, thrust_coefficient_min, thrust_coefficient_max);
         trace("Normalized CT  = ", thrust_coefficients);
     }
 
@@ -1218,9 +1251,9 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     const double raw_thrust_coefficient = thrust_coefficient;
 
     // Normalize flight condition and limit range to [0.0,1.0]
-    advance_ratio = clamp01((advance_ratio - advance_ratio_min) / (advance_ratio_max - advance_ratio_min));
+    advance_ratio = clamp01(unit_interval(advance_ratio, advance_ratio_min, advance_ratio_max));
     flight_path_angle = clamp01(
-            (flight_path_angle - flight_path_angle_min) / (flight_path_angle_max - flight_path_angle_min));
+            unit_interval(flight_path_angle, flight_path_angle_min, flight_path_angle_max));
 
     Blend blend;
     if (fixed_load_factor_)
@@ -1250,7 +1283,7 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     else
     {
         thrust_coefficient = clamp01(
-                (thrust_coefficient - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min));
+                unit_interval(thrust_coefficient, thrust_coefficient_min, thrust_coefficient_max));
         trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
                 ", CT = ", thrust_coefficient);
 

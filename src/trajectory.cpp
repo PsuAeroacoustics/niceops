@@ -620,7 +620,11 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
     // D: filename.splitter('.').retro.take(1).array()[0] -- the last '.' segment
     auto dotpos = filename.rfind('.');
     std::string extension = (dotpos == std::string::npos) ? filename : filename.substr(dotpos + 1);
-    std::for_each(extension.begin(), extension.end(), [](char& c) { c = std::tolower(c); });
+    // Through unsigned char: tolower of a negative char (a non-ASCII byte in the
+    // extension) is undefined.
+    std::for_each(extension.begin(), extension.end(), [](char& c) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    });
     info("Opening file ", filename, " with extension ", extension);
     if (extension == "csv")
     {
@@ -772,8 +776,8 @@ void Trajectory::write_state(const std::string& state_file) const
     info("Writing state data to ", state_file);
     // Create the directory first, as every other writer here does.  state/ is
     // not tracked, so on a fresh checkout `-S state/ci_state.csv` had nowhere
-    // to write and fatal()'d -- which aborts silently, since the message goes
-    // to the log file and not to stderr.
+    // to write and fatal()'d -- which aborted with the message only in the log
+    // file, before warnings and errors were echoed to stderr as well.
     ensure_parent_directory(state_file);
     std::ofstream file(state_file);
     if (!file)

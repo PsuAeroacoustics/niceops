@@ -634,8 +634,13 @@ std::string write_shared_grid_test_database(const std::string& name,
     REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file) == NC_NOERR);
     int scalar_dim = 0;
     REQUIRE(nc_def_dim(file, "scalar", 1, &scalar_dim) == NC_NOERR);
-    int same_grid_var = 0, version_var = 0, shared_var = 0;
+    int same_grid_var = 0, version_var = 0, shared_var = 0, fixed_lf_var = 0;
     REQUIRE(nc_def_var(file, "same_grid", NC_SHORT, 1, &scalar_dim, &same_grid_var) == NC_NOERR);
+    // These fixtures give every sphere one thrust coefficient, which is what a
+    // fixed_load_factor database is.  Written without the flag, the thrust axis
+    // normalised 0/0 and the triangulation was built on NaN -- the loader now
+    // refuses that, so the flag says what the fixture is.
+    REQUIRE(nc_def_var(file, "fixed_load_factor", NC_SHORT, 1, &scalar_dim, &fixed_lf_var) == NC_NOERR);
     REQUIRE(nc_def_var(file, "database_version", NC_INT, 1, &scalar_dim, &version_var) == NC_NOERR);
     REQUIRE(nc_def_var(file, "shared_grid_and_frequency", NC_SHORT, 1, &scalar_dim, &shared_var)
             == NC_NOERR);
@@ -730,6 +735,13 @@ std::string write_shared_grid_test_database(const std::string& name,
     REQUIRE(nc_put_var_short(file, same_grid_var, &one) == NC_NOERR);
     REQUIRE(nc_put_var_int(file, version_var, &version) == NC_NOERR);
     REQUIRE(nc_put_var_short(file, shared_var, &shared_flag) == NC_NOERR);
+    {
+        bool constant_ct = conditions.size() > 1;
+        for (const auto& condition : conditions)
+            constant_ct = constant_ct && condition[2] == conditions.front()[2];
+        const short fixed_flag = constant_ct ? 1 : 0;
+        REQUIRE(nc_put_var_short(file, fixed_lf_var, &fixed_flag) == NC_NOERR);
+    }
     if (shared_grid_and_frequency)
     {
         REQUIRE(nc_put_var_double(file, root_phi_var, phi_channel.data()) == NC_NOERR);
@@ -1021,9 +1033,12 @@ TEST_CASE("shared_grid_and_frequency: absent is the same as false (legacy files)
     // Every file every other test in this suite loads predates this flag, so
     // this is really just documenting the default rather than adding new
     // coverage: get_int_scalar's own default is what makes it work.
+    // Three spheres spanning mu and gamma: two at one gamma left that axis
+    // constant, which a database of several spheres is refused for.
     const std::vector<std::array<double, 4>> conditions = {
         {0.0, 0.0, 0.005, 100.0},
         {1.0, 0.0, 0.005, 110.0},
+        {0.0, 1.0, 0.005, 120.0},
     };
     const auto path = write_shared_grid_test_database(
             "niceops_no_shared_flag.nod", conditions, false, false);
@@ -1153,4 +1168,64 @@ TEST_CASE("spectra land in the direction their channel names, whatever the row o
                             200.0 + sphere.phis[m] + 10.0 * static_cast<double>(b)));
         std::filesystem::remove(path);
     }
+}
+
+namespace {
+
+// A database of `conditions` as the shared-grid writer lays it out, loaded and
+// removed again; returns what loading it said was wrong, or empty.
+std::string load_problem_of(const std::string& name,
+        const std::vector<std::array<double, 4>>& conditions)
+{
+    const auto path = write_shared_grid_test_database(name, conditions, false, false);
+    std::string problem;
+    try
+    {
+        Database db(path);
+    }
+    catch (const std::exception& e)
+    {
+        problem = e.what();
+    }
+    std::filesystem::remove(path);
+    return problem;
+}
+
+} // namespace
+
+TEST_CASE("a database whose conditions do not vary is refused, not NaN", "[sphere_database][validation]")
+{
+    // (x - min) / (max - min) is 0/0 on an axis that does not vary, and the
+    // triangulation was built on NaN: every query then returned one arbitrary
+    // sphere (114.0 dB at four conditions whose true levels were 100 to 112),
+    // silently.  The writer flags equal thrust coefficients as fixed_load_factor,
+    // as a real build of reference spheres is.
+    const std::vector<std::array<double, 4>> level_flight_only = {
+        {0.0, 0.0, 0.004, 100.0}, {0.1, 0.0, 0.004, 105.0}, {0.2, 0.0, 0.004, 110.0},
+        {0.0, 0.0, 0.008, 104.0}, {0.1, 0.0, 0.008, 109.0}, {0.2, 0.0, 0.008, 114.0}};
+    const auto problem = load_problem_of("niceops_constant_gamma.nod", level_flight_only);
+    REQUIRE(problem.find("flight path angle is 0 in all 6 spheres") != std::string::npos);
+
+    const std::vector<std::array<double, 4>> constant_mu = {
+        {0.0, 0.0, 0.005, 100.0}, {0.0, 1.0, 0.005, 110.0}, {0.0, 2.0, 0.005, 120.0}};
+    REQUIRE(load_problem_of("niceops_constant_mu.nod", constant_mu).find("advance ratio is 0")
+            != std::string::npos);
+
+    // A varying set loads.
+    const std::vector<std::array<double, 4>> fine = {
+        {0.0, 0.0, 0.005, 100.0}, {1.0, 0.0, 0.005, 110.0}, {0.0, 1.0, 0.005, 120.0}};
+    REQUIRE(load_problem_of("niceops_varying.nod", fine).empty());
+}
+
+TEST_CASE("two spheres at one operating condition are refused", "[sphere_database][validation]")
+{
+    // The second left a zero-volume simplex in the triangulation: the load
+    // aborted with "could not locate a simplex", or every query walked the whole
+    // mesh and fell through to the nearest sphere.
+    const std::vector<std::array<double, 4>> duplicated = {
+        {0.0, 0.0, 0.005, 100.0}, {1.0, 0.0, 0.005, 110.0}, {0.0, 1.0, 0.005, 120.0},
+        {1.0, 1.0, 0.005, 130.0}, {1.0, 0.0, 0.005, 111.0}};
+    const auto problem = load_problem_of("niceops_duplicate_condition.nod", duplicated);
+    REQUIRE(problem.find("Spheres 1 and 4 are at the same operating condition")
+            != std::string::npos);
 }

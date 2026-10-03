@@ -56,25 +56,25 @@ int main(int argc, char** argv)
     app.add_option("--atmosphere", atmosphere_file, "Atmosphere profile, as for niceops.")->required();
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("--toward", toward, "Compass bearing the sound travels along, degrees.")->required();
-    app.add_option("--source_height", source_height, "Source height, in --units.")->required();
+    app.add_option("--source_height", source_height, "Source height, in --units.")->required()->check(CLI::NonNegativeNumber);
     app.add_option("--bands", bands, "One-third-octave band centres, Hz (default 250 500 1000).");
-    app.add_option("--max_range", max_range, "Farthest range, in --units.")->required();
-    app.add_option("--step", step, "Range spacing of the output, in --units (default max_range / 200).");
-    app.add_option("--top", top, "Highest height written, in --units (default twice the source's).");
-    app.add_option("--dz", dz_out, "Height spacing of the output, in --units (default top / 150).");
+    app.add_option("--max_range", max_range, "Farthest range, in --units.")->required()->check(CLI::PositiveNumber);
+    app.add_option("--step", step, "Range spacing of the output, in --units (default max_range / 200).")->check(CLI::NonNegativeNumber);
+    app.add_option("--top", top, "Highest height written, in --units (default twice the source's).")->check(CLI::NonNegativeNumber);
+    app.add_option("--dz", dz_out, "Height spacing of the output, in --units (default top / 150).")->check(CLI::NonNegativeNumber);
     app.add_option("--flow_resistance", flow_resistance, "Ground flow resistance, kPa s/m^2.");
     app.add_option("--impedance_model", impedance_model, "As for niceops.");
-    app.add_option("--samples", samples, "PE frequencies per band (default 5).");
+    app.add_option("--samples", samples, "PE frequencies per band (default 5).")->check(CLI::PositiveNumber);
     app.add_option("--ppw", points_per_wavelength, "PE grid points per wavelength in height (default 10 where the grid is fourth order "
-            "throughout, 20 under --scheme cn or either order 2).");
+            "throughout, 20 under --scheme cn or either order 2).")->check(CLI::NonNegativeNumber);
     app.add_option("--scheme", scheme,
             "How the PE marches in range: pade (default), the split-step Pade march, or cn, Crank-Nicolson.")
             ->check(CLI::IsMember({"pade", "cn"}));
     app.add_option("--range_step", range_step_wavelengths,
-            "--scheme pade: longest range step, in wavelengths (default 8).");
+            "--scheme pade: longest range step, in wavelengths (default 8).")->check(CLI::PositiveNumber);
     app.add_option("--max_angle", max_angle,
             "--scheme pade: elevation angle the march is accurate to, degrees (default 50, at most 60).  Steeper "
-            "paths from the source come out as NaN.");
+            "paths from the source come out as NaN.")->check(CLI::Range(0.1, 60.0));
     app.add_option("--vertical_order", vertical_order,
             "--scheme pade: order of the height derivative on the grid, 4 (default) or 2.")
             ->check(CLI::IsMember({2, 4}));
@@ -86,7 +86,7 @@ int main(int argc, char** argv)
             "--scheme pade: self (default), the wide-angle self-starter, or gaussian.")
             ->check(CLI::IsMember({"self", "gaussian"}));
     app.add_option("--range_ppw", range_points_per_wavelength,
-            "--scheme cn: range steps per wavelength (default 10).");
+            "--scheme cn: range steps per wavelength (default 10).")->check(CLI::PositiveNumber);
     app.add_option("--gamma_t", gamma_t, "Turbulence in the PE, as for niceops_pe_compare (default 0).");
     app.add_option("--outer_scale", outer_scale, "von Karman outer scale, m (default 10).");
     app.add_option("--seed", seed, "First realisation's seed (default 1).");
@@ -99,6 +99,14 @@ int main(int argc, char** argv)
     const double dr_out = step > 0.0 ? step * unit.to_metres : r_max / 200.0;
     const double z_top = top > 0.0 ? top * unit.to_metres : 2.0 * z_s;
     const double dz = dz_out > 0.0 ? dz_out * unit.to_metres : z_top / 150.0;
+    if (!(z_top > 0.0))
+    {
+        // A source on the ground has no 'twice its height' to default the top to;
+        // the height loop below then never ended (dz = 0) and grew to 21 GB in 4 s.
+        std::cerr << "niceops_pe_field: --source_height 0 gives no default for --top; "
+                     "give --top, the highest height to write.\n";
+        return 2;
+    }
 
     auto profile = read_atmosphere_profile(atmosphere_file, unit, 0.0);
     if (!profile.has_pressure())

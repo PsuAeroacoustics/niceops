@@ -306,16 +306,8 @@ double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
     // first state onwards.  The level history has one dominant peak, so any
     // coarse sample near it is enough.
     double best = -std::numeric_limits<double>::infinity();
-    std::size_t peak = 0;
     for (std::size_t it = 0; it < nt; it += seed_stride)
-    {
-        const double level = evaluate(it);
-        if (level > best)
-        {
-            best = level;
-            peak = it;
-        }
-    }
+        best = std::max(best, evaluate(it));
     double best_energy = std::pow(10.0, 0.1 * best);
 
     // One pass: form the geometry, test the bound against the best level so far,
@@ -339,7 +331,6 @@ double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
         if (level > best)
         {
             best = level;
-            peak = it;
             best_energy = std::pow(10.0, 0.1 * best);
         }
     }
@@ -678,9 +669,18 @@ bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
             strongest / options.unit.to_metres, " ", options.unit.name, "/s at the aircraft.");
     if (std::isnan(options.frame_bearing))
     {
-        log("  the wind directions are compass bearings, turned into the local frame taking +x "
-            "as east. If this run's x/y are rotated -- the shipped AC tracks run +x along 210 "
-            "degrees -- give --frame_bearing.");
+        // For an AC track, whose x/y are rotated, this is a mistake rather than a
+        // remark: the wind is turned by the wrong angle and the footprint is off
+        // by several dB with only a line in the log to say why.  A geodetic run
+        // has settled its own frame (east/north unless told otherwise), so there
+        // it stays a note.
+        const char* note = "  the wind directions are compass bearings, turned into the local frame "
+                           "taking +x as east. If this run's x/y are rotated -- the shipped AC tracks "
+                           "run +x along 210 degrees -- give --frame_bearing.";
+        if (options.geodetic.frame)
+            log(note);
+        else
+            warn(note);
     }
     return true;
 }
@@ -1296,9 +1296,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     table.includes_absorption() ? "included in it" : "applied by the run", ". Pairs it "
                     "does not cover take ", ground_model ? "the ground model" : "free-field propagation", ".");
             if (!table.isotropic() && std::isnan(options.frame_bearing))
-                log("  the table's bearings are compass bearings, and this run takes +x as east. If "
-                    "its x/y are rotated -- the shipped AC tracks run +x along 210 degrees -- give "
-                    "--frame_bearing.");
+            {
+                // A table that depends on bearing, read in a frame that is not
+                // east/north, is mis-rotated: up to 3.2 dB on the demo track with
+                // only an info line to say so.  A warning for an AC run, whose x/y
+                // are rotated; a note where the frame is a geodetic one.
+                const char* note = "  the table's bearings are compass bearings, and this run takes +x as "
+                                   "east. If its x/y are rotated -- the shipped AC tracks run +x along "
+                                   "210 degrees -- give --frame_bearing.";
+                if (options.geodetic.frame)
+                    log(note);
+                else
+                    warn(note);
+            }
         }
     }
 
@@ -2555,6 +2565,14 @@ int run(int argc, char* argv[])
     {
         input_error("--gridstep must be positive, got ", grid_step, ".");
     }
+    // Say so up front rather than running the whole case and drawing nothing at
+    // the end: this check was written to do that, and sat after the run.
+    const bool want_plots = plotting || !figure_file.empty() || !state_figure_file.empty();
+    if (want_plots && !plt::available())
+    {
+        input_error("This build has no plotting support. Reconfigure with "
+              "-DNICEOPS_PLOTTING=ON, or drop -p/-f/-F.");
+    }
     // The atmosphere overrides are checked where they are read, before anything
     // loads: a bad one used to run the whole case and write a footprint.
     if (!std::isnan(temperature_override))
@@ -2923,25 +2941,22 @@ int run(int argc, char* argv[])
             write_geodetic_levels(x_obs, y_obs, dnl, *frame, latlon_companion(dnl_file), scattered);
     }
 
-    const bool want_plots = plotting || !figure_file.empty() || !state_figure_file.empty();
-    if (!plt::available() && want_plots)
-    {
-        // Say so up front rather than running the whole case and drawing
-        // nothing at the end.
-        input_error("This build has no plotting support. Reconfigure with "
-              "-DNICEOPS_PLOTTING=ON, or drop -p/-f/-F.");
-    }
-
     if (path_count > 1 && want_plots)
     {
         log("Plotting is skipped for multi-trajectory runs: one figure file cannot hold ",
                 path_count, " flight paths.");
     }
-    else if (want_plots)
+    else if (want_plots && trajectory_holder)
     {
         draw_figures(*trajectory_holder, integrated_levels, x_obs, y_obs,
                 scattered, plotting, figure_file, state_figure_file,
                 contour_min, contour_max, contour_step, unit);
+    }
+    else if (want_plots)
+    {
+        // The only trajectory failed, so there is nothing to draw; dereferencing
+        // the empty holder here was undefined behaviour.
+        warn("No figure drawn: the trajectory could not be processed.");
     }
     // Nonzero when any trajectory was skipped, so a batch script notices.
     return failed_paths > 0 ? 1 : 0;
