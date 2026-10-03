@@ -356,6 +356,21 @@ public:
     double level_from_geometry(double squared_range, double along, double up, double across,
             const Blend& blend) const;
 
+    // Whether every condition group records which channels the builder
+    // measured: a `coverage` variable, 1 for a measured channel and 0 for one
+    // the gate zeroed or that was filled from elsewhere.  The share below is
+    // only defined when it does.
+    bool has_coverage() const
+    {
+        return has_coverage_;
+    }
+
+    // The share of a direction's blended level that comes from cells the
+    // builder did not measure: the bilinear weight on each corner, times the
+    // blend's weight on the conditions that are unmeasured there.  `angles` are
+    // (phi, theta) in degrees, as lookup_angles() gives them.
+    double unmeasured_share(const std::array<double, 2>& angles, const Blend& blend) const;
+
     double level_at_observer(const Vec3& observer,
             const Vec3& source, const Vec3& velocity,
             const Vec3& normal, double advance_ratio,
@@ -737,6 +752,10 @@ private:
     bool upper_hemisphere_measured_ = false;
     std::optional<BuildAtmosphere> build_atmosphere_;
     std::optional<double> rotor_rpm_;
+    // One flag per grid cell and condition, parallel to grid: 1 where the
+    // channel that filled the cell was measured.  Empty without coverage.
+    std::vector<std::uint8_t> measured_;
+    bool has_coverage_ = false;
     std::vector<double> frequencies_;
     std::vector<double> spectra_;
 

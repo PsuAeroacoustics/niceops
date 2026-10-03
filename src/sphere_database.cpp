@@ -137,6 +137,25 @@ std::optional<double> read_double_attribute(int ncid, const char* name)
     return value;
 }
 
+// A group's per-channel coverage, if it carries one: 1 where the builder
+// measured the channel, 0 where the gate zeroed it or it was filled from
+// elsewhere.  It runs along the channels, as dBA does.
+bool read_channel_coverage(int group_id, std::vector<int>& coverage)
+{
+    int varid = 0;
+    if (NC_NOERR != nc_inq_varid(group_id, "coverage", &varid))
+        return false;
+    int dimid = 0;
+    std::size_t length = 0;
+    if (NC_NOERR != nc_inq_vardimid(group_id, varid, &dimid)
+            || NC_NOERR != nc_inq_dimlen(group_id, dimid, &length) || length != coverage.size())
+        input_error("The coverage variable does not run along the group's ", coverage.size(),
+                " channels.");
+    if (NC_NOERR != nc_get_var_int(group_id, varid, coverage.data()))
+        input_error("Found but could not read the variable coverage.");
+    return true;
+}
+
 // The root attribute speed_reference, as text.  Absent is the ground.  panam
 // writes it with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is
 // accepted too.
@@ -976,6 +995,8 @@ Database::Database(const std::string& datafile_path)
     sphere_max_.assign(group_ids.size(), -std::numeric_limits<double>::infinity());
     std::size_t repaired_spheres = 0;
     std::size_t groups_with_upper = 0;
+    std::size_t groups_with_coverage = 0;
+    std::vector<int> coverage_scattered;
     // Which grid cells each channel falls in.  It depends only on the channels'
     // angle labels, and every sphere shares one layout but the legacy hover
     // spheres, so it is derived once and again only when the labels change:
@@ -1073,6 +1094,9 @@ Database::Database(const std::string& datafile_path)
         if (std::any_of(phis_scattered.begin(), phis_scattered.end(),
                     [](double phi) { return std::fabs(phi) > 90.0; }))
             groups_with_upper++;
+        coverage_scattered.assign(nchannels, 0);
+        if (read_channel_coverage(group_id, coverage_scattered))
+            groups_with_coverage++;
         if (i == 0)
         {
             // Record number of channels to check for changes
@@ -1106,6 +1130,7 @@ Database::Database(const std::string& datafile_path)
             // Allocate the noise level grid
             n_conditions = group_ids.size();
             grid.assign(phis.size() * thetas.size() * n_conditions, Sample {0.0, 0.0});
+            measured_.assign(grid.size(), 0);
         }
         if (!placed || placed_phis != phis_scattered || placed_thetas != thetas_scattered)
         {
@@ -1322,6 +1347,8 @@ Database::Database(const std::string& datafile_path)
                             std::isfinite(dBAs_scattered[c]) ? dBAs_scattered[c] : no_energy_floor_db;
                     const double EAA = std::isfinite(EAAs_scattered[c]) ? EAAs_scattered[c] : 0.0;
                     grid[(m * thetas.size() + n) * n_conditions + i] = {dBA, EAA};
+                    measured_[(m * thetas.size() + n) * n_conditions + i] =
+                            coverage_scattered[c] != 0 ? 1 : 0;
                 }
             }
         }
@@ -1338,6 +1365,9 @@ Database::Database(const std::string& datafile_path)
         input_error("Database ", datafile_path, " has DOPPLER_SHIFT_REMOVED = 1: its spheres are "
                 "stationary-frame, and NICE-OPS does not yet shift them to the observer's frequencies. "
                 "Propagating them unshifted would be wrong by up to about 2 dB in tonal bands; refused.");
+    has_coverage_ = !group_ids.empty() && groups_with_coverage == group_ids.size();
+    if (!has_coverage_)
+        measured_.clear();
     upper_hemisphere_measured_ = !group_ids.empty() && groups_with_upper == group_ids.size();
     if (!upper_hemisphere_measured_)
         info("Not every sphere stores its upper half: directions above the plane read the mirror image.");
@@ -2358,6 +2388,34 @@ DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceStat
         value = std::pow(10.0, 0.1 * value) * sphere_radius_ * sphere_radius_ * (1.0 + 1e-9);
     bounds.usable_ = true;
     return bounds;
+}
+
+double Database::unmeasured_share(const std::array<double, 2>& angles, const Blend& blend) const
+{
+    if (!has_coverage_)
+        return 0.0;
+    // The four corners and their bilinear weights, exactly as eval() takes
+    // them, each read at the blended conditions.  The blend's own weights are
+    // normalized so the share is a fraction whatever the rounding in them.
+    const auto stencil = cell_stencil(phis.locate(angles[0]), thetas.locate(angles[1]), thetas.size());
+    double total = 0.0;
+    for (const double weight : blend.weights)
+        total += weight;
+    if (!(total > 0.0))
+        return 0.0;
+    double share = 0.0;
+    for (std::size_t corner = 0; corner < 4; corner++)
+    {
+        double unmeasured = 0.0;
+        for (std::size_t j = 0; j < blend.weights.size(); j++)
+        {
+            if (blend.weights[j] != 0.0 && measured_[stencil.corner[corner] * n_conditions
+                    + blend.indices[j]] == 0)
+                unmeasured += blend.weights[j];
+        }
+        share += stencil.weight[corner] * unmeasured / total;
+    }
+    return share;
 }
 
 double Database::level_from_geometry(double squared_range, double along, double up,

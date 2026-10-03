@@ -1610,3 +1610,50 @@ TEST_CASE("The build atmosphere and rotor speed are read when the file records t
     CHECK(*recorded.rotor_rpm() == Catch::Approx(393.0));
     std::filesystem::remove(path);
 }
+
+TEST_CASE("The unmeasured share follows the channels the builder did not measure",
+        "[sphere_database][coverage]")
+{
+    // The shipped databases record no coverage, so the share is undefined.
+    const Database plain("databases/S-76D_M3.nod");
+    REQUIRE(!plain.has_coverage());
+
+    // One sphere written out, with a coverage variable along its channels:
+    // measured where phi is negative, unmeasured elsewhere.
+    const auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_coverage.nod").string();
+    write_sphere(sphere, path);
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    int group = 0;
+    REQUIRE(nc_inq_grp_ncid(ncid, "sphere0", &group) == NC_NOERR);
+    int channels_dim = 0;
+    REQUIRE(nc_inq_dimid(group, "channels", &channels_dim) == NC_NOERR);
+    std::size_t channels = 0;
+    REQUIRE(nc_inq_dimlen(group, channels_dim, &channels) == NC_NOERR);
+    int phi_var = 0;
+    REQUIRE(nc_inq_varid(group, "phi", &phi_var) == NC_NOERR);
+    std::vector<double> phi(channels);
+    REQUIRE(nc_get_var_double(group, phi_var, phi.data()) == NC_NOERR);
+    std::vector<int> coverage(channels);
+    for (std::size_t c = 0; c < channels; c++)
+        coverage[c] = phi[c] < 0.0 ? 1 : 0;
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    int coverage_var = 0;
+    REQUIRE(nc_def_var(group, "coverage", NC_INT, 1, &channels_dim, &coverage_var) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_var_int(group, coverage_var, coverage.data()) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+
+    const Database recorded(path);
+    REQUIRE(recorded.has_coverage());
+    const auto state = recorded.source_state(Vec3(0.0, 0.0, 150.0), Vec3(60.0, 10.0, 2.0),
+            Vec3(0.1, -0.05, 1.0), 0.1, 0.0, 0.006);
+    // Both corner columns measured: nothing unmeasured.
+    CHECK(recorded.unmeasured_share({-45.0, 60.0}, state.blend) == Catch::Approx(0.0).margin(1e-12));
+    // Both unmeasured: all of it.
+    CHECK(recorded.unmeasured_share({45.0, 60.0}, state.blend) == Catch::Approx(1.0).margin(1e-12));
+    // Halfway between a measured column (-10) and an unmeasured one (0): half.
+    CHECK(recorded.unmeasured_share({-5.0, 60.0}, state.blend) == Catch::Approx(0.5).margin(1e-9));
+    std::filesystem::remove(path);
+}
