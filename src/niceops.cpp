@@ -605,7 +605,7 @@ struct RunOptions
     bool want_dnl = false;
     bool want_lamax = false;
     bool want_nax = false;
-    double nax_threshold = 80.0;
+    double nax_threshold = std::numeric_limits<double>::quiet_NaN();
     bool want_coverage = false;
     bool full_history = false;
     bool write_time_history = false;
@@ -2417,7 +2417,7 @@ int run(int argc, char* argv[])
     std::string dnl_file = "";
     std::string lamax_file = "";
     std::string nax_file = "";
-    double nax_threshold = 80.0;
+    double nax_threshold = std::numeric_limits<double>::quiet_NaN();
     std::string coverage_file = "";
     bool full_history = false;
     double utc_offset = 0.0;
@@ -2568,7 +2568,8 @@ int run(int argc, char* argv[])
             "Write each observer's NAx, the number of operations whose LAmax reaches "
             "--nax_threshold, to this file.");
     app.add_option("--nax_threshold", nax_threshold,
-            "The LAmax, dBA, that an operation must reach to count toward NAx (default 80).");
+            "The LAmax, dBA, that an operation must reach to count toward NAx. Required with "
+            "--nax_file: there is no default, so the study's threshold is always stated.");
     app.add_option("--coverage_file", coverage_file,
             "Write, per observer, the energy-weighted share of its levels that came from cells "
             "the database did not measure (straight rays only; needs a database with coverage).");
@@ -3017,7 +3018,8 @@ int run(int argc, char* argv[])
     std::vector<std::array<double, 2>> coverage(want_coverage ? observers.size() : 0,
             std::array<double, 2> {0.0, 0.0});
     if (want_nax && !std::isfinite(nax_threshold))
-        input_error("--nax_threshold must be a finite level in dBA, not ", nax_threshold, ".");
+        input_error("--nax_file needs --nax_threshold, the LAmax in dBA that counts an operation. "
+                "There is no default: give the threshold your study uses.");
 
     // Outlives the loop so the plotting block below, which only runs for a
     // single trajectory, can still reach it.
