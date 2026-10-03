@@ -212,6 +212,75 @@ TEST_CASE("DirectionBounds really bounds the level", "[sphere_database]")
     REQUIRE(checked > 10000);
 }
 
+TEST_CASE("DirectionBounds still bounds the level at the nose and tail axes", "[sphere_database][bounds]")
+{
+    // A cell is filed under the bin of its centre direction.  At theta = 0 or 180
+    // that direction has no azimuth (up = across = 0), so every phi of the pole
+    // row landed in one azimuth bin and the bins either side of it never saw the
+    // pole's value -- while a query a degree off the axis, in one of those
+    // bins, weights the pole cells at up to 0.9.  The bound was then exceeded by
+    // up to 0.8 dB, and the windowed peak search's exactness rests on it never
+    // being.  The ordinary sweep above puts only a handful of observers within 2
+    // degrees of an axis; this one aims at them, over the whole operating
+    // envelope (the violation needs a pole value that is the local maximum of its
+    // bin, which not every blend has).
+    if (!std::filesystem::exists("databases/S-76D_M3.nod"))
+        return;
+    Database db("databases/S-76D_M3.nod");
+
+    std::vector<Database::SourceState> states;
+    for (double mu = 0.0; mu <= 0.30001; mu += 0.02)
+        for (double gamma = -12.0; gamma <= 12.0001; gamma += 3.0)
+            for (double ct = 0.003; ct <= 0.0101; ct += 0.0014)
+                states.push_back(db.source_state(Vec3(0.0, 0.0, 150.0), Vec3(60.0, 10.0, 2.0),
+                        Vec3(0.1, -0.05, 1.0), mu, gamma, ct));
+    const auto bounds = db.direction_bounds(states);
+    REQUIRE(bounds.usable());
+
+    const double radius = db.sphere_radius();
+    std::size_t checked = 0, exceeded = 0;
+    double worst_db = 0.0;
+    for (std::size_t s = 0; s < states.size(); s++)
+    {
+        const auto& frame = states[s].frame;
+        for (double theta : {0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0})
+        {
+            for (double sign : {1.0, -1.0}) // the nose axis, then the tail axis
+            {
+                for (double phi = -180.0; phi < 180.0; phi += 2.5)
+                {
+                    for (double range : {150.0, 400.0, 1200.0})
+                    {
+                    const double t = theta * pi / 180.0, p = phi * pi / 180.0;
+                    Vec3 direction = sign * std::cos(t) * frame.nose
+                            + std::sin(t) * std::cos(p) * frame.normal
+                            + std::sin(t) * std::sin(p) * frame.starboard;
+                    direction = direction.normalized();
+                    const Vec3 observer = states[s].position + range * direction;
+                    const Vec3 delta = observer - states[s].position;
+                    const double squared_range = delta.squaredNorm();
+                    if (squared_range <= radius * radius)
+                        continue;
+                    const int bin = DirectionBounds::bin(frame.nose.dot(delta),
+                            frame.normal.dot(delta), frame.starboard.dot(delta), squared_range);
+                    const double level = db.level_at_observer(observer, states[s]);
+                    const double needed = std::pow(10.0, 0.1 * level) * squared_range * (1.0 - 1e-12);
+                    checked++;
+                    if (bounds.numerator(s, bin) < needed)
+                    {
+                        exceeded++;
+                        worst_db = std::max(worst_db, 10.0 * std::log10(needed / bounds.numerator(s, bin)));
+                    }
+                    }
+                }
+            }
+        }
+    }
+    INFO(exceeded << " of " << checked << " directions exceed the bound, worst " << worst_db << " dB");
+    REQUIRE(checked > 5000000);
+    REQUIRE(exceeded == 0);
+}
+
 TEST_CASE("clamp", "[sphere_database]")
 {
     REQUIRE(clamp01(0.5) == 0.5);

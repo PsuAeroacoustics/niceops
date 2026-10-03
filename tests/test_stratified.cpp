@@ -333,6 +333,50 @@ TEST_CASE("the log-law upwind shadow starts where Snell's law puts it", "[strati
     CHECK_FALSE(layered_direct_eigenray(layers, z_s, 0.0, 1.01 * boundary, -0.2).lit);
 }
 
+TEST_CASE("a receiver at the shadow boundary has a finite ray tube", "[stratified]")
+{
+    // Where the lit root closes on the end of its family the tube's window in
+    // launch angle has no width, its slope is 0/0, and the ray's spreading range
+    // came out NaN with the ray still marked lit.  That NaN went through the
+    // level to a NaN footprint cell, written with exit status 0, within about 1e-8
+    // of the boundary in range.
+    const auto profile = read_atmosphere_profile("atmospheres/example_windy.csv", feet, 0.0)
+                                 .with_hydrostatic_pressure(101.325);
+    const LayeredSoundSpeed air(profile, 90.0);
+    std::size_t lit = 0, boundaries = 0;
+    for (int bearing = 0; bearing < 12; bearing++)
+    {
+        const double angle = bearing * 30.0 * 3.14159265358979323846 / 180.0;
+        std::vector<double> c(air.levels());
+        air.along(std::cos(angle), std::sin(angle), c.data());
+        const Layers layers {air.heights().data(), c.data(), air.levels()};
+        for (double z_s : {20.0, 30.48, 60.0, 100.0, 150.0})
+        {
+            for (double z_r : {0.0, 1.2})
+            {
+                // The solver's own boundary: far enough out to be in the shadow.
+                const auto far = layered_direct_eigenray(layers, z_s, z_r, 30000.0, -0.2);
+                if (!std::isfinite(far.boundary) || !(far.boundary > 10.0))
+                    continue;
+                boundaries++;
+                for (double eps : {1e-10, 1e-9, 3e-9, 1e-8, 3e-8, 1e-7})
+                {
+                    const auto ray = layered_direct_eigenray(layers, z_s, z_r,
+                            far.boundary * (1.0 - eps), -0.2);
+                    if (!ray.lit)
+                        continue;
+                    lit++;
+                    INFO("bearing " << bearing * 30 << " z_s " << z_s << " z_r " << z_r << " eps " << eps);
+                    REQUIRE(std::isfinite(ray.spreading_range));
+                    REQUIRE(ray.spreading_range > 0.0);
+                }
+            }
+        }
+    }
+    REQUIRE(boundaries > 20);
+    REQUIRE(lit > 100);
+}
+
 namespace {
 
 // A calm morning inversion capped near 107 m, day 286's (run 286276) without its

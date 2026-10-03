@@ -1834,6 +1834,18 @@ int Database::home_bin(std::size_t i_phi, std::size_t i_theta) const
             std::sin(theta) * std::sin(phi), 1.0);
 }
 
+std::array<int, 2> Database::home_bins(std::size_t i_phi, std::size_t i_theta) const
+{
+    const int here = home_bin(i_phi, i_theta);
+    // sin(180 degrees) is 1.2e-16, not 0, so the tail pole's row kept a
+    // meaningful azimuth by accident; a tolerance treats both poles the same
+    // rather than relying on that.
+    if (std::fabs(std::sin(thetas[i_theta] * pi / 180.0)) < 1e-9)
+        return {(here / DirectionBounds::azimuth_bins) * DirectionBounds::azimuth_bins,
+                DirectionBounds::azimuth_bins};
+    return {here, 1};
+}
+
 std::array<int, 2> Database::bin_padding() const
 {
     // How many bins a single grid cell can straddle.  The bins are coarser than
@@ -1877,22 +1889,26 @@ DirectionBounds Database::direction_bounds(const std::vector<SourceState>& state
                 for (std::size_t k = 0; k < blends[b].size(); k++)
                     top = std::max(top, cell[blends[b][k]].dBA);
 
-                const int here = home_bin(m, n);
-                const int theta_index = here / DirectionBounds::azimuth_bins;
-                const int azimuth_index = here % DirectionBounds::azimuth_bins;
-                // A direction reads this cell through a bilinear stencil that
-                // reaches a grid step either way, so every bin that stencil can
-                // be queried from has to carry the cell's value.
-                for (int dt = -theta_pad; dt <= theta_pad; dt++)
+                const auto [first_home, home_count] = home_bins(m, n);
+                for (int home_index = 0; home_index < home_count; home_index++)
                 {
-                    const int t = std::min(DirectionBounds::theta_bins - 1,
-                            std::max(0, theta_index + dt));
-                    for (int da = -azimuth_pad; da <= azimuth_pad; da++)
+                    const int here = first_home + home_index;
+                    const int theta_index = here / DirectionBounds::azimuth_bins;
+                    const int azimuth_index = here % DirectionBounds::azimuth_bins;
+                    // A direction reads this cell through a bilinear stencil that
+                    // reaches a grid step either way, so every bin that stencil
+                    // can be queried from has to carry the cell's value.
+                    for (int dt = -theta_pad; dt <= theta_pad; dt++)
                     {
-                        const int a = std::min(DirectionBounds::azimuth_bins - 1,
-                                std::max(0, azimuth_index + da));
-                        double& slot = row[t * DirectionBounds::azimuth_bins + a];
-                        slot = std::max(slot, top);
+                        const int t = std::min(DirectionBounds::theta_bins - 1,
+                                std::max(0, theta_index + dt));
+                        for (int da = -azimuth_pad; da <= azimuth_pad; da++)
+                        {
+                            const int a = std::min(DirectionBounds::azimuth_bins - 1,
+                                    std::max(0, azimuth_index + da));
+                            double& slot = row[t * DirectionBounds::azimuth_bins + a];
+                            slot = std::max(slot, top);
+                        }
                     }
                 }
             }
@@ -1951,10 +1967,10 @@ DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceStat
 
     const std::size_t n_thetas = thetas.size();
     const std::size_t n_cells = phis.size() * n_thetas;
-    std::vector<int> home(n_cells);
+    std::vector<std::array<int, 2>> home(n_cells);
     for (std::size_t m = 0; m < phis.size(); m++)
         for (std::size_t n = 0; n < n_thetas; n++)
-            home[m * n_thetas + n] = home_bin(m, n);
+            home[m * n_thetas + n] = home_bins(m, n);
 
     // Weighted level of each stored spectrum, and whether it has an empty band
     // the metric reads.  Per condition, not per group: groups share conditions,
@@ -2002,18 +2018,22 @@ DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceStat
         std::fill(has_empty.begin(), has_empty.end(), 0);
         for (std::size_t c = 0; c < n_cells; c++)
         {
-            const int h = home[c];
-            double* maxima = band_max.data() + h * n_active;
-            for (const std::size_t k : blends[b])
+            // One bin, or at a pole all the azimuth bins of its theta bin.
+            for (int home_index = 0; home_index < home[c][1]; home_index++)
             {
-                spectrum_max[h] = std::max(spectrum_max[h], spectrum_level[c * n_conditions + k]);
-                has_empty[h] = has_empty[h] || spectrum_has_empty[c * n_conditions + k];
-                for (std::size_t j = 0; j < n_active; j++)
+                const int h = home[c][0] + home_index;
+                double* maxima = band_max.data() + h * n_active;
+                for (const std::size_t k : blends[b])
                 {
-                    // Raw values, the floor included: a band empty in every
-                    // entry blends to the floor, not to nothing.
-                    maxima[j] = std::max(maxima[j],
-                            spectra_[(c * n_bands + active[j]) * n_conditions + k]);
+                    spectrum_max[h] = std::max(spectrum_max[h], spectrum_level[c * n_conditions + k]);
+                    has_empty[h] = has_empty[h] || spectrum_has_empty[c * n_conditions + k];
+                    for (std::size_t j = 0; j < n_active; j++)
+                    {
+                        // Raw values, the floor included: a band empty in every
+                        // entry blends to the floor, not to nothing.
+                        maxima[j] = std::max(maxima[j],
+                                spectra_[(c * n_bands + active[j]) * n_conditions + k]);
+                    }
                 }
             }
         }

@@ -600,6 +600,14 @@ private:
     // The DirectionBounds bin a grid cell's centre direction falls in, and how
     // far a bilinear stencil reading that cell can reach in bins either way.
     int home_bin(std::size_t i_phi, std::size_t i_theta) const;
+
+    // The bins a cell is filed under before padding: its home bin, as {first,
+    // count} of consecutive bins -- one, except at the poles.  A pole cell's centre
+    // direction has no azimuth (up = across = 0), so home_bin gives it an
+    // arbitrary one, while a query a degree off the axis can arrive from any
+    // azimuth and weights the pole cells at up to 0.9.  Filing the cell under
+    // every azimuth bin of its theta bin is what keeps the bound a bound there.
+    std::array<int, 2> home_bins(std::size_t i_phi, std::size_t i_theta) const;
     std::array<int, 2> bin_padding() const;
 
     // Blend the four bracketing operating conditions at one grid cell.

@@ -505,6 +505,11 @@ double tube_range(Range&& range, const Family& family, double p, double c_s, dou
     const double delta = std::min(1e-6, 0.25 * std::min(theta - t_a, t_b - theta));
     const double a = std::max(theta - delta, t_a);
     const double b = std::min(theta + delta, t_b);
+    // A root that has closed on the end of its family leaves no window: delta is
+    // 0, a == b, and the slope below is 0/0.  The tube is then the straight one,
+    // r / cos(launch), as it is where the dipping family is a sliver.
+    if (!(b > a))
+        return r / std::cos(theta);
     const double slope = (at(b) - at(a)) / (b - a);
     return std::sqrt(r * std::fabs(slope) * std::sin(std::fabs(arrival)) / std::cos(theta));
 }
@@ -622,7 +627,7 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
         out.path_length = full.ds;
         out.travel_time = full.dt;
         out.spreading_range
-                = std::max(tube_range(range, family, p, c_s, r, out.arrival), focus_floor);
+                = std::max(focus_floor, tube_range(range, family, p, c_s, r, out.arrival));
         return out;
     }
 
@@ -652,7 +657,7 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
     const double carried = std::isfinite(tube) && tube > 0.0 && reach > 0.0
             ? tube * r / reach
             : r / std::cos(out.launch);
-    out.spreading_range = std::max(carried, focus_floor);
+    out.spreading_range = std::max(focus_floor, carried);
     out.path_length = full.ds + out.shadow_depth;
     out.travel_time = full.dt + out.shadow_depth / layers.at(0.0);
     return out;
@@ -764,7 +769,7 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
             a.path_length += m * hops.ds;
             a.travel_time += m * hops.dt;
         }
-        a.spreading_range = std::max(tube_range(range, whole, p, c_s, r, a.arrival), focus_floor);
+        a.spreading_range = std::max(focus_floor, tube_range(range, whole, p, c_s, r, a.arrival));
         out.push_back(a);
     };
 
