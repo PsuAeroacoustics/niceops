@@ -131,6 +131,14 @@ public:
         file_.open(path, std::ios::app);
     }
 
+    // Back to stderr, as before any set_file.
+    void close_file()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (file_.is_open())
+            file_.close();
+    }
+
     void set_level(LogLevel level)
     {
         detail::min_level = level;
@@ -164,6 +172,13 @@ public:
         {
             file_ << line;
             file_.flush();
+            // The file is where a run's whole story goes, but nobody watches it
+            // while the run is going: a skipped trajectory, a rejected option or
+            // a fatal() abort used to leave the terminal empty and the exit
+            // status the only sign anything was wrong.  Warnings and worse are
+            // echoed to stderr as well; -L still decides what is written at all.
+            if (level >= LogLevel::warn)
+                std::cerr << line;
         }
         else
         {

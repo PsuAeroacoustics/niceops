@@ -281,7 +281,7 @@ class Database
 public:
     // The four database spheres bracketing one operating condition, and the
     // barycentric weights that blend them.  Computing this is by far the most
-    // expensive part of an evaluation -- it is a CGAL Delaunay locate() walk --
+    // expensive part of an evaluation -- it is a Delaunay locate() walk --
     // and it depends only on (mu, gamma, CT), so it is hoisted out of any loop
     // that holds the operating condition fixed.
     //
@@ -481,6 +481,14 @@ public:
         // Mechanical shaft power for this condition, when the database carries
         // it.  NaN means the database has none.
         double shaft_power = std::numeric_limits<double>::quiet_NaN();
+        // What the database records at its root and the loader interprets, carried
+        // so an exported sphere reloads as what it was cut from: its flight
+        // conditions' reference (air or ground), and the rotor it was built for.
+        // NaN where the source had none.
+        SpeedReference speed_reference = SpeedReference::ground;
+        double tip_speed = std::numeric_limits<double>::quiet_NaN();
+        double rotor_radius = std::numeric_limits<double>::quiet_NaN();
+        double vehicle_weight_newtons = std::numeric_limits<double>::quiet_NaN();
         std::vector<double> phis;
         std::vector<double> thetas;
         // Row-major over (phi, theta): cells[i_phi * thetas.size() + i_theta].
@@ -500,6 +508,20 @@ public:
         return tip_speed_;
     }
 
+    // The rotor radius (m) and the weight (N) the database was built for, from
+    // the root variables main_rotor_radius_meters and vehicle_weight_newtons, or
+    // NaN when the file does not carry them.  With the tip speed these are what
+    // the vehicle file has to agree with for mu and CT to index the right
+    // conditions; only the tip speed used to be compared.
+    double rotor_radius() const
+    {
+        return rotor_radius_;
+    }
+    double vehicle_weight() const
+    {
+        return vehicle_weight_newtons_;
+    }
+
     // Which velocity the flight conditions were taken from, as the root
     // attribute speed_reference records it.  Absent means the ground, which is
     // what every database built before the attribute existed used.
@@ -512,6 +534,18 @@ public:
     bool has_spectra() const
     {
         return !frequencies_.empty();
+    }
+
+    // Whether this is a fixed_load_factor build, and the thrust coefficient of
+    // its reference condition (load factor 1).  Together they fix the analytic
+    // load-factor law, 20 lg(C_T / C_T,ref).
+    bool fixed_load_factor() const
+    {
+        return fixed_load_factor_;
+    }
+    double reference_thrust_coefficient() const
+    {
+        return reference_thrust_coefficient_;
     }
 
     // Whether the database carries a per-condition shaft power.
@@ -586,6 +620,14 @@ private:
     // The DirectionBounds bin a grid cell's center direction falls in, and how
     // far a bilinear stencil reading that cell can reach in bins either way.
     int home_bin(std::size_t i_phi, std::size_t i_theta) const;
+
+    // The bins a cell is filed under before padding: its home bin, as {first,
+    // count} of consecutive bins -- one, except at the poles.  A pole cell's center
+    // direction has no azimuth (up = across = 0), so home_bin gives it an
+    // arbitrary one, while a query a degree off the axis can arrive from any
+    // azimuth and weights the pole cells at up to 0.9.  Filing the cell under
+    // every azimuth bin of its theta bin is what keeps the bound a bound there.
+    std::array<int, 2> home_bins(std::size_t i_phi, std::size_t i_theta) const;
     std::array<int, 2> bin_padding() const;
 
     // Blend the four bracketing operating conditions at one grid cell.
@@ -597,7 +639,7 @@ private:
     // (i_phi * thetas.size() + i_theta) * n_conditions + condition.  This was a
     // vector<vector<vector<double>>>, which put two dependent pointer loads in
     // front of every one of the 32 reads an eval makes -- the largest single
-    // cost of a run once the CGAL locate had been hoisted out of the loop.
+    // cost of a run once the Delaunay locate had been hoisted out of the loop.
     std::vector<Sample> grid;
     std::size_t n_conditions = 0;
     double sphere_radius_ = 0.0;
@@ -648,6 +690,8 @@ private:
     // the loader transposes once.  Both empty unless the database carries
     // spectra.
     double tip_speed_ = std::numeric_limits<double>::quiet_NaN();
+    double rotor_radius_ = std::numeric_limits<double>::quiet_NaN();
+    double vehicle_weight_newtons_ = std::numeric_limits<double>::quiet_NaN();
     SpeedReference speed_reference_ = SpeedReference::ground;
     std::vector<double> frequencies_;
     std::vector<double> spectra_;

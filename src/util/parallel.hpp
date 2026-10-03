@@ -13,12 +13,21 @@
 // caller can hoist per-worker scratch -- the level time history, in practice --
 // out of the inner loop instead of allocating it per observer.
 //
-// Note that an exception escaping the body terminates the process.  That
-// matches what already happens: fatal() aborts, and nothing here throws.
+// An exception thrown by the body is carried back to the caller: the first one
+// is rethrown from parallel_chunks once every worker has stopped, exactly as it
+// would have propagated had the body run inline.  (This used to terminate the
+// process whenever there was more than one thread, because an exception cannot
+// leave a std::thread's function -- which defeated the caller's per-trajectory
+// handling of input_error, the one the observer loop reaches when a history
+// file cannot be opened.)  Remaining chunks are abandoned; their output slots
+// are whatever the caller initialised them to, and the caller is expected to
+// discard the lot.
 
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <exception>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -52,6 +61,10 @@ inline constexpr std::size_t chunks_per_worker = 8;
 //
 // The result does not depend on the split: every index writes only its own
 // output, so runs at any thread count stay byte-for-byte identical.
+//
+// With one thread the body runs inline on the caller, so an exception simply
+// propagates; with more, the first exception any worker throws is rethrown on
+// the calling thread after the pool has been joined.
 template <typename Body>
 void parallel_chunks(std::size_t count, unsigned threads, Body body)
 {
@@ -70,13 +83,31 @@ void parallel_chunks(std::size_t count, unsigned threads, Body body)
     const std::size_t chunk = (count + slices - 1) / slices;
 
     std::atomic<std::size_t> next {0};
-    auto pull = [&body, &next, count, chunk] {
+    std::atomic<bool> stop {false};
+    std::exception_ptr failure;
+    std::mutex failure_mutex;
+    auto pull = [&body, &next, &stop, &failure, &failure_mutex, count, chunk] {
         for (;;)
         {
+            if (stop.load(std::memory_order_relaxed))
+                return;
             const std::size_t begin = next.fetch_add(chunk, std::memory_order_relaxed);
             if (begin >= count)
                 return;
-            body(begin, std::min(begin + chunk, count));
+            try
+            {
+                body(begin, std::min(begin + chunk, count));
+            }
+            catch (...)
+            {
+                {
+                    std::lock_guard<std::mutex> lock(failure_mutex);
+                    if (!failure)
+                        failure = std::current_exception();
+                }
+                stop.store(true, std::memory_order_relaxed);
+                return;
+            }
         }
     };
 
@@ -87,6 +118,8 @@ void parallel_chunks(std::size_t count, unsigned threads, Body body)
     pull();
     for (auto& worker : pool)
         worker.join();
+    if (failure)
+        std::rethrow_exception(failure);
 }
 
 } // namespace niceops

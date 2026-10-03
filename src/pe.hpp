@@ -202,8 +202,11 @@ struct PeResult
 PeResult solve_pe(const PeSetup& setup);
 
 // The same averaged in energy over `samples` frequencies spread evenly in
-// log frequency across the one-third-octave band centerd on `center`: what a
-// band level sees, rather than one tone's interference pattern.
+// log frequency across the one-third-octave band centered on `center`: what a
+// band level sees, rather than one tone's interference pattern.  The frequencies
+// are the midpoints of `samples` equal slices of the band (one sample is the
+// center), so each stands for an equal share of it; they used to include both
+// band edges at full weight, which read 0.4 to 0.6 dB off the band's mean.
 // With turbulence each frequency is also its own realization (seed + k), so the
 // average is over the band and the ensemble at once.  The frequencies are
 // independent marches and run in parallel (PeSetup::threads); they are summed

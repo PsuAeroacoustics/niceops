@@ -86,4 +86,36 @@ std::vector<double> absorption_coefficients(const Atmosphere& atmosphere,
     return coefficients;
 }
 
+std::string temperature_problem(double kelvin)
+{
+    if (!std::isfinite(kelvin) || kelvin < 150.0 || kelvin > 350.0)
+    {
+        return "a temperature of " + std::to_string(kelvin) + " K is not air (150 to 350 K are accepted)"
+                + (kelvin >= -100.0 && kelvin <= 70.0 ? "; is it in Celsius? It is read in kelvin." : ".");
+    }
+    return "";
+}
+
+std::string pressure_problem(double kpa)
+{
+    if (!std::isfinite(kpa) || !(kpa > 0.0) || kpa > 120.0)
+    {
+        return "a pressure of " + std::to_string(kpa) + " kPa is not plausible (up to 120 kPa are accepted)"
+                + (kpa > 120.0 ? "; is it in Pa or hPa? It is read in kPa." : ".");
+    }
+    return "";
+}
+
+std::string humidity_problem(double percent)
+{
+    if (!std::isfinite(percent) || percent < 0.0 || percent > 100.0)
+        return "a relative humidity of " + std::to_string(percent) + " percent is outside 0 to 100.";
+    if (percent > 0.0 && percent <= 1.0)
+    {
+        return "a relative humidity of " + std::to_string(percent) + " percent is read in percent, not as a fraction; "
+                "scale a fraction (0 to 1) by 100. (0 for completely dry air is accepted.)";
+    }
+    return "";
+}
+
 } // namespace niceops

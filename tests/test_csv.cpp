@@ -157,3 +157,31 @@ TEST_CASE("the shipped scattered observer file reads", "[csv]")
     for (const auto& row : rows)
         REQUIRE(row.size() == 4);
 }
+
+TEST_CASE("a text line after the data began is reported, a header is not", "[csv]")
+{
+    // A row that did not parse used to vanish: a typo removed an observer and
+    // everything after it moved up one place.  A header, or a units line under
+    // one, is above the first row of data and is expected.
+    TempCsv header_only("x,y,z\n1,2,3\n4,5,6\n");
+    CsvReport clean;
+    REQUIRE(read_numeric_csv(header_only.path, false, &clean).size() == 2);
+    REQUIRE(clean.dropped == 0);
+
+    TempCsv units_line("x,y,z\nft,ft,ft\n1,2,3\n4,5,6\n");
+    CsvReport units;
+    REQUIRE(read_labeled_csv(units_line.path, &units).rows.size() == 2);
+    REQUIRE(units.dropped == 0);
+
+    TempCsv typo("x,y,z\n1,2,3\n4,5,6oo\n7,8,9\n10,x,12\n");
+    CsvReport report;
+    const auto rows = read_numeric_csv(typo.path, false, &report);
+    REQUIRE(rows.size() == 2);
+    REQUIRE(report.dropped == 2);
+    REQUIRE(report.first_dropped_line == 3);
+
+    CsvReport labeled;
+    REQUIRE(read_labeled_csv(typo.path, &labeled).rows.size() == 2);
+    REQUIRE(labeled.dropped == 2);
+    REQUIRE(labeled.first_dropped_line == 3);
+}

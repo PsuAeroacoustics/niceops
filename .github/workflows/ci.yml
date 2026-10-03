@@ -64,7 +64,7 @@ jobs:
         sudo apt-get install -y ${{ matrix.packages }}
 
     - name: Configure
-      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE ${{ matrix.options }}
+      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DNICEOPS_ASSERTS=ON ${{ matrix.options }}
 
     - name: Build
       run: cmake --build build --config $BUILD_TYPE -j$(nproc)
@@ -79,8 +79,8 @@ jobs:
       run: build/pyenv/bin/python -c "import matplotlib; print(matplotlib.__version__)"
 
     - name: Test
-      # --output-on-failure rather than -V: the suite runs ~46k assertions and
-      # 1.8M self-test samples, and the passing ones are noise.
+      # --output-on-failure rather than -V: the suite runs tens of thousands of
+      # assertions and 1.8M self-test samples, and the passing ones are noise.
       run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure
 
     - name: Draw the figures

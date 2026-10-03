@@ -121,13 +121,24 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
         double ground_elevation)
 {
     LabeledCsv csv;
+    CsvReport report;
     try
     {
-        csv = read_labeled_csv(path);
+        csv = read_labeled_csv(path, &report);
     }
     catch (const std::exception& e)
     {
         input_error("--atmosphere: ", e.what());
+    }
+    if (report.dropped > 0)
+    {
+        // A level with one unparseable cell used to vanish from the profile,
+        // quietly changing every gradient fitted through it.
+        input_error("--atmosphere ", path, ": line ", report.first_dropped_line,
+                " is not a row of numbers", report.dropped > 1
+                        ? " (and " + std::to_string(report.dropped - 1) + " more are not)"
+                        : std::string(),
+                ". A text line is only allowed above the first row of data.");
     }
 
     const bool metric = unit.to_meters == 1.0;
@@ -288,6 +299,19 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
     }
     if (csv.rows.empty())
         input_error("--atmosphere ", path, " holds no numeric rows under its header.");
+    // nan and inf parse as numbers; the range checks below compare against them
+    // and a NaN passes every one of those, then runs through the ray fits.
+    for (std::size_t row = 0; row < csv.rows.size(); row++)
+    {
+        for (const double value : csv.rows[row])
+        {
+            if (!std::isfinite(value))
+            {
+                input_error("--atmosphere ", path, ": data row ", row + 1,
+                        " holds a value that is not a number.");
+            }
+        }
+    }
 
     // Gather, then order by height: a sounding may well run top down.
     std::vector<std::size_t> order(csv.rows.size());

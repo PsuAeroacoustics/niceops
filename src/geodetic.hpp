@@ -5,8 +5,11 @@
 // worldtransforms.d and wgs84tocartesian.d, the latter itself a port of
 // https://github.com/chrberger/WGS84toCartesian.
 //
-// The projection is a transverse Mercator about a reference point, with
-// altitude carried straight through as z.  That makes it a map projection with
+// The projection is the American polyconic about a reference point (not a
+// transverse Mercator, though this header and the docs once said so; it is the
+// projection the shipped trajectory files were built with, and agrees with a
+// transverse Mercator to 3 mm at 10 km and 2.6 m at 100 km), with altitude
+// carried straight through as z.  That makes it a map projection with
 // a height attached rather than a true ENU frame: it does not rotate the
 // horizontal axes with height, and it does not account for the Earth curving
 // away beneath a distant observer.  Over the few kilometers a noise footprint
@@ -28,7 +31,7 @@ struct Geodetic
     double altitude = 0.0;
 };
 
-// Projects WGS84 positions onto a local Cartesian frame centerd on a reference
+// Projects WGS84 positions onto a local Cartesian frame centered on a reference
 // point: x east, y north, z up, all in meters.
 class LocalFrame
 {

@@ -10,11 +10,12 @@
 #include <vector>
 
 #include "geodetic.hpp"
+#include "util/constants.hpp"
 #include "util/csv.hpp"
 
 using namespace niceops;
 
-TEST_CASE("Projection is centerd on its reference", "[geodetic]")
+TEST_CASE("Projection is centered on its reference", "[geodetic]")
 {
     const Geodetic reference {39.82914323, -74.40996141, 0.0};
     const LocalFrame frame(reference);
@@ -198,4 +199,40 @@ TEST_CASE("An east/north/up vector takes the frame's rotation only", "[geodetic]
     REQUIRE(plain(0) == Catch::Approx(3.0));
     REQUIRE(plain(1) == Catch::Approx(4.0));
     REQUIRE(plain(2) == Catch::Approx(5.0));
+}
+
+TEST_CASE("Longitude wraps across the antimeridian", "[geodetic]")
+{
+    // The difference of two longitudes was projected as it stood, so a reference at
+    // 179.99 E and a point at 179.995 W -- 0.015 degrees apart -- came out 32,000
+    // km away.  Over the shipped tracks' range nothing changes (remainder leaves a
+    // difference within half a turn exactly as it is).
+    const LocalFrame frame(Geodetic {10.0, 179.99, 0.0});
+    const double meters_per_degree = 111319.49 * std::cos(10.0 * pi / 180.0);
+    for (double longitude : {179.995, -179.995, -179.99, 179.97, -180.0, 180.0})
+    {
+        double expected = longitude - 179.99;
+        if (expected < -180.0)
+            expected += 360.0;
+        const Vec3 local = frame.to_local(Geodetic {10.0, longitude, 0.0});
+        INFO("longitude " << longitude);
+        REQUIRE(local.x == Catch::Approx(expected * meters_per_degree).epsilon(0.01));
+        REQUIRE(std::fabs(local.y) < 30.0);
+    }
+    // And back.
+    const Vec3 across = frame.to_local(Geodetic {10.0, -179.995, 0.0});
+    const Geodetic back = frame.to_geodetic(across);
+    REQUIRE(std::remainder(back.longitude - (-179.995), 360.0) == Catch::Approx(0.0).margin(1e-7));
+}
+
+TEST_CASE("A position nowhere near the frame's origin is refused", "[geodetic]")
+{
+    // A sign-flipped --origin, or a longitude with its sign dropped, put the track
+    // thousands of kilometers from a frame made for a few kilometers, and it was
+    // projected anyway into a plausible-looking footprint for nowhere.
+    const LocalFrame frame(Geodetic {39.8, -74.4, 0.0});
+    REQUIRE_NOTHROW(frame.to_local(Geodetic {39.9, -74.3, 0.0}));
+    REQUIRE_THROWS_AS(frame.to_local(Geodetic {39.8, 74.4, 0.0}), std::runtime_error);
+    REQUIRE_THROWS_AS(frame.to_local(Geodetic {-39.8, -74.4, 0.0}), std::runtime_error);
+    REQUIRE_THROWS_AS(frame.to_local(Geodetic {49.8, -74.4, 0.0}), std::runtime_error);
 }

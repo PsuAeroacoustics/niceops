@@ -33,6 +33,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j8
 ```
 
+This configuration ships: `assert()` is compiled out, as CMake's Release normally has it. To test
+the way CI does, keep the asserts live with `-DNICEOPS_ASSERTS=ON`.
+
 On macOS with Command Line Tools but no full Xcode, add
 `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`.
 
@@ -84,7 +87,7 @@ Input and output files use **feet**; the computation is metric internally.
   plate and any shadow loss applied. A-weighted and summed in energy the bands give
   `level_dBA`. Bands outside `--band_limits` and culled states are left empty; `-a`'s ambient
   goes into `level_dBA` only. Needs the spectral path.
-- `-m` — appends average, maximum and above-threshold counts for the case.
+- `-m` — appends the energy-mean SEL, maximum and above-threshold counts for the case.
 - `-S` — the derived trajectory state (t, position, velocity, load factor, C<sub>T</sub>, μ, flight path angles).
 - `--powerfile` — per-state shaft power, if the database carries any.
 - `--latlon` — writes a `_latlon` companion beside every level file above, as latitude, longitude, level.
@@ -137,17 +140,17 @@ seconds, levels in dB.
 | `-d`, `--database` | netCDF noise database. Once, or once per trajectory. |
 | `-t`, `--trajectoryfile` | CSV trajectory. Repeat for several flight paths. |
 | `-v`, `--vehicle` | JSON vehicle definition. Once, or once per trajectory. |
-| `-o`, `--output` | SEL output file. Once per trajectory; with several tracks and no `-o`, each output is named after its track. |
+| `-o`, `--output` | SEL output file. Once per trajectory (default `integrated/197421_LAE.csv`); with several tracks and one name or none, each output is named after its track. Two trajectories asked to write one file are refused. |
 | `-b`, `--observer` | Scattered observer file; switches off the default grid. |
-| `-S`, `--state` | Save the derived trajectory state. |
-| `-i`, `--history` | Prefix for per-observer time history files. |
-| `--band_history` | Prefix for per-observer band time history files (see Outputs). Needs the spectral path. |
-| `-m`, `--metricfile` | Append overall noise metrics to this file. |
+| `-S`, `--state` | Save the derived trajectory state. With several tracks and one name, each is saved as `<track>_state.csv` beside it. |
+| `-i`, `--history` | Prefix for per-observer time history files, `<prefix>_i<N>.csv`. With several tracks each file is also named for its track, `<prefix>_<track>_i<N>.csv`, so they do not overwrite one another. |
+| `--band_history` | Prefix for per-observer band time history files (see Outputs), named as `-i` names its files. Needs the spectral path. |
+| `-m`, `--metricfile` | Append overall noise metrics to this file: the case name, the energy mean of the per-observer SELs (10 lg of the mean of 10^(L/10), not a mean of decibels), their maximum, and the share above 65 dB. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
 | `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. |
 | `--path_smoothing` | How far, RMS per axis in `--units`, the path fitted through a WGS84 track may sit from the given positions. Default 10 ft. Zero interpolates exactly, which on measured positions makes the load factor track coordinate rounding. |
-| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. |
+| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. Required with `-D` when the track has no `utcsec` column (it used to default to midnight, which is night, so the whole footprint took the 10 dB penalty). |
 | `--latlon` | Also write each level file as latitude, longitude, level. |
 | `-l`, `--logfile` | Log file (default `log/niceops.log`). |
 | `-L`, `--loglevel` | `trace`, `info`, `warn`, `error` or `fatal` (default `info`). |
@@ -156,16 +159,18 @@ seconds, levels in dB.
 
 | Option | Meaning |
 | --- | --- |
-| `-a`, `--ambient` | Ambient level in dB, mixed into every sample. Off unless given. |
+| `-a`, `--ambient` | Ambient level in dB, added to every sample's level in energy (two equal levels give +3 dB). Off unless given. It used to be added as pressure amplitude, as the D original did, which read up to 3 dB high. |
 | `-q`, `--qsam` / `--no-qsam` | Use the flight path angle relative to the tip-path-plane normal rather than the vertical. On by default. |
 | `-s`, `--step` | Resampling step for trajectory adaptation. **Not** the SEL integration step, which comes from the trajectory's own sampling. |
 | `--units` | Length unit for the command line and for every file carrying a length: `ft` (default) or `m`. See **Units**. |
 | `--trim` | Crop each trajectory from this x, in `--units`, to its lowest/slowest point. Off by default; it changes which part of the flight is integrated. |
 | `--grid`, `--gridstep` | Observer grid bounds and spacing, in `--units`. Default ±1500 m (±4921.26 ft), step 25 m (82.021 ft) — a fixed extent either way. |
-| `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory. |
+| `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory: the energy average over a 24-hour day, with the 22:00–07:00 night penalized. A daytime operation reads its SEL less 49.37 dB. |
+| `--lamax_file` | Write each observer's LAmax: the highest A-weighted level over the operation, dB. Forces the whole history, so the peak is exact. |
+| `--full_history` | Integrate each SEL over the whole history rather than the event's 10 dB-down window. Slower, since no window is found. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
-| `--spectral` | Propagate the database's per-band spectra to the ground with ISO 9613-1 absorption, instead of one broadband level with the database's EAA factor. Needs a database carrying spectra. |
+| `--spectral`, `--no-spectral` | On by default when the database carries spectra: propagate its per-band spectra to the ground with ISO 9613-1 absorption. `--no-spectral` takes one broadband level with the database's EAA factor instead (databases without spectra always do). |
 | `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
 | `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. |
 | `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity, and optionally pressure and wind, against height. Absorption is integrated through it. Spectral path only. See below. |
@@ -175,7 +180,9 @@ seconds, levels in dB.
 | `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail per band. Off by default; see below. |
 | `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γT, instead of `--shadow_floor`. Default 0 (off). Needs `--refraction` and `--ground_effect`. |
 | `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
-| `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
+| `--ground_effect`, `--no-ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. On by default wherever the spectral path runs on a database that carries spectra; `--no-ground_effect` turns it off. Asking for it with `--no-spectral` is an error. |
+| `--max_load_factor` | Largest load factor, in g, that a `fixed_load_factor` database's load-factor correction is taken to (default 2). Above it the correction is held, and the run says how many states it held. |
+| `--accept_vehicle_mismatch` | A vehicle file that disagrees with the database by more than 2 percent in tip speed, rotor radius, weight or thrust coefficient at 1 g is refused. Between 1 and 2 percent it is a warning; this flag turns the refusal into a warning. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
 | `--receiver_height`, `--turbulence` | Point receiver's microphone height (in `--units`, default 1.2 m; an observer file's fifth column overrides it per observer) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`; the height also places the microphone for `--propagation_table`. |
 | `--impedance_model` | Ground impedance: `delany_bazley` (default), `miki`, `variable_porosity` (with `--porosity_rate`, 1/m) or `delany_bazley_layer` (with `--layer_depth`, in `--units`). `--flow_resistance` is the (effective) flow resistivity. |
@@ -218,7 +225,9 @@ trajectory, or one per trajectory.
 DNL is a property of a set of operations rather than of one flight: each trajectory's SEL-style
 integral gains a 10 dB penalty on samples flown at night, and the results are summed as energy.
 Night is 22:00–07:00 local; `--utc_offset` shifts the trajectory's UTC seconds into local time.
-With one daytime operation the DNL equals the SEL exactly.
+The sum is normalized to a 24-hour day, as the DNL is defined: a single daytime operation
+gives the SEL less 10 lg 86 400 = 49.37 dB. (Before the normalization, `-D` wrote the raw sum,
+which read 49.37 dB high.)
 
 Plotting is skipped for multi-trajectory runs, since one figure file cannot hold several paths.
 
@@ -231,10 +240,16 @@ On a large observer grid most of the work goes into observers that are never lou
 matter. `--db_cutoff L` skips any evaluation that provably falls below `L`, bounding the level
 from the loudest sphere the state blends and spherical spreading alone.
 
-The threshold sits 10 dB below `L`, which makes the result **exact wherever it matters**: the SEL
-integral covers the window from the peak down to peak − 10, so for any observer that reaches `L`,
-no sample in its window is ever culled. On the demo case, `--db_cutoff 85` skips 96% of the
-evaluations and every cell at or above 85 dB is unchanged to the last bit.
+The threshold sits 10 dB below `L` and is applied to the **instantaneous level**, which makes the
+result exact for any observer whose *peak level* reaches `L`: the SEL integral covers the window
+from the peak down to peak − 10, so no sample in that window is ever culled.
+
+The cells of the output are SELs, though, and an SEL exceeds its observer's peak level by 1 to 12
+dB (the window's duration), so a cell can be at or above `L` in SEL while its peak is below `L`,
+and its window then loses samples. On the demo case, `--db_cutoff 85` changes 157 of the 592 cells
+whose SEL is at or above 85 dB, by at most 0.43 dB; a cell is unchanged to the last bit once it is
+about 3 dB above the cutoff. Read the cutoff as a threshold on peak level, and leave a few dB of
+margin when it is the SEL you care about.
 
 Observers that never reach the cutoff come out as `-inf` — they contributed no energy, and those
 cells will not plot. That is the trade the flag asks for; it is off by default.
@@ -247,7 +262,9 @@ does, `--export_aam` can write an interpolated sphere back out in the AAM/RNM he
 format the source spheres arrive in. Without spectra the flag refuses, since
 `AMPLITUDE(PHI, THETA, FREQUENCY)` is the whole payload of that format.
 
-None of the databases in `databases/` carries spectra. Build one with panam's
+Six of the databases in `databases/` carry spectra: the AS350, B407, Be206L3, EC130, RO-44 and
+RO-66 `_fixed_load_factor` files. The S-76D demo database does not, so the demo runs the
+broadband path. To build one with spectra, use panam's
 `build_empirical_database(..., include_spectra=True)`, which now carries the per-band
 amplitudes through from the source spheres. Band-limit it — `infreqs=(10.0, 3500.0)` —
 because the top few bands of a measured sphere are usually noise-floor artifacts.
@@ -255,8 +272,8 @@ because the top few bands of a measured sphere are usually noise-floor artifacts
 The AAM/RNM source spheres live in the group's OneDrive under `Data/Sphere_Database`, one
 directory of `.nc` files per aircraft (AS350, Be206L3, Be407, Be430, EC130, MD-902, Mi-8, R-44,
 R-66, SH-60B), each with its own `vehicle.cfg` and `vehicle.json`. `Be407_spectral.nod` sits
-beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. Databases are not tracked in
-this repository; they are far too large and are derived products.
+beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. The built `.nod` files in
+`databases/` are tracked; the source spheres are far too large and stay in OneDrive.
 
 #### A note on levels changing
 
@@ -278,12 +295,13 @@ by the surface impedance; a multiplier on a distance-proportional absorption is 
 
 #### Propagating them to the ground
 
-`--spectral` carries the spectrum itself to the observer instead of a single number. Each
+The spectral path, which is the default whenever the database carries spectra (`--no-spectral`
+turns it off), carries the spectrum itself to the observer instead of a single number. Each
 band is spread by the same `20 log10(r/r_sphere)` and absorbed at its own ISO 9613-1
 coefficient over `r - r_sphere`, and only then are the bands A-weighted and summed into a
 level. The two paths answer different questions and will not agree:
 
-| | default | `--spectral` |
+| | `--no-spectral` | spectral (the default with spectra) |
 | --- | --- | --- |
 | Attenuation | database's `EAA`, one dB/km factor | ISO 9613-1 α(f), per band |
 | Fitted for | the spectrum the source happened to have | the atmosphere you state |
@@ -525,7 +543,8 @@ receiver at or above the source is left to the linear model.
 The range need not be monotonic along a family, so the pair can have more arrivals than that.
 A source at a local maximum of the sound speed is one way. Its shallowest rays skim the slow
 layer and travel far, its steepest turn high and travel far, and the arrivals lie between. The
-other families are sampled at 32 launch angles and every crossing of the range is solved for.
+other families are sampled in launch angle, 32 times plus 8 for each bounce the path can hold
+(at most 512), and every crossing of the range is solved for.
 Each arrival is a level of its own, through its own launch direction on the sphere and its own
 ray tube, and they are summed in energy.
 
@@ -555,7 +574,10 @@ from 4.0–6.5 dB under the PE to within 1 dB of it. Upwind, the linear lapse an
 profiles do not move.
 
 Two limits remain. Within one pair of samples, two close arrivals at a caustic can still be
-missed: 32 against 128 samples moves about 5% of pairs under the inversion by more than 1 dB.
+missed. Against a 2048-sample reference (12 bearings, sources 5–300 m, 50 m to 10 km), 2.9% of
+pairs under `example_inversion.csv` are still more than 1 dB out, and 0.01% under
+`example_windy.csv`; a fixed 32 samples left 11.3% and 1.05%. Scaling the count with the hops
+cost 4–8% of a stratified run.
 Day 286's last profile (run 286288) is an elevated duct. Toward 270 the air is fastest at the
 ground, because the log-law headwind assumed below the LIDAR's first gate (46 ft) takes
 0.2 m/s off in the lowest foot, and a ray turned back from the inversion near 330 ft turns up
@@ -1202,18 +1224,22 @@ weighted level (`Database::spectral_direction_bounds`). With `--ground_effect` o
 
 ### How much gets evaluated
 
-The sound exposure integral only uses the window from each observer's peak down to 10 dB below
-it, which on a shipped case is a little over half the track. The observer loop therefore finds
-the peak and walks out to the 10-dB-down points rather than marching every emission time, and
-the run logs how much that skipped:
+The sound exposure integral covers the window from each observer's first to its last sample
+within 10 dB of its peak, dips included (the duration of the aircraft noise metrics), which on a
+shipped case is a little under 60% of the track. The observer loop therefore does not march every
+emission time: it finds the peak with a per-direction bound on the level, and evaluates only the
+states that bound cannot rule out of the window. The run logs how much it evaluated:
 
 ```
-Evaluated 66041828 of 94334400 (70.0%); the rest is provably outside every observer's 10 dB window.
+Evaluated N of M (P%); the rest is provably outside every observer's 10 dB window.
 ```
 
-It is exact, not an approximation — the output is byte-identical to evaluating every state.
-The path is skipped, and every state evaluated, with `--spectral`, `-a`, `-i`, `--band_history`, `-D` or
-`--db_cutoff`; see CLAUDE.md for why each one cannot use it.
+It is exact, not an approximation — the output is byte-identical to evaluating every state. It
+is used on the spectral path (`--spectral`, `--ground_effect`, plates, refraction, tables), where
+an evaluation costs 150 ns to a microsecond; a broadband run, where an evaluation costs about 20
+ns and the bound proves only about 6% of the pairs outside the window, marches every state
+instead. It is skipped, with every state evaluated, for `-a`, `-i`, `--band_history`, `-D` and
+`--db_cutoff` as well; see CLAUDE.md for why each one cannot use it.
 
 ### Threads
 
@@ -1277,21 +1303,37 @@ its full inertial state:
 
 | Input | Median | 99th pct | Max | Cells over 1 dB (of 14400) |
 | --- | --- | --- | --- | --- |
-| 50 Hz positions, default `--path_smoothing 10` | 0.085 dB | 1.00 | 2.88 | 145 |
-| 50 Hz positions, `--path_smoothing 0.0656` (= 0.02 m) | 0.028 dB | 0.64 | 2.44 | 37 |
-| 50 Hz positions, `--path_smoothing 0` (exact) | 11.6 dB | 15.51 | 16.32 | 14395 |
-| 50 Hz positions and velocity columns, default | 0.014 dB | 0.42 | 2.25 | 18 |
-| Waypoints 10 s apart, resampled to 0.1 s, default | 0.096 dB | 0.95 | 2.10 | 107 |
+| 50 Hz positions, default `--path_smoothing 10` | 0.073 dB | 0.72 | 1.42 | 25 |
+| 50 Hz positions, `--path_smoothing 0.0656` (= 0.02 m) | 0.031 dB | 0.36 | 1.44 | 6 |
+| 50 Hz positions, `--path_smoothing 0` (exact) | 8.0 dB | 9.57 | 10.58 | 14400 |
+| 50 Hz positions and velocity columns, default | 0.015 dB | 0.36 | 1.42 | 4 |
+| Waypoints 10 s apart, resampled to 0.1 s, default | 0.121 dB | 0.86 | 2.10 | 76 |
 
 The projection itself is not the lossy part: it reproduces that file's own x/y to under a meter
 over 3.2 km, and altitude passes through exactly. What costs is differentiating twice.
 
 The default is not the best row in the table — a dense 50 Hz track does better at 0.0656 ft,
 which is tuned to *that* file's coordinate resolution. It is the best *default*, because it is
-the only setting that is good on every input shape at once: 0.085 dB on dense positions,
-0.096 dB on sparse waypoints, 0.014 dB when velocities are given. Exact interpolation is
+the only setting that is good on every input shape at once: 0.073 dB on dense positions,
+0.121 dB on sparse waypoints, 0.015 dB when velocities are given. Exact interpolation is
 uniformly catastrophic on measured input, and a value tuned for one sampling rate is wrong for
 another. Tune it down if you know your coordinate resolution; leave it alone otherwise.
+
+**The ends of a dense track are fitted freely.** A natural smoothing spline is pinned to zero
+second derivative at the first and last knot, which is a statement that the aircraft is not
+accelerating there. A track that starts or stops mid-manoeuvre is therefore fitted with a
+velocity and a load factor that bend toward a straight line over the last few seconds: on a
+constant-acceleration test path (1.5 m/s²) the natural fit's acceleration is zero at the end,
+0.50 four seconds in and 1.14 eight seconds in, where the freed fit holds it within 11%
+throughout. For positions sampled at
+0.5 s or finer, with a nonzero `--path_smoothing`, the fit is therefore made over the track
+extended by 10 s at each end along a local quadratic (fitted to the last 3 s), so that the
+natural condition lands on the extension and not on the data. The extension is not used
+afterwards. Sparser tracks, and `--path_smoothing 0`, keep the natural ends; there the
+interpolant is the statement of intent, and a quadratic fitted to a few waypoints is not. On
+the table above this takes the default row from 0.109 dB median and 84 cells over 1 dB to the
+values shown, and leaves the exact and waypoint rows as they were. The shipped AC tracks carry
+their own state and never go through this.
 
 Sparse waypoints are resampled onto the `-s` grid first — never coarsened — and their load
 factor is an artifact of the interpolant, which is logged.
@@ -1312,8 +1354,9 @@ footprint onto a map. It needs a frame: either a geodetic track, which carries o
 `--origin`. A grid regular in the local frame is not regular in latitude and longitude, so this
 file is always scattered, never gridded.
 
-**The transform.** `src/geodetic.hpp` is a transverse Mercator about the reference point, with
-altitude carried through as z — a map projection with a height attached rather than a true ENU
+**The transform.** `src/geodetic.hpp` is the American polyconic projection about the reference
+point (it agrees with a transverse Mercator to 3 mm at 10 km, and reproduces the shipped
+tracks' own x/y), with altitude carried through as z — a map projection with a height attached rather than a true ENU
 frame. Over the few kilometers a footprint spans the difference is far below the modeling
 error. `from_east_north_up` applies the frame's rotation without its translation, for
 velocities; `to_geodetic` inverts the projection by Newton iteration, and is what `--latlon`
@@ -1324,9 +1367,10 @@ compass bearing of **210°**, the approach heading, not along the wandering head
 file's own column 8. Their ground plane sits 54.2651 ft below their altitude column. So
 ```sh
 ./build/niceops -t track.csv --origin 39.8104276 -74.4263086 --frame_bearing 210 \
-                --ground_elevation 54.2651 --path_smoothing 0.02
+                --ground_elevation 54.2651
 ```
-is the demo case restated in WGS84, and is what the table above measures.
+is the demo case restated in WGS84, and is what the first row of the table above measures
+(`--path_smoothing 0.0656` gives the second).
 
 ### Plotting
 

@@ -42,13 +42,16 @@
 // plate's center along +y.
 
 #include <array>
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <limits>
 #include <vector>
 
 #include "ground_effect.hpp"
+#include "vec3.hpp"
 
 namespace niceops {
 
@@ -162,5 +165,45 @@ struct PlateOrientation
     bool outboard = true;
     double azimuth = 0.0;
 };
+
+// The azimuth, in the plate's own frame, at which a ray arrives: the plate's tables
+// put the microphone on +y, so the propagation direction (source to microphone,
+// atan2 of `separation`) is turned by the microphone's actual offset direction
+// `mic_azimuth` in the run's frame.  A source directly inboard of the microphone
+// -- the ray travelling outward, along the offset -- is pi/2.  One function for
+// both places that need it (Database::spectral_level_along and the refracted
+// path in niceops.cpp), which spelled it out twice and agreed only by a comment.
+inline double plate_frame_azimuth(const Vec3& separation, double mic_azimuth)
+{
+    return std::atan2(separation.y, separation.x) - mic_azimuth + 0.5 * 3.14159265358979323846;
+}
+
+// The microphone's offset direction for "outboard": away from the track, along the
+// horizontal line from the track's nearest state to the observer.  Directly under
+// the track that line has no direction, and the microphone goes to the track's
+// right.  `States` is anything with a `position` (Database::SourceState).
+template <typename States>
+double outboard_azimuth(const Vec3& observer, const States& states)
+{
+    std::size_t nearest = 0;
+    double nearest_distance = std::numeric_limits<double>::infinity();
+    for (std::size_t it = 0; it < states.size(); it++)
+    {
+        const Vec3 separation = observer - states[it].position;
+        const double distance = separation.x * separation.x + separation.y * separation.y;
+        if (distance < nearest_distance)
+        {
+            nearest_distance = distance;
+            nearest = it;
+        }
+    }
+    const Vec3 separation = observer - states[nearest].position;
+    if (nearest_distance > 1e-6)
+        return std::atan2(separation.y, separation.x);
+    const std::size_t before = nearest > 0 ? nearest - 1 : nearest;
+    const std::size_t after = nearest + 1 < states.size() ? nearest + 1 : nearest;
+    const Vec3 track = states[after].position - states[before].position;
+    return std::atan2(track.y, track.x) - 0.5 * 3.14159265358979323846;
+}
 
 } // namespace niceops

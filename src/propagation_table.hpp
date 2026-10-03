@@ -56,6 +56,15 @@ public:
         std::vector<double> bands; // Hz
     };
 
+    // How to find the cell of one ascending axis quickly: an axis whose knots
+    // are evenly spaced is indexed by arithmetic and corrected against its
+    // neighbors, so the cell is exactly the one a binary search would give.
+    struct AxisLocator
+    {
+        bool uniform = false;
+        double inverse_step = 0.0;
+    };
+
     PropagationTable() = default;
     // `values` is [bearing][source][receiver][range][band]; it throws
     // std::invalid_argument if the axes are not as the header says.
@@ -129,6 +138,7 @@ private:
     }
 
     Axes axes_;
+    AxisLocator source_locator_, receiver_locator_, range_locator_;
     std::vector<double> values_;
     std::string method_;
     bool includes_absorption_ = false;

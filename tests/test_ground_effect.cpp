@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 // Excess ground attenuation, and the Faddeeva function underneath it.
 //
 // Both are pinned against the implementations they were ported from: the
@@ -461,4 +462,41 @@ TEST_CASE("GroundTable interpolates the model to within its stated accuracy, ins
         CHECK(std::sqrt(sum2 / n) < 0.003);
         CHECK(worst < 0.1);
     }
+}
+
+TEST_CASE("add_bounce_loss is the plane-wave reflection loss, once per bounce", "[ground_effect]")
+{
+    // Each earlier bounce of a duct arrival costs -10 lg |R_p|^2 at the grazing angle, R_p =
+    // (sin g - beta) / (sin g + beta) for the surface admittance beta.  Dropping the loss from
+    // the primary of a bounced arrival moved a duct footprint by up to 7.8 dB with every
+    // stratified test green.
+    const std::vector<std::complex<double>> admittance = {{0.0, 0.0}, {0.3, 0.2}, {1.5, -0.4}};
+    const double grazing = 0.2;
+    auto expected = [&](std::complex<double> beta) {
+        const std::complex<double> reflection = (std::sin(grazing) - beta) / (std::sin(grazing) + beta);
+        return -10.0 * std::log10(std::norm(reflection));
+    };
+    for (const int bounces : {1, 2, 5})
+    {
+        std::vector<double> loss = {1.0, 1.0, 1.0};
+        add_bounce_loss(grazing, bounces, admittance, 0, 3, loss.data());
+        INFO("bounces " << bounces);
+        // Rigid ground reflects everything; the others lose.
+        CHECK(loss[0] == Catch::Approx(1.0).margin(1e-12));
+        CHECK(loss[1] == Catch::Approx(1.0 + bounces * expected(admittance[1])).margin(1e-12));
+        CHECK(loss[2] == Catch::Approx(1.0 + bounces * expected(admittance[2])).margin(1e-12));
+        CHECK(loss[1] > 1.0);
+    }
+    // No bounces, no loss; only the bands asked for; and steeper loses less.
+    std::vector<double> none = {0.0, 0.0, 0.0};
+    add_bounce_loss(grazing, 0, admittance, 0, 3, none.data());
+    CHECK(none == std::vector<double>({0.0, 0.0, 0.0}));
+    std::vector<double> some = {0.0, 0.0, 0.0};
+    add_bounce_loss(grazing, 1, admittance, 1, 2, some.data());
+    CHECK(some[0] == 0.0);
+    CHECK(some[2] == 0.0);
+    CHECK(some[1] > 0.0);
+    std::vector<double> steep = {0.0, 0.0, 0.0};
+    add_bounce_loss(0.8, 1, admittance, 0, 3, steep.data());
+    CHECK(steep[1] < 1.0 * expected(admittance[1]));
 }

@@ -333,6 +333,50 @@ TEST_CASE("the log-law upwind shadow starts where Snell's law puts it", "[strati
     CHECK_FALSE(layered_direct_eigenray(layers, z_s, 0.0, 1.01 * boundary, -0.2).lit);
 }
 
+TEST_CASE("a receiver at the shadow boundary has a finite ray tube", "[stratified]")
+{
+    // Where the lit root closes on the end of its family the tube's window in
+    // launch angle has no width, its slope is 0/0, and the ray's spreading range
+    // came out NaN with the ray still marked lit.  That NaN went through the
+    // level to a NaN footprint cell, written with exit status 0, within about 1e-8
+    // of the boundary in range.
+    const auto profile = read_atmosphere_profile("atmospheres/example_windy.csv", feet, 0.0)
+                                 .with_hydrostatic_pressure(101.325);
+    const LayeredSoundSpeed air(profile, 90.0);
+    std::size_t lit = 0, boundaries = 0;
+    for (int bearing = 0; bearing < 12; bearing++)
+    {
+        const double angle = bearing * 30.0 * 3.14159265358979323846 / 180.0;
+        std::vector<double> c(air.levels());
+        air.along(std::cos(angle), std::sin(angle), c.data());
+        const Layers layers {air.heights().data(), c.data(), air.levels()};
+        for (double z_s : {20.0, 30.48, 60.0, 100.0, 150.0})
+        {
+            for (double z_r : {0.0, 1.2})
+            {
+                // The solver's own boundary: far enough out to be in the shadow.
+                const auto far = layered_direct_eigenray(layers, z_s, z_r, 30000.0, -0.2);
+                if (!std::isfinite(far.boundary) || !(far.boundary > 10.0))
+                    continue;
+                boundaries++;
+                for (double eps : {1e-10, 1e-9, 3e-9, 1e-8, 3e-8, 1e-7})
+                {
+                    const auto ray = layered_direct_eigenray(layers, z_s, z_r,
+                            far.boundary * (1.0 - eps), -0.2);
+                    if (!ray.lit)
+                        continue;
+                    lit++;
+                    INFO("bearing " << bearing * 30 << " z_s " << z_s << " z_r " << z_r << " eps " << eps);
+                    REQUIRE(std::isfinite(ray.spreading_range));
+                    REQUIRE(ray.spreading_range > 0.0);
+                }
+            }
+        }
+    }
+    REQUIRE(boundaries > 20);
+    REQUIRE(lit > 100);
+}
+
 namespace {
 
 // A calm morning inversion capped near 107 m, day 286's (run 286276) without its
@@ -390,6 +434,49 @@ TEST_CASE("every arrival in a surface duct lands where layered_arrivals says", "
         }
     }
     CHECK(bounced_arrivals > 0);
+}
+
+namespace {
+
+// The level re free field of a pair's arrivals summed in energy, the primary
+// counted as free field if it is lit.  The floor stands for "nothing arrives".
+double arrivals_level(const Layers& layers, double z_s, double z_r, double r, int samples)
+{
+    const auto direct = layered_direct_eigenray(layers, z_s, z_r, r, std::atan2(z_r - z_s, r));
+    const auto arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false, samples);
+    const double chord = std::hypot(r, z_s - z_r);
+    double energy = direct.lit ? 1.0 : 0.0;
+    for (const auto& a : arrivals)
+        energy += std::pow(chord / a.spreading_range, 2);
+    return 10.0 * std::log10(std::max(energy, 1e-6));
+}
+
+} // namespace
+
+TEST_CASE("the arrival search has converged in its sample count", "[stratified]")
+{
+    // A ray that bounces m times travels X_0(p) + m L(p), which turns through m
+    // times as many wiggles per sample interval as a direct one, so a fixed 32
+    // samples lost multi-hop arrivals, whole rays that arrive nowhere else: over
+    // the pairs below, 10 of 385 came out more than 1 dB from the answer at 512
+    // samples (11% of a wider sweep, with the grid not yet bunched toward the
+    // shallow end as it now is).  The count now grows with the hops the path can
+    // hold, and 3 of the 385 are left.  Sources of 10-60 m, ranges to 8 km:
+    const Duct duct;
+    const Layers layers = duct.layers();
+    int pairs = 0, off_by_1db = 0;
+    for (const double z_s : {10.0, 20.0, 30.48, 45.0, 60.0})
+    {
+        for (double r = 400.0; r <= 8000.0; r += 100.0)
+        {
+            const double got = arrivals_level(layers, z_s, 1.2, r, 0);
+            const double converged = arrivals_level(layers, z_s, 1.2, r, 512);
+            pairs++;
+            off_by_1db += std::fabs(got - converged) > 1.0;
+        }
+    }
+    INFO(off_by_1db << " of " << pairs << " pairs differ by more than 1 dB");
+    CHECK(off_by_1db <= 0.015 * pairs);
 }
 
 TEST_CASE("the direct solve reports no ray that does not land", "[stratified]")

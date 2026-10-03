@@ -135,3 +135,65 @@ TEST_CASE("the PE fills an upward-refraction shadow only by diffraction", "[pe]"
     CHECK(level_at(200.0) > -10.0);
     CHECK(level_at(1400.0) < level_at(200.0) - 20.0);
 }
+
+TEST_CASE("a band average is the mean over the band, not over its edges", "[pe][band]")
+{
+    // solve_pe_band averages `samples` frequencies in energy across the third-octave
+    // band.  They once sat at k/(N-1) of its width, which put the first and last on
+    // the band edges with a full 1/N weight each: 0.4 to 0.6 dB rms off the band's
+    // true mean in a case like this one (bias up to +0.3 dB), where the midpoints
+    // are within 0.06.  The exact band mean over rigid ground in still air is the
+    // two-ray energy integrated over log frequency.
+    const double center = 1000.0, c = 340.0, z_s = 30.0, z_r = 1.2;
+    PeSetup setup;
+    setup.source_height = z_s;
+    setup.receiver_heights = {z_r};
+    setup.max_range = 500.0;
+    setup.output_step = 10.0;
+    setup.z = {0.0};
+    setup.c = {c};
+    const auto band = solve_pe_band(setup, center, 5);
+
+    double sum_squares = 0.0, bias = 0.0;
+    int compared = 0;
+    for (std::size_t q = 0; q < band.range.size(); q++)
+    {
+        const double r = band.range[q];
+        if (r < 100.0)
+            continue; // the image ray's angle is toward the wide-angle limit nearer in
+        double energy = 0.0;
+        const int n = 2001;
+        for (int i = 0; i < n; i++)
+        {
+            const double f = center * std::pow(2.0, ((i + 0.5) / n - 0.5) / 3.0);
+            energy += std::pow(10.0, 0.1 * two_ray(r, z_s, z_r, f, c, 0.0, true));
+        }
+        const double exact = 10.0 * std::log10(energy / n);
+        const double error = band.relative_level[0][q] - exact;
+        sum_squares += error * error;
+        bias += error;
+        compared++;
+    }
+    REQUIRE(compared > 30);
+    const double rms = std::sqrt(sum_squares / compared);
+    INFO("rms error " << rms << " dB, bias " << bias / compared << " dB");
+    REQUIRE(rms < 0.15);
+    REQUIRE(std::fabs(bias / compared) < 0.1);
+}
+
+TEST_CASE("one band sample is the center frequency", "[pe][band]")
+{
+    PeSetup setup;
+    setup.source_height = 10.0;
+    setup.receiver_heights = {1.2};
+    setup.max_range = 300.0;
+    setup.output_step = 10.0;
+    setup.z = {0.0};
+    setup.c = {340.0};
+    setup.frequency = 500.0;
+    const auto single = solve_pe(setup);
+    const auto band = solve_pe_band(setup, 500.0, 1);
+    REQUIRE(band.range.size() == single.range.size());
+    for (std::size_t q = 0; q < single.range.size(); q++)
+        REQUIRE(band.relative_level[0][q] == Catch::Approx(single.relative_level[0][q]).margin(1e-9));
+}

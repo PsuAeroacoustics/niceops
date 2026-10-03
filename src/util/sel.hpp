@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include "logger.hpp"
@@ -132,6 +133,19 @@ inline bool is_night(double utcsec, double utc_offset_hours)
     return local < 7.0 * 3600.0 || local >= 22.0 * 3600.0;
 }
 
+// A level with an ambient level mixed in, both in dB, as the sum of their
+// energies: 10 log10(10^(L/10) + 10^(A/10)).  Aircraft and ambient noise are
+// uncorrelated, so it is their mean squares that add, and two equal levels give
+// 3.01 dB more, not 6.02.  The D original summed the pressure amplitudes
+// (20 log10(10^(L/20) + 10^(A/20))), which adds the two coherently and read up to
+// 3 dB high -- 6.02 dB over two equal levels, 2.4 dB over one 10 dB below the
+// ambient where the energy sum gives 0.4.  `ambient_energy` is 10^(A/10), formed
+// once per run.  A -infinity level (a culled state) gives the ambient alone.
+inline double level_with_ambient(double level_db, double ambient_energy)
+{
+    return 10.0 * std::log10(std::pow(10.0, 0.1 * level_db) + ambient_energy);
+}
+
 // Integrate an already-located window into a sound exposure level, each sample
 // weighted by its share of reception time (`weight_at`, see reception_factor;
 // pass one that returns 1 for plain emission-time integration).  Ascending
@@ -158,6 +172,23 @@ inline double sound_exposure_level(const std::vector<double>& levels, double T,
     const bool reception = ranges.size() == levels.size() && c > 0.0;
     return sel_over_window(
             index[0], index[1], T, [&levels](std::size_t i) { return levels[i]; },
+            [&](std::size_t i) {
+                return reception ? reception_factor(i, ranges.size(), T, c,
+                                           [&ranges](std::size_t k) { return ranges[k]; })
+                                 : 1.0;
+            });
+}
+
+// The same integral over the whole history, rather than the event's 10 dB-down
+// window (--full_history).  Every sample counts, dips included.
+inline double full_sound_exposure_level(const std::vector<double>& levels, double T,
+        const std::vector<double>& ranges = {}, double c = 0.0)
+{
+    if (levels.empty())
+        return -std::numeric_limits<double>::infinity();
+    const bool reception = ranges.size() == levels.size() && c > 0.0;
+    return sel_over_window(
+            0, levels.size() - 1, T, [&levels](std::size_t i) { return levels[i]; },
             [&](std::size_t i) {
                 return reception ? reception_factor(i, ranges.size(), T, c,
                                            [&ranges](std::size_t k) { return ranges[k]; })
