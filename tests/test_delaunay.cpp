@@ -4,11 +4,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <vector>
 
 #include "delaunay.hpp"
+#include "predicates.hpp"
 
 using namespace niceops;
 
@@ -223,4 +225,90 @@ TEST_CASE("Nearest vertex", "[delaunay]")
     REQUIRE(mesh.nearest_vertex(near_origin.data()) == 0);
     const std::vector<double> far_x {5.0, 0.0, 0.0};
     REQUIRE(mesh.nearest_vertex(far_x.data()) == 1);
+}
+
+namespace {
+
+// The Delaunay property itself, through the public interface: whatever simplex a
+// query lands in, no input point lies strictly inside its circumsphere.  The other
+// tests check that a located query reconstructs and that the weights sum to one,
+// which any tiling of the hull satisfies; this is what makes it Delaunay.
+void check_empty_spheres(std::size_t dim, const std::vector<double>& points, std::size_t queries, unsigned seed)
+{
+    const std::size_t count = points.size() / dim;
+    const Delaunay mesh(dim, count, points.data());
+    std::mt19937_64 random(seed);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    std::vector<double> query(dim), weights(dim + 1), simplex((dim + 1) * dim);
+    std::vector<std::size_t> indices(dim + 1);
+    std::size_t located = 0;
+    for (std::size_t q = 0; q < queries; q++)
+    {
+        // A random convex combination of input points: always inside the hull.
+        std::fill(query.begin(), query.end(), 0.0);
+        double total = 0.0;
+        for (std::size_t k = 0; k <= dim; k++)
+        {
+            const std::size_t p = random() % count;
+            const double w = unit(random);
+            total += w;
+            for (std::size_t j = 0; j < dim; j++)
+                query[j] += w * points[p * dim + j];
+        }
+        for (double& x : query)
+            x /= total;
+        if (!mesh.barycentric(query.data(), weights.data(), indices.data()))
+            continue;
+        located++;
+        for (std::size_t v = 0; v <= dim; v++)
+            for (std::size_t j = 0; j < dim; j++)
+                simplex[v * dim + j] = points[indices[v] * dim + j];
+        for (std::size_t p = 0; p < count; p++)
+        {
+            if (std::find(indices.begin(), indices.end(), p) != indices.end())
+                continue;
+            INFO("dim " << dim << ", query " << q << ", point " << p);
+            REQUIRE(in_sphere(simplex.data(), points.data() + p * dim, dim) <= 0);
+        }
+    }
+    REQUIRE(located > queries * 9 / 10);
+}
+
+} // namespace
+
+TEST_CASE("every simplex has an empty circumsphere, in two to four dimensions", "[delaunay]")
+{
+    std::mt19937_64 random(5);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    for (const std::size_t dim : {std::size_t(2), std::size_t(3), std::size_t(4)})
+    {
+        std::vector<double> points(40 * dim);
+        for (double& x : points)
+            x = unit(random);
+        check_empty_spheres(dim, points, 400, 100 + static_cast<unsigned>(dim));
+    }
+    // The prism the operating conditions form, and a lattice: whole families of
+    // exactly cospherical points, where "empty" has to allow points on the sphere.
+    std::vector<double> prism;
+    for (int a = 0; a < 6; a++)
+        for (int b = 0; b < 5; b++)
+            for (int c = 0; c < 4; c++)
+            {
+                prism.push_back(a / 5.0);
+                prism.push_back(b / 4.0);
+                prism.push_back(c / 3.0);
+            }
+    check_empty_spheres(3, prism, 400, 7);
+    std::vector<double> lattice;
+    for (int a = 0; a < 4; a++)
+        for (int b = 0; b < 4; b++)
+            for (int c = 0; c < 3; c++)
+                for (int d = 0; d < 3; d++)
+                {
+                    lattice.push_back(a);
+                    lattice.push_back(b);
+                    lattice.push_back(c);
+                    lattice.push_back(d);
+                }
+    check_empty_spheres(4, lattice, 300, 9);
 }

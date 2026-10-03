@@ -492,3 +492,54 @@ TEST_CASE("a budget the factorization cannot reach on a long track is kept, not 
     REQUIRE(spline.residual() > 0.0);
     REQUIRE(std::isfinite(spline.derivative(500.0, 2)));
 }
+
+TEST_CASE("unevenly spaced knots give a continuous, natural spline", "[spline][nonuniform]")
+{
+    // Every other test uses linspace, where the spacing either side of a knot is the
+    // same, so a transposition of the two in the assembly of R, Q or the penalty is
+    // invisible.  Irregular timestamps are real input (fit_path fits the raw time
+    // column), and there a wrong assembly gives a spline that is not C2 across knots.
+    const std::vector<double> x = {0.0, 0.3, 1.0, 1.1, 2.5, 2.6, 4.0, 7.0, 7.2, 9.0};
+    std::vector<double> y(x.size());
+    for (std::size_t i = 0; i < x.size(); i++)
+        y[i] = std::sin(1.3 * x[i]) + 0.2 * std::cos(5.0 * x[i]);
+    for (const double lambda : {0.0, 1e-3, 1e-1})
+    {
+        const auto spline = SmoothingSpline::with_smoothing(x, y, lambda);
+        INFO("lambda " << lambda);
+        // Natural: no curvature at either end.
+        CHECK(std::fabs(spline.derivative(x.front(), 2)) < 1e-9);
+        CHECK(std::fabs(spline.derivative(x.back(), 2)) < 1e-9);
+        // Value, slope and curvature continue across every interior knot.
+        const double eps = 1e-7;
+        for (std::size_t k = 1; k + 1 < x.size(); k++)
+        {
+            for (int order = 0; order <= 2; order++)
+            {
+                const double left = order == 0 ? spline(x[k] - eps) : spline.derivative(x[k] - eps, order);
+                const double right = order == 0 ? spline(x[k] + eps) : spline.derivative(x[k] + eps, order);
+                INFO("knot " << x[k] << " order " << order);
+                CHECK(left == Catch::Approx(right).margin(1e-4));
+            }
+        }
+        if (lambda == 0.0)
+        {
+            for (std::size_t k = 0; k < x.size(); k++)
+                CHECK(spline(x[k]) == Catch::Approx(y[k]).margin(1e-9));
+        }
+    }
+    // A line is reproduced exactly at any lambda, however the knots fall.
+    std::vector<double> line(x.size());
+    for (std::size_t i = 0; i < x.size(); i++)
+        line[i] = 2.0 * x[i] + 1.0;
+    for (const double lambda : {0.0, 1e-3, 1.0, 1e3})
+    {
+        const auto spline = SmoothingSpline::with_smoothing(x, line, lambda);
+        for (double at : {0.0, 0.5, 1.05, 3.3, 7.1, 9.0})
+        {
+            INFO("lambda " << lambda << " at " << at);
+            CHECK(spline(at) == Catch::Approx(2.0 * at + 1.0).margin(1e-8));
+            CHECK(spline.derivative(at, 1) == Catch::Approx(2.0).margin(1e-8));
+        }
+    }
+}

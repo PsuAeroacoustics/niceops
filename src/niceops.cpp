@@ -522,36 +522,6 @@ ObserverSet gridded_observers(const std::vector<double>& bounds, double step)
 
 } // namespace
 
-namespace {
-
-// The plate microphone's offset direction for "outboard": away from the
-// track, along the horizontal line from the track's nearest state to the
-// observer.  Directly under the track that line has no direction, and the
-// microphone goes to the track's right.
-double outboard_azimuth(const Vec3& observer, const std::vector<Database::SourceState>& states)
-{
-    std::size_t nearest = 0;
-    double nearest_distance = std::numeric_limits<double>::infinity();
-    for (std::size_t it = 0; it < states.size(); it++)
-    {
-        const Vec3 separation = observer - states[it].position;
-        const double distance = separation.x * separation.x + separation.y * separation.y;
-        if (distance < nearest_distance)
-        {
-            nearest_distance = distance;
-            nearest = it;
-        }
-    }
-    const Vec3 separation = observer - states[nearest].position;
-    if (nearest_distance > 1e-6)
-        return std::atan2(separation.y, separation.x);
-    const std::size_t before = nearest > 0 ? nearest - 1 : nearest;
-    const std::size_t after = nearest + 1 < states.size() ? nearest + 1 : nearest;
-    const Vec3 track = states[after].position - states[before].position;
-    return std::atan2(track.y, track.x) - 0.5 * pi;
-}
-
-} // namespace
 
 namespace {
 
@@ -1811,10 +1781,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 const double* extra_loss = nullptr;
                 const double* ground_weight = nullptr;
                 // The plate's frame, as Database::spectral_level_along takes it.
-                const double plate_azimuth = flush
-                        ? std::atan2(ray.path.separation.y, ray.path.separation.x) - plate_mic_azimuth
-                                + 0.5 * pi
-                        : 0.0;
+                const double plate_azimuth = flush ? plate_frame_azimuth(ray.path.separation, plate_mic_azimuth) : 0.0;
                 if (transition_here != nullptr
                         && transition_here->apply(ray, shadow_attenuation, options.shadow_floor,
                                 first_band, last_band, shadow_weight.data(), shadow.data(),
@@ -2341,7 +2308,7 @@ int run(int argc, char* argv[])
     app.add_option("-S,--state", state_files,
             "Filename to save state data, once per trajectory. With several trajectories and one "
             "name, each is named after its track (<stem>_state.csv).");
-    app.add_flag("--self_test", self_test, "Run self tests.");
+    app.add_flag("--self_test", self_test, "Check every channel of the database against what eval() returns for it, then exit.");
     app.add_option("-j,--threads", thread_count,
             "Worker threads for the observer loop (0 = one per hardware thread).");
     auto* trim_option = app.add_option("--trim", trim_start,
@@ -2736,6 +2703,10 @@ int run(int argc, char* argv[])
         // directivity (see repair_legacy_hover_directivity); with that repaired
         // the self test passes on every shipped database.
         database.self_test(loaded_database);
+        // And stop: the rest of main is the demo case, whose output file the
+        // golden tests read, so a self test that ran it too rewrote that file
+        // under any test running beside it.
+        return 0;
     }
 
     // The one place the user's units become metres.  Everything above is in

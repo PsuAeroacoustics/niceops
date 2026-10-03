@@ -1760,8 +1760,7 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
             // frame, where the microphone is offset along +y.  This is the
             // bearing between the two, which a ray in a stratified atmosphere
             // keeps unless a crosswind deflects it.
-            const double azimuth = std::atan2(path.separation.y, path.separation.x)
-                    - plate_mic_azimuth + 0.5 * pi;
+            const double azimuth = plate_frame_azimuth(path.separation, plate_mic_azimuth);
             plate->power_ratio(path.source_height, path.ground_distance, azimuth,
                     correction.data(), first_band, last_band);
         }
@@ -2735,7 +2734,20 @@ void Database::self_test(const std::string& datafile_path)
             // floor applied here before the comparison means anything.
             auto dBA = std::isfinite(dBA_data[ch]) ? dBA_data[ch] : no_energy_floor_db;
             auto level = eval(dimensional_radius, phi_data[ch], theta_data[ch], blend);
-            if (!approx_equal(dBA, level))
+            // At a sphere's own condition and a grid node the blend and the
+            // bilinear weights are [1, 0, 0, 0], so eval() returns the stored
+            // double itself (measured: 0 difference over 22 million samples on every
+            // shipped database).  The 1% the D original allowed -- 0.8 dB at 80 dBA
+            // -- let a channel filed one grid cell off pass 60-90% of the time, which
+            // is the very error this test exists to catch.  The EAA is the other half
+            // of the cell and was never looked at: it comes back through eval as the
+            // loss over a further 1000 m, less the spreading.
+            constexpr double exact = 1e-9;
+            const double far = dimensional_radius + 1000.0;
+            const double eaa = std::isfinite(EAA_data[ch]) ? EAA_data[ch] : 0.0;
+            const double eaa_back = level - eval(far, phi_data[ch], theta_data[ch], blend)
+                    - 20.0 * std::log10(far / dimensional_radius);
+            if (!approx_equal(dBA, level, exact, exact) || !approx_equal(eaa, eaa_back, exact, exact))
             {
                 log("Surface level disagreement of D:", dBA, " versus N:", level, " for φ = ",
                         phi_data[ch], ", θ = ", theta_data[ch], ", μ  = ", advance_ratio, ",γ  =  ",

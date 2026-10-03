@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 // The ground-plane receiver (plate_receiver.hpp), pinned against panam's
 // axisymmetric_bem.board_level() evaluated on the same netCDF tables
 // (plates/, written by axisymmetric_bem.write_netcdf), and its level bound
@@ -209,4 +210,67 @@ TEST_CASE("Plate receiver's tabulated Q stays close to the evaluated one, inside
     INFO("worst " << worst << " dB, rms " << std::sqrt(sum2 / n) << " dB");
     CHECK(std::sqrt(sum2 / n) < 0.002);
     CHECK(worst < 0.15);
+}
+
+namespace {
+
+struct Placed
+{
+    Vec3 position;
+};
+
+} // namespace
+
+TEST_CASE("the plate's azimuth is the ray's bearing turned by the microphone's offset", "[plate_receiver]")
+{
+    // The tables put the microphone on +y, so a ray travelling straight outward
+    // along the offset arrives from the plate's inboard side: pi/2.  Nothing tested
+    // this mapping; a dropped half-pi or a sign on the offset rotates every plate
+    // result by up to a dB (the table is not symmetric under a quarter turn).
+    constexpr double pi = 3.14159265358979323846;
+    auto wrapped = [](double angle) { return std::remainder(angle, 2.0 * pi); };
+    for (const double offset : {0.0, 0.7, pi / 2.0, -2.0, 3.0})
+    {
+        const Vec3 outward(100.0 * std::cos(offset), 100.0 * std::sin(offset), -30.0);
+        CHECK(wrapped(plate_frame_azimuth(outward, offset) - 0.5 * pi) == Catch::Approx(0.0).margin(1e-12));
+        // Travelling the other way, toward the track, is the opposite side.
+        CHECK(std::fabs(wrapped(plate_frame_azimuth(-1.0 * outward, offset) + 0.5 * pi)) < 1e-12);
+    }
+    // Turning the geometry and the offset together changes nothing.
+    const Vec3 separation(300.0, -120.0, -50.0);
+    const double reference = plate_frame_azimuth(separation, 0.4);
+    for (const double turn : {0.3, 1.9, -2.5})
+    {
+        const Vec3 turned(separation.x * std::cos(turn) - separation.y * std::sin(turn),
+                separation.x * std::sin(turn) + separation.y * std::cos(turn), separation.z);
+        CHECK(wrapped(plate_frame_azimuth(turned, 0.4 + turn) - reference) == Catch::Approx(0.0).margin(1e-12));
+    }
+    // It matters: the table's level is not the same a quarter turn away.
+    const auto plate = PlateReceiver::load("plates/gr1425_db225.nc").bound(kBands, grass(), 340.0);
+    std::vector<double> here(kBands.size()), turned(kBands.size());
+    plate.level_exact(40.0, 900.0, 0.0, here.data(), 0, kBands.size());
+    plate.level_exact(40.0, 900.0, 0.5 * pi, turned.data(), 0, kBands.size());
+    double differ = 0.0;
+    for (std::size_t band = 0; band < kBands.size(); band++)
+        differ = std::max(differ, std::fabs(here[band] - turned[band]));
+    CHECK(differ > 0.05);
+}
+
+TEST_CASE("outboard puts the microphone away from the track", "[plate_receiver]")
+{
+    constexpr double pi = 3.14159265358979323846;
+    std::vector<Placed> track;
+    for (int k = -10; k <= 10; k++)
+        track.push_back({Vec3(10.0 * k, 0.0, 50.0)});
+    // Off to either side: the direction from the track's nearest point to the observer.
+    CHECK(outboard_azimuth(Vec3(0.0, 300.0, 0.0), track) == Catch::Approx(0.5 * pi).margin(1e-12));
+    CHECK(outboard_azimuth(Vec3(0.0, -300.0, 0.0), track) == Catch::Approx(-0.5 * pi).margin(1e-12));
+    CHECK(outboard_azimuth(Vec3(40.0, 120.0, 0.0), track) == Catch::Approx(std::atan2(120.0, 0.0)).margin(1e-12));
+    // Beyond the track's end the nearest point is the end state.
+    CHECK(outboard_azimuth(Vec3(400.0, 0.0, 0.0), track) == Catch::Approx(0.0).margin(1e-12));
+    // Directly under it there is no direction: the track's right, which for a
+    // track along +x is -y.
+    CHECK(outboard_azimuth(Vec3(30.0, 0.0, 0.0), track) == Catch::Approx(-0.5 * pi).margin(1e-12));
+    std::reverse(track.begin(), track.end());
+    CHECK(outboard_azimuth(Vec3(30.0, 0.0, 0.0), track) == Catch::Approx(0.5 * pi).margin(1e-12));
 }

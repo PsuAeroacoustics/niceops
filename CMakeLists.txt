@@ -557,6 +557,27 @@ set_tests_properties(stratified_duct_point stratified_duct_point_marched stratif
 add_test(NAME stratified_duct_point_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME stratified_duct_plate_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_plate.csv integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_duct_point_windowed_is_exact stratified_duct_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# Pinned footprints, since windowed-versus-marched compares two runs of one binary and a change
+# to the arrivals' summation, bounce loss, ground geometry or completeness passes it: dropping the
+# extra arrivals from the energy sum and the primary's bounce loss moved the duct footprint by up
+# to 7.8 dB with every stratified test green.  Regenerate with the build that changed them, after
+# checking the change is meant (CLAUDE.md, "Every arrival, summed in energy").  Absolute 1e-4 dB:
+# the root solves are not bit-stable across compilers.
+add_test(NAME stratified_windy_point_golden COMMAND golden_compare integrated/stratified_windy_point.csv golden/stratified_windy_point.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_point_golden COMMAND golden_compare integrated/stratified_duct_point.csv golden/stratified_duct_point.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate_golden COMMAND golden_compare integrated/stratified_duct_plate.csv golden/stratified_duct_plate.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_windy_point_golden PROPERTIES FIXTURES_REQUIRED stratified_runs)
+set_tests_properties(stratified_duct_point_golden stratified_duct_plate_golden PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# --scattering fills shadows with scattered energy, a gain the peak search's bound has to allow: the
+# creeping-wave and scattering caps were the survivors of mutation testing, with no CTest running the option.
+add_test(NAME scattering_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --scattering 3e-6 --gridstep 492 -L warn -o integrated/scattering_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME scattering_point_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --scattering 3e-6 --gridstep 492 -L warn -D integrated/scattering_point_dnl.csv -o integrated/scattering_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME scattering_windowed_is_exact COMMAND golden_compare integrated/scattering_point.csv integrated/scattering_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# ... and the option does something: without it the footprint differs (golden_compare reports a mismatch, which is the pass; a missing file would say something else).
+add_test(NAME scattering_is_not_off COMMAND golden_compare integrated/scattering_point.csv integrated/refraction_windy_point.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(scattering_is_not_off PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value" FIXTURES_REQUIRED "scattering_runs;refraction_windy_runs")
+set_tests_properties(scattering_point scattering_point_marched PROPERTIES FIXTURES_SETUP scattering_runs)
+set_tests_properties(scattering_windowed_is_exact PROPERTIES FIXTURES_REQUIRED scattering_runs)
 add_test(NAME refraction_point_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_point.csv integrated/refraction_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME refraction_plate_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_plate.csv integrated/refraction_windy_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(refraction_point_windowed_is_exact refraction_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED refraction_windy_runs)

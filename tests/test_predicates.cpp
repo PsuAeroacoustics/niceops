@@ -177,3 +177,127 @@ TEST_CASE("Predicates stay self-consistent near degeneracy", "[predicates]")
         REQUIRE(direct == -reversed);
     }
 }
+
+namespace {
+
+// Sign of a determinant of small integers, exactly: fraction-free (Bareiss)
+// elimination in 128-bit integers, so an oracle with nothing in common with the
+// expansion arithmetic under test.
+int integer_determinant_sign(std::vector<std::vector<__int128>> m)
+{
+    const std::size_t n = m.size();
+    int sign = 1;
+    __int128 previous = 1;
+    for (std::size_t k = 0; k + 1 < n; k++)
+    {
+        if (m[k][k] == 0)
+        {
+            std::size_t swap = k + 1;
+            while (swap < n && m[swap][k] == 0)
+                swap++;
+            if (swap == n)
+                return 0;
+            std::swap(m[k], m[swap]);
+            sign = -sign;
+        }
+        for (std::size_t i = k + 1; i < n; i++)
+            for (std::size_t j = k + 1; j < n; j++)
+                m[i][j] = (m[i][j] * m[k][k] - m[i][k] * m[k][j]) / previous;
+        previous = m[k][k];
+    }
+    const __int128 d = m[n - 1][n - 1];
+    return d == 0 ? 0 : (d > 0 ? sign : -sign);
+}
+
+// The lifted determinant of `dim + 1` points about a query: rows (a - q, |a - q|^2).
+int lifted_sign(const std::vector<std::vector<long>>& points, const std::vector<long>& query)
+{
+    const std::size_t dim = query.size();
+    std::vector<std::vector<__int128>> m;
+    for (const auto& a : points)
+    {
+        std::vector<__int128> row(dim + 1);
+        __int128 norm = 0;
+        for (std::size_t j = 0; j < dim; j++)
+        {
+            row[j] = a[j] - query[j];
+            norm += row[j] * row[j];
+        }
+        row[dim] = norm;
+        m.push_back(row);
+    }
+    return integer_determinant_sign(m);
+}
+
+} // namespace
+
+TEST_CASE("in_sphere agrees with an exact integer oracle, in one to five dimensions", "[predicates]")
+{
+    // The oracle needs no sign convention: the lifted determinant is affine in the
+    // lifted query and zero on the circumsphere, so it has one sign inside and the
+    // other outside, and the simplex's own centroid (scaled to stay integer) is
+    // always inside.  Cube corners and a coarse lattice make exact ties common; the
+    // dimension-four and -five paths were not pinned directly before, and a wrong
+    // in_sphere there built a non-Delaunay mesh the Delaunay tests could not see.
+    std::mt19937_64 random(2024);
+    int ties = 0, inside = 0, outside = 0;
+    for (std::size_t dim = 1; dim <= 5; dim++)
+    {
+        const long scale = static_cast<long>(dim) + 1;
+        for (int trial = 0; trial < 1500; trial++)
+        {
+            std::vector<std::vector<long>> points(dim + 1, std::vector<long>(dim));
+            std::vector<double> flat;
+            const bool cube = trial % 3 == 0;
+            const long range = trial % 3 == 1 ? 2 : 4;
+            do
+            {
+                flat.clear();
+                for (auto& p : points)
+                    for (auto& x : p)
+                    {
+                        x = cube ? static_cast<long>(random() % 2) : static_cast<long>(random() % (2 * range + 1)) - range;
+                    }
+            } while ([&] {
+                std::vector<double> test;
+                for (const auto& p : points)
+                    for (long x : p)
+                        test.push_back(static_cast<double>(x));
+                return orientation(test.data(), dim) == 0;
+            }());
+            std::vector<long> query(dim);
+            for (auto& x : query)
+                x = cube ? static_cast<long>(random() % 2) : static_cast<long>(random() % (2 * range + 3)) - range - 1;
+            // Scale by dim + 1 so the centroid is an integer point.
+            std::vector<std::vector<long>> scaled = points;
+            std::vector<long> centroid(dim, 0), scaled_query(dim);
+            for (auto& p : scaled)
+                for (std::size_t j = 0; j < dim; j++)
+                {
+                    centroid[j] += p[j];
+                    p[j] *= scale;
+                }
+            for (std::size_t j = 0; j < dim; j++)
+                scaled_query[j] = query[j] * scale;
+            const int at_query = lifted_sign(scaled, scaled_query);
+            const int at_centroid = lifted_sign(scaled, centroid);
+            REQUIRE(at_centroid != 0);
+            const int expected = at_query * at_centroid; // +1 inside, -1 outside, 0 on it
+            std::vector<double> simplex, q;
+            for (const auto& p : points)
+                for (long x : p)
+                    simplex.push_back(static_cast<double>(x));
+            for (long x : query)
+                q.push_back(static_cast<double>(x));
+            INFO("dim " << dim << " trial " << trial);
+            REQUIRE(in_sphere(simplex.data(), q.data(), dim) == expected);
+            ties += expected == 0;
+            inside += expected > 0;
+            outside += expected < 0;
+        }
+    }
+    // The cases include all three outcomes in quantity.
+    CHECK(ties > 100);
+    CHECK(inside > 500);
+    CHECK(outside > 500);
+}

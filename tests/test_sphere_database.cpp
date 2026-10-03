@@ -513,7 +513,8 @@ namespace {
 // load-factor scaling law against.
 std::string write_fixed_load_factor_test_database(const std::string& name,
         const std::vector<std::array<double, 4>>& conditions, bool fixed_load_factor,
-        double sphere_radius_m = 30.48, nc_type storage = NC_DOUBLE, double sphere_1_phi_shift = 0.0)
+        double sphere_radius_m = 30.48, nc_type storage = NC_DOUBLE, double sphere_1_phi_shift = 0.0,
+        double first_channel_eaa = 0.0)
 {
     const auto path = (std::filesystem::temp_directory_path() / name).string();
     int file = 0;
@@ -584,7 +585,9 @@ std::string write_fixed_load_factor_test_database(const std::string& name,
         // Uniform across every channel: these tests are about the
         // load-factor correction, not phi/theta interpolation, so the base
         // level is the same everywhere on a given condition's sphere.
-        const std::vector<double> eaa(n_channels, 0.0);
+        std::vector<double> eaa(n_channels, 0.0);
+        if (i == 0)
+            eaa[0] = first_channel_eaa;
         const std::vector<double> dba(n_channels, conditions[i][3]);
         REQUIRE(nc_put_var_double(v.group, v.radius, &sphere_radius_m) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.scale, &scale) == NC_NOERR);
@@ -1470,4 +1473,35 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
     CHECK(read_floats("FLIGHT_PATH_ANGLE", 1)[0] == Catch::Approx(-4.0).margin(1e-6));
     REQUIRE(nc_close(ncid) == NC_NOERR);
     std::filesystem::remove(path);
+}
+
+TEST_CASE("a negative excess-attenuation factor turns the bounds off", "[sphere_database][bounds]")
+{
+    // cull_range() and direction_bounds() are upper bounds only because they drop
+    // the excess-attenuation term, which is a loss only if no EAA is negative.  The
+    // guard is what keeps the windowed run exact on a database that has one; nothing
+    // built a database with one, so removing the guard passed every test.
+    std::vector<Database::SourceState> states;
+    for (const double first_eaa : {0.0, -20.0})
+    {
+        const auto path = write_fixed_load_factor_test_database("niceops_negative_eaa.nod",
+                fixed_load_factor_conditions, true, 30.48, NC_DOUBLE, 0.0, first_eaa);
+        const Database database(path);
+        states.clear();
+        states.push_back(database.source_state(Vec3(0.0, 0.0, 100.0), Vec3(50.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0),
+                0.0, 0.0, test_ct_reference));
+        const auto blend = database.blend_at(0.0, 0.0, test_ct_reference);
+        INFO("first channel's EAA " << first_eaa);
+        if (first_eaa >= 0.0)
+        {
+            CHECK(database.direction_bounds(states).usable());
+            CHECK(std::isfinite(database.cull_range(blend, 60.0)));
+        }
+        else
+        {
+            CHECK_FALSE(database.direction_bounds(states).usable());
+            CHECK(std::isinf(database.cull_range(blend, 60.0)));
+        }
+        std::filesystem::remove(path);
+    }
 }
