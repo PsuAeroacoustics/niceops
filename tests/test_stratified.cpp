@@ -14,6 +14,7 @@
 #include <limits>
 #include <vector>
 
+#include "atmosphere_profile.hpp"
 #include "refraction.hpp"
 #include "stratified.hpp"
 #include "util/constants.hpp"
@@ -31,12 +32,13 @@ struct Traced
 };
 
 // RK4 in arc length through c(z) given by `layers`, from (0, z_s) at elevation
-// `launch` until horizontal distance r; bouncing off z = 0 once if `reflect`.
-Traced trace(const Layers& layers, double z_s, double launch, double r, bool reflect, double h = 0.02)
+// `launch` until horizontal distance r; bouncing off z = 0 up to `reflections`
+// times (grazing is the last bounce's).
+Traced trace(const Layers& layers, double z_s, double launch, double r, int reflections, double h = 0.02)
 {
     auto c = [&](double z) { return layers.at(z); };
     // The layer's own gradient: a finite difference here rounds to ~1e-8 /s,
-    // which over a kilometre of ray is a tenth of a millimetre.
+    // which over a kilometer of ray is a tenth of a millimeter.
     // Exactly on a level -- where the trace lands on purpose -- the layer is
     // the one the ray is heading into.
     auto dcdz = [&](double z, bool down) {
@@ -74,7 +76,7 @@ Traced trace(const Layers& layers, double z_s, double launch, double r, bool ref
     Traced out;
     S s {0.0, z_s, launch, 0.0};
     double length = 0.0;
-    bool bounced = false;
+    int bounced = 0;
     // A step that straddles a level would integrate across the gradient's
     // jump there, and RK4 drops to first order; land on the level instead.
     auto crosses_level = [&](double z0, double z1) {
@@ -90,7 +92,7 @@ Traced trace(const Layers& layers, double z_s, double launch, double r, bool ref
     {
         S next = step(s, h);
         const double level = crosses_level(s.z, next.z);
-        if (!std::isnan(level) && next.x < r && !(reflect && !bounced && next.z < 0.0))
+        if (!std::isnan(level) && next.x < r && !(bounced < reflections && next.z < 0.0))
         {
             double lo = 0, hi = h;
             for (int i = 0; i < 60; i++)
@@ -103,7 +105,7 @@ Traced trace(const Layers& layers, double z_s, double launch, double r, bool ref
             length += hi;
             continue;
         }
-        if (reflect && !bounced && next.z < 0.0)
+        if (bounced < reflections && next.z < 0.0)
         {
             double lo = 0, hi = h;
             for (int i = 0; i < 60; i++)
@@ -116,7 +118,7 @@ Traced trace(const Layers& layers, double z_s, double launch, double r, bool ref
             out.grazing = -s.theta;
             s.theta = -s.theta;
             s.z = 0.0;
-            bounced = true;
+            bounced++;
             continue;
         }
         if (next.x >= r)
@@ -329,4 +331,210 @@ TEST_CASE("the log-law upwind shadow starts where Snell's law puts it", "[strati
     CHECK(boundary == Catch::Approx(520.0).epsilon(0.02));
     CHECK(layered_direct_eigenray(layers, z_s, 0.0, 0.99 * boundary, -0.2).lit);
     CHECK_FALSE(layered_direct_eigenray(layers, z_s, 0.0, 1.01 * boundary, -0.2).lit);
+}
+
+namespace {
+
+// A calm morning inversion capped near 107 m, day 286's (run 286276) without its
+// wind: c(T) at each level, T in Celsius.
+struct Duct
+{
+    std::vector<double> z, c;
+    Duct()
+    {
+        const double table[][2] = {{0, -0.033}, {3.048, 0.100}, {9.144, 0.400}, {15.24, 0.767}, {30.48, 1.333},
+                {45.72, 2.211}, {60.96, 2.556}, {76.2, 2.594}, {91.44, 3.233}, {106.07, 3.423},
+                {106.68, 3.417}, {121.92, 3.506}, {137.16, 3.572}, {152.4, 3.539}, {1524.0, 3.539}};
+        for (const auto& row : table)
+        {
+            z.push_back(row[0]);
+            c.push_back(331.3 * std::sqrt(1.0 + row[1] / 273.15));
+        }
+    }
+    Layers layers() const
+    {
+        return Layers {z.data(), c.data(), z.size()};
+    }
+};
+
+} // namespace
+
+TEST_CASE("every arrival in a surface duct lands where layered_arrivals says", "[stratified]")
+{
+    // Past the reach of every direct ray, only rays that bounced arrive; nearer,
+    // they arrive beside the direct one.  Each must be a real ray: traced with
+    // its bounces off z = 0, it reaches the receiver's height at r, in the time
+    // and over the length given, meeting the ground at the angle given.
+    const Duct duct;
+    const Layers layers = duct.layers();
+    const double z_s = 30.48;
+    const double z_r = 1.2;
+    int bounced_arrivals = 0;
+    for (const double r : {1800.0, 2600.0, 3400.0})
+    {
+        const auto direct = layered_direct_eigenray(layers, z_s, z_r, r, -0.05);
+        const auto arrivals = layered_arrivals(layers, z_s, z_r, r, direct);
+        for (const auto& a : arrivals)
+        {
+            CAPTURE(r, a.bounces, a.launch);
+            const auto traced = trace(layers, z_s, a.launch, r, a.bounces, 0.01);
+            CHECK(traced.z == Catch::Approx(z_r).margin(1e-5));
+            CHECK(traced.time == Catch::Approx(a.travel_time).epsilon(1e-8));
+            CHECK(traced.length == Catch::Approx(a.path_length).epsilon(1e-8));
+            if (a.bounces > 0)
+            {
+                CHECK(traced.grazing == Catch::Approx(a.grazing).margin(1e-7));
+                bounced_arrivals++;
+            }
+            CHECK(a.spreading_range > 0.0);
+        }
+    }
+    CHECK(bounced_arrivals > 0);
+}
+
+TEST_CASE("the direct solve reports no ray that does not land", "[stratified]")
+{
+    // A family whose end ray never reaches the receiver brackets falsely: that
+    // end stands in as an infinity of the right sign.  Through this duct (day
+    // 286's run 286276, calm) the iteration closed on the duct's top from 2.4 km
+    // out and reported it lit, its tube 575 times the range, 55 dB low.  Lit has
+    // to mean landed.
+    auto profile = read_atmosphere_profile("atmospheres/example_inversion.csv", feet, 0.0);
+    profile = profile.with_hydrostatic_pressure(101.325);
+    const LayeredSoundSpeed air(profile, 90.0);
+    std::vector<double> c(air.levels());
+    air.along(-1.0, 0.0, c.data());
+    const Layers layers {air.heights().data(), c.data(), air.levels()};
+    const double z_s = 100.0 * ft2m;
+    const double z_r = 1.2;
+    int dark = 0;
+    for (double r = 600.0; r <= 4000.0; r += 200.0)
+    {
+        const auto ray = layered_direct_eigenray(layers, z_s, z_r, r, -0.05);
+        CAPTURE(r, ray.launch);
+        if (ray.lit)
+        {
+            const auto traced = trace(layers, z_s, ray.launch, r, 0, 0.02);
+            CHECK(traced.z == Catch::Approx(z_r).margin(1e-5));
+        }
+        else
+        {
+            dark++;
+        }
+    }
+    // Past the single-hop reach the direct solve finds nothing; what arrives
+    // there is layered_arrivals'.
+    CHECK(dark > 0);
+}
+
+namespace {
+
+// Day 286's last profile toward 270 (run 286288): fastest at the ground, where
+// the log-law headwind assumed below the lidar's first gate takes 0.2 m/s off in
+// the lowest foot, slowest near 230 ft, and back to nearly the ground's speed at
+// the inversion's top near 330 ft.  Heights in feet.
+struct Elevated
+{
+    std::vector<double> z, c;
+    Elevated()
+    {
+        const double ft[] = {0, 1, 3, 10, 20, 30, 46, 70, 100, 120, 160, 230, 280, 330, 400, 500};
+        const double speed[] = {334.125, 333.918, 333.835, 333.796, 333.703, 333.648, 333.490, 333.296,
+                333.367, 333.409, 333.259, 333.017, 333.369, 333.921, 333.669, 333.516};
+        for (std::size_t k = 0; k < std::size(ft); k++)
+        {
+            z.push_back(ft[k] * ft2m);
+            c.push_back(speed[k]);
+        }
+    }
+    Layers layers() const { return {z.data(), c.data(), z.size()}; }
+};
+
+} // namespace
+
+TEST_CASE("tunneled arrivals carry the evanescent integral below their turning point", "[stratified]")
+{
+    // A 100 ft source 12,000 ft out: the duct's return, whose rays turn back up
+    // a few feet above a flush microphone.  Each one's integral is checked
+    // against a brute-force quadrature of sqrt(p^2 - 1/c^2) where it is real.
+    const Elevated profile;
+    const Layers layers = profile.layers();
+    const double z_s = 100.0 * ft2m, z_r = 0.0, r = 12000.0 * ft2m;
+    CHECK(layered_wave_arrivals(layers, z_s, z_r, r, {}).empty());
+    const auto arrivals = layered_wave_arrivals(layers, z_s, z_r, r, {true, false});
+    REQUIRE(!arrivals.empty());
+    const double c_s = layers.at(z_s);
+    int checked = 0;
+    for (const Arrival& a : arrivals)
+    {
+        if (!(a.wave.evanescent > 0.0) || a.wave.caustic)
+            continue;
+        const double p = std::cos(a.launch) / c_s;
+        // The turning point: going down from the source, where c first reaches 1/p.
+        double z_t = z_s;
+        while (z_t > 0.0 && layers.at(z_t) < 1.0 / p)
+            z_t -= 1e-5;
+        REQUIRE(z_t > z_r);
+        constexpr int n = 200000;
+        double sum = 0.0;
+        for (int k = 0; k < n; k++)
+        {
+            const double z = z_r + (k + 0.5) * (z_t - z_r) / n;
+            const double c = layers.at(z);
+            sum += std::sqrt(std::max(0.0, p * p - 1.0 / (c * c)));
+        }
+        sum *= (z_t - z_r) / n;
+        CAPTURE(a.launch, z_t);
+        CHECK(a.wave.evanescent == Catch::Approx(sum).epsilon(1e-3));
+        CHECK(a.grazing == 0.0);
+        checked++;
+    }
+    CHECK(checked > 0);
+}
+
+TEST_CASE("a wave arrival's loss is never negative", "[stratified]")
+{
+    // Never negative, so the peak search's bound on the tube bounds the band.
+    // Not monotonic in frequency at small depth -- the energy near a turning
+    // point grows as omega^(1/3) while a shallow tail hardly decays -- but a
+    // deep tail costs the top band more than the bottom one.
+    const std::vector<double> bands = {50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250,
+            1600, 2000, 2500, 3150, 4000, 5000};
+    for (const double evanescent : {1e-5, 1e-4, 1e-3})
+    {
+        WaveCorrection wave;
+        wave.evanescent = evanescent;
+        std::vector<double> loss(bands.size(), 0.0);
+        add_wave_loss(wave, 1000.0, 1000.0, bands, 0, bands.size(), loss.data());
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            CAPTURE(evanescent, bands[b]);
+            CHECK(loss[b] >= 0.0);
+        }
+        if (evanescent >= 1e-4)
+            CHECK(loss.back() > loss.front());
+    }
+    // A caustic's dark side, and its lit side, where the band averages the fringes.
+    for (const double depth : {-1e-3, 0.0, 1e-3, 1e-2})
+    {
+        WaveCorrection wave;
+        wave.caustic = true;
+        wave.caustic_depth = depth;
+        std::vector<double> loss(bands.size(), 0.0);
+        add_wave_loss(wave, 1000.0, 1000.0, bands, 0, bands.size(), loss.data());
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            CAPTURE(depth, bands[b]);
+            CHECK(loss[b] >= 0.0);
+        }
+        if (depth > 0.0)
+            CHECK(loss.back() > loss.front());
+    }
+    // A tube focused past the cap is held to it.
+    WaveCorrection wave;
+    wave.evanescent = 1e-9;
+    std::vector<double> loss(1, 0.0);
+    const std::vector<double> one = {wave_reference_frequency};
+    add_wave_loss(wave, 1000.0, 10.0, one, 0, 1, loss.data());
+    CHECK(loss[0] == Catch::Approx(40.0 - max_focusing_gain_db).margin(1e-6));
 }

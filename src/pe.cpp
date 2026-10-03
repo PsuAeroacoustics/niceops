@@ -160,7 +160,7 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
     auto diagonal = [&](complex alpha, std::size_t j) { return 1.0 + alpha * (-2.0 * a + epsilon[j]); };
 
     // The left side does not change with range: factor it once, from both ends
-    // at once (a twisted, or burn-at-both-ends, factorisation).  Rows 0 .. p-1
+    // at once (a twisted, or burn-at-both-ends, factorization).  Rows 0 .. p-1
     // are eliminated downward and p+1 .. m-1 upward, meeting at row p; the two
     // elimination chains, and then the two back-substitution chains, are
     // independent, so a step's two sweeps each carry two recurrences the
@@ -297,14 +297,14 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
 // term and may be several wavelengths long.
 //
 // Each solve is the Thomas algorithm against a matrix factored once.  Written
-// for a x' = x, the scaled unknown, the factorisation leaves one stored number
+// for a x' = x, the scaled unknown, the factorization leaves one stored number
 // per row, e_r = a / d_r with d_r the pivot: forward w_r = e_r (psi_r -
 // w_{r-1}), back x'_r = w_r - e_r x'_{r+1}.  The terms are independent, so the
 // loops run term-innermost and the sweeps are as many interleaved recurrences
 // as there are terms -- throughput-bound, where Crank-Nicolson's single solve
 // waits on its own latency.  Storage is term-innermost to match, two doubles
 // of factor and two of w per term per row.
-// Two terms' worth of one real quantity.  The compiler would not vectorise the
+// Two terms' worth of one real quantity.  The compiler would not vectorize the
 // march across terms from scalar code -- it came out one term at a time, a
 // third as fast -- so the pairing is explicit: the GCC/Clang vector type where
 // there is one, and a plain struct that says the same thing where there is not.
@@ -384,7 +384,7 @@ struct PadeFactors
 // well.  With the terms interleaved the sweeps are no longer waiting on that
 // chain, though -- eight terms is sixteen cycles of arithmetic a row against
 // sixteen of latency -- which is why the single Crank-Nicolson solve's twisted
-// factorisation is not repeated here.
+// factorization is not repeated here.
 template <std::size_t pairs, bool fourth_order>
 void pade_step(PadeFactors& factors, std::vector<complex>& psi)
 {
@@ -393,7 +393,7 @@ void pade_step(PadeFactors& factors, std::vector<complex>& psi)
     {
         // b_j = (psi_{j-1} + 10 psi_j + psi_{j+1}) / 12, psi_0 from the ground
         // condition and psi_n = 0.
-        // In parts: std::complex's arithmetic would not vectorise here.
+        // In parts: std::complex's arithmetic would not vectorize here.
         double* __restrict const b = reinterpret_cast<double*>(factors.smoothed.data());
         const double* __restrict const f = reinterpret_cast<const double*>(psi.data());
         const complex ground = factors.fourth_ground ? psi[m] : factors.g1 * psi[0] + factors.g2 * psi[1];
@@ -520,7 +520,7 @@ constexpr std::array<PadeStep, sizeof...(counts)> pade_steps(std::index_sequence
 // over dz^2, so that (Q - p) y = psi becomes
 //   [a delta^2 + (1 + delta^2 / 12) D] y = (1 + delta^2 / 12) psi,  D = epsilon - p.
 // Its off-diagonal entry in column s is c_s = a + D_s / 12, so in y' = c y the
-// off-diagonals are one again and the same one-number-a-row factorisation
+// off-diagonals are one again and the same one-number-a-row factorization
 // serves; what it costs is a weight per row, c_0's share over c, where second
 // order has one per term.
 //
@@ -571,7 +571,7 @@ March pade_march(const VerticalOperator& op, const PadePropagator& propagator, b
         factors->weight[j] = propagator.residues[j] / a;
         // In units where the off-diagonals are one: second order divides the
         // row by a, fourth order by the column's c.  Row 0 carries the ground:
-        // its diagonal gains psi_0's g1 share, its upper neighbour's
+        // its diagonal gains psi_0's g1 share, its upper neighbor's
         // coefficient psi_0's g2 share.
         auto column = [&](std::size_t grid) { return a + (op.epsilon[grid] - pole) / 12.0; };
         complex upper_0, e = 0.0;
@@ -617,7 +617,7 @@ March pade_march(const VerticalOperator& op, const PadePropagator& propagator, b
                 d -= (row == 1 ? upper_0 : complex(1.0)) * e;
             e = 1.0 / d;
             if (!std::isfinite(std::norm(e)))
-                throw std::runtime_error("solve_pe: a Pade term's factorisation broke down");
+                throw std::runtime_error("solve_pe: a Pade term's factorization broke down");
             factors->e[(row * pairs + j / 2) * 2][j % 2] = e.real();
             factors->e[(row * pairs + j / 2) * 2 + 1][j % 2] = e.imag();
             if (row == 0)
@@ -751,7 +751,7 @@ PeResult solve_pe(const PeSetup& s)
         std::size_t per_output = static_cast<std::size_t>(std::ceil(s.output_step / longest - 1e-9));
         per_output = std::max<std::size_t>(per_output, 1);
 
-        // Where the propagator must be accurate: every mode travelling within
+        // Where the propagator must be accurate: every mode traveling within
         // max_angle of horizontal, anywhere below the absorbing layer.  A wave
         // at elevation theta where the index is k has x = epsilon - (1 +
         // epsilon) sin^2 theta.  Above zero, room for the ground's surface
@@ -844,7 +844,7 @@ PeResult solve_pe(const PeSetup& s)
     result.range_step = dr;
 
     // Salomons' second-order Gaussian starter, with its image in the ground
-    // at the normal-incidence reflection coefficient.  Normalised so that
+    // at the normal-incidence reflection coefficient.  Normalized so that
     // p = psi exp(i k_a r) / sqrt(r) is a unit point source, exp(ikR)/R.
     // psi_1 .. psi_m, and psi_0 after them where the ground condition carries it.
     std::vector<complex> psi(m + 1);
@@ -890,7 +890,7 @@ PeResult solve_pe(const PeSetup& s)
         }
     }
 
-    // Turbulence: a screen every `spacing` metres, below the absorbing layer.
+    // Turbulence: a screen every `spacing` meters, below the absorbing layer.
     const std::size_t screened = std::min(m, static_cast<std::size_t>(physical_top / dz));
     std::unique_ptr<ScreenSource> screens;
     if (turbulent)
@@ -946,7 +946,7 @@ PeResult solve_pe(const PeSetup& s)
             march(psi);
 
         const double r = static_cast<double>(step) * dr;
-        // Each screen stands for the slab of turbulence centred on it.
+        // Each screen stands for the slab of turbulence centerd on it.
         while (turbulent && r >= next_screen)
         {
             const auto& phi = screens->next();
@@ -983,15 +983,15 @@ PeResult solve_pe(const PeSetup& s)
     return result;
 }
 
-PeResult solve_pe_band(PeSetup setup, double centre, int samples)
+PeResult solve_pe_band(PeSetup setup, double center, int samples)
 {
-    return solve_pe_bands({setup}, {centre}, samples)[0];
+    return solve_pe_bands({setup}, {center}, samples)[0];
 }
 
-std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const std::vector<double>& centres,
+std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const std::vector<double>& centers,
         int samples)
 {
-    if (setups.size() != centres.size())
+    if (setups.size() != centers.size())
         throw std::invalid_argument("solve_pe_bands: one setup per band");
     if (setups.empty())
         return {};
@@ -1005,30 +1005,30 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
         double frequency;
     };
     std::vector<Task> tasks;
-    for (std::size_t b = 0; b < centres.size(); b++)
+    for (std::size_t b = 0; b < centers.size(); b++)
         for (std::size_t k = 0; k < per_band; k++)
         {
             const double offset = samples <= 1 ? 0.0 : (static_cast<double>(k) / (samples - 1) - 0.5) / 3.0;
-            tasks.push_back({b, k, centres[b] * std::pow(2.0, offset)});
+            tasks.push_back({b, k, centers[b] * std::pow(2.0, offset)});
         }
     std::stable_sort(tasks.begin(), tasks.end(),
             [](const Task& x, const Task& y) { return x.frequency > y.frequency; });
-    std::vector<std::vector<PeResult>> each(centres.size(), std::vector<PeResult>(per_band));
+    std::vector<std::vector<PeResult>> each(centers.size(), std::vector<PeResult>(per_band));
     const unsigned threads = setups[0].threads > 0 ? setups[0].threads : default_thread_count();
     parallel_chunks(tasks.size(), threads, [&](std::size_t lo, std::size_t hi) {
         for (std::size_t t = lo; t < hi; t++)
         {
             PeSetup one = setups[tasks[t].band];
             one.frequency = tasks[t].frequency;
-            // With turbulence each frequency is also its own realisation.
+            // With turbulence each frequency is also its own realization.
             one.seed = setups[tasks[t].band].seed + static_cast<unsigned>(tasks[t].sample);
             each[tasks[t].band][tasks[t].sample] = solve_pe(one);
         }
     });
     // Summed in frequency order whatever order they ran in, so the result is
     // the same on any thread count.
-    std::vector<PeResult> out(centres.size());
-    for (std::size_t b = 0; b < centres.size(); b++)
+    std::vector<PeResult> out(centers.size());
+    for (std::size_t b = 0; b < centers.size(); b++)
     {
         PeResult& sum = out[b];
         sum.range = each[b][0].range;

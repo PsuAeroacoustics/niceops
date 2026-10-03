@@ -4,7 +4,7 @@
 // NICE-OPS that needs one: every observer's time history is computed from
 // read-only data (the database, and the per-state SourceState array built
 // before the loop) and written to its own slot, so the work splits with no
-// synchronisation at all.
+// synchronization at all.
 //
 // std::thread rather than <execution>: libc++ ships the parallel algorithms
 // only against TBB, which would be a whole new dependency for one loop.

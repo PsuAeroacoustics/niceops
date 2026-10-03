@@ -3,7 +3,7 @@
 // The closed forms are checked against rays traced numerically -- a Runge-Kutta
 // integration of the ray equations for c(z) = c0 + a z, which knows nothing of
 // circles -- for position, travel time, arc length, and (by finite differences
-// of neighbouring rays) the ray tube behind the spreading.  Then the limits:
+// of neighboring rays) the ray tube behind the spreading.  Then the limits:
 // straight rays as the gradient vanishes, the launch-angle shifts and shadow
 // boundaries tabulated in the propagation roadmap, and continuity across the
 // shadow boundary.
@@ -143,7 +143,7 @@ TEST_CASE("direct_eigenray matches a numerically traced ray", "[refraction]")
 TEST_CASE("the spreading is the traced ray tube's", "[refraction]")
 {
     // r_eq^2 = r |dr/dtheta| sin|arrival| / cos(launch), with dr/dtheta from
-    // two neighbouring traced rays and r where each crosses z_r.
+    // two neighboring traced rays and r where each crosses z_r.
     const double z_s = 150.0;
     const double z_r = 1.2;
     for (const double a : {0.05, -0.02})
@@ -400,7 +400,7 @@ TEST_CASE("read_atmosphere_profile reads wind", "[refraction]")
     // From the west at 10 m/s blows toward the east; from the north toward the
     // south.
     TempCsv polar("z, T_K, RH, wind_speed_mps, wind_direction\n0, 288, 50, 10, 270\n100, 287, 50, 10, 0\n");
-    const auto a = read_atmosphere_profile(polar.path, metres, 0.0);
+    const auto a = read_atmosphere_profile(polar.path, meters, 0.0);
     REQUIRE(a.has_wind());
     CHECK(a.wind_east[0] == Catch::Approx(10.0));
     CHECK(std::fabs(a.wind_north[0]) < 1e-12);
@@ -408,12 +408,12 @@ TEST_CASE("read_atmosphere_profile reads wind", "[refraction]")
     CHECK(a.wind_north[1] == Catch::Approx(-10.0));
 
     TempCsv knots("z, T_K, RH, u_kt, v_kt\n0, 288, 50, 10, -5\n");
-    const auto b = read_atmosphere_profile(knots.path, metres, 0.0);
+    const auto b = read_atmosphere_profile(knots.path, meters, 0.0);
     CHECK(b.wind_east[0] == Catch::Approx(10.0 * 1852.0 / 3600.0));
     CHECK(b.wind_north[0] == Catch::Approx(-5.0 * 1852.0 / 3600.0));
 
     TempCsv bare("z, T_K, RH, wind_speed, wind_direction\n0, 288, 50, 10, 270\n");
-    CHECK_THROWS_AS(read_atmosphere_profile(bare.path, metres, 0.0), std::runtime_error);
+    CHECK_THROWS_AS(read_atmosphere_profile(bare.path, meters, 0.0), std::runtime_error);
     TempCsv half("z, T_K, RH, wind_speed_mps\n0, 288, 50, 10\n");
-    CHECK_THROWS_AS(read_atmosphere_profile(half.path, metres, 0.0), std::runtime_error);
+    CHECK_THROWS_AS(read_atmosphere_profile(half.path, meters, 0.0), std::runtime_error);
 }

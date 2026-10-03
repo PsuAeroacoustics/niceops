@@ -1,7 +1,7 @@
 // Natural cubic smoothing spline.
 //
 // The checks here are the defining properties of the object rather than
-// hard-coded numbers, so they pin the behaviour without encoding one particular
+// hard-coded numbers, so they pin the behavior without encoding one particular
 // implementation:
 //
 //   lambda = 0            interpolates the data exactly
@@ -166,7 +166,7 @@ TEST_CASE("analytic derivatives agree with finite differences", "[spline]")
     }
 }
 
-TEST_CASE("within_tolerance honours the residual bound", "[spline][spaps]")
+TEST_CASE("within_tolerance honors the residual bound", "[spline][spaps]")
 {
     const auto x = linspace(0.0, 6.0, 60);
     const auto y = noisy_curve(x);

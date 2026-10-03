@@ -2,7 +2,7 @@
 
 // Natural cubic smoothing spline, replacing the vendored SPLINTER library.
 //
-// Fits the function f minimising
+// Fits the function f minimizing
 //
 //     sum_i w_i (y_i - f(x_i))^2  +  lambda * integral f''(t)^2 dt
 //

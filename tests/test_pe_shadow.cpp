@@ -9,7 +9,7 @@
 // a'_n the zeros of Ai'.  The rigid ground puts g_n'(0) = 0, which is why the
 // zeros of Ai' and not of Ai; kappa_n's imaginary part is each mode's decay
 // with range, so deep in the shadow the first few modes are all of it.  With
-// p normalised to a source whose free field is exp(ikR)/R, 20 log10(|p| R) is
+// p normalized to a source whose free field is exp(ikR)/R, 20 log10(|p| R) is
 // the level relative to free field, which is what solve_pe() reports.
 // tests/test_benchmark.cpp takes the same series over impedance ground.
 //

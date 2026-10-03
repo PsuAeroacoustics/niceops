@@ -32,28 +32,28 @@ double json_to_double(const nlohmann::json& value)
     return value.get<double>();
 }
 
-// Where the labelled WGS84 format's columns sit in a particular file.  That
+// Where the labeled WGS84 format's columns sit in a particular file.  That
 // format is read by column name rather than by position, so whatever a planner
 // already exports can be used without being reordered first, and a file carries
 // only the columns it actually has.
 struct GeodeticColumns
 {
-    std::size_t time = LabelledCsv::npos;
-    std::size_t utc = LabelledCsv::npos;
-    std::size_t latitude = LabelledCsv::npos;
-    std::size_t longitude = LabelledCsv::npos;
-    std::size_t altitude = LabelledCsv::npos;
-    std::size_t east_speed = LabelledCsv::npos;
-    std::size_t north_speed = LabelledCsv::npos;
-    std::size_t up_speed = LabelledCsv::npos;
+    std::size_t time = LabeledCsv::npos;
+    std::size_t utc = LabeledCsv::npos;
+    std::size_t latitude = LabeledCsv::npos;
+    std::size_t longitude = LabeledCsv::npos;
+    std::size_t altitude = LabeledCsv::npos;
+    std::size_t east_speed = LabeledCsv::npos;
+    std::size_t north_speed = LabeledCsv::npos;
+    std::size_t up_speed = LabeledCsv::npos;
 
     // A file is a WGS84 track when it says where the aircraft is.  Time can
     // come from either of two columns and velocity is optional, so neither of
     // those decides it.
     bool positioned() const
     {
-        return latitude != LabelledCsv::npos && longitude != LabelledCsv::npos
-                && altitude != LabelledCsv::npos;
+        return latitude != LabeledCsv::npos && longitude != LabeledCsv::npos
+                && altitude != LabeledCsv::npos;
     }
 
     // Velocity is taken from the file only when all three components are there;
@@ -61,8 +61,8 @@ struct GeodeticColumns
     // of the same vector.
     bool velocity_given() const
     {
-        return east_speed != LabelledCsv::npos && north_speed != LabelledCsv::npos
-                && up_speed != LabelledCsv::npos;
+        return east_speed != LabeledCsv::npos && north_speed != LabeledCsv::npos
+                && up_speed != LabeledCsv::npos;
     }
 
     // The widest index this file will be read at, so a short row is caught
@@ -73,17 +73,17 @@ struct GeodeticColumns
         for (std::size_t index : {time, utc, latitude, longitude, altitude, east_speed,
                      north_speed, up_speed})
         {
-            if (index != LabelledCsv::npos)
+            if (index != LabeledCsv::npos)
                 widest = std::max(widest, index + 1);
         }
         return widest;
     }
 };
 
-GeodeticColumns find_geodetic_columns(const LabelledCsv& csv, LengthUnit unit)
+GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
 {
-    // Aliases are matched after LabelledCsv::normalise, which lower-cases,
-    // drops a parenthesised unit and removes punctuation -- so "Alt (ft)",
+    // Aliases are matched after LabeledCsv::normalize, which lower-cases,
+    // drops a parenthesized unit and removes punctuation -- so "Alt (ft)",
     // "alt_ft" and "ALT" are all the one name, and a spelling here needs no
     // punctuation variants of its own.
     GeodeticColumns columns;
@@ -92,14 +92,14 @@ GeodeticColumns find_geodetic_columns(const LabelledCsv& csv, LengthUnit unit)
     columns.latitude = csv.column({"lat", "latitude", "lat deg", "latitude deg"});
     columns.longitude = csv.column({"lon", "long", "longitude", "lon deg", "longitude deg"});
     // Only the spellings that agree with the unit actually being read.  A file
-    // that says "alt_ft" while --units says metres is not matched, and failing
+    // that says "alt_ft" while --units says meters is not matched, and failing
     // to parse is the right answer: matching it would read one unit as the
     // other and quietly fly the aircraft three times too high or too low.  The
     // bare spellings carry no claim and are always accepted.
     columns.altitude = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height"});
-    if (columns.altitude == LabelledCsv::npos)
+    if (columns.altitude == LabeledCsv::npos)
     {
-        columns.altitude = unit.to_metres == 1.0
+        columns.altitude = unit.to_meters == 1.0
                 ? csv.column({"alt m", "altitude m", "alt msl m"})
                 : csv.column({"alt ft", "altitude ft", "alt msl ft"});
     }
@@ -110,20 +110,20 @@ GeodeticColumns find_geodetic_columns(const LabelledCsv& csv, LengthUnit unit)
 }
 
 // Fit one coordinate against time.  within_tolerance bounds the *summed*
-// squared residual, so an RMS bound in metres is scaled by the sample count to
+// squared residual, so an RMS bound in meters is scaled by the sample count to
 // mean the same thing whatever the sample rate; zero interpolates, which is
 // what a list of waypoints wants.
-SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>& f, double rms_metres)
+SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>& f, double rms_meters)
 {
     return SmoothingSpline::within_tolerance(
-            t, f, rms_metres * rms_metres * static_cast<double>(t.size()));
+            t, f, rms_meters * rms_meters * static_cast<double>(t.size()));
 }
 
-// Read a labelled WGS84 trajectory into local Cartesian states.  The file gives
+// Read a labeled WGS84 trajectory into local Cartesian states.  The file gives
 // position against time; the velocity and the load factor that sets CT come
 // from differentiating the fitted path, unless the file carries velocity
 // columns of its own.
-void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
+void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         const GeodeticColumns& columns, const dimensional_data& vehicle,
         const GeodeticInput& input, LengthUnit unit, std::optional<LocalFrame>& frame,
         std::vector<State>& states)
@@ -137,8 +137,8 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
     if (!(input.resample_dt > 0.0))
         input_error("Resampling step must be positive, got ", input.resample_dt, " s.");
 
-    const bool have_utc = columns.utc != LabelledCsv::npos;
-    const bool from_utc = columns.time == LabelledCsv::npos;
+    const bool have_utc = columns.utc != LabeledCsv::npos;
+    const bool from_utc = columns.time == LabeledCsv::npos;
     if (from_utc && !have_utc)
     {
         input_error("Geodetic trajectory ", filename, " names no time column. Add \"time\" "
@@ -180,7 +180,7 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         }
         if (!frame)
         {
-            // Nothing settled the frame for us, so this lone trajectory centres
+            // Nothing settled the frame for us, so this lone trajectory centers
             // one on its own first position, x east and y north.  A run with
             // several trajectories settles it up front instead -- they share
             // the observers, so they have to share the frame.
@@ -197,7 +197,7 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         // Altitude is above mean sea level while z is height above the plane
         // the observers stand on, so the ground's elevation comes off first.
         const double height
-                = data[columns.altitude] * unit.to_metres - input.ground_elevation;
+                = data[columns.altitude] * unit.to_meters - input.ground_elevation;
         const Vec3 local = frame->to_local(Geodetic {latitude, longitude, height});
         x.push_back(local(0));
         y.push_back(local(1));
@@ -207,9 +207,9 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
         {
             // East/north/up in ft/s, turned onto the frame's axes.  A velocity
             // is a direction, so only the rotation applies to it.
-            const Vec3 enu(data[columns.east_speed] * unit.to_metres,
-                    data[columns.north_speed] * unit.to_metres,
-                    data[columns.up_speed] * unit.to_metres);
+            const Vec3 enu(data[columns.east_speed] * unit.to_meters,
+                    data[columns.north_speed] * unit.to_meters,
+                    data[columns.up_speed] * unit.to_meters);
             const Vec3 velocity = frame->from_east_north_up(enu);
             vx.push_back(velocity(0));
             vy.push_back(velocity(1));
@@ -259,8 +259,8 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
     {
         // Differentiating an interpolant twice amplifies whatever resolution the
         // coordinates were written at by 1/step^2, and the load factor is that
-        // second derivative.  The shipped tracks quantise latitude at 1e-8
-        // degrees, about a millimetre, which at their 0.02 s spacing moves the
+        // second derivative.  The shipped tracks quantize latitude at 1e-8
+        // degrees, about a millimeter, which at their 0.02 s spacing moves the
         // footprint by 11.6 dB at the median against the same flight's measured
         // accelerations.  The 10 ft default takes that to 0.085 dB; asking for
         // zero is asking for the 11.6.
@@ -297,7 +297,7 @@ void read_geodetic_states(const std::string& filename, const LabelledCsv& csv,
     {
         // Velocity gets its own tolerance, not path_smoothing.  That parameter
         // is a distance, and passing it here silently reused the same number as
-        // a *speed* -- one value meaning both metres and metres per second.
+        // a *speed* -- one value meaning both meters and meters per second.
         // Harmless while the default was zero; at the current default it would
         // hand every velocity column a ~3 m/s (6 kt) smoothing budget nobody
         // asked for.  Zero interpolates the given velocities, which is what
@@ -360,10 +360,10 @@ std::optional<Geodetic> first_geodetic_position(const std::string& filename, Len
     // a single parser rather than a second, subtly different one.  It happens
     // once per trajectory at start-up, against a database load of about a
     // second, so it does not show.
-    LabelledCsv csv;
+    LabeledCsv csv;
     try
     {
-        csv = read_labelled_csv(filename);
+        csv = read_labeled_csv(filename);
     }
     catch (const std::exception&)
     {
@@ -425,7 +425,7 @@ namespace {
 
 // The two flight path angles, from the velocity the rotor sees (air_velocity:
 // the ground velocity until relative_to_air() sets a wind).  Needs nx/ny/nz
-// already normalised.
+// already normalized.
 void derive_path_angles(State& now)
 {
     const auto [ux, uy, uz] = air_velocity(now);
@@ -454,7 +454,7 @@ void derive_path_angles(State& now)
 // Derive the non-dimensional flight parameters from a state's raw kinematics.
 // The trajectory constructor and adapt() both need exactly this, from different
 // sources, and previously each carried its own copy.  Expects nx/ny/nz to hold
-// the un-normalised load-factor components on entry.
+// the un-normalized load-factor components on entry.
 void derive_flight_parameters(State& now, const dimensional_data& vehicle)
 {
     // Compute load factor
@@ -488,7 +488,7 @@ bool correct_vertical_speed_sign(std::vector<State>& states, const std::string& 
 {
     if (states.size() < 3)
         return false;
-    // Uncentred -- the cosine between vz and dz/dt, not their correlation -- so
+    // Uncenterd -- the cosine between vz and dz/dt, not their correlation -- so
     // a steady descent, whose dz/dt is constant and has no variance to
     // correlate, still decides: vz . dz/dt is +|dz/dt|^2 when the two agree.
     double s_vz_dz = 0.0, s_vz2 = 0.0, s_dz2 = 0.0;
@@ -519,7 +519,7 @@ bool correct_vertical_speed_sign(std::vector<State>& states, const std::string& 
     {
         now.vz = -now.vz;
         // Only the path angles depend on vz's sign.  The speed, and so mu, do
-        // not, and nx/ny/nz were already normalised when the state was derived.
+        // not, and nx/ny/nz were already normalized when the state was derived.
         derive_path_angles(now);
     }
     return true;
@@ -543,10 +543,10 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
         // the first record as a header regardless of content.  The demo tracks
         // all carry a text header so both paths agreed by luck; a headerless
         // trajectory would have gained a spurious first state here.  The
-        // labelled reader keeps that first record instead of discarding it,
+        // labeled reader keeps that first record instead of discarding it,
         // because the simpler formats below are read by column name -- it
         // drops the same rows, so the AC path is unchanged.
-        const auto csv = read_labelled_csv(filename);
+        const auto csv = read_labeled_csv(filename);
 
         // An empty file falls through to the "no usable states" check below,
         // which names the format it expected; front() on no rows would not.
@@ -573,20 +573,21 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                     // Convert to metric
                     now.utcsec = data[0];
                     now.t = data[1];
-                    now.x = data[5] * unit.to_metres;
-                    now.y = data[6] * unit.to_metres;
-                    now.z = data[7] * unit.to_metres;
-                    now.vx = data[11] * unit.to_metres;
-                    now.vy = data[13] * unit.to_metres;
-                    now.vz = data[15] * unit.to_metres;
+                    now.x = data[5] * unit.to_meters;
+                    now.y = data[6] * unit.to_meters;
+                    now.z = data[7] * unit.to_meters;
+                    now.vx = data[11] * unit.to_meters;
+                    now.vy = data[13] * unit.to_meters;
+                    now.vz = data[15] * unit.to_meters;
+                    now.heading = data[8];
                     // Convert to "g"
                     // Accelerations carry the file's length unit too.  Chosen
-                    // as a single constant rather than unit.to_metres * mps2g,
+                    // as a single constant rather than unit.to_meters * mps2g,
                     // so the feet path multiplies by exactly the same fps2g it
                     // always did -- the product of two constants is not the
                     // same double as two multiplies, and the state golden is
                     // pinned at 1e-9.
-                    const double accel_to_g = unit.to_metres == 1.0 ? mps2g : fps2g;
+                    const double accel_to_g = unit.to_meters == 1.0 ? mps2g : fps2g;
                     now.nx = data[21] * accel_to_g;
                     now.ny = data[22] * accel_to_g;
                     now.nz = (data[23] * accel_to_g + 1.0);
@@ -606,7 +607,7 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
             const auto columns = find_geodetic_columns(csv, unit);
             if (!columns.positioned())
             {
-                input_error("Unrecognised trajectory format in ", filename,
+                input_error("Unrecognized trajectory format in ", filename,
                         ": it is neither the 27-column NASA/FAA AC state format nor a WGS84 "
                         "track. A WGS84 track needs a header naming latitude and longitude "
                         "columns in degrees, an altitude column in ", unit.name, ", and a time "
@@ -701,7 +702,7 @@ void Trajectory::adapt(double dt, double smoothing, double tolerance)
     const auto fit_z = fit(z);
 
     // UTC seconds ride along with the resampled time.  They used to be dropped:
-    // the repacked State was value-initialised and nothing refilled utcsec, so
+    // the repacked State was value-initialized and nothing refilled utcsec, so
     // adapting a trajectory silently moved the whole flight to UTC midnight and
     // with it the day/night classification behind --dnlfile.
     const double utc_at_start = states.front().utcsec;
@@ -766,7 +767,7 @@ double Trajectory::relative_to_air(const std::function<std::array<double, 2>(dou
         now.wx = w[0];
         now.wy = w[1];
         strongest = std::max(strongest, std::hypot(w[0], w[1]));
-        // nx/ny/nz, LF and CT stay as the constructor derived them: normalised,
+        // nx/ny/nz, LF and CT stay as the constructor derived them: normalized,
         // and inertial.
         const auto [ux, uy, uz] = air_velocity(now);
         now.mu = std::hypot(ux, uy, uz) / vehicle.tip_speed;
@@ -775,7 +776,7 @@ double Trajectory::relative_to_air(const std::function<std::array<double, 2>(dou
     return strongest;
 }
 
-void Trajectory::watts_trim(double xstart_metres)
+void Trajectory::watts_trim(double xstart_meters)
 {
     auto mu = column("mu");
     auto z = column("z");
@@ -786,13 +787,51 @@ void Trajectory::watts_trim(double xstart_metres)
     std::size_t ixmin = 0;
     for (std::size_t i = 0; i < x.size(); i++)
     {
-        if (x[i] > xstart_metres)
+        if (x[i] > xstart_meters)
             break;
         ixmin = i;
     }
     info("Trimming trajectory from x = ", x[ixmin], " to ", x[ixmax]);
     std::vector<State> sub(states.begin() + ixmin, states.begin() + ixmax + 1);
     states.swap(sub);
+}
+
+std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing)
+{
+    constexpr double fast = 20.0 * 1852.0 / 3600.0; // m/s
+    constexpr std::size_t enough = 50;
+    double sum_cos = 0.0, sum_sin = 0.0;
+    std::size_t count = 0;
+    bool has_heading = false;
+    for (const auto& s : states)
+    {
+        if (std::isnan(s.heading))
+            continue;
+        has_heading = true;
+        const auto v = air_velocity(s);
+        if (std::hypot(v[0], v[1]) < fast)
+            continue;
+        const double offset = std::atan2(v[1], v[0]) + s.heading * pi / 180.0;
+        sum_cos += std::cos(offset);
+        sum_sin += std::sin(offset);
+        count++;
+    }
+    if (!has_heading)
+        return std::nullopt;
+    if (count >= enough)
+        return std::atan2(sum_sin, sum_cos);
+    if (!std::isnan(frame_bearing))
+        return frame_bearing * pi / 180.0;
+    return std::nullopt;
+}
+
+std::array<double, 3> nose_direction(const State& state, std::optional<double> offset)
+{
+    const auto v = air_velocity(state);
+    if (!offset || std::isnan(state.heading) || std::hypot(v[0], v[1]) >= heading_nose_speed)
+        return v;
+    const double angle = *offset - state.heading * pi / 180.0;
+    return {std::cos(angle), std::sin(angle), 0.0};
 }
 
 } // namespace niceops

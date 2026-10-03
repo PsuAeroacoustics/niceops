@@ -132,7 +132,7 @@ Vec3 LocalFrame::to_local(const Geodetic& position) const
 Vec3 LocalFrame::from_east_north_up(const Vec3& enu) const
 {
     // The same rotation to_local applies to a projected position, without the
-    // projection: over a footprint's few kilometres the convergence of the
+    // projection: over a footprint's few kilometers the convergence of the
     // meridians is far below the accuracy of any velocity a trajectory file
     // carries, so one rotation serves the whole frame.
     return {enu(0) * cos_rotation_ + enu(1) * sin_rotation_,
@@ -149,7 +149,7 @@ Geodetic LocalFrame::to_geodetic(const Vec3& local) const
     Geodetic guess = reference_;
     guess.altitude = local(2);
 
-    // About a millimetre at the surface, big enough to keep the difference
+    // About a millimeter at the surface, big enough to keep the difference
     // quotient well clear of round-off and small enough to be accurate.
     const double step = 1.0e-8;
     for (int iteration = 0; iteration < 50; iteration++)

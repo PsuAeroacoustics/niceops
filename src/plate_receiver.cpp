@@ -69,7 +69,7 @@ PlateReceiver PlateReceiver::load(const std::string& path)
     plate.n_sub_ = dimension(ncid, "sub", path);
     const std::size_t n_elevations = dimension(ncid, "elevation", path);
     plate.n_azimuths_ = dimension(ncid, "azimuth", path);
-    plate.centres_ = variable(ncid, "band_centre", plate.n_bands_, path);
+    plate.centers_ = variable(ncid, "band_center", plate.n_bands_, path);
     plate.frequencies_ = variable(ncid, "frequency", plate.n_bands_ * plate.n_sub_, path);
     plate.elevations_ = variable(ncid, "elevation", n_elevations, path);
     const auto azimuths = variable(ncid, "azimuth", plate.n_azimuths_, path);
@@ -108,18 +108,18 @@ PlateReceiver PlateReceiver::load(const std::string& path)
     plate.values_ = std::move(values);
 
     // The fast path's quadratic in log frequency through each band's edges
-    // and centre, at the sub-frequencies' positions across the band.
+    // and center, at the sub-frequencies' positions across the band.
     plate.edges_.resize(plate.n_bands_ + 1);
     for (std::size_t band = 0; band < plate.n_bands_; band++)
-        plate.edges_[band] = plate.centres_[band] * std::pow(2.0, -1.0 / 6.0);
-    plate.edges_.back() = plate.centres_.back() * std::pow(2.0, 1.0 / 6.0);
+        plate.edges_[band] = plate.centers_[band] * std::pow(2.0, -1.0 / 6.0);
+    plate.edges_.back() = plate.centers_.back() * std::pow(2.0, 1.0 / 6.0);
     plate.lagrange_.resize(3 * plate.n_sub_);
     for (std::size_t sub = 0; sub < plate.n_sub_; sub++)
     {
         // Position in log frequency across the band, 0 at the lower edge; the
         // sub-frequencies are the band's midpoints, as panam places them.
         const double t = (static_cast<double>(sub) + 0.5) / static_cast<double>(plate.n_sub_);
-        const double expected = plate.centres_[0] * std::pow(2.0, (t - 0.5) / 3.0);
+        const double expected = plate.centers_[0] * std::pow(2.0, (t - 0.5) / 3.0);
         if (!close_to(plate.frequencies_[sub], expected))
             input_error("Plate table ", path, " sub-frequencies are not the band's ", plate.n_sub_,
                     " equal log steps.");
@@ -137,13 +137,13 @@ PlateReceiver PlateReceiver::bound(const std::vector<double>& bands, const Groun
     // The table's bands must be the database's, band for band, over the bands
     // the run reads.
     last_band = std::min(last_band, bands.size());
-    if (centres_.size() != bands.size())
-        input_error("Plate table ", path, " has ", centres_.size(), " bands; the database has ",
+    if (centers_.size() != bands.size())
+        input_error("Plate table ", path, " has ", centers_.size(), " bands; the database has ",
                 bands.size(), ".");
     for (std::size_t band = first_band; band < last_band; band++)
     {
-        if (!close_to(centres_[band], bands[band]))
-            input_error("Plate table ", path, " band ", band, " is ", centres_[band],
+        if (!close_to(centers_[band], bands[band]))
+            input_error("Plate table ", path, " band ", band, " is ", centers_[band],
                     " Hz; the database's is ", bands[band], " Hz.");
     }
     // P_d and P_r depend on the ground the table was solved over; applying
@@ -169,7 +169,7 @@ PlateReceiver PlateReceiver::bound(const std::vector<double>& bands, const Groun
     plate.sound_speed_ = sound_speed;
     plate.admittance_ = ground_impedance(ground, frequencies_, sound_speed);
     plate.edge_admittance_ = ground_impedance(ground, edges_, sound_speed);
-    plate.centre_admittance_ = ground_impedance(ground, centres_, sound_speed);
+    plate.center_admittance_ = ground_impedance(ground, centers_, sound_speed);
     return plate;
 }
 
@@ -215,8 +215,8 @@ void PlateReceiver::tabulate(double r_max, int angle_nodes, int nodes_per_decade
             {
                 const bool edge = p % 2 == 0;
                 const std::size_t band = p / 2;
-                const double f = edge ? edges_[band] : centres_[band];
-                const auto beta = edge ? edge_admittance_[band] : centre_admittance_[band];
+                const double f = edge ? edges_[band] : centers_[band];
+                const auto beta = edge ? edge_admittance_[band] : center_admittance_[band];
                 const auto q = spherical_reflection_coefficient(cos_grazing, kappa_per_hz * f, beta,
                         boundary_loss);
                 out[2 * p] = static_cast<float>(q[0]);
@@ -310,14 +310,14 @@ void PlateReceiver::evaluate(double source_height, double ground_distance, doubl
         return spherical_reflection_coefficient(cos_grazing, kappa_per_hz * f, beta, boundary_loss);
     };
 
-    // Q at the lower edge of the first band; each band then adds its centre
+    // Q at the lower edge of the first band; each band then adds its center
     // and upper edge, which is the next band's lower edge.
     std::array<double, 2> q_low {};
     if (!exact && first_band < last_band)
         q_low = q_at(2 * first_band, edges_[first_band], edge_admittance_[first_band]);
 
     // P_d and P_r at this direction for every sub-frequency in range, as one
-    // weighted sum of the four corners' contiguous runs (vectorises), rather
+    // weighted sum of the four corners' contiguous runs (vectorizes), rather
     // than corner by corner inside the band loop.
     thread_local std::vector<double> interpolated;
     const std::size_t lo = first_band * n_sub_ * 4;
@@ -336,11 +336,11 @@ void PlateReceiver::evaluate(double source_height, double ground_distance, doubl
 
     for (std::size_t band = first_band; band < last_band; band++)
     {
-        std::array<double, 2> q_centre {};
+        std::array<double, 2> q_center {};
         std::array<double, 2> q_high {};
         if (!exact)
         {
-            q_centre = q_at(2 * band + 1, centres_[band], centre_admittance_[band]);
+            q_center = q_at(2 * band + 1, centers_[band], center_admittance_[band]);
             q_high = q_at(2 * band + 2, edges_[band + 1], edge_admittance_[band + 1]);
         }
         double energy = 0.0;
@@ -357,8 +357,8 @@ void PlateReceiver::evaluate(double source_height, double ground_distance, doubl
             else
             {
                 const double* l = lagrange_.data() + 3 * sub;
-                q = {l[0] * q_low[0] + l[1] * q_centre[0] + l[2] * q_high[0],
-                        l[0] * q_low[1] + l[1] * q_centre[1] + l[2] * q_high[1]};
+                q = {l[0] * q_low[0] + l[1] * q_center[0] + l[2] * q_high[0],
+                        l[0] * q_low[1] + l[1] * q_center[1] + l[2] * q_high[1]};
             }
             const double re = p[0] + q[0] * p[2] - q[1] * p[3];
             const double im = p[1] + q[0] * p[3] + q[1] * p[2];
@@ -378,12 +378,12 @@ std::vector<double> PlateReceiver::gain_bounds(std::size_t first_band, std::size
     // then at most the largest corner's mean of A^2.  So the maximum over the
     // table's nodes bounds every geometry, held elevations included.
     last_band = std::min(last_band, n_bands_);
-    // The fast path's Q is the quadratic through the edges and centre, so its
+    // The fast path's Q is the quadratic through the edges and center, so its
     // size is at most sum_k |L_k| |Q_k|max; the exact path's is at most its own
     // |Q|max.  Take the larger, so both are bounded.
     const auto q_exact = reflection_coefficient_bounds(ground_, admittance_);
     const auto q_edge = reflection_coefficient_bounds(ground_, edge_admittance_);
-    const auto q_centre = reflection_coefficient_bounds(ground_, centre_admittance_);
+    const auto q_center = reflection_coefficient_bounds(ground_, center_admittance_);
     std::vector<double> q_max(q_exact.size());
     for (std::size_t band = 0; band < n_bands_; band++)
     {
@@ -391,7 +391,7 @@ std::vector<double> PlateReceiver::gain_bounds(std::size_t first_band, std::size
         {
             const double* l = lagrange_.data() + 3 * sub;
             const double quadratic = std::abs(l[0]) * q_edge[band]
-                    + std::abs(l[1]) * q_centre[band] + std::abs(l[2]) * q_edge[band + 1];
+                    + std::abs(l[1]) * q_center[band] + std::abs(l[2]) * q_edge[band + 1];
             q_max[band * n_sub_ + sub] = std::max(q_exact[band * n_sub_ + sub], quadratic);
         }
     }
@@ -422,7 +422,7 @@ std::string PlateReceiver::description() const
 {
     return source_ + " (plate radius " + std::to_string(radius_) + " m, top "
             + std::to_string(thickness_) + " m up, microphone " + std::to_string(mic_offset_)
-            + " m off centre; " + std::to_string(n_sub_) + " sub-frequencies per band, "
+            + " m off center; " + std::to_string(n_sub_) + " sub-frequencies per band, "
             + std::to_string(elevations_.size()) + " elevations x " + std::to_string(n_azimuths_)
             + " azimuths)";
 }

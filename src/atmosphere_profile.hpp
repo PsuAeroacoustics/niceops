@@ -4,7 +4,7 @@
 // against height -- and the layered absorption it implies.
 //
 // ISO 9613-1's coefficient depends on all three, and between a helicopter at a
-// few hundred metres and the ground they are not one value.  Integrating the
+// few hundred meters and the ground they are not one value.  Integrating the
 // coefficient along the path rather than taking it at the ground moved LAE by
 // -0.6 to +1.3 dB(A) at 500 m in sonAIR's comparison (Zellmann & Wunderli,
 // Inter-Noise 2014).  It is the first step of the propagation roadmap because
@@ -32,7 +32,7 @@ struct AtmosphereProfile
 {
     // The file it came from, for messages.
     std::string source;
-    // Metres above the observer plane, strictly ascending.
+    // Meters above the observer plane, strictly ascending.
     std::vector<double> height;
     std::vector<double> temperature; // K
     std::vector<double> relative_humidity; // percent
@@ -61,7 +61,7 @@ struct AtmosphereProfile
         return height.back();
     }
 
-    // The atmosphere at height z, in metres.  Temperature and humidity are
+    // The atmosphere at height z, in meters.  Temperature and humidity are
     // linear between levels.  Pressure is linear in its logarithm, since it
     // falls off exponentially.  Every quantity is held at its end value outside
     // the levels.  Needs has_pressure().
@@ -102,7 +102,7 @@ struct CompassToLocal
     double cos_b;
 };
 
-// Read a profile.  Columns are found by name (read_labelled_csv), in any order,
+// Read a profile.  Columns are found by name (read_labeled_csv), in any order,
 // one row per level:
 //   height above the observers   z, agl                   in `unit`; z_ft / z_m
 //                                                          are checked against it
@@ -126,7 +126,7 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
 // Per-band absorption integrated through a profile, tabulated in height so the
 // observer loop never evaluates ISO 9613-1.
 //
-// The table holds alpha_b(z) at nodes a metre apart and its running integral
+// The table holds alpha_b(z) at nodes a meter apart and its running integral
 // F_b(z).  Between nodes alpha is linear and F its exact integral, a
 // quadratic.  That is why (F_b(z_a) - F_b(z_b)) / (z_a - z_b) tends smoothly to
 // alpha_b as the two heights meet, rather than jumping at a node.
@@ -141,7 +141,7 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
 // approximation to the integral along the arc.  The mean is taken over the
 // whole height span, including the stretch inside the sphere radius that the
 // path length excludes.  For the shipped databases that stretch is a few
-// metres against hundreds.
+// meters against hundreds.
 class LayeredAbsorption
 {
 public:
@@ -159,7 +159,7 @@ public:
     void coefficients(double z, double* out) const;
 
     // The mean coefficient over the heights between z_a and z_b, given
-    // integral() at each: (F_a - F_b) / (z_a - z_b).  Within a millimetre of
+    // integral() at each: (F_a - F_b) / (z_a - z_b).  Within a millimeter of
     // each other it takes the coefficient at their midpoint instead, where the
     // difference quotient would lose its digits.  Written like integral().
     void mean_coefficients(double z_a, const double* integral_a, double z_b,

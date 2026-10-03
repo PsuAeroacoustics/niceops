@@ -88,7 +88,7 @@ void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y
         file << "x(" << unit.name << "), y(" << unit.name << "), Level(dB)\n";
         for (std::size_t i = 0; i < levels.size(); i++)
         {
-            file << x_obs[i] / unit.to_metres << "," << y_obs[i] / unit.to_metres << ","
+            file << x_obs[i] / unit.to_meters << "," << y_obs[i] / unit.to_meters << ","
                  << levels[i] << "\n";
         }
     }
@@ -109,8 +109,8 @@ void write_levels(const std::vector<double>& x_obs, const std::vector<double>& y
                 file << (i ? "," : "") << values[first + i] / scale;
             file << "\n";
         };
-        write_row(x_obs, 0, nx, unit.to_metres);
-        write_row(y_obs, 0, ny, unit.to_metres);
+        write_row(x_obs, 0, nx, unit.to_meters);
+        write_row(y_obs, 0, ny, unit.to_meters);
         for (std::size_t row = 0; row * nx < levels.size(); row++)
             write_row(levels, row * nx, nx, 1.0);
         // The D original writes one extra newline at the end; keep it.
@@ -171,7 +171,7 @@ void write_time_history_file(const std::vector<double>& time_history, double dt,
     auto file = open_output(filename);
     file << "Level time history. Next row [dt (s), x (" << unit.name << "), y(" << unit.name
          << ")], remaining rows, dB.\n";
-    file << dt << "," << x / unit.to_metres << "," << y / unit.to_metres << "\n";
+    file << dt << "," << x / unit.to_meters << "," << y / unit.to_meters << "\n";
     for (auto level : time_history)
     {
         file << level << "\n";
@@ -195,21 +195,21 @@ struct BandHistoryRow
 
 void write_band_history_file(const std::vector<BandHistoryRow>& rows,
         const std::vector<double>& levels, const std::vector<double>& band_levels,
-        const std::vector<double>& band_centres, std::size_t first_band, std::size_t last_band,
+        const std::vector<double>& band_centers, std::size_t first_band, std::size_t last_band,
         const Vec3& microphone, LengthUnit unit, const std::string& filename)
 {
     auto file = open_output(filename);
     file << "# NICE-OPS band history. Microphone x, y, z (" << unit.name << "): "
-         << microphone.x / unit.to_metres << ", " << microphone.y / unit.to_metres << ", "
-         << microphone.z / unit.to_metres << ". Times s, range " << unit.name
+         << microphone.x / unit.to_meters << ", " << microphone.y / unit.to_meters << ", "
+         << microphone.z / unit.to_meters << ". Times s, range " << unit.name
          << ", angles deg; level_dBA is the A-weighted, band-limited level, band_<Hz> each "
             "band's unweighted level at the microphone, dB re 20 uPa.\n";
     file << "emission_time,reception_time,range,elevation,phi,theta,level_dBA";
-    for (auto centre : band_centres)
-        file << ",band_" << centre;
+    for (auto center : band_centers)
+        file << ",band_" << center;
     file << "\n";
     file << std::setprecision(10);
-    const std::size_t nb = band_centres.size();
+    const std::size_t nb = band_centers.size();
     for (std::size_t it = 0; it < rows.size(); it++)
     {
         const auto& row = rows[it];
@@ -217,7 +217,7 @@ void write_band_history_file(const std::vector<BandHistoryRow>& rows,
         file << row.emission_time << ",";
         if (evaluated)
         {
-            file << row.reception_time << "," << row.range / unit.to_metres << ","
+            file << row.reception_time << "," << row.range / unit.to_meters << ","
                  << row.elevation << "," << row.phi << "," << row.theta << "," << levels[it];
         }
         else
@@ -411,28 +411,28 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
     {
         if (data.size() == 3)
         {
-            observers.push_back(Vec3(data[0] * unit.to_metres, data[1] * unit.to_metres,
-                    data[2] * unit.to_metres));
+            observers.push_back(Vec3(data[0] * unit.to_meters, data[1] * unit.to_meters,
+                    data[2] * unit.to_meters));
         }
         else if (data.size() == 4)
         {
             // Skip channel ID in first column
-            observers.push_back(Vec3(data[1] * unit.to_metres, data[2] * unit.to_metres,
-                    data[3] * unit.to_metres));
+            observers.push_back(Vec3(data[1] * unit.to_meters, data[2] * unit.to_meters,
+                    data[3] * unit.to_meters));
         }
         else if (data.size() == 5)
         {
             // id, x, y, z, and the microphone's height above the ground there:
             // 0 for a flush microphone (a plate, with --plate_table), more for
             // one on a pole.
-            observers.push_back(Vec3(data[1] * unit.to_metres, data[2] * unit.to_metres,
-                    data[3] * unit.to_metres));
+            observers.push_back(Vec3(data[1] * unit.to_meters, data[2] * unit.to_meters,
+                    data[3] * unit.to_meters));
             if (!(data[4] >= 0.0))
             {
                 input_error("Observer file ", observer_file, " gives a microphone height of ",
                         data[4], " ", unit.name, "; it must not be negative.");
             }
-            microphone_heights.push_back(data[4] * unit.to_metres);
+            microphone_heights.push_back(data[4] * unit.to_meters);
         }
         else
         {
@@ -463,7 +463,7 @@ struct ObserverSet
     std::vector<Vec3> observers;
     std::vector<double> x;
     std::vector<double> y;
-    // Each observer's microphone height above the ground, metres, when the
+    // Each observer's microphone height above the ground, meters, when the
     // observer file gives one (id,x,y,z,height); empty otherwise, and every
     // observer takes the run's receiver (Receivers in process_trajectory).
     std::vector<double> microphone_heights;
@@ -583,6 +583,9 @@ struct RunOptions
     // the profile.  The shadow zone's attenuation is capped at shadow_floor dB.
     bool refraction = false;
     bool stratified = false;
+    // --tunneling, --skip_fill (stratified only): arrivals ray theory leaves
+    // out, with their Airy tails per band (layered_wave_arrivals).
+    WaveOptions waves;
     double shadow_floor = 20.0;
     // --scattering: the HARMONOISE turbulence strength whose scattered energy
     // fills the shadows (ShadowScattering); 0 keeps shadow_floor instead.
@@ -594,7 +597,7 @@ struct RunOptions
     // Which velocity the flight conditions are taken from (--speed_reference).
     // Unset follows each database's own speed_reference attribute.
     std::optional<SpeedReference> speed_reference;
-    // Metres, after the --units conversion; NaN means the trim is off.
+    // Meters, after the --units conversion; NaN means the trim is off.
     double trim_start = 0.0;
     double utc_offset = 0.0;
     bool scattered = false;
@@ -660,7 +663,7 @@ bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
             [&](double z) { return to_local(profile.wind_at(z)); });
     log("Flight conditions referred to the air: mu, the path angle and the sphere's nose follow "
         "the velocity less the profile's wind, which reaches ",
-            strongest / options.unit.to_metres, " ", options.unit.name, "/s at the aircraft.");
+            strongest / options.unit.to_meters, " ", options.unit.name, "/s at the aircraft.");
     if (std::isnan(options.frame_bearing))
     {
         log("  the wind directions are compass bearings, turned into the local frame taking +x "
@@ -682,7 +685,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Create trajectory from CSV data
     Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
 
-    // mu and CT are non-dimensionalised by the vehicle JSON's tip speed, and
+    // mu and CT are non-dimensionalized by the vehicle JSON's tip speed, and
     // they index the database's operating conditions -- which were generated at
     // whatever tip speed the database records.  Disagree, and every lookup lands
     // at the wrong condition with nothing downstream able to notice.  Worth
@@ -757,15 +760,36 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     for (std::size_t it = 0; it < night.size(); it++)
         night[it] = is_night(trajectory.states[it].utcsec, options.utc_offset) ? 1 : 0;
 
+    // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
+    const auto offset = heading_offset(trajectory.states, options.frame_bearing);
+    std::size_t by_heading = 0, slow = 0;
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
     {
         const auto velocity = air_velocity(state);
+        const auto nose = nose_direction(state, offset);
+        if (std::hypot(velocity[0], velocity[1]) < heading_nose_speed)
+        {
+            slow++;
+            if (nose != velocity)
+                by_heading++;
+        }
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
-                Vec3(velocity[0], velocity[1], velocity[2]),
+                Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
                 options.qsam ? state.fpa_e : state.fpa, state.CT));
+    }
+    if (slow > 0)
+    {
+        if (by_heading > 0)
+            info(by_heading, " of ", slow, " states under 5 kt take the sphere's nose from the heading, turned "
+                    "into the local frame by ", *offset * 180.0 / pi, " degrees.");
+        else
+            warn(slow, " states under 5 kt orient the sphere by their drift: ",
+                    std::isnan(trajectory.states.front().heading)
+                            ? "the track carries no heading."
+                            : "too few fast states to relate heading to the frame, and no --frame_bearing.");
     }
 
     if (!options.power_file.empty())
@@ -887,7 +911,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (flush_count > 0)
             item(flush_count, " flush on plates");
         for (std::size_t k = 0; k < point_heights.size(); k++)
-            item(at_height[k], " at ", point_heights[k] / options.unit.to_metres, " ", options.unit.name);
+            item(at_height[k], " at ", point_heights[k] / options.unit.to_meters, " ", options.unit.name);
         if (bare_count > 0)
             item(bare_count, " with no ground model");
         log("Receivers: ", summary.str(), "; each level is evaluated at its microphone.");
@@ -915,7 +939,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // not of interest.
 
     // Spectral propagation setup.  Both of these depend only on the atmosphere
-    // and the database's band centres, so they are computed once here rather
+    // and the database's band centers, so they are computed once here rather
     // than per observer: the coefficients cost a pow() and two exp() per band.
     std::vector<double> absorption;
     std::vector<double> band_gains;
@@ -937,7 +961,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // set) and, unless --exact_ground, its table.
     std::vector<GroundModel> point_models;
     std::vector<GroundTable> point_tables;
-    // The contiguous run of bands inside the metric's limits. Band centres are
+    // The contiguous run of bands inside the metric's limits. Band centers are
     // sorted, so the limits always select a range rather than a scattered set.
     std::size_t first_band = 0;
     std::size_t last_band = 0;
@@ -946,6 +970,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // run from taking it twice.
     PropagationTable::BandMap table_bands;
     std::vector<double> table_absorption;
+    // [azimuth][band]: K for plate microphones read from the table.
+    constexpr int table_plate_azimuths = 36;
+    std::vector<std::vector<double>> table_plate_offset;
 
     // The atmosphere is needed on every path now, not only the spectral one:
     // its sound speed turns the emission-time level history into reception time
@@ -975,7 +1002,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Spectral propagation is the default, since per-band ISO 9613-1 absorption
     // is what the EAA factor approximates -- and approximates badly: EAA is one
     // A-weighted attenuation fitted at 1000 m and scaled linearly with range,
-    // which under-attenuates at the few hundred metres a footprint mostly sees.
+    // which under-attenuates at the few hundred meters a footprint mostly sees.
     // Against the 2017 approach measurements (139 runs, ~6200 mic-runs) the
     // broadband path read +1.2 dB high in the median (rms 3.1 dB) and the
     // spectral one -0.2 dB (rms 2.5).  A database without spectra falls back to
@@ -1009,7 +1036,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (spectral)
     {
 
-        const auto& bands = database.band_centres();
+        const auto& bands = database.band_centers();
         const auto retained = bands_in_range(bands, options.band_limits);
         if (retained == 0)
         {
@@ -1056,15 +1083,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (profile->height.size() > 1 && z_high > profile->top())
             {
                 input_error("--atmosphere ", profile->source, " reaches ",
-                        profile->top() / options.unit.to_metres, " ", options.unit.name,
+                        profile->top() / options.unit.to_meters, " ", options.unit.name,
                         " above the observers, but paths from ", job.trajectory, " reach ",
-                        z_high / options.unit.to_metres, " ", options.unit.name,
+                        z_high / options.unit.to_meters, " ", options.unit.name,
                         ". Extend the profile above the highest state and observer.");
             }
             if (profile->height.size() > 1 && z_low < profile->bottom())
             {
-                log("  the profile's lowest level, ", profile->bottom() / options.unit.to_metres,
-                        " ", options.unit.name, ", is held down to ", z_low / options.unit.to_metres,
+                log("  the profile's lowest level, ", profile->bottom() / options.unit.to_meters,
+                        " ", options.unit.name, ", is held down to ", z_low / options.unit.to_meters,
                         " ", options.unit.name, ".");
             }
             layered = LayeredAbsorption(*profile, bands, first_band, last_band, z_low, z_high);
@@ -1092,7 +1119,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::vector<double> at_top(bands.size(), 0.0);
             layered->coefficients(z_high, at_top.data());
             log("  absorption layered through ", profile->source, " from ",
-                    z_low / options.unit.to_metres, " to ", z_high / options.unit.to_metres, " ",
+                    z_low / options.unit.to_meters, " to ", z_high / options.unit.to_meters, " ",
                     options.unit.name, ": at ", bands[last_band - 1], " Hz it is ",
                     absorption[last_band - 1], " dB/m at the ground and ", at_top[last_band - 1],
                     " dB/m at the top.");
@@ -1138,7 +1165,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     const double r_max = reach();
                     point_tables.emplace_back(model, ground_impedance_bands, sound_speed, bands,
                             first_band, last_band, 1.0, r_max);
-                    log("  ground effect for microphones ", height / options.unit.to_metres, " ",
+                    log("  ground effect for microphones ", height / options.unit.to_meters, " ",
                             options.unit.name, " up tabulated to ", r_max, " m in ",
                             std::chrono::duration<double>(std::chrono::steady_clock::now() - table_start)
                                     .count(),
@@ -1191,15 +1218,38 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 std::ostringstream heights;
                 for (std::size_t k = 0; k < uncovered.size(); k++)
-                    heights << (k ? ", " : "") << uncovered[k] / options.unit.to_metres;
+                    heights << (k ? ", " : "") << uncovered[k] / options.unit.to_meters;
                 input_error("--propagation_table ", options.propagation_table_path, " holds receivers from ",
-                        table.axes().receiver_heights.front() / options.unit.to_metres, " to ",
-                        table.axes().receiver_heights.back() / options.unit.to_metres, " ", options.unit.name,
+                        table.axes().receiver_heights.front() / options.unit.to_meters, " to ",
+                        table.axes().receiver_heights.back() / options.unit.to_meters, " ", options.unit.name,
                         "; this run's microphones are also at ", heights.str(), " ", options.unit.name,
                         ". Build the table with those receiver heights.");
             }
             if (table.includes_absorption())
                 table_absorption.assign(bands.size(), 0.0);
+            // A flush microphone on a plate reads the table at its lowest
+            // receiver height, plus K, the plate over bare ground there, per band
+            // and azimuth -- as ShadowTransition places a plate in the shadow:
+            // near grazing K barely depends on elevation, so it is taken at 2
+            // degrees, a kilometer out.
+            if (plate)
+            {
+                GroundModel bare = options.ground;
+                bare.receiver_height = table.axes().receiver_heights.front();
+                const double elevation = 2.0 * pi / 180.0;
+                const double h = 1000.0 * std::sin(elevation), d = 1000.0 * std::cos(elevation);
+                std::vector<double> bare_db(bands.size(), 0.0), plate_db(bands.size(), 0.0);
+                excess_ground_attenuation(bare, ground_impedance_bands, h, d, sound_speed, bands,
+                        bare_db.data(), first_band, last_band, false);
+                table_plate_offset.assign(table_plate_azimuths, std::vector<double>(bands.size(), 0.0));
+                for (int i = 0; i < table_plate_azimuths; i++)
+                {
+                    plate->level(h, d, 2.0 * pi * i / table_plate_azimuths, plate_db.data(), first_band,
+                            last_band);
+                    for (std::size_t band = first_band; band < last_band; band++)
+                        table_plate_offset[i][band] = plate_db[band] - bare_db[band];
+                }
+            }
             log("  propagation table ", options.propagation_table_path, ": ", table.method(), "; ",
                     table.axes().bearings.size(), " bearings, source heights ",
                     table.axes().source_heights.front(), " to ", table.axes().source_heights.back(),
@@ -1239,20 +1289,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // The creeping wave runs along the ground: over its admittance when
         // there is a ground model, over rigid ground (the old rate) when not.
         shadow_attenuation = ground_model
-                ? ShadowAttenuation(database.band_centres(), ground_impedance_bands, first_band, last_band)
-                : ShadowAttenuation(database.band_centres(), first_band, last_band);
+                ? ShadowAttenuation(database.band_centers(), ground_impedance_bands, first_band, last_band)
+                : ShadowAttenuation(database.band_centers(), first_band, last_band);
         if (ground_model != nullptr)
         {
             for (const double height : point_heights)
             {
                 const auto start = std::chrono::steady_clock::now();
-                shadow_transitions.emplace_back(database.band_centres(), ground_impedance_bands,
+                shadow_transitions.emplace_back(database.band_centers(), ground_impedance_bands,
                         height, sound_speed, first_band, last_band, nullptr, nullptr,
                         options.thread_count);
                 if (options.scattering > 0.0)
                     shadow_transitions.back().set_scattering(
                             ShadowScattering::for_receiver(options.scattering, height, false));
-                log("  shadow-boundary field for microphones ", height / options.unit.to_metres, " ",
+                log("  shadow-boundary field for microphones ", height / options.unit.to_meters, " ",
                         options.unit.name, " up tabulated from the residue series in ",
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
                         " s.");
@@ -1260,7 +1310,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (any_plate)
             {
                 const auto start = std::chrono::steady_clock::now();
-                plate_transition.emplace(database.band_centres(), ground_impedance_bands,
+                plate_transition.emplace(database.band_centers(), ground_impedance_bands,
                         plate->thickness(), sound_speed, first_band, last_band, &*plate, ground_model,
                         options.thread_count);
                 if (options.scattering > 0.0)
@@ -1275,7 +1325,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         for (std::size_t band = first_band; band < last_band; band++)
             if (shadow_attenuation.admits_surface_wave(band))
                 surface_bands += (surface_bands.empty() ? "" : ", ") + std::to_string(
-                        static_cast<int>(std::lround(database.band_centres()[band]))) + " Hz";
+                        static_cast<int>(std::lround(database.band_centers()[band]))) + " Hz";
         if (!surface_bands.empty())
             log("  warning: the ground's admittance allows a surface wave in the shadow at ",
                     surface_bands, ", which the creeping-wave loss leaves out. Those bands take "
@@ -1296,7 +1346,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         : "Refraction: curved rays through a linear effective sound speed fitted "
                           "per path.",
                 " From the highest state (",
-                top->position.z / options.unit.to_metres, " ", options.unit.name,
+                top->position.z / options.unit.to_meters, " ", options.unit.name,
                 ") the gradient is ", along.gradient, " /s toward +x and ", against.gradient,
                 " /s toward -x; shadow zones attenuate by the first creeping-wave mode over ",
                 shadow_attenuation.rigid() ? "rigid ground" : "the ground's impedance",
@@ -1443,7 +1493,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // leave the two mechanisms separate rather than layering this one on top.
     // Under --refraction the same bounds hold, taken along each ray's launch
     // direction at its tube's range -- see windowed_exposure.
-    const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history;
+    // A table beside refraction mixes two geometries per state -- the
+    // straight line the table is read along and the ray's launch direction --
+    // which the bounds were not built for, so every state is evaluated.
+    const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history
+            && !(options.propagation_table && options.refraction);
 
     // Each blend's spectra packed contiguously (Database::pack_spectra), one
     // copy per distinct blend the track visits, so the observer loop's reads
@@ -1505,7 +1559,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> penalized;
         // --band_history: every state's band levels, and the geometry each
         // was reached along.
-        const std::size_t history_bands = write_band_history ? database.band_centres().size() : 0;
+        const std::size_t history_bands = write_band_history ? database.band_centers().size() : 0;
         std::vector<double> band_levels(nt * history_bands);
         std::vector<BandHistoryRow> band_rows(write_band_history ? nt : 0);
         auto record_path = [&](std::size_t it, const RayPath& path) {
@@ -1537,6 +1591,33 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             return StateGeometry {path.range * path.range, frame.nose.dot(d), frame.normal.dot(d),
                     frame.starboard.dot(d)};
         };
+        // With more than one eigenray (Arrival), a geometry whose bound covers
+        // their sum: each is bounded by its own direction's numerator over its
+        // own squared range, so the largest of those numerators over the
+        // harmonic sum of the squared ranges bounds them all.
+        auto bound_geometry = [&](std::size_t it, const RefractedRay& ray) {
+            const StateGeometry primary = equivalent_geometry(it, ray.path);
+            if (ray.extra.empty())
+                return primary;
+            double inverse = 1.0 / primary.squared_range;
+            StateGeometry pick = primary;
+            double best = direction_bounds.numerator(it, DirectionBounds::bin(primary.along, primary.up,
+                    primary.across, primary.squared_range));
+            for (const Arrival& a : ray.extra)
+            {
+                const StateGeometry g = equivalent_geometry(it, a.path);
+                inverse += 1.0 / g.squared_range;
+                const double n = direction_bounds.numerator(it,
+                        DirectionBounds::bin(g.along, g.up, g.across, g.squared_range));
+                if (n > best)
+                {
+                    best = n;
+                    pick = g;
+                }
+            }
+            const double scale = std::sqrt(1.0 / (inverse * pick.squared_range));
+            return StateGeometry {1.0 / inverse, pick.along * scale, pick.up * scale, pick.across * scale};
+        };
         struct RefractedGeometry
         {
             double squared_range, along, up, across;
@@ -1553,7 +1634,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 return layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
                         source_states[it].position, state_moments[it], observer, at_receiver,
-                        layer_scratch, transition);
+                        layer_scratch, transition, options.waves);
             }
             return direct_ray(*effective_sound_speed, source_states[it].position, state_moments[it],
                     observer, at_receiver);
@@ -1572,7 +1653,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // height, once per observer, and the per-band mean over each path's
         // heights, once per evaluation.  Without a profile every path takes the
         // one run-wide array, as before.
-        const std::size_t band_count = layered ? database.band_centres().size() : 0;
+        const std::size_t band_count = layered ? database.band_centers().size() : 0;
         std::vector<double> observer_absorption_integral(band_count, 0.0);
         std::vector<double> path_absorption(band_count, 0.0);
         auto absorption_for = [&](std::size_t it, const Vec3& observer) -> const double* {
@@ -1587,11 +1668,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         };
         // Refraction: the moments at each observer's receiver, and the shadow
         // zone's per-band loss.
-        std::vector<double> shadow(effective_sound_speed ? database.band_centres().size() : 0, 0.0);
-        std::vector<double> table_loss(options.propagation_table ? database.band_centres().size() : 0, 0.0);
+        std::vector<double> shadow(effective_sound_speed ? database.band_centers().size() : 0, 0.0);
+        std::vector<double> table_loss(options.propagation_table ? database.band_centers().size() : 0, 0.0);
         std::size_t tabled_here = 0, fallback_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
         std::size_t shadowed_here = 0;
+        // --refraction stratified's other eigenrays: each one's loss from its
+        // earlier bounces, its band levels, and a ground weight of zero for one
+        // that never reaches the ground.
+        std::vector<double> arrival_loss(shadow.size(), 0.0);
+        std::vector<double> arrival_bands(shadow.size(), 0.0);
+        const std::vector<double> no_ground(shadow.size(), 0.0);
         for (std::size_t index = begin; index < end; index++)
         {
             // Evaluated at the microphone, with this observer's receiver.
@@ -1613,27 +1700,53 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // it covers the pair, with the table's level in place of the ground
             // model's and spreading and absorption as ever; otherwise the run's
             // own model.
-            auto straight_level = [&](std::size_t it, double* bands_out) {
-                if (options.propagation_table && !flush)
+            // The table's level for a pair it covers, into `level`; false where
+            // it does not.  A plate microphone reads it at the table's lowest
+            // receiver height and adds K at the pair's azimuth in its frame.
+            auto table_level = [&](std::size_t it, double* bands_out, double& level) {
+                const Vec3& source = source_states[it].position;
+                const Vec3 separation = observer - source;
+                const double east = frame_sin * separation.x - frame_cos * separation.y;
+                const double north = frame_cos * separation.x + frame_sin * separation.y;
+                const double height = flush ? options.propagation_table->axes().receiver_heights.front()
+                                            : microphone_height[index];
+                if (!options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, source.z, height,
+                            separation.horizontal_norm(), table_bands, table_loss.data()))
                 {
-                    const Vec3& source = source_states[it].position;
-                    const Vec3 separation = observer - source;
-                    const double east = frame_sin * separation.x - frame_cos * separation.y;
-                    const double north = frame_cos * separation.x + frame_sin * separation.y;
-                    if (options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, source.z,
-                                microphone_height[index], separation.horizontal_norm(), table_bands,
-                                table_loss.data()))
-                    {
-                        for (std::size_t band = first_band; band < last_band; band++)
-                            table_loss[band] = -table_loss[band];
-                        tabled_here++;
-                        return database.spectral_level_along(straight_ray(source, observer), source_states[it],
-                                table_absorption.empty() ? absorption_for(it, observer) : table_absorption.data(),
-                                band_gains, nullptr, nullptr, sound_speed, first_band, last_band,
-                                packed_of_state[it], nullptr, 0.0, nullptr, table_loss.data(), nullptr, bands_out);
-                    }
                     fallback_here++;
+                    return false;
                 }
+                double k_weight = 0.0;
+                std::size_t k_lo = 0, k_hi = 0;
+                if (flush && !table_plate_offset.empty())
+                {
+                    const double azimuth = std::atan2(separation.y, separation.x) - plate_mic_azimuth + 0.5 * pi;
+                    double x = std::fmod(azimuth / (2.0 * pi) * table_plate_azimuths, double(table_plate_azimuths));
+                    if (x < 0.0)
+                        x += table_plate_azimuths;
+                    k_lo = std::min(static_cast<std::size_t>(x), std::size_t(table_plate_azimuths - 1));
+                    k_hi = (k_lo + 1) % table_plate_azimuths;
+                    k_weight = x - static_cast<double>(k_lo);
+                }
+                for (std::size_t band = first_band; band < last_band; band++)
+                {
+                    double gain = table_loss[band];
+                    if (flush && !table_plate_offset.empty())
+                        gain += (1.0 - k_weight) * table_plate_offset[k_lo][band]
+                                + k_weight * table_plate_offset[k_hi][band];
+                    table_loss[band] = -gain;
+                }
+                tabled_here++;
+                level = database.spectral_level_along(straight_ray(source, observer), source_states[it],
+                        table_absorption.empty() ? absorption_for(it, observer) : table_absorption.data(),
+                        band_gains, nullptr, nullptr, sound_speed, first_band, last_band, packed_of_state[it],
+                        nullptr, 0.0, nullptr, table_loss.data(), nullptr, bands_out);
+                return true;
+            };
+            auto straight_level = [&](std::size_t it, double* bands_out) {
+                double level = 0.0;
+                if (options.propagation_table && table_level(it, bands_out, level))
+                    return level;
                 return database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
                         band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, bands_out);
@@ -1652,6 +1765,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     ? (plate_transition ? &*plate_transition : nullptr)
                     : (!shadow_transitions.empty() ? &shadow_transitions[point_of[index]] : nullptr);
             auto refracted_level = [&](std::size_t it, RefractedRay ray) {
+                // With a table too, the pairs it covers take it; the rest the ray model.
+                if (options.propagation_table)
+                {
+                    double level = 0.0;
+                    double* table_bands_out = write_band_history
+                            ? record_path(it, straight_ray(source_states[it].position, observer))
+                            : nullptr;
+                    if (table_level(it, table_bands_out, level))
+                        return add_ambient ? 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure)
+                                           : level;
+                }
                 finish_ray(ray, ray_ground, microphone_height[index]);
                 double* bands_out = record_path(it, ray.path);
                 const double* extra_loss = nullptr;
@@ -1683,11 +1807,56 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     extra_loss = shadow.data();
                     shadowed_here++;
                 }
+                // A primary that bounced before arriving (a duct, past every
+                // direct ray) loses what those bounces took.
+                if (ray.bounces > 0 && ground_here != nullptr)
+                {
+                    if (extra_loss != nullptr)
+                        std::copy(extra_loss, extra_loss + shadow.size(), arrival_loss.begin());
+                    else
+                        std::fill(arrival_loss.begin(), arrival_loss.end(), 0.0);
+                    add_bounce_loss(ray.ground_grazing, ray.bounces, ground_impedance_bands, first_band,
+                            last_band, arrival_loss.data());
+                    extra_loss = arrival_loss.data();
+                }
                 double level = database.spectral_level_along(ray.path, source_states[it],
                         absorption_for(it, observer), band_gains, ground_here,
                         &ground_impedance_bands, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
                         extra_loss, ground_weight, bands_out);
+                if (!ray.extra.empty())
+                {
+                    // The other eigenrays, each its own level, summed in energy.
+                    double energy = std::pow(10.0, 0.1 * level);
+                    for (const Arrival& a : ray.extra)
+                    {
+                        std::fill(arrival_loss.begin(), arrival_loss.end(), 0.0);
+                        if (ground_here != nullptr)
+                            add_bounce_loss(a.grazing, a.bounces, ground_impedance_bands, first_band,
+                                    last_band, arrival_loss.data());
+                        if (a.wave.active())
+                            add_wave_loss(a.wave, (observer - source_states[it].position).norm(),
+                                    a.path.range, database.band_centers(), first_band, last_band,
+                                    arrival_loss.data());
+                        // One that tunnels reaches the microphone as the field's
+                        // tail below its turning point, plate or not.
+                        const bool grounded = (a.grazing > 0.0 || flush) && !(a.wave.evanescent > 0.0);
+                        const double here = database.spectral_level_along(a.path, source_states[it],
+                                absorption_for(it, observer), band_gains, ground_here,
+                                &ground_impedance_bands, sound_speed, first_band, last_band,
+                                packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
+                                arrival_loss.data(), grounded ? nullptr : no_ground.data(),
+                                bands_out != nullptr ? arrival_bands.data() : nullptr);
+                        energy += std::pow(10.0, 0.1 * here);
+                        if (bands_out != nullptr)
+                        {
+                            for (std::size_t band = first_band; band < last_band; band++)
+                                bands_out[band] = 10.0 * std::log10(std::pow(10.0, 0.1 * bands_out[band])
+                                        + std::pow(10.0, 0.1 * arrival_bands[band]));
+                        }
+                    }
+                    level = 10.0 * std::log10(energy);
+                }
                 if (add_ambient)
                     level = 20.0 * std::log10(std::pow(10.0, level / 20.) + ambient_pressure);
                 return level;
@@ -1709,7 +1878,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             [&](std::size_t it) {
                                 RefractedGeometry g;
                                 g.ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
-                                const auto e = equivalent_geometry(it, g.ray.path);
+                                const auto e = bound_geometry(it, g.ray);
                                 g.squared_range = e.squared_range;
                                 g.along = e.along;
                                 g.up = e.up;
@@ -1758,7 +1927,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     ranges[it] = sound_speed * ray.travel_time;
                     if (culling)
                     {
-                        const auto g = equivalent_geometry(it, ray.path);
+                        const auto g = bound_geometry(it, ray);
                         if (g.squared_range > sphere_radius_squared
                                 && direction_bounds.numerator(it,
                                            DirectionBounds::bin(g.along, g.up, g.across, g.squared_range))
@@ -1803,7 +1972,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // Energies add across operations; the logarithm comes at the
                 // end, once every trajectory has contributed.  Each observer
                 // index belongs to exactly one worker, and the trajectories run
-                // one after another, so this needs no synchronisation.
+                // one after another, so this needs no synchronization.
                 dnl_energy[index] += std::pow(
                         10.0, 0.1 * day_night_level(levels, integration_step, night, penalized, ranges,
                                               sound_speed));
@@ -1822,7 +1991,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     band_rows[it].emission_time = trajectory.states[it].t;
                     band_rows[it].reception_time = trajectory.states[it].t + ranges[it] / sound_speed;
                 }
-                write_band_history_file(band_rows, levels, band_levels, database.band_centres(),
+                write_band_history_file(band_rows, levels, band_levels, database.band_centers(),
                         first_band, last_band, observer, options.unit,
                         options.band_history_prefix + "_i" + std::to_string(index) + ".csv");
             }
@@ -1902,7 +2071,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 // Draw the footprint and the state figures for a single-trajectory run.
 //
 // Lifted out of run() unchanged.  It takes x_obs/y_obs by value because the
-// first thing it does is convert them out of metres, and run() still holds the
+// first thing it does is convert them out of meters, and run() still holds the
 // metric copies -- in place, that conversion used to run over the caller's
 // arrays.
 void draw_figures(const Trajectory& trajectory, const std::vector<double>& integrated_levels,
@@ -1915,18 +2084,18 @@ void draw_figures(const Trajectory& trajectory, const std::vector<double>& integ
     auto y = trajectory.column("y");
     auto z = trajectory.column("z");
 
-    // Out of metres and into whatever --units selected, which is also what the
-    // axes are labelled with.
+    // Out of meters and into whatever --units selected, which is also what the
+    // axes are labeled with.
     for (auto& v : x_obs)
-        v *= 1.0 / unit.to_metres;
+        v *= 1.0 / unit.to_meters;
     for (auto& v : y_obs)
-        v *= 1.0 / unit.to_metres;
+        v *= 1.0 / unit.to_meters;
     for (auto& v : x)
-        v *= 1.0 / unit.to_metres;
+        v *= 1.0 / unit.to_meters;
     for (auto& v : y)
-        v *= 1.0 / unit.to_metres;
+        v *= 1.0 / unit.to_meters;
     for (auto& v : z)
-        v *= 1.0 / unit.to_metres;
+        v *= 1.0 / unit.to_meters;
 
     if (plotting || !figure_file.empty())
     {
@@ -2040,13 +2209,13 @@ int run(int argc, char* argv[])
     double utc_offset = 0.0;
     double trim_start = std::numeric_limits<double>::quiet_NaN();
     // Lengths on this command line are in whatever --units selects, feet by
-    // default, and are converted to metres at one seam below.  A *default* is a
+    // default, and are converted to meters at one seam below.  A *default* is a
     // fixed physical quantity, not a number in the selected unit, so it is
-    // written here in metres and skips that conversion -- otherwise --units
+    // written here in meters and skips that conversion -- otherwise --units
     // would silently change the geometry of a run that named no grid.
     std::string unit_name = "ft";
     std::vector<double> grid_bounds;
-    double grid_step = 25.0; // metres
+    double grid_step = 25.0; // meters
     std::string sphere_file = "";
     std::string aam_file = "";
     std::string power_file = "";
@@ -2068,7 +2237,7 @@ int run(int argc, char* argv[])
     double dt = 0.5;
     // NOTE: D default-initializes `double` to NaN, not 0, so the !isNaN guard
     // below is FALSE by default and D never mixes in an ambient level unless
-    // -a is given.  Initialising this to 0.0 added a spurious 0 dB ambient
+    // -a is given.  Initializing this to 0.0 added a spurious 0 dB ambient
     // floor to every run, which pinned quiet observers near 0 dB.
     double ambient_level = std::numeric_limits<double>::quiet_NaN();
     bool write_time_history = false;
@@ -2083,7 +2252,7 @@ int run(int argc, char* argv[])
     std::vector<double> band_limits;
     bool ground_effect = false;
     double flow_resistance = flow_resistance::grassy_field;
-    double receiver_height = 1.2; // metres
+    double receiver_height = 1.2; // meters
     double turbulence = 0.0;
     std::string impedance_model = "delany_bazley";
     double porosity_rate = 0.0;      // 1/m
@@ -2101,6 +2270,8 @@ int run(int argc, char* argv[])
     std::string atmosphere_file;
     std::string refraction = "none";
     double shadow_floor = 20.0;
+    bool tunneling = false;
+    bool skip_fill = false;
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
     std::string speed_reference;
@@ -2117,7 +2288,7 @@ int run(int argc, char* argv[])
     // is that curvature, so it lands in CT and then in the levels.  Ten feet is
     // loose enough to absorb both coordinate rounding and the corner a planner
     // did not mean literally.
-    double path_smoothing = 10.0 * ft2m; // 10 ft, in metres
+    double path_smoothing = 10.0 * ft2m; // 10 ft, in meters
     bool latlon = false;
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
@@ -2208,6 +2379,13 @@ int run(int argc, char* argv[])
             "per path; or stratified -- through the profile's own layers, slower but without "
             "the fit. Both give shadow zones under upward refraction.")
             ->check(CLI::IsMember({"none", "linear", "stratified"}));
+    app.add_flag("--tunneling", tunneling,
+            "--refraction stratified: also take the rays turned back from aloft that turn again just "
+            "above the microphone, which the wave reaches through the layer below them (an Airy "
+            "tail per band).  Off by default.");
+    app.add_flag("--skip_fill", skip_fill,
+            "--refraction stratified: fill the skip zone short of where rays from aloft first land "
+            "with the caustic's Airy tail per band.  Off by default.");
     app.add_option("--shadow_floor", shadow_floor,
             "Most a refractive shadow zone attenuates, dB (default 20). Deeper in, energy "
             "scattered by turbulence dominates.");
@@ -2261,7 +2439,7 @@ int run(int argc, char* argv[])
             ->check(CLI::IsMember({"delany_bazley", "miki", "variable_porosity", "delany_bazley_layer"}));
     app.add_option("--porosity_rate", porosity_rate,
             "variable_porosity: rate of change of porosity with depth, alpha_e, 1/m (a material "
-            "parameter, in metres whatever --units says).");
+            "parameter, in meters whatever --units says).");
     auto* layer_depth_option = app.add_option("--layer_depth", layer_depth,
             "delany_bazley_layer: depth of the hard-backed layer, in --units (default 0.05 m).");
     app.add_option("--turbulence_model", turbulence_model,
@@ -2347,7 +2525,7 @@ int run(int argc, char* argv[])
 
     if (grid_bounds.empty())
     {
-        grid_bounds = {-1500.0, 1500.0, -1500.0, 1500.0}; // metres
+        grid_bounds = {-1500.0, 1500.0, -1500.0, 1500.0}; // meters
     }
     if (!(grid_step > 0.0))
     {
@@ -2470,31 +2648,31 @@ int run(int argc, char* argv[])
         database.self_test(loaded_database);
     }
 
-    // The one place the user's units become metres.  Everything above is in
+    // The one place the user's units become meters.  Everything above is in
     // what they typed; everything below is metric, as the computation is.
     //
     // Only options the user actually supplied are converted: a default is a
-    // physical quantity already written in metres above, and scaling it here
+    // physical quantity already written in meters above, and scaling it here
     // would make --units m move the observer grid by 3.28x rather than just
     // renaming its axis.  CLI11's count() is what tells the two apart.
-    const LengthUnit unit = unit_name == "m" ? metres : feet;
+    const LengthUnit unit = unit_name == "m" ? meters : feet;
     log("Lengths are in ", unit.name, ".");
-    auto to_metres = [&unit](const CLI::Option* option, double& value) {
+    auto to_meters = [&unit](const CLI::Option* option, double& value) {
         if (option->count() > 0)
-            value *= unit.to_metres;
+            value *= unit.to_meters;
     };
     if (grid_option->count() > 0)
     {
         for (double& bound : grid_bounds)
-            bound *= unit.to_metres;
+            bound *= unit.to_meters;
     }
-    to_metres(gridstep_option, grid_step);
-    to_metres(receiver_height_option, receiver_height);
-    to_metres(layer_depth_option, layer_depth);
-    to_metres(roughness_option, roughness);
-    to_metres(path_smoothing_option, path_smoothing);
-    to_metres(trim_option, trim_start);
-    to_metres(ground_elevation_option, ground_elevation);
+    to_meters(gridstep_option, grid_step);
+    to_meters(receiver_height_option, receiver_height);
+    to_meters(layer_depth_option, layer_depth);
+    to_meters(roughness_option, roughness);
+    to_meters(path_smoothing_option, path_smoothing);
+    to_meters(trim_option, trim_start);
+    to_meters(ground_elevation_option, ground_elevation);
 
     ObserverSet observer_set = scattered
             ? scattered_observers(observer_file, unit)
@@ -2526,11 +2704,8 @@ int run(int argc, char* argv[])
         input_error("--band_history needs the spectral path: the broadband path (--no-spectral "
                     "or --db_cutoff) carries no bands.");
     }
-    if (!propagation_table.empty() && (!spectral || refraction != "none" || !plate_table.empty()))
-    {
-        input_error("--propagation_table needs the spectral path, and replaces --refraction and the "
-                    "point receiver; it does not model a ground plate (--plate_table).");
-    }
+    if (!propagation_table.empty() && !spectral)
+        input_error("--propagation_table needs the spectral path.");
     if (!plate_table.empty() && !ground_effect)
     {
         input_error("--plate_table needs --ground_effect: the plate's level depends on the "
@@ -2569,7 +2744,7 @@ int run(int argc, char* argv[])
     }
 
     // Everything the trajectory loop needs that does not vary between
-    // trajectories, named once.  Written as an initialiser rather than thirty
+    // trajectories, named once.  Written as an initializer rather than thirty
     // assignments so a field added to RunOptions and forgotten here reads as
     // its declared default rather than as whatever the struct was left holding.
     RunOptions options {};
@@ -2620,6 +2795,10 @@ int run(int argc, char* argv[])
     options.pressure_override = pressure_override;
     options.refraction = refraction != "none";
     options.stratified = refraction == "stratified";
+    if ((tunneling || skip_fill) && !options.stratified)
+        input_error("--tunneling and --skip_fill need --refraction stratified.");
+    options.waves.tunneling = tunneling;
+    options.waves.skip_fill = skip_fill;
     options.shadow_floor = shadow_floor;
     options.scattering = scattering;
     options.frame_bearing = frame_bearing;

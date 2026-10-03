@@ -14,7 +14,7 @@
 
 using namespace niceops;
 
-TEST_CASE("Projection is centred on its reference", "[geodetic]")
+TEST_CASE("Projection is centerd on its reference", "[geodetic]")
 {
     const Geodetic reference {39.82914323, -74.40996141, 0.0};
     const LocalFrame frame(reference);
@@ -45,7 +45,7 @@ TEST_CASE("Projection has the right scale and orientation", "[geodetic]")
     REQUIRE(east(0) > 0.0);
     REQUIRE(std::fabs(east(0) - 11119.5 * std::cos(40.0 * 3.14159265358979323846 / 180.0)) < 30.0);
 
-    // South and west are the negatives, to the metre.
+    // South and west are the negatives, to the meter.
     const auto south = frame.to_local({39.9, -75.0, 0.0});
     REQUIRE(std::fabs(south(1) + north(1)) < 1.0);
     const auto west = frame.to_local({40.0, -75.1, 0.0});
@@ -64,7 +64,7 @@ TEST_CASE("Round trip returns the original position", "[geodetic]")
             const auto local = frame.to_local(original);
             const auto recovered = frame.to_geodetic(local);
             // A micro-degree is about 0.1 mm; the inverse is far tighter than
-            // the centimetre the D original's fixed-step search stopped at.
+            // the centimeter the D original's fixed-step search stopped at.
             REQUIRE(std::fabs(recovered.latitude - original.latitude) < 1e-9);
             REQUIRE(std::fabs(recovered.longitude - original.longitude) < 1e-9);
             REQUIRE(recovered.altitude == original.altitude);
@@ -115,7 +115,7 @@ TEST_CASE("Projection matches the shipped tracks' own geometry", "[geodetic]")
 
     double worst = 0.0;
     double longest = 0.0;
-    // Stride well past the 1e-8 degree quantisation of the lat/lon columns, so
+    // Stride well past the 1e-8 degree quantization of the lat/lon columns, so
     // the comparison is of real displacements rather than of rounding.
     const std::size_t stride = 250;
     for (std::size_t i = stride; i < records.size(); i += stride)
@@ -163,11 +163,11 @@ TEST_CASE("The shipped tracks' frame runs along a bearing of 210 degrees", "[geo
         return worst;
     };
 
-    // Sub-metre over 3.2 km of track: this projection is the one that file was
+    // Sub-meter over 3.2 km of track: this projection is the one that file was
     // built with.
     REQUIRE(worst_residual(210.0) < 1.0);
     // And the fit is tight enough to pin the bearing rather than merely allow
-    // it -- five degrees out is hundreds of metres by the end.
+    // it -- five degrees out is hundreds of meters by the end.
     REQUIRE(worst_residual(215.0) > 100.0);
     REQUIRE(worst_residual(205.0) > 100.0);
 }

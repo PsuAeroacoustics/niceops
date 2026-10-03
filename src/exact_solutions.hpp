@@ -74,7 +74,7 @@ std::vector<std::complex<double>> impedance_airy_zeros(std::complex<double> q, i
 // q = 0, followed out along q = s * direction, for each of the increasing,
 // non-negative `s`.  impedance_airy_zeros stops at |q| = 6 because it accounts
 // for every zero, and the high ones crowd; the first stays well apart from its
-// neighbours, so it can be followed as far as asked, to the first zero of Ai,
+// neighbors, so it can be followed as far as asked, to the first zero of Ai,
 // a_1 - 1/q, as |q| grows.  It is the least attenuated creeping wave of an
 // upward-refracting atmosphere over ground of any admittance (ShadowAttenuation).
 std::vector<std::complex<double>> first_impedance_airy_zero(std::complex<double> direction,

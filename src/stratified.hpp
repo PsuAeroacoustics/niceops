@@ -5,13 +5,13 @@
 //
 // --refraction linear fits one straight line to the effective sound speed of
 // each path.  That averages away exactly what shapes near-ground propagation:
-// a log-law wind's steep lowest metres, an inversion.  This takes the effective
+// a log-law wind's steep lowest meters, an inversion.  This takes the effective
 // sound speed c(z) + w(z).h as piecewise linear between the profile's own
 // levels, held constant below the lowest and above the highest.  Within each
 // layer a ray is still a circular arc, so crossing a layer has a closed form,
 // and a ray through the whole profile is a sum over its layers.
 //
-// Rays are parametrised by launch elevation theta.  In a horizontally
+// Rays are parametrized by launch elevation theta.  In a horizontally
 // stratified medium the Snell invariant p = cos(theta) / c(z_s) fixes the
 // whole ray.  Two branches reach a receiver below the source from above:
 //   A  launched downward, reaching the receiver before turning;
@@ -27,7 +27,7 @@
 // The ray tube -- the spreading -- comes from finite differences of the range
 // in launch angle:
 //   r_eq^2 = r |dr/dtheta| sin|arrival| / cos(launch),
-// which for a linear profile is exactly (r / cos(launch))^2.  Where neighbouring
+// which for a linear profile is exactly (r / cos(launch))^2.  Where neighboring
 // rays cross, at a caustic, it goes to zero.  The focusing it implies is capped
 // at max_focusing_gain_db, a stand-in for the Airy function's finite peak.
 //
@@ -97,6 +97,71 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
 ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, double z_r,
         double r, double guess);
 
+// Every ray that reaches the receiver from above, but the primary: the direct
+// rays of the families after the one layered_direct_eigenray takes (`primary`
+// is its result, which counts only if lit), and, in a surface duct, the rays
+// that bounce off the ground first.  With `bounced_only`, only those.
+//
+// A duct is air above the source faster than all of it below, so that a ray
+// that reaches the ground turns aloft and comes back down.  A ray of
+// invariant p that bounces m times before its last descent travels
+//   X_m(p) = X_0(p) + m L(p),
+// X_0 its direct range and L the hop from the ground up to its turning height
+// and back.  Only rays arriving from above are listed: the one rising to the
+// receiver from the next bounce is the partner the ground model pairs each
+// with, as the primary's reflected ray is the primary's.  X_0 rises with p
+// where L falls, so X_m is not monotonic and has caustics: the arms are
+// sampled once, together, in launch angle (the hops reuse the samples) and
+// every crossing of r is solved for.  A ray whose hops alone already outrun r
+// is skipped without a trace, which leaves nothing to do for a source above
+// the duct or a path shorter than its first hop.
+//
+// Past the reach of every direct ray in a duct -- the single-hop skip
+// distance, ~2.4 km for a 30 m source under day 286's morning inversion --
+// these are the only rays there are.  Leaving them out, the level sat 8-54 dB
+// under the parabolic equation's there (which stays within a few dB of free
+// field) and fell into the gaps between hops.
+std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z_r, double r,
+        const DirectEigenray& primary, bool bounced_only = false);
+
+// Two wave effects the rays above leave out, each behind its own option
+// (WaveCorrection, refraction.hpp, gives the loss):
+//
+// tunneling: a ray turned back from aloft that turns again just above the
+//   receiver never reaches it, and ray theory leaves the receiver in silence.
+//   The wave reaches it as the field's tail below the turning point.  Under day
+//   286's last profile the turning height is 1-20 ft, inside the log-law wind
+//   assumed below the lidar's first gate, and the parabolic equation hardly
+//   notices the layer (<1 dB to 250 Hz): the rays that turn lowest carry the
+//   duct's return to the ground.  Listed: rays launched up, and rays launched
+//   down that have turned aloft at least once, that turn at z_t above z_r after
+//   m = 0, 1, ... cycles between their two turning heights, where the range to
+//   that turning point is r.  Rays launched down that have not turned aloft are
+//   left to ShadowTransition, whose field past a ground-grazing boundary is
+//   theirs.  Their tube is taken a reference Airy length above the turning
+//   point (at wave_reference_frequency), where the ray is still a ray.
+//
+// skip_fill: short of where a family from aloft first lands -- a caustic, where
+//   its range X(p) is least -- is a skip zone that no ray reaches, and the
+//   level there fell to the creeping-wave floor or to nothing.  Each interior
+//   extremum of a family's range with the receiver on its dark side adds the
+//   caustic's Airy tail: I = C Ai^2(x), C = 4 pi omega^(1/3) /
+//   (2^(1/3) G X''^(2/3)), G = r |dp/dtheta| sin|arrival| / cos(launch), which
+//   matches the two rays' summed energy on the lit side.  The families are the
+//   ones from aloft (direct, bounced along a duct, and with tunneling the
+//   tunneled ones); a downward family's interior extrema are a log law's, and
+//   the hand-over to the linear fit stands for those.
+struct WaveOptions
+{
+    bool tunneling = false;
+    bool skip_fill = false;
+
+    bool any() const { return tunneling || skip_fill; }
+};
+
+std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, double z_r, double r,
+        const WaveOptions& options);
+
 // --refraction stratified's counterparts of direct_ray() and finish_ground().
 // `linear` supplies the warm start; `scratch` holds the path's effective sound
 // speed at each level between the two calls, so is per thread.
@@ -119,7 +184,7 @@ inline constexpr double handover_fraction = 0.9;
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
-        bool linear_past_shadow = false);
+        bool linear_past_shadow = false, const WaveOptions& waves = {});
 void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, GroundGeometry ground,
         double microphone_height, std::vector<double>& scratch);
 

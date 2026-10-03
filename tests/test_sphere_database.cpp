@@ -81,7 +81,7 @@ TEST_CASE("bracket", "[sphere_database]")
 TEST_CASE("GridAxis::bracket matches the binary search", "[sphere_database]")
 {
     // GridAxis short-circuits the binary search when the axis is uniform, and
-    // the whole optimisation rests on it giving an identical answer.  Sweep
+    // the whole optimization rests on it giving an identical answer.  Sweep
     // both a uniform axis (the shortcut) and a deliberately irregular one (the
     // fall-back), including values on the knots, between them, and off both
     // ends.
@@ -374,7 +374,7 @@ TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")
         for (std::size_t band = 0; band < bands; band++)
         {
             // Something cell- and band-dependent, so a transposed or shifted
-            // read shows up rather than cancelling out.
+            // read shows up rather than canceling out.
             plain_sphere.amplitudes[cell * bands + band]
                     = 50.0 + 0.01 * static_cast<double>(cell) + static_cast<double>(band);
         }
@@ -402,7 +402,7 @@ TEST_CASE("a database with no condition groups is refused, not crashed", "[spher
 {
     // Every field the constructor fills comes out of the loop over the groups.
     // With none, the loop never ran and the tail of the constructor read an
-    // uninitialised sphere radius and dereferenced max_element's end() on the
+    // uninitialized sphere radius and dereferenced max_element's end() on the
     // empty condition lists.  That segfaulted, with nothing on stderr, after a
     // log that looked like a successful load.
     const auto path = (std::filesystem::temp_directory_path() / "niceops_no_groups.nod").string();
@@ -1001,7 +1001,7 @@ TEST_CASE("a direction empty in one condition takes the others' level, not silen
 {
     // Blending in dB is linear, so before this a third of the weight on the
     // -1000 dB floor put the blended level near -270 dB: a measured direction
-    // became silent because one neighbouring condition had not measured it.
+    // became silent because one neighboring condition had not measured it.
     const auto path = write_shared_grid_test_database("niceops_empty_one_condition.nod",
             uniform_conditions, false, false, 30.48,
             [](std::size_t condition, std::size_t channel) {

@@ -10,7 +10,7 @@
 // the trajectory on a uniform dt grid; watts_trim() crops it to the region
 // of interest.
 //
-// It also reads a simpler, labelled format in WGS84 coordinates -- latitude,
+// It also reads a simpler, labeled format in WGS84 coordinates -- latitude,
 // longitude and altitude against time -- which is what a mission planner has
 // rather than a flight-test state file.  That path projects the positions onto
 // the run's local frame (see geodetic.hpp) and derives the velocity and load
@@ -18,6 +18,7 @@
 
 #include <array>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -56,9 +57,13 @@ struct State
     // The horizontal wind at the state, m/s in the local frame.  Zero unless
     // Trajectory::relative_to_air() set it, which leaves mu, both path angles
     // and the sphere's nose following air_velocity() rather than the ground
-    // velocity.  Last, so that brace-initialising the fields above still works.
+    // velocity.  Last, so that brace-initializing the fields above still works.
     double wx = 0.0;
     double wy = 0.0;
+    // Compass heading of the nose, degrees from true north: the AC format's
+    // column 8.  NaN where the file carries none (the geodetic formats).  Only
+    // the sphere's orientation at hover reads it (nose_direction).
+    double heading = std::numeric_limits<double>::quiet_NaN();
 };
 
 // The velocity the rotor sees: the ground velocity less the wind, the vertical
@@ -67,6 +72,26 @@ inline std::array<double, 3> air_velocity(const State& s)
 {
     return {s.vx - s.wx, s.vy - s.wy, s.vz};
 }
+
+// Below this horizontal speed (5 kt) the velocity's direction is drift, not
+// where the aircraft points: a hover's GPS velocity is a few tenths of a knot in
+// any direction, and the sphere's nose went wherever it pointed.  Below it the
+// nose is the heading.  Shipped tracks never fly this slowly.
+constexpr double heading_nose_speed = 5.0 * 1852.0 / 3600.0; // m/s
+
+// The local frame's angle atan2(y, x) of compass heading h is offset - h; this
+// is that offset, radians.  Inferred from the track, as the circular mean of
+// atan2(vy, vx) + heading over its states faster than 20 kt, when it has 50
+// such -- which also folds in the few degrees an INS heading sits off the
+// ground track, so the nose does not step where the switch to velocity is
+// made.  Otherwise from `frame_bearing` (degrees, NaN when not given), the
+// bearing of +x, where the offset is the bearing itself.  nullopt when neither
+// is available or the file carries no heading.
+std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing);
+
+// The direction the sphere's nose takes for a state: its air velocity, or
+// below heading_nose_speed and with an offset, the heading, horizontal.
+std::array<double, 3> nose_direction(const State& state, std::optional<double> offset);
 
 inline std::ostream& operator<<(std::ostream& os, const State& s)
 {
@@ -100,9 +125,9 @@ struct GeodeticInput
     // The frame every geodetic position is projected onto.  One run shares one
     // frame across all of its trajectories -- the observers are common to them
     // all -- so it is settled before any file is read and handed in here.
-    // Unset lets a lone trajectory centre its own frame on its first position.
+    // Unset lets a lone trajectory center its own frame on its first position.
     std::optional<LocalFrame> frame;
-    // Elevation of the observer plane above the WGS84 datum, in METRES -- the
+    // Elevation of the observer plane above the WGS84 datum, in METERS -- the
     // command line's --ground_elevation is in the user's units and is converted
     // with every other length before it reaches here.  An
     // altitude column is height above mean sea level, while z is height above
@@ -110,7 +135,7 @@ struct GeodeticInput
     // differ by a constant 54.2651 ft, the terrain under that particular
     // flight.  Leaving it at zero reads altitudes as height above the
     // observers, which is what a planner working in AGL already means.
-    double ground_elevation = 0.0; // metres
+    double ground_elevation = 0.0; // meters
     // Seconds since UTC midnight at t = 0.  Only the day-night window reads it,
     // and a file carrying its own utcsec column supplies it instead.
     double start_utc = 0.0;
@@ -119,14 +144,14 @@ struct GeodeticInput
     // sample times -- because the sound exposure integral is a Riemann sum over
     // whatever step the states end up with.
     double resample_dt = 0.5;
-    // How far, in metres RMS, the fitted path may sit from the given positions.
+    // How far, in meters RMS, the fitted path may sit from the given positions.
     // Zero interpolates, which is what waypoints want; measured positions want
     // enough slack to keep the second derivative out of the noise, since that
     // second derivative is the load factor and so CT.
     double path_smoothing = 0.0;
 };
 
-// The first WGS84 position in a labelled geodetic trajectory file, or nullopt
+// The first WGS84 position in a labeled geodetic trajectory file, or nullopt
 // when `filename` is not one.  Reads the header and one row, so a run can
 // settle its frame before committing to loading anything.
 std::optional<Geodetic> first_geodetic_position(
@@ -138,8 +163,8 @@ std::optional<Geodetic> first_geodetic_position(
 dimensional_data configure_vehicle(const std::string& filename);
 
 // Derive the non-dimensional flight parameters (LF, CT, mu, fpa, fpa_e) from a
-// state's raw kinematics.  Expects nx/ny/nz to hold the un-normalised
-// load-factor components on entry, and normalises them in place.  Exported so
+// state's raw kinematics.  Expects nx/ny/nz to hold the un-normalized
+// load-factor components on entry, and normalizes them in place.  Exported so
 // the unit tests can reach the hover case directly.
 void derive_flight_parameters(State& now, const dimensional_data& vehicle);
 
@@ -186,10 +211,10 @@ public:
     // Returns the largest wind speed met, for the log.
     double relative_to_air(const std::function<std::array<double, 2>(double)>& wind);
 
-    // Crop from this x, in METRES.  The caller converts; the command line's
+    // Crop from this x, in METERS.  The caller converts; the command line's
     // --trim is in the user's units and is converted at the same seam as
     // everything else.
-    void watts_trim(double xstart_metres);
+    void watts_trim(double xstart_meters);
 
     std::vector<State> states;
     dimensional_data vehicle;

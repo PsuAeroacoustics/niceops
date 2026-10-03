@@ -122,7 +122,7 @@ TEST_CASE("one bearing means every bearing", "[propagation_table]")
 TEST_CASE("a run's bands are found in the table, or the run is refused", "[propagation_table]")
 {
     const auto table = make_table();
-    // A database's centres rounded differently, and bands outside the limits
+    // A database's centers rounded differently, and bands outside the limits
     // the table does not have.
     const std::vector<double> run = {80.0, 100.4, 125.0, 159.5, 200.0};
     const auto bands = table.match_bands(run, 1, 4);

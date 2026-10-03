@@ -72,7 +72,7 @@ bool newton(complex& t, complex q)
 }
 
 // Past this |a'_n| a zero of Ai' has moved by less than a quarter of the gap
-// to its neighbours, pi / sqrt|a'|, so first-order perturbation finds it:
+// to its neighbors, pi / sqrt|a'|, so first-order perturbation finds it:
 // the shift is -q / a', and |q| / |a'| < pi / (4 sqrt|a'|) once |a'| > 2 |q|^2.
 double settled(complex q)
 {
@@ -81,7 +81,7 @@ double settled(complex q)
 
 // Follows a zero as q moves from `from` to `to`, halving the step whenever
 // Newton lands farther than a fraction of the local spacing away -- the sign
-// of having jumped to a neighbour.
+// of having jumped to a neighbor.
 void follow(complex& t, complex from, complex to, int depth = 0)
 {
     complex trial = t;

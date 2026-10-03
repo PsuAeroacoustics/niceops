@@ -7,7 +7,7 @@ only that its copyright notice and disclaimer travel with redistributions, and
 none carries a reciprocal or source-disclosure obligation. This file exists so
 that a binary distribution satisfies that condition.
 
-The licence texts below are reproduced verbatim from the sources the build
+The license texts below are reproduced verbatim from the sources the build
 actually fetched or linked.
 
 ## Linked into every build

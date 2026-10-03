@@ -54,12 +54,12 @@ public:
     std::size_t simplex_count() const;
 
 private:
-    // A simplex holds dim+1 vertices and, opposite each, the neighbouring
+    // A simplex holds dim+1 vertices and, opposite each, the neighboring
     // simplex across the facet that omits it.
     struct Simplex
     {
         std::vector<std::size_t> vertices;
-        std::vector<long> neighbours;
+        std::vector<long> neighbors;
         bool alive = true;
     };
 
@@ -90,7 +90,7 @@ private:
     std::vector<Simplex> simplices_;
     std::vector<std::size_t> free_list_;
     // Last simplex located, as the starting point of the next walk.  Queries
-    // arrive in trajectory order, so consecutive ones are usually neighbours.
+    // arrive in trajectory order, so consecutive ones are usually neighbors.
     mutable std::size_t hint_ = 0;
 };
 

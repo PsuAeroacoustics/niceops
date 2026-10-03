@@ -27,7 +27,7 @@ using namespace niceops;
 
 namespace {
 
-// The band centres and the constant per-band level the fixture is built with.
+// The band centers and the constant per-band level the fixture is built with.
 const std::vector<double> kBands = {125.0, 500.0, 2000.0, 8000.0};
 constexpr double kFlatLevel = 90.0;
 
@@ -57,7 +57,7 @@ TEST_CASE("eval_spectrum applies spreading and per-band absorption", "[spectral]
     const auto path = write_flat_spectral_database("niceops_flat_spectrum.nod");
     Database db(path);
     REQUIRE(db.has_spectra());
-    REQUIRE(db.band_centres() == kBands);
+    REQUIRE(db.band_centers() == kBands);
 
     const auto blend = db.blend_at(0.15, -4.0, 0.006);
     const double radius = db.sphere_radius();
@@ -263,7 +263,7 @@ TEST_CASE("spectral_direction_bounds really bounds the spectral level", "[spectr
             continue;
         Database db(name);
         REQUIRE(db.has_spectra());
-        const auto& bands = db.band_centres();
+        const auto& bands = db.band_centers();
         const auto gains = a_weighting_gains(bands, BandLimits {});
         const std::vector<double> no_absorption(bands.size(), 0.0);
 

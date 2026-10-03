@@ -10,7 +10,7 @@ against frequency.
 
 The parabolic equation is the reference, so it is drawn in ink; the three ray
 models take the first three categorical slots, with distinct dashes so their
-identity never rests on colour alone.
+identity never rests on color alone.
 """
 
 import csv
@@ -28,7 +28,7 @@ INK = "#0b0b0b"
 INK_2 = "#52514e"
 GRID = "#e4e3df"
 MODELS = [
-    # (column prefix, label, colour, dashes, width)
+    # (column prefix, label, color, dashes, width)
     ("pe", "parabolic equation", INK, (None, None), 2.4),
     ("stratified", "stratified rays", "#2a78d6", (None, None), 1.8),
     ("linear", "linear rays", "#eb6834", (6, 3), 1.8),
@@ -92,8 +92,8 @@ def case_figure(path, title, out):
         ax = axes[k // ncols][k % ncols]
         style(ax)
         ax.axhline(THRESHOLD, color=INK_2, linewidth=0.8, linestyle=(0, (2, 3)))
-        for prefix, label, colour, dashes, width in MODELS:
-            line, = ax.plot(ranges, [max(v, bottom - 5) for v in series[(prefix, b)]], color=colour,
+        for prefix, label, color, dashes, width in MODELS:
+            line, = ax.plot(ranges, [max(v, bottom - 5) for v in series[(prefix, b)]], color=color,
                             linewidth=width, label=label, solid_capstyle="round")
             if dashes[0] is not None:
                 line.set_dashes(dashes)
@@ -142,11 +142,11 @@ def onset_figure(cases, out):
                              facecolor=SURFACE, squeeze=False)
     for ax, (title, freqs, found) in zip(axes[0], shadowed):
         style(ax)
-        for prefix, label, colour, dashes, width in models:
+        for prefix, label, color, dashes, width in models:
             points = [(f, v) for f, v in zip(freqs, found[prefix]) if v is not None]
             if not points:
                 continue
-            line, = ax.plot([p[0] for p in points], [p[1] for p in points], color=colour,
+            line, = ax.plot([p[0] for p in points], [p[1] for p in points], color=color,
                             linewidth=width, marker="o", markersize=8, markeredgecolor=SURFACE,
                             markeredgewidth=2, label=label)
             if dashes[0] is not None:

@@ -43,20 +43,20 @@ double Atmosphere::saturation_pressure() const
                     -6.8346 * std::pow(triple_point_temperature / temperature, 1.261) + 4.6151);
 }
 
-double Atmosphere::molar_concentration_water_vapour() const
+double Atmosphere::molar_concentration_water_vapor() const
 {
     return relative_humidity * saturation_pressure() / pressure;
 }
 
 double Atmosphere::relaxation_frequency_oxygen() const
 {
-    const double h = molar_concentration_water_vapour();
+    const double h = molar_concentration_water_vapor();
     return pressure / reference_pressure * (24.0 + 4.04e4 * h * (0.02 + h) / (0.391 + h));
 }
 
 double Atmosphere::relaxation_frequency_nitrogen() const
 {
-    const double h = molar_concentration_water_vapour();
+    const double h = molar_concentration_water_vapor();
     const double t_ratio = temperature / reference_temperature;
     return pressure / reference_pressure * std::pow(t_ratio, -0.5)
             * (9.0 + 280.0 * h * std::exp(-4.170 * (std::pow(t_ratio, -1.0 / 3.0) - 1.0)));

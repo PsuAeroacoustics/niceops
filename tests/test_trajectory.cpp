@@ -41,7 +41,7 @@ TEST_CASE("Trajectory parses the demo case", "[trajectory]")
 TEST_CASE("Hover states do not produce NaN flight path angles", "[trajectory]")
 {
     // A stationary aircraft makes v zero, and the flight path angles used to be
-    // asin of a division by it -- NaN, which then travelled through mu into the
+    // asin of a division by it -- NaN, which then traveled through mu into the
     // sphere lookup and out into every level.  The database carries hover
     // spheres at mu = 0, so this regime is meant to be reachable.
     dimensional_data vehicle;
@@ -79,7 +79,7 @@ TEST_CASE("Hover states do not produce NaN flight path angles", "[trajectory]")
 }
 
 // ---------------------------------------------------------------------------
-// The labelled WGS84 input format.
+// The labeled WGS84 input format.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -173,7 +173,7 @@ TEST_CASE("A WGS84 track reproduces the flight it was taken from", "[trajectory]
         worst_height = std::max(worst_height, std::fabs(got.z - want.z));
         worst_mu = std::max(worst_mu, std::fabs(got.mu - want.mu));
     }
-    // Sub-metre over a 3.2 km track, which is the projection agreeing with
+    // Sub-meter over a 3.2 km track, which is the projection agreeing with
     // whatever the file's own producer used.
     REQUIRE(worst_position < 1.0);
     // Smoothing is applied to all three coordinates, so height is fitted like
@@ -199,7 +199,7 @@ TEST_CASE("Geodetic columns are found by name, not by position", "[trajectory][g
 {
     // A planner's export is not going to have the columns in our order, or
     // spell them the way we would, so they are matched by name after
-    // normalisation -- and an unrecognised header is an error, not a guess.
+    // normalization -- and an unrecognized header is an error, not a guess.
     const TempCsv canonical(demo_track_as_geodetic("time,lat,lon,alt", 100));
     const TempCsv dressed(demo_track_as_geodetic("Time (s),Latitude,LONGITUDE,alt_ft", 100));
     const Trajectory plain(canonical.path, "databases/S-76D.json", demo_frame());
@@ -324,7 +324,7 @@ TEST_CASE("adapt resamples onto a uniform grid and keeps the clock", "[trajector
 
     // A straight line at constant speed, which a natural cubic spline
     // reproduces exactly: f'' = 0 everywhere already satisfies the natural end
-    // condition, so there is no boundary artefact to allow for.
+    // condition, so there is no boundary artifact to allow for.
     const double speed_x = 3.0;
     const double speed_y = -4.0;
     const double start_utc = 43200.0; // noon
@@ -349,7 +349,7 @@ TEST_CASE("adapt resamples onto a uniform grid and keeps the clock", "[trajector
         const auto& now = trajectory.states[i];
         REQUIRE(now.t == Catch::Approx(0.1 * static_cast<double>(i)));
         // UTC seconds used to be dropped here: the repacked State was
-        // value-initialised and nothing refilled utcsec, which moved the whole
+        // value-initialized and nothing refilled utcsec, which moved the whole
         // flight to midnight and with it --dnlfile's day/night split.
         REQUIRE(now.utcsec == Catch::Approx(start_utc + now.t));
         REQUIRE(now.x == Catch::Approx(100.0 + speed_x * now.t));
@@ -393,7 +393,7 @@ TEST_CASE("adapt takes the load factor from the fitted path", "[trajectory][adap
     {
         const auto& now = trajectory.states[i];
         REQUIRE(now.vx == Catch::Approx(acceleration * now.t).epsilon(1e-6));
-        // nx is normalised by LF, so recover the acceleration in g from both.
+        // nx is normalized by LF, so recover the acceleration in g from both.
         REQUIRE(now.nx * now.LF == Catch::Approx(acceleration * mps2g).epsilon(1e-6));
         REQUIRE(now.nz * now.LF == Catch::Approx(1.0).epsilon(1e-6));
     }
@@ -415,9 +415,9 @@ TEST_CASE("the default observer grid is bit-exact in feet", "[units]")
 
     for (int i = 0; i < 120; i++)
     {
-        const double as_metres = -1500.0 + 25.0 * i;
+        const double as_meters = -1500.0 + 25.0 * i;
         const double via_feet = (-bound_ft + step_ft * i) * ft2m;
-        REQUIRE(via_feet == as_metres);
+        REQUIRE(via_feet == as_meters);
     }
 }
 
@@ -455,7 +455,7 @@ TEST_CASE("path_smoothing bounds the deviation, in feet", "[units][geodetic]")
 TEST_CASE("--units m reads the same flight from a metric file", "[units][geodetic]")
 {
     // The unit system is a statement about the interface, not about the
-    // physics: the same flight written in metres and read with metres has to
+    // physics: the same flight written in meters and read with meters has to
     // give the same states as the feet original read as feet.
     const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
     REQUIRE(records.size() > 100);
@@ -476,13 +476,13 @@ TEST_CASE("--units m reads the same flight from a metric file", "[units][geodeti
     const TempCsv metric_track(metric.str());
 
     const Trajectory in_feet("tracks/S-76D/197421AC.csv", "databases/S-76D.json", {}, feet);
-    const Trajectory in_metres(metric_track.path, "databases/S-76D.json", {}, metres);
+    const Trajectory in_meters(metric_track.path, "databases/S-76D.json", {}, meters);
 
-    REQUIRE(in_metres.states.size() == in_feet.states.size());
+    REQUIRE(in_meters.states.size() == in_feet.states.size());
     for (std::size_t i = 0; i < in_feet.states.size(); i++)
     {
         const auto& a = in_feet.states[i];
-        const auto& b = in_metres.states[i];
+        const auto& b = in_meters.states[i];
         // Positions and velocities are already metric internally, so they match
         // to the round-off of writing the file out and reading it back.
         REQUIRE(std::fabs(b.x - a.x) < 1e-9);
@@ -496,29 +496,29 @@ TEST_CASE("--units m reads the same flight from a metric file", "[units][geodeti
 
 TEST_CASE("an altitude column may only claim the unit in force", "[units][geodetic]")
 {
-    // "alt_ft" under --units m would read feet as metres and fly the aircraft
+    // "alt_ft" under --units m would read feet as meters and fly the aircraft
     // a third as high; refusing to match is what makes that loud instead of
     // silent.  A bare "alt" claims nothing and is always taken.
     const std::string body = "0,39.81,-74.43,300\n1,39.811,-74.431,299\n2,39.812,-74.432,298\n";
     const TempCsv in_feet("time,lat,lon,alt_ft\n" + body);
-    const TempCsv in_metres("time,lat,lon,alt_m\n" + body);
-    const TempCsv unlabelled("time,lat,lon,alt\n" + body);
+    const TempCsv in_meters("time,lat,lon,alt_m\n" + body);
+    const TempCsv unlabeled("time,lat,lon,alt\n" + body);
 
     GeodeticInput input;
     input.frame = LocalFrame(Geodetic {39.81, -74.43, 0.0});
 
     REQUIRE_NOTHROW(Trajectory(in_feet.path, "databases/S-76D.json", input, feet));
-    REQUIRE_THROWS(Trajectory(in_feet.path, "databases/S-76D.json", input, metres));
-    REQUIRE_NOTHROW(Trajectory(in_metres.path, "databases/S-76D.json", input, metres));
-    REQUIRE_THROWS(Trajectory(in_metres.path, "databases/S-76D.json", input, feet));
-    REQUIRE_NOTHROW(Trajectory(unlabelled.path, "databases/S-76D.json", input, feet));
-    REQUIRE_NOTHROW(Trajectory(unlabelled.path, "databases/S-76D.json", input, metres));
+    REQUIRE_THROWS(Trajectory(in_feet.path, "databases/S-76D.json", input, meters));
+    REQUIRE_NOTHROW(Trajectory(in_meters.path, "databases/S-76D.json", input, meters));
+    REQUIRE_THROWS(Trajectory(in_meters.path, "databases/S-76D.json", input, feet));
+    REQUIRE_NOTHROW(Trajectory(unlabeled.path, "databases/S-76D.json", input, feet));
+    REQUIRE_NOTHROW(Trajectory(unlabeled.path, "databases/S-76D.json", input, meters));
 }
 
 namespace {
 // A steady 6 degree descent at 36 m/s, 0.02 s apart, with vz stored as the
 // file would: positive up (vz_positive_up) or positive down.  derive has
-// already normalised the load factor, as the reader leaves it.
+// already normalized the load factor, as the reader leaves it.
 std::vector<State> steady_descent(bool vz_positive_up)
 {
     dimensional_data vehicle;
@@ -560,8 +560,8 @@ TEST_CASE("vz stored positive down is detected and made positive up", "[trajecto
 
 TEST_CASE("vz already positive up is left alone, even at a constant rate", "[trajectory][vz]")
 {
-    // A steady descent has a constant dz/dt, so a centred correlation has no
-    // variance to work with; the check has to decide from the uncentred one.
+    // A steady descent has a constant dz/dt, so a centerd correlation has no
+    // variance to work with; the check has to decide from the uncenterd one.
     auto states = steady_descent(true);
     const auto before = states;
     REQUIRE_FALSE(correct_vertical_speed_sign(states, "descent_vz_up"));
@@ -702,4 +702,49 @@ TEST_CASE("the wind is the profile's at each state's height, in the track frame"
     REQUIRE(trajectory.states[1].wy == Catch::Approx(10.0));
     REQUIRE(trajectory.states[1].mu * trajectory.vehicle.tip_speed
             == Catch::Approx(std::hypot(40.0, 10.0)));
+}
+
+TEST_CASE("at hover the sphere's nose is the heading, turned into the local frame", "[trajectory]")
+{
+    // A local frame with +x along compass 270 and +y along 180, as the 2017 AC
+    // tracks are.  Fast states fly west on heading 274 (an INS heading 4 degrees
+    // off the ground track), so the offset inferred from them folds that in.
+    auto state = [](double vx, double vy, double heading) {
+        State s {};
+        s.vx = vx;
+        s.vy = vy;
+        s.heading = heading;
+        return s;
+    };
+    std::vector<State> states;
+    for (int i = 0; i < 60; i++)
+        states.push_back(state(40.0, 0.0, 274.0));
+    const auto inferred = heading_offset(states, std::numeric_limits<double>::quiet_NaN());
+    REQUIRE(inferred.has_value());
+    CHECK(std::remainder(*inferred * 180.0 / pi - 274.0, 360.0) == Catch::Approx(0.0).margin(1e-9));
+    // A hovering state drifting, nose north: north is local -y in this frame.
+    const auto nose = nose_direction(state(0.1, -0.1, 4.0), inferred);
+    CHECK(nose[0] == Catch::Approx(0.0).margin(1e-12));
+    CHECK(nose[1] == Catch::Approx(-1.0));
+    CHECK(nose[2] == 0.0);
+    // Faster than heading_nose_speed it is the velocity, unchanged.
+    const State moving = state(3.0, 1.0, 4.0);
+    const auto along = nose_direction(moving, inferred);
+    CHECK(along[0] == moving.vx);
+    CHECK(along[1] == moving.vy);
+    // A hover-only track has no fast states: the frame bearing supplies it,
+    // and without one there is none.
+    std::vector<State> hover(100, state(0.1, 0.0, 90.0));
+    CHECK(std::remainder(*heading_offset(hover, 270.0) * 180.0 / pi - 270.0, 360.0)
+            == Catch::Approx(0.0).margin(1e-9));
+    CHECK_FALSE(heading_offset(hover, std::numeric_limits<double>::quiet_NaN()).has_value());
+    // East on that frame is local -x.
+    const auto east = nose_direction(hover.front(), heading_offset(hover, 270.0));
+    CHECK(east[0] == Catch::Approx(-1.0));
+    CHECK(east[1] == Catch::Approx(0.0).margin(1e-12));
+    // No heading column: the velocity.
+    State bare {};
+    bare.vx = 0.1;
+    CHECK_FALSE(heading_offset(std::vector<State>(60, bare), 270.0).has_value());
+    CHECK(nose_direction(bare, 1.0)[0] == 0.1);
 }

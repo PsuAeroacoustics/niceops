@@ -36,11 +36,11 @@ struct Atmosphere
     // absorption coefficients were fitted against.
     double sound_speed() const;
 
-    // Saturation vapour pressure, kPa.
+    // Saturation vapor pressure, kPa.
     double saturation_pressure() const;
 
-    // Molar concentration of water vapour, percent.
-    double molar_concentration_water_vapour() const;
+    // Molar concentration of water vapor, percent.
+    double molar_concentration_water_vapor() const;
 
     // Relaxation frequencies of oxygen and nitrogen, Hz.  Both depend only on
     // the atmosphere, so hoist them out of any per-frequency loop.
@@ -56,11 +56,11 @@ struct Atmosphere
     double attenuation_coefficient(double frequency) const;
 };
 
-// Absorption coefficients in dB/m for each band centre, computed with the
+// Absorption coefficients in dB/m for each band center, computed with the
 // relaxation frequencies evaluated once.
 //
 // This is what the propagation path wants: the coefficients depend only on the
-// atmosphere and the band centres, so a run computes them once and then pays a
+// atmosphere and the band centers, so a run computes them once and then pays a
 // multiply per band per evaluation rather than a dozen exp() and pow() calls.
 std::vector<double> absorption_coefficients(const Atmosphere& atmosphere,
         const std::vector<double>& frequencies);

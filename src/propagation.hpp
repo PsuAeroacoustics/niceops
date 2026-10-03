@@ -13,10 +13,10 @@
 //                    also how panam's hemigen defined the spheres' angles, so a
 //                    refracting model keys the lookup on its launch direction.
 //   range            The distance spherical spreading is equivalent to, from
-//                    the source's centre: the level falls by
+//                    the source's center: the level falls by
 //                    20 log10(range / r_sphere).  For a curved ray it comes
 //                    from the ray tube's area, not the arc.
-//   path_length      The length absorbed along, from the source's centre
+//   path_length      The length absorbed along, from the source's center
 //                    (eval_spectrum absorbs over path_length - r_sphere): the
 //                    slant range for a straight ray, the arc for a curved one.
 //   source_height,   The ground model's geometry (GroundTable, the exact model,

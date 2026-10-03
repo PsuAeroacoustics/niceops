@@ -122,7 +122,7 @@ void ConditionInterpolator::barycentric(const double* query, double* weights,
     if (mesh_ && mesh_->barycentric(clamped.data(), raw.data(), vertices.data()))
     {
         // A query sitting exactly on one of the database's own conditions takes
-        // that sphere's data whole rather than a blend of its neighbours.  Hover
+        // that sphere's data whole rather than a blend of its neighbors.  Hover
         // at mu = 0 lands here, on the boundary of the envelope, and blending it
         // with anything disagreed with the stored levels by up to 5.8 dB.
         for (std::size_t v = 0; v <= dim; v++)

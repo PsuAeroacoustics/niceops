@@ -20,6 +20,9 @@ constexpr double ground_reflection_coefficient = 6.325159;
 // Beyond this the boundary-loss term is negligible and its series is not worth
 // evaluating; panam uses the same cut, leaving the term at zero above it.
 constexpr double boundary_loss_cutoff = 500.0;
+// |1 + R_p|^2 under which the boundary loss is kept past the cutoff (see
+// reflection_coefficient): -40 dB.
+constexpr double near_cancellation = 1e-4;
 
 // The spherical-wave reflection coefficient Q of the image source, at grazing
 // cosine `cos_grazing`, for a band whose Delany-Bazley impedance is (zr, zi).
@@ -96,6 +99,30 @@ inline std::array<double, 2> reflection_coefficient(double cos_grazing, double k
             // 1 + i*root_pi*product
             loss_r = 1.0 - root_pi * product_i;
             loss_i = root_pi * product_r;
+        }
+        else if ((1.0 + plane_r) * (1.0 + plane_r) + plane_i * plane_i < near_cancellation)
+        {
+            // Near grazing, which a refracted ray arriving almost level at a
+            // flush receiver gives: the plane coefficient tends to -1, so
+            // dropping the boundary loss as panam does past the cutoff cancels
+            // the two paths to rounding (the model then threw).  What is left
+            // there is the loss itself, (1 - R_p) F, and past |w| = 500
+            // F = -1/(2w) - 3/(4w^2) - 15/(8w^3) to 1e-7 of itself.  It is at
+            // most 2/|w|, so it moves the level by more than 1 dB only where
+            // |1 + R_p| is under about 1e-2; past -40 dB the plane coefficient
+            // alone is already that wrong, and everything above it is panam's
+            // to the bit.
+            const double w_r = param_r * param_r - param_i * param_i;
+            const double w_i = 2.0 * param_r * param_i;
+            const double w_norm = w_r * w_r + w_i * w_i;
+            const double inv_r = w_r / w_norm; // 1/w
+            const double inv_i = -w_i / w_norm;
+            const double inv2_r = inv_r * inv_r - inv_i * inv_i; // 1/w^2
+            const double inv2_i = 2.0 * inv_r * inv_i;
+            const double inv3_r = inv2_r * inv_r - inv2_i * inv_i; // 1/w^3
+            const double inv3_i = inv2_r * inv_i + inv2_i * inv_r;
+            loss_r = -0.5 * inv_r - 0.75 * inv2_r - 1.875 * inv3_r;
+            loss_i = -0.5 * inv_i - 0.75 * inv2_i - 1.875 * inv3_i;
         }
 
         // image = plane + loss * (1 - plane)
@@ -312,6 +339,22 @@ std::array<double, 2> spherical_reflection_coefficient(double cos_grazing, doubl
 {
     return reflection_coefficient(cos_grazing, kappa, admittance.real(), admittance.imag(),
             boundary_loss);
+}
+
+void add_bounce_loss(double grazing, int bounces,
+        const std::vector<std::complex<double>>& admittance, std::size_t first_band,
+        std::size_t last_band, double* loss)
+{
+    if (bounces <= 0)
+        return;
+    const double sin_grazing = std::sin(grazing);
+    last_band = std::min(last_band, admittance.size());
+    for (std::size_t band = first_band; band < last_band; band++)
+    {
+        const auto q = reflection_coefficient(sin_grazing, 0.0, admittance[band].real(),
+                admittance[band].imag(), false);
+        loss[band] -= bounces * 10.0 * std::log10(q[0] * q[0] + q[1] * q[1]);
+    }
 }
 
 std::vector<double> ground_gain_bounds(const GroundModel& ground,

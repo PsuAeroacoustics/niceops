@@ -118,7 +118,7 @@ TEST_CASE("the zeros of Ai' + q Ai are found, and none is missed", "[benchmark]"
         CHECK(std::abs(rigid[n - 1] - airy_prime_zero(n)) < 1e-12);
 
     // Case 2's ground at 100 Hz, q = i k0 l beta: the lowest zero has
-    // travelled half-way to the imaginary axis.  Mathematica's, by FindRoot.
+    // traveled half-way to the imaginary axis.  Mathematica's, by FindRoot.
     const complex q1(0.57, 0.628);
     const auto zeros = impedance_airy_zeros(q1, 3);
     for (const complex expected : {complex(-0.55900779524144920, 1.00743162226423679),

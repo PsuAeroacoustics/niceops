@@ -26,7 +26,7 @@
 // PRECONDITION: coordinates must be normal floating-point numbers, not
 // subnormals.  two_product is exact only while the product stays in the normal
 // range -- an FMA that underflows loses the low half, and with it the
-// exactness the whole construction rests on.  NICE-OPS normalises every
+// exactness the whole construction rests on.  NICE-OPS normalizes every
 // operating condition into [0, 1] before it gets here, so the smallest
 // magnitudes in play are around 1e-3; subnormals begin below 1e-308.
 //
@@ -49,7 +49,7 @@ int exact_determinant_sign(const double* matrix, std::size_t size);
 int orientation(const double* points, std::size_t dim);
 
 // Whether `query` lies inside the circumsphere of the simplex on `dim + 1`
-// points: +1 inside, -1 outside, 0 exactly on it.  The sign is normalised so
+// points: +1 inside, -1 outside, 0 exactly on it.  The sign is normalized so
 // that it does not depend on the orientation of the simplex.
 //
 // This is the lifted orientation test: points rise to the paraboloid

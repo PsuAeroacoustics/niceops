@@ -49,7 +49,7 @@ TEST_CASE("ISO 9613-1 intermediate quantities match panam", "[atmosphere]")
     dry.relative_humidity = 20.0;
 
     check_close(dry.saturation_pressure(), 2.33663045297615);
-    check_close(dry.molar_concentration_water_vapour(), 0.461214991951867);
+    check_close(dry.molar_concentration_water_vapor(), 0.461214991951867);
     check_close(dry.relaxation_frequency_oxygen(), 10545.4297539258);
     check_close(dry.relaxation_frequency_nitrogen(), 138.140197746523);
 
@@ -62,7 +62,7 @@ TEST_CASE("ISO 9613-1 intermediate quantities match panam", "[atmosphere]")
     humid.relative_humidity = 70.0;
 
     check_close(humid.saturation_pressure(), 3.68251757734024);
-    check_close(humid.molar_concentration_water_vapour(), 2.43783081533778);
+    check_close(humid.molar_concentration_water_vapor(), 2.43783081533778);
     check_close(humid.relaxation_frequency_oxygen(), 89325.2869346732);
     check_close(humid.relaxation_frequency_nitrogen(), 737.82581815141);
 }

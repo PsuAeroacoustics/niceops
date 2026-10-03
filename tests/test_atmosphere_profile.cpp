@@ -85,19 +85,19 @@ TEST_CASE("read_atmosphere_profile reads named units and orders by height", "[at
 TEST_CASE("read_atmosphere_profile tells bare units from the values", "[atmosphere_profile]")
 {
     TempCsv kelvin_kpa("z, T, RH, p\n0, 288.15, 50, 101.325\n");
-    const auto a = read_atmosphere_profile(kelvin_kpa.path, metres, 0.0);
+    const auto a = read_atmosphere_profile(kelvin_kpa.path, meters, 0.0);
     CHECK(a.temperature[0] == 288.15);
     CHECK(a.pressure[0] == 101.325);
 
     TempCsv celsius_pa("z, temperature, humidity, pressure\n0, 15, 50, 101325\n");
-    const auto b = read_atmosphere_profile(celsius_pa.path, metres, 0.0);
+    const auto b = read_atmosphere_profile(celsius_pa.path, meters, 0.0);
     CHECK(b.temperature[0] == Catch::Approx(288.15));
     CHECK(b.pressure[0] == Catch::Approx(101.325));
 
-    // "T (K)": the parenthesised unit is dropped by the header matching, so
+    // "T (K)": the parenthesized unit is dropped by the header matching, so
     // this is the bare name too, and the values decide.
-    TempCsv parenthesised("z (m), T (K), RH (%)\n0, 280, 20\n100, 279, 20\n");
-    const auto c = read_atmosphere_profile(parenthesised.path, metres, 0.0);
+    TempCsv parenthesized("z (m), T (K), RH (%)\n0, 280, 20\n100, 279, 20\n");
+    const auto c = read_atmosphere_profile(parenthesized.path, meters, 0.0);
     CHECK(c.temperature[1] == 279.0);
     CHECK_FALSE(c.has_pressure());
 }
@@ -115,29 +115,29 @@ TEST_CASE("read_atmosphere_profile converts altitude to height above the observe
 TEST_CASE("read_atmosphere_profile refuses what it cannot read safely", "[atmosphere_profile]")
 {
     // A unit in the height column that disagrees with --units.
-    TempCsv metres_file("z_m, T_K, RH\n0, 288, 50\n");
-    CHECK_THROWS_AS(read_atmosphere_profile(metres_file.path, feet, 0.0), std::runtime_error);
-    CHECK_NOTHROW(read_atmosphere_profile(metres_file.path, metres, 0.0));
+    TempCsv meters_file("z_m, T_K, RH\n0, 288, 50\n");
+    CHECK_THROWS_AS(read_atmosphere_profile(meters_file.path, feet, 0.0), std::runtime_error);
+    CHECK_NOTHROW(read_atmosphere_profile(meters_file.path, meters, 0.0));
 
     // Humidity given as a fraction.
     TempCsv fraction("z, T_K, RH\n0, 288, 0.5\n100, 287, 0.4\n");
-    CHECK_THROWS_AS(read_atmosphere_profile(fraction.path, metres, 0.0), std::runtime_error);
+    CHECK_THROWS_AS(read_atmosphere_profile(fraction.path, meters, 0.0), std::runtime_error);
 
     // Two levels at one height.
     TempCsv duplicate("z, T_K, RH\n0, 288, 50\n0, 287, 50\n");
-    CHECK_THROWS_AS(read_atmosphere_profile(duplicate.path, metres, 0.0), std::runtime_error);
+    CHECK_THROWS_AS(read_atmosphere_profile(duplicate.path, meters, 0.0), std::runtime_error);
 
-    // Kelvin labelled as Celsius.
-    TempCsv mislabelled("z, T_C, RH\n0, 288, 50\n");
-    CHECK_THROWS_AS(read_atmosphere_profile(mislabelled.path, metres, 0.0), std::runtime_error);
+    // Kelvin labeled as Celsius.
+    TempCsv mislabeled("z, T_C, RH\n0, 288, 50\n");
+    CHECK_THROWS_AS(read_atmosphere_profile(mislabeled.path, meters, 0.0), std::runtime_error);
 
     // No humidity at all.
     TempCsv no_humidity("z, T_K\n0, 288\n");
-    CHECK_THROWS_AS(read_atmosphere_profile(no_humidity.path, metres, 0.0), std::runtime_error);
+    CHECK_THROWS_AS(read_atmosphere_profile(no_humidity.path, meters, 0.0), std::runtime_error);
 
     // Pressure rising with height.
     TempCsv rising("z, T_K, RH, p_kPa\n0, 288, 50, 90\n100, 287, 50, 95\n");
-    CHECK_THROWS_AS(read_atmosphere_profile(rising.path, metres, 0.0), std::runtime_error);
+    CHECK_THROWS_AS(read_atmosphere_profile(rising.path, meters, 0.0), std::runtime_error);
 }
 
 TEST_CASE("AtmosphereProfile::at interpolates and holds the ends", "[atmosphere_profile]")
@@ -265,7 +265,7 @@ TEST_CASE("LayeredAbsorption is continuous as the two heights meet", "[atmospher
             just_inside(third_octaves.size());
     const double z = 812.37;
     layered.coefficients(z, point.data());
-    // Either side of the millimetre where the difference quotient hands over
+    // Either side of the millimeter where the difference quotient hands over
     // to the midpoint coefficient.
     layered.integral(z + 0.6e-3, f_a.data());
     layered.integral(z - 0.6e-3, f_b.data());
