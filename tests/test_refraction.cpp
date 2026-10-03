@@ -417,3 +417,158 @@ TEST_CASE("read_atmosphere_profile reads wind", "[refraction]")
     TempCsv half("z, T_K, RH, wind_speed_mps\n0, 288, 50, 10\n");
     CHECK_THROWS_AS(read_atmosphere_profile(half.path, meters, 0.0), std::runtime_error);
 }
+
+TEST_CASE("reflected_eigenray reaches a receiver above the source, or reports none", "[refraction]")
+{
+    // With sound bending down and the receiver above the source, launches steeper
+    // than a window about the horizontal never climb to the receiver's height.  The
+    // solve used to accept a zero of the clamped continuation there: a = 0.01,
+    // z_s = 2, z_r = 3, r = 800 m returned a launch whose traced ray ended 1.1 m
+    // short, with a grazing angle 19% low.  Every ray it reports must land.
+    int found = 0, reported_none = 0;
+    for (const double a : {0.003, 0.01, 0.03, 0.1})
+    {
+        for (const double z_s : {2.0, 5.0, 20.0})
+        {
+            for (const double z_r : {3.0, 8.0, 40.0})
+            {
+                if (!(z_r > z_s))
+                    continue;
+                for (double r = 60.0; r <= 3000.0; r += 140.0)
+                {
+                    const auto ray = reflected_eigenray({c0, a}, z_s, z_r, r);
+                    INFO("a = " << a << ", z_s = " << z_s << ", z_r = " << z_r << ", r = " << r);
+                    if (!ray.exists)
+                    {
+                        reported_none++;
+                        continue;
+                    }
+                    const auto traced = trace(a, z_s, ray.launch, r, true);
+                    REQUIRE(traced.grazing > 0.0);
+                    CHECK(traced.z == Catch::Approx(z_r).margin(1e-5));
+                    CHECK(traced.grazing == Catch::Approx(ray.grazing).margin(1e-7));
+                    CHECK(traced.length == Catch::Approx(ray.path_length).epsilon(1e-8));
+                    found++;
+                }
+            }
+        }
+    }
+    CHECK(found > 200);
+    // The case that returned a non-ray has none to return: at 800 m the only launches
+    // that put the traced ray at 3 m are the ones that rise past it, turn over (its
+    // apex is 3.3 m) and come back down -- a second crossing, arriving from above,
+    // which this ray (the first, ascending one) is not.  At 500 m there is a first.
+    CHECK_FALSE(reflected_eigenray({c0, 0.01}, 2.0, 3.0, 800.0).exists);
+    const auto near = reflected_eigenray({c0, 0.01}, 2.0, 3.0, 500.0);
+    REQUIRE(near.exists);
+    CHECK(trace(0.01, 2.0, near.launch, 500.0, true).z == Catch::Approx(3.0).margin(1e-5));
+    INFO(reported_none << " pairs had no reflected ray");
+}
+
+TEST_CASE("the fit projects the wind onto the path's own direction, both components", "[refraction]")
+{
+    // Every other wind test has one component zero or a profile that is linear in
+    // both, so a flipped sign on the northward projection passed them all.  Still,
+    // isothermal air with an east wind growing 0.025 /s and a north wind growing
+    // 0.015 /s; the frame's +x is east and +y north (bearing 90).
+    AtmosphereProfile profile;
+    profile.height = {0.0, 400.0};
+    profile.temperature = {288.15, 288.15};
+    profile.relative_humidity = {50.0, 50.0};
+    profile.pressure = {101.325, 97.0};
+    profile.wind_east = {0.0, 10.0};
+    profile.wind_north = {0.0, 6.0};
+    const EffectiveSoundSpeed air(profile, 90.0, 0.0, 400.0);
+    const auto top = air.moments(300.0);
+    const auto bottom = air.moments(1.2);
+    struct Direction
+    {
+        double hx, hy, gradient;
+    };
+    for (const Direction d : {Direction {0.6, 0.8, 0.6 * 0.025 + 0.8 * 0.015},
+                 Direction {0.6, -0.8, 0.6 * 0.025 - 0.8 * 0.015},
+                 Direction {-0.8, 0.6, -0.8 * 0.025 + 0.6 * 0.015},
+                 Direction {0.0, 1.0, 0.015}, Direction {-0.6, -0.8, -0.6 * 0.025 - 0.8 * 0.015}})
+    {
+        INFO("direction (" << d.hx << ", " << d.hy << ")");
+        CHECK(air.fit(300.0, top, 1.2, bottom, d.hx, d.hy).gradient == Catch::Approx(d.gradient).epsilon(1e-9));
+    }
+    // And in a frame turned 210 degrees the same wind is projected through that turn:
+    // a path along the compass bearing 120 (toward the south-east) is local (cos 30, -sin 30)
+    // when +x is bearing 150... easiest to check against the wind itself.
+    const EffectiveSoundSpeed turned(profile, 210.0, 0.0, 400.0);
+    const auto w = turned.wind(400.0);
+    const double along = 0.8 * w[0] + 0.6 * w[1];
+    CHECK(turned.fit(300.0, turned.moments(300.0), 1.2, turned.moments(1.2), 0.8, 0.6).gradient
+            == Catch::Approx(along / 400.0).epsilon(1e-9));
+}
+
+TEST_CASE("a short fit span is widened upward, past a kink, not downward", "[refraction]")
+{
+    // A level path spans too little height to fit a gradient through, so the span is
+    // widened to min_fit_span: upward, to where the sound will actually be going.  On a
+    // linear profile any window gives the same answer, so this one has no wind below
+    // 10 m and a shear above it.
+    AtmosphereProfile profile;
+    profile.height = {0.0, 10.0, 400.0};
+    profile.temperature = {288.15, 288.15, 288.15};
+    profile.relative_humidity = {50.0, 50.0, 50.0};
+    profile.pressure = {101.325, 101.2, 97.0};
+    profile.wind_east = {0.0, 0.0, 7.8};
+    profile.wind_north = {0.0, 0.0, 0.0};
+    const EffectiveSoundSpeed air(profile, 90.0, 0.0, 400.0);
+    // The least-squares slope of the wind over [5, 15], by quadrature.
+    const double z1 = 5.0, z2 = 5.0 + EffectiveSoundSpeed::min_fit_span;
+    auto wind = [](double z) { return z <= 10.0 ? 0.0 : 0.02 * (z - 10.0); };
+    const int n = 200000;
+    double mean = 0.0, moment = 0.0;
+    const double z_mid = 0.5 * (z1 + z2);
+    for (int i = 0; i < n; i++)
+    {
+        const double z = z1 + (z2 - z1) * (i + 0.5) / n;
+        mean += wind(z) / n;
+        moment += wind(z) * (z - z_mid) / n;
+    }
+    const double expected = moment / ((z2 - z1) * (z2 - z1) / 12.0);
+    REQUIRE(expected > 0.005);
+    const auto fit = air.fit(5.0, air.moments(5.0), 5.5, air.moments(5.5), 1.0, 0.0);
+    CHECK(fit.gradient == Catch::Approx(expected).epsilon(1e-4));
+    // Source and receiver in either order are the same path.
+    const auto reversed = air.fit(5.5, air.moments(5.5), 5.0, air.moments(5.0), 1.0, 0.0);
+    CHECK(reversed.gradient == Catch::Approx(fit.gradient).epsilon(1e-12));
+}
+
+TEST_CASE("a flush microphone sees the direct ray arrive at its own angle", "[refraction]")
+{
+    // finish_ground's plate branch hands the ground model the direct ray's arrival
+    // geometry: a source height and ground distance whose slant has the arrival's
+    // elevation and the ray's path length.  Swapping sin and cos in it passed every
+    // test, none of which asked for GroundGeometry::plate on a curved ray.
+    AtmosphereProfile profile;
+    profile.height = {0.0, 600.0};
+    profile.temperature = {288.15, 288.15};
+    profile.relative_humidity = {50.0, 50.0};
+    profile.pressure = {101.325, 94.0};
+    profile.wind_east = {0.0, 12.0}; // 0.02 /s toward the east: downwind bends the sound down
+    profile.wind_north = {0.0, 0.0};
+    const EffectiveSoundSpeed air(profile, 90.0, 0.0, 700.0);
+    for (const double r : {400.0, 900.0, 1500.0})
+    {
+        const Vec3 source(0.0, 0.0, 120.0);
+        const Vec3 observer(r, 0.0, 0.0);
+        const auto ray = refracted_ray(air, source, air.moments(120.0), observer, air.moments(0.0),
+                GroundGeometry::plate, 0.0);
+        REQUIRE(ray.curved);
+        REQUIRE(ray.direct.lit);
+        // The numerically traced ray's elevation where it arrives.
+        const auto traced = trace(ray.profile.gradient, 120.0, ray.direct.launch, r, false, ray.profile.sound_speed);
+        INFO("r = " << r);
+        CHECK(traced.z == Catch::Approx(0.0).margin(1e-6));
+        CHECK(std::atan2(ray.path.source_height, ray.path.ground_distance)
+                == Catch::Approx(std::fabs(traced.arrival)).margin(1e-7));
+        CHECK(std::hypot(ray.path.source_height, ray.path.ground_distance)
+                == Catch::Approx(ray.direct.path_length).epsilon(1e-9));
+        // The ray is steeper than the straight chord's 120/r: it was bent down.
+        CHECK(ray.path.source_height / ray.path.ground_distance > 120.0 / r);
+    }
+}

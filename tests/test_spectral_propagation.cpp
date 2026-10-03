@@ -332,3 +332,62 @@ TEST_CASE("spectral_direction_bounds really bounds the spectral level", "[spectr
         REQUIRE(tightest < 2.0);
     }
 }
+
+TEST_CASE("spectral_direction_bounds still bounds the level at the nose and tail axes",
+        "[spectral][bounds]")
+{
+    // The spectral table files a cell under the bin of its center direction as the
+    // broadband one does, and shared its gap: at theta = 0 or 180 that direction
+    // has no azimuth, so a query a degree off the axis, in a bin the pole's value
+    // was never written to, was bounded too low (0.14 dB on AS350).
+    const char* name = "databases/AS350_fixed_load_factor.nod";
+    if (!std::filesystem::exists(name))
+        return;
+    Database db(name);
+    REQUIRE(db.has_spectra());
+    const auto& bands = db.band_centers();
+    const auto gains = a_weighting_gains(bands, BandLimits {});
+    const std::vector<double> no_absorption(bands.size(), 0.0);
+
+    std::vector<Database::SourceState> states;
+    for (double mu = 0.0; mu <= 0.30001; mu += 0.02)
+        for (double gamma = -12.0; gamma <= 12.0001; gamma += 3.0)
+            for (double ct : {0.004, 0.0075, 0.011})
+                states.push_back(db.source_state(Vec3(0.0, 0.0, 60.0), Vec3(40.0, 5.0, -3.0),
+                        Vec3(0.1, -0.05, 1.0), mu, gamma, ct));
+    const auto bounds = db.spectral_direction_bounds(states, gains);
+    REQUIRE(bounds.usable());
+
+    const double radius = db.sphere_radius();
+    std::size_t checked = 0, exceeded = 0;
+    for (std::size_t s = 0; s < states.size(); s++)
+    {
+        const auto& frame = states[s].frame;
+        for (double theta : {0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0})
+            for (double sign : {1.0, -1.0})
+                for (double phi = -180.0; phi < 180.0; phi += 2.5)
+                    for (double range : {150.0, 400.0, 1200.0})
+                    {
+                        const double t = theta * M_PI / 180.0, p = phi * M_PI / 180.0;
+                        Vec3 direction = sign * std::cos(t) * frame.nose
+                                + std::sin(t) * std::cos(p) * frame.normal
+                                + std::sin(t) * std::sin(p) * frame.starboard;
+                        direction = direction.normalized();
+                        const Vec3 observer = states[s].position + range * direction;
+                        const Vec3 delta = observer - states[s].position;
+                        const double squared_range = delta.squaredNorm();
+                        if (squared_range <= radius * radius)
+                            continue;
+                        const int bin = DirectionBounds::bin(frame.nose.dot(delta),
+                                frame.normal.dot(delta), frame.starboard.dot(delta), squared_range);
+                        const double level = db.spectral_level_at_observer(observer, states[s],
+                                no_absorption.data(), gains);
+                        checked++;
+                        if (bounds.numerator(s, bin) < std::pow(10.0, 0.1 * level) * squared_range)
+                            exceeded++;
+                    }
+    }
+    INFO(exceeded << " of " << checked << " directions exceed the spectral bound");
+    REQUIRE(checked > 2000000);
+    REQUIRE(exceeded == 0);
+}

@@ -3,13 +3,16 @@
 // approx_equal() from sphere_database.hpp to keep identical pass/fail
 // semantics rather than Catch::Approx.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -17,6 +20,7 @@
 #include <netcdf.h>
 
 #include "sphere_database.hpp"
+#include "util/logger.hpp"
 
 using namespace niceops;
 
@@ -210,6 +214,75 @@ TEST_CASE("DirectionBounds really bounds the level", "[sphere_database]")
         }
     }
     REQUIRE(checked > 10000);
+}
+
+TEST_CASE("DirectionBounds still bounds the level at the nose and tail axes", "[sphere_database][bounds]")
+{
+    // A cell is filed under the bin of its center direction.  At theta = 0 or 180
+    // that direction has no azimuth (up = across = 0), so every phi of the pole
+    // row landed in one azimuth bin and the bins either side of it never saw the
+    // pole's value -- while a query a degree off the axis, in one of those
+    // bins, weights the pole cells at up to 0.9.  The bound was then exceeded by
+    // up to 0.8 dB, and the windowed peak search's exactness rests on it never
+    // being.  The ordinary sweep above puts only a handful of observers within 2
+    // degrees of an axis; this one aims at them, over the whole operating
+    // envelope (the violation needs a pole value that is the local maximum of its
+    // bin, which not every blend has).
+    if (!std::filesystem::exists("databases/S-76D_M3.nod"))
+        return;
+    Database db("databases/S-76D_M3.nod");
+
+    std::vector<Database::SourceState> states;
+    for (double mu = 0.0; mu <= 0.30001; mu += 0.02)
+        for (double gamma = -12.0; gamma <= 12.0001; gamma += 3.0)
+            for (double ct = 0.003; ct <= 0.0101; ct += 0.0014)
+                states.push_back(db.source_state(Vec3(0.0, 0.0, 150.0), Vec3(60.0, 10.0, 2.0),
+                        Vec3(0.1, -0.05, 1.0), mu, gamma, ct));
+    const auto bounds = db.direction_bounds(states);
+    REQUIRE(bounds.usable());
+
+    const double radius = db.sphere_radius();
+    std::size_t checked = 0, exceeded = 0;
+    double worst_db = 0.0;
+    for (std::size_t s = 0; s < states.size(); s++)
+    {
+        const auto& frame = states[s].frame;
+        for (double theta : {0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0})
+        {
+            for (double sign : {1.0, -1.0}) // the nose axis, then the tail axis
+            {
+                for (double phi = -180.0; phi < 180.0; phi += 2.5)
+                {
+                    for (double range : {150.0, 400.0, 1200.0})
+                    {
+                    const double t = theta * pi / 180.0, p = phi * pi / 180.0;
+                    Vec3 direction = sign * std::cos(t) * frame.nose
+                            + std::sin(t) * std::cos(p) * frame.normal
+                            + std::sin(t) * std::sin(p) * frame.starboard;
+                    direction = direction.normalized();
+                    const Vec3 observer = states[s].position + range * direction;
+                    const Vec3 delta = observer - states[s].position;
+                    const double squared_range = delta.squaredNorm();
+                    if (squared_range <= radius * radius)
+                        continue;
+                    const int bin = DirectionBounds::bin(frame.nose.dot(delta),
+                            frame.normal.dot(delta), frame.starboard.dot(delta), squared_range);
+                    const double level = db.level_at_observer(observer, states[s]);
+                    const double needed = std::pow(10.0, 0.1 * level) * squared_range * (1.0 - 1e-12);
+                    checked++;
+                    if (bounds.numerator(s, bin) < needed)
+                    {
+                        exceeded++;
+                        worst_db = std::max(worst_db, 10.0 * std::log10(needed / bounds.numerator(s, bin)));
+                    }
+                    }
+                }
+            }
+        }
+    }
+    INFO(exceeded << " of " << checked << " directions exceed the bound, worst " << worst_db << " dB");
+    REQUIRE(checked > 5000000);
+    REQUIRE(exceeded == 0);
 }
 
 TEST_CASE("clamp", "[sphere_database]")
@@ -440,7 +513,8 @@ namespace {
 // load-factor scaling law against.
 std::string write_fixed_load_factor_test_database(const std::string& name,
         const std::vector<std::array<double, 4>>& conditions, bool fixed_load_factor,
-        double sphere_radius_m = 30.48)
+        double sphere_radius_m = 30.48, nc_type storage = NC_DOUBLE, double sphere_1_phi_shift = 0.0,
+        double first_channel_eaa = 0.0)
 {
     const auto path = (std::filesystem::temp_directory_path() / name).string();
     int file = 0;
@@ -475,17 +549,17 @@ std::string write_fixed_load_factor_test_database(const std::string& name,
         REQUIRE(nc_def_dim(group, "condition", 1, &condition_dim) == NC_NOERR);
         REQUIRE(nc_def_dim(group, "channels", n_channels, &channel_dim) == NC_NOERR);
         GroupVars v {group, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-        REQUIRE(nc_def_var(group, "radius", NC_DOUBLE, 1, &radii_dim, &v.radius) == NC_NOERR);
-        REQUIRE(nc_def_var(group, "rotor_scale", NC_DOUBLE, 1, &condition_dim, &v.scale) == NC_NOERR);
-        REQUIRE(nc_def_var(group, "advance_ratio", NC_DOUBLE, 1, &condition_dim, &v.mu) == NC_NOERR);
-        REQUIRE(nc_def_var(group, "flight_path_angle", NC_DOUBLE, 1, &condition_dim, &v.gamma)
+        REQUIRE(nc_def_var(group, "radius", storage, 1, &radii_dim, &v.radius) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "rotor_scale", storage, 1, &condition_dim, &v.scale) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "advance_ratio", storage, 1, &condition_dim, &v.mu) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "flight_path_angle", storage, 1, &condition_dim, &v.gamma)
                 == NC_NOERR);
-        REQUIRE(nc_def_var(group, "thrust_coefficient", NC_DOUBLE, 1, &condition_dim, &v.ct)
+        REQUIRE(nc_def_var(group, "thrust_coefficient", storage, 1, &condition_dim, &v.ct)
                 == NC_NOERR);
-        REQUIRE(nc_def_var(group, "phi", NC_DOUBLE, 1, &channel_dim, &v.phi) == NC_NOERR);
-        REQUIRE(nc_def_var(group, "theta", NC_DOUBLE, 1, &channel_dim, &v.theta) == NC_NOERR);
-        REQUIRE(nc_def_var(group, "dBA", NC_DOUBLE, 1, &channel_dim, &v.dba) == NC_NOERR);
-        REQUIRE(nc_def_var(group, "EAA", NC_DOUBLE, 1, &channel_dim, &v.eaa) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "phi", storage, 1, &channel_dim, &v.phi) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "theta", storage, 1, &channel_dim, &v.theta) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "dBA", storage, 1, &channel_dim, &v.dba) == NC_NOERR);
+        REQUIRE(nc_def_var(group, "EAA", storage, 1, &channel_dim, &v.eaa) == NC_NOERR);
         groups.push_back(v);
     }
     REQUIRE(nc_enddef(file) == NC_NOERR);
@@ -511,14 +585,20 @@ std::string write_fixed_load_factor_test_database(const std::string& name,
         // Uniform across every channel: these tests are about the
         // load-factor correction, not phi/theta interpolation, so the base
         // level is the same everywhere on a given condition's sphere.
-        const std::vector<double> eaa(n_channels, 0.0);
+        std::vector<double> eaa(n_channels, 0.0);
+        if (i == 0)
+            eaa[0] = first_channel_eaa;
         const std::vector<double> dba(n_channels, conditions[i][3]);
         REQUIRE(nc_put_var_double(v.group, v.radius, &sphere_radius_m) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.scale, &scale) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.mu, &conditions[i][0]) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.gamma, &conditions[i][1]) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.ct, &conditions[i][2]) == NC_NOERR);
-        REQUIRE(nc_put_var_double(v.group, v.phi, phi_channel.data()) == NC_NOERR);
+        std::vector<double> labels = phi_channel;
+        if (i == 1)
+            for (double& label : labels)
+                label += sphere_1_phi_shift;
+        REQUIRE(nc_put_var_double(v.group, v.phi, labels.data()) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.theta, theta_channel.data()) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.dba, dba.data()) == NC_NOERR);
         REQUIRE(nc_put_var_double(v.group, v.eaa, eaa.data()) == NC_NOERR);
@@ -565,8 +645,13 @@ std::string write_shared_grid_test_database(const std::string& name,
     REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file) == NC_NOERR);
     int scalar_dim = 0;
     REQUIRE(nc_def_dim(file, "scalar", 1, &scalar_dim) == NC_NOERR);
-    int same_grid_var = 0, version_var = 0, shared_var = 0;
+    int same_grid_var = 0, version_var = 0, shared_var = 0, fixed_lf_var = 0;
     REQUIRE(nc_def_var(file, "same_grid", NC_SHORT, 1, &scalar_dim, &same_grid_var) == NC_NOERR);
+    // These fixtures give every sphere one thrust coefficient, which is what a
+    // fixed_load_factor database is.  Written without the flag, the thrust axis
+    // normalized 0/0 and the triangulation was built on NaN -- the loader now
+    // refuses that, so the flag says what the fixture is.
+    REQUIRE(nc_def_var(file, "fixed_load_factor", NC_SHORT, 1, &scalar_dim, &fixed_lf_var) == NC_NOERR);
     REQUIRE(nc_def_var(file, "database_version", NC_INT, 1, &scalar_dim, &version_var) == NC_NOERR);
     REQUIRE(nc_def_var(file, "shared_grid_and_frequency", NC_SHORT, 1, &scalar_dim, &shared_var)
             == NC_NOERR);
@@ -661,6 +746,13 @@ std::string write_shared_grid_test_database(const std::string& name,
     REQUIRE(nc_put_var_short(file, same_grid_var, &one) == NC_NOERR);
     REQUIRE(nc_put_var_int(file, version_var, &version) == NC_NOERR);
     REQUIRE(nc_put_var_short(file, shared_var, &shared_flag) == NC_NOERR);
+    {
+        bool constant_ct = conditions.size() > 1;
+        for (const auto& condition : conditions)
+            constant_ct = constant_ct && condition[2] == conditions.front()[2];
+        const short fixed_flag = constant_ct ? 1 : 0;
+        REQUIRE(nc_put_var_short(file, fixed_lf_var, &fixed_flag) == NC_NOERR);
+    }
     if (shared_grid_and_frequency)
     {
         REQUIRE(nc_put_var_double(file, root_phi_var, phi_channel.data()) == NC_NOERR);
@@ -952,9 +1044,12 @@ TEST_CASE("shared_grid_and_frequency: absent is the same as false (legacy files)
     // Every file every other test in this suite loads predates this flag, so
     // this is really just documenting the default rather than adding new
     // coverage: get_int_scalar's own default is what makes it work.
+    // Three spheres spanning mu and gamma: two at one gamma left that axis
+    // constant, which a database of several spheres is refused for.
     const std::vector<std::array<double, 4>> conditions = {
         {0.0, 0.0, 0.005, 100.0},
         {1.0, 0.0, 0.005, 110.0},
+        {0.0, 1.0, 0.005, 120.0},
     };
     const auto path = write_shared_grid_test_database(
             "niceops_no_shared_flag.nod", conditions, false, false);
@@ -1082,6 +1177,331 @@ TEST_CASE("spectra land in the direction their channel names, whatever the row o
                     REQUIRE(approx_equal(
                             sphere.amplitudes[(m * sphere.thetas.size() + n) * n_bands + b],
                             200.0 + sphere.phis[m] + 10.0 * static_cast<double>(b)));
+        std::filesystem::remove(path);
+    }
+}
+
+namespace {
+
+// A database of `conditions` as the shared-grid writer lays it out, loaded and
+// removed again; returns what loading it said was wrong, or empty.
+std::string load_problem_of(const std::string& name,
+        const std::vector<std::array<double, 4>>& conditions)
+{
+    const auto path = write_shared_grid_test_database(name, conditions, false, false);
+    std::string problem;
+    try
+    {
+        Database db(path);
+    }
+    catch (const std::exception& e)
+    {
+        problem = e.what();
+    }
+    std::filesystem::remove(path);
+    return problem;
+}
+
+} // namespace
+
+TEST_CASE("a database whose conditions do not vary is refused, not NaN", "[sphere_database][validation]")
+{
+    // (x - min) / (max - min) is 0/0 on an axis that does not vary, and the
+    // triangulation was built on NaN: every query then returned one arbitrary
+    // sphere (114.0 dB at four conditions whose true levels were 100 to 112),
+    // silently.  The writer flags equal thrust coefficients as fixed_load_factor,
+    // as a real build of reference spheres is.
+    const std::vector<std::array<double, 4>> level_flight_only = {
+        {0.0, 0.0, 0.004, 100.0}, {0.1, 0.0, 0.004, 105.0}, {0.2, 0.0, 0.004, 110.0},
+        {0.0, 0.0, 0.008, 104.0}, {0.1, 0.0, 0.008, 109.0}, {0.2, 0.0, 0.008, 114.0}};
+    const auto problem = load_problem_of("niceops_constant_gamma.nod", level_flight_only);
+    REQUIRE(problem.find("flight path angle is 0 in all 6 spheres") != std::string::npos);
+
+    const std::vector<std::array<double, 4>> constant_mu = {
+        {0.0, 0.0, 0.005, 100.0}, {0.0, 1.0, 0.005, 110.0}, {0.0, 2.0, 0.005, 120.0}};
+    REQUIRE(load_problem_of("niceops_constant_mu.nod", constant_mu).find("advance ratio is 0")
+            != std::string::npos);
+
+    // A varying set loads.
+    const std::vector<std::array<double, 4>> fine = {
+        {0.0, 0.0, 0.005, 100.0}, {1.0, 0.0, 0.005, 110.0}, {0.0, 1.0, 0.005, 120.0}};
+    REQUIRE(load_problem_of("niceops_varying.nod", fine).empty());
+}
+
+TEST_CASE("two spheres at one operating condition are refused", "[sphere_database][validation]")
+{
+    // The second left a zero-volume simplex in the triangulation: the load
+    // aborted with "could not locate a simplex", or every query walked the whole
+    // mesh and fell through to the nearest sphere.
+    const std::vector<std::array<double, 4>> duplicated = {
+        {0.0, 0.0, 0.005, 100.0}, {1.0, 0.0, 0.005, 110.0}, {0.0, 1.0, 0.005, 120.0},
+        {1.0, 1.0, 0.005, 130.0}, {1.0, 0.0, 0.005, 111.0}};
+    const auto problem = load_problem_of("niceops_duplicate_condition.nod", duplicated);
+    REQUIRE(problem.find("Spheres 1 and 4 are at the same operating condition")
+            != std::string::npos);
+}
+
+TEST_CASE("inside the sphere the level is the surface's", "[sphere_database]")
+{
+    // Spherical spreading extrapolated inward grows as 1/r and diverges at r = 0:
+    // an observer exactly at a source position got +inf in the CSV, an observer
+    // within the 30 m sphere up to 4.4 dB more than at its surface, and with the
+    // asserts live the r = 0 case aborted the run.  The sphere is the source's own
+    // volume, so spreading and absorption start at its surface and the level inside
+    // is the surface's.
+    if (!std::filesystem::exists("databases/S-76D_M3.nod"))
+        return;
+    Database db("databases/S-76D_M3.nod");
+    const double radius = db.sphere_radius();
+    const auto blend = db.blend_at(0.1, 0.0, 0.006);
+    const double at_surface = db.eval(radius, 20.0, 60.0, blend);
+    for (double fraction : {0.0, 1e-12, 1e-6, 0.01, 0.1, 0.5, 0.99, 1.0})
+    {
+        const double level = db.eval(fraction * radius, 20.0, 60.0, blend);
+        INFO("range " << fraction << " radii");
+        REQUIRE(std::isfinite(level));
+        REQUIRE(level == at_surface);
+    }
+    // Beyond the surface the level still falls with range, as it always did.
+    double previous = at_surface;
+    for (double fraction : {1.01, 1.5, 2.0, 10.0, 100.0})
+    {
+        const double level = db.eval(fraction * radius, 20.0, 60.0, blend);
+        INFO("range " << fraction << " radii");
+        REQUIRE(level < previous);
+        previous = level;
+    }
+}
+
+TEST_CASE("a database stored as float32 loads as what it holds", "[sphere_database][validation]")
+{
+    // nc_get_var copies the file's external type unconverted, so a float32 .nod
+    // was read as garbage into doubles: a sphere radius of 0, a maximum level of
+    // 3e14, NaN footprints, and an exit status of 0.
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_float32.nod", fixed_load_factor_conditions, true, 30.0, NC_FLOAT);
+    const Database database(path);
+    CHECK(database.sphere_radius() == 30.0);
+    // The conditions' own levels, from three different spheres.
+    for (const auto& condition : fixed_load_factor_conditions)
+    {
+        const auto blend = database.blend_at(condition[0], condition[1], condition[2]);
+        CHECK(database.eval(30.0, 0.0, 90.0, blend) == Catch::Approx(condition[3]).margin(1e-9));
+    }
+}
+
+TEST_CASE("a sphere whose channels miss the grid is reported", "[sphere_database][validation]")
+{
+    // The axes come from sphere 0; a sphere whose phi labels are two degrees off
+    // matches none of them, so its channels are dropped and its cells stay 0 dBA.
+    // Nothing used to say so.
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_coverage.log").string();
+    std::filesystem::remove(path);
+    Logger::instance().set_file(path);
+    const auto database_path = write_fixed_load_factor_test_database(
+            "niceops_offgrid.nod", fixed_load_factor_conditions, true, 30.0, NC_DOUBLE, 2.0);
+    const Database database(database_path);
+    const Database aligned(write_fixed_load_factor_test_database(
+            "niceops_ongrid.nod", fixed_load_factor_conditions, true, 30.0));
+    Logger::instance().close_file();
+    std::ifstream in(path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text.find("sphere 1 leaves 16 of 16 (phi, theta) cells without a channel") != std::string::npos);
+    CHECK(text.find("drops 16 of 16 channels") != std::string::npos);
+    // The aligned twin says nothing of the sort: one warning, not two.
+    CHECK(text.find("without a channel") == text.rfind("without a channel"));
+}
+
+TEST_CASE("a frame with no velocity is still a frame", "[sphere_database][validation]")
+{
+    // Zero velocity, or velocity along the thrust axis, left the nose zero and with it
+    // the starboard vector: every observer was looked up at (phi 0, theta 90), the same
+    // point of the sphere from every side, and the answer jumped when the velocity
+    // became a millimeter a second.
+    for (const Vec3 velocity : {Vec3(0.0, 0.0, 0.0), Vec3(0.0, 0.0, -2.0), Vec3(0.0, 0.0, 2.0)})
+    {
+        const Vec3 normal(0.0, 0.0, 1.0);
+        const auto frame = sphere_frame(velocity, normal);
+        CHECK(frame.nose.norm() == Catch::Approx(1.0).margin(1e-12));
+        CHECK(frame.starboard.norm() == Catch::Approx(1.0).margin(1e-12));
+        CHECK(frame.nose.dot(frame.normal) == Catch::Approx(0.0).margin(1e-12));
+        CHECK(frame.nose.dot(frame.starboard) == Catch::Approx(0.0).margin(1e-12));
+        // And directions from different sides are looked up at different places.
+        const auto ahead = lookup_angles(frame, Vec3(0.6, 0.0, -0.8));
+        const auto beside = lookup_angles(frame, Vec3(0.0, 0.6, -0.8));
+        CHECK(!(ahead[0] == beside[0] && ahead[1] == beside[1]));
+    }
+    // A velocity with a component in the plane is unchanged: the nose is that
+    // component's direction.
+    const auto moving = sphere_frame(Vec3(3.0, 4.0, 5.0), Vec3(0.0, 0.0, 1.0));
+    CHECK(moving.nose.x == Catch::Approx(0.6).margin(1e-12));
+    CHECK(moving.nose.y == Catch::Approx(0.8).margin(1e-12));
+}
+
+TEST_CASE("an exported sphere reloads as the sphere it was, cell for cell", "[sphere_database][export]")
+{
+    // Every level and EAA of the exported sphere, and what the root says about the
+    // vehicle and its speed reference, comes back exactly.  Swapped dBA and EAA, a
+    // dropped load-factor correction or a transposed grid all passed the whole
+    // suite before this.
+    Database source("databases/S-76D_M3.nod");
+    const auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_round_trip.nod").string();
+    write_sphere(sphere, path);
+    const Database reloaded(path);
+    const auto again = reloaded.interpolate_sphere(0.15, -4.0, 0.006);
+    REQUIRE(again.phis == sphere.phis);
+    REQUIRE(again.thetas == sphere.thetas);
+    REQUIRE(again.cells.size() == sphere.cells.size());
+    double eaa_sum = 0.0;
+    for (std::size_t c = 0; c < sphere.cells.size(); c++)
+    {
+        REQUIRE(again.cells[c].dBA == sphere.cells[c].dBA);
+        REQUIRE(again.cells[c].EAA == sphere.cells[c].EAA);
+        eaa_sum += std::fabs(sphere.cells[c].EAA);
+    }
+    // The test means something only if the two differ: dBA and EAA are not the same field.
+    REQUIRE(eaa_sum > 0.0);
+    REQUIRE(sphere.cells[0].dBA != sphere.cells[0].EAA);
+    // What the root records.
+    CHECK(reloaded.speed_reference() == source.speed_reference());
+    if (!std::isnan(source.tip_speed()))
+        CHECK(reloaded.tip_speed() == source.tip_speed());
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("an exported sphere keeps its speed reference and rotor", "[sphere_database][export]")
+{
+    // The loader decides how to read a run's flight conditions from the root's
+    // speed_reference, and checks the vehicle file against the rotor it records; an
+    // export that dropped both reloaded as ground-referenced with no rotor, and the
+    // run neither refused nor referred to the air.
+    const auto source_path = write_fixed_load_factor_test_database(
+            "niceops_air_source.nod", fixed_load_factor_conditions, true);
+    int ncid = 0;
+    REQUIRE(nc_open(source_path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "speed_reference", 3, "air") == NC_NOERR);
+    int scalar_dim = 0;
+    REQUIRE(nc_inq_dimid(ncid, "scalar", &scalar_dim) == NC_NOERR);
+    int tip_var = 0, radius_var = 0, weight_var = 0;
+    REQUIRE(nc_def_var(ncid, "main_rotor_tip_speed_meters_per_sec", NC_DOUBLE, 1, &scalar_dim, &tip_var) == NC_NOERR);
+    REQUIRE(nc_def_var(ncid, "main_rotor_radius_meters", NC_DOUBLE, 1, &scalar_dim, &radius_var) == NC_NOERR);
+    REQUIRE(nc_def_var(ncid, "vehicle_weight_newtons", NC_DOUBLE, 1, &scalar_dim, &weight_var) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    const double tip = 213.4, radius = 6.7, weight = 49033.2;
+    REQUIRE(nc_put_var_double(ncid, tip_var, &tip) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, radius_var, &radius) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, weight_var, &weight) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+
+    const Database source(source_path);
+    REQUIRE(source.speed_reference() == SpeedReference::air);
+    // Above the reference thrust coefficient, so the load-factor correction is in
+    // the exported levels as well.
+    const auto sphere = source.interpolate_sphere(0.2, 0.2, 2.0 * test_ct_reference);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_air_export.nod").string();
+    write_sphere(sphere, path);
+    const Database reloaded(path);
+    CHECK(reloaded.speed_reference() == SpeedReference::air);
+    CHECK(reloaded.tip_speed() == tip);
+    CHECK(reloaded.rotor_radius() == radius);
+    CHECK(reloaded.vehicle_weight() == weight);
+    // The correction survived: 20 log10 of the load factor (2), on levels of 100-120 dB.
+    const auto again = reloaded.interpolate_sphere(0.2, 0.2, 2.0 * test_ct_reference);
+    for (std::size_t c = 0; c < sphere.cells.size(); c++)
+        REQUIRE(again.cells[c].dBA == Catch::Approx(sphere.cells[c].dBA).margin(1e-9));
+    const auto uncorrected = source.interpolate_sphere(0.2, 0.2, test_ct_reference);
+    CHECK(sphere.cells[0].dBA - uncorrected.cells[0].dBA == Catch::Approx(20.0 * std::log10(2.0)).margin(1e-9));
+    std::filesystem::remove(path);
+    std::filesystem::remove(source_path);
+}
+
+TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "[sphere_database][export]")
+{
+    // AMPLITUDE(PHI, THETA, FREQUENCY), the axes in degrees and hertz, RADIUS in feet
+    // and SPEED in knots from the advance ratio and the tip speed.  Nothing read an
+    // AAM file back before this.
+    Database source("databases/S-76D_M3.nod");
+    auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    const std::size_t bands = 3;
+    sphere.frequencies = {125.0, 250.0, 500.0};
+    sphere.amplitudes.resize(sphere.cells.size() * bands);
+    for (std::size_t cell = 0; cell < sphere.cells.size(); cell++)
+        for (std::size_t band = 0; band < bands; band++)
+            sphere.amplitudes[cell * bands + band] = 40.0 + 0.5 * static_cast<double>(cell % 97) + 10.0 * band;
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_aam_export.nc").string();
+    const double tip_speed = 213.0;
+    write_aam_sphere(sphere, path, tip_speed);
+
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_NOWRITE, &ncid) == NC_NOERR);
+    auto length = [&](const char* name) {
+        int dim = 0;
+        std::size_t n = 0;
+        REQUIRE(nc_inq_dimid(ncid, name, &dim) == NC_NOERR);
+        REQUIRE(nc_inq_dimlen(ncid, dim, &n) == NC_NOERR);
+        return n;
+    };
+    REQUIRE(length("PHI") == sphere.phis.size());
+    REQUIRE(length("THETA") == sphere.thetas.size());
+    REQUIRE(length("FREQUENCY") == bands);
+    auto read_floats = [&](const char* name, std::size_t n) {
+        int var = 0;
+        REQUIRE(nc_inq_varid(ncid, name, &var) == NC_NOERR);
+        std::vector<float> values(n);
+        REQUIRE(nc_get_var_float(ncid, var, values.data()) == NC_NOERR);
+        return values;
+    };
+    const auto phi = read_floats("PHI", sphere.phis.size());
+    const auto theta = read_floats("THETA", sphere.thetas.size());
+    const auto frequency = read_floats("FREQUENCY", bands);
+    for (std::size_t i = 0; i < phi.size(); i++)
+        CHECK(phi[i] == static_cast<float>(sphere.phis[i]));
+    for (std::size_t i = 0; i < theta.size(); i++)
+        CHECK(theta[i] == static_cast<float>(sphere.thetas[i]));
+    CHECK(frequency[1] == 250.0f);
+    // Element order: phi slowest, then theta, then frequency.
+    const auto amplitude = read_floats("AMPLITUDE", sphere.cells.size() * bands);
+    for (std::size_t m = 0; m < phi.size(); m += 5)
+        for (std::size_t n = 0; n < theta.size(); n += 3)
+            for (std::size_t f = 0; f < bands; f++)
+                REQUIRE(amplitude[(m * theta.size() + n) * bands + f]
+                        == static_cast<float>(sphere.amplitudes[(m * theta.size() + n) * bands + f]));
+    CHECK(read_floats("RADIUS", 1)[0] == Catch::Approx(sphere.radius / 0.3048).epsilon(1e-6));
+    CHECK(read_floats("SPEED", 1)[0] == Catch::Approx(0.15 * tip_speed * 1.94384).epsilon(1e-6));
+    CHECK(read_floats("FLIGHT_PATH_ANGLE", 1)[0] == Catch::Approx(-4.0).margin(1e-6));
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a negative excess-attenuation factor turns the bounds off", "[sphere_database][bounds]")
+{
+    // cull_range() and direction_bounds() are upper bounds only because they drop
+    // the excess-attenuation term, which is a loss only if no EAA is negative.  The
+    // guard is what keeps the windowed run exact on a database that has one; nothing
+    // built a database with one, so removing the guard passed every test.
+    std::vector<Database::SourceState> states;
+    for (const double first_eaa : {0.0, -20.0})
+    {
+        const auto path = write_fixed_load_factor_test_database("niceops_negative_eaa.nod",
+                fixed_load_factor_conditions, true, 30.48, NC_DOUBLE, 0.0, first_eaa);
+        const Database database(path);
+        states.clear();
+        states.push_back(database.source_state(Vec3(0.0, 0.0, 100.0), Vec3(50.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0),
+                0.0, 0.0, test_ct_reference));
+        const auto blend = database.blend_at(0.0, 0.0, test_ct_reference);
+        INFO("first channel's EAA " << first_eaa);
+        if (first_eaa >= 0.0)
+        {
+            CHECK(database.direction_bounds(states).usable());
+            CHECK(std::isfinite(database.cull_range(blend, 60.0)));
+        }
+        else
+        {
+            CHECK_FALSE(database.direction_bounds(states).usable());
+            CHECK(std::isinf(database.cull_range(blend, 60.0)));
+        }
         std::filesystem::remove(path);
     }
 }

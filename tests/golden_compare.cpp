@@ -99,8 +99,30 @@ int main(int argc, char** argv)
     const double tolerance = 1e-9;
     for (std::size_t i = 0; i < golden.size(); i++)
     {
-        auto scale = std::max(1.0, std::max(std::abs(candidate[i]), std::abs(golden[i])));
-        if (std::abs(candidate[i] - golden[i]) > std::max(tolerance * scale, absolute))
+        // Written as the condition for agreeing, so that a NaN falls through to
+        // a mismatch.  The earlier form -- "differs by more than the tolerance"
+        // -- is false whenever either side is NaN, and an infinite operand made
+        // the tolerance itself infinite, so a file of nan or inf agreed with any
+        // golden and every test built on this tool was blind to non-finite
+        // output.  Two NaNs, or two equal infinities (a culled cell is -inf in
+        // both runs), still agree.
+        const double c = candidate[i];
+        const double g = golden[i];
+        bool agree;
+        if (std::isnan(c) || std::isnan(g))
+        {
+            agree = std::isnan(c) && std::isnan(g);
+        }
+        else if (std::isinf(c) || std::isinf(g))
+        {
+            agree = c == g;
+        }
+        else
+        {
+            const double scale = std::max(1.0, std::max(std::abs(c), std::abs(g)));
+            agree = std::abs(c - g) <= std::max(tolerance * scale, absolute);
+        }
+        if (!agree)
         {
             std::cerr << "golden_compare: mismatch at value " << i << ": candidate "
                       << candidate[i] << " vs golden " << golden[i] << "\n";

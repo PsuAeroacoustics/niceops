@@ -80,6 +80,58 @@ struct GeodeticColumns
     }
 };
 
+// A header that declares a unit -- "Alt (ft)", "Climb Rate [fpm]", "Time (ms)" --
+// is checked against what this run reads that column in.  LabeledCsv::normalize
+// drops the parenthesized part so the name matches whatever unit it carries,
+// which left the declaration unchecked: a foot value read as meters put the
+// aircraft 3.28 times too high, and a climb rate in feet per minute was read as
+// feet per second, 60 times too large, with exit status 0.  Only tokens that are
+// recognized and conflict are refused; an unfamiliar one ("deg", "msl") passes.
+void check_declared_units(const std::string& filename, const LabeledCsv& csv,
+        const GeodeticColumns& columns, LengthUnit unit)
+{
+    const bool metric = unit.to_meters == 1.0;
+    const auto in = [](const std::string& token, std::initializer_list<const char*> list) {
+        for (const char* candidate : list)
+            if (token == candidate)
+                return true;
+        return false;
+    };
+    const auto check = [&](std::size_t index, const char* what, bool conflicts,
+                               const std::string& expected) {
+        if (index == LabeledCsv::npos || !conflicts)
+            return;
+        input_error("Column \"", csv.header[index], "\" of ", filename, " declares its ", what,
+                " in ", csv.unit_token(index), ", but this run reads it in ", expected,
+                ". Nothing is converted: give the column in ", expected,
+                ", or change --units for the lengths.");
+    };
+    const auto length_conflicts = [&](const std::string& t) {
+        return metric ? in(t, {"ft", "feet", "foot"}) : in(t, {"m", "meter", "meters", "meter", "meters"});
+    };
+    const auto time_conflicts = [&](const std::string& t) {
+        return in(t, {"ms", "msec", "millisecond", "milliseconds", "us", "min", "mins", "minute",
+                "minutes", "h", "hr", "hrs", "hour", "hours"});
+    };
+    const auto speed_conflicts = [&](const std::string& t) {
+        return in(t, {"fpm", "ft/min", "m/min", "kt", "kts", "knot", "knots", "mph", "km/h", "kph",
+                       "kmh", "kmph"})
+                || (metric ? in(t, {"ft/s", "fps", "feet/s", "ft/sec"})
+                           : in(t, {"m/s", "mps", "meters/s", "m/sec"}));
+    };
+    const std::string seconds = "seconds";
+    const std::string speed_unit = metric ? "m/s" : "ft/s";
+    if (columns.altitude != LabeledCsv::npos)
+        check(columns.altitude, "altitude", length_conflicts(csv.unit_token(columns.altitude)), unit.name);
+    if (columns.time != LabeledCsv::npos)
+        check(columns.time, "time", time_conflicts(csv.unit_token(columns.time)), seconds);
+    if (columns.utc != LabeledCsv::npos)
+        check(columns.utc, "time", time_conflicts(csv.unit_token(columns.utc)), seconds);
+    for (std::size_t index : {columns.east_speed, columns.north_speed, columns.up_speed})
+        if (index != LabeledCsv::npos)
+            check(index, "velocity", speed_conflicts(csv.unit_token(index)), speed_unit);
+}
+
 GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
 {
     // Aliases are matched after LabeledCsv::normalize, which lower-cases,
@@ -113,8 +165,26 @@ GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
 // squared residual, so an RMS bound in meters is scaled by the sample count to
 // mean the same thing whatever the sample rate; zero interpolates, which is
 // what a list of waypoints wants.
+//
+// A dense track (under half a second between samples, the ones that carry an
+// aircraft's own motion) gets its ends freed from the natural condition: see
+// SmoothingSpline::within_tolerance_extended.  Natural ends pin the acceleration
+// at both ends of the track to zero and bias it for several seconds inward, which
+// on an approach that ends in a stop is the part nearest the observers who hear it
+// loudest.  Sparse waypoints are a statement of intent and are left as they were,
+// and so is an exact interpolation (a zero budget has no bias to remove).
+constexpr double end_window_seconds = 3.0;
+constexpr double end_extension_seconds = 10.0;
+constexpr double dense_track_spacing = 0.5; // seconds
+
 SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>& f, double rms_meters)
 {
+    const double spacing = (t.back() - t.front()) / static_cast<double>(t.size() - 1);
+    if (rms_meters > 0.0 && t.size() >= 3 && spacing <= dense_track_spacing)
+    {
+        return SmoothingSpline::within_tolerance_extended(
+                t, f, rms_meters, end_window_seconds, end_extension_seconds);
+    }
     return SmoothingSpline::within_tolerance(
             t, f, rms_meters * rms_meters * static_cast<double>(t.size()));
 }
@@ -145,6 +215,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
                 "(seconds from the start of the track) or \"utcsec\" (seconds since UTC "
                 "midnight).");
     }
+    check_declared_units(filename, csv, columns, unit);
     const std::size_t time_column = from_utc ? columns.utc : columns.time;
     const std::size_t needed = columns.width();
     const bool velocity_given = columns.velocity_given();
@@ -187,6 +258,19 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
             frame = LocalFrame(Geodetic {latitude, longitude, 0.0});
             info("Projecting ", filename, " about its first position, ", latitude, ", ",
                     longitude, ", with x east and y north.");
+        }
+
+        // lat and lon were range-checked above, which a NaN fails; the rest of
+        // what is read is not, and one NaN then ran through the spline fit into
+        // every footprint cell.
+        for (std::size_t index : {time_column, columns.altitude, columns.east_speed,
+                     columns.north_speed, columns.up_speed})
+        {
+            if (index != LabeledCsv::npos && !std::isfinite(data[index]))
+            {
+                input_error("Data row ", row + 1, " of ", filename, " holds a value that is not a "
+                        "number (", csv.header[index], ").");
+            }
         }
 
         const double raw_time = data[time_column];
@@ -398,10 +482,14 @@ dimensional_data configure_vehicle(const std::string& filename)
     // than failing, and a file written before any of this existed still loads.
     const auto& air = config["Atmosphere"];
     if (air.contains("temperature"))
+    {
         vehicle.atmosphere.temperature = json_to_double(air["temperature"]);
+        vehicle.temperature_given = true;
+    }
     if (air.contains("pressure"))
     {
         vehicle.atmosphere.pressure = json_to_double(air["pressure"]);
+        vehicle.pressure_given = true;
     }
     else
     {
@@ -415,7 +503,23 @@ dimensional_data configure_vehicle(const std::string& filename)
                 = vehicle.rho * dry_air_gas_constant * vehicle.atmosphere.temperature / 1000.0;
     }
     if (air.contains("relative humidity"))
+    {
         vehicle.atmosphere.relative_humidity = json_to_double(air["relative humidity"]);
+        vehicle.humidity_given = true;
+    }
+
+    // What the file gave has to be air.  A temperature of 0 or a pressure of 0
+    // made every level NaN, and Celsius, Pa or a humidity fraction shifted the
+    // footprint several dB, all with exit status 0.  (The defaults and the
+    // pressure derived from density are checked too: a density in the wrong unit
+    // shows up there.)
+    const auto require_air = [&](const std::string& problem) {
+        if (!problem.empty())
+            input_error("Vehicle file ", filename, ", Atmosphere section: ", problem);
+    };
+    require_air(temperature_problem(vehicle.atmosphere.temperature));
+    require_air(pressure_problem(vehicle.atmosphere.pressure));
+    require_air(humidity_problem(vehicle.atmosphere.relative_humidity));
 
     trace("Vehicle data structure: ", vehicle);
     return vehicle;
@@ -488,7 +592,7 @@ bool correct_vertical_speed_sign(std::vector<State>& states, const std::string& 
 {
     if (states.size() < 3)
         return false;
-    // Uncenterd -- the cosine between vz and dz/dt, not their correlation -- so
+    // Uncentered -- the cosine between vz and dz/dt, not their correlation -- so
     // a steady descent, whose dz/dt is constant and has no variance to
     // correlate, still decides: vz . dz/dt is +|dz/dt|^2 when the two agree.
     double s_vz_dz = 0.0, s_vz2 = 0.0, s_dz2 = 0.0;
@@ -534,7 +638,11 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
     // D: filename.splitter('.').retro.take(1).array()[0] -- the last '.' segment
     auto dotpos = filename.rfind('.');
     std::string extension = (dotpos == std::string::npos) ? filename : filename.substr(dotpos + 1);
-    std::for_each(extension.begin(), extension.end(), [](char& c) { c = std::tolower(c); });
+    // Through unsigned char: tolower of a negative char (a non-ASCII byte in the
+    // extension) is undefined.
+    std::for_each(extension.begin(), extension.end(), [](char& c) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    });
     info("Opening file ", filename, " with extension ", extension);
     if (extension == "csv")
     {
@@ -546,7 +654,19 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
         // labeled reader keeps that first record instead of discarding it,
         // because the simpler formats below are read by column name -- it
         // drops the same rows, so the AC path is unchanged.
-        const auto csv = read_labeled_csv(filename);
+        CsvReport report;
+        const auto csv = read_labeled_csv(filename, &report);
+        if (report.dropped > 0)
+        {
+            // A row that did not parse was dropped silently: a time gap in a
+            // track, a missing point in the fit.  Text before the first number
+            // is a header and was always fine.
+            input_error("Line ", report.first_dropped_line, " of ", filename,
+                    " is not a row of numbers", report.dropped > 1
+                            ? " (and " + std::to_string(report.dropped - 1) + " more are not)"
+                            : std::string(),
+                    ". A text line is only allowed above the first row of data.");
+        }
 
         // An empty file falls through to the "no usable states" check below,
         // which names the format it expected; front() on no rows would not.
@@ -564,10 +684,30 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
         // origin, which it does not record, is not its first position.
         if (csv.rows.front().size() == 27)
         {
+            std::size_t data_row = 0;
             for (const auto& data : csv.rows)
             {
+                data_row++;
                 if (data.size() == 27)
                 {
+                    // One NaN or infinity in a column the states are built from
+                    // used to run through the whole acoustics and come out as
+                    // NaN footprint cells, with exit status 0.
+                    static const struct
+                    {
+                        std::size_t column;
+                        const char* name;
+                    } used[] = {{1, "time"}, {5, "x"}, {6, "y"}, {7, "z"}, {11, "vx"}, {13, "vy"},
+                            {15, "vz"}, {21, "ax"}, {22, "ay"}, {23, "az"}};
+                    for (const auto& field : used)
+                    {
+                        if (!std::isfinite(data[field.column]))
+                        {
+                            input_error("Data row ", data_row, " of ", filename, " holds a value "
+                                    "that is not a number (column ", field.column + 1, ", ",
+                                    field.name, ").");
+                        }
+                    }
                     // Assume NASA/FAA AC state data format
                     State now {};
                     // Convert to metric
@@ -598,6 +738,17 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                 else
                 {
                     input_error("Wrong number of columns in ", filename, ".");
+                }
+            }
+            // The geodetic reader refuses a clock that does not advance; this one
+            // did not, and a constant or descending time column gave a zero or
+            // negative integration step and an all -inf or all NaN footprint.
+            for (std::size_t i = 1; i < states.size(); i++)
+            {
+                if (!(states[i].t > states[i - 1].t))
+                {
+                    input_error("Time does not increase between data rows ", i, " and ", i + 1,
+                            " of ", filename, ": ", states[i - 1].t, " then ", states[i].t, ".");
                 }
             }
             correct_vertical_speed_sign(states, filename);
@@ -643,8 +794,8 @@ void Trajectory::write_state(const std::string& state_file) const
     info("Writing state data to ", state_file);
     // Create the directory first, as every other writer here does.  state/ is
     // not tracked, so on a fresh checkout `-S state/ci_state.csv` had nowhere
-    // to write and fatal()'d -- which aborts silently, since the message goes
-    // to the log file and not to stderr.
+    // to write and fatal()'d -- which aborted with the message only in the log
+    // file, before warnings and errors were echoed to stderr as well.
     ensure_parent_directory(state_file);
     std::ofstream file(state_file);
     if (!file)
@@ -790,6 +941,21 @@ void Trajectory::watts_trim(double xstart_meters)
         if (x[i] > xstart_meters)
             break;
         ixmin = i;
+    }
+    // The trim runs from the last state at or before `xstart` to the track's
+    // lowest or slowest point.  A start past that point built a vector from a
+    // reversed iterator range, which threw "vector" with no hint of the cause on
+    // libc++, and a start on it left a one-state trajectory that has no sample
+    // interval to integrate over.
+    const auto last = static_cast<std::size_t>(ixmax);
+    if (ixmin >= last)
+    {
+        input_error("--trim ", xstart_meters, " m leaves ",
+                ixmin > last ? std::string("nothing") : std::string("one state"),
+                " of the trajectory: it is cropped from the last state at or before the trim "
+                "start to the track's lowest or slowest point, which is at x = ", x[ixmax],
+                " m (the track runs from x = ", x.front(), " m to ", x.back(),
+                " m). Start the trim earlier along the track.");
     }
     info("Trimming trajectory from x = ", x[ixmin], " to ", x[ixmax]);
     std::vector<State> sub(states.begin() + ixmin, states.begin() + ixmax + 1);

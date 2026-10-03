@@ -305,10 +305,25 @@ TEST_CASE("The AC state format is still read positionally", "[trajectory][geodet
     // that dispatched on the header alone would take a state file for a WGS84
     // track -- and get its position from columns whose x/y origin the file does
     // not record.  Width decides first, and first_geodetic_position agrees.
-    REQUIRE_FALSE(first_geodetic_position("tracks/S-76D/197421AC.csv").has_value());
+    REQUIRE_FALSE(first_geodetic_position("tracks/S-76D/197421AC.csv", feet).has_value());
 
     const TempCsv track(demo_track_as_geodetic("time,lat,lon,alt", 500));
-    const auto first = first_geodetic_position(track.path);
+    const auto first = first_geodetic_position(track.path, feet);
+    REQUIRE(first.has_value());
+    const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
+    REQUIRE(first->latitude == Catch::Approx(records.front()[2]));
+    REQUIRE(first->longitude == Catch::Approx(records.front()[3]));
+}
+
+TEST_CASE("The run frame is found for a metric geodetic track", "[trajectory][geodetic][units]")
+{
+    // run() settles the frame by reading the first row before it loads anything.
+    // It once did so in feet whatever --units said, so a track headed alt_m (a
+    // spelling that exists only in meters) looked unpositioned: no frame, and
+    // --frame_bearing silently ignored.
+    const TempCsv metric(demo_track_as_geodetic("time,lat,lon,alt_m", 500));
+    REQUIRE_FALSE(first_geodetic_position(metric.path, feet).has_value());
+    const auto first = first_geodetic_position(metric.path, meters);
     REQUIRE(first.has_value());
     const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
     REQUIRE(first->latitude == Catch::Approx(records.front()[2]));
@@ -560,8 +575,8 @@ TEST_CASE("vz stored positive down is detected and made positive up", "[trajecto
 
 TEST_CASE("vz already positive up is left alone, even at a constant rate", "[trajectory][vz]")
 {
-    // A steady descent has a constant dz/dt, so a centerd correlation has no
-    // variance to work with; the check has to decide from the uncenterd one.
+    // A steady descent has a constant dz/dt, so a centered correlation has no
+    // variance to work with; the check has to decide from the uncentered one.
     auto states = steady_descent(true);
     const auto before = states;
     REQUIRE_FALSE(correct_vertical_speed_sign(states, "descent_vz_up"));
@@ -747,4 +762,198 @@ TEST_CASE("at hover the sphere's nose is the heading, turned into the local fram
     bare.vx = 0.1;
     CHECK_FALSE(heading_offset(std::vector<State>(60, bare), 270.0).has_value());
     CHECK(nose_direction(bare, 1.0)[0] == 0.1);
+}
+
+namespace {
+
+// The demo AC track as text, with `change(row, fields)` applied to every data
+// row first.  The shipped tracks are the only AC-format input in the repo, so
+// the validation cases are built by damaging one.
+template <typename Change>
+std::string demo_ac_track(Change change)
+{
+    std::ifstream in("tracks/S-76D/197421AC.csv");
+    REQUIRE(in.good());
+    std::string line, text;
+    bool header = true;
+    std::size_t row = 0;
+    while (std::getline(in, line))
+    {
+        if (line.empty())
+            continue;
+        if (header)
+        {
+            text += line + "\n";
+            header = false;
+            continue;
+        }
+        std::vector<std::string> fields;
+        std::stringstream ss(line);
+        std::string field;
+        while (std::getline(ss, field, ','))
+            fields.push_back(field);
+        change(row++, fields);
+        for (std::size_t i = 0; i < fields.size(); i++)
+            text += (i ? "," : "") + fields[i];
+        text += "\n";
+    }
+    return text;
+}
+
+// What loading `path` says is wrong with it, or empty when it loads.
+std::string load_problem(const std::string& path, LengthUnit unit = feet)
+{
+    try
+    {
+        Trajectory trajectory(path, "databases/S-76D.json", demo_frame(0.02), unit);
+    }
+    catch (const std::exception& problem)
+    {
+        return problem.what();
+    }
+    return "";
+}
+
+} // namespace
+
+TEST_CASE("An AC track with a value that is not a number is refused", "[trajectory][validation]")
+{
+    // One NaN in a column the states are built from ran through the whole
+    // acoustics and came out as NaN footprint cells, exit status 0.
+    const TempCsv intact(demo_ac_track([](std::size_t, std::vector<std::string>&) {}));
+    REQUIRE(load_problem(intact.path).empty());
+
+    for (std::size_t column : {1u, 5u, 6u, 7u, 11u, 13u, 15u, 21u, 22u, 23u})
+    {
+        for (const char* bad : {"nan", "inf", "-inf"})
+        {
+            const TempCsv damaged(demo_ac_track([&](std::size_t row, std::vector<std::string>& f) {
+                if (row == 3000)
+                    f[column] = bad;
+            }));
+            const auto problem = load_problem(damaged.path);
+            INFO("column " << column << " set to " << bad << ": " << problem);
+            REQUIRE(problem.find("not a number") != std::string::npos);
+            REQUIRE(problem.find("row 3001") != std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("An AC track whose clock does not advance is refused", "[trajectory][validation]")
+{
+    // The geodetic reader already refused this.  Here a constant time column
+    // gave a zero integration step (an all -inf footprint) and a descending one
+    // a negative step (all NaN), both exit status 0.
+    const TempCsv flat(demo_ac_track([](std::size_t, std::vector<std::string>& f) { f[1] = "0.0"; }));
+    REQUIRE(load_problem(flat.path).find("Time does not increase") != std::string::npos);
+
+    const TempCsv descending(demo_ac_track([](std::size_t row, std::vector<std::string>& f) {
+        f[1] = std::to_string(-0.02 * static_cast<double>(row));
+    }));
+    REQUIRE(load_problem(descending.path).find("Time does not increase") != std::string::npos);
+
+    // A repeated stamp in the middle is the same fault.
+    const TempCsv stalled(demo_ac_track([](std::size_t row, std::vector<std::string>& f) {
+        if (row >= 1000)
+            f[1] = std::to_string(0.02 * static_cast<double>(row - 1));
+    }));
+    REQUIRE(load_problem(stalled.path).find("Time does not increase between data rows 1000") != std::string::npos);
+}
+
+TEST_CASE("A column header that declares a conflicting unit is refused", "[trajectory][geodetic][units]")
+{
+    // LabeledCsv::normalize drops "(ft)" so the name matches, which left the
+    // declared unit unchecked: a foot value read as meters put the aircraft 3.28
+    // times too high, and "Climb Rate (fpm)" was read as feet per second.
+    const auto declares = [](const std::string& problem) {
+        return problem.find("declares its") != std::string::npos;
+    };
+
+    const TempCsv feet_in_feet(demo_track_as_geodetic("time,lat,lon,Alt (ft)", 50));
+    REQUIRE_FALSE(declares(load_problem(feet_in_feet.path, feet)));
+    REQUIRE(declares(load_problem(feet_in_feet.path, meters)));
+
+    const TempCsv meters_header(demo_track_as_geodetic("time,lat,lon,Altitude [m MSL]", 50));
+    REQUIRE(declares(load_problem(meters_header.path, feet)));
+    REQUIRE_FALSE(declares(load_problem(meters_header.path, meters)));
+
+    // An unfamiliar unit word makes no claim and passes.
+    const TempCsv unknown(demo_track_as_geodetic("time,lat,lon,Alt (msl)", 50));
+    REQUIRE_FALSE(declares(load_problem(unknown.path, feet)));
+
+    const TempCsv milliseconds(demo_track_as_geodetic("Time (ms),lat,lon,alt", 50));
+    REQUIRE(declares(load_problem(milliseconds.path)));
+
+    const std::string rows = "0,39.8,-74.4,100,10,0,-5\n1,39.8001,-74.4,99,10,0,-5\n"
+                             "2,39.8002,-74.4,98,10,0,-5\n3,39.8003,-74.4,97,10,0,-5\n";
+    const TempCsv fpm("time,lat,lon,alt,vE,vN,Climb Rate (fpm)\n" + rows);
+    REQUIRE(declares(load_problem(fpm.path)));
+    const TempCsv knots("time,lat,lon,alt,vE (kt),vN (kt),vUp\n" + rows);
+    REQUIRE(declares(load_problem(knots.path)));
+    const TempCsv fps("time,lat,lon,alt,vE (ft/s),vN (ft/s),vUp (ft/s)\n" + rows);
+    REQUIRE_FALSE(declares(load_problem(fps.path)));
+    REQUIRE(declares(load_problem(fps.path, meters)));
+}
+
+TEST_CASE("A geodetic track with a value that is not a number is refused", "[trajectory][geodetic][validation]")
+{
+    const std::string rows = "0,39.8,-74.4,100\n1,39.8001,-74.4,99\nNAN_ROW\n3,39.8003,-74.4,97\n";
+    for (const char* bad : {"2,39.8002,-74.4,nan", "2,39.8002,-74.4,inf", "nan,39.8002,-74.4,98"})
+    {
+        std::string text = "time,lat,lon,alt\n" + rows;
+        text.replace(text.find("NAN_ROW"), 7, bad);
+        const TempCsv damaged(text);
+        const auto problem = load_problem(damaged.path);
+        INFO(bad << ": " << problem);
+        REQUIRE(problem.find("not a number") != std::string::npos);
+    }
+}
+
+TEST_CASE("A geodetic track with no clock has no time of day", "[trajectory][geodetic][validation]")
+{
+    // --start_utc defaulted to 0, which dates a clockless flight at UTC midnight:
+    // night in most timezones, so -D added the 10 dB night penalty to the whole
+    // footprint with no word said.  No clock now means NaN, which -D refuses.
+    const TempCsv track(demo_track_as_geodetic("time,lat,lon,alt", 50));
+    const Trajectory clockless(track.path, "databases/S-76D.json", demo_frame(0.02));
+    REQUIRE_FALSE(clockless.states.empty());
+    REQUIRE(std::isnan(clockless.states.front().utcsec));
+
+    GeodeticInput dated = demo_frame(0.02);
+    dated.start_utc = 43200.0;
+    const Trajectory noon(track.path, "databases/S-76D.json", dated);
+    REQUIRE(noon.states.front().utcsec == Catch::Approx(43200.0 + noon.states.front().t));
+    REQUIRE(noon.states.back().utcsec == Catch::Approx(43200.0 + noon.states.back().t));
+}
+
+TEST_CASE("watts_trim refuses a start past the end of the crop", "[trajectory][validation]")
+{
+    // The crop ends at the lowest or slowest point.  A start beyond it built a
+    // vector from a reversed iterator range -- "Skipping ...: vector" in the log
+    // and nothing else -- and a start on it left a single state.
+    const auto fresh = [] { return Trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json"); };
+
+    Trajectory fine = fresh();
+    const std::size_t before = fine.states.size();
+    fine.watts_trim(-1000.0);
+    REQUIRE(fine.states.size() > 1);
+    REQUIRE(fine.states.size() < before);
+
+    // The demo track ends its crop at x = 100.86 m.
+    for (double start : {1000.0, 101.0, 100.9})
+    {
+        Trajectory past = fresh();
+        std::string message;
+        try
+        {
+            past.watts_trim(start);
+        }
+        catch (const std::runtime_error& problem)
+        {
+            message = problem.what();
+        }
+        INFO("trim start " << start << ": " << message);
+        REQUIRE(message.find("--trim") != std::string::npos);
+        REQUIRE(message.find("Start the trim earlier") != std::string::npos);
+    }
 }

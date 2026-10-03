@@ -16,6 +16,7 @@
 // the one unit here that is easy to get wrong, since the rest of the code is SI.
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 namespace niceops {
@@ -55,6 +56,17 @@ struct Atmosphere
     // once.
     double attenuation_coefficient(double frequency) const;
 };
+
+// Why a value cannot be the air a run propagates through, or empty when it can.
+// Temperature in kelvin, pressure in kPa, humidity in percent.  A unit slip is
+// the usual cause -- 15 for a temperature in Celsius, 101325 for a pressure in
+// Pa, 0.5 for a humidity as a fraction -- and each used to run: Celsius typed for
+// kelvin moved the footprint 6 dB, Pa for kPa 4 dB, and a temperature or pressure
+// of zero made every level NaN, all with exit status 0.  The bounds are the ones
+// --atmosphere already applies to a profile.
+std::string temperature_problem(double kelvin);
+std::string pressure_problem(double kpa);
+std::string humidity_problem(double percent);
 
 // Absorption coefficients in dB/m for each band center, computed with the
 // relaxation frequencies evaluated once.

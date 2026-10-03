@@ -312,3 +312,32 @@ TEST_CASE("LayeredAbsorption agrees with the 14 CFR 36 Appendix A layered proced
         CHECK(mean[band] == Catch::Approx(sum / layers).epsilon(1e-4));
     }
 }
+
+TEST_CASE("CompassToLocal turns east/north into the frame whose +x runs along a compass bearing", "[atmosphere_profile]")
+{
+    // The propagation table is indexed by compass bearing, and the run turns the local
+    // separation back with the inverse of this.  Swapping atan2's arguments in that step
+    // passed every test, because the only table built had one bearing.
+    for (const double bearing : {0.0, 90.0, 210.0, 333.0})
+    {
+        const CompassToLocal frame(bearing);
+        const double b = bearing * 3.14159265358979323846 / 180.0;
+        // A unit vector along the bearing (east = sin, north = cos) is the frame's +x.
+        const auto along = frame({std::sin(b), std::cos(b)});
+        CHECK(along[0] == Catch::Approx(1.0).margin(1e-12));
+        CHECK(along[1] == Catch::Approx(0.0).margin(1e-12));
+        // The frame's +y is 90 degrees to its left (counter-clockwise): bearing - 90.
+        const auto left = frame({std::sin(b - 0.5 * 3.14159265358979323846), std::cos(b - 0.5 * 3.14159265358979323846)});
+        CHECK(left[0] == Catch::Approx(0.0).margin(1e-12));
+        CHECK(left[1] == Catch::Approx(1.0).margin(1e-12));
+        // And the inverse brings both back, and a compass bearing of a local vector comes out right.
+        const auto back = frame.east_north({1.0, 0.0});
+        CHECK(back[0] == Catch::Approx(std::sin(b)).margin(1e-12));
+        CHECK(back[1] == Catch::Approx(std::cos(b)).margin(1e-12));
+        const auto round_trip = frame.east_north(frame({3.0, -4.0}));
+        CHECK(round_trip[0] == Catch::Approx(3.0).margin(1e-12));
+        CHECK(round_trip[1] == Catch::Approx(-4.0).margin(1e-12));
+        const double toward = std::atan2(back[0], back[1]) * 180.0 / 3.14159265358979323846;
+        CHECK(std::remainder(toward - bearing, 360.0) == Catch::Approx(0.0).margin(1e-9));
+    }
+}

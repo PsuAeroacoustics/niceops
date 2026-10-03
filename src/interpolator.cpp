@@ -37,6 +37,31 @@ void ConditionInterpolator::build(std::size_t dim, std::size_t count, const doub
                 " dimensions.");
     }
 
+    // Two spheres at one operating condition are ambiguous (which one is the
+    // answer there?) and the triangulation cannot place both: the second left a
+    // zero-volume simplex behind, and the load then aborted with "could not locate
+    // a simplex", or every query walked the whole mesh and fell through to the
+    // nearest sphere. Sorted, so the check costs n log n and not n squared.
+    {
+        std::vector<std::size_t> order(count);
+        for (std::size_t i = 0; i < count; i++)
+            order[i] = i;
+        const auto before = [points, dim](std::size_t a, std::size_t b) {
+            return std::lexicographical_compare(points + a * dim, points + (a + 1) * dim,
+                    points + b * dim, points + (b + 1) * dim);
+        };
+        std::sort(order.begin(), order.end(), before);
+        for (std::size_t i = 1; i < count; i++)
+        {
+            if (!before(order[i - 1], order[i]))
+            {
+                input_error("Spheres ", std::min(order[i - 1], order[i]), " and ",
+                        std::max(order[i - 1], order[i]), " are at the same operating condition. "
+                        "A database holds one sphere per condition.");
+            }
+        }
+    }
+
     const double high = 1.0 + extend_domain_by;
     const double low = 0.0 - extend_domain_by;
 

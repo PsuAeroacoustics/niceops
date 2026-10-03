@@ -413,21 +413,48 @@ complex hankel1_0(complex z)
         const complex y0 = (2.0 / pi) * ((std::log(z / 2.0) + euler_gamma) * j0 - series);
         return j0 + I * y0;
     }
-    // Its large-argument expansion (DLMF 10.17.5), to the smallest term.
-    complex sum = 1.0, term = 1.0;
-    double last = 1.0;
+    // Its large-argument expansion (DLMF 10.17.5), to the smallest term.  In
+    // real arithmetic: every std::complex multiply and divide carries a branch
+    // to recover NaN and infinity that cannot arise here, and the divide is a
+    // call (__divdc3) that this loop made up to 60 times a call -- 56% of the
+    // ShadowTransition table build.  1/z is formed once, and the step from one
+    // term to the next is i f_k / z with f_k = -(2k-1)^2 / 8k real.
+    const double zr = z.real(), zi = z.imag();
+    const double n2 = zr * zr + zi * zi;
+    const double inv_r = zr / n2, inv_i = -zi / n2; // 1/z
+    double sum_r = 1.0, sum_i = 0.0, term_r = 1.0, term_i = 0.0;
+    double last2 = 1.0;
     for (int k = 1; k < 60; k++)
     {
         const double odd = 2.0 * k - 1.0;
-        term *= I * (-odd * odd) / (8.0 * k * z);
-        if (std::abs(term) > last)
+        const double f = -odd * odd / (8.0 * k);
+        // i f / z = f (zi, zr) / |z|^2, as (-inv_i, inv_r) f.
+        const double c_r = -f * inv_i, c_i = f * inv_r;
+        const double next_r = term_r * c_r - term_i * c_i;
+        const double next_i = term_r * c_i + term_i * c_r;
+        term_r = next_r;
+        term_i = next_i;
+        const double size2 = term_r * term_r + term_i * term_i;
+        if (size2 > last2)
             break;
-        last = std::abs(term);
-        sum += term;
-        if (last < 1e-17)
+        last2 = size2;
+        sum_r += term_r;
+        sum_i += term_i;
+        if (last2 < 1e-34)
             break;
     }
-    return std::sqrt(2.0 / (pi * z)) * std::exp(I * (z - pi / 4.0)) * sum;
+    // sqrt(2 / (pi z)), the principal root, then exp(i (z - pi/4)).
+    const double a = (2.0 / pi) * inv_r, b = (2.0 / pi) * inv_i;
+    const double radius = std::hypot(a, b);
+    const double t = std::sqrt(0.5 * (radius + std::fabs(a)));
+    const double root_r = a >= 0.0 ? t : std::fabs(b) / (2.0 * t);
+    const double root_i = a >= 0.0 ? b / (2.0 * t) : std::copysign(t, b);
+    const double magnitude = std::exp(-zi);
+    const double phase = zr - pi / 4.0;
+    const double e_r = magnitude * std::cos(phase), e_i = magnitude * std::sin(phase);
+    const double p_r = root_r * e_r - root_i * e_i;
+    const double p_i = root_r * e_i + root_i * e_r;
+    return {p_r * sum_r - p_i * sum_i, p_r * sum_i + p_i * sum_r};
 }
 
 complex homogeneous_pressure(const ExactProblem& p, double range)

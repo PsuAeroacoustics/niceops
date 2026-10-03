@@ -5,9 +5,12 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <future>
 #include <limits>
 #include <cstdint>
 #include <numeric>
+#include <system_error>
+#include <type_traits>
 #include <utility>
 
 #include <netcdf.h>
@@ -31,7 +34,16 @@ struct NcGuard
     explicit NcGuard(int i) : id(i) {}
     ~NcGuard()
     {
-        nc_close(id);
+        if (id >= 0)
+            nc_close(id);
+    }
+    // Closes now, and says how it went: with HDF5's buffering a failed write
+    // (a full disk, a quota) surfaces only here, so a writer has to look.
+    int close()
+    {
+        const int status = id >= 0 ? nc_close(id) : NC_NOERR;
+        id = -1;
+        return status;
     }
 };
 
@@ -80,18 +92,29 @@ std::size_t get_dim_length(const std::string& dimname, int group_id)
     return dim_length;
 }
 
+// `optional`: the variable may well be absent, so say nothing -- a database
+// with 1312 groups and no ShaftPower otherwise wrote 1312 identical lines, 97%
+// of a run's log, and buried the few that mattered.
 template <typename T>
-int get_scalar(int ncid, const std::string& variable_name, T* value)
+int get_scalar(int ncid, const std::string& variable_name, T* value, bool optional = false)
 {
     int varid;
     auto status = nc_inq_varid(ncid, variable_name.c_str(), &varid);
     if (NC_NOERR != status)
     {
-        log("Could not find variable ", variable_name, " in ncid ", ncid, ".");
+        if (!optional)
+            log("Could not find variable ", variable_name, " in ncid ", ncid, ".");
     }
     else
     {
-        status = nc_get_var(ncid, varid, value);
+        // As double, whatever the file stores (nc_get_var copies the external
+        // type's bytes unconverted: a float32 file loaded as garbage, and the
+        // exit status was 0), and element 0 only (it read the whole variable, so
+        // a "scalar" with a longer dimension overran the one double it was
+        // handed).
+        static_assert(std::is_same_v<T, double>, "scalars are read as double");
+        const std::size_t first[NC_MAX_VAR_DIMS] = {};
+        status = nc_get_var1_double(ncid, varid, first, value);
         if (NC_NOERR != status)
         {
             input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
@@ -182,7 +205,8 @@ int get_array(int ncid, const std::string& variable_name, std::size_t countp, st
     {
         std::size_t startp = 0;
         values.resize(countp);
-        status = nc_get_vara(ncid, varid, &startp, &countp, values.data());
+        static_assert(std::is_same_v<T, double>, "arrays are read as double");
+        status = nc_get_vara_double(ncid, varid, &startp, &countp, values.data());
         if (NC_NOERR != status)
         {
             input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
@@ -652,6 +676,15 @@ double DirectionBounds::narrowest_theta_bin_degrees()
 
 namespace {
 
+// (x - low) / (high - low), or 0 on an axis that does not vary, where it was 0/0.
+// The expression is the one that was written inline, so every axis that does
+// vary scales to the same bits as before.
+double unit_interval(double x, double low, double high)
+{
+    const double span = high - low;
+    return span > 0.0 ? (x - low) / span : 0.0;
+}
+
 // Widest gap between adjacent knots of an axis, in degrees.
 double grid_spacing(const GridAxis& axis)
 {
@@ -682,6 +715,17 @@ SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal)
     // Project velocity vector onto TPP to get a "nose" vector
     const Vec3 v = velocity.normalized();
     frame.nose = v - v.dot(frame.normal) * frame.normal;
+    if (!(frame.nose.norm() > 1e-9))
+    {
+        // No velocity, or one along the thrust axis (hover without a heading, a
+        // pure climb): there is no direction to project, and a zero nose made both
+        // frame vectors zero, so every observer was looked up at (phi 0, theta
+        // 90) -- the same point of the sphere from every side.  Any direction in
+        // the plane will do; take +x's projection (or +y's if the thrust axis is
+        // along x), so the frame is a proper one and the same each time.
+        const Vec3 axis = std::fabs(frame.normal.x) < 0.9 ? Vec3(1.0, 0.0, 0.0) : Vec3(0.0, 1.0, 0.0);
+        frame.nose = axis - axis.dot(frame.normal) * frame.normal;
+    }
     frame.nose.normalize();
     // Define starboard as the cross product of the "nose" and the TPP normal
     frame.starboard = frame.nose.cross(frame.normal);
@@ -826,6 +870,11 @@ Database::Database(const std::string& datafile_path)
         tip_speed_ = tip_speed_value;
         info("Database records a main rotor tip speed of ", tip_speed_, " m/s.");
     }
+    double root_value = 0.0;
+    if (NC_NOERR == get_scalar(file_ncid, "main_rotor_radius_meters", &root_value))
+        rotor_radius_ = root_value;
+    if (NC_NOERR == get_scalar(file_ncid, "vehicle_weight_newtons", &root_value))
+        vehicle_weight_newtons_ = root_value;
     speed_reference_ = read_speed_reference(file_ncid);
     info("Database flight conditions are referred to the ", to_string(speed_reference_), ".");
 
@@ -855,6 +904,21 @@ Database::Database(const std::string& datafile_path)
     auto eaa_min = std::numeric_limits<double>::infinity();
     sphere_max_.assign(group_ids.size(), -std::numeric_limits<double>::infinity());
     std::size_t repaired_spheres = 0;
+    // Which grid cells each channel falls in.  It depends only on the channels'
+    // angle labels, and every sphere shares one layout but the legacy hover
+    // spheres, so it is derived once and again only when the labels change:
+    // 1312 spheres x 1406 channels x 2 searches was most of what the fill cost.
+    struct ChannelCells
+    {
+        std::array<std::size_t, 2> phi, theta;
+    };
+    std::vector<ChannelCells> placement;
+    std::vector<double> placed_phis, placed_thetas;
+    bool placed = false;
+    std::size_t layout_warnings = 0;
+    // The spectral amplitude layout is a function of the same labels.
+    std::vector<std::size_t> cached_cell_of;
+    bool cached_cell_of_valid = false;
     // Cycle through sphere groups and load data
     for (std::size_t i = 0; i < group_ids.size(); i++)
     {
@@ -883,7 +947,7 @@ Database::Database(const std::string& datafile_path)
         // The D original (DRZ_edits) made it required, which would refuse every
         // database in this repository.
         double shaft_power_value = 0.0;
-        if (NC_NOERR == get_scalar(group_id, "ShaftPower", &shaft_power_value))
+        if (NC_NOERR == get_scalar(group_id, "ShaftPower", &shaft_power_value, true))
         {
             if (i != 0 && shaft_power_.size() != i)
                 input_error("Database error: ShaftPower present on some spheres but not others.");
@@ -955,6 +1019,47 @@ Database::Database(const std::string& datafile_path)
             n_conditions = group_ids.size();
             grid.assign(phis.size() * thetas.size() * n_conditions, Sample {0.0, 0.0});
         }
+        if (!placed || placed_phis != phis_scattered || placed_thetas != thetas_scattered)
+        {
+            placement.resize(phis_scattered.size());
+            for (std::size_t c = 0; c < phis_scattered.size(); c++)
+            {
+                placement[c].phi = approx_equal_range(phis.values(), phis_scattered[c]);
+                placement[c].theta = approx_equal_range(thetas.values(), thetas_scattered[c]);
+            }
+            placed_phis = phis_scattered;
+            placed_thetas = thetas_scattered;
+            placed = true;
+            cached_cell_of_valid = false;
+            // Whether this layout fills the grid.  A cell no channel reaches stays
+            // 0 dBA, which blends read as a real level; a channel that matches no
+            // grid angle (the axes come from sphere 0 alone) is dropped.  Neither
+            // used to be mentioned anywhere.
+            std::size_t dropped = 0;
+            std::vector<char> reached(phis.size() * thetas.size(), 0);
+            for (const auto& channel : placement)
+            {
+                if (channel.phi[0] == channel.phi[1] || channel.theta[0] == channel.theta[1])
+                {
+                    dropped++;
+                    continue;
+                }
+                for (std::size_t m = channel.phi[0]; m < channel.phi[1]; m++)
+                    for (std::size_t n = channel.theta[0]; n < channel.theta[1]; n++)
+                        reached[m * thetas.size() + n] = 1;
+            }
+            const std::size_t unreached = static_cast<std::size_t>(std::count(reached.begin(), reached.end(), 0));
+            if (dropped > 0 || unreached > 0)
+            {
+                if (++layout_warnings <= 3)
+                {
+                    warn("Database ", datafile_path, ": sphere ", i, " leaves ", unreached, " of ", reached.size(),
+                            " (phi, theta) cells without a channel, which read as 0 dBA, and drops ", dropped,
+                            " of ", placement.size(), " channels that match no angle of the grid (taken from "
+                            "sphere 0).");
+                }
+            }
+        }
         // Fetch scattered acoustic data for each sphere
         dBAs_scattered.resize(nchannels);
         EAAs_scattered.resize(nchannels);
@@ -1023,38 +1128,43 @@ Database::Database(const std::string& datafile_path)
             // their own angles say which cell each row is, and for a sorted file
             // that is the identity.  Otherwise keep the sorted reading.
             const std::size_t n_phi = phis.size(), n_theta = thetas.size();
-            std::vector<std::size_t> cell_of(n_phi * n_theta);
-            std::iota(cell_of.begin(), cell_of.end(), std::size_t {0});
-            if (phis_scattered.size() == n_phi * n_theta)
+            std::vector<std::size_t>& cell_of = cached_cell_of;
+            if (!cached_cell_of_valid)
             {
-                std::vector<std::size_t> mapped(n_phi * n_theta);
-                std::vector<bool> taken(n_phi * n_theta, false);
-                bool grid_layout = true;
-                for (std::size_t r = 0; r < n_phi && grid_layout; r++)
+                cell_of.resize(n_phi * n_theta);
+                std::iota(cell_of.begin(), cell_of.end(), std::size_t {0});
+                if (phis_scattered.size() == n_phi * n_theta)
                 {
-                    for (std::size_t j = 0; j < n_theta && grid_layout; j++)
+                    std::vector<std::size_t> mapped(n_phi * n_theta);
+                    std::vector<bool> taken(n_phi * n_theta, false);
+                    bool grid_layout = true;
+                    for (std::size_t r = 0; r < n_phi && grid_layout; r++)
                     {
-                        const std::size_t c = r * n_theta + j;
-                        const auto pm = approx_equal_range(phis.values(), phis_scattered[c]);
-                        const auto tm = approx_equal_range(thetas.values(), thetas_scattered[c]);
-                        if (pm[0] == pm[1] || tm[0] == tm[1]
-                                || !approx_equal(phis_scattered[c], phis_scattered[r * n_theta]))
+                        for (std::size_t j = 0; j < n_theta && grid_layout; j++)
                         {
-                            grid_layout = false;
-                            break;
+                            const std::size_t c = r * n_theta + j;
+                            const auto& pm = placement[c].phi;
+                            const auto& tm = placement[c].theta;
+                            if (pm[0] == pm[1] || tm[0] == tm[1]
+                                    || !approx_equal(phis_scattered[c], phis_scattered[r * n_theta]))
+                            {
+                                grid_layout = false;
+                                break;
+                            }
+                            const std::size_t cell = pm[0] * n_theta + tm[0];
+                            if (taken[cell])
+                                grid_layout = false;
+                            taken[cell] = true;
+                            mapped[c] = cell;
                         }
-                        const std::size_t cell = pm[0] * n_theta + tm[0];
-                        if (taken[cell])
-                            grid_layout = false;
-                        taken[cell] = true;
-                        mapped[c] = cell;
                     }
+                    if (grid_layout)
+                        cell_of = mapped;
+                    else if (i == 0)
+                        log("Sphere channels are not a full row-major grid; reading amplitude as "
+                            "gridded over the sorted angles.");
                 }
-                if (grid_layout)
-                    cell_of = mapped;
-                else if (i == 0)
-                    log("Sphere channels are not a full row-major grid; reading amplitude as "
-                        "gridded over the sorted angles.");
+                cached_cell_of_valid = true;
             }
             for (std::size_t slot = 0; slot < n_phi * n_theta; slot++)
             {
@@ -1085,10 +1195,10 @@ Database::Database(const std::string& datafile_path)
         // visited in file order), and dba_max covers matched channels only.
         for (std::size_t c = 0; c < phis_scattered.size(); c++)
         {
-            const auto phi_match = approx_equal_range(phis.values(), phis_scattered[c]);
+            const auto& phi_match = placement[c].phi;
             if (phi_match[0] == phi_match[1])
                 continue;
-            const auto theta_match = approx_equal_range(thetas.values(), thetas_scattered[c]);
+            const auto& theta_match = placement[c].theta;
             if (theta_match[0] == theta_match[1])
                 continue;
             if (dBAs_scattered[c] > dba_max)
@@ -1128,6 +1238,9 @@ Database::Database(const std::string& datafile_path)
             }
         }
     }
+    if (layout_warnings > 3)
+        warn("Database ", datafile_path, ": ", layout_warnings - 3, " more sphere layouts leave cells unfilled or drop channels.");
+    info("ShaftPower ", shaft_power_.empty() ? "is not in this database." : "is in this database.");
     if (repaired_spheres > 0)
     {
         log("Repaired legacy hover directivity on ", repaired_spheres, " of ", group_ids.size(),
@@ -1168,12 +1281,36 @@ Database::Database(const std::string& datafile_path)
     reference_thrust_coefficient_ = thrust_coefficient_min;
     active_condition_dims_ = fixed_load_factor_ ? 2 : condition_dims;
 
+    // An axis that does not vary cannot be scaled to [0, 1]: (x - min) / 0 is 0/0,
+    // NaN, and a triangulation built on NaN answered every query with one
+    // arbitrary sphere, silently (a level-flight-only build gave 114.0 dB at four
+    // conditions whose true levels were 100 to 112). The triangulation needs every
+    // axis it uses to vary, so a database of several spheres that does not is
+    // refused here, naming the axis; a single sphere has nothing to triangulate
+    // and takes the nearest-condition path, whatever its axes do.
+    if (advance_ratios.size() >= 2)
+    {
+        const auto require_varying = [&](const char* axis, double low, double high) {
+            if (!(high > low))
+            {
+                input_error("Database ", datafile_path, ": the ", axis, " is ", low,
+                        " in all ", advance_ratios.size(), " spheres, so the operating conditions "
+                        "cannot be interpolated over it. The triangulation needs the advance "
+                        "ratio and the flight path angle to vary (and the thrust coefficient too, "
+                        "unless the database is fixed_load_factor).");
+            }
+        };
+        require_varying("advance ratio", advance_ratio_min, advance_ratio_max);
+        require_varying("flight path angle", flight_path_angle_min, flight_path_angle_max);
+        if (!fixed_load_factor_)
+            require_varying("thrust coefficient", thrust_coefficient_min, thrust_coefficient_max);
+    }
     // Normalize operating conditions
     for (auto& x : advance_ratios)
-        x = (x - advance_ratio_min) / (advance_ratio_max - advance_ratio_min);
+        x = unit_interval(x, advance_ratio_min, advance_ratio_max);
     trace("Normalized μ   = ", advance_ratios);
     for (auto& x : flight_path_angles)
-        x = (x - flight_path_angle_min) / (flight_path_angle_max - flight_path_angle_min);
+        x = unit_interval(x, flight_path_angle_min, flight_path_angle_max);
     trace("Normalized γ   = ", flight_path_angles);
     // A fixed_load_factor database has thrust_coefficient_min == max, so this
     // would divide by zero -- and there is nothing to normalize anyway, since
@@ -1181,7 +1318,7 @@ Database::Database(const std::string& datafile_path)
     if (!fixed_load_factor_)
     {
         for (auto& x : thrust_coefficients)
-            x = (x - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min);
+            x = unit_interval(x, thrust_coefficient_min, thrust_coefficient_max);
         trace("Normalized CT  = ", thrust_coefficients);
     }
 
@@ -1200,7 +1337,24 @@ Database::Database(const std::string& datafile_path)
         if (!fixed_load_factor_)
             conditions[i * active_condition_dims_ + 2] = thrust_coefficients[i];
     }
-    interpolator_.build(active_condition_dims_, advance_ratios.size(), conditions.data());
+    // The triangulation touches no netCDF state, and nc_close takes about as long:
+    // it tears down the metadata netCDF-4 read for every group at nc_open, about
+    // 0.1 s for the shipped file's 1312.  So they run at once.
+    auto build = [&] { interpolator_.build(active_condition_dims_, advance_ratios.size(), conditions.data()); };
+    std::future<void> triangulation;
+    try
+    {
+        triangulation = std::async(std::launch::async, build);
+    }
+    catch (const std::system_error&)
+    {
+        // No thread to be had: do them one after the other.
+        guard.close();
+        build();
+        return;
+    }
+    guard.close();
+    triangulation.get();
 }
 
 Database::Blend Database::blend_at(double advance_ratio, double flight_path_angle,
@@ -1213,9 +1367,9 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     const double raw_thrust_coefficient = thrust_coefficient;
 
     // Normalize flight condition and limit range to [0.0,1.0]
-    advance_ratio = clamp01((advance_ratio - advance_ratio_min) / (advance_ratio_max - advance_ratio_min));
+    advance_ratio = clamp01(unit_interval(advance_ratio, advance_ratio_min, advance_ratio_max));
     flight_path_angle = clamp01(
-            (flight_path_angle - flight_path_angle_min) / (flight_path_angle_max - flight_path_angle_min));
+            unit_interval(flight_path_angle, flight_path_angle_min, flight_path_angle_max));
 
     Blend blend;
     if (fixed_load_factor_)
@@ -1245,7 +1399,7 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     else
     {
         thrust_coefficient = clamp01(
-                (thrust_coefficient - thrust_coefficient_min) / (thrust_coefficient_max - thrust_coefficient_min));
+                unit_interval(thrust_coefficient, thrust_coefficient_min, thrust_coefficient_max));
         trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
                 ", CT = ", thrust_coefficient);
 
@@ -1280,6 +1434,14 @@ Database::Sample Database::blend_cell(std::size_t i_phi, std::size_t i_theta,
 
 double Database::eval(double range, double phi, double theta, const Blend& blend) const
 {
+    // Spreading and absorption are taken from the sphere's surface outward, and
+    // the level inside it is the surface's: spherical spreading extrapolated
+    // inward grows as 1/r, which put 28 of the demo's observers up to 4.4 dB above
+    // the sphere-surface level and diverged at r = 0 (+inf in the CSV, an abort
+    // with the asserts live).  The sphere is the source's own volume, so there is
+    // no propagation to account for in it.  Clamped once, so the spreading and the
+    // excess attenuation below agree on the range; a no-op beyond the sphere.
+    range = std::max(range, sphere_radius_);
     // Find the sphere grid cell containing the desired phi, theta, and where in
     // it they sit.  locate() gives the bracketing indices and the interpolation
     // weight together, so nothing below has to read the knot arrays back.
@@ -1376,7 +1538,8 @@ Database::PackedSpectra Database::pack_spectra(
             {
                 const double v = spectra_[(c * n_bands + band) * n_conditions + indices[k]];
                 bands[band] = v;
-                if (band >= packed.first_band && band < packed.last_band && v <= empty_level_db)
+                // The mask holds 64 bands; eval_spectrum takes the general path past that.
+                if (band >= packed.first_band && band < packed.last_band && band < 64 && v <= empty_level_db)
                     packed.empty_bands[c * n_slots + k] |= std::uint64_t {1} << band;
             }
         }
@@ -1412,8 +1575,10 @@ void Database::eval_spectrum(double range, double absorbed_range, double phi, do
 
     // Spreading is geometry, so it is the same for every band; absorption is
     // not, which is the whole point of propagating the spectrum.
-    const double spreading_loss = 20.0 * std::log10(range / sphere_radius());
-    const double path_length = absorbed_range - sphere_radius();
+    // Capped at the sphere's surface as eval() does: no spreading gain and no
+    // negative absorption inside the source's own volume.
+    const double spreading_loss = 20.0 * std::log10(std::max(range, sphere_radius()) / sphere_radius());
+    const double path_length = std::max(absorbed_range - sphere_radius(), 0.0);
     const double* w = blend.weights.data();
     const double* sw = stencil.weight;
     constexpr std::size_t n_slots = condition_dims + 1;
@@ -1595,8 +1760,7 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
             // frame, where the microphone is offset along +y.  This is the
             // bearing between the two, which a ray in a stratified atmosphere
             // keeps unless a crosswind deflects it.
-            const double azimuth = std::atan2(path.separation.y, path.separation.x)
-                    - plate_mic_azimuth + 0.5 * pi;
+            const double azimuth = plate_frame_azimuth(path.separation, plate_mic_azimuth);
             plate->power_ratio(path.source_height, path.ground_distance, azimuth,
                     correction.data(), first_band, last_band);
         }
@@ -1684,8 +1848,30 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.flight_path_angle = flight_path_angle;
     sphere.thrust_coefficient = thrust_coefficient;
     sphere.radius = sphere_radius_;
+    sphere.speed_reference = speed_reference_;
+    sphere.tip_speed = tip_speed_;
+    sphere.rotor_radius = rotor_radius_;
+    sphere.vehicle_weight_newtons = vehicle_weight_newtons_;
     sphere.phis = phis.values();
     sphere.thetas = thetas.values();
+    // blend_at() clamps the condition into the database's envelope, so a request
+    // outside it (a 3 for a 0.3) gets the edge sphere while the file says what
+    // was asked for.  Say so.
+    {
+        const bool inside = advance_ratio >= advance_ratio_min && advance_ratio <= advance_ratio_max
+                && flight_path_angle >= flight_path_angle_min && flight_path_angle <= flight_path_angle_max
+                && (fixed_load_factor_ || (thrust_coefficient >= thrust_coefficient_min
+                        && thrust_coefficient <= thrust_coefficient_max));
+        if (!inside)
+        {
+            warn("The requested condition (mu ", advance_ratio, ", gamma ", flight_path_angle, ", CT ",
+                    thrust_coefficient, ") lies outside the database's envelope (mu ", advance_ratio_min, " to ",
+                    advance_ratio_max, ", gamma ", flight_path_angle_min, " to ", flight_path_angle_max,
+                    fixed_load_factor_ ? "" : ", CT ", fixed_load_factor_ ? "" : std::to_string(thrust_coefficient_min),
+                    fixed_load_factor_ ? "" : " to ", fixed_load_factor_ ? "" : std::to_string(thrust_coefficient_max),
+                    "): the sphere is the nearest one in it, labeled with the condition asked for.");
+        }
+    }
 
     // Same blend eval() applies at one direction, carried out at every cell, so
     // a sphere exported at an operating condition the database already holds
@@ -1829,6 +2015,18 @@ int Database::home_bin(std::size_t i_phi, std::size_t i_theta) const
             std::sin(theta) * std::sin(phi), 1.0);
 }
 
+std::array<int, 2> Database::home_bins(std::size_t i_phi, std::size_t i_theta) const
+{
+    const int here = home_bin(i_phi, i_theta);
+    // sin(180 degrees) is 1.2e-16, not 0, so the tail pole's row kept a
+    // meaningful azimuth by accident; a tolerance treats both poles the same
+    // rather than relying on that.
+    if (std::fabs(std::sin(thetas[i_theta] * pi / 180.0)) < 1e-9)
+        return {(here / DirectionBounds::azimuth_bins) * DirectionBounds::azimuth_bins,
+                DirectionBounds::azimuth_bins};
+    return {here, 1};
+}
+
 std::array<int, 2> Database::bin_padding() const
 {
     // How many bins a single grid cell can straddle.  The bins are coarser than
@@ -1872,22 +2070,26 @@ DirectionBounds Database::direction_bounds(const std::vector<SourceState>& state
                 for (std::size_t k = 0; k < blends[b].size(); k++)
                     top = std::max(top, cell[blends[b][k]].dBA);
 
-                const int here = home_bin(m, n);
-                const int theta_index = here / DirectionBounds::azimuth_bins;
-                const int azimuth_index = here % DirectionBounds::azimuth_bins;
-                // A direction reads this cell through a bilinear stencil that
-                // reaches a grid step either way, so every bin that stencil can
-                // be queried from has to carry the cell's value.
-                for (int dt = -theta_pad; dt <= theta_pad; dt++)
+                const auto [first_home, home_count] = home_bins(m, n);
+                for (int home_index = 0; home_index < home_count; home_index++)
                 {
-                    const int t = std::min(DirectionBounds::theta_bins - 1,
-                            std::max(0, theta_index + dt));
-                    for (int da = -azimuth_pad; da <= azimuth_pad; da++)
+                    const int here = first_home + home_index;
+                    const int theta_index = here / DirectionBounds::azimuth_bins;
+                    const int azimuth_index = here % DirectionBounds::azimuth_bins;
+                    // A direction reads this cell through a bilinear stencil that
+                    // reaches a grid step either way, so every bin that stencil
+                    // can be queried from has to carry the cell's value.
+                    for (int dt = -theta_pad; dt <= theta_pad; dt++)
                     {
-                        const int a = std::min(DirectionBounds::azimuth_bins - 1,
-                                std::max(0, azimuth_index + da));
-                        double& slot = row[t * DirectionBounds::azimuth_bins + a];
-                        slot = std::max(slot, top);
+                        const int t = std::min(DirectionBounds::theta_bins - 1,
+                                std::max(0, theta_index + dt));
+                        for (int da = -azimuth_pad; da <= azimuth_pad; da++)
+                        {
+                            const int a = std::min(DirectionBounds::azimuth_bins - 1,
+                                    std::max(0, azimuth_index + da));
+                            double& slot = row[t * DirectionBounds::azimuth_bins + a];
+                            slot = std::max(slot, top);
+                        }
                     }
                 }
             }
@@ -1946,10 +2148,10 @@ DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceStat
 
     const std::size_t n_thetas = thetas.size();
     const std::size_t n_cells = phis.size() * n_thetas;
-    std::vector<int> home(n_cells);
+    std::vector<std::array<int, 2>> home(n_cells);
     for (std::size_t m = 0; m < phis.size(); m++)
         for (std::size_t n = 0; n < n_thetas; n++)
-            home[m * n_thetas + n] = home_bin(m, n);
+            home[m * n_thetas + n] = home_bins(m, n);
 
     // Weighted level of each stored spectrum, and whether it has an empty band
     // the metric reads.  Per condition, not per group: groups share conditions,
@@ -1997,18 +2199,22 @@ DirectionBounds Database::spectral_direction_bounds(const std::vector<SourceStat
         std::fill(has_empty.begin(), has_empty.end(), 0);
         for (std::size_t c = 0; c < n_cells; c++)
         {
-            const int h = home[c];
-            double* maxima = band_max.data() + h * n_active;
-            for (const std::size_t k : blends[b])
+            // One bin, or at a pole all the azimuth bins of its theta bin.
+            for (int home_index = 0; home_index < home[c][1]; home_index++)
             {
-                spectrum_max[h] = std::max(spectrum_max[h], spectrum_level[c * n_conditions + k]);
-                has_empty[h] = has_empty[h] || spectrum_has_empty[c * n_conditions + k];
-                for (std::size_t j = 0; j < n_active; j++)
+                const int h = home[c][0] + home_index;
+                double* maxima = band_max.data() + h * n_active;
+                for (const std::size_t k : blends[b])
                 {
-                    // Raw values, the floor included: a band empty in every
-                    // entry blends to the floor, not to nothing.
-                    maxima[j] = std::max(maxima[j],
-                            spectra_[(c * n_bands + active[j]) * n_conditions + k]);
+                    spectrum_max[h] = std::max(spectrum_max[h], spectrum_level[c * n_conditions + k]);
+                    has_empty[h] = has_empty[h] || spectrum_has_empty[c * n_conditions + k];
+                    for (std::size_t j = 0; j < n_active; j++)
+                    {
+                        // Raw values, the floor included: a band empty in every
+                        // entry blends to the floor, not to nothing.
+                        maxima[j] = std::max(maxima[j],
+                                spectra_[(c * n_bands + active[j]) * n_conditions + k]);
+                    }
                 }
             }
         }
@@ -2214,6 +2420,27 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     int version_var = 0;
     nc_check(nc_def_var(file, "database_version", NC_INT, 1, &scalar_dim, &version_var),
             "defining database_version");
+    // The rest of the root the loader reads, where the source had it: the
+    // sphere reloads with the same speed reference and rotor, and so the same
+    // wind requirement, nose and vehicle-file checks, as the database it came from.
+    struct RootScalar
+    {
+        const char* name;
+        double value;
+        int var;
+    };
+    RootScalar root_scalars[] = {{"main_rotor_tip_speed_meters_per_sec", sphere.tip_speed, 0},
+            {"main_rotor_radius_meters", sphere.rotor_radius, 0},
+            {"vehicle_weight_newtons", sphere.vehicle_weight_newtons, 0}};
+    for (auto& scalar : root_scalars)
+    {
+        if (std::isfinite(scalar.value))
+            nc_check(nc_def_var(file, scalar.name, NC_DOUBLE, 1, &scalar_dim, &scalar.var),
+                    std::string("defining ") + scalar.name);
+    }
+    const std::string reference = to_string(sphere.speed_reference);
+    nc_check(nc_put_att_text(file, NC_GLOBAL, "speed_reference", reference.size(), reference.c_str()),
+            "writing speed_reference");
 
     int group = 0;
     nc_check(nc_def_grp(file, "sphere0", &group), "defining group sphere0");
@@ -2258,6 +2485,11 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     const int version = 1;
     nc_check(nc_put_var_short(file, same_grid_var, &same_grid), "writing same_grid");
     nc_check(nc_put_var_int(file, version_var, &version), "writing database_version");
+    for (const auto& scalar : root_scalars)
+    {
+        if (scalar.var != 0)
+            nc_check(nc_put_var_double(file, scalar.var, &scalar.value), std::string("writing ") + scalar.name);
+    }
 
     // The loader multiplies radius by rotor_scale, so put the whole dimensional
     // radius in the first and leave the second at unity.
@@ -2300,6 +2532,7 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
                 "writing amplitude");
     }
 
+    nc_check(guard.close(), "closing " + path);
     log("Wrote interpolated sphere to ", path, " (", n_channels, " channels).");
 }
 
@@ -2407,6 +2640,7 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     std::vector<float> amplitude(sphere.amplitudes.begin(), sphere.amplitudes.end());
     nc_check(nc_put_var_float(file, amplitude_var, amplitude.data()), "writing AMPLITUDE");
 
+    nc_check(guard.close(), "closing " + path);
     log("Wrote AAM sphere to ", path, " (", sphere.phis.size(), " x ", sphere.thetas.size(),
             " x ", sphere.frequencies.size(), ").");
 }
@@ -2488,7 +2722,7 @@ void Database::self_test(const std::string& datafile_path)
 
         // Every channel of a sphere is queried at that sphere's own operating
         // condition, so the blend is the same for all of them -- resolve it
-        // once instead of running a CGAL locate per channel.
+        // once instead of running a Delaunay locate per channel.
         const auto blend = blend_at(advance_ratio, flight_path_angle, thrust_coefficient);
 
         // Validate the database against the known data at sphere surface
@@ -2500,7 +2734,20 @@ void Database::self_test(const std::string& datafile_path)
             // floor applied here before the comparison means anything.
             auto dBA = std::isfinite(dBA_data[ch]) ? dBA_data[ch] : no_energy_floor_db;
             auto level = eval(dimensional_radius, phi_data[ch], theta_data[ch], blend);
-            if (!approx_equal(dBA, level))
+            // At a sphere's own condition and a grid node the blend and the
+            // bilinear weights are [1, 0, 0, 0], so eval() returns the stored
+            // double itself (measured: 0 difference over 22 million samples on every
+            // shipped database).  The 1% the D original allowed -- 0.8 dB at 80 dBA
+            // -- let a channel filed one grid cell off pass 60-90% of the time, which
+            // is the very error this test exists to catch.  The EAA is the other half
+            // of the cell and was never looked at: it comes back through eval as the
+            // loss over a further 1000 m, less the spreading.
+            constexpr double exact = 1e-9;
+            const double far = dimensional_radius + 1000.0;
+            const double eaa = std::isfinite(EAA_data[ch]) ? EAA_data[ch] : 0.0;
+            const double eaa_back = level - eval(far, phi_data[ch], theta_data[ch], blend)
+                    - 20.0 * std::log10(far / dimensional_radius);
+            if (!approx_equal(dBA, level, exact, exact) || !approx_equal(eaa, eaa_back, exact, exact))
             {
                 log("Surface level disagreement of D:", dBA, " versus N:", level, " for φ = ",
                         phi_data[ch], ", θ = ", theta_data[ch], ", μ  = ", advance_ratio, ",γ  =  ",

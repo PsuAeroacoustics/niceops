@@ -22,6 +22,17 @@ endif (NOT CMAKE_BUILD_TYPE)
 # NOTE: do NOT add -DNDEBUG to Release.  The D original ran with asserts live
 # in release builds, and sphere_database.cpp relies on assert(isFinite(...))
 # guards; matching that behavior is part of the port contract.
+#
+# CMake adds it itself: its default Release, RelWithDebInfo and MinSizeRel flags
+# all carry -DNDEBUG, so the contract above was not being kept -- every assert()
+# in src/ (17 of them, guarding isfinite of the levels and angles among others)
+# was compiled out of the shipped binaries.  Removed here.  It costs about 4
+# percent of the demo case's CPU time, and the whole suite passes with them live.
+# tests/test_build.cpp fails if a build comes out with NDEBUG defined anyway.
+foreach(config RELEASE RELWITHDEBINFO MINSIZEREL)
+  string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_${config} "${CMAKE_CXX_FLAGS_${config}}")
+  string(STRIP "${CMAKE_CXX_FLAGS_${config}}" CMAKE_CXX_FLAGS_${config})
+endforeach()
 
 # Link-time optimization.  The acoustic loop lives in niceops.cpp and calls
 # Database::level_at_observer, which lives in sphere_database.cpp, ~100 million
@@ -188,9 +199,15 @@ target_include_directories(niceops_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${NETCDF_INCLUDE_DIR}
 )
+# The library itself starts threads (the observer loop, the PE's band pool and the
+# propagation-table builds), so everything that links it needs the thread library;
+# only niceops and niceops_benchmark said so, and the rest relied on a libc that
+# folds pthread in.
+find_package(Threads REQUIRED)
 target_link_libraries(niceops_core PUBLIC
   ${NETCDF_LIBRARY}
   nlohmann_json::nlohmann_json
+  Threads::Threads
 )
 if(NICEOPS_PLOTTING)
   target_link_libraries(niceops_core PUBLIC pybind11::embed)
@@ -202,12 +219,14 @@ endif()
 
 # Main executable
 add_executable(niceops src/niceops.cpp)
-find_package(Threads REQUIRED)
 target_link_libraries(niceops niceops_core CLI11::CLI11 Threads::Threads)
 
 # Unit tests (Catch2)
 add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
+  tests/test_parallel.cpp
+  tests/test_build.cpp
+  tests/test_iota.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
   tests/test_atmosphere.cpp
@@ -270,6 +289,116 @@ add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CUR
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME state_golden COMMAND golden_compare state/ci_state.csv golden/state_197421.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(regression_golden state_golden PROPERTIES FIXTURES_REQUIRED demo_run)
+# golden_compare is what every equivalence test below stands on, so it is tested
+# itself.  A NaN or an infinity once compared equal to anything, which would have
+# passed a footprint of nan.  The reject cases pass on the mismatch message
+# (PASS_REGULAR_EXPRESSION replaces the exit status), so a usage error or a
+# missing file cannot satisfy them.
+add_test(NAME golden_compare_rejects_nan COMMAND golden_compare tests/data/compare_nan.csv tests/data/compare_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME golden_compare_rejects_inf COMMAND golden_compare tests/data/compare_inf.csv tests/data/compare_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME golden_compare_accepts_matching_inf COMMAND golden_compare tests/data/compare_same_inf.csv tests/data/compare_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(golden_compare_rejects_nan PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value 5: candidate nan")
+set_tests_properties(golden_compare_rejects_inf PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value 8: candidate inf")
+# -a mixes an ambient level in energy.  A negligible one (-200 dB) leaves the demo
+# at the golden, which checks the plumbing of the marched, transformed-level path
+# that -a forces; the arithmetic itself is a unit test (level_with_ambient).
+add_test(NAME ambient_negligible_is_the_golden COMMAND niceops -S state/ci_state.csv -a -200 -o integrated/ambient_negligible.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ambient_negligible_matches COMMAND golden_compare integrated/ambient_negligible.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ambient_negligible_is_the_golden PROPERTIES FIXTURES_SETUP ambient_run)
+set_tests_properties(ambient_negligible_matches PROPERTIES FIXTURES_REQUIRED ambient_run)
+# A failure used to reach only log/niceops.log, so a skipped trajectory left the
+# terminal empty with exit status 1 as the only sign.  Warnings and worse are now
+# echoed to stderr; the case passes on that text.
+add_test(NAME missing_track_is_reported COMMAND niceops -t tracks/does_not_exist.csv -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(missing_track_is_reported PROPERTIES PASS_REGULAR_EXPRESSION "Skipping tracks/does_not_exist.csv: Unable to open CSV file")
+# --export_sphere writes with NC_CLOBBER: giving it the database it reads replaced that
+# database with a one-sphere file and exited 0.
+add_test(NAME export_guard_copy COMMAND ${CMAKE_COMMAND} -E copy databases/S-76D_fixed_load_factor.nod integrated/export_guard.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME export_over_the_database_is_refused COMMAND niceops -d integrated/export_guard.nod --export_sphere integrated/export_guard.nod --sphere_condition 0.1 0 0.006 -S state/ci_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(export_guard_copy PROPERTIES FIXTURES_SETUP export_guard_file)
+set_tests_properties(export_over_the_database_is_refused PROPERTIES FIXTURES_REQUIRED export_guard_file PASS_REGULAR_EXPRESSION "would overwrite the database it reads")
+# A negative --receiver_height was taken as typed (the ground model assumes the microphone is
+# at or above the plane, and its table disagrees with the exact model below it).
+add_test(NAME negative_receiver_height_is_refused COMMAND niceops --ground_effect --receiver_height -3.937 -S state/ci_state.csv -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(negative_receiver_height_is_refused PROPERTIES PASS_REGULAR_EXPRESSION "--receiver_height: Value -3.937 not in range")
+# An exception in an observer-loop worker must skip the trajectory, not abort the
+# process.  Making the first history file's name a directory makes opening it
+# throw inside a worker; the case passes only on the "Skipping" line that
+# run()'s handler writes, which a std::terminate never reaches.
+add_test(NAME worker_exception_clean_clean COMMAND ${CMAKE_COMMAND} -E remove_directory integrated/blocked_hist WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME worker_exception_clean_block COMMAND ${CMAKE_COMMAND} -E make_directory integrated/blocked_hist/h_i0.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME worker_exception_is_skipped COMMAND niceops -S state/ci_state.csv --gridstep 1640 -j 4 -i integrated/blocked_hist/h -o integrated/blocked_hist_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(worker_exception_clean_clean PROPERTIES FIXTURES_SETUP blocked_hist_clean)
+set_tests_properties(worker_exception_clean_block PROPERTIES FIXTURES_REQUIRED blocked_hist_clean FIXTURES_SETUP blocked_hist_ready)
+set_tests_properties(worker_exception_is_skipped PROPERTIES FIXTURES_REQUIRED blocked_hist_ready PASS_REGULAR_EXPRESSION "Skipping tracks/S-76D/197421AC.csv: Unable to open file for writing")
+# With several trajectories every observer index restarts at 0, so -i and
+# --band_history files named only by index were overwritten by each trajectory in
+# turn.  They are now named for their track as well; and two trajectories asked
+# to write one file are refused up front rather than silently overwriting.
+add_test(NAME multi_trajectory_history_clean COMMAND ${CMAKE_COMMAND} -E remove_directory integrated/multi_hist WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME multi_trajectory_history_run COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197405AC.csv --gridstep 1640 -L warn -i integrated/multi_hist/h -o integrated/multi_a.csv -o integrated/multi_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME multi_trajectory_history_names COMMAND ${CMAKE_COMMAND} "-DFILES=integrated/multi_hist/h_197421AC_i0.csv;integrated/multi_hist/h_197405AC_i0.csv;integrated/multi_hist/h_197421AC_i48.csv;integrated/multi_hist/h_197405AC_i48.csv" "-DABSENT=integrated/multi_hist/h_i0.csv" -P tests/check_files.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(multi_trajectory_history_clean PROPERTIES FIXTURES_SETUP multi_history_clean)
+set_tests_properties(multi_trajectory_history_run PROPERTIES FIXTURES_REQUIRED multi_history_clean FIXTURES_SETUP multi_history_run)
+set_tests_properties(multi_trajectory_history_names PROPERTIES FIXTURES_REQUIRED multi_history_run)
+add_test(NAME duplicate_output_names_rejected COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197405AC.csv --gridstep 1640 -o integrated/same.csv -o integrated/same.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(duplicate_output_names_rejected PROPERTIES PASS_REGULAR_EXPRESSION "Two trajectories would write the same output file")
+# -D on a geodetic track with no utcsec column and no --start_utc used to date the
+# flight at UTC midnight and add the night penalty (+10 dB) without a word.  It is
+# refused now, and a start time makes the same run work.
+add_test(NAME dnl_needs_a_clock COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -D integrated/noclock_dnl.csv -o integrated/noclock_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(dnl_needs_a_clock PROPERTIES PASS_REGULAR_EXPRESSION "-D needs the time of day")
+add_test(NAME dnl_with_start_utc COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --start_utc 43200 -D integrated/dated_dnl.csv -o integrated/dated_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# An observer exactly at a source position: spherical spreading diverges at r = 0.
+# The level was +inf in the CSV, and with the asserts live the run aborted.  The
+# case passes only if the run finishes.
+add_test(NAME observer_on_the_source_survives COMMAND niceops -b tests/data/observer_on_source.csv -o integrated/observer_on_source.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The vehicle file against the database it is run with.  Only the tip speed was
+# ever compared, in an info line; weight and radius set CT in the same way, and a
+# vehicle file 10 percent heavy moved the footprint 0.75 dB median with nothing
+# said.  All three are warnings now.  The B407 file and database are a matched
+# pair (the weights differ by panam's g = 9.82, 0.14 percent) and must stay quiet.
+set(B407_RUN -d databases/B407_fixed_load_factor.nod -t tracks/S-76D/197421AC.csv --gridstep 1640 --humidity 20 -o integrated/vehicle_check.csv)
+add_test(NAME vehicle_tip_speed_mismatch_warns COMMAND niceops ${B407_RUN} -v databases/S-76D.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(vehicle_tip_speed_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle main rotor tip speed disagrees")
+add_test(NAME vehicle_weight_mismatch_warns COMMAND niceops ${B407_RUN} -v tests/data/B407_heavy.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(vehicle_weight_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle weight disagrees")
+add_test(NAME matched_vehicle_is_silent COMMAND niceops ${B407_RUN} -v databases/B407.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(matched_vehicle_is_silent PROPERTIES FAIL_REGULAR_EXPRESSION "disagrees;Relative humidity is not set")
+# Humidity is the one atmosphere value that is usually defaulted (the vehicle
+# files give a temperature and a density, not a humidity) and absorption is very
+# sensitive to it, so a defaulted one is said aloud; the other values say where
+# they came from in the log.
+add_test(NAME humidity_default_is_warned COMMAND niceops -d databases/B407_fixed_load_factor.nod -t tracks/S-76D/197421AC.csv --gridstep 1640 -v databases/B407.json -o integrated/humidity_default.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(humidity_default_is_warned PROPERTIES PASS_REGULAR_EXPRESSION "Relative humidity is not set")
+# Unit slips in the atmosphere options are refused before anything loads.
+add_test(NAME temperature_in_celsius_rejected COMMAND niceops --temperature 15 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(temperature_in_celsius_rejected PROPERTIES PASS_REGULAR_EXPRESSION "--temperature: a temperature of 15.* is it in Celsius")
+add_test(NAME pressure_in_pascals_rejected COMMAND niceops --pressure 101325 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pressure_in_pascals_rejected PROPERTIES PASS_REGULAR_EXPRESSION "--pressure: a pressure of 101325.* is it in Pa or hPa")
+add_test(NAME humidity_as_fraction_rejected COMMAND niceops --humidity 0.5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(humidity_as_fraction_rejected PROPERTIES PASS_REGULAR_EXPRESSION "--humidity: a relative humidity of 0.5.* not as a fraction")
+# An observer file with a row that does not parse, or with rows of different
+# widths, used to run on the rows that did: a typo removed an observer, a short
+# row became an observer at the wrong coordinates.
+add_test(NAME observer_typo_rejected COMMAND niceops -b tests/data/observers_typo.csv -o integrated/observers_typo.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(observer_typo_rejected PROPERTIES PASS_REGULAR_EXPRESSION "line 3 is not a row of numbers")
+add_test(NAME observer_mixed_widths_rejected COMMAND niceops -b tests/data/observers_mixed_widths.csv -o integrated/observers_mixed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(observer_mixed_widths_rejected PROPERTIES PASS_REGULAR_EXPRESSION "has 2 fields where the first has 3")
+# The PE tools took numeric options unchecked: --source_height 0 without --top
+# looped until it had eaten 21 GB, --max_range 0 and --range_step 0 threw inside a
+# worker thread (an abort), --samples 0 divided by zero and wrote a table of
+# +Infinity with exit status 0, and --max_angle above the documented 60 degrees
+# reported paths the march cannot carry instead of NaN.  Each is refused.
+set(PE_FIELD_BASE --atmosphere atmospheres/example_windy.csv --toward 312)
+add_test(NAME pe_field_zero_source_height_needs_top COMMAND niceops_pe_field ${PE_FIELD_BASE} --source_height 0 --bands 500 --max_range 2000 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pe_field_zero_source_height_needs_top PROPERTIES PASS_REGULAR_EXPRESSION "gives no default for --top")
+add_test(NAME pe_field_rejects_zero_range COMMAND niceops_pe_field ${PE_FIELD_BASE} --source_height 100 --max_range 0 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pe_field_rejects_zero_range PROPERTIES PASS_REGULAR_EXPRESSION "--max_range: Value 0 not in range")
+add_test(NAME pe_field_rejects_zero_samples COMMAND niceops_pe_field ${PE_FIELD_BASE} --source_height 100 --max_range 1000 --samples 0 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pe_field_rejects_zero_samples PROPERTIES PASS_REGULAR_EXPRESSION "--samples: Value 0 not in range")
+add_test(NAME pe_field_rejects_steep_max_angle COMMAND niceops_pe_field ${PE_FIELD_BASE} --source_height 100 --max_range 1000 --max_angle 75 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(pe_field_rejects_steep_max_angle PROPERTIES PASS_REGULAR_EXPRESSION "--max_angle: Value 75 not in range")
 # The spectral peak search and --db_cutoff skip what a bound puts below a
 # threshold; with --ground_effect the bound includes the most the ground can
 # add.  A skipped state must change nothing, so a run through the peak search
@@ -308,6 +437,20 @@ add_test(NAME propagation_table_marched COMMAND niceops -d databases/B407_fixed_
 set_tests_properties(propagation_table_marched PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP propagation_table_runs)
 add_test(NAME propagation_table_windowed_is_exact COMMAND golden_compare integrated/propagation_table.csv integrated/propagation_table_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_windowed_is_exact PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
+# A table with a +25 dB bump beyond 1500 m and a bearing tilt, on eight bearings, run with the frame
+# turned 210 degrees: the peak search's bound has to carry the table's largest gain, so the windowed run
+# equals the marched one; and a table that says it carries absorption makes the run add none, so the
+# footprint is the louder of the two by the absorption (golden_compare reports the mismatch).
+add_test(NAME propagation_table_bump_build COMMAND niceops_unit_tests "[.bump_table]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_bump_build PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP propagation_table_bump_file)
+add_test(NAME propagation_table_bump COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --propagation_table tables/bump_test.nc --frame_bearing 210 --gridstep 492 -L warn -o integrated/propagation_table_bump.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_bump_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --propagation_table tables/bump_test.nc --frame_bearing 210 --gridstep 492 -L warn -D integrated/propagation_table_bump_dnl.csv -o integrated/propagation_table_bump_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_bump_absorbed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --propagation_table tables/bump_absorbed_test.nc --frame_bearing 210 --gridstep 492 -L warn -o integrated/propagation_table_bump_absorbed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_bump propagation_table_bump_marched propagation_table_bump_absorbed PROPERTIES FIXTURES_REQUIRED propagation_table_bump_file FIXTURES_SETUP propagation_table_bump_runs)
+add_test(NAME propagation_table_bump_windowed_is_exact COMMAND golden_compare integrated/propagation_table_bump.csv integrated/propagation_table_bump_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_absorption_is_not_added_twice COMMAND golden_compare integrated/propagation_table_bump.csv integrated/propagation_table_bump_absorbed.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_bump_windowed_is_exact PROPERTIES FIXTURES_REQUIRED propagation_table_bump_runs)
+set_tests_properties(propagation_table_absorption_is_not_added_twice PROPERTIES FIXTURES_REQUIRED propagation_table_bump_runs PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME propagation_table_is_the_ground_model COMMAND golden_compare integrated/propagation_table.csv integrated/propagation_table_reference.csv 0.25 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_is_the_ground_model PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
 # --atmosphere through a single-level profile holding the vehicle file's own
@@ -428,6 +571,27 @@ set_tests_properties(stratified_duct_point stratified_duct_point_marched stratif
 add_test(NAME stratified_duct_point_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME stratified_duct_plate_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_plate.csv integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_duct_point_windowed_is_exact stratified_duct_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# Pinned footprints, since windowed-versus-marched compares two runs of one binary and a change
+# to the arrivals' summation, bounce loss, ground geometry or completeness passes it: dropping the
+# extra arrivals from the energy sum and the primary's bounce loss moved the duct footprint by up
+# to 7.8 dB with every stratified test green.  Regenerate with the build that changed them, after
+# checking the change is meant (CLAUDE.md, "Every arrival, summed in energy").  Absolute 1e-4 dB:
+# the root solves are not bit-stable across compilers.
+add_test(NAME stratified_windy_point_golden COMMAND golden_compare integrated/stratified_windy_point.csv golden/stratified_windy_point.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_point_golden COMMAND golden_compare integrated/stratified_duct_point.csv golden/stratified_duct_point.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate_golden COMMAND golden_compare integrated/stratified_duct_plate.csv golden/stratified_duct_plate.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_windy_point_golden PROPERTIES FIXTURES_REQUIRED stratified_runs)
+set_tests_properties(stratified_duct_point_golden stratified_duct_plate_golden PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# --scattering fills shadows with scattered energy, a gain the peak search's bound has to allow: the
+# creeping-wave and scattering caps were the survivors of mutation testing, with no CTest running the option.
+add_test(NAME scattering_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --scattering 3e-6 --gridstep 492 -L warn -o integrated/scattering_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME scattering_point_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --scattering 3e-6 --gridstep 492 -L warn -D integrated/scattering_point_dnl.csv -o integrated/scattering_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME scattering_windowed_is_exact COMMAND golden_compare integrated/scattering_point.csv integrated/scattering_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# ... and the option does something: without it the footprint differs (golden_compare reports a mismatch, which is the pass; a missing file would say something else).
+add_test(NAME scattering_is_not_off COMMAND golden_compare integrated/scattering_point.csv integrated/refraction_windy_point.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(scattering_is_not_off PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value" FIXTURES_REQUIRED "scattering_runs;refraction_windy_runs")
+set_tests_properties(scattering_point scattering_point_marched PROPERTIES FIXTURES_SETUP scattering_runs)
+set_tests_properties(scattering_windowed_is_exact PROPERTIES FIXTURES_REQUIRED scattering_runs)
 add_test(NAME refraction_point_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_point.csv integrated/refraction_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME refraction_plate_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_plate.csv integrated/refraction_windy_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(refraction_point_windowed_is_exact refraction_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED refraction_windy_runs)

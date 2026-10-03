@@ -42,33 +42,66 @@ void airy_series(complex z, complex& ai, complex& aip)
     aip = c1 * fp - c2 * gp;
 }
 
+namespace {
+
+// The principal square root, in real arithmetic (std::sqrt on a complex goes
+// through polar form, an atan2 and a sincos).
+complex principal_sqrt(complex w)
+{
+    const double a = w.real(), b = w.imag();
+    const double t = std::sqrt(0.5 * (std::hypot(a, b) + std::fabs(a)));
+    if (t == 0.0)
+        return 0.0;
+    return a >= 0.0 ? complex(t, b / (2.0 * t)) : complex(std::fabs(b) / (2.0 * t), std::copysign(t, b));
+}
+
+// Complex product without the NaN-recovery branch of the library's.
+complex product(complex a, complex b)
+{
+    return {a.real() * b.real() - a.imag() * b.imag(), a.real() * b.imag() + a.imag() * b.real()};
+}
+
+} // namespace
+
 void airy_asymptotic(complex z, complex& ai, complex& aip)
 {
-    const complex zeta = (2.0 / 3.0) * std::pow(z, 1.5);
-    complex sum_u = 1.0, sum_v = 1.0;
+    // In real arithmetic, as hankel1_0 is: the powers z^(3/2) and z^(1/4) on the
+    // principal branch are z sqrt(z) and sqrt(sqrt(z)), the divides are by a
+    // reciprocal formed once, and the series stops on squared magnitudes.  The
+    // library's complex pow, exp, divide and abs were half the ShadowTransition
+    // table build once hankel1_0 was fixed.
+    const complex root = principal_sqrt(z);
+    const complex zeta = (2.0 / 3.0) * product(z, root);
+    const double zeta2 = std::norm(zeta);
+    const complex inverse(-zeta.real() / zeta2, zeta.imag() / zeta2); // -1/zeta
+    double sum_u_r = 1.0, sum_u_i = 0.0, sum_v_r = 1.0, sum_v_i = 0.0;
     double u_k = 1.0;
-    double last = 1e300;
-    const complex inverse = -1.0 / zeta;
+    double last2 = 1e300;
     complex power = 1.0;
     for (int k = 1; k < 60; k++)
     {
         const double kk = static_cast<double>(k);
         u_k *= (6 * kk - 5) * (6 * kk - 3) * (6 * kk - 1) / ((2 * kk - 1) * 216.0 * kk);
         const double v_k = -(6 * kk + 1) / (6 * kk - 1) * u_k;
-        power *= inverse;
-        const complex term_u = u_k * power;
-        if (std::abs(term_u) > last)
+        power = product(power, inverse);
+        const double size2 = u_k * u_k * (power.real() * power.real() + power.imag() * power.imag());
+        if (size2 > last2)
             break; // the series is asymptotic: stop at its smallest term
-        last = std::abs(term_u);
-        sum_u += term_u;
-        sum_v += v_k * power;
-        if (last < 1e-17)
+        last2 = size2;
+        sum_u_r += u_k * power.real();
+        sum_u_i += u_k * power.imag();
+        sum_v_r += v_k * power.real();
+        sum_v_i += v_k * power.imag();
+        if (last2 < 1e-34)
             break;
     }
-    const complex e = std::exp(-zeta) / (2.0 * std::sqrt(pi));
-    const complex quarter = std::pow(z, 0.25);
-    ai = e / quarter * sum_u;
-    aip = -e * quarter * sum_v;
+    // exp(-zeta) / (2 sqrt(pi)), and z^(1/4) with its reciprocal conj / |.|^2.
+    const double magnitude = std::exp(-zeta.real()) / (2.0 * std::sqrt(pi));
+    const complex e(magnitude * std::cos(zeta.imag()), -magnitude * std::sin(zeta.imag()));
+    const complex quarter = principal_sqrt(root);
+    const complex quarter_inverse = std::conj(quarter) / std::norm(quarter);
+    ai = product(product(e, quarter_inverse), complex(sum_u_r, sum_u_i));
+    aip = -product(product(e, quarter), complex(sum_v_r, sum_v_i));
 }
 
 void airy(complex z, complex& ai, complex& aip)
