@@ -15,6 +15,7 @@
 // since a discontinuity there is the classic symptom of a botched cubic
 // assembly and would not show up in the residual.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
@@ -288,5 +289,122 @@ TEST_CASE("zero smoothing gives the interpolating cubic, not a polyline", "[spli
             REQUIRE(std::fabs(spline.derivative(xi, 1) - 2.0 * xi) < 1e-6);
             REQUIRE(std::fabs(spline.derivative(xi, 2) - 2.0) < 1e-6);
         }
+    }
+}
+
+namespace {
+
+// A deterministic stand-in for measurement noise: a few hundred microns, white
+// enough for a smoother, and repeatable.
+double jitter(std::size_t i)
+{
+    return 5e-4 * std::sin(12.9898 * static_cast<double>(i) + 78.233 * std::sin(0.37 * static_cast<double>(i)));
+}
+
+} // namespace
+
+TEST_CASE("freed ends recover the acceleration the natural condition pins to zero",
+        "[spline][ends]")
+{
+    // y = v0 t + a t^2 / 2 at 50 Hz for 131 s, smoothed to a 3.048 m RMS budget as
+    // the geodetic reader does.  The natural spline's second derivative is exactly
+    // 0 at the ends and recovers over seconds; the extended fit has a at the end.
+    const double a = 1.5, v0 = 20.0;
+    std::vector<double> t, y;
+    for (std::size_t i = 0; i <= 6550; i++)
+    {
+        const double ti = 0.02 * static_cast<double>(i);
+        t.push_back(ti);
+        y.push_back(v0 * ti + 0.5 * a * ti * ti + jitter(i));
+    }
+    const double budget = 3.048;
+    const auto natural = SmoothingSpline::within_tolerance(t, y, budget * budget * static_cast<double>(t.size()));
+    const auto freed = SmoothingSpline::within_tolerance_extended(t, y, budget, 3.0, 10.0);
+
+    REQUIRE(std::fabs(natural.derivative(t.back(), 2)) < 1e-9);
+    for (double from_end : {0.0, 1.0, 2.0, 4.0, 8.0})
+    {
+        const double at = t.back() - from_end;
+        INFO("seconds from the end: " << from_end);
+        // Curvature at 0, 0.5, 1, 2, 4, 8 s from the end, for a = 1.5: natural 0, 0.01,
+        // 0.05, 0.16, 0.50, 1.14; freed 1.33, 1.37, 1.40, 1.46, 1.53, 1.56.  The end
+        // point itself keeps about a tenth of the bias, where the natural fit has all.
+        const double tolerance = from_end == 0.0 ? 0.15 : from_end <= 1.0 ? 0.10 : 0.06;
+        REQUIRE(freed.derivative(at, 2) == Catch::Approx(a).epsilon(tolerance));
+        REQUIRE(freed.derivative(t.front() + from_end, 2) == Catch::Approx(a).epsilon(tolerance));
+        // And the speed: the natural fit's end speed is off where it matters.
+        REQUIRE(freed.derivative(at, 1) == Catch::Approx(v0 + a * at).epsilon(0.01));
+    }
+    // The natural fit really was biased here, so the test is not vacuous.
+    REQUIRE(std::fabs(natural.derivative(t.back() - 2.0, 2) - a) > 0.15 * a);
+}
+
+TEST_CASE("freed ends carry a track that ends in a stop", "[spline][ends]")
+{
+    // 30 m/s decelerating at 1.5 m/s^2 to rest, then the track ends: the case the
+    // reviewers measured.  The natural fit's last state was still doing 5.4 m/s and
+    // its last four seconds had 43 percent too little deceleration.
+    std::vector<double> t, y;
+    const double a = -1.5, v0 = 30.0, t_stop = 20.0;
+    for (std::size_t i = 0; i <= static_cast<std::size_t>(t_stop / 0.02); i++)
+    {
+        const double ti = 0.02 * static_cast<double>(i);
+        t.push_back(ti);
+        y.push_back(v0 * ti + 0.5 * a * ti * ti + jitter(i));
+    }
+    const double budget = 3.048;
+    const auto natural = SmoothingSpline::within_tolerance(t, y, budget * budget * static_cast<double>(t.size()));
+    const auto freed = SmoothingSpline::within_tolerance_extended(t, y, budget, 3.0, 10.0);
+
+    const double end = t.back();
+    REQUIRE(std::fabs(natural.derivative(end, 1)) > 3.0); // the bias being removed
+    REQUIRE(std::fabs(freed.derivative(end, 1)) < 1.0);
+    for (double from_end : {1.0, 2.0, 4.0})
+    {
+        INFO("seconds from the end: " << from_end);
+        REQUIRE(freed.derivative(end - from_end, 2) == Catch::Approx(a).epsilon(0.15));
+    }
+}
+
+TEST_CASE("freed ends keep the fit's budget and leave a line a line", "[spline][ends]")
+{
+    // The RMS budget keeps its meaning: the extended fit stays within it over the
+    // real points too.  A straight line has no end bias to remove and comes back a
+    // straight line (zero curvature everywhere, the end included).
+    std::vector<double> t, y;
+    for (std::size_t i = 0; i <= 3000; i++)
+    {
+        t.push_back(0.02 * static_cast<double>(i));
+        y.push_back(50.0 + 12.0 * t.back() + jitter(i));
+    }
+    const auto line = SmoothingSpline::within_tolerance_extended(t, y, 3.048, 3.0, 10.0);
+    for (double at : {0.0, 1.0, 30.0, 59.0, 60.0})
+    {
+        REQUIRE(std::fabs(line.derivative(at, 2)) < 2e-3);
+        REQUIRE(line.derivative(at, 1) == Catch::Approx(12.0).margin(1e-2));
+    }
+    double squares = 0.0;
+    for (std::size_t i = 0; i < t.size(); i++)
+        squares += (line(t[i]) - y[i]) * (line(t[i]) - y[i]);
+    REQUIRE(std::sqrt(squares / static_cast<double>(t.size())) <= 3.048);
+}
+
+TEST_CASE("an end with too little data in its window stays natural", "[spline][ends]")
+{
+    // Sparse samples (under 8 in the 3 s window) cannot support a quadratic, so the
+    // fit is the plain one, bit for bit.
+    std::vector<double> t, y;
+    for (std::size_t i = 0; i < 40; i++)
+    {
+        t.push_back(2.0 * static_cast<double>(i));
+        y.push_back(0.5 * t.back() * t.back() * 0.1 + jitter(i));
+    }
+    const double budget = 1.0;
+    const auto plain = SmoothingSpline::within_tolerance(t, y, budget * budget * static_cast<double>(t.size()));
+    const auto freed = SmoothingSpline::within_tolerance_extended(t, y, budget, 3.0, 10.0);
+    for (double at : {0.0, 10.0, 40.0, 78.0})
+    {
+        REQUIRE(freed(at) == plain(at));
+        REQUIRE(freed.derivative(at, 2) == plain.derivative(at, 2));
     }
 }

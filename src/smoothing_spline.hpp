@@ -51,6 +51,31 @@ public:
             const std::vector<double>& y, double tolerance,
             const std::vector<double>& weights = {});
 
+    // within_tolerance with the ends freed from the natural condition.
+    //
+    // A natural spline has zero curvature at both ends, and a smoothing spline's
+    // boundary bias is order one for about a smoothing length from each: with the
+    // stiff fits the trajectory code asks for (a bandwidth of ten seconds) the last
+    // several seconds of a track have their second derivative -- the acceleration
+    // -- pulled towards zero.  On a track that ends in a deceleration it cut the
+    // last four seconds' deceleration by 43 percent, left the last state at 5.4 m/s
+    // where the aircraft had stopped, and tilted the thrust vector 7 to 11 degrees
+    // wrong, which moved the footprint under the landing end by up to 1.8 dB.
+    //
+    // The cure is to give the fit something to bend into: each end is extended by
+    // `extension` (same units as x) of virtual points on the quadratic that
+    // least-squares fits the last `window` of the data, at the data's mean spacing;
+    // the spline is fitted through all of them, and only the real range is
+    // evaluated.  `rms` is a root-mean-square residual per point (so the budget
+    // keeps the meaning it has on the plain fit): the tolerance is rms^2 times the
+    // number of points, extension included.  An end with too few points in its
+    // window (under 8) or a window that is not spanned is left natural.
+    //
+    // Returns a spline over the extended range; evaluate it inside [x.front(),
+    // x.back()].  residual() and fitted() refer to the extended points.
+    static SmoothingSpline within_tolerance_extended(const std::vector<double>& x,
+            const std::vector<double>& y, double rms, double window, double extension);
+
     // Value at xi.  Outside [x.front(), x.back()] the end cubics are extended,
     // which for a natural spline means linear extrapolation.
     double operator()(double xi) const;

@@ -165,8 +165,26 @@ GeodeticColumns find_geodetic_columns(const LabelledCsv& csv, LengthUnit unit)
 // squared residual, so an RMS bound in metres is scaled by the sample count to
 // mean the same thing whatever the sample rate; zero interpolates, which is
 // what a list of waypoints wants.
+//
+// A dense track (under half a second between samples, the ones that carry an
+// aircraft's own motion) gets its ends freed from the natural condition: see
+// SmoothingSpline::within_tolerance_extended.  Natural ends pin the acceleration
+// at both ends of the track to zero and bias it for several seconds inward, which
+// on an approach that ends in a stop is the part nearest the observers who hear it
+// loudest.  Sparse waypoints are a statement of intent and are left as they were,
+// and so is an exact interpolation (a zero budget has no bias to remove).
+constexpr double end_window_seconds = 3.0;
+constexpr double end_extension_seconds = 10.0;
+constexpr double dense_track_spacing = 0.5; // seconds
+
 SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>& f, double rms_metres)
 {
+    const double spacing = (t.back() - t.front()) / static_cast<double>(t.size() - 1);
+    if (rms_metres > 0.0 && t.size() >= 3 && spacing <= dense_track_spacing)
+    {
+        return SmoothingSpline::within_tolerance_extended(
+                t, f, rms_metres, end_window_seconds, end_extension_seconds);
+    }
     return SmoothingSpline::within_tolerance(
             t, f, rms_metres * rms_metres * static_cast<double>(t.size()));
 }

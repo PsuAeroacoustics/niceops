@@ -1222,21 +1222,37 @@ its full inertial state:
 
 | Input | Median | 99th pct | Max | Cells over 1 dB (of 14400) |
 | --- | --- | --- | --- | --- |
-| 50 Hz positions, default `--path_smoothing 10` | 0.085 dB | 1.00 | 2.88 | 145 |
-| 50 Hz positions, `--path_smoothing 0.0656` (= 0.02 m) | 0.028 dB | 0.64 | 2.44 | 37 |
-| 50 Hz positions, `--path_smoothing 0` (exact) | 11.6 dB | 15.51 | 16.32 | 14395 |
-| 50 Hz positions and velocity columns, default | 0.014 dB | 0.42 | 2.25 | 18 |
-| Waypoints 10 s apart, resampled to 0.1 s, default | 0.096 dB | 0.95 | 2.10 | 107 |
+| 50 Hz positions, default `--path_smoothing 10` | 0.073 dB | 0.72 | 1.42 | 25 |
+| 50 Hz positions, `--path_smoothing 0.0656` (= 0.02 m) | 0.031 dB | 0.36 | 1.44 | 6 |
+| 50 Hz positions, `--path_smoothing 0` (exact) | 8.0 dB | 9.57 | 10.58 | 14400 |
+| 50 Hz positions and velocity columns, default | 0.015 dB | 0.36 | 1.42 | 4 |
+| Waypoints 10 s apart, resampled to 0.1 s, default | 0.121 dB | 0.86 | 2.10 | 76 |
 
 The projection itself is not the lossy part: it reproduces that file's own x/y to under a metre
 over 3.2 km, and altitude passes through exactly. What costs is differentiating twice.
 
 The default is not the best row in the table — a dense 50 Hz track does better at 0.0656 ft,
 which is tuned to *that* file's coordinate resolution. It is the best *default*, because it is
-the only setting that is good on every input shape at once: 0.085 dB on dense positions,
-0.096 dB on sparse waypoints, 0.014 dB when velocities are given. Exact interpolation is
+the only setting that is good on every input shape at once: 0.073 dB on dense positions,
+0.121 dB on sparse waypoints, 0.015 dB when velocities are given. Exact interpolation is
 uniformly catastrophic on measured input, and a value tuned for one sampling rate is wrong for
 another. Tune it down if you know your coordinate resolution; leave it alone otherwise.
+
+**The ends of a dense track are fitted freely.** A natural smoothing spline is pinned to zero
+second derivative at the first and last knot, which is a statement that the aircraft is not
+accelerating there. A track that starts or stops mid-manoeuvre is therefore fitted with a
+velocity and a load factor that bend toward a straight line over the last few seconds: on a
+constant-acceleration test path (1.5 m/s²) the natural fit's acceleration is zero at the end,
+0.50 four seconds in and 1.14 eight seconds in, where the freed fit holds it within 11%
+throughout. For positions sampled at
+0.5 s or finer, with a nonzero `--path_smoothing`, the fit is therefore made over the track
+extended by 10 s at each end along a local quadratic (fitted to the last 3 s), so that the
+natural condition lands on the extension and not on the data. The extension is not used
+afterwards. Sparser tracks, and `--path_smoothing 0`, keep the natural ends; there the
+interpolant is the statement of intent, and a quadratic fitted to a few waypoints is not. On
+the table above this takes the default row from 0.109 dB median and 84 cells over 1 dB to the
+values shown, and leaves the exact and waypoint rows as they were. The shipped AC tracks carry
+their own state and never go through this.
 
 Sparse waypoints are resampled onto the `-s` grid first — never coarsened — and their load
 factor is an artefact of the interpolant, which is logged.
@@ -1270,9 +1286,10 @@ compass bearing of **210°**, the approach heading, not along the wandering head
 file's own column 8. Their ground plane sits 54.2651 ft below their altitude column. So
 ```sh
 ./build/niceops -t track.csv --origin 39.8104276 -74.4263086 --frame_bearing 210 \
-                --ground_elevation 54.2651 --path_smoothing 0.02
+                --ground_elevation 54.2651
 ```
-is the demo case restated in WGS84, and is what the table above measures.
+is the demo case restated in WGS84, and is what the first row of the table above measures
+(`--path_smoothing 0.0656` gives the second).
 
 ### Plotting
 

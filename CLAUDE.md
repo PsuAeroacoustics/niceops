@@ -1122,7 +1122,7 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   `to_geodetic` inverts the projection by Newton iteration, which is what `--latlon` output
   uses. Ported from the D `worldtransforms.d`/`wgs84tocartesian.d` pair, which had no notion of
   a rotated frame and whose inverse walked fixed 1e-5 degree increments.
-- `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `trajectory.cpp` uses it directly. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
+- `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does. `within_tolerance_extended` does the same over a track padded along a local quadratic at each end, which is what a dense geodetic track uses (see "Velocity and load factor are derived" above). `trajectory.cpp` uses it directly. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
 ### Geodetic trajectory input
@@ -1159,8 +1159,8 @@ touching it:
   and is an acceptable deviation in feet RMS per axis, not an abstract weight -- the solver
   spends the whole budget rather than merely staying inside it. Interpolating exactly
   (`--path_smoothing 0`) amplifies the coordinates' 1e-8 degree rounding by 1/step² -- 2500x on
-  the 0.02 s demo track -- and moves the footprint by **11.6 dB at the median**; the 10 ft
-  default takes that to 0.085 dB. Zero is wrong for both kinds of input, which is why it is no
+  the 0.02 s demo track -- and moves the footprint by **8.0 dB at the median**; the 10 ft
+  default takes that to 0.073 dB. Zero is wrong for both kinds of input, which is why it is no
   longer the default: measured positions turn into rounding noise, and sparse waypoints are a
   statement of intent, so flying exactly through them manufactures manoeuvring that is itself a
   noise source. 10 ft is not the optimum for any one input shape (a dense 50 Hz track does
@@ -1172,7 +1172,18 @@ touching it:
   derivative everywhere, so the load factor was exactly 1 g on every state, CT never moved, and
   the amplification above never happened -- the old "17% and 3 dB" measured that bug. README
   carries the re-measured table for all four input shapes; do not re-derive it.
-  README carries the measured table for all four input shapes; do not re-derive it.
+
+  **A dense track's ends are freed from the natural condition** (`fit_path`,
+  `SmoothingSpline::within_tolerance_extended`). A natural spline's second derivative is zero at
+  the first and last knot and still a third low four seconds in, so the load factor, and with it
+  CT, is wrong exactly where a track that starts or stops mid-manoeuvre is loudest. For positions
+  at 0.5 s spacing or finer with a nonzero `--path_smoothing`, the fit is made over the track
+  extended by 10 s each way along a local quadratic through the last 3 s, so the natural
+  condition lands on the extension, and only the part over the data is kept. Dense demo
+  footprint against the AC state: median 0.109 -> 0.073 dB, max 1.84 -> 1.42, cells over 1 dB
+  84 -> 25. Sparse waypoints and `--path_smoothing 0` are unchanged, bit for bit, on purpose: a
+  quadratic through a few waypoints is a guess, and the exact interpolant has no bias to
+  remove. The AC path does no smoothing, so the goldens did not move.
 - **Resampling never coarsens.** The sound exposure integral is a Riemann sum over whatever
   step the states end up with, so a 50 Hz file keeps its own sample times and only sparse or
   unevenly spaced input is refitted onto the `-s` grid.

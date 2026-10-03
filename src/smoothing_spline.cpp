@@ -386,6 +386,120 @@ SmoothingSpline SmoothingSpline::within_tolerance(const std::vector<double>& x,
     return fit(x, y, w, std::exp(log_lower));
 }
 
+namespace {
+
+// Least-squares quadratic a + b u + c u^2 through (u_i, y_i), by the normal
+// equations; false when they are singular.  u is scaled to about [-1, 0] by the
+// caller, which keeps the 3x3 system well conditioned.
+bool fit_quadratic(const std::vector<double>& u, const std::vector<double>& y, double coefficients[3])
+{
+    double s[5] = {0, 0, 0, 0, 0}, r[3] = {0, 0, 0};
+    for (std::size_t i = 0; i < u.size(); i++)
+    {
+        double power = 1.0;
+        for (int k = 0; k < 5; k++)
+        {
+            s[k] += power;
+            if (k < 3)
+                r[k] += power * y[i];
+            power *= u[i];
+        }
+    }
+    double m[3][4] = {{s[0], s[1], s[2], r[0]}, {s[1], s[2], s[3], r[1]}, {s[2], s[3], s[4], r[2]}};
+    for (int col = 0; col < 3; col++)
+    {
+        int pivot = col;
+        for (int row = col + 1; row < 3; row++)
+            if (std::fabs(m[row][col]) > std::fabs(m[pivot][col]))
+                pivot = row;
+        if (std::fabs(m[pivot][col]) < 1e-12 * static_cast<double>(u.size()))
+            return false;
+        for (int k = 0; k < 4; k++)
+            std::swap(m[col][k], m[pivot][k]);
+        for (int row = col + 1; row < 3; row++)
+        {
+            const double factor = m[row][col] / m[col][col];
+            for (int k = col; k < 4; k++)
+                m[row][k] -= factor * m[col][k];
+        }
+    }
+    for (int row = 2; row >= 0; row--)
+    {
+        double value = m[row][3];
+        for (int k = row + 1; k < 3; k++)
+            value -= m[row][k] * coefficients[k];
+        coefficients[row] = value / m[row][row];
+    }
+    return true;
+}
+
+} // namespace
+
+SmoothingSpline SmoothingSpline::within_tolerance_extended(const std::vector<double>& x,
+        const std::vector<double>& y, double rms, double window, double extension)
+{
+    validate(x, y, {});
+    const std::size_t n = x.size();
+    const double span = x.back() - x.front();
+    const double spacing = span / static_cast<double>(n - 1);
+    const std::size_t steps = std::min<std::size_t>(
+            n, static_cast<std::size_t>(std::floor(extension / spacing + 0.5)));
+
+    // The quadratic through the data within `window` of one end, evaluated at
+    // `steps` virtual points beyond it.  `toward_front` flips the sense so one
+    // routine serves both ends.
+    auto extend = [&](bool toward_front, std::vector<double>& t_out, std::vector<double>& y_out) {
+        t_out.clear();
+        y_out.clear();
+        if (steps == 0 || !(window > 0.0))
+            return;
+        const double origin = toward_front ? x.front() : x.back();
+        std::vector<double> u, v;
+        for (std::size_t k = 0; k < n; k++)
+        {
+            const std::size_t i = toward_front ? k : n - 1 - k;
+            const double distance = toward_front ? x[i] - origin : origin - x[i];
+            if (distance > window)
+                break;
+            u.push_back((toward_front ? 1.0 : -1.0) * distance / window); // 0 at the end, -1 or +1 inward
+            v.push_back(y[i]);
+        }
+        // Too few points, or all of them bunched near the end, leave it natural.
+        if (u.size() < 8 || std::fabs(u.back()) < 0.5)
+            return;
+        double q[3];
+        if (!fit_quadratic(u, v, q))
+            return;
+        for (std::size_t k = steps; k >= 1; k--)
+        {
+            const double offset = static_cast<double>(k) * spacing; // beyond the end
+            const double uk = (toward_front ? -1.0 : 1.0) * offset / window; // u grows outward
+            t_out.push_back(toward_front ? origin - offset : origin + offset);
+            y_out.push_back(q[0] + uk * (q[1] + uk * q[2]));
+        }
+    };
+    // Note the sign: inward samples have u of one sign and virtual ones the other,
+    // which is what the quadratic in u is fitted and evaluated with.
+    std::vector<double> front_t, front_y, back_t, back_y;
+    extend(true, front_t, front_y);
+    extend(false, back_t, back_y);
+
+    // front_* run outward-first (k = steps down to 1), i.e. already ascending in x
+    // for the front when reversed; assemble in ascending order.
+    std::vector<double> xs, ys;
+    xs.reserve(n + front_t.size() + back_t.size());
+    ys.reserve(xs.capacity());
+    xs.insert(xs.end(), front_t.begin(), front_t.end());
+    ys.insert(ys.end(), front_y.begin(), front_y.end());
+    xs.insert(xs.end(), x.begin(), x.end());
+    ys.insert(ys.end(), y.begin(), y.end());
+    // The back's virtual points were generated outward-first too (k = steps..1);
+    // ascending order needs them nearest-first.
+    xs.insert(xs.end(), back_t.rbegin(), back_t.rend());
+    ys.insert(ys.end(), back_y.rbegin(), back_y.rend());
+    return within_tolerance(xs, ys, rms * rms * static_cast<double>(xs.size()));
+}
+
 std::size_t SmoothingSpline::interval_for(double xi) const
 {
     // Index of the cubic piece containing xi, clamped so that evaluation outside
