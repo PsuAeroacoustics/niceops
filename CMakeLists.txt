@@ -22,6 +22,17 @@ endif (NOT CMAKE_BUILD_TYPE)
 # NOTE: do NOT add -DNDEBUG to Release.  The D original ran with asserts live
 # in release builds, and sphere_database.cpp relies on assert(isFinite(...))
 # guards; matching that behavior is part of the port contract.
+#
+# CMake adds it itself: its default Release, RelWithDebInfo and MinSizeRel flags
+# all carry -DNDEBUG, so the contract above was not being kept -- every assert()
+# in src/ (17 of them, guarding isfinite of the levels and angles among others)
+# was compiled out of the shipped binaries.  Removed here.  It costs about 4
+# percent of the demo case's CPU time, and the whole suite passes with them live.
+# tests/test_build.cpp fails if a build comes out with NDEBUG defined anyway.
+foreach(config RELEASE RELWITHDEBINFO MINSIZEREL)
+  string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_${config} "${CMAKE_CXX_FLAGS_${config}}")
+  string(STRIP "${CMAKE_CXX_FLAGS_${config}}" CMAKE_CXX_FLAGS_${config})
+endforeach()
 
 # Link-time optimization.  The acoustic loop lives in niceops.cpp and calls
 # Database::level_at_observer, which lives in sphere_database.cpp, ~100 million
@@ -188,9 +199,15 @@ target_include_directories(niceops_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${NETCDF_INCLUDE_DIR}
 )
+# The library itself starts threads (the observer loop, the PE's band pool and the
+# propagation-table builds), so everything that links it needs the thread library;
+# only niceops and niceops_benchmark said so, and the rest relied on a libc that
+# folds pthread in.
+find_package(Threads REQUIRED)
 target_link_libraries(niceops_core PUBLIC
   ${NETCDF_LIBRARY}
   nlohmann_json::nlohmann_json
+  Threads::Threads
 )
 if(NICEOPS_PLOTTING)
   target_link_libraries(niceops_core PUBLIC pybind11::embed)
@@ -202,13 +219,13 @@ endif()
 
 # Main executable
 add_executable(niceops src/niceops.cpp)
-find_package(Threads REQUIRED)
 target_link_libraries(niceops niceops_core CLI11::CLI11 Threads::Threads)
 
 # Unit tests (Catch2)
 add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
   tests/test_parallel.cpp
+  tests/test_build.cpp
   tests/test_iota.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
