@@ -15,12 +15,17 @@ TEST_CASE("parallel_chunks visits every index exactly once", "[parallel]")
         for (std::size_t count : {std::size_t {0}, std::size_t {1}, std::size_t {7},
                      std::size_t {100}, std::size_t {1001}})
         {
+            // Counted, and asserted on this thread afterwards: Catch2's assertions
+            // are not thread-safe, so a REQUIRE inside the body raced (ThreadSanitizer).
             std::vector<std::atomic<int>> visits(count);
+            std::atomic<int> empty_chunks {0};
             parallel_chunks(count, threads, [&](std::size_t begin, std::size_t end) {
-                REQUIRE(begin < end);
+                if (!(begin < end))
+                    empty_chunks++;
                 for (std::size_t i = begin; i < end; i++)
                     visits[i]++;
             });
+            REQUIRE(empty_chunks.load() == 0);
             for (std::size_t i = 0; i < count; i++)
                 REQUIRE(visits[i] == 1);
         }
