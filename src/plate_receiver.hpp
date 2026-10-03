@@ -32,7 +32,7 @@
 //
 // The table is netCDF, from panam's axisymmetric_bem.write_netcdf():
 //   dims band, sub, elevation, azimuth
-//   band_centre(band), frequency(band, sub), elevation (deg), azimuth (deg,
+//   band_center(band), frequency(band, sub), elevation (deg), azimuth (deg,
 //   uniform from 0), P_d_real/_imag and P_r_real/_imag(band, sub, elevation, azimuth)
 //   attributes thickness_m (the plate top above the ground, where Q is taken),
 //   ground_model, flow_resistance, porosity_rate, layer_depth_m, and the rest

@@ -69,7 +69,7 @@ PlateReceiver PlateReceiver::load(const std::string& path)
     plate.n_sub_ = dimension(ncid, "sub", path);
     const std::size_t n_elevations = dimension(ncid, "elevation", path);
     plate.n_azimuths_ = dimension(ncid, "azimuth", path);
-    plate.centers_ = variable(ncid, "band_centre", plate.n_bands_, path);
+    plate.centers_ = variable(ncid, "band_center", plate.n_bands_, path);
     plate.frequencies_ = variable(ncid, "frequency", plate.n_bands_ * plate.n_sub_, path);
     plate.elevations_ = variable(ncid, "elevation", n_elevations, path);
     const auto azimuths = variable(ncid, "azimuth", plate.n_azimuths_, path);
