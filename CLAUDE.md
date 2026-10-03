@@ -656,9 +656,35 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     - **The peak search bounds the sum** by the loudest arrival's direction over the harmonic
       sum of their squared ranges (`bound_geometry` in niceops.cpp).
       `stratified_duct_*_windowed_is_exact` holds it.
-    - **Not fixed: a flush microphone under warm, calm ground air** (day 286, run 286288).
-      Rays turned back from aloft turn up again within the lowest metre and never reach
-      z = 0; the PE diffracts through that layer. 21 dB low at 8,000–13,000 ft.
+    - **Not fixed: an elevated duct whose returning rays turn just above the ground** (day
+      286, run 286288, 100 ft source toward 270). It is not warm ground air: the air is
+      fastest at z = 0 because the log-law headwind assumed below the 46 ft LIDAR gate takes
+      0.2 m/s off in the lowest foot (the temperature rises there). Rays turned back from the
+      ~330 ft inversion turn up again 1–20 ft up and reach neither a flush nor a 1.2 m
+      microphone: 11–21 dB under the PE at 8,000–13,000 ft. The PE tunnels through: holding
+      the wind below 46 ft flat moves it under 1 dB at 63–250 Hz and ~6 dB at 1 kHz, as a WKB
+      factor exp(-2 int kappa dz) does for rays turning at 1–9 ft. The skip zone short of the
+      duct's return is a second gap: with the shear removed, `stratified` sits 30–60 dB under
+      the PE there and finds the return 1–2 kft late. On measured day-286 frames where
+      `stratified` is >= 10 dB under straight rays (1.2% of frame-bands; 0.4–2 deg, 4–9 kft,
+      sources under 300 ft) it is 10–20 dB too quiet and straight rays are within 4 dB at
+      50–630 Hz; none of those frames is in an SEL window. Harness
+      `propagation/micro_shadow.py`, `micro_shadow_frames.py`.
+    - **Three opt-in treatments of it, compared** (README, "Micro-shadows and skip zones";
+      harness `micro_shadow_fixes.py`, `micro_shadow_frames.py`): `--tunnelling` and
+      `--skip_fill` (`layered_wave_arrivals`, stratified.cpp), and a PE `--propagation_table`
+      beside the ray model. Both Airy options together take the deficit frames from -10.5 /
+      -15.5 to -2.1 / -5.0 dB at 50-160 / 200-630 Hz and barely touch 800-2000 (-20.6 ->
+      -18.9). The PE table puts the low sources (under 150 ft, 3-6 kft) within +0.3 to +2.5.
+      The SEL moves under 0.02 dB under every option.
+    - **Wave arrivals carry their loss per band (`WaveCorrection`, `add_wave_loss`)** on a
+      tube taken at `wave_reference_frequency` (10 kHz), so the loss is never negative and
+      the peak search's bound on the tube still bounds them. They stay out of the
+      boundary's removal and the promotion to primary in `layered_direct_ray`, which only
+      ray arrivals take. A tunnelled one takes no ground term, plate or not.
+    - **Near a tunnelled family's caustic the coalescing pair is replaced by the caustic's
+      band-averaged Airy field.** Left to the +10 dB focusing cap it put the return 5-12 dB
+      over the PE at 250 Hz-2 kHz.
     - Cost: about +55% on a stratified run (demo grid, B407, `--ground_effect`: 23.6 -> 37 s
       on `example_windy.csv`, 57.5 -> 86 s on `example_inversion.csv`). It was +107% and +76%
       before the jumps, the shared samples and the hand-over skip.
@@ -950,9 +976,13 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   - **The plumbing check is the ground-model table.** It reproduces `--ground_effect
     --exact_ground` to the table's interpolation, 0.19 dB at worst at 10 ft spacing, 0.02 at
     5. The mean error falls fourfold per halving, which is what says it is interpolation.
-  - **Not done:** plates (a different ground geometry; refused), `--refraction` with a table
-    (refused: the table is the refraction), ground elevation (flat ground at z = 0), and a
-    sphere lookup along a refracted launch direction (the table cannot say what it is).
+  - **Plates read the table at its lowest receiver height plus K**, the plate over bare
+    ground there per band and azimuth at 2 degrees (`table_plate_offset` in niceops.cpp), as
+    ShadowTransition places a plate. **With `--refraction` the table takes the pairs it
+    covers and the ray model the rest** (`table_level` first in `refracted_level`); that
+    run evaluates every state, since its bounds were not built for both geometries.
+  - **Not done:** ground elevation (flat ground at z = 0), and a sphere lookup along a
+    refracted launch direction (the table cannot say what it is).
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its

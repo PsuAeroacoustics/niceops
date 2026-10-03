@@ -426,3 +426,115 @@ TEST_CASE("the direct solve reports no ray that does not land", "[stratified]")
     // there is layered_arrivals'.
     CHECK(dark > 0);
 }
+
+namespace {
+
+// Day 286's last profile toward 270 (run 286288): fastest at the ground, where
+// the log-law headwind assumed below the lidar's first gate takes 0.2 m/s off in
+// the lowest foot, slowest near 230 ft, and back to nearly the ground's speed at
+// the inversion's top near 330 ft.  Heights in feet.
+struct Elevated
+{
+    std::vector<double> z, c;
+    Elevated()
+    {
+        const double ft[] = {0, 1, 3, 10, 20, 30, 46, 70, 100, 120, 160, 230, 280, 330, 400, 500};
+        const double speed[] = {334.125, 333.918, 333.835, 333.796, 333.703, 333.648, 333.490, 333.296,
+                333.367, 333.409, 333.259, 333.017, 333.369, 333.921, 333.669, 333.516};
+        for (std::size_t k = 0; k < std::size(ft); k++)
+        {
+            z.push_back(ft[k] * ft2m);
+            c.push_back(speed[k]);
+        }
+    }
+    Layers layers() const { return {z.data(), c.data(), z.size()}; }
+};
+
+} // namespace
+
+TEST_CASE("tunnelled arrivals carry the evanescent integral below their turning point", "[stratified]")
+{
+    // A 100 ft source 12,000 ft out: the duct's return, whose rays turn back up
+    // a few feet above a flush microphone.  Each one's integral is checked
+    // against a brute-force quadrature of sqrt(p^2 - 1/c^2) where it is real.
+    const Elevated profile;
+    const Layers layers = profile.layers();
+    const double z_s = 100.0 * ft2m, z_r = 0.0, r = 12000.0 * ft2m;
+    CHECK(layered_wave_arrivals(layers, z_s, z_r, r, {}).empty());
+    const auto arrivals = layered_wave_arrivals(layers, z_s, z_r, r, {true, false});
+    REQUIRE(!arrivals.empty());
+    const double c_s = layers.at(z_s);
+    int checked = 0;
+    for (const Arrival& a : arrivals)
+    {
+        if (!(a.wave.evanescent > 0.0) || a.wave.caustic)
+            continue;
+        const double p = std::cos(a.launch) / c_s;
+        // The turning point: going down from the source, where c first reaches 1/p.
+        double z_t = z_s;
+        while (z_t > 0.0 && layers.at(z_t) < 1.0 / p)
+            z_t -= 1e-5;
+        REQUIRE(z_t > z_r);
+        constexpr int n = 200000;
+        double sum = 0.0;
+        for (int k = 0; k < n; k++)
+        {
+            const double z = z_r + (k + 0.5) * (z_t - z_r) / n;
+            const double c = layers.at(z);
+            sum += std::sqrt(std::max(0.0, p * p - 1.0 / (c * c)));
+        }
+        sum *= (z_t - z_r) / n;
+        CAPTURE(a.launch, z_t);
+        CHECK(a.wave.evanescent == Catch::Approx(sum).epsilon(1e-3));
+        CHECK(a.grazing == 0.0);
+        checked++;
+    }
+    CHECK(checked > 0);
+}
+
+TEST_CASE("a wave arrival's loss is never negative", "[stratified]")
+{
+    // Never negative, so the peak search's bound on the tube bounds the band.
+    // Not monotonic in frequency at small depth -- the energy near a turning
+    // point grows as omega^(1/3) while a shallow tail hardly decays -- but a
+    // deep tail costs the top band more than the bottom one.
+    const std::vector<double> bands = {50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250,
+            1600, 2000, 2500, 3150, 4000, 5000};
+    for (const double evanescent : {1e-5, 1e-4, 1e-3})
+    {
+        WaveCorrection wave;
+        wave.evanescent = evanescent;
+        std::vector<double> loss(bands.size(), 0.0);
+        add_wave_loss(wave, 1000.0, 1000.0, bands, 0, bands.size(), loss.data());
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            CAPTURE(evanescent, bands[b]);
+            CHECK(loss[b] >= 0.0);
+        }
+        if (evanescent >= 1e-4)
+            CHECK(loss.back() > loss.front());
+    }
+    // A caustic's dark side, and its lit side, where the band averages the fringes.
+    for (const double depth : {-1e-3, 0.0, 1e-3, 1e-2})
+    {
+        WaveCorrection wave;
+        wave.caustic = true;
+        wave.caustic_depth = depth;
+        std::vector<double> loss(bands.size(), 0.0);
+        add_wave_loss(wave, 1000.0, 1000.0, bands, 0, bands.size(), loss.data());
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            CAPTURE(depth, bands[b]);
+            CHECK(loss[b] >= 0.0);
+        }
+        if (depth > 0.0)
+            CHECK(loss.back() > loss.front());
+    }
+    // A tube focused past the cap is held to it.
+    WaveCorrection wave;
+    wave.evanescent = 1e-9;
+    std::vector<double> loss(1, 0.0);
+    const std::vector<double> one = {wave_reference_frequency};
+    add_wave_loss(wave, 1000.0, 10.0, one, 0, 1, loss.data());
+    CHECK(loss[0] == Catch::Approx(40.0 - max_focusing_gain_db).margin(1e-6));
+}

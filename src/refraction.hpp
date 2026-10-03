@@ -165,6 +165,39 @@ enum class GroundGeometry
     plate,
 };
 
+// What ray theory leaves out of an arrival that --tunnelling or --skip_fill
+// adds (stratified.hpp, layered_wave_arrivals), as a per-band loss on top of its
+// ray tube.  Both are Airy tails, and both grow with frequency:
+//   - evanescent: the ray turns at z_t above the receiver, which it reaches as
+//     the tail of the field below its turning point, Ai^2(x) with
+//     x = (3/2 omega I)^(2/3), I = int_{z_r}^{z_t} sqrt(p^2 - 1/c(z)^2) dz in
+//     seconds;
+//   - caustic: the receiver lies on the dark side of a caustic where a family's
+//     range X(p) is stationary, a distance d short of (or past) it, and takes
+//     Ai^2(x) with x = omega^(2/3) d (2 / X'')^(1/3) -- caustic_depth holds the
+//     d (2 / X'')^(1/3), in s^(2/3).
+// The tube the arrival carries is the one at wave_reference_frequency (see
+// add_wave_loss), so the loss is never negative and the peak search's bound on
+// the tube still bounds the band.
+struct WaveCorrection
+{
+    double evanescent = 0.0;
+    bool caustic = false;
+    double caustic_depth = 0.0;
+
+    bool active() const { return evanescent > 0.0 || caustic; }
+};
+
+inline constexpr double wave_reference_frequency = 10000.0; // Hz
+
+// Add the correction's loss, dB, to loss[band] for bands in [first_band,
+// last_band), and hold the band's gain over spherical spreading -- its tube,
+// `spreading_range`, against the straight-line `chord` -- to
+// max_focusing_gain_db, the caustic cap every ray tube takes.
+void add_wave_loss(const WaveCorrection& wave, double chord, double spreading_range,
+        const std::vector<double>& frequencies, std::size_t first_band, std::size_t last_band,
+        double* loss);
+
 // One eigenray besides a pair's primary, under --refraction stratified: in a
 // duct, rays that have bounced off the ground `bounces` times before arriving
 // from above, and the direct rays of families other than the primary's.  Each
@@ -184,6 +217,9 @@ struct Arrival
     double spreading_range = 0.0;
     double path_length = 0.0;
     double travel_time = 0.0;
+    // --tunnelling, --skip_fill: an arrival ray theory does not have, and its
+    // per-band loss.  One that tunnels takes no ground term, plate or not.
+    WaveCorrection wave;
     // Formed by layered_direct_ray; its ground geometry by the ground's finish.
     RayPath path;
 };

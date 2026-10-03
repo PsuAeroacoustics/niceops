@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <limits>
+#include <type_traits>
 
+#include "airy.hpp"
 #include "util/constants.hpp"
 
 namespace niceops {
@@ -950,10 +953,488 @@ Layers path_layers(const LayeredSoundSpeed& air, double hx, double hy, std::vect
 
 } // namespace
 
+namespace {
+
+// int_{za}^{zb} sqrt(max(0, p^2 - 1/c(z)^2)) dz through the layers, in seconds:
+// the decay exponent, per unit angular frequency, of the field where a ray of
+// invariant p cannot go.  Within a layer c is linear, and with u = p c the
+// integrand is sqrt(1 - 1/u^2) du / g, whose antiderivative is
+// sqrt(u^2 - 1) - acos(1/u) for u >= 1.
+double evanescent_integral(const Layers& L, double p, double za, double zb)
+{
+    auto antiderivative = [](double u) {
+        const double e = u - 1.0;
+        if (e < 1e-6) // both terms tend to sqrt(2 e); their difference to (2/3) sqrt(2) e^(3/2)
+            return e > 0.0 ? (2.0 / 3.0) * std::sqrt(2.0) * e * std::sqrt(e) : 0.0;
+        return std::sqrt(u * u - 1.0) - std::acos(1.0 / u);
+    };
+    auto piece = [&](double z0, double c0, double z1, double c1) {
+        const double dz = z1 - z0;
+        if (!(dz > 0.0))
+            return 0.0;
+        const double u0 = p * c0, u1 = p * c1;
+        if (u0 <= 1.0 && u1 <= 1.0)
+            return 0.0;
+        if (std::fabs(c1 - c0) < 1e-9 * c0)
+        {
+            const double u = 0.5 * (u0 + u1);
+            return u > 1.0 ? std::sqrt(p * p - 1.0 / (u / p * u / p)) * dz : 0.0;
+        }
+        const double g = (c1 - c0) / dz;
+        // Only where u > 1: the evanescent end of the layer, if it is not all.
+        return (antiderivative(std::max(u1, 1.0)) - antiderivative(std::max(u0, 1.0))) / g;
+    };
+    double total = 0.0;
+    if (!(zb > za))
+        return total;
+    double z0 = za;
+    double c0 = L.at(za);
+    const double* begin = L.z;
+    const double* end = L.z + L.levels;
+    for (const double* level = std::upper_bound(begin, end, za); level != end && *level < zb; ++level)
+    {
+        const double c1 = L.c[level - begin];
+        total += piece(z0, c0, *level, c1);
+        z0 = *level;
+        c0 = c1;
+    }
+    return total + piece(z0, c0, zb, L.at(zb));
+}
+
+// Ai(x)^2 for real x >= 0.
+double airy_squared(double x)
+{
+    std::complex<double> ai, ai_prime;
+    airy(std::complex<double>(x, 0.0), ai, ai_prime);
+    return ai.real() * ai.real();
+}
+
+constexpr double airy_zero_squared = 0.355028053887817239 * 0.355028053887817239; // Ai(0)^2
+// Ai's largest value, at its first maximum x = -1.0188, squared: what a caustic's
+// tube is normalised by, lit side included.
+constexpr double airy_peak_squared = 0.535656656015700 * 0.535656656015700;
+
+// Ai^2 averaged over a third-octave band about f, at x = (omega / omega_f)^power x_f:
+// on a caustic's lit side Ai oscillates, and a band averages its fringes.
+template <typename Argument>
+double band_airy_squared(double f, Argument&& argument)
+{
+    constexpr int n = 7;
+    double sum = 0.0;
+    for (int k = 0; k < n; k++)
+    {
+        const double fk = f * std::pow(2.0, (k - 0.5 * (n - 1)) / (3.0 * (n - 1)));
+        sum += [&] {
+            std::complex<double> ai, ai_prime;
+            airy(std::complex<double>(argument(2.0 * pi * fk), 0.0), ai, ai_prime);
+            return ai.real() * ai.real();
+        }();
+    }
+    return sum / n;
+}
+
+// The Airy length at a turning point where the sound speed is c and falls at
+// |g| per metre going up, at wave_reference_frequency: (c^3 / (2 |g| omega^2))^(1/3).
+double reference_airy_length(double c, double g)
+{
+    const double omega = 2.0 * pi * wave_reference_frequency;
+    return std::cbrt(c * c * c / (2.0 * std::max(std::fabs(g), 1e-9) * omega * omega));
+}
+
+// The sound speed's gradient at z, from the layer it lies in (above z when it
+// is a level).
+double gradient_at(const Layers& L, double z)
+{
+    if (L.levels < 2)
+        return 0.0;
+    const double* upper = std::upper_bound(L.z, L.z + L.levels, z);
+    if (upper == L.z || upper == L.z + L.levels)
+        return 0.0;
+    const std::size_t i = static_cast<std::size_t>(upper - L.z) - 1;
+    return (L.c[i + 1] - L.c[i]) / (L.z[i + 1] - L.z[i]);
+}
+
+} // namespace
+
+void add_wave_loss(const WaveCorrection& wave, double chord, double spreading_range,
+        const std::vector<double>& frequencies, std::size_t first_band, std::size_t last_band,
+        double* loss)
+{
+    if (!wave.active())
+        return;
+    const double tube_gain_db = 20.0 * std::log10(chord / spreading_range);
+    for (std::size_t band = first_band; band < last_band; band++)
+    {
+        const double f = frequencies[band];
+        const double omega = 2.0 * pi * f;
+        // The tube is the reference frequency's: the Airy length, and with it
+        // the energy near a turning point or caustic, scales as omega^(1/3).
+        const double scale = std::cbrt(f / wave_reference_frequency);
+        double db = 0.0;
+        (void)omega;
+        if (wave.evanescent > 0.0)
+        {
+            const double e = wave.evanescent;
+            const double a = band_airy_squared(f, [e](double w) { return std::pow(1.5 * w * e, 2.0 / 3.0); });
+            db -= 10.0 * std::log10(std::max(scale * a / airy_zero_squared, 1e-300));
+        }
+        if (wave.caustic)
+        {
+            const double d = wave.caustic_depth;
+            const double a = band_airy_squared(f, [d](double w) { return std::cbrt(w * w) * d; });
+            db -= 10.0 * std::log10(std::max(scale * a / airy_peak_squared, 1e-300));
+        }
+        loss[band] += std::max(db, tube_gain_db - max_focusing_gain_db);
+    }
+}
+
+std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, double z_r, double r,
+        const WaveOptions& options)
+{
+    std::vector<Arrival> out;
+    if (!options.any() || !(z_s > z_r))
+        return out;
+    const Path path {layers};
+    const double c_s = layers.at(z_s);
+    const double c_r = layers.at(z_r);
+    const double c_0 = layers.at(0.0);
+    const double c_up = path.fastest_above(z_s);
+    const double c_rs = path.fastest(z_r, z_s);
+    const double c_0r = path.fastest(0.0, z_r);
+    constexpr double inset = 1e-12;
+    // Nothing turns back from aloft: no family here comes from there.
+    if (!(c_up > c_s))
+        return out;
+    // A tail this deep is under 60 dB at 20 Hz, and smaller at every band.
+    constexpr double lowest_frequency = 20.0;
+    const double omega_low = 2.0 * pi * lowest_frequency;
+    const double max_evanescent = 60.0 / (10.0 / std::log(10.0) * omega_low);
+    const double max_caustic_depth = 10.0 / std::cbrt(omega_low * omega_low);
+    constexpr int samples = 48;
+    constexpr int max_cycles = 16;
+
+    // A family: its rays' range to the receiver (or, tunnelled, to their last
+    // turning point above it) as a function of p, over [p_lo, p_hi].
+    enum class Kind
+    {
+        direct,
+        tunnelled
+    };
+    struct Spec
+    {
+        Kind kind;
+        Arm arm;
+        int m; // hops (direct) or cycles (tunnelled)
+        double p_lo, p_hi;
+    };
+    // The ray's lowest turning point above the receiver, or NaN.
+    auto tunnel_height = [&](double p) {
+        const double z_t = path.turning_below(p, z_s);
+        return std::isfinite(z_t) && z_t > z_r ? z_t : nan;
+    };
+    // Range (dx), time and arc of a family's ray of invariant p.
+    auto trace = [&](const Spec& s, double p, auto full_tag) {
+        constexpr bool full = decltype(full_tag)::value;
+        Crossing total;
+        auto add = [&total](const Crossing& c, double times) {
+            total.dx += times * c.dx;
+            total.dt += times * c.dt;
+            total.ds += times * c.ds;
+        };
+        if (s.kind == Kind::direct)
+        {
+            total = trace_p<full>(path, z_s, z_r, p, s.arm, false);
+            if (s.m > 0 && std::isfinite(total.dx))
+                add(hop<full>(path, z_s, p), s.m);
+            return total;
+        }
+        const double z_t = tunnel_height(p);
+        const double top = path.turning_above(p, z_s);
+        if (std::isnan(z_t) || std::isnan(top))
+        {
+            total.dx = nan;
+            return total;
+        }
+        if (s.arm.up)
+            add(path.between<full>(p, z_s, top, false, true), 2.0);
+        add(path.between<full>(p, z_t, z_s, true, false), 1.0);
+        if (s.m > 0)
+            add(path.between<full>(p, z_t, top, true, true), 2.0 * s.m);
+        return total;
+    };
+    auto range_of = [&](const Spec& s) {
+        return [&, s](double p) { return trace(s, p, std::false_type {}).dx; };
+    };
+
+    // Each family once, its rays' range written as base(p) + m cycle(p): for
+    // the direct families the hops of a duct, for the tunnelled ones the cycles
+    // between their two turning heights.  Sampled once, shared over m.
+    struct Group
+    {
+        Kind kind;
+        Arm arm;
+        int m_lo, m_hi;
+        double p_lo, p_hi;
+    };
+    std::vector<Group> groups;
+    const double turn = 1.0 / c_up * (1.0 + inset);
+    const double pass = std::min(1.0 / c_s, 1.0 / c_rs) * (1.0 - inset);
+    if (options.skip_fill)
+    {
+        // The families from aloft that reach the receiver, as families() has
+        // them, and in a duct each first-crossing family's bounced rays.
+        const auto fams = families(path, z_s, z_r, false);
+        for (int k = 0; k < fams.count; k++)
+            if (fams.list[k].arm.up)
+                groups.push_back({Kind::direct, fams.list[k].arm, 0, 0, fams.list[k].p_lo, fams.list[k].p_hi});
+        const double c_0s = path.fastest(0.0, z_s);
+        const double duct_hi = std::min(1.0 / c_0s * (1.0 - inset), pass);
+        if (c_up > c_0s && duct_hi > turn)
+        {
+            const double leg = path.between<false>(turn, 0.0, z_s).dx;
+            const int m_max = leg > 0.0 ? static_cast<int>(std::min(r / (2.0 * leg) + 1.0, 64.0)) : 0;
+            if (m_max >= 1)
+            {
+                groups.push_back({Kind::direct, {false, false}, 1, m_max, turn, duct_hi});
+                groups.push_back({Kind::direct, {true, false}, 1, m_max, turn, duct_hi});
+            }
+        }
+    }
+    if (options.tunnelling)
+    {
+        // Rays that pass the source, turn aloft, and turn again between the
+        // receiver and the source: 1/p over c_s, at most c_up, under c_rs.
+        const double p_lo = std::max(turn, 1.0 / c_rs * (1.0 + inset));
+        const double p_hi = (1.0 / c_s) * (1.0 - inset);
+        if (p_hi > p_lo)
+        {
+            groups.push_back({Kind::tunnelled, {true, false}, 0, max_cycles, p_lo, p_hi});
+            groups.push_back({Kind::tunnelled, {false, false}, 1, max_cycles, p_lo, p_hi});
+        }
+    }
+
+    // The arrival of a family's ray of invariant p.
+    auto make = [&](const Spec& s, double p) {
+        Arrival a;
+        const auto full = trace(s, p, std::true_type {});
+        a.bounces = s.kind == Kind::direct ? s.m : 0;
+        a.launch = launch_of(p, c_s, s.arm.up);
+        a.path_length = full.ds;
+        a.travel_time = full.dt;
+        if (s.kind == Kind::tunnelled)
+        {
+            // Its tube a reference Airy length above the turning point, where
+            // the ray is still a ray.
+            const double z_t = tunnel_height(p);
+            const double z_a = z_t + reference_airy_length(layers.at(z_t), gradient_at(layers, z_t));
+            a.arrival = -std::asin(sine(p, layers.at(z_a)));
+            a.grazing = 0.0;
+            a.wave.evanescent = std::max(evanescent_integral(layers, p, z_r, z_t), 1e-300);
+        }
+        else
+        {
+            const double rising = std::asin(sine(p, c_r));
+            a.arrival = s.arm.second ? rising : -rising;
+            a.grazing = !s.arm.second && 1.0 / p > c_0r ? std::asin(sine(p, c_0)) : 0.0;
+        }
+        return a;
+    };
+    const double omega_ref = 2.0 * pi * wave_reference_frequency;
+
+    for (const Group& group : groups)
+    {
+        if (!(group.p_hi > group.p_lo))
+            continue;
+        // Samples uniform in launch angle, shallowest (largest p) first: the
+        // m = 0 range and one cycle.
+        double p[samples], base[samples], cycle[samples];
+        const double t_a = std::acos(std::min(1.0, group.p_hi * c_s));
+        const double t_b = std::acos(std::min(1.0, group.p_lo * c_s));
+        for (int j = 0; j < samples; j++)
+        {
+            p[j] = std::clamp(std::cos(t_a + (t_b - t_a) * j / (samples - 1)) / c_s, group.p_lo, group.p_hi);
+            const Spec zero {group.kind, group.arm, 0, group.p_lo, group.p_hi};
+            base[j] = trace(zero, p[j], std::false_type {}).dx;
+            cycle[j] = nan;
+            if (group.m_hi > 0)
+            {
+                if (group.kind == Kind::direct)
+                {
+                    cycle[j] = hop<false>(path, z_s, p[j]).dx;
+                }
+                else
+                {
+                    const double z_t = tunnel_height(p[j]);
+                    const double top = path.turning_above(p[j], z_s);
+                    if (std::isfinite(z_t) && std::isfinite(top))
+                        cycle[j] = 2.0 * path.between<false>(p[j], z_t, top, true, true).dx;
+                }
+            }
+        }
+        // A cycle never shorter than the shortest sampled: past r / that, no m reaches.
+        double shortest = std::numeric_limits<double>::infinity();
+        for (int j = 0; j < samples; j++)
+            if (cycle[j] > 0.0)
+                shortest = std::min(shortest, cycle[j]);
+        const int m_top = group.m_hi == 0 ? 0
+                : std::isfinite(shortest) ? std::min(group.m_hi, static_cast<int>(r / shortest) + 1)
+                                          : 0;
+        for (int m = group.m_lo; m <= m_top; m++)
+        {
+            const Spec s {group.kind, group.arm, m, group.p_lo, group.p_hi};
+            const auto range = range_of(s);
+            const Family whole {s.arm, s.p_lo, s.p_hi, false};
+            const bool tunnelled = s.kind == Kind::tunnelled;
+            double x[samples];
+            for (int j = 0; j < samples; j++)
+                x[j] = m == 0 ? base[j] : base[j] + m * cycle[j];
+
+            // The caustics: interior extrema of the range, refined by
+            // golden-section search over the samples either side.
+            struct Extremum
+            {
+                int j;
+                double p, x, second;
+            };
+            std::vector<Extremum> extrema;
+            for (int j = 1; j + 1 < samples; j++)
+            {
+                if (!(std::isfinite(x[j - 1]) && std::isfinite(x[j]) && std::isfinite(x[j + 1])))
+                    continue;
+                const bool minimum = x[j] < x[j - 1] && x[j] <= x[j + 1];
+                const bool maximum = x[j] > x[j - 1] && x[j] >= x[j + 1];
+                if (!minimum && !maximum)
+                    continue;
+                // Near enough to matter: the receiver within a twentieth of
+                // the range of it on the dark side, or beside it on the lit.
+                const double sign = minimum ? 1.0 : -1.0;
+                if (!((x[j] - r) * sign > -std::max(std::fabs(x[j - 1] - x[j]), std::fabs(x[j + 1] - x[j]))))
+                    continue;
+                if (!((x[j] - r) * sign < 0.05 * r) && !options.skip_fill)
+                    continue;
+                double lo = p[j + 1], hi = p[j - 1];
+                constexpr double phi = 0.6180339887498949;
+                double c = hi - phi * (hi - lo), d = lo + phi * (hi - lo);
+                double fc = sign * range(c), fd = sign * range(d);
+                for (int it = 0; it < 60 && hi - lo > 1e-13 * hi; it++)
+                {
+                    if (fc < fd)
+                    {
+                        hi = d;
+                        d = c;
+                        fd = fc;
+                        c = hi - phi * (hi - lo);
+                        fc = sign * range(c);
+                    }
+                    else
+                    {
+                        lo = c;
+                        c = d;
+                        fc = fd;
+                        d = lo + phi * (hi - lo);
+                        fd = sign * range(d);
+                    }
+                }
+                const double p_c = 0.5 * (lo + hi);
+                const double x_c = range(p_c);
+                const double h = 1e-3 * (p[j - 1] - p[j + 1]);
+                const double second = (range(p_c + h) - 2.0 * x_c + range(p_c - h)) / (h * h);
+                if (std::isfinite(x_c) && std::isfinite(second) && second != 0.0 && (second > 0.0) == minimum)
+                    extrema.push_back({j, p_c, x_c, second});
+            }
+
+            // A caustic's Airy arrival, `depth` = (X_c - r)(2 / X'')^(1/3):
+            // positive on the dark side, negative on the lit.
+            auto caustic_arrival = [&](const Extremum& e, double depth) {
+                Arrival arrival = make(s, e.p);
+                arrival.spreading_range = 0.0;
+                if (tunnelled && !(arrival.wave.evanescent <= max_evanescent))
+                    return arrival;
+                const double theta = arrival.launch;
+                const double g = e.x * std::fabs(std::sin(theta)) / c_s * std::sin(std::fabs(arrival.arrival))
+                        / std::cos(theta);
+                if (!(g > 0.0))
+                    return arrival;
+                // C Ai_peak^2 at the reference frequency, so that the band's
+                // Airy factor is at most 1; a tunnelled caustic also takes the
+                // turning point's 4 pi Ai(0)^2.
+                double intensity = 4.0 * pi * std::cbrt(omega_ref)
+                        / (std::cbrt(2.0) * g * std::cbrt(e.second * e.second)) * airy_peak_squared;
+                if (tunnelled)
+                    intensity *= 4.0 * pi * airy_zero_squared;
+                arrival.spreading_range = 1.0 / std::sqrt(intensity);
+                arrival.wave.caustic = true;
+                arrival.wave.caustic_depth = depth;
+                return arrival;
+            };
+
+            // Root intervals [j - 1, j] taken by a caustic's lit-side arrival.
+            bool consumed[samples] = {};
+            for (const Extremum& e : extrema)
+            {
+                const double depth = (e.x - r) * std::cbrt(2.0 / e.second);
+                if (depth > 0.0)
+                {
+                    if (!options.skip_fill || !(depth < max_caustic_depth))
+                        continue;
+                }
+                else
+                {
+                    // Lit side: only the tunnelled pair beside its caustic,
+                    // whose tubes coalesce there and would take the cap.
+                    if (!tunnelled || !options.tunnelling)
+                        continue;
+                    const double reach = std::max(std::fabs(x[e.j - 1] - e.x), std::fabs(x[e.j + 1] - e.x));
+                    if (!(std::fabs(r - e.x) <= reach))
+                        continue;
+                    consumed[e.j] = consumed[e.j + 1] = true;
+                }
+                Arrival arrival = caustic_arrival(e, depth);
+                if (arrival.spreading_range > 0.0)
+                    out.push_back(arrival);
+            }
+
+            if (tunnelled && options.tunnelling)
+            {
+                // Every other crossing of r.
+                for (int j = 1; j < samples; j++)
+                {
+                    if (consumed[j])
+                        continue;
+                    const double f_lo = x[j] - r, f_hi = x[j - 1] - r;
+                    if (!(std::isfinite(f_lo) && std::isfinite(f_hi) && (f_lo < 0.0) != (f_hi < 0.0)))
+                        continue;
+                    const double root = solve(range, r, Family {s.arm, p[j], p[j - 1], f_hi > f_lo}, nan);
+                    if (std::isnan(root))
+                        continue;
+                    Arrival a = make(s, root);
+                    if (!(a.wave.evanescent <= max_evanescent))
+                        continue;
+                    const double tube = tube_range(range, whole, root, c_s, r, a.arrival);
+                    if (!(std::isfinite(tube) && tube > 0.0))
+                        continue;
+                    // Normalised so that the Airy factor's largest value is 1
+                    // (add_wave_loss): at the turning point the field is
+                    // 4 pi Ai(0)^2 times one ray's.
+                    a.spreading_range = tube / std::sqrt(4.0 * pi * airy_zero_squared);
+                    out.push_back(a);
+                }
+            }
+        }
+    }
+    if (out.size() > max_arrivals)
+    {
+        std::partial_sort(out.begin(), out.begin() + max_arrivals, out.end(),
+                [](const Arrival& a, const Arrival& b) { return a.spreading_range < b.spreading_range; });
+        out.resize(max_arrivals);
+    }
+    return out;
+}
+
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
-        bool linear_past_shadow)
+        bool linear_past_shadow, const WaveOptions& waves)
 {
     // The linear model's ray: the warm start, and the answer wherever the
     // layered solve does not apply -- straight paths, and a receiver at or
@@ -995,6 +1476,7 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     bool handover = linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
             && linear_boundary > direct.boundary;
     auto arrivals = layered_arrivals(layers, z_s, z_r, r, direct, handover);
+    std::vector<Arrival> arrivals_wave;
     // A boundary set under faster air aloft stands only where nothing from
     // aloft or along a duct arrives (layered_direct_eigenray).  Where something
     // does, past the direct rays' reach, this is the duct's gap and is handled
@@ -1010,8 +1492,19 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
             arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false);
         }
     }
+    // --tunnelling, --skip_fill: arrivals ray theory does not have.  Kept out
+    // of `arrivals` until now, so they take no part in the boundary's removal
+    // or the promotion to primary below: each carries a per-band loss that only
+    // an extra arrival is given.
+    if (waves.any())
+    {
+        auto added = layered_wave_arrivals(layers, z_s, z_r, r, waves);
+        for (Arrival& a : added)
+            arrivals_wave.push_back(a);
+    }
     // The pair's path, for the arrivals to start from: its separation is theirs.
     auto form_arrivals = [&](RefractedRay& into) {
+        arrivals.insert(arrivals.end(), arrivals_wave.begin(), arrivals_wave.end());
         for (Arrival& a : arrivals)
         {
             a.path = into.path;

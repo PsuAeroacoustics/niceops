@@ -65,6 +65,7 @@ int main(int argc, char** argv)
     double gamma_t = 0.0;
     double outer_scale = 10.0;
     unsigned seed = 1;
+    WaveOptions waves;
     app.add_option("--atmosphere", atmosphere_file, "Atmosphere profile, as for niceops.")->required();
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("--toward", toward, "Compass bearing the sound travels along, degrees.")->required();
@@ -105,6 +106,8 @@ int main(int argc, char** argv)
             "frequencies is then its own realisation, so give it 20 or so.");
     app.add_option("--outer_scale", outer_scale, "von Karman outer scale of the PE's turbulence, m (default 10).");
     app.add_option("--seed", seed, "First realisation's seed (default 1).");
+    app.add_flag("--tunnelling", waves.tunnelling, "stratified: as niceops --tunnelling.");
+    app.add_flag("--skip_fill", waves.skip_fill, "stratified: as niceops --skip_fill.");
     CLI11_PARSE(app, argc, argv);
 
     Logger::instance().set_file("log/pe_compare.log");
@@ -222,7 +225,8 @@ int main(int argc, char** argv)
             {
                 std::fill(bounce.begin(), bounce.end(), 0.0);
                 add_bounce_loss(a.grazing, a.bounces, admittance, 0, bands.size(), bounce.data());
-                const double ground_db = a.grazing > 0.0
+                add_wave_loss(a.wave, slant, a.path.range, bands, 0, bands.size(), bounce.data());
+                const double ground_db = a.grazing > 0.0 && !(a.wave.evanescent > 0.0)
                         ? excess_ground_attenuation(ground, a.path.source_height, a.path.ground_distance,
                                   sound_speed, {bands[b]})[0]
                         : 0.0;
@@ -235,7 +239,7 @@ int main(int argc, char** argv)
         RefractedRay by_linear = direct_ray(linear, source, at_source, receiver, at_receiver);
         finish_ground(by_linear, GroundGeometry::point, z_r);
         RefractedRay by_layers = layered_direct_ray(layered, linear, source, at_source, receiver,
-                at_receiver, scratch, true);
+                at_receiver, scratch, true, waves);
         layered_finish_ground(layered, by_layers, GroundGeometry::point, z_r, scratch);
 
         std::cout << r / unit.to_metres;

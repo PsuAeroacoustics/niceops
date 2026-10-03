@@ -124,6 +124,44 @@ ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, d
 std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z_r, double r,
         const DirectEigenray& primary, bool bounced_only = false);
 
+// Two wave effects the rays above leave out, each behind its own option
+// (WaveCorrection, refraction.hpp, gives the loss):
+//
+// tunnelling: a ray turned back from aloft that turns again just above the
+//   receiver never reaches it, and ray theory leaves the receiver in silence.
+//   The wave reaches it as the field's tail below the turning point.  Under day
+//   286's last profile the turning height is 1-20 ft, inside the log-law wind
+//   assumed below the lidar's first gate, and the parabolic equation hardly
+//   notices the layer (<1 dB to 250 Hz): the rays that turn lowest carry the
+//   duct's return to the ground.  Listed: rays launched up, and rays launched
+//   down that have turned aloft at least once, that turn at z_t above z_r after
+//   m = 0, 1, ... cycles between their two turning heights, where the range to
+//   that turning point is r.  Rays launched down that have not turned aloft are
+//   left to ShadowTransition, whose field past a ground-grazing boundary is
+//   theirs.  Their tube is taken a reference Airy length above the turning
+//   point (at wave_reference_frequency), where the ray is still a ray.
+//
+// skip_fill: short of where a family from aloft first lands -- a caustic, where
+//   its range X(p) is least -- is a skip zone that no ray reaches, and the
+//   level there fell to the creeping-wave floor or to nothing.  Each interior
+//   extremum of a family's range with the receiver on its dark side adds the
+//   caustic's Airy tail: I = C Ai^2(x), C = 4 pi omega^(1/3) /
+//   (2^(1/3) G X''^(2/3)), G = r |dp/dtheta| sin|arrival| / cos(launch), which
+//   matches the two rays' summed energy on the lit side.  The families are the
+//   ones from aloft (direct, bounced along a duct, and with tunnelling the
+//   tunnelled ones); a downward family's interior extrema are a log law's, and
+//   the hand-over to the linear fit stands for those.
+struct WaveOptions
+{
+    bool tunnelling = false;
+    bool skip_fill = false;
+
+    bool any() const { return tunnelling || skip_fill; }
+};
+
+std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, double z_r, double r,
+        const WaveOptions& options);
+
 // --refraction stratified's counterparts of direct_ray() and finish_ground().
 // `linear` supplies the warm start; `scratch` holds the path's effective sound
 // speed at each level between the two calls, so is per thread.
@@ -146,7 +184,7 @@ inline constexpr double handover_fraction = 0.9;
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
-        bool linear_past_shadow = false);
+        bool linear_past_shadow = false, const WaveOptions& waves = {});
 void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, GroundGeometry ground,
         double microphone_height, std::vector<double>& scratch);
 

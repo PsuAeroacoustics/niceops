@@ -171,6 +171,8 @@ seconds, levels in dB.
 | `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity, and optionally pressure and wind, against height. Absorption is integrated through it. Spectral path only. See below. |
 | `--refraction` | `none` (default); `linear`, curved rays through the `--atmosphere` profile's effective sound speed fitted to a straight line per path; or `stratified`, through the profile's own layers. Both give shadow zones under upward refraction. See below. |
 | `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
+| `--tunnelling` | `--refraction stratified`: also take the rays turned back from aloft that turn again just above the microphone, which the wave reaches through the layer below them (an Airy tail per band). Off by default; see "Micro-shadows and skip zones" below. |
+| `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail per band. Off by default; see below. |
 | `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γT, instead of `--shadow_floor`. Default 0 (off). Needs `--refraction` and `--ground_effect`. |
 | `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
 | `--ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. Needs `--spectral`. |
@@ -180,7 +182,7 @@ seconds, levels in dB.
 | `--turbulence_model`, `--gamma_t` | `chessell` (default, `--turbulence`) or `harmonoise`, whose coherence takes `--gamma_t` (~1e-6 moderate, ~1e-5 strong). |
 | `--roughness` | RMS roughness height, in `--units`: the coherent reflection falls by exp(−2(kσ cos θ)²). Default 0. |
 | `--plate_table` | Observers are flush microphones on a rigid ground plate (GRAS 67AX in a GR1425 plate). Takes a netCDF table from panam; needs `--ground_effect` over the ground the table was built for. See below. |
-| `--propagation_table` | A propagation loss table (netCDF, from `niceops_propagation_table`): each band's level relative to free field by bearing, source height, receiver height and range, for one stratified atmosphere over uniform ground. Replaces the ground and ray models wherever it covers a pair. Spectral path; not with `--refraction` or `--plate_table`. See below. |
+| `--propagation_table` | A propagation loss table (netCDF, from `niceops_propagation_table`): each band's level relative to free field by bearing, source height, receiver height and range, for one stratified atmosphere over uniform ground. Replaces the ground and ray models wherever it covers a pair; pairs it does not cover take the run's own model, `--refraction` included. A plate microphone reads it at its lowest receiver height plus the plate's offset over bare ground. Spectral path. See below. |
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state instead of interpolating per-trajectory tables of it: 3-4x slower, for checking the tables. |
 | `--plate_mic_azimuth` | Which way the microphone is offset on its plate: `outboard` (default, away from the track) or degrees in the local frame from +x toward +y. |
 
@@ -554,10 +556,16 @@ profiles do not move.
 
 Two limits remain. Within one pair of samples, two close arrivals at a caustic can still be
 missed: 32 against 128 samples moves about 5% of pairs under the inversion by more than 1 dB.
-Day 286's last profile (run 286288) has warm, calm air at the ground under a weak inversion at
-70–120 ft. There, every ray turned back from aloft turns up again within the lowest metre. It
-reaches a 1.2 m microphone but never a flush one, which stays on the shadow's floor 21 dB
-under the PE, while the wave diffracts through that sub-wavelength layer.
+Day 286's last profile (run 286288) is an elevated duct. Toward 270 the air is fastest at the
+ground, because the log-law headwind assumed below the LIDAR's first gate (46 ft) takes
+0.2 m/s off in the lowest foot, and a ray turned back from the inversion near 330 ft turns up
+again 1–20 ft above the ground. For a 100 ft source it reaches neither a flush nor a 1.2 m
+microphone at 8,000–13,000 ft, which stay on the shadow's floor 11–21 dB under the PE, while
+the wave tunnels through the layer (flattening it moves the PE by under 1 dB to 250 Hz and
+about 6 dB at 1 kHz). Short of the duct's return lies a skip zone that no ray reaches, which
+the PE fills from the caustic 1–2 kft early. Measured day-286 frames agree with the PE: where
+`stratified` predicts 10 dB or more under straight rays, it is 10–20 dB too quiet. Those
+frames are far from each microphone's peak and do not move the SEL.
 
 It is checked two ways. On a linear profile it reproduces the linear model's closed forms,
 the shadow boundary included. On layered profiles its rays match numerically traced ones to a
@@ -1012,8 +1020,12 @@ the source and the two heights above the ground, which are the table's axes:
 
 Values are interpolated linearly in dB along each axis. A NaN means the method has no value
 there. A pair the table does not cover, by a NaN among the values it would interpolate or by
-falling outside an axis, takes the run's own propagation instead: `--ground_effect` if it is
-on, free field if not. The log says how many did. Receivers are the exception: a microphone
+falling outside an axis, takes the run's own propagation instead: `--refraction` if it is
+on, `--ground_effect` if that is, free field if not. A flush microphone on a plate
+(`--plate_table`) reads the table at its lowest receiver height and adds K, the plate's level
+over bare ground there, per band and azimuth at 2 degrees, as the shadow transition places a
+plate. With `--refraction` too, the run evaluates every state rather than windowing from the
+peak, since the bounds were not built for the two geometries together. The log says how many did. Receivers are the exception: a microphone
 height outside the table's is refused, since that table was built for another run. Bearings
 are compass bearings, so a run in a rotated frame needs `--frame_bearing`, as with wind.
 
@@ -1022,6 +1034,60 @@ receiver_height, range, band)` array, one coordinate variable per axis, and glob
 `propagation_table_version` (1), `method`, `includes_absorption` and `provenance_*`.
 Anything that can fill that array can be read; `src/propagation_table.hpp` is the
 specification.
+
+### Micro-shadows and skip zones
+
+Under day 286's last profile (run 286288) the air toward 270 is fastest at the ground, because
+the log-law headwind assumed below the lidar's 46 ft gate takes 0.2 m/s off in the lowest
+foot, and the inversion near 330 ft makes an elevated duct above it. A 100 ft source's sound
+turned back by the inversion turns up again 1-20 ft above the ground, so ray theory delivers it
+to neither a flush nor a 1.2 m microphone; and short of where it first comes down, about
+12,000 ft out, no ray arrives at all. The parabolic equation hardly notices the near-ground
+layer (flattening it moves the PE by under 1 dB to 250 Hz) and fills the skip zone from the
+caustic. Three treatments were built and compared (harness `propagation/micro_shadow*.py`):
+
+- `--tunnelling` adds the rays that turn within reach of the microphone, each with the Airy
+  tail below its turning point, Ai^2((3/2 omega I)^(2/3)), I the integral of
+  sqrt(p^2 - 1/c^2) from the microphone to the turning height. Near the family's caustic the
+  pair of rays is replaced by the caustic's band-averaged Airy field.
+- `--skip_fill` adds, for each family from aloft whose range has an interior extremum with the
+  receiver on its dark side, the caustic's Airy tail, I = C Ai^2(omega^(2/3) (X_c - r)
+  (2 / X'')^(1/3)), C matched to the two rays' energy on the lit side.
+- `--propagation_table` built from the PE for each run's profile, beside `--refraction
+  stratified` for the pairs it does not cover.
+
+| 100 ft source, flush, 2,000-13,000 ft; `stratified` - PE, mean / rms dB | 50-160 Hz | 200-630 Hz | 800-2,000 Hz |
+| --- | --- | --- | --- |
+| Day-286 PE matrix (five profiles), neither | -5.4 / 9.8 | -6.1 / 11.1 | -3.6 / 9.9 |
+| `--tunnelling` | -3.4 / 7.3 | -3.8 / 8.5 | -1.4 / 7.3 |
+| `--skip_fill` | -4.5 / 8.9 | -5.6 / 10.5 | -2.7 / 9.2 |
+| both | -1.7 / 5.1 | -2.3 / 6.5 | +0.3 / 6.7 |
+
+Against measured day-286 frames where `stratified` predicts at least 10 dB under straight rays
+(1.4% of frame-bands to 2 kHz; sources under 300 ft, 0.4-2 degrees, 4-9 kft), energy-mean
+predicted - measured:
+
+| | straight | `stratified` | `--tunnelling` | `--skip_fill` | both | PE table (5 runs) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 25 runs, 50-160 Hz | +3.8 | -10.5 | -7.3 | -3.6 | -2.1 | |
+| 25 runs, 200-630 Hz | -0.1 | -15.5 | -10.7 | -7.2 | -5.0 | |
+| 25 runs, 800-2,000 Hz | -7.6 | -20.6 | -20.6 | -20.7 | -18.9 | |
+| 5 runs, sources under 150 ft at 3-6 kft, 50-630 Hz | +1.0 to +1.6 | -11.5 to -13.3 | | | -2.5 to -4.5 | +0.3 to +2.5 |
+
+None moves the SEL: the exposure within 10 dB of each microphone's measured peak is unchanged
+to 0.02 dB under every option. All three are off by default. What they leave:
+
+- The tails above 800 Hz. The tunnelled field at the ground and the skip zone's edge short of
+  the direct rays' reach (a duct's direct family ends without a caustic, and the PE diffracts
+  past it) are still 10-20 dB low there.
+- On run 286276's far frames (150-330 ft sources, 6-20 kft) every model but plain `stratified`
+  is too loud, the PE table by 13.5 dB and straight rays by 8.8: something the PE leaves out.
+- The table is read across 45 degree bearings and eight source heights; off those nodes it is
+  within about 1 dB of a direct PE run at 63-250 Hz but 5 dB rms overall in this duct, almost
+  all at 1-2 kHz, where the return's caustic moves between nodes. Each run's table took
+  2.5 minutes to build.
+- Cost on a day-286 run: `--tunnelling` about +20%, `--skip_fill` 2-4x, a table about the
+  ray model's own.
 
 `niceops_propagation_table` writes one, by either of two methods:
 
