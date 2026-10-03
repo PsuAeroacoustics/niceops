@@ -50,7 +50,7 @@ cmake --build build -j8
 
 Notes:
 - The repo root contains stale in-source build artifacts from the D era (CMakeCache.txt, Makefile, `libniceops*.a`, binaries) that are gitignored — do not build in-source.
-- **Never add `-DNDEBUG` to Release.** The D original ran with asserts live, and `sphere_database.cpp` relies on `assert(isFinite(...))` guards; matching that is part of the port contract. This is called out in CMakeLists.txt.
+- **Never add `-DNDEBUG` to Release.** The D original ran with asserts live, and `sphere_database.cpp` relies on `assert(isFinite(...))` guards; matching that is part of the port contract. CMake's own Release flags carry `-DNDEBUG`, so `CMakeLists.txt` strips it (about 4% of the demo's CPU) and `tests/test_build.cpp` fails if it comes back. This is called out in CMakeLists.txt.
 - If Xcode proper isn't installed (Command Line Tools only), pass `-DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)`. No special flags are needed; the vendored SPLINTER library that used to require them is gone.
 - CGAL 5.0+ is header-only and exports `CGAL::CGAL`. Do **not** reintroduce `include(${CGAL_USE_FILE})` — `UseCGAL.cmake` was removed in CGAL 6, leaving `CGAL_USE_FILE` empty so the `include()` errors out.
 - **CI builds on GCC/libstdc++; a macOS clang build will not catch what that finds.**
@@ -93,10 +93,10 @@ Notes:
   ctest --test-dir build --output-on-failure
   ```
 
-  Note what such a failure looks like: `fatal()` logs its reason to `log/niceops.log` and
-  calls `abort()`, so **nothing reaches stdout or stderr**. CTest reports only
-  `Subprocess aborted` with an empty output block, and the reason is in the log alone.
-  CI dumps the log on failure for this reason.
+  Note what such a failure looks like: `fatal()` logs its reason and calls `abort()`, and
+  CTest reports `Subprocess aborted`. The log line goes to `log/niceops.log` and, since
+  warnings and errors are echoed to stderr as well (`Logger::write_line`), to the terminal --
+  it used to reach the log alone, which is why CI still dumps the log on failure.
 - **Keep the C++ sources in one static library.** `interpolator.cpp` used to be its own
   `interpolator` target, a D-era seam that walled off CGAL's heavy headers. Once CGAL went,
   that split was a *cycle*: `interpolator.cpp` calls into `Delaunay`, which lives in
@@ -164,12 +164,12 @@ The unit tests are a Catch2 binary, so you can run a single case or tag directly
 ./niceops_unit_tests --list-tests
 ```
 
-CTest defines five tests, all with the **source root** as their working directory (the demo case's relative paths resolve there):
+CTest defines about ninety tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
 
 - `regression_default` — runs `niceops -S state/ci_state.csv`; one run feeds both golden comparisons.
 - `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion.
 
-- `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All 7 cases pass (~26k assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
+- `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All cases pass (tens of thousands of assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
 - `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines.
 
 **No CTest case passes `-p`/`-f`/`-F`, so none of them executes the plotting path.**
@@ -222,6 +222,39 @@ the product of two constants is not the same double as two multiplies and the st
 pinned at 1e-9.  Verified end to end: a metric twin of the demo track under `--units m`
 reproduces the golden footprint to 1.5e-12 dB. Trajectory CSVs are the 27-column NASA/FAA AC state format. Vehicle JSON keys: `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg, converted to Newtons), `Atmosphere.density`.
 
+### Input checking and reporting
+
+A bad input used to give a plausible-looking wrong footprint with exit status 0 and nothing on
+screen; these now fail, or warn, with the cause named. Know them before adding a reader:
+
+- **Errors and warnings reach stderr** as well as `log/niceops.log` (`Logger::write_line`); `-L`
+  still decides what is written at all. A skipped trajectory is `Skipping <file>: <why>` on the
+  terminal and exit status 1.
+- **An exception in an observer-loop worker is carried to the caller** by `parallel_chunks` (it
+  terminated the process at any thread count above one), so `input_error` skips one trajectory
+  as `run()`'s handler intends.
+- **Readers refuse what they used to swallow.** An AC track's time must increase and every
+  column the states are built from must be finite; a geodetic track's time, altitude and
+  velocity must be finite; a unit declared in a geodetic header (`Alt (ft)`, `Climb Rate (fpm)`,
+  `Time (ms)`) is checked against `--units` (`check_declared_units`); a text line *after* the
+  first row of data is an error (`CsvReport`; text above it is a header); observer files keep
+  one width; `--atmosphere` rejects non-finite cells. `--trim` past the crop is diagnosed, and
+  `-D` on a geodetic track with no clock needs `--start_utc` (it defaulted to UTC midnight, i.e.
+  the night penalty, silently).
+- **Atmosphere values are range-checked** (`temperature_problem` and friends in
+  `atmosphere.hpp`, the bounds `--atmosphere` already used) from the command line and the vehicle
+  file. The spectral path's log says where each value came from, and warns when humidity is the
+  default 20 percent. The vehicle file's tip speed, weight and rotor radius are compared with
+  the database's and a disagreement is a warning.
+- **A database must vary where the triangulation needs it** (advance ratio, flight path angle,
+  and CT unless `fixed_load_factor`) and may not hold two spheres at one condition; both were
+  silent NaN or hang before. Test fixtures with one thrust coefficient carry the flag.
+- **Several trajectories in one run** name `-i` / `--band_history` files for their track and
+  derive `-S` names as `-o` does, and two trajectories asked to write one file are refused.
+- **CTests that test these pass on the message text** (`PASS_REGULAR_EXPRESSION`), which
+  replaces the exit-status check, so a usage error or a missing file cannot satisfy them;
+  `golden_compare` itself is tested on NaN and infinity.
+
 ## Architecture
 
 Pipeline in `main()` (`src/niceops.cpp`): load `Database` + `Trajectory` → for each observer and each trajectory state, compute instantaneous dBA via `Database::level_at_observer` → integrate the time history into a sound exposure level (SEL) using the 10-dB-down-from-peak window (`peak_range`/`sound_exposure_level` in `src/util/sel.hpp`) → write CSV output and optional matplotlib figures.
@@ -230,7 +263,7 @@ Pipeline in `main()` (`src/niceops.cpp`): load `Database` + `Trajectory` → for
 
 A default run evaluates 14,400 observers × 6,551 states = 94.3M times, so anything left in `eval` costs ~100 M×. Do not "simplify" these back:
 
-- **`Database::SourceState` is built once per trajectory state, in `main`, and reused across every observer.** It carries the source position, the `SphereFrame` (unit TPP normal, nose, starboard) and the `Blend` (four bracketing spheres + barycentric weights). The `Blend` is a CGAL Delaunay `locate()` walk and was ~60% of the whole run when it sat inside `eval`. Anything that depends only on (μ, γ, CT) or on attitude belongs here, not in `eval`.
+- **`Database::SourceState` is built once per trajectory state, in `main`, and reused across every observer.** It carries the source position, the `SphereFrame` (unit TPP normal, nose, starboard) and the `Blend` (four bracketing spheres + barycentric weights). The `Blend` is a Delaunay `locate()` walk and was ~60% of the whole run when it sat inside `eval`. Anything that depends only on (μ, γ, CT) or on attitude belongs here, not in `eval`.
 - **`lookup_angles` is split**: `sphere_frame(velocity, normal)` is per state, `lookup_angles(frame, direction)` is per observer. The four-argument overload still exists for the unit tests and composes the two.
 - **`lookup_angles` takes three dot products and no projection.** `{nose, normal, starboard}` is orthonormal, so the propagation direction's components in the plane normal to the nose are just `normal.dot(d)` and `starboard.dot(d)`; forming the projected vector and normalising it (a square root and three divides) scaled both by the same positive length, which the angle does not depend on. `phi` is then `atan(across / |up|)` — `atan`, not `atan2`, which costs twice as much for quadrant handling a non-negative second argument does not need, and gives the right half of pi from the infinity the division produces when `up` is zero. The 0/0 case at the poles is caught explicitly.
 - **The level grid is one flat `vector<Sample>`** (`{dBA, EAA}` pairs), indexed `(i_phi * n_theta + i_theta) * n_conditions + condition`, not `vector<vector<vector<double>>>`. Both metrics are read together, so they share a cache line. A condition-major layout was tried and is *worse* — it also breaks bit-exactness via different FMA contraction.
@@ -277,70 +310,81 @@ Several further optimizations were measured and **rejected**; the numbers are he
   (observer, state) pairs fall outside the window, but a bound that proves a *particular* pair
   is outside it has to be tighter than 10 dB, and `level <= sphere max - spreading` is 11.4 dB
   loose at the median -- it proves only 7.6%. That is the wrong question; asking it the other
-  way round is what works, and is now the default path. See "Walking out from the peak" below.
+  way round is what works, and is now the default path. See "The SEL window, the oversampling,
+  and the windowed peak search" below.
 
-### The SEL integral is oversampled, and the window is why that cannot be used
+### The SEL window, the oversampling, and the windowed peak search
 
-The largest speedup still on the table is not a code change: the sound exposure integral is a
-Riemann sum over a 50 Hz trajectory, and it is oversampled by roughly thirty times. Decimating
-the demo case's 6551 states moves the footprint's **mean** by 0.008 dB at stride 2 and 0.088 dB
-even at stride 64. A 2-8x cut in the whole acoustic loop is sitting there.
+**The window is the outermost 10 dB-down interval.** `ten_db_down_interval()` in
+`src/util/sel.hpp` runs from the first to the last sample at or above peak - 10 dB, dips
+below the threshold between them included. That is the duration of the aircraft noise metrics
+(the EPNL duration of 14 CFR 36 A36.4.5, and what panam's `sound_exposure_level` uses, so a
+prediction and a measurement are integrated alike). It replaced the D original's walk out from
+the peak, which stopped at the *first* sample below the threshold on either side and so cut an
+event off at its first dip: an approach heard from upstream lost its second rise, and on the
+2017 approach data the two rules differ by up to 0.7 dB at a single microphone. The change was
+made deliberately (commit `9d6e986`, which regenerated `golden/197421_LAE.csv`), so the old
+first-crossing walk, `expand_window()` and the "left alone under the port-fidelity rule" note
+are gone from the code; do not reintroduce them from an older copy of this file. The integral
+is taken over *reception* time (`reception_factor`, 1 + dr/dt / c), with the step from the
+trajectory itself (see the time-step note below).
 
-What blocks it is `peak_range`, which walks out from the peak and stops at the **first** sample
-below peak - 10. One transient directivity dip therefore truncates the window, and the result
-is a knife-edge: decimation steps over the dip, the window doubles, and the level jumps. The
-tail does not shrink with stride the way a quadrature error would --
+**The SEL integral is oversampled, and the discrete window is why that cannot be used.** The
+sound exposure integral is a Riemann sum over a 50 Hz trajectory, oversampled by roughly
+thirty times. Decimating the demo case's 6551 states moves the footprint's **mean** by 0.008 dB
+at stride 2 and 0.088 dB even at stride 64. What blocks a 2-8x cut in the whole acoustic loop
+is the window: decimation steps over a transient dip, the window's end jumps, and the level
+jumps with it. The error does not shrink with stride the way a quadrature error would --
 
-| stride | max cell error, first-crossing | outermost-crossing |
+| stride | max cell error, first-crossing (the retired rule) | outermost-crossing (current) |
 | --- | --- | --- |
 | 2 | 1.93 dB (104 cells > 0.1 dB) | 1.13 dB (86) |
 | 8 | 2.34 dB (619) | 1.13 dB (271) |
 | 64 | 2.48 dB (3150) | 1.54 dB (1346) |
 
--- which is the signature of a discrete window flip, not of the integral. Widening the window
-to the outermost crossing only halves it, and is itself a metric change: at full resolution it
-moves 2758 of 14400 observers by more than 0.1 dB and one by 2.48 dB.
+-- which is the signature of a discrete window flip, not of the integral. So decimation is
+**not** safe as a default under either definition: the mean is negligible but individual cells
+move by 1-2 dB, and the cells are the deliverable. It stays available deliberately, through
+`adapt()` and `-s` (both currently commented out in `main`).
 
-So decimation is **not** safe as a default under either definition: the mean is negligible but
-individual cells move by 1-2 dB, and the cells are the deliverable. It stays available
-deliberately, through `adapt()` and `-s` (both currently commented out in `main`).
+**Skipping states the window cannot use: the windowed peak search.**
+`windowed_sound_exposure_level` / `windowed_exposure` in `src/niceops.cpp` do not evaluate every
+emission time. A coarse sweep (stride nt/128) seeds a best level; one pass then evaluates every
+state `DirectionBounds` cannot prove is below that best level, handing the same geometry on to
+the evaluation so a state that survives the test pays nothing for it; and
+`ten_db_down_interval` finds the window's ends by scanning in from both sides, skipping a state
+the bound puts below the threshold (`certainly_below`) and evaluating everything between the
+ends. It is **exact** -- the output is byte-identical to evaluating every state, on every track,
+grid, observer set, receiver and thread count tried -- because the integral and the window are
+the shared `ten_db_down_interval()` and `sel_over_window()`, templated on a level accessor (a
+filled array for `peak_range`, a memoizing lambda here), not a second copy.
 
-The oversampling is spent a different way instead, and exactly: by not evaluating the states
-the window was never going to use. That is the next section.
+It runs whenever the bound applies: broadband, `--spectral`, `--ground_effect`, plates, the
+propagation table (whose largest value per band enters the bound), and `--refraction` (the
+bound is taken along each ray's launch direction at its ray tube's range; for a sum of
+stratified arrivals, the loudest arrival's direction over the harmonic sum of their squared
+ranges, `bound_geometry`). It is skipped, and the loop marches every state, for `-a` (the level
+is transformed after eval), `-i` and `--band_history` (the whole history is written),
+`-D` (the day-night window is found on a penalized history, which a window found on the raw one
+need not cover), `--db_cutoff` (which culls on its own terms), and any database with a negative
+excess-attenuation factor, where dropping that term is not a loss.
 
-Worth knowing on its own, independent of performance: the first-crossing rule means ~0.7% of
-observers' SEL depends on whether a single sample dips below the threshold. That is a faithful
-port of the D original and is left alone under the port-fidelity rule, but it is a fragility,
-not a feature -- and it is the reason the oversampling cannot be spent.
-
-### Walking out from the peak instead of marching every emission time
-
-`windowed_sound_exposure_level` in `src/niceops.cpp` is the default path and the reason the
-loop is 1.2x faster than evaluating everything. It is **exact** -- byte-identical output on
-every track, grid, observer set and thread count tried, not an approximation.
-
-It does not carry its own copy of the window walk or the integral. `expand_window()` and
-`sel_over_window()` in `src/util/sel.hpp` are templated on a level accessor, so `peak_range`
-reads them out of a filled array and this path reads them through a memoizing lambda that
-computes a state the first time it is asked for. That is deliberate: the backward walk's
-`== threshold` tie rule decides ~0.7% of observers' SEL, and it now exists once rather than
-in two places that have to be edited together. The accessor is a template, not a
-`std::function`, so it inlines away and the comparisons are unchanged.
-
-The idea is to stop asking "can I prove this state is outside the window?", which needs a bound
-tighter than the 10 dB window and is hopeless (above), and ask "where is the peak?" instead.
-`peak_range` walks out from the peak and stops at the **first** sample below peak - 10, so the
-window is contiguous *by construction*: once the peak is known the walk itself decides where
-the window ends, and nothing beyond it needs a bound at all. A bound is then needed for exactly
-one thing -- being sure the walk started on the true peak -- and that is a far weaker demand,
-because it only has to beat the best level found so far rather than that level minus ten.
+What it saves depends on how dear an evaluation is. Under the outermost-crossing rule it
+evaluates most of what it is shown: on the broadband demo case `Evaluated 88610720 of 94334400
+(93.9%)` -- the window itself is 59%, and the bound proves only about 6% of the pairs outside
+it -- and there it is a small net *loss*, about 4.6% more user CPU than marching every state
+(measured twice, output identical), because `certainly_below` recomputes geometry for the
+skipped states. It still pays where an evaluation costs 150 ns (`--spectral`) to a microsecond
+(`--ground_effect`). Two ways to buy the broadband loss back were found and not taken: skip the
+path for broadband-only runs, or cache each skipped state's numerator and squared range from the
+main pass so `certainly_below` stops recomputing (bit-identical, about 2% on the demo).
 
 Three things had to hold, and each was measured before any of it was written:
 
 - **The bound needs less than 10 dB of slack**, or the peak search reaches outside the window
   and there is nothing left to save. The whole-sphere maximum is 11.4 dB, just over. Binning it
   by direction -- `DirectionBounds`, bins uniform in cos^2(theta) crossed with azimuth sectors
-  -- brings the median to 8.6 dB and the search collapses inside the window.
+  -- brings the median to 8.6 dB.
 - **The test must cost nothing on the states it does not reject.** It forms the squared range
   and the three dot products with the sphere frame, which is exactly what an evaluation needs,
   so `Database::level_from_geometry` takes those and a surviving state pays nothing for having
@@ -351,31 +395,19 @@ Three things had to hold, and each was measured before any of it was written:
   Built per state it was 3.3 MB, re-streamed for every observer, and that alone cost more than
   the scheme saved once the loop was threaded.
 
-What it gives up: the bound maxes over the four conditions of a tetrahedron rather than over
-the particular blend of them, so it is looser than the per-state tables the prototype used --
-70% of states evaluated against the prototype's 64%, where the window itself is the 56% floor.
-Buying that back means a table per state, which is the cache problem above. Bin counts were
-swept (8x8, 16x8, 16x16, 32x16): finer bins do cut the evaluated fraction, to 66%, but the
-extra binning work cancels the saving almost exactly (1.585, 1.546, 1.557, 1.567 s), so the
-choice among them hardly matters and 16x8 is kept only for being marginally ahead on both.
+The bound maxes over the four conditions of a tetrahedron rather than over the particular blend
+of them, so it is looser than a per-state table would be; buying that back means a table per
+state, which is the cache problem above. Bin counts were swept under the earlier window rule
+(8x8 to 32x16) and the choice hardly mattered; 16x8 is kept.
 
-`tests/test_sphere_database.cpp` checks the bound directly -- that it is never exceeded over a
-sweep of source states and observers -- because the whole thing rests on that one property.
-
-The path is skipped and the loop marches every state whenever the bound does not apply:
-`--spectral` (the bound is on the broadband dBA, which does not bound the band-limited weighted
-level -- the same reason `--db_cutoff` is refused there), `-a` (the level is transformed after
-eval), `-i` and `--band_history` (the whole history is written out), `-D` (the day-night window is found on a
-penalized history, which a window found on the raw one need not cover), `--db_cutoff` (already
-culling on its own terms), and any database with a negative excess-attenuation factor, where
-dropping that term is not a loss.
-
-**Extending it to `--ground_effect` is the obvious next move and is not done.** An evaluation
-costs ~1160 ns there against the broadband path's 19, so the test is free and the saving would
-be close to the full 30% rather than being half eaten by overhead. It needs a bound on the
-*A-weighted band-limited* level -- the largest weighted band sum per direction, which a
-spectral database can supply -- and a bound on the ground term, which is a **gain** of up to
-about +6 dB and so has to be bounded rather than dropped.
+The whole thing rests on one property, that the bound is never exceeded, and it is tested
+directly (`tests/test_sphere_database.cpp`, `tests/test_spectral_propagation.cpp`, tag
+`[bounds]`) over sweeps of source states and observers, **including sweeps aimed within five
+degrees of the nose and tail axes**. A cell is filed under the bin of its centre direction, and
+at theta = 0 or 180 that direction has no azimuth, so a pole cell is filed under every azimuth
+bin of its theta bin (`Database::home_bins`); before that, a query a degree off the axis was
+bounded up to 0.8 dB too low and the ordinary sweep, which samples hardly any observers there,
+never saw it.
 
 Two suggested optimizations were deliberately **not** taken:
 
@@ -1016,8 +1048,8 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   `--spectral` 1.44 s, `--spectral --ground_effect` 10.9 s (was 41.4); the Horner split takes
   the last of those to about 9.4 s.
 
-  No database in `databases/` carries spectra, but the path is still exercisable end to end
-  from a bare checkout: `write_flat_spectral_database` in `tests/test_spectral_propagation.cpp`
+  The `*_fixed_load_factor.nod` databases carry spectra, so the path runs end to end on shipped
+  data; it was also exercisable from a bare checkout when none did, and still is: `write_flat_spectral_database` in `tests/test_spectral_propagation.cpp`
   interpolates a sphere out of the shipped `S-76D_M3.nod`, hangs synthetic band amplitudes on
   it and writes it back with `write_sphere`, and the result is a one-group `.nod` that
   `--spectral` accepts. Its single condition makes the blend degenerate, so timings off it run
@@ -1055,13 +1087,18 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
   attenuates it with the database's `EAA` factor; `--spectral` carries the per-band spectrum
   and attenuates each band at its own ISO 9613-1 coefficient. `Database::eval_spectrum` mirrors
   `eval`'s bracketing and bilinear cell exactly, so a difference between them is the physics and
-  never the interpolation. `--spectral` is opt-in: the goldens are the broadband path, and
-  `spectra_` is condition-major (right for `interpolate_sphere`, wrong for this loop), so the
+  never the interpolation. `--spectral` is the default whenever the database carries spectra (and
+  falls back to broadband when it does not), so the goldens -- made from `S-76D_M3.nod`, which has
+  none -- are the broadband path. On B407, spectral minus `--no-spectral` is median -1.2 dB
+  (-3.2 to +2.3) on the demo track: the humidity and temperature of the run against the ones the
+  database's EAA was built at, and EAA being a linear-in-range rate anchored at 1 km where the
+  true loss is concave. `spectra_` is condition-major (right for `interpolate_sphere`, wrong for this loop), so the
   spectral path pays a long stride per band rather than making the sphere export pay.
-  It is rejected together with `--db_cutoff`, whose range bound is derived from the broadband
-  level and does not bound the band-limited one.
-- `src/geodetic.{hpp,cpp}` — the WGS84 transform: a transverse Mercator about a reference point
-  with altitude carried through as z. `LocalFrame(reference)` is east/north;
+  `--db_cutoff` works on it through `spectral_direction_bounds`, the band-limited level's own bound.
+- `src/geodetic.{hpp,cpp}` — the WGS84 transform: the American polyconic projection about a
+  reference point (it is not a transverse Mercator, whatever older copies of this file say; it
+  reproduces the shipped tracks' own x/y, and agrees with a Krueger transverse Mercator to 3 mm
+  at 10 km), with altitude carried through as z. `LocalFrame(reference)` is east/north;
   `track_aligned(reference, bearing)` turns +x onto a compass bearing;
   `from_east_north_up` applies that rotation without the translation, for velocities; and
   `to_geodetic` inverts the projection by Newton iteration, which is what `--latlon` output

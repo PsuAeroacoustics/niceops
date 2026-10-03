@@ -775,7 +775,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
     // The source geometry and the blend of database operating conditions depend
     // only on the trajectory state, so build them once here rather than once
-    // per (observer, state) pair.  The blend is a CGAL Delaunay locate() walk
+    // per (observer, state) pair.  The blend is a Delaunay locate() walk
     // and was by far the largest single cost in the program; this turns
     // observers*states of them into states of them.
     // Night classification for the DNL penalty, from the AC format's UTC
@@ -865,7 +865,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
     // Observers are independent of one another: each reads the database and the
     // source_states array, which are finished and const by now, and writes only
-    // its own level.  Nothing in here reaches the CGAL triangulation -- the
+    // its own level.  Nothing in here reaches the Delaunay triangulation -- the
     // blends were all resolved above -- so the loop splits with no locking.
     const unsigned workers = options.thread_count > 0 ? options.thread_count : default_thread_count();
     info("Evaluating ", observers.size(), " observers on ", workers,
@@ -2338,11 +2338,11 @@ int run(int argc, char* argv[])
             "and the -S state file stays metric.")
             ->check(CLI::IsMember({"ft", "m"}));
     auto* grid_option = app.add_option("--grid", grid_bounds,
-            "Observer grid bounds in feet: xmin xmax ymin ymax. Default +/-4921.26 "
-            "(= 1500 m).")
+            "Observer grid bounds, in --units: xmin xmax ymin ymax. Default +/-1500 m "
+            "(+/-4921.26 ft).")
             ->expected(4);
     auto* gridstep_option = app.add_option("--gridstep", grid_step,
-            "Observer grid spacing in feet (default 82.021, = 25 m).");
+            "Observer grid spacing, in --units (default 25 m, = 82.021 ft).");
     app.add_option("-D,--dnlfile", dnl_file,
             "Write the day-night level, summed over every trajectory, to this file.");
     app.add_option("--utc_offset", utc_offset,
@@ -2397,8 +2397,8 @@ int run(int argc, char* argv[])
             "Specific flow resistance of the ground, kPa s/m^2. 30 snow, 225 grass (default), "
             "650 soil, 3000 dirt, 10000 concrete, 50000 asphalt.");
     auto* receiver_height_option = app.add_option("--receiver_height", receiver_height,
-            "Receiver height above ground for --ground_effect, ft (default 3.937, "
-            "= 1.2 m).");
+            "Receiver height above ground for --ground_effect, in --units (default 1.2 m, "
+            "= 3.937 ft).");
     app.add_option("--origin", origin,
             "WGS84 reference for the local frame: latitude longitude, in degrees. "
             "Defaults to the first position of the first geodetic trajectory.")
@@ -2421,8 +2421,8 @@ int run(int argc, char* argv[])
             "window (-D). Required with -D when the track has no utcsec column; ignored "
             "when it has one.");
     auto* path_smoothing_option = app.add_option("--path_smoothing", path_smoothing,
-            "How far, in feet RMS, the path fitted through a geodetic track may sit from "
-            "the given positions, per axis. Default 10. Zero flies through them exactly, "
+            "How far, RMS in --units, the path fitted through a geodetic track may sit from "
+            "the given positions, per axis. Default 10 ft. Zero flies through them exactly, "
             "which on measured positions makes the load factor track coordinate rounding.");
     app.add_flag("--latlon", latlon,
             "Also write each level file as latitude, longitude, level. Needs --origin unless "

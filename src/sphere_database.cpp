@@ -2546,7 +2546,7 @@ void Database::self_test(const std::string& datafile_path)
 
         // Every channel of a sphere is queried at that sphere's own operating
         // condition, so the blend is the same for all of them -- resolve it
-        // once instead of running a CGAL locate per channel.
+        // once instead of running a Delaunay locate per channel.
         const auto blend = blend_at(advance_ratio, flight_path_angle, thrust_coefficient);
 
         // Validate the database against the known data at sphere surface

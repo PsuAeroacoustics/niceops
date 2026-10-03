@@ -281,7 +281,7 @@ class Database
 public:
     // The four database spheres bracketing one operating condition, and the
     // barycentric weights that blend them.  Computing this is by far the most
-    // expensive part of an evaluation -- it is a CGAL Delaunay locate() walk --
+    // expensive part of an evaluation -- it is a Delaunay locate() walk --
     // and it depends only on (mu, gamma, CT), so it is hoisted out of any loop
     // that holds the operating condition fixed.
     //
@@ -619,7 +619,7 @@ private:
     // (i_phi * thetas.size() + i_theta) * n_conditions + condition.  This was a
     // vector<vector<vector<double>>>, which put two dependent pointer loads in
     // front of every one of the 32 reads an eval makes -- the largest single
-    // cost of a run once the CGAL locate had been hoisted out of the loop.
+    // cost of a run once the Delaunay locate had been hoisted out of the loop.
     std::vector<Sample> grid;
     std::size_t n_conditions = 0;
     double sphere_radius_ = 0.0;

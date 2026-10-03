@@ -57,7 +57,7 @@ double parallel_radius(double sin_phi, double cos_phi)
     return cos_phi / std::sqrt(1.0 - SQUARED_ECCENTRICITY * sin_phi * sin_phi);
 }
 
-// Transverse Mercator forward, in units of the equatorial radius, with `lon`
+// American polyconic forward, in units of the equatorial radius, with `lon`
 // already relative to the reference meridian.  Returns (easting, northing).
 struct Projected
 {
