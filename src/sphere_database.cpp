@@ -5,9 +5,11 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <future>
 #include <limits>
 #include <cstdint>
 #include <numeric>
+#include <system_error>
 #include <utility>
 
 #include <netcdf.h>
@@ -31,7 +33,15 @@ struct NcGuard
     explicit NcGuard(int i) : id(i) {}
     ~NcGuard()
     {
-        nc_close(id);
+        if (id >= 0)
+            nc_close(id);
+    }
+    // Closes now, for a caller with something to do alongside nc_close.
+    void close()
+    {
+        if (id >= 0)
+            nc_close(id);
+        id = -1;
     }
 };
 
@@ -80,14 +90,18 @@ std::size_t get_dim_length(const std::string& dimname, int group_id)
     return dim_length;
 }
 
+// `optional`: the variable may well be absent, so say nothing -- a database
+// with 1312 groups and no ShaftPower otherwise wrote 1312 identical lines, 97%
+// of a run's log, and buried the few that mattered.
 template <typename T>
-int get_scalar(int ncid, const std::string& variable_name, T* value)
+int get_scalar(int ncid, const std::string& variable_name, T* value, bool optional = false)
 {
     int varid;
     auto status = nc_inq_varid(ncid, variable_name.c_str(), &varid);
     if (NC_NOERR != status)
     {
-        log("Could not find variable ", variable_name, " in ncid ", ncid, ".");
+        if (!optional)
+            log("Could not find variable ", variable_name, " in ncid ", ncid, ".");
     }
     else
     {
@@ -869,6 +883,20 @@ Database::Database(const std::string& datafile_path)
     auto eaa_min = std::numeric_limits<double>::infinity();
     sphere_max_.assign(group_ids.size(), -std::numeric_limits<double>::infinity());
     std::size_t repaired_spheres = 0;
+    // Which grid cells each channel falls in.  It depends only on the channels'
+    // angle labels, and every sphere shares one layout but the legacy hover
+    // spheres, so it is derived once and again only when the labels change:
+    // 1312 spheres x 1406 channels x 2 searches was most of what the fill cost.
+    struct ChannelCells
+    {
+        std::array<std::size_t, 2> phi, theta;
+    };
+    std::vector<ChannelCells> placement;
+    std::vector<double> placed_phis, placed_thetas;
+    bool placed = false;
+    // The spectral amplitude layout is a function of the same labels.
+    std::vector<std::size_t> cached_cell_of;
+    bool cached_cell_of_valid = false;
     // Cycle through sphere groups and load data
     for (std::size_t i = 0; i < group_ids.size(); i++)
     {
@@ -897,7 +925,7 @@ Database::Database(const std::string& datafile_path)
         // The D original (DRZ_edits) made it required, which would refuse every
         // database in this repository.
         double shaft_power_value = 0.0;
-        if (NC_NOERR == get_scalar(group_id, "ShaftPower", &shaft_power_value))
+        if (NC_NOERR == get_scalar(group_id, "ShaftPower", &shaft_power_value, true))
         {
             if (i != 0 && shaft_power_.size() != i)
                 input_error("Database error: ShaftPower present on some spheres but not others.");
@@ -969,6 +997,19 @@ Database::Database(const std::string& datafile_path)
             n_conditions = group_ids.size();
             grid.assign(phis.size() * thetas.size() * n_conditions, Sample {0.0, 0.0});
         }
+        if (!placed || placed_phis != phis_scattered || placed_thetas != thetas_scattered)
+        {
+            placement.resize(phis_scattered.size());
+            for (std::size_t c = 0; c < phis_scattered.size(); c++)
+            {
+                placement[c].phi = approx_equal_range(phis.values(), phis_scattered[c]);
+                placement[c].theta = approx_equal_range(thetas.values(), thetas_scattered[c]);
+            }
+            placed_phis = phis_scattered;
+            placed_thetas = thetas_scattered;
+            placed = true;
+            cached_cell_of_valid = false;
+        }
         // Fetch scattered acoustic data for each sphere
         dBAs_scattered.resize(nchannels);
         EAAs_scattered.resize(nchannels);
@@ -1037,38 +1078,43 @@ Database::Database(const std::string& datafile_path)
             // their own angles say which cell each row is, and for a sorted file
             // that is the identity.  Otherwise keep the sorted reading.
             const std::size_t n_phi = phis.size(), n_theta = thetas.size();
-            std::vector<std::size_t> cell_of(n_phi * n_theta);
-            std::iota(cell_of.begin(), cell_of.end(), std::size_t {0});
-            if (phis_scattered.size() == n_phi * n_theta)
+            std::vector<std::size_t>& cell_of = cached_cell_of;
+            if (!cached_cell_of_valid)
             {
-                std::vector<std::size_t> mapped(n_phi * n_theta);
-                std::vector<bool> taken(n_phi * n_theta, false);
-                bool grid_layout = true;
-                for (std::size_t r = 0; r < n_phi && grid_layout; r++)
+                cell_of.resize(n_phi * n_theta);
+                std::iota(cell_of.begin(), cell_of.end(), std::size_t {0});
+                if (phis_scattered.size() == n_phi * n_theta)
                 {
-                    for (std::size_t j = 0; j < n_theta && grid_layout; j++)
+                    std::vector<std::size_t> mapped(n_phi * n_theta);
+                    std::vector<bool> taken(n_phi * n_theta, false);
+                    bool grid_layout = true;
+                    for (std::size_t r = 0; r < n_phi && grid_layout; r++)
                     {
-                        const std::size_t c = r * n_theta + j;
-                        const auto pm = approx_equal_range(phis.values(), phis_scattered[c]);
-                        const auto tm = approx_equal_range(thetas.values(), thetas_scattered[c]);
-                        if (pm[0] == pm[1] || tm[0] == tm[1]
-                                || !approx_equal(phis_scattered[c], phis_scattered[r * n_theta]))
+                        for (std::size_t j = 0; j < n_theta && grid_layout; j++)
                         {
-                            grid_layout = false;
-                            break;
+                            const std::size_t c = r * n_theta + j;
+                            const auto& pm = placement[c].phi;
+                            const auto& tm = placement[c].theta;
+                            if (pm[0] == pm[1] || tm[0] == tm[1]
+                                    || !approx_equal(phis_scattered[c], phis_scattered[r * n_theta]))
+                            {
+                                grid_layout = false;
+                                break;
+                            }
+                            const std::size_t cell = pm[0] * n_theta + tm[0];
+                            if (taken[cell])
+                                grid_layout = false;
+                            taken[cell] = true;
+                            mapped[c] = cell;
                         }
-                        const std::size_t cell = pm[0] * n_theta + tm[0];
-                        if (taken[cell])
-                            grid_layout = false;
-                        taken[cell] = true;
-                        mapped[c] = cell;
                     }
+                    if (grid_layout)
+                        cell_of = mapped;
+                    else if (i == 0)
+                        log("Sphere channels are not a full row-major grid; reading amplitude as "
+                            "gridded over the sorted angles.");
                 }
-                if (grid_layout)
-                    cell_of = mapped;
-                else if (i == 0)
-                    log("Sphere channels are not a full row-major grid; reading amplitude as "
-                        "gridded over the sorted angles.");
+                cached_cell_of_valid = true;
             }
             for (std::size_t slot = 0; slot < n_phi * n_theta; slot++)
             {
@@ -1099,10 +1145,10 @@ Database::Database(const std::string& datafile_path)
         // visited in file order), and dba_max covers matched channels only.
         for (std::size_t c = 0; c < phis_scattered.size(); c++)
         {
-            const auto phi_match = approx_equal_range(phis.values(), phis_scattered[c]);
+            const auto& phi_match = placement[c].phi;
             if (phi_match[0] == phi_match[1])
                 continue;
-            const auto theta_match = approx_equal_range(thetas.values(), thetas_scattered[c]);
+            const auto& theta_match = placement[c].theta;
             if (theta_match[0] == theta_match[1])
                 continue;
             if (dBAs_scattered[c] > dba_max)
@@ -1142,6 +1188,7 @@ Database::Database(const std::string& datafile_path)
             }
         }
     }
+    info("ShaftPower ", shaft_power_.empty() ? "is not in this database." : "is in this database.");
     if (repaired_spheres > 0)
     {
         log("Repaired legacy hover directivity on ", repaired_spheres, " of ", group_ids.size(),
@@ -1238,7 +1285,24 @@ Database::Database(const std::string& datafile_path)
         if (!fixed_load_factor_)
             conditions[i * active_condition_dims_ + 2] = thrust_coefficients[i];
     }
-    interpolator_.build(active_condition_dims_, advance_ratios.size(), conditions.data());
+    // The triangulation touches no netCDF state, and nc_close takes about as long:
+    // it tears down the metadata netCDF-4 read for every group at nc_open, about
+    // 0.1 s for the shipped file's 1312.  So they run at once.
+    auto build = [&] { interpolator_.build(active_condition_dims_, advance_ratios.size(), conditions.data()); };
+    std::future<void> triangulation;
+    try
+    {
+        triangulation = std::async(std::launch::async, build);
+    }
+    catch (const std::system_error&)
+    {
+        // No thread to be had: do them one after the other.
+        guard.close();
+        build();
+        return;
+    }
+    guard.close();
+    triangulation.get();
 }
 
 Database::Blend Database::blend_at(double advance_ratio, double flight_path_angle,

@@ -107,7 +107,7 @@ Notes:
 
 ### Where the database load time goes
 
-A default run is now ~1.0 s, and ~0.75 s of that is `Database::Database`. Most of it is not
+A default run is now ~0.93 s, and ~0.61 s of that is `Database::Database`. Most of it is not
 ours: `S-76D_M3.nod` has **one netCDF group per operating condition**, 1312 of them, and
 netCDF-4 reads every group's metadata eagerly at `nc_open` -- it opens all ~8000 HDF5 datasets
 in the file before returning. Measured split:
@@ -120,9 +120,16 @@ in the file before returning. Measured split:
 | Delaunay build over the conditions | 14% |
 | grid fill and the rest | 8% |
 
-The first three -- 78% -- are netCDF's own cost for this file layout and are not reachable
-through its API; the five tiny scalars per group cost more than the four big arrays, because
-what they pay for is the lookup, not the bytes. The real fix is in the database builder
+(The table is the load before the three changes below, when it was ~0.75 s; the first three rows
+are unchanged and the last two shrank.) The first three -- 78% of that -- are netCDF's own cost
+for this file layout and are not reachable through its API; the five tiny scalars per group cost more than the four big arrays, because
+what they pay for is the lookup, not the bytes. What *was* ours, and is done: the Delaunay build runs on its own thread while `nc_close` tears
+the file down (the build touches no netCDF state, so it is safe even though HDF5 here reports
+thread-safety off; ~85 ms, `NcGuard::close`); each channel's grid cells are derived once and reused
+while the angle labels are unchanged, which is every sphere but the legacy hover ones (the fill
+and the spectral layout, 47 -> 10 ms); and the optional `ShaftPower` probe no longer logs a
+line per group (1312 of a run's 1349 log lines). Output is byte-identical (golden compare).
+The real fix is in the database builder
 (panam): the same data in one group with `(condition, channel)` arrays would load in a
 fraction of the time. Do not go looking for it in `sphere_database.cpp`.
 
