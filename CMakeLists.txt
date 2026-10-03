@@ -437,6 +437,20 @@ add_test(NAME propagation_table_marched COMMAND niceops -d databases/B407_fixed_
 set_tests_properties(propagation_table_marched PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP propagation_table_runs)
 add_test(NAME propagation_table_windowed_is_exact COMMAND golden_compare integrated/propagation_table.csv integrated/propagation_table_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_windowed_is_exact PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
+# A table with a +25 dB bump beyond 1500 m and a bearing tilt, on eight bearings, run with the frame
+# turned 210 degrees: the peak search's bound has to carry the table's largest gain, so the windowed run
+# equals the marched one; and a table that says it carries absorption makes the run add none, so the
+# footprint is the louder of the two by the absorption (golden_compare reports the mismatch).
+add_test(NAME propagation_table_bump_build COMMAND niceops_unit_tests "[.bump_table]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_bump_build PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP propagation_table_bump_file)
+add_test(NAME propagation_table_bump COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --propagation_table tables/bump_test.nc --frame_bearing 210 --gridstep 492 -L warn -o integrated/propagation_table_bump.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_bump_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --propagation_table tables/bump_test.nc --frame_bearing 210 --gridstep 492 -L warn -D integrated/propagation_table_bump_dnl.csv -o integrated/propagation_table_bump_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_bump_absorbed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --propagation_table tables/bump_absorbed_test.nc --frame_bearing 210 --gridstep 492 -L warn -o integrated/propagation_table_bump_absorbed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_bump propagation_table_bump_marched propagation_table_bump_absorbed PROPERTIES FIXTURES_REQUIRED propagation_table_bump_file FIXTURES_SETUP propagation_table_bump_runs)
+add_test(NAME propagation_table_bump_windowed_is_exact COMMAND golden_compare integrated/propagation_table_bump.csv integrated/propagation_table_bump_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_absorption_is_not_added_twice COMMAND golden_compare integrated/propagation_table_bump.csv integrated/propagation_table_bump_absorbed.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_bump_windowed_is_exact PROPERTIES FIXTURES_REQUIRED propagation_table_bump_runs)
+set_tests_properties(propagation_table_absorption_is_not_added_twice PROPERTIES FIXTURES_REQUIRED propagation_table_bump_runs PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME propagation_table_is_the_ground_model COMMAND golden_compare integrated/propagation_table.csv integrated/propagation_table_reference.csv 0.25 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_is_the_ground_model PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
 # --atmosphere through a single-level profile holding the vehicle file's own

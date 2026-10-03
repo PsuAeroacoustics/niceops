@@ -98,6 +98,12 @@ struct CompassToLocal
                 -east_north[0] * cos_b + east_north[1] * sin_b};
     }
 
+    // The inverse: a vector in the local frame as (east, north).
+    std::array<double, 2> east_north(const std::array<double, 2>& local) const
+    {
+        return {local[0] * sin_b - local[1] * cos_b, local[0] * cos_b + local[1] * sin_b};
+    }
+
     double sin_b;
     double cos_b;
 };

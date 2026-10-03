@@ -281,3 +281,35 @@ TEST_CASE("lookup finds the same cell on even and uneven axes, at the knots and 
         CHECK(checked > 1000);
     }
 }
+
+TEST_CASE("write a bump table for the windowed-versus-marched CTests", "[.bump_table]")
+{
+    // Not a test: CMakeLists.txt's propagation_table_bump_build runs it (by its hidden tag) to
+    // make tables/bump_test.nc from tables/ground_model_test.nc, which the CTests build first.
+    // The ground model's table never exceeds +6 dB and has one bearing, so the peak search's
+    // use of the table's largest gain, and the run's bearing mapping, went untested: a bound
+    // that left the table's gain out differed from the marched run by 0.57 dB in 21 of 23
+    // cells on a table with +25 dB beyond 1500 m, and passed every CTest.  Here: +25 dB
+    // beyond 1500 m and a 6 dB cos(bearing) tilt, on eight bearings.
+    const auto base = PropagationTable::load("tables/ground_model_test.nc");
+    PropagationTable::Axes axes = base.axes();
+    REQUIRE(axes.bearings.size() == 1);
+    axes.bearings.clear();
+    for (int b = 0; b < 8; b++)
+        axes.bearings.push_back(45.0 * b);
+    std::vector<double> values;
+    for (const double bearing : axes.bearings)
+        for (std::size_t s = 0; s < axes.source_heights.size(); s++)
+            for (std::size_t h = 0; h < axes.receiver_heights.size(); h++)
+                for (std::size_t r = 0; r < axes.ranges.size(); r++)
+                    for (std::size_t f = 0; f < axes.bands.size(); f++)
+                    {
+                        double v = base.at(0, s, h, r, f);
+                        if (std::isfinite(v))
+                            v += (axes.ranges[r] > 1500.0 ? 25.0 : 0.0) + 6.0 * std::cos(bearing * M_PI / 180.0);
+                        values.push_back(v);
+                    }
+    PropagationTable(axes, values, "bump", false, {{"note", "bump_test"}}).save("tables/bump_test.nc");
+    // The same values again, saying the table carries absorption: the run then adds none of its own.
+    PropagationTable(axes, values, "bump", true, {{"note", "bump_test"}}).save("tables/bump_absorbed_test.nc");
+}

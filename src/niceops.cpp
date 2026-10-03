@@ -1578,8 +1578,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::atomic<std::size_t> fallback_samples {0};
     // The table's bearings are compass bearings; the run's x/y are turned from
     // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
-    const double frame_bearing = (std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing) * pi / 180.0;
-    const double frame_sin = std::sin(frame_bearing), frame_cos = std::cos(frame_bearing);
+    const CompassToLocal compass(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
 
     const auto acoustics_start = std::chrono::steady_clock::now();
 
@@ -1742,9 +1741,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 {
                     const Vec3& source = source_states[it].position;
                     const Vec3 separation = observer - source;
-                    const double east = frame_sin * separation.x - frame_cos * separation.y;
-                    const double north = frame_cos * separation.x + frame_sin * separation.y;
-                    if (options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, source.z,
+                    const auto east_north = compass.east_north({separation.x, separation.y});
+                    if (options.propagation_table->lookup(std::atan2(east_north[0], east_north[1]) * 180.0 / pi, source.z,
                                 microphone_height[index], separation.horizontal_norm(), table_bands,
                                 table_loss.data()))
                     {
