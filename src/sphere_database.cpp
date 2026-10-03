@@ -123,6 +123,20 @@ int get_scalar(int ncid, const std::string& variable_name, T* value, bool option
     return status;
 }
 
+// A root attribute holding one number, if the file carries it.  panam writes its
+// build atmosphere and rotor speed this way; older databases carry neither.
+std::optional<double> read_double_attribute(int ncid, const char* name)
+{
+    int type = 0;
+    std::size_t length = 0;
+    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, name, &type, &length))
+        return std::nullopt;
+    double value = 0.0;
+    if (NC_NOERR != nc_get_att_double(ncid, NC_GLOBAL, name, &value))
+        input_error("Found but could not read the database attribute ", name, ".");
+    return value;
+}
+
 // The root attribute speed_reference, as text.  Absent is the ground.  panam
 // writes it with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is
 // accepted too.
@@ -921,6 +935,18 @@ Database::Database(const std::string& datafile_path)
     if (NC_NOERR == get_scalar(file_ncid, "vehicle_weight_newtons", &root_value))
         vehicle_weight_newtons_ = root_value;
     speed_reference_ = read_speed_reference(file_ncid);
+    // The atmosphere the broadband EAA was built in, when the builder recorded
+    // all three of its values; the rotor speed the spheres were built at.
+    const auto build_temperature = read_double_attribute(file_ncid, "build_temperature_K");
+    const auto build_pressure = read_double_attribute(file_ncid, "build_pressure_kPa");
+    const auto build_humidity = read_double_attribute(file_ncid, "build_relative_humidity_percent");
+    if (build_temperature && build_pressure && build_humidity)
+        build_atmosphere_ = BuildAtmosphere{*build_temperature, *build_pressure, *build_humidity};
+    rotor_rpm_ = read_double_attribute(file_ncid, "rotor_rpm");
+    if (build_atmosphere_)
+        info("Built at ", build_atmosphere_->temperature_kelvin, " K, ",
+                build_atmosphere_->pressure_kpa, " kPa, ",
+                build_atmosphere_->relative_humidity_percent, " % RH.");
     info("Database flight conditions are referred to the ", to_string(speed_reference_), ".");
 
     auto group_ids = get_group_ids(file_ncid);

@@ -1573,3 +1573,40 @@ TEST_CASE("GridAxis::locate crosses the seam of a periodic axis", "[sphere_datab
     const auto pole = axis.locate(180.0);
     CHECK(phi[pole.lo] + pole.fraction * (phi[pole.hi] - phi[pole.lo]) == Catch::Approx(-180.0).margin(1e-9));
 }
+
+TEST_CASE("The build atmosphere and rotor speed are read when the file records them",
+        "[sphere_database][build]")
+{
+    // Older databases carry neither, and must say nothing rather than guess.
+    const Database plain("databases/S-76D_M3.nod");
+    REQUIRE(!plain.build_atmosphere().has_value());
+    REQUIRE(!plain.rotor_rpm().has_value());
+
+    const auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_build_attributes.nod").string();
+    write_sphere(sphere, path);
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    const double temperature = 293.15;
+    const double pressure = 101.325;
+    const double humidity = 20.0;
+    const double rpm = 393.0;
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "build_temperature_K", NC_DOUBLE, 1, &temperature)
+            == NC_NOERR);
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "build_pressure_kPa", NC_DOUBLE, 1, &pressure)
+            == NC_NOERR);
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "build_relative_humidity_percent", NC_DOUBLE, 1,
+            &humidity) == NC_NOERR);
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "rotor_rpm", NC_DOUBLE, 1, &rpm) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+
+    const Database recorded(path);
+    REQUIRE(recorded.build_atmosphere().has_value());
+    CHECK(recorded.build_atmosphere()->temperature_kelvin == Catch::Approx(293.15));
+    CHECK(recorded.build_atmosphere()->pressure_kpa == Catch::Approx(101.325));
+    CHECK(recorded.build_atmosphere()->relative_humidity_percent == Catch::Approx(20.0));
+    REQUIRE(recorded.rotor_rpm().has_value());
+    CHECK(*recorded.rotor_rpm() == Catch::Approx(393.0));
+    std::filesystem::remove(path);
+}

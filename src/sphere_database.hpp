@@ -548,6 +548,24 @@ public:
         return upper_hemisphere_measured_;
     }
 
+    // The atmosphere the broadband EAA was built in, and the rotor speed the
+    // spheres were built at, when the builder recorded them (panam does; older
+    // databases carry neither).  Absent means the database says nothing.
+    struct BuildAtmosphere
+    {
+        double temperature_kelvin;
+        double pressure_kpa;
+        double relative_humidity_percent;
+    };
+    const std::optional<BuildAtmosphere>& build_atmosphere() const
+    {
+        return build_atmosphere_;
+    }
+    const std::optional<double>& rotor_rpm() const
+    {
+        return rotor_rpm_;
+    }
+
     SpeedReference speed_reference() const
     {
         return speed_reference_;
@@ -717,6 +735,8 @@ private:
     double vehicle_weight_newtons_ = std::numeric_limits<double>::quiet_NaN();
     SpeedReference speed_reference_ = SpeedReference::ground;
     bool upper_hemisphere_measured_ = false;
+    std::optional<BuildAtmosphere> build_atmosphere_;
+    std::optional<double> rotor_rpm_;
     std::vector<double> frequencies_;
     std::vector<double> spectra_;
 
