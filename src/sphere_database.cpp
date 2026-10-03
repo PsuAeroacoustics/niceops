@@ -500,11 +500,22 @@ inline CellStencil cell_stencil(const GridAxis::Cell& phi_cell, const GridAxis::
 // eval() could derive the cell once and apply it to dBA and EAA separately.
 // Nothing needs that split now, so it is one function again.
 double periodic_bilinear_interp(double q11, double q12, double q21, double q22, double x1, double x2,
-        double y1, double y2, double x, double y)
+        double y1, double y2, double x, double y, double x_period)
 {
+    // A cell across the seam of a periodic axis: its lower knot is x1 and its
+    // upper knot is x2 one period on, so x is read into [x1, x2 + period).
+    // Swapping the knots instead would interpolate the whole circle between
+    // the two seam knots and extrapolate beyond them -- which is what this
+    // function did before the phi seam was exercised at all.
+    if (x_period > 0.0 && x1 > x2)
+    {
+        x2 += x_period;
+        if (x < x1)
+            x += x_period;
+    }
     // Check if points "wrap around" sphere, and swap inputs to bilinear
     // interpolation if necessary
-    if (x1 > x2)
+    else if (x1 > x2)
     {
         std::swap(x1, x2);
         std::swap(q11, q21);
@@ -563,6 +574,11 @@ std::array<std::size_t, 2> bracket(const std::vector<double>& a, double val)
     auto it = std::upper_bound(a.begin(), a.end(), val);
     // Index is one less the length of this range
     return wrap_bracket(static_cast<long>(it - a.begin()) - 1, a.size());
+}
+
+void GridAxis::set_period(double period)
+{
+    period_ = period;
 }
 
 void GridAxis::reset(std::vector<double> values)
@@ -641,6 +657,26 @@ GridAxis::Cell GridAxis::locate(double val) const
                     estimate - index};
         }
         // Past either end: the wrap-around cell, below.
+    }
+
+    if (period_ > 0.0 && n >= 2)
+    {
+        // Bring the value into [first, first + period), then look at the seam:
+        // the cell from the last knot up to the first knot one period on.
+        const double first = values_.front();
+        double u = val;
+        if (!(u >= first && u < first + period_))
+        {
+            u = first + std::fmod(u - first, period_);
+            if (u < first)
+                u += period_;
+        }
+        if (u >= values_.back())
+        {
+            const double width = first + period_ - values_.back();
+            return {n - 1, 0, (u - values_.back()) / width};
+        }
+        val = u;
     }
 
     const auto pair = bracket(val);
@@ -752,9 +788,17 @@ namespace {
 // Shared by lookup_angles and Database::level_from_geometry, which differ only
 // in how they get their components; the 0/0 guard is delicate enough that one
 // copy of it is the point.
-inline double phi_degrees(double up, double across)
+// Above the plane (up > 0) the angle comes round the far side of the circle,
+// copysign(pi, across) - atan(across / up): the same value as atan2(across,
+// -up), with the one atan the rest of the function already pays for.  Below the
+// plane, or when the upper half is folded onto the lower, it stays
+// atan(across / |up|), so every lower-half direction takes the same arithmetic
+// as before the upper half was read.
+inline double phi_degrees(double up, double across, bool fold_upper)
 {
-    const double phi = std::atan(across / std::fabs(up));
+    const double phi = up > 0.0 && !fold_upper
+            ? std::copysign(pi, across) - std::atan(across / up)
+            : std::atan(across / std::fabs(up));
     if (up == 0.0 && across == 0.0)
     {
         // Straight along the nose: the projection degenerates and phi is
@@ -768,12 +812,13 @@ inline double phi_degrees(double up, double across)
 
 } // namespace
 
-std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direction)
+std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direction,
+        bool fold_upper)
 {
     // Sphere theta angle is relative to projection of velocity onto TPP
     const double along = frame.nose.dot(direction);
     const double theta = acosc(along);
-    return {phi_degrees(frame.normal.dot(direction), frame.starboard.dot(direction)),
+    return {phi_degrees(frame.normal.dot(direction), frame.starboard.dot(direction), fold_upper),
             theta * (180.0 / pi)};
 }
 
@@ -904,6 +949,7 @@ Database::Database(const std::string& datafile_path)
     auto eaa_min = std::numeric_limits<double>::infinity();
     sphere_max_.assign(group_ids.size(), -std::numeric_limits<double>::infinity());
     std::size_t repaired_spheres = 0;
+    std::size_t groups_with_upper = 0;
     // Which grid cells each channel falls in.  It depends only on the channels'
     // angle labels, and every sphere shares one layout but the legacy hover
     // spheres, so it is derived once and again only when the labels change:
@@ -920,6 +966,11 @@ Database::Database(const std::string& datafile_path)
     std::vector<std::size_t> cached_cell_of;
     bool cached_cell_of_valid = false;
     // Cycle through sphere groups and load data
+    // The Doppler convention of the spheres: 0 received, the frame the
+    // builders write and the goldens use; 1 de-Dopplerized, stationary-frame
+    // spheres that need a frequency shift before absorption and weighting.
+    // Absent (-1) is what every database written so far carries.
+    int doppler_removed = -1;
     for (std::size_t i = 0; i < group_ids.size(); i++)
     {
         auto group_id = group_ids[i];
@@ -928,6 +979,13 @@ Database::Database(const std::string& datafile_path)
         require_scalar(group_id, "thrust_coefficient", &thrust_coefficient);
         require_scalar(group_id, "radius", &radius);
         require_scalar(group_id, "rotor_scale", &scale);
+        const int group_doppler = get_int_scalar(group_id, "DOPPLER_SHIFT_REMOVED", -1);
+        if (i == 0)
+            doppler_removed = group_doppler;
+        else if (group_doppler != doppler_removed)
+            input_error("Database error: sphere ", group_id, " has DOPPLER_SHIFT_REMOVED ",
+                    group_doppler, " but the first has ", doppler_removed, ". Spheres in one "
+                    "database must share a Doppler convention.");
         advance_ratios.push_back(advance_ratio);
         flight_path_angles.push_back(flight_path_angle);
         thrust_coefficients.push_back(thrust_coefficient);
@@ -986,6 +1044,9 @@ Database::Database(const std::string& datafile_path)
                 repaired_spheres++;
             }
         }
+        if (std::any_of(phis_scattered.begin(), phis_scattered.end(),
+                    [](double phi) { return std::fabs(phi) > 90.0; }))
+            groups_with_upper++;
         if (i == 0)
         {
             // Record number of channels to check for changes
@@ -1012,6 +1073,7 @@ Database::Database(const std::string& datafile_path)
                 return v;
             };
             phis.reset(unique_sorted(phis_scattered));
+            phis.set_period(360.0);
             thetas.reset(unique_sorted(thetas_scattered));
             info("The ", phis.size(), " unique phi values are:\n", phis.values());
             info("The ", thetas.size(), " unique theta values are:\n", thetas.values());
@@ -1246,6 +1308,13 @@ Database::Database(const std::string& datafile_path)
         log("Repaired legacy hover directivity on ", repaired_spheres, " of ", group_ids.size(),
             " spheres.  Regenerate this database with a versioned builder to avoid the fix-up.");
     }
+    if (doppler_removed == 1)
+        input_error("Database ", datafile_path, " has DOPPLER_SHIFT_REMOVED = 1: its spheres are "
+                "stationary-frame, and NICE-OPS does not yet shift them to the observer's frequencies. "
+                "Propagating them unshifted would be wrong by up to about 2 dB in tonal bands; refused.");
+    upper_hemisphere_measured_ = !group_ids.empty() && groups_with_upper == group_ids.size();
+    if (!upper_hemisphere_measured_)
+        info("Not every sphere stores its upper half: directions above the plane read the mirror image.");
     max_level_ = dba_max;
     min_excess_factor_ = eaa_min;
     info("Max level found in database is: ", max_level_);
@@ -1732,7 +1801,7 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
     levels.resize(frequencies_.size());
 
     // Everything the level takes from the path (propagation.hpp).
-    const auto angles = lookup_angles(state.frame, path.direction);
+    const auto angles = lookup_angles(state.frame, path.direction, !upper_hemisphere_measured_);
     assert(std::isfinite(angles[0]) && std::isfinite(angles[1]));
 
     eval_spectrum(path.range, path.path_length, angles[0], angles[1], state.blend, absorption,
@@ -2276,7 +2345,7 @@ double Database::level_from_geometry(double squared_range, double along, double 
     // care about their common scale.
     const double inverse = range > 0.0 ? 1.0 / range : 0.0;
     const double theta = acosc(along * inverse) * (180.0 / pi);
-    const double phi = phi_degrees(up, across);
+    const double phi = phi_degrees(up, across, !upper_hemisphere_measured_);
     trace("Looked up [phi,theta] = ", phi, ", ", theta);
     assert(std::isfinite(phi) && std::isfinite(theta));
     const auto level = eval(range, phi, theta, blend);

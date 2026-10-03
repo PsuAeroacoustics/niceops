@@ -1178,12 +1178,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 air.temperature, " K (", temperature_from, "), ", air.pressure, " kPa (",
                 pressure_from, "), ", air.relative_humidity, "% RH (", humidity_from, ")",
                 profile ? ", the ground values" : "", ".");
+        // Refused rather than assumed: the spectral path attenuates every band
+        // at this humidity, and going from 20 to 50 percent moved a footprint
+        // 2 dB, so a silent 20 percent would be a prediction nobody chose.
         if (!profile && humidity_from == "default")
         {
-            warn("Relative humidity is not set (no --humidity, and ", job.vehicle, " gives none), so ",
-                    air.relative_humidity, " percent is assumed. Absorption depends strongly on it: "
-                    "going from 20 to 50 percent moved a footprint 2 dB. Give --humidity or add "
-                    "\"relative humidity\" to the Atmosphere section.");
+            input_error("Relative humidity is not set (no --humidity, and ", job.vehicle,
+                    " gives none), and the spectral path needs it: absorption depends strongly on "
+                    "it. Give --humidity, add \"relative humidity\" to the vehicle file or its "
+                    "Atmosphere section, or pass --atmosphere.");
         }
         // Say what that atmosphere costs at the extremes actually in play, so a
         // wrong humidity is visible in the log rather than only in the answer.
@@ -1707,7 +1710,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (!write_band_history)
                 return static_cast<double*>(nullptr);
             auto& row = band_rows[it];
-            const auto angles = lookup_angles(source_states[it].frame, path.direction);
+            const auto angles = lookup_angles(source_states[it].frame, path.direction,
+                    !database.upper_hemisphere_measured());
             row.range = path.range;
             row.elevation = std::asin(std::clamp(-path.direction.z, -1.0, 1.0)) * 180.0 / pi;
             row.phi = angles[0];

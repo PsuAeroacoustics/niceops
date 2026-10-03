@@ -1505,3 +1505,71 @@ TEST_CASE("a negative excess-attenuation factor turns the bounds off", "[sphere_
         std::filesystem::remove(path);
     }
 }
+
+TEST_CASE("phi reads the upper half above the plane, and folds only when asked",
+        "[sphere_database][upper_hemisphere]")
+{
+    // Directions built from the frame's own axes, so that up and across are
+    // exactly what the lookup sees.  psi sweeps the circle about the nose.
+    const auto frame = sphere_frame(Vec3(1.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0));
+    const double to_degrees = 180.0 / pi;
+    for (const double psi_degrees : {-150.0, -60.0, -20.0, 0.0, 45.0, 170.0})
+    {
+        const double psi = psi_degrees * pi / 180.0;
+        const Vec3 direction = 0.6 * frame.nose + (0.8 * std::cos(psi)) * frame.normal
+                + (0.8 * std::sin(psi)) * frame.starboard;
+        const double up = frame.normal.dot(direction);
+        const double across = frame.starboard.dot(direction);
+        INFO("psi = " << psi_degrees);
+        const auto full = lookup_angles(frame, direction);
+        const auto folded = lookup_angles(frame, direction, true);
+        // The full circle: atan2 of (across, -up), the stored layout's own
+        // convention (phi = 0 straight down, 180 straight up).
+        CHECK(full[0] == Catch::Approx(std::atan2(across, -up) * to_degrees).margin(1e-9));
+        // The fold: the mirror image, atan(across / |up|), as before.
+        CHECK(folded[0] == Catch::Approx(std::atan(across / std::fabs(up)) * to_degrees).margin(1e-9));
+        CHECK(full[1] == folded[1]);
+        if (up < 0.0)
+            CHECK(full[0] == folded[0]);
+        else
+            CHECK(std::fabs(full[0]) > 90.0);
+    }
+}
+
+TEST_CASE("GridAxis::locate crosses the seam of a periodic axis", "[sphere_database][upper_hemisphere]")
+{
+    // The full-circle phi axis runs -180 to 170 in 10-degree steps, so the one
+    // cell that is not a cell of the axis itself is the seam, 170 to 180.
+    std::vector<double> phi;
+    for (int i = -180; i < 180; i += 10)
+        phi.push_back(static_cast<double>(i));
+    GridAxis axis;
+    axis.reset(phi);
+    axis.set_period(360.0);
+
+    // Every value on the circle, seam included, weighs its two corners
+    // exactly as the periodic reference does.
+    for (int step = -720; step <= 720; step++)
+    {
+        const double val = 0.25 * static_cast<double>(step);
+        const auto cell = axis.locate(val);
+        CHECK(cell.fraction >= 0.0);
+        CHECK(cell.fraction <= 1.0);
+        // 180 is the same direction as -180, so the reference reads it there,
+        // as locate() does.
+        const double x = val >= 180.0 ? val - 360.0 : val;
+        const double reference = periodic_bilinear_interp(0.0, 0.0, 1.0, 1.0,
+                phi[cell.lo], phi[cell.hi], 0.0, 1.0, x, 0.5, 360.0);
+        REQUIRE(std::fabs(cell.fraction - reference) <= 1e-12);
+    }
+
+    // Halfway across the seam sits halfway between the 170 knot and the -180
+    // knot one period on, so the weight on the wrapped corner is one half.
+    const auto seam = axis.locate(175.0);
+    CHECK(seam.lo == phi.size() - 1);
+    CHECK(seam.hi == 0);
+    CHECK(seam.fraction == Catch::Approx(0.5));
+    // 180 is the same direction as -180, the first knot.
+    const auto pole = axis.locate(180.0);
+    CHECK(phi[pole.lo] + pole.fraction * (phi[pole.hi] - phi[pole.lo]) == Catch::Approx(-180.0).margin(1e-9));
+}
