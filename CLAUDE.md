@@ -914,7 +914,14 @@ which is exactly how panam writes and consumes it. No ground effect: see `--grou
     with the connection formula near the negative axis. Five is where both are ~1e-7; near
     the positive real axis the series cancels exp(4/3 z^1.5) of its digits away. The
     reference values came from Bessel-integral quadrature, not memory, which had Ai(-10)
-    wrong.
+    wrong. **`airy_asymptotic` and `hankel1_0`'s large-argument branch are in real arithmetic**,
+    for the reason `faddeeva` is (the library's complex divide, pow, exp and abs are calls with
+    NaN-recovery branches that cannot fire here): `z^(3/2)` and `z^(1/4)` are `z sqrt(z)` and
+    `sqrt(sqrt(z))` on the principal branch, the divides are by a reciprocal formed once, and the
+    series stop on squared magnitudes. 2-3x per call (H0 209 -> 67 ns, Ai 151 -> 73), and a
+    refraction run with a point receiver, whose ShadowTransition table is most of it, went from
+    4.9 to 1.6 s. They agree with what they replaced to 1e-16 (H0; 2e-13 where exp(-Im z)
+    underflows) and 4e-13 (Ai, where the new one is the closer to a long-double evaluation).
   - **The domain margin is at least 250 m, and the absorbing layer 100 wavelengths.** In a
     shadow the near-ground field is a weak remainder while energy leaks upward past it.
     With 60 wavelengths of margin (25 m at 1 kHz), reflection off the layer set a floor: the
