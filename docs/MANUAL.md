@@ -86,6 +86,12 @@ above 1 g adds 20 lg(C<sub>T</sub> / C<sub>T,1g</sub>) dB, up to `--max_load_fac
 blend depends only on the operating condition, so it is formed once per state and shared by
 every observer.
 
+A condition outside the range of a database axis is clamped to that axis's end before
+blending. Each run logs how many states were clamped on each axis, and how many took the
+load-factor correction, and warns if any were clamped. The counts are about the axes'
+ranges only: a condition inside every range can still lie outside the convex hull of the
+database's conditions, and neither says which directions on the sphere were measured.
+
 ### Reading the sphere
 
 Each sphere is fixed to the rotor. Its axes are the tip-path-plane normal, the nose and
@@ -1162,6 +1168,18 @@ Interpolating between source heights in dB is where the table's error is. Over t
 shrinks fourfold as the spacing halves, but the PE's band-averaged field is only as smooth as
 its band. Build tables a few wavelengths apart at the highest band, or densely at the lowest
 heights, where the interference changes fastest.
+
+**Checking a table between its nodes.** With `--validation_csv FILE`,
+`niceops_propagation_table` solves its method again at the middle of every cell (source
+height, receiver height and range, and the middle of each bearing sector) and compares the
+table's interpolation there with it. The file has one row per point and band: the table's
+level, the reference, the error and whether the table covered the point. Each band's bias, rms
+and largest error are printed. The run exits with status 2, keeping the table, if a covered
+point is off by more than `--validation_max_error` dB (default 1), if a band has no covered
+point, or if a gap in the table hides a point the reference reaches. For `--method pe` the
+reference is a PE on twice the grid density, with `--validation_samples` frequencies per band
+(default 21). Midpoints do not bound every interpolation error, and a PE reference is not a
+measurement; [FIDELITY.md](FIDELITY.md) has the error budgets measured so far.
 
 ## Reference solutions
 
