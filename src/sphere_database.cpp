@@ -1009,6 +1009,8 @@ Database::Database(const std::string& datafile_path)
     std::size_t groups_with_coverage = 0;
     bool any_coverage_variable = false;
     std::vector<int> coverage_scattered;
+    // A-weighting per band, for the grid-shaped coverage's energy shares.
+    std::vector<double> coverage_gains;
     // Which grid cells each channel falls in.  It depends only on the channels'
     // angle labels, and every sphere shares one layout but the legacy hover
     // spheres, so it is derived once and again only when the labels change:
@@ -1147,7 +1149,7 @@ Database::Database(const std::string& datafile_path)
             // Allocate the noise level grid
             n_conditions = group_ids.size();
             grid.assign(phis.size() * thetas.size() * n_conditions, Sample {0.0, 0.0});
-            measured_.assign(grid.size(), 0);
+            measured_.assign(grid.size(), 0.0F);
         }
         if (!placed || placed_phis != phis_scattered || placed_thetas != thetas_scattered)
         {
@@ -1297,24 +1299,41 @@ Database::Database(const std::string& datafile_path)
                 cached_cell_of_valid = true;
             }
             // Grid-shaped coverage, laid out as amplitude is, so the same cell_of
-            // permutation applies.  A cell counts as measured only if every band
-            // of it was, which is the conservative reading of one flag per cell.
+            // permutation applies.  A cell takes the share of its own A-weighted
+            // band energy, at the sphere, that the builder measured: a band the
+            // SNR gate dropped counts by what it carries, not as the whole cell.
+            // Counting any unmeasured band as the whole cell put B407 down as
+            // 70-80% unmeasured on the demo grid, for 5-10 kHz bands the gate
+            // drops in about half its measured cells; by energy 99.6% of its
+            // lower hemisphere is measured.  A cell with no energy in any band
+            // contributes nothing to a level and takes all or nothing.
             if (group_has_coverage && !channel_coverage)
             {
                 if (coverage_scattered.size() != n_phi * n_theta * n_bands)
                     input_error("Database error: sphere ", i, " has a coverage variable that matches "
                             "neither its channels nor its spectral grid.");
-                std::vector<std::uint8_t> measured_in_every_band(n_phi * n_theta, 1);
+                if (coverage_gains.size() != n_bands)
+                    coverage_gains = a_weighting_gains(frequencies_, BandLimits {});
                 for (std::size_t slot = 0; slot < n_phi * n_theta; slot++)
                 {
+                    double total = 0.0;
+                    double measured = 0.0;
+                    bool every_band = true;
                     for (std::size_t band = 0; band < n_bands; band++)
                     {
-                        if (coverage_scattered[slot * n_bands + band] == 0)
-                            measured_in_every_band[cell_of[slot]] = 0;
+                        const bool band_measured = coverage_scattered[slot * n_bands + band] != 0;
+                        every_band = every_band && band_measured;
+                        const double a = sphere_amplitudes[slot * n_bands + band];
+                        if (!std::isfinite(a))
+                            continue;
+                        const double energy = coverage_gains[band] * std::pow(10.0, 0.1 * a);
+                        total += energy;
+                        if (band_measured)
+                            measured += energy;
                     }
+                    measured_[cell_of[slot] * n_conditions + i] = static_cast<float>(
+                            total > 0.0 ? measured / total : (every_band ? 1.0 : 0.0));
                 }
-                for (std::size_t cell = 0; cell < n_phi * n_theta; cell++)
-                    measured_[cell * n_conditions + i] = measured_in_every_band[cell];
                 groups_with_coverage++;
             }
             for (std::size_t slot = 0; slot < n_phi * n_theta; slot++)
@@ -1387,7 +1406,7 @@ Database::Database(const std::string& datafile_path)
                     grid[(m * thetas.size() + n) * n_conditions + i] = {dBA, EAA};
                     if (channel_coverage)
                         measured_[(m * thetas.size() + n) * n_conditions + i] =
-                                coverage_scattered[c] != 0 ? 1 : 0;
+                                coverage_scattered[c] != 0 ? 1.0F : 0.0F;
                 }
             }
         }
@@ -2453,9 +2472,9 @@ double Database::unmeasured_share(const std::array<double, 2>& angles, const Ble
         double unmeasured = 0.0;
         for (std::size_t j = 0; j < blend.weights.size(); j++)
         {
-            if (blend.weights[j] != 0.0 && measured_[stencil.corner[corner] * n_conditions
-                    + blend.indices[j]] == 0)
-                unmeasured += blend.weights[j];
+            if (blend.weights[j] != 0.0)
+                unmeasured += blend.weights[j]
+                        * (1.0 - measured_[stencil.corner[corner] * n_conditions + blend.indices[j]]);
         }
         share += stencil.weight[corner] * unmeasured / total;
     }
