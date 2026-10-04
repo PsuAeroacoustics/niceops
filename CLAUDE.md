@@ -1104,8 +1104,11 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   checkable against the source. It exists solely for the ground model's boundary-loss term, which panam
   writes as `exp(-w)(1 - erf(-i sqrt w))` using SciPy's complex `erf`; with z = sqrt(w) that *is*
   w(z), and evaluating it as written overflows. Max relative error 3e-13 over the domain the
-  ground model reaches (Re z ∈ [0.09, 22.3], Im z ∈ [-1.2, 15.6]), measured against SciPy's `wofz`.
-  The lower-half-plane reflection `w(z) = 2exp(-z²) - w(-z)` is safe **only** in that domain.
+  ground model reached while the boundary loss was cut at |w| = 500 (Re z ∈ [0.09, 22.3],
+  Im z ∈ [-1.2, 15.6]), measured against SciPy's `wofz`; past it the tests hold it to `wofz` at
+  1e-11 out to |z| = 700. The lower-half-plane reflection `w(z) = 2exp(-z²) - w(-z)` is safe
+  because a passive ground keeps z within 45 degrees of the real axis wherever it is below it,
+  so exp(-z²) is at most 1 in size.
 - `src/ground_effect.{hpp,cpp}` — excess ground attenuation, ported from panam's `ega()` and pinned
   against it to 1e-9 dB. **It returns a gain, not a loss** — +6 dB over rigid ground with the
   receiver on the surface. `ground_impedance()` is hoisted out of the observer loop and the
@@ -1116,7 +1119,8 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   the real costs and the same effort bought 2.5x. What it found, and what not to undo:
   - `std::sqrt` on a `std::complex` costs an **atan2**, because libc++ evaluates it in polar
     form. `ground_effect.cpp` called it three times per band; two were provably redundant
-    (`sqrt(w)` *is* the numerical-distance parameter, verified over the whole domain) and the
+    (`sqrt(w)` *is* the numerical-distance parameter wherever its real part is positive, which is
+    every passive ground but a mass-like one; see below) and the
     third is an algebraic root written out in the band loop. `std::abs`/`std::arg` on a complex cost a
     hypot and an atan2 and are gone the same way -- `|Q|cos(p + arg Q)` is
     `Re(Q)cos p - Im(Q)sin p`, and `|w| <= 500` is `norm(parameter) <= 500`.
@@ -1157,12 +1161,26 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   any cutoff in range. Roughly 9% of the ground path, for the loss of the property that proves
   the port. Not worth it; do not re-derive it.
 
-  **It is used in one place, past the cutoff, where panam's answer is no answer.** A refracted
-  ray arriving level at a flush receiver puts both ends on the ground, the plane coefficient
-  tends to -1, and dropping the term past |w| = 500 (as panam does) cancels the two paths to
-  rounding, so the model threw. Where |1 + R_p|^2 < 1e-4 past the cutoff,
-  `reflection_coefficient` keeps three terms of the series instead. Everywhere else is panam's
-  to the bit. `tests/test_ground_effect.cpp` checks it joins the exact path at the cutoff.
+  **There is no cutoff any more.** panam cut the boundary-loss term to zero past |w| = 500, and
+  this followed, until panam e978703 evaluated it by `wofz` at any |w|; NICE-OPS now does the
+  same, pinned to panam b758e3a (`ega` 1e-9 dB, `pole_level` and `board_level` 1e-6). Q moves by up
+  to 2e-3 just past the old cut; the demo footprint with the plate receiver by at most 0.028 dB
+  (0.08 dB with a 4 ft point receiver, where the two paths nearly cancel), means ~1e-4. Three
+  things to keep:
+  - **The gain bound past the edge is analytic** (`reflection_coefficient_bounds`). Past
+    |w| = 500, |Q| <= |R_p| + |1 - R_p| (1.003/(2|w|) + |P|), P = 2i sqrt(pi) z exp(-z²) the
+    surface wave, whose size peaks at |z|² = 1/(2 cos 2 theta), theta the parameter's direction,
+    which does not depend on range. For soils that peak is far inside the edge. For a nearly
+    lossless stiff surface (a thin layer's band, theta a hair under -45 degrees) the wave
+    carries on: |Q| = 151 at |w| = 1250 at grazing, where the cut gave -1. The sweep stops at the
+    edge and the formula takes over; `a surface wave carried past |w| = 500 ...` holds it to a
+    sweep out to kappa = 1e10.
+  - **A mass-like admittance (Im beta > 0) keeps NICE-OPS's branch, not panam's.** Its
+    parameter is in the second quadrant; panam squares it and takes the principal root, the
+    negative, whose w() grows as exp(|Re w|) and overflows by |w| ~ 1000. Such a surface has no
+    surface wave, and the parameter itself gives none. A thin layer gives this in some bands.
+  - The near-grazing three-term series that stood in past the cut (a refracted ray arriving
+    level at a flush receiver, R_p -> -1) is gone: the exact term is what it approximated.
 - **The 4x EAA multiplier is gone, and the goldens moved with it.** `eval` used to compute
   `4.0 * EAA * (range - r)/1000` under a `//TODO Add ground effects`, inherited verbatim from
   the D original (`c74bab3`). panam *writes* that EAA as `SPLA - SPLAa` over a 1000 m reference

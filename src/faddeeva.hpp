@@ -25,6 +25,12 @@
 // like exp(Im(z)^2 - Re(z)^2), so a large negative imaginary part with a small
 // real part would overflow.  The function does not guard against that, because
 // no caller can produce it.
+//
+// That domain is |w| <= 500, |z| <= 22.4.  Past it Im(z) can go far below
+// zero (several hundred for a strongly porosity-graded ground), but for any
+// passive ground z stays within 45 degrees of the real axis wherever it is
+// below it, so the reflection's exp(-z^2) is at most 1 in size and cannot
+// overflow.
 
 #include <complex>
 

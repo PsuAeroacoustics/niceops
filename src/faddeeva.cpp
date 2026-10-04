@@ -139,7 +139,10 @@ std::complex<double> weideman_everywhere(std::complex<double> z)
 //        w(z) ~ i/(sqrt(pi) z) sum_n (2n-1)!! / (2 z^2)^n,
 //    12 terms, 1e-11 relative.  Valid off the negative imaginary axis; the
 //    exp(-z^2) it omits is below 1e-15 wherever it is used (x^2 - y^2 >= 36
-//    or y >= 0).
+//    or y >= 0).  Those samples predate evaluating the boundary loss past
+//    |w| = 500 (|z| = 22.4); beyond it a nearly lossless stiff ground can put
+//    z below the axis and nearer the diagonal than that, which the Weideman
+//    series takes (held to SciPy to |z| = 700 in the tests).
 //  * |z| < 6 inside the table: Taylor series of order 6 about the nearest node
 //    of a 0.05 grid over Re in [0, 6], Im in [-0.25, 6], 3.6e-12 relative
 //    (further below the real axis, where w grows, it loses digits: 1e-10 at
