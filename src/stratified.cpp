@@ -714,10 +714,6 @@ Crossing hop(const Path& path, double z_s, double p)
     return out;
 }
 
-// The most arrivals kept per pair, nearest-spread first.  A source a few meters
-// up in a deep duct has hops of a hundred meters and could otherwise list
-// dozens of near-grazing rays at long range, each a sphere lookup.
-constexpr std::size_t max_arrivals = 24;
 
 } // namespace
 
@@ -954,12 +950,6 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
                 before = here;
             }
         }
-    }
-    if (out.size() > max_arrivals)
-    {
-        std::partial_sort(out.begin(), out.begin() + max_arrivals, out.end(),
-                [](const Arrival& a, const Arrival& b) { return a.spreading_range < b.spreading_range; });
-        out.resize(max_arrivals);
     }
     return out;
 }
@@ -1444,12 +1434,6 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
                 }
             }
         }
-    }
-    if (out.size() > max_arrivals)
-    {
-        std::partial_sort(out.begin(), out.begin() + max_arrivals, out.end(),
-                [](const Arrival& a, const Arrival& b) { return a.spreading_range < b.spreading_range; });
-        out.resize(max_arrivals);
     }
     return out;
 }

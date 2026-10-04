@@ -1422,3 +1422,16 @@ which a binary distribution needs to carry with it.
 
 `CLAUDE.md` carries the developer-facing detail: the port's history, the shape of the hot path,
 and the pitfalls worth knowing before changing the numerics.
+
+### Arrival completeness and PE sample counts
+
+Stratified propagation retains all solved ray and wave arrivals. It previously
+kept only the 24 arrivals with the smallest spreading ranges, which discarded
+energy without accounting for source directivity or ground losses. The 10 dB
+focusing cap applies per ray; distinct arrivals add in energy and can exceed it
+in total. Deep ducts can therefore take longer to evaluate and predict more
+energy. Launch-angle sampling and the bounce search remain approximate.
+
+PE band sample counts must be positive. Zero or negative counts are rejected by
+the solver API, including for an empty batch, rather than producing invalid band
+levels. Valid sample counts retain the existing midpoint quadrature.

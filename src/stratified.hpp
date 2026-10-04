@@ -42,7 +42,8 @@
 
 namespace niceops {
 
-// The most a caustic may focus a ray over spherical spreading, dB.
+// The focusing cap per ray over spherical spreading, dB. Distinct arrivals
+// add in energy, so the summed field can exceed this per-ray cap.
 inline constexpr double max_focusing_gain_db = 10.0;
 
 // The profile's levels and, per level, the sound speed and local-frame wind:
@@ -125,7 +126,7 @@ ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, d
 // The launch angles are sampled 32 times, plus 8 for each bounce the path can
 // hold (at most 512 in all), bunched toward the shallow end.  `samples`, if
 // positive, replaces that count, and exists so that a test can ask whether the
-// answer has converged in it.
+// answer has converged in it. All solved arrivals are retained.
 std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z_r, double r,
         const DirectEigenray& primary, bool bounced_only = false, int samples = 0);
 

@@ -14,6 +14,7 @@
 #include <cmath>
 #include <complex>
 #include <vector>
+#include <stdexcept>
 
 #include "ground_effect.hpp"
 #include "pe.hpp"
@@ -196,4 +197,13 @@ TEST_CASE("one band sample is the center frequency", "[pe][band]")
     REQUIRE(band.range.size() == single.range.size());
     for (std::size_t q = 0; q < single.range.size(); q++)
         REQUIRE(band.relative_level[0][q] == Catch::Approx(single.relative_level[0][q]).margin(1e-9));
+}
+
+TEST_CASE("PE band averaging rejects nonpositive sample counts", "[pe][band]")
+{
+    PeSetup setup;
+    REQUIRE_THROWS_AS(solve_pe_band(setup, 500.0, 0), std::invalid_argument);
+    REQUIRE_THROWS_AS(solve_pe_band(setup, 500.0, -1), std::invalid_argument);
+    REQUIRE_THROWS_AS(solve_pe_bands({}, {}, 0), std::invalid_argument);
+    REQUIRE_THROWS_AS(solve_pe_bands({}, {}, -1), std::invalid_argument);
 }
