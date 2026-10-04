@@ -993,12 +993,14 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
 {
     if (setups.size() != centers.size())
         throw std::invalid_argument("solve_pe_bands: one setup per band");
+    if (samples < 1)
+        throw std::invalid_argument("solve_pe_bands: samples must be positive");
     if (setups.empty())
         return {};
     // Evenly in log frequency across each band's edges, 2^(+-1/6).  Every
     // frequency reports on the same range grid (solve_pe), so the energies add
     // point by point.
-    const std::size_t per_band = static_cast<std::size_t>(std::max(samples, 1));
+    const std::size_t per_band = static_cast<std::size_t>(samples);
     struct Task
     {
         std::size_t band, sample;

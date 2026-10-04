@@ -690,7 +690,8 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     X_m(p) = X_0(p) + m L(p), from the same samples. Each earlier bounce costs the plane-wave
     |R|^2 (`add_bounce_loss`), and past every direct ray's reach the strongest is promoted to
     primary. Day 286's inversion was 8–24 dB under the PE past 4,000 ft without them, and is
-    now mostly within 3 dB. Focusing is capped at `max_focusing_gain_db` (+10). Things to keep:
+    now mostly within 3 dB. Focusing is capped per ray at `max_focusing_gain_db` (+10 dB); distinct arrivals
+    add in energy and can exceed it in total. All solved arrivals are retained. Things to keep:
     - **`solve` refuses a bracket that does not land** (residual over 1e-6 r). A family whose
       end ray never arrives stands in as an infinity, so it brackets falsely. In a duct that
       reported the duct's top as a lit ray, 55 dB low.

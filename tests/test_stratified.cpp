@@ -625,3 +625,25 @@ TEST_CASE("a wave arrival's loss is never negative", "[stratified]")
     add_wave_loss(wave, 1000.0, 10.0, one, 0, 1, loss.data());
     CHECK(loss[0] == Catch::Approx(40.0 - max_focusing_gain_db).margin(1e-6));
 }
+
+TEST_CASE("a deep duct retains more than 24 arrivals", "[stratified]")
+{
+    const Duct duct;
+    const Layers layers = duct.layers();
+    std::size_t most = 0;
+    for (double source : {1.0, 2.0, 5.0, 10.0})
+        for (double range : {4000.0, 8000.0, 16000.0, 32000.0})
+        {
+            const auto primary = layered_direct_eigenray(layers, source, 1.2, range,
+                    std::atan2(1.2 - source, range));
+            const auto arrivals = layered_arrivals(layers, source, 1.2, range, primary, false, 512);
+            most = std::max(most, arrivals.size());
+            for (const auto& ray : arrivals)
+            {
+                REQUIRE(std::isfinite(ray.spreading_range));
+                REQUIRE(ray.spreading_range > 0.0);
+            }
+        }
+    INFO("most arrivals retained: " << most);
+    REQUIRE(most > 24);
+}
