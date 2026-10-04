@@ -604,6 +604,9 @@ struct RunOptions
     bool scattered = false;
     bool want_dnl = false;
     bool want_lamax = false;
+    bool want_nax = false;
+    double nax_threshold = std::numeric_limits<double>::quiet_NaN();
+    bool want_coverage = false;
     bool full_history = false;
     bool write_time_history = false;
     bool write_state = false;
@@ -692,7 +695,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const RunOptions& options, const std::vector<Vec3>& observers,
         const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
         const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
-        std::vector<double>& dnl_energy, std::vector<double>& lamax)
+        std::vector<double>& dnl_energy, std::vector<double>& lamax, std::vector<double>& nax,
+        std::vector<std::array<double, 2>>& coverage)
 {
     // Create trajectory from CSV data
     Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
@@ -1139,6 +1143,24 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                   << air.relative_humidity << " % RH (" << humidity_from << ")"
                   << (profile ? ", layered profile" : "")
                   << (options.refraction ? "; refraction on" : "") << ".\n";
+        // The broadband path carries the EAA factor the database was built
+        // with, so the run's air only enters through the spreading and the
+        // speed of sound.  A different build atmosphere is an absorption error
+        // no later step can see, so say so where the run is stated.
+        if (!spectral && database.build_atmosphere())
+        {
+            const auto& build = *database.build_atmosphere();
+            if (std::fabs(air.temperature - build.temperature_kelvin) > 0.5
+                    || std::fabs(air.pressure - build.pressure_kpa) > 0.1
+                    || std::fabs(air.relative_humidity - build.relative_humidity_percent) > 1.0)
+            {
+                warn("The broadband EAA factor was built at ", build.temperature_kelvin, " K, ",
+                        build.pressure_kpa, " kPa, ", build.relative_humidity_percent,
+                        " % RH, and this run's air differs. Its absorption is the build's, not "
+                        "this run's: use --spectral for the run's own air, or rebuild the "
+                        "database at this atmosphere.");
+            }
+        }
     }
     if (spectral)
     {
@@ -1178,12 +1200,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 air.temperature, " K (", temperature_from, "), ", air.pressure, " kPa (",
                 pressure_from, "), ", air.relative_humidity, "% RH (", humidity_from, ")",
                 profile ? ", the ground values" : "", ".");
+        // Refused rather than assumed: the spectral path attenuates every band
+        // at this humidity, and going from 20 to 50 percent moved a footprint
+        // 2 dB, so a silent 20 percent would be a prediction nobody chose.
         if (!profile && humidity_from == "default")
         {
-            warn("Relative humidity is not set (no --humidity, and ", job.vehicle, " gives none), so ",
-                    air.relative_humidity, " percent is assumed. Absorption depends strongly on it: "
-                    "going from 20 to 50 percent moved a footprint 2 dB. Give --humidity or add "
-                    "\"relative humidity\" to the Atmosphere section.");
+            input_error("Relative humidity is not set (no --humidity, and ", job.vehicle,
+                    " gives none), and the spectral path needs it: absorption depends strongly on "
+                    "it. Give --humidity, add \"relative humidity\" to the vehicle file or its "
+                    "Atmosphere section, or pass --atmosphere.");
         }
         // Say what that atmosphere costs at the extremes actually in play, so a
         // wrong humidity is visible in the log rather than only in the answer.
@@ -1510,10 +1535,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // (ground_gain_bounds), which keeps it a bound with the ground included.
     const bool culling = !std::isnan(options.db_cutoff);
     const bool level_is_transformed = add_ambient;
+    if (options.want_coverage)
+    {
+        if (!database.has_coverage())
+            input_error("--coverage_file needs a database that records its coverage, and ",
+                    job.trajectory, " is run against one that does not.");
+        if (options.refraction || level_is_transformed)
+            input_error("--coverage_file reports the straight-ray levels: it does not combine with "
+                    "--refraction or -a.");
+    }
     const bool needs_full_history = options.write_time_history || options.want_dnl
-            || options.full_history || options.want_lamax
+            || options.full_history || options.want_lamax || options.want_nax
             || write_band_history;
-    const bool bounded = !level_is_transformed;
+    // The coverage report needs every state's level, so nothing is skipped.
+    const bool bounded = !level_is_transformed && !options.want_coverage;
     DirectionBounds direction_bounds;
     // Only the spectral path has a bound worth building.  A broadband evaluation
     // costs about 20 ns, and the bound test costs more than the evaluations it
@@ -1707,7 +1742,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (!write_band_history)
                 return static_cast<double*>(nullptr);
             auto& row = band_rows[it];
-            const auto angles = lookup_angles(source_states[it].frame, path.direction);
+            const auto angles = lookup_angles(source_states[it].frame, path.direction,
+                    !database.upper_hemisphere_measured());
             row.range = path.range;
             row.elevation = std::asin(std::clamp(-path.direction.z, -1.0, 1.0)) * 180.0 / pi;
             row.phi = angles[0];
@@ -2105,11 +2141,40 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             integrated_levels[index] = options.full_history
                     ? full_sound_exposure_level(levels, integration_step, ranges, sound_speed)
                     : sound_exposure_level(levels, integration_step, ranges, sound_speed);
-            if (options.want_lamax)
+            if (options.want_lamax || options.want_nax)
             {
                 // The history is complete here (needs_full_history), so this is
                 // the true peak over the whole operation, not a windowed one.
-                lamax[index] = std::max(lamax[index], *std::max_element(levels.begin(), levels.end()));
+                const double peak = *std::max_element(levels.begin(), levels.end());
+                if (options.want_lamax)
+                    lamax[index] = std::max(lamax[index], peak);
+                // NAx: operations whose own peak reaches the threshold.  Each
+                // trajectory is one operation, so the count adds per trajectory.
+                if (options.want_nax && peak >= options.nax_threshold)
+                    nax[index] += 1.0;
+            }
+            if (options.want_coverage)
+            {
+                // The energy-weighted share of this observer's operation that
+                // the database did not measure.  Every state's level is in
+                // `levels` (the report turns bounding off), so the share is
+                // summed over the same states the SEL integrated.
+                double energy = 0.0;
+                double unmeasured_energy = 0.0;
+                for (std::size_t it = 0; it < nt; it++)
+                {
+                    if (!std::isfinite(levels[it]))
+                        continue;
+                    const double weight = std::pow(10.0, 0.1 * levels[it]);
+                    const Vec3 direction = (observers[index] - source_states[it].position).normalized();
+                    const auto angles = lookup_angles(source_states[it].frame, direction,
+                            !database.upper_hemisphere_measured());
+                    energy += weight;
+                    unmeasured_energy += weight
+                            * database.unmeasured_share(angles, source_states[it].blend);
+                }
+                coverage[index][0] += unmeasured_energy;
+                coverage[index][1] += energy;
             }
             if (options.want_dnl)
             {
@@ -2353,6 +2418,9 @@ int run(int argc, char* argv[])
     std::vector<std::string> state_files;
     std::string dnl_file = "";
     std::string lamax_file = "";
+    std::string nax_file = "";
+    double nax_threshold = std::numeric_limits<double>::quiet_NaN();
+    std::string coverage_file = "";
     bool full_history = false;
     double utc_offset = 0.0;
     double trim_start = std::numeric_limits<double>::quiet_NaN();
@@ -2498,6 +2566,15 @@ int run(int argc, char* argv[])
     app.add_option("--lamax_file", lamax_file,
             "Write each observer's LAmax, the highest A-weighted level over the operation, "
             "dB, to this file.");
+    app.add_option("--nax_file", nax_file,
+            "Write each observer's NAx, the number of operations whose LAmax reaches "
+            "--nax_threshold, to this file.");
+    app.add_option("--nax_threshold", nax_threshold,
+            "The LAmax, dBA, that an operation must reach to count toward NAx. Required with "
+            "--nax_file: there is no default, so the study's threshold is always stated.");
+    app.add_option("--coverage_file", coverage_file,
+            "Write, per observer, the energy-weighted share of its levels that came from cells "
+            "the database did not measure (straight rays only; needs a database with coverage).");
     app.add_flag("--full_history", full_history,
             "Integrate each SEL over the whole history rather than the event's 10 dB-down "
             "window, as full-history tools do. Slower: no window is found.");
@@ -2937,6 +3014,14 @@ int run(int argc, char* argv[])
     const bool want_lamax = !lamax_file.empty();
     std::vector<double> lamax(want_lamax ? observers.size() : 0,
             -std::numeric_limits<double>::infinity());
+    const bool want_nax = !nax_file.empty();
+    std::vector<double> nax(want_nax ? observers.size() : 0, 0.0);
+    const bool want_coverage = !coverage_file.empty();
+    std::vector<std::array<double, 2>> coverage(want_coverage ? observers.size() : 0,
+            std::array<double, 2> {0.0, 0.0});
+    if (want_nax && !std::isfinite(nax_threshold))
+        input_error("--nax_file needs --nax_threshold, the LAmax in dBA that counts an operation. "
+                "There is no default: give the threshold your study uses.");
 
     // Outlives the loop so the plotting block below, which only runs for a
     // single trajectory, can still reach it.
@@ -3075,6 +3160,9 @@ int run(int argc, char* argv[])
     options.scattered = scattered;
     options.want_dnl = want_dnl;
     options.want_lamax = want_lamax;
+    options.want_nax = want_nax;
+    options.nax_threshold = nax_threshold;
+    options.want_coverage = want_coverage;
     options.full_history = full_history;
     options.write_time_history = write_time_history;
     options.write_state = write_state;
@@ -3116,7 +3204,7 @@ int run(int argc, char* argv[])
             job.count = path_count;
             trajectory_holder = process_trajectory(database, job, options, observers,
                     observer_set.microphone_heights, x_obs, y_obs, integrated_levels, dnl_energy,
-                    lamax);
+                    lamax, nax, coverage);
         }
         catch (const std::exception& problem)
         {
@@ -3152,6 +3240,33 @@ int run(int argc, char* argv[])
         write_levels(x_obs, y_obs, lamax, lamax_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, lamax, *frame, latlon_companion(lamax_file), scattered);
+    }
+
+    if (want_nax)
+    {
+        log("Writing NAx (operations with LAmax at or above ", nax_threshold, " dBA) over ",
+                path_count, path_count == 1 ? " operation to " : " operations to ", nax_file);
+        write_levels(x_obs, y_obs, nax, nax_file, scattered, unit);
+        if (latlon)
+            write_geodetic_levels(x_obs, y_obs, nax, *frame, latlon_companion(nax_file), scattered);
+    }
+
+    if (want_coverage)
+    {
+        // The energy-weighted fraction of each observer's levels that came from
+        // cells the database did not measure.  An observer that heard nothing
+        // has no fraction to give, and is written as NaN.
+        std::vector<double> share(coverage.size());
+        for (std::size_t i = 0; i < coverage.size(); i++)
+        {
+            share[i] = coverage[i][1] > 0.0 ? coverage[i][0] / coverage[i][1]
+                                            : std::numeric_limits<double>::quiet_NaN();
+        }
+        log("Writing the unmeasured share of the levels over ", path_count,
+                path_count == 1 ? " operation to " : " operations to ", coverage_file);
+        write_levels(x_obs, y_obs, share, coverage_file, scattered, unit);
+        if (latlon)
+            write_geodetic_levels(x_obs, y_obs, share, *frame, latlon_companion(coverage_file), scattered);
     }
 
     if (path_count > 1 && want_plots)

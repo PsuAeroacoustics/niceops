@@ -979,3 +979,42 @@ TEST_CASE("watts_trim refuses a start past the end of the crop", "[trajectory][v
         REQUIRE(message.find("Start the trim earlier") != std::string::npos);
     }
 }
+
+TEST_CASE("A static operation holds the aircraft at hover, nose on each hold's heading",
+        "[trajectory][static]")
+{
+    // Two holds at one point, in feet: 30 s then 10 s, at 50 Hz.
+    const TempCsv file("duration,x,y,z,heading\n30,0,0,12,210\n10,0,0,12,240\n");
+    const Trajectory hold(file.path, "databases/S-76D.json");
+    REQUIRE(hold.states.size() == 2000);
+    for (const auto& state : hold.states)
+    {
+        CHECK(state.vx == 0.0);
+        CHECK(state.vy == 0.0);
+        CHECK(state.vz == 0.0);
+        CHECK(state.LF == Catch::Approx(1.0));
+        CHECK(state.mu == 0.0);
+        CHECK(state.fpa == 0.0);
+        CHECK(state.fpa_e == 0.0);
+        CHECK(std::isfinite(state.CT));
+        CHECK(state.z == Catch::Approx(12.0 * ft2m).margin(1e-9));
+    }
+    CHECK(hold.states.front().heading == 210.0);
+    CHECK(hold.states[1499].heading == 210.0);
+    CHECK(hold.states[1500].heading == 240.0);
+    CHECK(hold.states[1].t - hold.states[0].t == Catch::Approx(0.02));
+    CHECK(hold.states.back().t == Catch::Approx(39.98));
+
+    // A move between holds is a trajectory, not a static operation.
+    const TempCsv moving("duration,x,y,z,heading\n5,0,0,12,0\n5,10,0,12,0\n");
+    std::string message;
+    try
+    {
+        Trajectory(moving.path, "databases/S-76D.json");
+    }
+    catch (const std::exception& problem)
+    {
+        message = problem.what();
+    }
+    REQUIRE(message.find("share one position") != std::string::npos);
+}
