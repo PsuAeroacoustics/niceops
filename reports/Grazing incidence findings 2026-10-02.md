@@ -393,3 +393,83 @@ Under 1,000 ft the 200–630 Hz term is −0.9 to −2 dB at 1–10°. Together 
 **Aft, a ray-model artifact beyond the cap:** with curved rays, aft samples past 4,500 ft depropagate +11 to +17 dB too loud at 5–10° (−9 dB at 10–20°). Under straight rays the same samples are within ±1.8 dB at 63–630 Hz. Depropagating through the ray model's too-deep shadows is the cause, which is a second reason to keep the cap with curved rays.
 
 **Approach cards:** panam `bbf8224` refuses approach cards outright. The B206L3 databases are rebuilt without them (NICE-OPS `019a0d5`, September recipe; SEL rms 1.48 / 1.47 dB out of sample). The R66 rebuild is waiting on its data fetch.
+
+## Addendum: building the hover from measured data (3 October)
+
+The synthesised hover (the slowest level pass averaged fore to aft) is 4–13 dB too quiet at 315–1,250 Hz where the B407's high hovers hear it, and about right near the horizon. A hover built from the measurements is within about 2 dB of both measured rings, and a second aircraft supports how it carries below them; between the rings and above 25° it remains an assumption, with a quantified uncertainty. Nothing is shipped.
+
+**The cards** (`B407_Flight_Cards/FLT283_B407_static.xlsx`): H1/H12 ground idle and H2/H11 flight idle, on the ground, so their +16 / −11 dB are expected and they are out of every fit; H3–H6 in ground effect (4–30 ft, heard at 0.5–3°), H7–H10 out of it (165–235 ft, 18–25°). Relative direction 90 = nose toward mic 7, clockwise; the AC heading agrees on all 20 runs, about 9° clockwise of the card. The card's "temperature (F)" column is °C.
+
+**What the excess is** (`H/hover/decompose.py`, 16 flying hovers × 13 boards, 0.5 Hz bins): 63–250 Hz is 70–90% rotor tones, 315–1,250 Hz 55–80% broadband, 1.6–5 kHz 97–99% broadband. The tail rotor's blade-passage frequency (83.3 Hz) is 3.01 times the main rotor's (27.6 Hz), so the two cannot be separated below about 300 Hz.
+
+**The wind** (`H/hover/wind_check.py`): the four headings put the day's 3–5 kt easterly on four sides, and the level follows it at 100–200 Hz and 400–800 Hz — headwind −3 to −5 dB, wind from port +4 to +5 dB at 100–125 Hz, beyond twice the pass-to-pass spread. Fitted as a level offset per card beside the azimuthal shape, a held-out heading is predicted to 1.6–1.7 dB (2.8 without).
+
+**Doppler** (panam `56ac635`, `remove_doppler`): at 46 kt the main rotor's 55 Hz harmonic is received at 58–60 Hz ahead (the 63 Hz band) and 50–52 Hz behind; the fore-to-aft average put a tone in the 63 Hz band no hover has. Removing the shift in narrowband before averaging (only for the hover source, run 283103; flight spheres keep received frequencies) halves the 63 Hz correction (−14.0 → −7.1 dB at 18–25°, −14.1 → −5.6 near the horizon) and removes the 50 Hz one. A control rebuild reproduces the shipped sphere to 0.0000 dB.
+
+**The construction** (`H/spheres/hover_sphere.py`):
+
+| Variant | High hovers, 315–1,250 Hz | Low hovers, 315–1,250 Hz | Notes |
+| --- | --- | --- | --- |
+| Shipped (synthesised) | −7.0 dB | +0.8 dB | |
+| Correction at 17.5–25° only | | | a 7 dB ridge at 20° that returns to the synthesis within 10° |
+| Fourier in azimuth, band offset everywhere | −0.9 | **+7.4** | offset carried to the horizon breaks it |
+| **Two rings, de-Dopplerized** | −1.1 | −0.1 | low ring at the horizon, high ring from 17.5°, linear between 3° and 17.5°, the high ring's azimuthal orders fading as cos^m toward the nadir |
+
+The approaches barely move (their slowest states are 13 kt): under 100 ft and 40 kt, 63–630 Hz +0.74 → −0.20 dB, 800–2,000 Hz −0.65 → +0.19; every other state within 0.02 dB.
+
+**Statistical fusion** (`H/hover/gp_fusion.py`): the hovers depropagated by panam like the flight spheres (`nose_from_heading`), fused with the synthesis by Gaussian-process regression with run offsets and ring-specific noise. panam's residuals agree with the NICE-OPS frames within 1–1.5 dB at the high ring (except 63 Hz, unresolved: −7.1 against +1.5). From 400 Hz up the fitted vertical correlation length goes to its floor (≈2°): the two rings (+4 to +7 dB at 20°, −1 to −3 near the horizon) are not one smooth field, and off the rings the posterior standard deviation is 5–13 dB. Below 400 Hz the field is smooth (10–17°, ±3–4 dB).
+
+**A second aircraft** (`H/hover/r66_hovers.py`): the R66 flew the same cards at Eglin 500–580 ft up, several runs well off centre, so its boards hear it from 30 to 78°. Against its own synthesised hover (RO-66520, 38 kt) the measured excess at 315–1,250 Hz is +5.6, +5.4, +6.7 and +7.2 dB at 30–40, 40–50, 50–60 and 60–80°, nearly flat and similar all round; near the horizon −1.5 dB (−7.9 above 1.6 kHz). That supports carrying the high ring's offset unchanged toward the nadir, as the two-ring construction does, and not the fall back to the synthesis that the local form and the fusion's short correlation imply. **The R66 track altitude is ~28.6 ft low against the Eglin boards** (the aircraft on the ground reads 17–25 ft below them; board Z and track z share one reference): check the R-66 spheres for it before using them.
+
+**Open:** 3–17° is unmeasured on both aircraft; the 63 Hz disagreement between the two processing routes; whether to ship the de-Doppler two-ring hover with its uncertainty.
+
+**The 63 Hz disagreement was band leakage** (4 October). panam's depropagation sums whole FFT bins between band edges, with 0.64 s Hann windows (1.56 Hz bins at 51.2 kHz). The B407 main rotor's 27.6 and 55.2 Hz harmonics sit 0.6 and 1.0 Hz below the 25/31.5 and 50/63 Hz edges, so a large part of each lands in the band above: on a hover recording, against a 4 s reference, 31.5 Hz +9.6 dB, 63 Hz +6.9 dB, 50 Hz −1.5 dB (the NICE-OPS frame tool's 0.5 s frames leak +1.5 to +4 dB into 63 Hz). Every panam sphere carries it, where depends on each harmonic's Doppler shift; A-weighting takes those bands down 26–40 dB, so SEL hardly moves, but spectral databases' and spectral runs' 31.5–63 Hz do. panam `d716002` adds `tone_aware` banding (tones located by the Hann ratio formula, removed with the window's own shape, filed whole in their own band; within ~1 dB of the reference), and `band_frames.py --tone-aware` the same for frames. With both, the two routes agree at 63 Hz (+2.2 / +2.2 dB at the high ring), and the 63 Hz hover correction is +2.2 dB, not −14: it was processing, half Doppler and half leakage. The de-Doppler, tone-aware two-ring hover (`H/spheres/out/hover_ddt_two_ring`) scores high hovers −7.05 → −1.11 dB and low hovers +0.70 → −0.07 at 315–1,250 Hz on tone-aware frames; approaches overall unchanged, their slowest states 63–630 Hz +0.25 → −0.72 and 800–2,000 Hz −0.64 → +0.21. The low ring still reads 1–3 dB lower through panam than through the frames at 160–1,250 Hz (grazing treatment, open). Not shipped; rebuilding every flight sphere tone-aware is the remaining step before it would be consistent.
+
+**Tone-aware rebuild and the candidate database** (4 October). The B407 spheres rebuilt with the shipped recipe on today's tools reproduce the shipped ones to 0.00 dB (`H/spheres/out/shepfloor5_control`); with `--tone-aware` (`shepfloor5_tone`) only the bands beside rotor harmonics move (5th percentiles 25 Hz −17.9, 31.5 Hz −8.2, 63 Hz −4.7, 80 Hz −3.8 dB; 50 Hz up to +1.9; 125 Hz–3 kHz under 0.4). With the de-Doppler, tone-aware two-ring hover on top (`tone_ddt_two_ring`; `self_test` passes on all 238,428 samples), the day-286 approach SEL (1,112 mic-runs, 10 dB-down measured, median / rms):
+
+| Database | station, all | station, 5–10° | `stratified`, all | `stratified`, 5–10° |
+| --- | --- | --- | --- | --- |
+| Shipped (= control) | +0.31 / 1.28 | +1.18 / 1.89 | +0.48 / 1.38 | +1.49 / 2.03 |
+| Tone-aware | +0.32 / 1.28 | +1.19 / 1.89 | +0.49 / 1.39 | +1.48 / 2.03 |
+| Tone-aware + hover | +0.32 / 1.27 | +1.14 / 1.82 | +0.49 / 1.37 | +1.53 / 1.93 |
+
+Tone-aware bands are neutral for SEL; the hover moves only the mic-runs hearing the approach's slow end (5th percentile −1.0 dB). Ready to ship on request; the ambient-gated database would be rebuilt the same way.
+
+## Addendum: the hover frames ran on a stale NICE-OPS; the release build (4 October)
+
+**Every hover frame set from 2 October 23:00 to 4 October 01:47 ran NICE-OPS 84462d7, which has no heading nose at hover.** That build is the harness default `build/niceops` (the submodule, 30 September). The shell exports of `NICEOPS_BIN` did not persist into the `band_frames.py` commands. It predates 9fc714a, so a hovering aircraft's nose followed its drift. On H7 (run 283427, nose toward mic 7), mic 7 sat at theta 120°; with the heading nose it sits at 25°, its depression angle.
+
+So every azimuthal hover correction above is drift-referenced: the Fourier, two-ring, `dd` and `ddt` corrections and the `tone_ddt_two_ring` candidate. The one exception is the first local correction of 2 October 09:51, which ran the dev build. The fit's wind offsets per card absorbed part of the error. The day-286 approach frames from the same commands ran the old build too. Their database-to-database differences stand, because forward flight's nose is the velocity. The approach SEL tables did set `NICEOPS_BIN` and are unaffected.
+
+**The release chain**, everything with the current master build and panam `b758e3a`. That panam is master 0598721 merged with the hover, tone-aware and provenance branches (harness `stratified-ducts-merge`).
+
+The chain:
+1. B407 spheres rebuilt with the same recipe, tone-aware (`H/spheres/out/release_b407`).
+2. The hover source de-Dopplerized. It matches the earlier one to 0.002 dB; its control matches the build exactly.
+3. Hover frames against the uncorrected de-Doppler hover.
+4. Fourier fits at both rings.
+5. The two-ring databases (`H/spheres/out/release_two_ring`).
+
+The high ring's fit now holds out at 2.8 dB rms (M = 3). The low ring picks M = 0 at 5.0 dB, so it is a level per band and mostly noise. panam's master changed the flight spheres in two places. 22e2a96 stops closing a gap at a record's edge, which had started some steady windows in the turn-in; 11 runs move, at their coverage edges. The other runs move by hundredths of a dB.
+
+Scored on tone-aware frames (predicted − measured, energy mean, dB):
+
+| | High hovers, 63–250 / 315–1,250 / 1.6–5k Hz | Low hovers, same bands | Approaches under 100 ft and 40 kt, 63–630 Hz |
+| --- | --- | --- | --- |
+| Shipped | +0.78 / −6.94 / −3.04 | +0.88 / +0.75 / +0.75 | −0.87 |
+| De-Doppler hover, uncorrected | −0.77 / −6.89 / −3.07 | −1.48 / +1.21 / +0.80 | −2.07 |
+| High ring only | −0.41 / −1.28 / −0.51 | −1.44 / +1.62 / +1.00 | −2.15 |
+| **Two rings (shipped on the branch)** | −0.42 / −1.32 / −0.54 | −0.67 / −1.74 / −0.97 | −2.15 |
+
+Day-286 approach SEL (1,112 mic-runs, median / rms):
+
+| | station, all | station, 5–10° | `stratified`, all | `stratified`, 5–10° |
+| --- | --- | --- | --- | --- |
+| Shipped | +0.31 / 1.28 | +1.18 / 1.89 | +0.48 / 1.38 | +1.49 / 2.03 |
+| Rebuilt, synthesized hover | +0.33 / 1.28 | +1.22 / 1.91 | +0.50 / 1.39 | +1.57 / 2.08 |
+| High ring only | +0.34 / 1.28 | +1.19 / 1.87 | +0.50 / 1.39 | +1.52 / 2.06 |
+| **Two rings** | +0.32 / 1.28 | +1.03 / 1.83 | +0.47 / 1.37 | +1.43 / 1.91 |
+
+The approaches are not in any fit. On them, only the two-ring hover improves the 5–10° bin. The high-ring-only variant leaves the low hovers 1.6 dB loud where the two-ring one leaves them 1.7 dB quiet. The de-Dopplerized hover makes the slowest, lowest approach states 1.3 dB quieter at 63–630 Hz (43,000 of 1.7 million frames). That is the fore-to-aft tone it removes; a slow aircraft has a smaller but real Doppler shift.
+
+**Shipped** in NICE-OPS PR #11 (merge c089976, 4 October): the two-ring B407 databases (`self_test` passes on 238,428 and 1,907,424 samples), with `golden/stratified_*.csv` regenerated (mean change within ±0.05 dB, at most 4.8 dB in one far in-duct cell). The panam that built them is master 4a7779a (panam PR #10). The harness pins both and its default binary is rebuilt, so a run without `NICEOPS_BIN` no longer falls back to the stale build.
