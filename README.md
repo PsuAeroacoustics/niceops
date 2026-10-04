@@ -136,6 +136,8 @@ feet, must be run without it. The `-S` state file is always metric. See
   propagation models, their checks against exact and full-wave solutions, and performance.
 - [`CLAUDE.md`](CLAUDE.md): developer notes on the port's history, the shape of the hot path,
   and the pitfalls to know before changing the numerics.
+- [`docs/FIDELITY.md`](docs/FIDELITY.md): fidelity status and validation, with current
+  measurement evidence, experimental source improvements and propagation-table error checks.
 
 **Results from before September 2026 are not comparable to results after.** See
 [Changes that affect results](docs/MANUAL.md#changes-that-affect-results).
