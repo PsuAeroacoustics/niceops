@@ -493,7 +493,8 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   - **Wind columns are ignored** and named in the log.
 
   The roadmap this starts (refraction, then urban) is in the Claude Doc "NICE-OPS:
-  Atmospheric and Urban Propagation Options".
+  Atmospheric and Urban Propagation Options"; `reports/` holds its 2026-09-26 snapshot, and
+  `reports/Urban canyon propagation methods.md` works out the urban step.
 - `src/refraction.{hpp,cpp}` — `--refraction linear` (roadmap step 4). Per path, a
   least-squares line through the effective sound speed c(z) + w(z).h over the heights the path
   spans (`EffectiveSoundSpeed`: running integrals of c, w_x, w_y and z times each on a 1 m
