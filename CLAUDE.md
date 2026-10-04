@@ -9,6 +9,7 @@ NICE-OPS (Noise Informed Community Environment Operation Planning System) is a h
 The implementation is C++17, under `src/`. It began as a port of a D original, which is why several comments reference D semantics — those are load-bearing: the port reproduces the D reference bit-for-bit on the demo case, and the goldens come from it.
 
 - `src/` — the implementation. **Every `.cpp` lives here and is listed in CMakeLists.txt**; there are no C++ sources at the repo root.
+- `README.md` — a short description, building and a first run. **`docs/MANUAL.md`** is the user manual: every option, the theory behind each model, and how each was checked. Put user-facing detail in the manual, not the README.
 
 The D sources (`niceops.d`, `sphere_database.d`, `trajectory.d`, `splines.d`, `netcdf.d`), along with `cmake-d/` and the vendored `external/matplotlibd/`, were removed once the port was verified complete: every D function, all 19 CLI options and all 10 `unittest` blocks have C++ counterparts. **They remain in history at `c74bab3`** (on `origin/no-stk`), which is what to check out if you ever need the oracle again — see the golden-file section.
 
@@ -212,7 +213,7 @@ Regenerating the database with the current builder (panam, `DATABASE_FORMAT_VERS
 
 ## Running the Tool
 
-Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. For the full option set see `README.md`, which documents every flag, or the CLI11 setup in `src/niceops.cpp`.
+Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, database `databases/S-76D_M3.nod`, vehicle config `databases/S-76D.json`, output `integrated/197421_LAE.csv`. For the full option set see `docs/MANUAL.md`, which documents every flag, or the CLI11 setup in `src/niceops.cpp`.
 
 **`--units` picks the length unit for the whole interface** -- `ft` (default) or `m` -- covering
 every length on the command line (`--grid`, `--gridstep`, `--trim`, `--ground_elevation`,
@@ -653,7 +654,7 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     inversion over an upwind shear, 330.5 m/s aloft against 339 at the ground -- with no
     boundary, so no transition and no hand-over, and the shadow a 10-35 dB cliff the PE
     puts 30-50% further out. It moved day 284's upwind 5-10 degree bin most of all; see the
-    README for the table.
+    manual (`docs/MANUAL.md`) for the table.
   - **And where the air aloft does outrun it, the boundary stands short of the skip
     distance** (`boundary_under_aloft`). Rays turned back from aloft come down only past it,
     kilometers out for an inversion a few hundred feet up; short of it the shadow is the same
@@ -743,7 +744,7 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
       sources under 300 ft) it is 10–20 dB too quiet and straight rays are within 4 dB at
       50–630 Hz; none of those frames is in an SEL window. Harness
       `propagation/micro_shadow.py`, `micro_shadow_frames.py`.
-    - **Three opt-in treatments of it, compared** (README, "Micro-shadows and skip zones";
+    - **Three opt-in treatments of it, compared** (`docs/MANUAL.md`, "Micro-shadows and skip zones";
       harness `micro_shadow_fixes.py`, `micro_shadow_frames.py`): `--tunneling` and
       `--skip_fill` (`layered_wave_arrivals`, stratified.cpp), and a PE `--propagation_table`
       beside the ray model. Both Airy options together take the deficit frames from -10.5 /
@@ -983,7 +984,7 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   - Without `--gamma_t` the deep shadow, 40–90 dB down, is not physical. Absorption is optional
     (`PeSetup::absorption`, Np/m, the imaginary part of k so it acts along the actual path)
     and off in `pe_compare`, because the ray-model comparison leaves it out of all four.
-  - **Findings** (README has the tables). Downwind, `stratified` is within 0.4–2.1 dB rms of
+  - **Findings** (`docs/MANUAL.md` has the tables). Downwind, `stratified` is within 0.4–2.1 dB rms of
     the PE and the others are 1–8 dB off. Upwind, the PE's shadow onset lies between
     `stratified` (too early) and `linear` (too late), moving toward `stratified` with
     frequency; the per-band boundary law is that treatment.
@@ -993,7 +994,7 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   the Attenborough et al. benchmark (JASA 97, 173 (1995); the PDF is not in the repo) and its
   exact solutions: direct plus image ray (case 1), the downward normal-mode series (case 2)
   and the upward residue series (case 3), all over impedance ground with absorption as
-  Im k0. The PE reproduces the paper's figs. 11–14 in every panel. `README.md` has the
+  Im k0. The PE reproduces the paper's figs. 11–14 in every panel. `docs/MANUAL.md` has the
   tables. Load-bearing:
   - **The mode sums are derived in `exact_solutions.cpp`, not copied, because the paper's
     eq. (11) is wrong.** Its upward ground condition, Ai'(b) + i k0 l beta w Ai(b) = 0, should
@@ -1220,7 +1221,7 @@ Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a cur
 ### Geodetic trajectory input
 
 A trajectory may be given in WGS84 (latitude, longitude, altitude) instead of the 27-column AC
-state format; `README.md` documents the format and the options. Things worth knowing before
+state format; `docs/MANUAL.md` documents the format and the options. Things worth knowing before
 touching it:
 
 - **The format is decided by width, not by the header.** 27 columns is the positional AC
@@ -1262,7 +1263,7 @@ touching it:
   Those numbers were re-measured after `SmoothingSpline` was fixed to give the lambda = 0 case
   its curvature. Before that, `--path_smoothing 0` returned a spline with zero second
   derivative everywhere, so the load factor was exactly 1 g on every state, CT never moved, and
-  the amplification above never happened -- the old "17% and 3 dB" measured that bug. README
+  the amplification above never happened -- the old "17% and 3 dB" measured that bug. The manual
   carries the re-measured table for all four input shapes; do not re-derive it.
 
   **A dense track's ends are freed from the natural condition** (`fit_path`,
@@ -1309,7 +1310,7 @@ touching it:
   - **One rotation.** `CompassToLocal` (atmosphere_profile.hpp) turns east/north into the
     local frame for this and for both ray models. Before it, refraction.cpp and
     stratified.cpp each spelled the rotation out, with the same expression.
-  - **panam's side is not built yet.** It has to use the same definition, the README's
+  - **panam's side is not built yet.** It has to use the same definition, the manual's
     "Speed reference" section, and write the attribute. Until it does, every database is
     ground-referenced, and an air run against one mixes the two.
 - `src/plotting.{hpp,cpp}` — `plt::` facade replacing the vendored matplotlib-d binding. Embeds Python via pybind11 and calls matplotlib directly; the interpreter is created lazily on first use, so non-plotting runs never pay the import cost.
