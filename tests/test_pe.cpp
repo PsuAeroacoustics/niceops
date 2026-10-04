@@ -207,3 +207,46 @@ TEST_CASE("PE band averaging rejects nonpositive sample counts", "[pe][band]")
     REQUIRE_THROWS_AS(solve_pe_bands({}, {}, 0), std::invalid_argument);
     REQUIRE_THROWS_AS(solve_pe_bands({}, {}, -1), std::invalid_argument);
 }
+
+TEST_CASE("band reduction preserves single-frequency levels and invalid samples", "[pe][band]")
+{
+    for (const auto scheme : {PeScheme::split_step_pade, PeScheme::crank_nicolson})
+    {
+        PeSetup setup;
+        setup.scheme = scheme;
+        setup.source_height = 5.0;
+        setup.receiver_heights = {0.0, 1.2, 30.0};
+        setup.max_range = 40.0;
+        setup.output_step = 10.0;
+        setup.z = {0.0};
+        setup.c = {340.0};
+        const double center = 250.0;
+        constexpr int samples = 3;
+        std::vector<PeResult> tones;
+        for (int k = 0; k < samples; k++)
+        {
+            setup.frequency = center * std::pow(2.0, ((k + 0.5) / samples - 0.5) / 3.0);
+            tones.push_back(solve_pe(setup));
+            REQUIRE(tones.back().psi.size() == setup.receiver_heights.size());
+        }
+        for (unsigned threads : {1u, 2u})
+        {
+            setup.threads = threads;
+            const auto band = solve_pe_band(setup, center, samples);
+            REQUIRE(band.psi.empty());
+            REQUIRE(band.range == tones.front().range);
+            for (std::size_t rcv = 0; rcv < setup.receiver_heights.size(); rcv++)
+                for (std::size_t q = 0; q < band.range.size(); q++)
+                {
+                    double energy = 0.0;
+                    for (const auto& tone : tones)
+                        energy += std::pow(10.0, 0.1 * tone.relative_level[rcv][q]) / samples;
+                    const double expected = 10.0 * std::log10(energy + 1e-300);
+                    if (std::isnan(expected))
+                        CHECK(std::isnan(band.relative_level[rcv][q]));
+                    else
+                        CHECK(band.relative_level[rcv][q] == expected);
+                }
+        }
+    }
+}

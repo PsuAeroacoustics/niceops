@@ -293,10 +293,10 @@ double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
     const std::size_t seed_stride = std::max<std::size_t>(1, nt / 128);
 
     using Geometry = decltype(geometry_of(std::size_t {0}));
-    auto evaluate_with = [&](std::size_t it, const Geometry& g) {
+    auto evaluate_with = [&](std::size_t it, Geometry&& g) {
         visited[it] = generation;
         evaluated++;
-        return levels[it] = level_of(it, g);
+        return levels[it] = level_of(it, std::move(g));
     };
     auto evaluate = [&](std::size_t it) {
         if (visited[it] == generation)
@@ -321,7 +321,7 @@ double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
     {
         if (visited[it] == generation)
             continue;
-        const Geometry g = geometry_of(it);
+        Geometry g = geometry_of(it);
         // The bound subtracts spherical spreading, which is only a loss outside
         // the sphere; inside it, evaluate rather than trust it.
         if (g.squared_range > sphere_radius_squared)
@@ -340,7 +340,7 @@ double windowed_exposure(std::size_t nt, const DirectionBounds& bounds,
                 continue;
             }
         }
-        const double level = evaluate_with(it, g);
+        const double level = evaluate_with(it, std::move(g));
         if (level > best)
         {
             best = level;
@@ -1961,8 +1961,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             last_band, arrival_loss.data());
                     extra_loss = arrival_loss.data();
                 }
+                // All arrivals share these endpoints and their mean absorption.
+                const double* pair_absorption = absorption_for(it, observer);
                 double level = database.spectral_level_along(ray.path, source_states[it],
-                        absorption_for(it, observer), band_gains, ground_here,
+                        pair_absorption, band_gains, ground_here,
                         &ground_impedance_bands, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
                         extra_loss, ground_weight, bands_out);
@@ -1984,7 +1986,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         // tail below its turning point, plate or not.
                         const bool grounded = (a.grazing > 0.0 || flush) && !(a.wave.evanescent > 0.0);
                         const double here = database.spectral_level_along(a.path, source_states[it],
-                                absorption_for(it, observer), band_gains, ground_here,
+                                pair_absorption, band_gains, ground_here,
                                 &ground_impedance_bands, sound_speed, first_band, last_band,
                                 packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here,
                                 arrival_loss.data(), grounded ? nullptr : no_ground.data(),
@@ -2029,8 +2031,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                 travel_stamp[it] = generation;
                                 return g;
                             },
-                            [&](std::size_t it, const RefractedGeometry& g) {
-                                return refracted_level(it, g.ray);
+                            [&](std::size_t it, RefractedGeometry&& g) {
+                                return refracted_level(it, std::move(g.ray));
                             },
                             [&](std::size_t it) {
                                 if (travel_stamp[it] == generation)

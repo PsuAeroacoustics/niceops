@@ -630,9 +630,8 @@ March pade_march(const VerticalOperator& op, const PadePropagator& propagator, b
     return [factors, step](std::vector<complex>& psi) { step(*factors, psi); };
 }
 
-} // namespace
-
-PeResult solve_pe(const PeSetup& s)
+// Band averages need levels only; single-frequency callers also keep the field.
+PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
 {
     if (s.z.empty() || s.z.size() != s.c.size())
         throw std::invalid_argument("solve_pe: the sound-speed profile is empty or uneven");
@@ -899,16 +898,37 @@ PeResult solve_pe(const PeSetup& s)
     double next_screen = 0.5 * spacing;
 
     result.relative_level.assign(s.receiver_heights.size(), {});
-    result.psi.assign(s.receiver_heights.size(), {});
+    if (keep_field)
+        result.psi.assign(s.receiver_heights.size(), {});
     // Crank-Nicolson's step follows the wavelength; the split-step's divides
     // the output step, up to rounding.
     const std::size_t steps = static_cast<std::size_t>(std::ceil(s.max_range / dr - 1e-9));
     // psi at each receiver, cubic or linear between grid points; psi_0 from
     // the ground condition.
-    auto at_receiver = [&](double zr) {
+    struct ReceiverStencil
+    {
+        std::size_t first;
+        std::array<double, 4> share {};
+    };
+    std::vector<ReceiverStencil> receiver_stencils;
+    receiver_stencils.reserve(s.receiver_heights.size());
+    for (double zr : s.receiver_heights)
+    {
         const double u = zr / dz;
-        const std::size_t j = std::min(static_cast<std::size_t>(u), m - 1);
-        const double t = u - static_cast<double>(j);
+        ReceiverStencil stencil;
+        if (cubic)
+            cubic_weights(u, stencil.first, stencil.share.data());
+        else
+        {
+            stencil.first = std::min(static_cast<std::size_t>(u), m - 1);
+            const double t = u - static_cast<double>(stencil.first);
+            stencil.share[0] = 1.0 - t;
+            stencil.share[1] = t;
+        }
+        receiver_stencils.push_back(stencil);
+    }
+    auto at_receiver = [&](std::size_t receiver) {
+        const auto& stencil = receiver_stencils[receiver];
         auto at = [&](std::size_t jj) {
             if (jj == 0)
                 return op.fourth_ground ? psi[m] : g1 * psi[0] + g2 * psi[1];
@@ -916,15 +936,12 @@ PeResult solve_pe(const PeSetup& s)
         };
         if (cubic)
         {
-            std::size_t first;
-            double share[4];
-            cubic_weights(u, first, share);
             complex value = 0.0;
             for (std::size_t k = 0; k < 4; k++)
-                value += share[k] * at(first + k);
+                value += stencil.share[k] * at(stencil.first + k);
             return value;
         }
-        return (1.0 - t) * at(j) + t * at(j + 1);
+        return stencil.share[0] * at(stencil.first) + stencil.share[1] * at(stencil.first + 1);
     };
     // Results at exact multiples of the output step, whatever the range step,
     // so every frequency lands on one grid: psi interpolated between the two
@@ -932,7 +949,7 @@ PeResult solve_pe(const PeSetup& s)
     // interpolation then takes the later step whole.
     std::vector<complex> previous_value(s.receiver_heights.size());
     for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
-        previous_value[k] = at_receiver(s.receiver_heights[k]);
+        previous_value[k] = at_receiver(k);
     std::size_t next_output = 1;
     std::vector<complex> value(s.receiver_heights.size());
     for (std::size_t step = 1; step <= steps; step++)
@@ -956,7 +973,7 @@ PeResult solve_pe(const PeSetup& s)
             next_screen += spacing;
         }
         for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
-            value[k] = at_receiver(s.receiver_heights[k]);
+            value[k] = at_receiver(k);
         while (next_output * s.output_step <= r + 1e-9 && next_output * s.output_step <= s.max_range + 1e-9)
         {
             const double target = next_output * s.output_step;
@@ -974,13 +991,21 @@ PeResult solve_pe(const PeSetup& s)
                 result.relative_level[k].push_back(too_steep
                         ? std::numeric_limits<double>::quiet_NaN()
                         : 20.0 * std::log10(std::abs(v) * slant / std::sqrt(target) + 1e-300));
-                result.psi[k].push_back(v);
+                if (keep_field)
+                    result.psi[k].push_back(v);
             }
             next_output++;
         }
         previous_value = value;
     }
     return result;
+}
+
+} // namespace
+
+PeResult solve_pe(const PeSetup& setup)
+{
+    return solve_pe_impl(setup, true);
 }
 
 PeResult solve_pe_band(PeSetup setup, double center, int samples)
@@ -1030,7 +1055,7 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
             one.frequency = tasks[t].frequency;
             // With turbulence each frequency is also its own realization.
             one.seed = setups[tasks[t].band].seed + static_cast<unsigned>(tasks[t].sample);
-            each[tasks[t].band][tasks[t].sample] = solve_pe(one);
+            each[tasks[t].band][tasks[t].sample] = solve_pe_impl(one, false);
         }
     });
     // Summed in frequency order whatever order they ran in, so the result is
@@ -1049,6 +1074,8 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
                     sum.relative_level[rcv][q] += std::pow(10.0, 0.1 * one.relative_level[rcv][q]) / samples;
             }
         }
+        // Release this band before reducing the next, keeping sample order intact.
+        each[b].clear();
         for (auto& row : sum.relative_level)
             for (double& v : row)
                 v = 10.0 * std::log10(v + 1e-300);
