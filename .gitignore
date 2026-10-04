@@ -47,3 +47,8 @@ niceops_unit_tests
 .claude/settings.local.json
 wopwop2aam
 /fidelity_runs/
+# Other out-of-source build trees (build-gcc, as CLAUDE.md suggests), Claude Code
+# worktrees, and Python bytecode from the tools' tests
+/build-*/
+/.claude/worktrees/
+__pycache__/
