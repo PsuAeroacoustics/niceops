@@ -483,9 +483,10 @@ beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. The built 
 The AS350, B407, Be206L3, EC130, RO-44 and RO-66 databases are built from the 2017 Noise
 Abatement flight test by panam (`noise_abatement_2017.build_all`, then
 `build_empirical_database`). The validation harness keeps the recipes (`spheres/rebuild.py`,
-`spheres/hover_sphere.py`, `spheres/rebuild_database.py`). Each file records its build at the
-root: `speed_reference`, the build atmosphere, and `DOPPLER_SHIFT_REMOVED` and `coverage` per
-group.
+`spheres/hover_sphere.py`, `spheres/release_database.py`, `spheres/rebuild_database.py`). Each
+file records its build at the root: `speed_reference`, the build atmosphere, `hover_source` when
+the hover was synthesized from a sphere outside the build, and `DOPPLER_SHIFT_REMOVED` and
+`coverage` per group.
 
 - **B407** is the reference aircraft and the one validated most. Its spheres are depropagated
   along curved rays through each run's own atmosphere, with a 2-degree emission floor, an
@@ -500,9 +501,37 @@ group.
   - Nothing measures 3–17 degrees or the region under the aircraft, so treat the hover there
     as an interpolation.
   - The low ring is the noisier of the two (5 dB held-out rms against 2.8).
-- **The other aircraft** keep the September recipe: straight rays, a 10-degree floor and a
-  25-degree grid. AS350, EC130 and RO-44 still hold the September spheres. Be206L3 and RO-66
-  are built without the approach cards, which are the validation set.
+- **Be206L3, EC130, RO-44 and RO-66** (rebuilt 2026-10-04) take the B407's flight recipe and
+  its de-Dopplerized hover source, but no hover correction: only the B407's hovers have been
+  measured. Their hover is the slowest level pass averaged fore to aft (Be206L3 run 277103,
+  EC130 298295, RO-44 229395, RO-66 234520). No approach card is in any of them. Against each
+  aircraft's approaches, which are the validation set (NICE-OPS minus the measured 10 dB-down
+  SEL, station atmosphere, median / rms in dB):
+
+  | Database | Spheres, September → now | Approaches | September | Now |
+  | --- | --- | --- | --- | --- |
+  | Be206L3 | 110 → 110 | day 279, 906 mic-runs | +0.28 / 1.48 | +0.24 / 1.50 |
+  | EC130 | 38 → 112 | day 298, 1025 mic-runs | +0.19 / 3.17 | +0.70 / 2.70 |
+  | RO-44 | 50 → 83 | day 229, 585 mic-runs | +0.31 / 1.55 | +0.12 / 1.27 |
+  | RO-66 | 87 → 88 | day 236, 876 mic-runs | +0.28 / 1.06 | +0.86 / 1.57 |
+
+  - **RO-66 reads worse, and the September file was right for the wrong reason.** All four
+    September files carried near-silent cells: finite levels far below the aircraft (as low as
+    −70 dBA beside an 84 dBA neighbor), mostly in the abeam column near the horizon, which the
+    loader blends as real. The rebuild raises RO-66's predictions by 0.2 dB under the track and
+    1.3 dB at 1,200–2,000 ft off it, where the aircraft is heard abeam, while the cells both
+    files measured moved by +0.05 dB at the median. The holes had hidden the low-elevation
+    over-prediction every aircraft shows. The rebuilt files have none (RO-66 had 62 such cells
+    and 3,962 empty ones below the horizon, and now has 0 and 108).
+  - **EC130's September spheres were depropagated at a standard day** (20 °C, 20 % RH,
+    101.3 kPa), where the stations read −1 to 19 °C, 37–94 % and 88–89.5 kPa. The dataset spells
+    the folder `EC130B4_Ground Stations`, and panam looks for `EC130B4_Ground_Stations`. They
+    also lacked day 296, 62 of the spheres now. The day-298 approaches have no ambient run, so
+    their measured SEL carries the background and has no SNR to filter on: read EC130's rms,
+    not its median.
+  - RO-44's September spheres lacked day 227, which holds 32 of its steady runs.
+- **AS350** keeps the September recipe and spheres: straight rays, a 10-degree floor and a
+  25-degree grid.
 
 A database written before panam c53588f (2026-09-26) may have its last group unwritten. Every
 entry is then the netCDF fill value (9.97e36), which the loader reads as a finite 1e37 dB
