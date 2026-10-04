@@ -48,10 +48,13 @@ std::optional<SpeedReference> parse_speed_reference(const std::string& name);
 const char* to_string(SpeedReference reference);
 
 
-// Check if points "wrap around" sphere, and swap inputs to bilinear
-// interpolation if necessary
+// Bilinear interpolation on the sphere grid.  A cell whose knots come in
+// decreasing order wraps the seam of a periodic axis: with `x_period` set, its
+// upper knot is one period past x2 and x is read into the cell.  Without a
+// period the knots are simply swapped, as before.
 double periodic_bilinear_interp(double q11, double q12, double q21, double q22,
-        double x1, double x2, double y1, double y2, double x, double y);
+        double x1, double x2, double y1, double y2, double x, double y,
+        double x_period = 0.0);
 
 // Find the pair of grid indices bracketing val (wrapping around the ends)
 std::array<std::size_t, 2> bracket(const std::vector<double>& a, double val);
@@ -65,6 +68,12 @@ class GridAxis
 {
 public:
     void reset(std::vector<double> values);
+
+    // Make the axis periodic (phi: 360 degrees).  The cell across the seam then
+    // runs from the last knot up to the first knot one period on, and a value
+    // past either end is read into the axis before it is located.  Without a
+    // period the seam is never crossed.
+    void set_period(double period);
 
     const std::vector<double>& values() const
     {
@@ -107,6 +116,8 @@ public:
 private:
     std::vector<double> values_;
     double first_ = 0.0;
+    // Period of a periodic axis, or 0 when the axis does not wrap.
+    double period_ = 0.0;
     // Reciprocal of the uniform spacing, or 0 when the axis is not uniform and
     // the binary search has to be used after all.
     double inv_step_ = 0.0;
@@ -139,8 +150,12 @@ struct SphereFrame
 SphereFrame sphere_frame(const Vec3& velocity, const Vec3& normal);
 
 // Sphere angles (phi, theta in degrees) of an already-normalized propagation
-// direction.
-std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direction);
+// direction.  phi runs over the whole circle: a direction above the tip-path
+// plane reads the database's upper half.  `fold_upper` reads the mirror image
+// instead, for a database that stores no upper half (see
+// Database::upper_hemisphere_measured()).
+std::array<double, 2> lookup_angles(const SphereFrame& frame, const Vec3& direction,
+        bool fold_upper = false);
 
 // Sphere angles (phi, theta in degrees) of the propagation direction
 std::array<double, 2> lookup_angles(const Vec3& source,
@@ -341,6 +356,21 @@ public:
     double level_from_geometry(double squared_range, double along, double up, double across,
             const Blend& blend) const;
 
+    // Whether every condition group records which channels the builder
+    // measured: a `coverage` variable, 1 for a measured channel and 0 for one
+    // the gate zeroed or that was filled from elsewhere.  The share below is
+    // only defined when it does.
+    bool has_coverage() const
+    {
+        return has_coverage_;
+    }
+
+    // The share of a direction's blended level that comes from cells the
+    // builder did not measure: the bilinear weight on each corner, times the
+    // blend's weight on the conditions that are unmeasured there.  `angles` are
+    // (phi, theta) in degrees, as lookup_angles() gives them.
+    double unmeasured_share(const std::array<double, 2>& angles, const Blend& blend) const;
+
     double level_at_observer(const Vec3& observer,
             const Vec3& source, const Vec3& velocity,
             const Vec3& normal, double advance_ratio,
@@ -525,6 +555,32 @@ public:
     // Which velocity the flight conditions were taken from, as the root
     // attribute speed_reference records it.  Absent means the ground, which is
     // what every database built before the attribute existed used.
+    // True when every condition group stores channels above the tip-path
+    // plane (|phi| > 90 degrees).  Then a direction above the plane reads that
+    // stored half; otherwise it reads the mirror image, as before.
+    bool upper_hemisphere_measured() const
+    {
+        return upper_hemisphere_measured_;
+    }
+
+    // The atmosphere the broadband EAA was built in, and the rotor speed the
+    // spheres were built at, when the builder recorded them (panam does; older
+    // databases carry neither).  Absent means the database says nothing.
+    struct BuildAtmosphere
+    {
+        double temperature_kelvin;
+        double pressure_kpa;
+        double relative_humidity_percent;
+    };
+    const std::optional<BuildAtmosphere>& build_atmosphere() const
+    {
+        return build_atmosphere_;
+    }
+    const std::optional<double>& rotor_rpm() const
+    {
+        return rotor_rpm_;
+    }
+
     SpeedReference speed_reference() const
     {
         return speed_reference_;
@@ -693,6 +749,13 @@ private:
     double rotor_radius_ = std::numeric_limits<double>::quiet_NaN();
     double vehicle_weight_newtons_ = std::numeric_limits<double>::quiet_NaN();
     SpeedReference speed_reference_ = SpeedReference::ground;
+    bool upper_hemisphere_measured_ = false;
+    std::optional<BuildAtmosphere> build_atmosphere_;
+    std::optional<double> rotor_rpm_;
+    // One flag per grid cell and condition, parallel to grid: 1 where the
+    // channel that filled the cell was measured.  Empty without coverage.
+    std::vector<std::uint8_t> measured_;
+    bool has_coverage_ = false;
     std::vector<double> frequencies_;
     std::vector<double> spectra_;
 

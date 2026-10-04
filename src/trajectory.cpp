@@ -629,6 +629,79 @@ bool correct_vertical_speed_sign(std::vector<State>& states, const std::string& 
     return true;
 }
 
+namespace {
+
+// A static operation: a file whose header names a duration, one row per hold.
+// The aircraft stays at one place for each row's duration, with its nose on the
+// row's compass heading, and the rows follow one another.  Every hold has to sit
+// at the same point: a move is a trajectory, and a jump between holds would be
+// neither.  Sampled at 50 Hz, like the AC tracks.  The rotor is at 1 g with zero
+// velocity, so mu, both flight path angles and CT come from the same derivation
+// as a flown state, and the sphere is read at hover (its nose is the heading).
+void read_static_states(const std::string& filename, const LabeledCsv& csv,
+        const dimensional_data& vehicle, LengthUnit unit, std::vector<State>& states)
+{
+    const auto duration_column = csv.column({"duration"});
+    const auto x_column = csv.column({"x"});
+    const auto y_column = csv.column({"y"});
+    const auto z_column = csv.column({"z"});
+    const auto heading_column = csv.column({"heading"});
+    if (duration_column == LabeledCsv::npos || x_column == LabeledCsv::npos
+            || y_column == LabeledCsv::npos || z_column == LabeledCsv::npos
+            || heading_column == LabeledCsv::npos)
+    {
+        input_error(filename, " is a static operation, and needs columns named duration, x, y, z "
+                "and heading (x, y and z in --units; heading is compass degrees).");
+    }
+    constexpr double dt = 0.02;
+    const std::size_t needed = std::max({duration_column, x_column, y_column, z_column,
+            heading_column}) + 1;
+    double t = 0.0;
+    double x0 = 0.0, y0 = 0.0, z0 = 0.0;
+    for (std::size_t row = 0; row < csv.rows.size(); row++)
+    {
+        const auto& data = csv.rows[row];
+        if (data.size() < needed)
+            input_error("Row ", row + 1, " of ", filename, " has ", data.size(),
+                    " values, and the static columns need ", needed, ".");
+        const double duration = data[duration_column];
+        if (!std::isfinite(duration) || !(duration > 0.0))
+            input_error("Hold ", row + 1, " of ", filename, " has duration ", duration,
+                    " s; it has to be positive.");
+        const double x = data[x_column] * unit.to_meters;
+        const double y = data[y_column] * unit.to_meters;
+        const double z = data[z_column] * unit.to_meters;
+        if (row == 0)
+        {
+            x0 = x;
+            y0 = y;
+            z0 = z;
+        }
+        else if (std::fabs(x - x0) > 1e-6 || std::fabs(y - y0) > 1e-6 || std::fabs(z - z0) > 1e-6)
+        {
+            input_error("Hold ", row + 1, " of ", filename, " is not at the first hold's point. "
+                    "Static holds share one position; a move between points is a trajectory.");
+        }
+        const std::size_t count = std::max<std::size_t>(1,
+                static_cast<std::size_t>(std::llround(duration / dt)));
+        for (std::size_t k = 0; k < count; k++)
+        {
+            State now{};
+            now.t = t + static_cast<double>(k) * dt;
+            now.x = x;
+            now.y = y;
+            now.z = z;
+            now.nz = 1.0; // un-normalized, as derive_flight_parameters expects
+            now.heading = data[heading_column];
+            derive_flight_parameters(now, vehicle);
+            states.push_back(now);
+        }
+        t += static_cast<double>(count) * dt;
+    }
+}
+
+} // namespace
+
 Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_filename,
         const GeodeticInput& geodetic, LengthUnit unit)
 {
@@ -752,6 +825,10 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                 }
             }
             correct_vertical_speed_sign(states, filename);
+        }
+        else if (csv.column({"duration"}) != LabeledCsv::npos)
+        {
+            read_static_states(filename, csv, vehicle, unit, states);
         }
         else
         {

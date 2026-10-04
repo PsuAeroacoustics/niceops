@@ -1505,3 +1505,206 @@ TEST_CASE("a negative excess-attenuation factor turns the bounds off", "[sphere_
         std::filesystem::remove(path);
     }
 }
+
+TEST_CASE("phi reads the upper half above the plane, and folds only when asked",
+        "[sphere_database][upper_hemisphere]")
+{
+    // Directions built from the frame's own axes, so that up and across are
+    // exactly what the lookup sees.  psi sweeps the circle about the nose.
+    const auto frame = sphere_frame(Vec3(1.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0));
+    const double to_degrees = 180.0 / pi;
+    for (const double psi_degrees : {-150.0, -60.0, -20.0, 0.0, 45.0, 170.0})
+    {
+        const double psi = psi_degrees * pi / 180.0;
+        const Vec3 direction = 0.6 * frame.nose + (0.8 * std::cos(psi)) * frame.normal
+                + (0.8 * std::sin(psi)) * frame.starboard;
+        const double up = frame.normal.dot(direction);
+        const double across = frame.starboard.dot(direction);
+        INFO("psi = " << psi_degrees);
+        const auto full = lookup_angles(frame, direction);
+        const auto folded = lookup_angles(frame, direction, true);
+        // The full circle: atan2 of (across, -up), the stored layout's own
+        // convention (phi = 0 straight down, 180 straight up).
+        CHECK(full[0] == Catch::Approx(std::atan2(across, -up) * to_degrees).margin(1e-9));
+        // The fold: the mirror image, atan(across / |up|), as before.
+        CHECK(folded[0] == Catch::Approx(std::atan(across / std::fabs(up)) * to_degrees).margin(1e-9));
+        CHECK(full[1] == folded[1]);
+        if (up < 0.0)
+            CHECK(full[0] == folded[0]);
+        else
+            CHECK(std::fabs(full[0]) > 90.0);
+    }
+}
+
+TEST_CASE("GridAxis::locate crosses the seam of a periodic axis", "[sphere_database][upper_hemisphere]")
+{
+    // The full-circle phi axis runs -180 to 170 in 10-degree steps, so the one
+    // cell that is not a cell of the axis itself is the seam, 170 to 180.
+    std::vector<double> phi;
+    for (int i = -180; i < 180; i += 10)
+        phi.push_back(static_cast<double>(i));
+    GridAxis axis;
+    axis.reset(phi);
+    axis.set_period(360.0);
+
+    // Every value on the circle, seam included, weighs its two corners
+    // exactly as the periodic reference does.
+    for (int step = -720; step <= 720; step++)
+    {
+        const double val = 0.25 * static_cast<double>(step);
+        const auto cell = axis.locate(val);
+        CHECK(cell.fraction >= 0.0);
+        CHECK(cell.fraction <= 1.0);
+        // 180 is the same direction as -180, so the reference reads it there,
+        // as locate() does.
+        const double x = val >= 180.0 ? val - 360.0 : val;
+        const double reference = periodic_bilinear_interp(0.0, 0.0, 1.0, 1.0,
+                phi[cell.lo], phi[cell.hi], 0.0, 1.0, x, 0.5, 360.0);
+        REQUIRE(std::fabs(cell.fraction - reference) <= 1e-12);
+    }
+
+    // Halfway across the seam sits halfway between the 170 knot and the -180
+    // knot one period on, so the weight on the wrapped corner is one half.
+    const auto seam = axis.locate(175.0);
+    CHECK(seam.lo == phi.size() - 1);
+    CHECK(seam.hi == 0);
+    CHECK(seam.fraction == Catch::Approx(0.5));
+    // 180 is the same direction as -180, the first knot.
+    const auto pole = axis.locate(180.0);
+    CHECK(phi[pole.lo] + pole.fraction * (phi[pole.hi] - phi[pole.lo]) == Catch::Approx(-180.0).margin(1e-9));
+}
+
+TEST_CASE("The build atmosphere and rotor speed are read when the file records them",
+        "[sphere_database][build]")
+{
+    // Older databases carry neither, and must say nothing rather than guess.
+    const Database plain("databases/S-76D_M3.nod");
+    REQUIRE(!plain.build_atmosphere().has_value());
+    REQUIRE(!plain.rotor_rpm().has_value());
+
+    const auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_build_attributes.nod").string();
+    write_sphere(sphere, path);
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    const double temperature = 293.15;
+    const double pressure = 101.325;
+    const double humidity = 20.0;
+    const double rpm = 393.0;
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "build_temperature_K", NC_DOUBLE, 1, &temperature)
+            == NC_NOERR);
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "build_pressure_kPa", NC_DOUBLE, 1, &pressure)
+            == NC_NOERR);
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "build_relative_humidity_percent", NC_DOUBLE, 1,
+            &humidity) == NC_NOERR);
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "rotor_rpm", NC_DOUBLE, 1, &rpm) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+
+    const Database recorded(path);
+    REQUIRE(recorded.build_atmosphere().has_value());
+    CHECK(recorded.build_atmosphere()->temperature_kelvin == Catch::Approx(293.15));
+    CHECK(recorded.build_atmosphere()->pressure_kpa == Catch::Approx(101.325));
+    CHECK(recorded.build_atmosphere()->relative_humidity_percent == Catch::Approx(20.0));
+    REQUIRE(recorded.rotor_rpm().has_value());
+    CHECK(*recorded.rotor_rpm() == Catch::Approx(393.0));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("The unmeasured share follows the channels the builder did not measure",
+        "[sphere_database][coverage]")
+{
+    // The shipped databases record no coverage, so the share is undefined.
+    const Database plain("databases/S-76D_M3.nod");
+    REQUIRE(!plain.has_coverage());
+
+    // One sphere written out, with a coverage variable along its channels:
+    // measured where phi is negative, unmeasured elsewhere.
+    const auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_coverage.nod").string();
+    write_sphere(sphere, path);
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    int group = 0;
+    REQUIRE(nc_inq_grp_ncid(ncid, "sphere0", &group) == NC_NOERR);
+    int channels_dim = 0;
+    REQUIRE(nc_inq_dimid(group, "channels", &channels_dim) == NC_NOERR);
+    std::size_t channels = 0;
+    REQUIRE(nc_inq_dimlen(group, channels_dim, &channels) == NC_NOERR);
+    int phi_var = 0;
+    REQUIRE(nc_inq_varid(group, "phi", &phi_var) == NC_NOERR);
+    std::vector<double> phi(channels);
+    REQUIRE(nc_get_var_double(group, phi_var, phi.data()) == NC_NOERR);
+    std::vector<int> coverage(channels);
+    for (std::size_t c = 0; c < channels; c++)
+        coverage[c] = phi[c] < 0.0 ? 1 : 0;
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    int coverage_var = 0;
+    REQUIRE(nc_def_var(group, "coverage", NC_INT, 1, &channels_dim, &coverage_var) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_var_int(group, coverage_var, coverage.data()) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+
+    const Database recorded(path);
+    REQUIRE(recorded.has_coverage());
+    const auto state = recorded.source_state(Vec3(0.0, 0.0, 150.0), Vec3(60.0, 10.0, 2.0),
+            Vec3(0.1, -0.05, 1.0), 0.1, 0.0, 0.006);
+    // Both corner columns measured: nothing unmeasured.
+    CHECK(recorded.unmeasured_share({-45.0, 60.0}, state.blend) == Catch::Approx(0.0).margin(1e-12));
+    // Both unmeasured: all of it.
+    CHECK(recorded.unmeasured_share({45.0, 60.0}, state.blend) == Catch::Approx(1.0).margin(1e-12));
+    // Halfway between a measured column (-10) and an unmeasured one (0): half.
+    CHECK(recorded.unmeasured_share({-5.0, 60.0}, state.blend) == Catch::Approx(0.5).margin(1e-9));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Grid-shaped coverage marks a cell unmeasured if any of its bands is",
+        "[sphere_database][coverage]")
+{
+    // A spectral sphere, with coverage laid out as its amplitude is:
+    // (PHI, THETA, frequency).  Above the plane the lowest band is unmeasured,
+    // so those cells are unmeasured whatever the other bands say.
+    const Database plain("databases/S-76D_M3.nod");
+    auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
+    const std::size_t bands = 4;
+    sphere.frequencies = {100.0, 200.0, 400.0, 800.0};
+    sphere.amplitudes.assign(sphere.cells.size() * bands, 1.0);
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_grid_coverage.nod").string();
+    write_sphere(sphere, path);
+
+    int ncid = 0;
+    REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+    int group = 0;
+    REQUIRE(nc_inq_grp_ncid(ncid, "sphere0", &group) == NC_NOERR);
+    // Dimensions for the coverage, in the group: the sphere's own axes, and
+    // the frequency dimension write_sphere already defined.
+    REQUIRE(nc_redef(ncid) == NC_NOERR);
+    int dims[3] = {0, 0, 0};
+    REQUIRE(nc_def_dim(group, "coverage_phi", sphere.phis.size(), &dims[0]) == NC_NOERR);
+    REQUIRE(nc_def_dim(group, "coverage_theta", sphere.thetas.size(), &dims[1]) == NC_NOERR);
+    REQUIRE(nc_inq_dimid(group, "frequency", &dims[2]) == NC_NOERR);
+    const std::size_t n_phi = sphere.phis.size();
+    const std::size_t n_theta = sphere.thetas.size();
+    const std::size_t n_bands = bands;
+    const auto& phi = sphere.phis;
+    std::vector<int> coverage(n_phi * n_theta * n_bands);
+    for (std::size_t p = 0; p < n_phi; p++)
+        for (std::size_t t = 0; t < n_theta; t++)
+            for (std::size_t b = 0; b < n_bands; b++)
+                coverage[(p * n_theta + t) * n_bands + b] = (phi[p] < 0.0 || b != 0) ? 1 : 0;
+    int coverage_var = 0;
+    REQUIRE(nc_def_var(group, "coverage", NC_INT, 3, dims, &coverage_var) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    REQUIRE(nc_put_var_int(group, coverage_var, coverage.data()) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+
+    const Database recorded(path);
+    REQUIRE(recorded.has_spectra());
+    REQUIRE(recorded.has_coverage());
+    const auto state = recorded.source_state(Vec3(0.0, 0.0, 150.0), Vec3(60.0, 10.0, 2.0),
+            Vec3(0.1, -0.05, 1.0), 0.1, 0.0, 0.006);
+    CHECK(recorded.unmeasured_share({-45.0, 60.0}, state.blend) == Catch::Approx(0.0).margin(1e-12));
+    CHECK(recorded.unmeasured_share({45.0, 60.0}, state.blend) == Catch::Approx(1.0).margin(1e-12));
+    CHECK(recorded.unmeasured_share({-5.0, 60.0}, state.blend) == Catch::Approx(0.5).margin(1e-9));
+    std::filesystem::remove(path);
+}
