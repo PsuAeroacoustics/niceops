@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <limits>
 
 #include "faddeeva.hpp"
 #include "util/constants.hpp"
@@ -17,12 +18,11 @@ namespace {
 constexpr double spherical_spreading_coefficient = 0.727477;
 constexpr double ground_reflection_coefficient = 6.325159;
 
-// Beyond this the boundary-loss term is negligible and its series is not worth
-// evaluating; panam uses the same cut, leaving the term at zero above it.
-constexpr double boundary_loss_cutoff = 500.0;
-// |1 + R_p|^2 under which the boundary loss is kept past the cutoff (see
-// reflection_coefficient): -40 dB.
-constexpr double near_cancellation = 1e-4;
+// |w| up to which reflection_coefficient_bounds() samples Q; beyond it the
+// bound is analytic.  panam once cut the boundary-loss term to zero here,
+// because exp(-w) and erfc evaluated apart overflow; the Faddeeva form does
+// not, and both now evaluate the term at any |w| (panam e978703).
+constexpr double bound_sample_edge = 500.0;
 
 // The spherical-wave reflection coefficient Q of the image source, at grazing
 // cosine `cos_grazing`, for a band whose Delany-Bazley impedance is (zr, zi).
@@ -50,8 +50,13 @@ inline std::array<double, 2> reflection_coefficient(double cos_grazing, double k
         // Numerical distance: sqrt(i k / (1 + Z cos)) * (cos + Z), with
         // k = pi f R / a.  panam squares this to get w and then takes
         // sqrt(w) again inside the boundary loss, but sqrt(w) is exactly
-        // this -- its real part is positive throughout the domain the model
-        // reaches -- so the round trip is skipped.
+        // this wherever its real part is positive, so the round trip is
+        // skipped.  That is every passive ground but a mass-like one
+        // (Im Z > 0 here, which a thin layer gives in some bands): there the
+        // parameter is in the second quadrant and the principal root is its
+        // negative, whose w() carries a surface-wave term growing as
+        // exp(|Re w|) with range.  Such a ground has no surface wave, and this
+        // keeps the branch without one.
         const double k = kappa;
         const double base_r = 1.0 + zr * cos_grazing;
         const double base_i = zi * cos_grazing;
@@ -83,47 +88,21 @@ inline std::array<double, 2> reflection_coefficient(double cos_grazing, double k
         const double param_r = root_r * sum_r - root_i * sum_i;
         const double param_i = root_r * sum_i + root_i * sum_r;
 
-        // |w| <= 500 is |parameter|^2 <= 500, which norm gives without a root.
-        double loss_r = 0.0;
-        double loss_i = 0.0;
-        if (param_r * param_r + param_i * param_i <= boundary_loss_cutoff)
-        {
-            // panam writes this as 1 + i sqrt(pi w) exp(-w)(1 - erf(-i sqrt w)).
-            // sqrt(pi w) is sqrt(pi) times the parameter, and the trailing
-            // product is the Faddeeva function -- the stable form.
-            const auto faddeeva_value = faddeeva({param_r, param_i});
-            const double fr = faddeeva_value.real();
-            const double fi = faddeeva_value.imag();
-            const double product_r = param_r * fr - param_i * fi;
-            const double product_i = param_r * fi + param_i * fr;
-            // 1 + i*root_pi*product
-            loss_r = 1.0 - root_pi * product_i;
-            loss_i = root_pi * product_r;
-        }
-        else if ((1.0 + plane_r) * (1.0 + plane_r) + plane_i * plane_i < near_cancellation)
-        {
-            // Near grazing, which a refracted ray arriving almost level at a
-            // flush receiver gives: the plane coefficient tends to -1, so
-            // dropping the boundary loss as panam does past the cutoff cancels
-            // the two paths to rounding (the model then threw).  What is left
-            // there is the loss itself, (1 - R_p) F, and past |w| = 500
-            // F = -1/(2w) - 3/(4w^2) - 15/(8w^3) to 1e-7 of itself.  It is at
-            // most 2/|w|, so it moves the level by more than 1 dB only where
-            // |1 + R_p| is under about 1e-2; past -40 dB the plane coefficient
-            // alone is already that wrong, and everything above it is panam's
-            // to the bit.
-            const double w_r = param_r * param_r - param_i * param_i;
-            const double w_i = 2.0 * param_r * param_i;
-            const double w_norm = w_r * w_r + w_i * w_i;
-            const double inv_r = w_r / w_norm; // 1/w
-            const double inv_i = -w_i / w_norm;
-            const double inv2_r = inv_r * inv_r - inv_i * inv_i; // 1/w^2
-            const double inv2_i = 2.0 * inv_r * inv_i;
-            const double inv3_r = inv2_r * inv_r - inv2_i * inv_i; // 1/w^3
-            const double inv3_i = inv2_r * inv_i + inv2_i * inv_r;
-            loss_r = -0.5 * inv_r - 0.75 * inv2_r - 1.875 * inv3_r;
-            loss_i = -0.5 * inv_i - 0.75 * inv2_i - 1.875 * inv3_i;
-        }
+        // panam writes this as 1 + i sqrt(pi w) exp(-w)(1 - erf(-i sqrt w)).
+        // sqrt(pi w) is sqrt(pi) times the parameter, and the trailing product
+        // is the Faddeeva function -- the stable form, at any |w|.  For a
+        // ground whose parameter falls below the real axis (at grazing,
+        // -Im Z > Re Z: most soils at low frequency) w() holds the surface wave,
+        // 2 exp(-z^2), of size at most one since the parameter stays within
+        // 45 degrees of the real axis.
+        const auto faddeeva_value = faddeeva({param_r, param_i});
+        const double fr = faddeeva_value.real();
+        const double fi = faddeeva_value.imag();
+        const double product_r = param_r * fr - param_i * fi;
+        const double product_i = param_r * fi + param_i * fr;
+        // 1 + i*root_pi*product
+        const double loss_r = 1.0 - root_pi * product_i;
+        const double loss_i = root_pi * product_r;
 
         // image = plane + loss * (1 - plane)
         const double one_minus_r = 1.0 - plane_r;
@@ -377,14 +356,24 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
     // (1 + |Q|)^2, whatever the geometry.  What is left is sup |Q| per band.
     //
     // Q depends on the geometry only through the grazing cosine and kappa =
-    // pi f R / a.  Outside |w| <= 500 the model drops the boundary loss and Q is
-    // the plane-wave coefficient, at most 1 in size for a passive ground
-    // (Re Z > 0).  Inside, |Q| climbs past 1 toward grazing incidence -- the
-    // surface wave -- to about 2.02 just inside the |w| = 500 edge, which is
-    // +9.6 dB, not the +6 dB of pressure doubling.  The sweep samples each
-    // grazing cosine up to that edge.  Against a sweep 40x denser in both
-    // directions, over flow resistances 10 to 200,000 kPa s/m^2 and every
-    // band, it came within 0.08%; the 1% margin covers that.
+    // pi f R / a.  Up to |w| = 500, |Q| climbs past 1 toward grazing
+    // incidence -- the surface wave -- to about 2.02 at the edge for an
+    // ordinary soil, which is +9.6 dB, not the +6 dB of pressure doubling.  The
+    // sweep samples each grazing cosine up to that edge.  Against a sweep 40x
+    // denser in both directions, over flow resistances 10 to 200,000 kPa s/m^2
+    // and every band, it came within 0.08%; the 1% margin covers that.
+    //
+    // Beyond the edge the bound is analytic.  There Q = R_p + F (1 - R_p) with
+    // |R_p| <= 1 for a passive ground (Re Z > 0), and F = 1 - S + P: S the
+    // asymptotic series of the Faddeeva function, |1 - S| <= 1.003/(2|w|), and
+    // P = 2i sqrt(pi) z exp(-z^2) the surface wave, present only where the
+    // parameter z is below the real axis.  The parameter's direction, theta,
+    // does not depend on range, so |P| = 2 sqrt(pi) |z| exp(-|z|^2 cos 2 theta)
+    // peaks at |z|^2 = 1/(2 cos 2 theta), or at the edge if that is nearer.  For
+    // ordinary soils the peak is far inside the edge and P is nothing past it;
+    // for a nearly lossless stiff surface (a thin layer's band with theta near
+    // -45 degrees) the wave travels on past the edge and the bound grows with
+    // it, as it should.
     constexpr int cosines = 40;
     constexpr int kappas = 48;
     constexpr double margin = 1.01;
@@ -402,7 +391,7 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
                     = c == 0 ? 0.0 : std::pow(10.0, -4.0 + 4.0 * (c - 1) / (cosines - 1));
             const double base = std::hypot(1.0 + zr * cos_grazing, zi * cos_grazing);
             const double sum_norm = (cos_grazing + zr) * (cos_grazing + zr) + zi * zi;
-            const double edge = boundary_loss_cutoff * base / sum_norm;
+            const double edge = bound_sample_edge * base / sum_norm;
             for (int k = 0; k <= kappas; k++)
             {
                 const double kappa = k == kappas
@@ -412,6 +401,34 @@ std::vector<double> reflection_coefficient_bounds(const GroundModel& ground,
                         ground.boundary_loss_correction);
                 largest = std::max(largest, std::hypot(q[0], q[1]));
             }
+            const auto plane = reflection_coefficient(cos_grazing, 0.0, zr, zi, false);
+            const double plane_size = std::hypot(plane[0], plane[1]);
+            double beyond = plane_size;
+            if (ground.boundary_loss_correction)
+            {
+                // The parameter at kappa = 1; its direction is theta at every kappa.
+                const std::complex<double> beta(zr, zi);
+                const auto z = std::sqrt(std::complex<double>(0.0, 1.0) / (1.0 + beta * cos_grazing))
+                        * (cos_grazing + beta);
+                double wave = 0.0;
+                if (z.imag() < 0.0)
+                {
+                    const double cos_2theta = (z.real() * z.real() - z.imag() * z.imag()) / std::norm(z);
+                    if (cos_2theta > 0.0)
+                    {
+                        const double at = std::max(0.5 / cos_2theta, bound_sample_edge);
+                        wave = 2.0 * std::sqrt(pi * at) * std::exp(-at * cos_2theta);
+                    }
+                    else
+                    {
+                        // Not passive; ground_impedance() refuses such a ground.
+                        wave = std::numeric_limits<double>::infinity();
+                    }
+                }
+                const double one_minus = std::hypot(1.0 - plane[0], plane[1]);
+                beyond = plane_size + one_minus * (1.003 / (2.0 * bound_sample_edge) + wave);
+            }
+            largest = std::max(largest, beyond);
         }
         bounds[band] = margin * largest;
     }

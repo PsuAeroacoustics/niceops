@@ -169,7 +169,7 @@ seconds, levels in dB.
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory: the energy average over a 24-hour day, with the 22:00–07:00 night penalized. A daytime operation reads its SEL less 49.37 dB. |
 | `--lamax_file` | Write each observer's LAmax: the highest A-weighted level over the operation, dB. Forces the whole history, so the peak is exact. |
 | `--nax_file`, `--nax_threshold` | Write each observer's NAx: the number of operations whose own LAmax reaches the threshold, dBA (required with `--nax_file`: there is no default, so the study's threshold is always stated). The count adds across trajectories. EPNL is not implemented. |
-| `--coverage_file` | Write, per observer, the energy-weighted share of its levels that came from cells the database did not measure. Needs a database that records `coverage` (none of the shipped ones does yet). Straight rays only: refused with `--refraction` or `-a`. |
+| `--coverage_file` | Write, per observer, the energy-weighted share of its levels that came from cells the database did not measure. Needs a database that records `coverage`, as the 2017 aircraft databases do. A cell counts as measured only if every band of it was, so a band the builder's SNR gate dropped counts against it: on B407 that is 5–10 kHz in about half the measured cells, and the demo grid reads 70–80% unmeasured. Straight rays only: refused with `--refraction` or `-a`. |
 | `--full_history` | Integrate each SEL over the whole history rather than the event's 10 dB-down window. Slower, since no window is found. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
@@ -277,6 +277,37 @@ directory of `.nc` files per aircraft (AS350, Be206L3, Be407, Be430, EC130, MD-9
 R-66, SH-60B), each with its own `vehicle.cfg` and `vehicle.json`. `Be407_spectral.nod` sits
 beside them — 26 bands, 10–3150 Hz, built from `Be407/` as above. The built `.nod` files in
 `databases/` are tracked; the source spheres are far too large and stay in OneDrive.
+
+#### Where the 2017 databases come from
+
+The AS350, B407, Be206L3, EC130, RO-44 and RO-66 databases are built from the 2017 Noise
+Abatement flight test by panam (`noise_abatement_2017.build_all`, then
+`build_empirical_database`). The validation harness keeps the recipes (`spheres/rebuild.py`,
+`spheres/hover_sphere.py`, `spheres/rebuild_database.py`). Each file records its build at the
+root: `speed_reference`, the build atmosphere, and `DOPPLER_SHIFT_REMOVED` and `coverage` per
+group.
+
+- **B407** is the reference aircraft and the one validated most. Its spheres are depropagated
+  along curved rays through each run's own atmosphere, with a 2-degree emission floor, an
+  adaptive 2-degree grid and tone-aware third-octave bands. A rotor harmonic near a band edge is
+  filed whole in its own band instead of being split by whole FFT bins.
+- **The B407 hover** is synthesized from the slowest level pass with the Doppler shift taken
+  out, then corrected by the measured hovers. Two rings were measured: 18–25 degrees below the
+  horizon (out of ground effect) and 0.5–3 degrees (in ground effect). Each ring is a Fourier
+  series in azimuth from the heading, with a sum-to-zero offset per heading for the wind. The
+  two are blended linearly in elevation from 3 to 17.5 degrees. Below the high ring each
+  azimuthal order fades toward the nadir as cos^m.
+  - Nothing measures 3–17 degrees or the region under the aircraft, so treat the hover there
+    as an interpolation.
+  - The low ring is the noisier of the two (5 dB held-out rms against 2.8).
+- **The other aircraft** keep the September recipe: straight rays, a 10-degree floor and a
+  25-degree grid. AS350, EC130 and RO-44 still hold the September spheres. Be206L3 and RO-66
+  are built without the approach cards, which are the validation set.
+
+A database written before panam c53588f (2026-09-26) may have its last group unwritten. Every
+entry is then the netCDF fill value (9.97e36), which the loader reads as a finite 1e37 dB
+level. The September AS350, EC130, RO-44 and RO-66 files had this, and spectral runs that
+reached the fastest +35-degree condition gave an infinite SEL.
 
 #### A note on levels changing
 
