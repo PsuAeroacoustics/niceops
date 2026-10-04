@@ -909,6 +909,28 @@ TEST_CASE("fixed_load_factor: query above the reference scales by 20*log10(load 
     std::filesystem::remove(path);
 }
 
+TEST_CASE("source coverage distinguishes clamping from analytic load scaling", "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_source_coverage.nod", fixed_load_factor_conditions, true);
+    Database db(path);
+    const auto inside = db.blend_at(0.0, 0.0, test_ct_reference);
+    CHECK_FALSE(inside.advance_ratio_clamped);
+    CHECK_FALSE(inside.flight_path_angle_clamped);
+    CHECK_FALSE(inside.thrust_coefficient_clamped);
+    const auto outside = db.blend_at(-0.1, 1.1, 2.0 * test_ct_reference);
+    CHECK(outside.advance_ratio_clamped);
+    CHECK(outside.flight_path_angle_clamped);
+    CHECK_FALSE(outside.thrust_coefficient_clamped);
+    CHECK(outside.level_correction_db > 0.0);
+    const auto boundary = db.blend_at(0.0, 1.0, 2.0 * test_ct_reference);
+    CHECK_FALSE(boundary.advance_ratio_clamped);
+    CHECK_FALSE(boundary.flight_path_angle_clamped);
+    CHECK(db.eval(db.sphere_radius(), 0.0, 90.0, outside)
+            == db.eval(db.sphere_radius(), 0.0, 90.0, boundary));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("fixed_load_factor: cull_range accounts for the correction", "[sphere_database]")
 {
     const auto path = write_fixed_load_factor_test_database(

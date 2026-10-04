@@ -320,6 +320,12 @@ public:
         // convention of leaving load factors at or below 1 g unscaled from
         // the stored reference rather than extrapolating them down.
         double level_correction_db = 0.0;
+        // Queries outside the stored axis ranges are clamped before blending.
+        // These flags describe axis coverage, not coverage of the convex hull
+        // or the measured angular directions.
+        bool advance_ratio_clamped = false;
+        bool flight_path_angle_clamped = false;
+        bool thrust_coefficient_clamped = false;
     };
 
     // Everything about one trajectory state that every observer shares: where

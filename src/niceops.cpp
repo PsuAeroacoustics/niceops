@@ -829,6 +829,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
     const auto offset = heading_offset(trajectory.states, options.frame_bearing);
     std::size_t by_heading = 0, slow = 0, load_capped = 0;
+    std::size_t mu_clamped = 0, fpa_clamped = 0, ct_clamped = 0, load_scaled = 0;
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
@@ -858,7 +859,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
                 options.qsam ? state.fpa_e : state.fpa, thrust_coefficient));
+        const auto& blend = source_states.back().blend;
+        mu_clamped += blend.advance_ratio_clamped;
+        fpa_clamped += blend.flight_path_angle_clamped;
+        ct_clamped += blend.thrust_coefficient_clamped;
+        load_scaled += blend.level_correction_db > 0.0;
     }
+    log("Source axis coverage over ", nt, " states: advance ratio clamped ", mu_clamped,
+            ", flight-path angle clamped ", fpa_clamped, ", thrust coefficient clamped ", ct_clamped,
+            "; analytic load-factor correction applied ", load_scaled, ".");
+    if (mu_clamped || fpa_clamped || ct_clamped)
+        warn("Flight conditions exceed the source database's axis ranges: advance ratio ", mu_clamped,
+                ", flight-path angle ", fpa_clamped, ", thrust coefficient ", ct_clamped,
+                " of ", nt, " states. These queries use clamped source conditions.");
     if (load_capped > 0)
     {
         warn(load_capped, " of ", nt, " states exceed ", options.max_load_factor, " g on a "

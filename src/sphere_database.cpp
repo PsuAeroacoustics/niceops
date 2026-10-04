@@ -1553,13 +1553,17 @@ Database::Blend Database::blend_at(double advance_ratio, double flight_path_angl
     // analytic load-factor correction compares it against
     // reference_thrust_coefficient_ in physical units, not normalized ones.
     const double raw_thrust_coefficient = thrust_coefficient;
+    Blend blend;
+    blend.advance_ratio_clamped = advance_ratio < advance_ratio_min || advance_ratio > advance_ratio_max;
+    blend.flight_path_angle_clamped = flight_path_angle < flight_path_angle_min || flight_path_angle > flight_path_angle_max;
+    blend.thrust_coefficient_clamped = !fixed_load_factor_
+            && (thrust_coefficient < thrust_coefficient_min || thrust_coefficient > thrust_coefficient_max);
 
     // Normalize flight condition and limit range to [0.0,1.0]
     advance_ratio = clamp01(unit_interval(advance_ratio, advance_ratio_min, advance_ratio_max));
     flight_path_angle = clamp01(
             unit_interval(flight_path_angle, flight_path_angle_min, flight_path_angle_max));
 
-    Blend blend;
     if (fixed_load_factor_)
     {
         // CT is not part of this triangulation -- see the member comment on
