@@ -278,6 +278,11 @@ target_link_libraries(niceops_benchmark niceops_core CLI11::CLI11 Threads::Threa
 
 # Add testing with CTest
 enable_testing()
+add_test(NAME propagation_table_midpoint_validation COMMAND ${CMAKE_COMMAND}
+  -DTOOL=$<TARGET_FILE:niceops_propagation_table>
+  -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_validation
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_table_validation.cmake
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 # One default run feeds both the LAE and state golden comparisons
 add_test(NAME regression_default COMMAND niceops -S state/ci_state.csv --no-spectral --no-ground_effect WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # The two golden comparisons read files this run writes.  CI happens to run the

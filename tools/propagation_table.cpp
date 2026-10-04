@@ -27,6 +27,9 @@
 #include <limits>
 #include <optional>
 #include <cmath>
+#include <fstream>
+#include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -42,6 +45,7 @@
 #include "util/constants.hpp"
 #include "util/logger.hpp"
 #include "util/parallel.hpp"
+#include "util/paths.hpp"
 
 using namespace niceops; // NOLINT
 
@@ -80,6 +84,9 @@ int main(int argc, char** argv)
     double max_angle = 50.0;
     double points_per_wavelength = 0.0;
     double sound_speed_override = 0.0;
+    std::string validation_csv;
+    int validation_samples = 21;
+    double validation_max_error = 1.0;
     app.add_option("--method", method, "pe (default) or ground_model.")->check(CLI::IsMember({"pe", "ground_model"}));
     app.add_option("--atmosphere", atmosphere_file,
             "Atmosphere profile, as for niceops; required for pe, and for ground_model gives the sound speed.");
@@ -102,6 +109,15 @@ int main(int argc, char** argv)
     app.add_option("--porosity_rate", porosity_rate, "As for niceops, 1/m.");
     app.add_option("--layer_depth", layer_depth, "As for niceops, m.");
     app.add_option("--samples", samples, "pe: frequencies per band (default 5).")->check(CLI::PositiveNumber);
+    app.add_option("--validation_csv", validation_csv,
+            "Check cell midpoints against direct solves and write errors in dB (SI coordinates). "
+            "Exit 2 if a covered reference exceeds --validation_max_error or a table gap hides it.");
+    app.add_option("--validation_samples", validation_samples,
+            "pe validation: frequencies per band in the reference (default 21).")
+            ->check(CLI::PositiveNumber);
+    app.add_option("--validation_max_error", validation_max_error,
+            "Largest permitted absolute midpoint error in dB (default 1).")
+            ->check(CLI::NonNegativeNumber);
     app.add_option("--max_angle", max_angle, "pe: angle limit, degrees (default 50).")->check(CLI::Range(0.1, 60.0));
     app.add_option("--ppw", points_per_wavelength, "pe: grid points per wavelength in height (default: the PE's).")->check(CLI::NonNegativeNumber);
     app.add_option("-o,--output", output, "The table to write (netCDF).")->required();
@@ -110,6 +126,14 @@ int main(int argc, char** argv)
     Logger::instance().set_file("log/propagation_table.log");
     try
     {
+        if (!validation_csv.empty())
+        {
+            if (!std::isfinite(validation_max_error))
+                throw std::runtime_error("--validation_max_error must be finite");
+            if (std::filesystem::weakly_canonical(validation_csv)
+                    == std::filesystem::weakly_canonical(output))
+                throw std::runtime_error("--validation_csv must differ from the table output");
+        }
         const LengthUnit unit = units == "m" ? meters : feet;
         for (double& h : source_heights)
             h *= unit.to_meters;
@@ -262,6 +286,122 @@ int main(int argc, char** argv)
         provenance["bands_hz"] = join(bands);
         const PropagationTable table(std::move(axes), std::move(values), description, false, provenance);
         table.save(output);
+        if (!validation_csv.empty())
+        {
+            ensure_parent_directory(validation_csv);
+            std::ofstream report(validation_csv);
+            if (!report)
+                throw std::runtime_error("cannot write " + validation_csv);
+            report << std::setprecision(17)
+                   << "bearing_deg,source_height_m,receiver_height_m,range_m,band_hz,table_db,reference_db,error_db,status\n";
+            const auto midpoint = [](const std::vector<double>& axis) {
+                std::vector<double> points;
+                if (axis.size() == 1)
+                    points = axis;
+                else
+                    for (std::size_t i = 0; i + 1 < axis.size(); i++)
+                        points.push_back(0.5 * (axis[i] + axis[i + 1]));
+                return points;
+            };
+            const auto sources = midpoint(table.axes().source_heights);
+            const auto receivers = midpoint(table.axes().receiver_heights);
+            const auto ranges = midpoint(table.axes().ranges);
+            const auto band_map = table.match_bands(bands, 0, nb);
+            struct Errors { std::size_t count = 0, gaps = 0; double sum = 0.0, square = 0.0, maximum = 0.0; };
+            std::vector<Errors> errors(nb);
+            std::size_t unavailable = 0;
+            std::optional<LayeredSoundSpeed> reference_profile;
+            if (method == "pe")
+                reference_profile.emplace(*profile, 90.0);
+            for (std::size_t b = 0; b < table.axes().bearings.size(); b++)
+            {
+                const double bearing = table.isotropic() ? 0.0 : table.axes().bearings[b] + 180.0 / bearings;
+                std::vector<double> c;
+                if (reference_profile)
+                {
+                    c.resize(reference_profile->levels());
+                    reference_profile->along(std::sin(bearing * pi / 180.0), std::cos(bearing * pi / 180.0), c.data());
+                }
+                for (const double source : sources)
+                {
+                    std::vector<PeResult> reference;
+                    if (method == "pe")
+                    {
+                        std::vector<PeSetup> setups(nb);
+                        for (std::size_t band = 0; band < nb; band++)
+                        {
+                            auto& setup = setups[band];
+                            setup.source_height = source;
+                            setup.receiver_heights = receivers;
+                            setup.max_range = r_max;
+                            setup.output_step = dr / 2.0;
+                            setup.admittance = admittance[band];
+                            setup.z = reference_profile->heights();
+                            setup.c = c;
+                            setup.max_angle = max_angle;
+                            setup.points_per_wavelength = points_per_wavelength > 0.0 ? 2.0 * points_per_wavelength : 20.0;
+                        }
+                        reference = solve_pe_bands(setups, bands, validation_samples);
+                    }
+                    for (std::size_t h = 0; h < receivers.size(); h++)
+                        for (std::size_t r = 0; r < ranges.size(); r++)
+                        {
+                            std::vector<double> interpolated(nb, std::numeric_limits<double>::quiet_NaN());
+                            const bool covered = table.lookup(bearing, source, receivers[h], ranges[r], band_map, interpolated.data());
+                            GroundModel here = ground;
+                            here.receiver_height = receivers[h];
+                            const auto exact = method == "ground_model"
+                                    ? excess_ground_attenuation(here, source, ranges[r], sound_speed, bands)
+                                    : std::vector<double>();
+                            for (std::size_t band = 0; band < nb; band++)
+                            {
+                                // PE output starts at dr/2, so the first range midpoint (1.5 dr) is index 2.
+                                const std::size_t q = table.axes().ranges.size() == 1 ? 1 : 2 * r + 2;
+                                const double ref = method == "ground_model" ? exact[band]
+                                        : q < reference[band].range.size() ? reference[band].relative_level[h][q]
+                                                                           : std::numeric_limits<double>::quiet_NaN();
+                                const bool valid_reference = std::isfinite(ref);
+                                const double error = covered && valid_reference ? interpolated[band] - ref
+                                                                                : std::numeric_limits<double>::quiet_NaN();
+                                auto& stats = errors[band];
+                                if (!valid_reference)
+                                    unavailable++;
+                                else if (!covered)
+                                    stats.gaps++;
+                                else
+                                {
+                                    stats.count++;
+                                    stats.sum += error;
+                                    stats.square += error * error;
+                                    stats.maximum = std::max(stats.maximum, std::abs(error));
+                                }
+                                report << bearing << ',' << source << ',' << receivers[h] << ',' << ranges[r] << ','
+                                       << bands[band] << ',' << (covered ? interpolated[band] : std::numeric_limits<double>::quiet_NaN())
+                                       << ',' << ref << ',' << error << ','
+                                       << (!valid_reference ? "reference_unavailable" : covered ? "covered" : "table_gap") << '\n';
+                            }
+                        }
+                    std::cerr << "Validated bearing " << bearing << ", source " << source << " m\n";
+                }
+            }
+            report.close();
+            if (!report)
+                throw std::runtime_error("failed writing " + validation_csv);
+            bool failed = false;
+            for (std::size_t band = 0; band < nb; band++)
+            {
+                const auto& stats = errors[band];
+                std::cerr << bands[band] << " Hz: " << stats.count << " covered, " << stats.gaps << " gaps; bias "
+                          << (stats.count ? stats.sum / stats.count : 0.0) << ", rms "
+                          << (stats.count ? std::sqrt(stats.square / stats.count) : 0.0)
+                          << ", max " << stats.maximum << " dB\n";
+                failed = failed || stats.count == 0 || stats.gaps > 0 || stats.maximum > validation_max_error;
+            }
+            std::cerr << unavailable << " reference values unavailable; midpoint validation " << (failed ? "FAILED" : "passed")
+                      << ". Table retained at " << output << ".\n";
+            if (failed)
+                return 2;
+        }
         std::cerr << "Wrote " << output << " (" << table.axes().bearings.size() << " bearings x " << ns
                   << " source heights x " << nh << " receiver heights x " << nr << " ranges x " << nb << " bands) in "
                   << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << " s."
