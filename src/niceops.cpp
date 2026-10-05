@@ -2766,7 +2766,7 @@ int run(int argc, char* argv[])
             "trajectories and one name, each is named after its track "
             "(<track>_atmosphere.csv).");
     app.add_option("--refraction", refraction,
-            "Refraction through the --atmosphere profile: none (default); linear -- curved rays "
+            "Refraction through the --atmosphere (or --wind) profile: none (default); linear -- curved rays "
             "through its effective sound speed (temperature and wind) fitted to a straight line "
             "per path; or stratified -- through the profile's own layers, slower but without "
             "the fit. Both give shadow zones under upward refraction.")
