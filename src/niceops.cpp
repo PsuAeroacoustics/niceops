@@ -5,6 +5,7 @@
 // output and optional matplotlib figures.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -45,6 +46,7 @@
 #include "util/paths.hpp"
 #include "util/parallel.hpp"
 #include "util/sel.hpp"
+#include "util/time_weighting.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
 
@@ -602,10 +604,19 @@ struct RunOptions
     double trim_start = 0.0;
     double utc_offset = 0.0;
     bool scattered = false;
-    bool want_dnl = false;
+    // -D, --lden_file, --cnel_file, indexed by DayMetric.
+    std::array<bool, day_metric_count> want_day_metric {};
     bool want_lamax = false;
     bool want_nax = false;
     double nax_threshold = std::numeric_limits<double>::quiet_NaN();
+    // --ta_file: seconds the weighted level exceeds ta_threshold.
+    bool want_ta = false;
+    double ta_threshold = std::numeric_limits<double>::quiet_NaN();
+    // The time weighting LAmax, NAx and TA read the level through
+    // (--lamax_weighting), in reception time.
+    LevelWeighting lamax_weighting = LevelWeighting::fast;
+    // --csel_file: the C-weighted SEL, from the band levels.
+    bool want_csel = false;
     bool want_coverage = false;
     bool full_history = false;
     bool write_time_history = false;
@@ -634,7 +645,22 @@ struct PathJob
     std::string vehicle;
     std::string output;
     std::string state;
+    // The C-weighted SEL's file (--csel_file); empty for none.
+    std::string csel_output;
     std::size_t count = 1;
+};
+
+// What every trajectory of a run adds to, per observer: each day-evening-night
+// metric's penalized energy (summed, normalized to the day at the end), the
+// largest weighted level, the NAx count, the time above, and the coverage
+// report's two energies.  A metric not asked for keeps an empty vector.
+struct RunTotals
+{
+    std::array<std::vector<double>, day_metric_count> day_energy;
+    std::vector<double> lamax;
+    std::vector<double> nax;
+    std::vector<double> time_above;
+    std::vector<std::array<double, 2>> coverage;
 };
 
 // Take the trajectory's flight conditions against the air when its database's
@@ -695,9 +721,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const RunOptions& options, const std::vector<Vec3>& observers,
         const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
         const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
-        std::vector<double>& dnl_energy, std::vector<double>& lamax, std::vector<double>& nax,
-        std::vector<std::array<double, 2>>& coverage)
+        RunTotals& totals)
 {
+    auto& lamax = totals.lamax;
+    auto& nax = totals.nax;
+    auto& coverage = totals.coverage;
     // Create trajectory from CSV data
     Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
     // Ground effect is on by default, but it acts on per-band levels, so it is
@@ -803,29 +831,61 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
     }
 
+    // An exponential time weighting over fewer than two samples per time
+    // constant reports the sampling, not the signal: on a 0.5 s history the
+    // fast detector (tau 0.125 s) settles fully within every sample and its
+    // "maximum" is the largest sample again, under another name.  Refused,
+    // since the number would look like a meter reading.
+    //
+    // The check is on the integration step, the mean interval, because that is
+    // the step every sample is weighted by (T times its reception factor), in
+    // the time weighting as in the SEL.  Not on the longest interval: the 2017
+    // AC tracks are 0.02 s with the odd dropout of up to 0.14 s, which the
+    // longest interval would refuse while the history the detector sees is
+    // uniform.  A part in 1e9 of slack lets a track at exactly tau/2 pass.
+    const bool want_weighted_level = options.want_lamax || options.want_nax || options.want_ta;
+    if (want_weighted_level && nt >= 2
+            && integration_step > coarsest_weighting_step(options.lamax_weighting) * (1.0 + 1e-9))
+    {
+        input_error("--lamax_weighting ", to_string(options.lamax_weighting), " (", maximum_name(options.lamax_weighting),
+                ", time constant ", weighting_time_constant(options.lamax_weighting), " s) needs the level history "
+                "sampled at least every ", coarsest_weighting_step(options.lamax_weighting), " s, half its time "
+                "constant, and ", job.trajectory, " is sampled every ", integration_step, " s. Give a finer -s "
+                "(a geodetic track is refitted onto it), or another --lamax_weighting: slow needs 0.5 s, leq0.5 "
+                "0.25 s, and instantaneous takes any step.");
+    }
+
+    // The day-evening-night penalties (-D, --lden_file, --cnel_file), per
+    // state, from the track's UTC seconds shifted into local time.  Each is a
+    // level added to the sample (0 outside its periods).
+    std::array<std::vector<double>, day_metric_count> day_penalty;
+    for (std::size_t m = 0; m < day_metric_count; m++)
+    {
+        if (!options.want_day_metric[m])
+            continue;
+        const auto metric = static_cast<DayMetric>(m);
+        day_penalty[m].resize(nt);
+        for (std::size_t it = 0; it < nt; it++)
+        {
+            if (std::isnan(trajectory.states[it].utcsec))
+            {
+                // A NaN fails both halves of a period's window test, so a track
+                // with no clock was classed as daytime -- or, when the start
+                // defaulted to zero, as UTC midnight, i.e. night: +10 dB on the
+                // whole footprint, silently.  Either way the answer was made up.
+                input_error(day_metric_option(metric), " needs the time of day, and ", job.trajectory,
+                        " does not carry one: it has no utcsec column. Give --start_utc <seconds since UTC "
+                        "midnight at t = 0>.");
+            }
+            day_penalty[m][it] = schedule_penalty(trajectory.states[it].utcsec, options.utc_offset, metric);
+        }
+    }
+
     // The source geometry and the blend of database operating conditions depend
     // only on the trajectory state, so build them once here rather than once
     // per (observer, state) pair.  The blend is a Delaunay locate() walk
     // and was by far the largest single cost in the program; this turns
     // observers*states of them into states of them.
-    // Night classification for the DNL penalty, from the AC format's UTC
-    // seconds column shifted into local time.
-    std::vector<char> night(options.want_dnl ? nt : 0);
-    for (std::size_t it = 0; it < night.size(); it++)
-    {
-        if (std::isnan(trajectory.states[it].utcsec))
-        {
-            // A NaN fails both halves of is_night's window test, so a track with
-            // no clock was classed as daytime -- or, when the start defaulted to
-            // zero, as UTC midnight, i.e. night: +10 dB on the whole footprint,
-            // silently.  Either way the answer was made up.
-            input_error("-D needs the time of day, and ", job.trajectory, " does not carry one: "
-                    "it has no utcsec column. Give --start_utc <seconds since UTC midnight at "
-                    "t = 0>.");
-        }
-        night[it] = is_night(trajectory.states[it].utcsec, options.utc_offset) ? 1 : 0;
-    }
-
     // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
     const auto offset = heading_offset(trajectory.states, options.frame_bearing);
     std::size_t by_heading = 0, slow = 0, load_capped = 0;
@@ -945,6 +1005,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::filesystem::create_directories(directory);
     }
     const bool write_band_history = !options.band_history_prefix.empty();
+    // The C-weighted SEL is formed from the same per-band levels the band
+    // history writes, so both record them.
+    const bool record_bands = write_band_history || options.want_csel;
     if (write_band_history)
     {
         const auto directory = std::filesystem::path(options.band_history_prefix).parent_path();
@@ -1051,6 +1114,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // than per observer: the coefficients cost a pow() and two exp() per band.
     std::vector<double> absorption;
     std::vector<double> band_gains;
+    // --csel_file's C-weighting, over the same --band_limits as band_gains.
+    std::vector<double> c_gains;
     // With --atmosphere, absorption integrated through the profile instead
     // (LayeredAbsorption), and its running integral at each state's height,
     // [state][band], so the observer loop never looks a state's up twice.
@@ -1137,6 +1202,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             input_error("--band_history needs a database carrying per-band spectra; this one "
                         "has none.");
         }
+        if (options.want_csel)
+        {
+            // C-weighting is a weighting of the spectrum: a broadband database
+            // has one A-weighted level and nothing to reweight.
+            input_error("--csel_file needs a database carrying per-band spectra, to C-weight; this "
+                        "one has none.");
+        }
         log("Database carries no per-band spectra: propagating the broadband level with its "
             "EAA factor.");
         spectral = false;
@@ -1189,6 +1261,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
         absorption = absorption_coefficients(air, bands);
         band_gains = a_weighting_gains(bands, options.band_limits);
+        if (options.want_csel)
+            c_gains = c_weighting_gains(bands, options.band_limits);
         while (first_band < bands.size() && band_gains[first_band] == 0.0)
             first_band++;
         last_band = bands.size();
@@ -1557,9 +1631,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             input_error("--coverage_file reports the straight-ray levels: it does not combine with "
                     "--refraction or -a.");
     }
-    const bool needs_full_history = options.write_time_history || options.want_dnl
-            || options.full_history || options.want_lamax || options.want_nax
-            || write_band_history;
+    const bool any_day_metric = std::any_of(options.want_day_metric.begin(),
+            options.want_day_metric.end(), [](bool b) { return b; });
+    const bool needs_full_history = options.write_time_history || any_day_metric
+            || options.full_history || options.want_lamax || options.want_nax || options.want_ta
+            || options.want_csel || write_band_history;
     // The coverage report needs every state's level, so nothing is skipped.
     const bool bounded = !level_is_transformed && !options.want_coverage;
     DirectionBounds direction_bounds;
@@ -1676,7 +1752,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     //     -i / --history writes the whole time history, skipped states included
     //     --band_history the same, per band
     //     -D / --dnlfile the day-night window is found on a penalized history,
-    //                    which a window found on the raw one does not cover
+    //                    which a window found on the raw one does not cover;
+    //                    --lden_file and --cnel_file the same
+    //     --lamax_file, --nax_file, --ta_file
+    //                    the time weighting runs over the whole history
+    //     --csel_file    the C-weighted window is not the A-weighted one, and
+    //                    every state's bands are needed to find it
     //
     // A new option that does either belongs in the matching term above.
     // --db_cutoff stands apart: its culling is a deliberate metric change, so
@@ -1737,6 +1818,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
     const CompassToLocal compass(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
 
+    // This trajectory's C-weighted SEL per observer (--csel_file).
+    std::vector<double> csel_levels(options.want_csel ? observers.size() : 0);
+
     const auto acoustics_start = std::chrono::steady_clock::now();
 
     parallel_chunks(observers.size(), workers, [&](std::size_t begin, std::size_t end) {
@@ -1746,14 +1830,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> levels(nt);
         std::vector<double> ranges(nt);
         std::vector<double> penalized;
-        // --band_history: every state's band levels, and the geometry each
-        // was reached along.
-        const std::size_t history_bands = write_band_history ? database.band_centers().size() : 0;
+        // Each sample's reception-time duration, for the time weighting.
+        std::vector<double> durations;
+        // --csel_file: the C-weighted history.
+        std::vector<double> c_levels(options.want_csel ? nt : 0);
+        // --band_history and --csel_file: every state's band levels, and (for
+        // the history) the geometry each was reached along.
+        const std::size_t history_bands = record_bands ? database.band_centers().size() : 0;
         std::vector<double> band_levels(nt * history_bands);
         std::vector<BandHistoryRow> band_rows(write_band_history ? nt : 0);
         auto record_path = [&](std::size_t it, const RayPath& path) {
-            if (!write_band_history)
+            if (!record_bands)
                 return static_cast<double*>(nullptr);
+            if (!write_band_history)
+                return band_levels.data() + it * history_bands;
             auto& row = band_rows[it];
             const auto angles = lookup_angles(source_states[it].frame, path.direction,
                     !database.upper_hemisphere_measured());
@@ -1964,7 +2054,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 if (options.propagation_table)
                 {
                     double level = 0.0;
-                    double* table_bands_out = write_band_history
+                    double* table_bands_out = record_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
                     if (table_level(it, table_bands_out, level))
@@ -2138,7 +2228,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         culled_here++;
                         continue;
                     }
-                    double* bands_out = write_band_history
+                    double* bands_out = record_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
                     double level = spectral ? straight_level(it, bands_out)
@@ -2154,17 +2244,43 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             integrated_levels[index] = options.full_history
                     ? full_sound_exposure_level(levels, integration_step, ranges, sound_speed)
                     : sound_exposure_level(levels, integration_step, ranges, sound_speed);
-            if (options.want_lamax || options.want_nax)
+            if (options.want_csel)
             {
-                // The history is complete here (needs_full_history), so this is
-                // the true peak over the whole operation, not a windowed one.
-                const double peak = *std::max_element(levels.begin(), levels.end());
-                if (options.want_lamax)
-                    lamax[index] = std::max(lamax[index], peak);
-                // NAx: operations whose own peak reaches the threshold.  Each
-                // trajectory is one operation, so the count adds per trajectory.
-                if (options.want_nax && peak >= options.nax_threshold)
-                    nax[index] += 1.0;
+                // The C-weighted level of every state, from the bands the
+                // A-weighted one was summed from, and its SEL by the same rule
+                // as SEL's: the 10 dB-down window of the C-weighted history
+                // itself (or the whole of it under --full_history).  A state
+                // with no A-weighted energy has no band energy either.
+                for (std::size_t it = 0; it < nt; it++)
+                {
+                    c_levels[it] = levels[it] == -std::numeric_limits<double>::infinity()
+                            ? levels[it]
+                            : weighted_level(band_levels.data() + it * history_bands, c_gains);
+                }
+                csel_levels[index] = options.full_history
+                        ? full_sound_exposure_level(c_levels, integration_step, ranges, sound_speed)
+                        : sound_exposure_level(c_levels, integration_step, ranges, sound_speed);
+            }
+            if (want_weighted_level)
+            {
+                // The history is complete here (needs_full_history), so the
+                // weighting runs over the whole operation, in reception time:
+                // each sample lasts what it lasts in the SEL integral.
+                reception_durations(nt, integration_step, ranges, sound_speed, durations);
+                if (options.want_lamax || options.want_nax)
+                {
+                    const double peak = weighted_maximum(levels, durations, options.lamax_weighting);
+                    if (options.want_lamax)
+                        lamax[index] = std::max(lamax[index], peak);
+                    // NAx: operations whose own peak reaches the threshold.  Each
+                    // trajectory is one operation, so the count adds per trajectory.
+                    if (options.want_nax && peak >= options.nax_threshold)
+                        nax[index] += 1.0;
+                }
+                // Time above: seconds, adding across operations.
+                if (options.want_ta)
+                    totals.time_above[index] += time_above(levels, durations, options.lamax_weighting,
+                            options.ta_threshold);
             }
             if (options.want_coverage)
             {
@@ -2189,15 +2305,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 coverage[index][0] += unmeasured_energy;
                 coverage[index][1] += energy;
             }
-            if (options.want_dnl)
+            for (std::size_t m = 0; m < day_metric_count; m++)
             {
+                if (!options.want_day_metric[m])
+                    continue;
                 // Energies add across operations; the logarithm comes at the
                 // end, once every trajectory has contributed.  Each observer
                 // index belongs to exactly one worker, and the trajectories run
-                // one after another, so this needs no synchronization.
-                dnl_energy[index] += std::pow(
-                        10.0, 0.1 * day_night_level(levels, integration_step, night, penalized, ranges,
-                                              sound_speed));
+                // one after another, so this needs no synchronization.  The
+                // operation's window is its own penalized 10 dB-down window, or
+                // the whole history under --full_history.
+                totals.day_energy[m][index] += std::pow(10.0,
+                        0.1 * penalized_exposure_level(levels, integration_step, day_penalty[m], penalized,
+                                      ranges, sound_speed, options.full_history));
             }
             if (options.write_time_history)
             {
@@ -2276,6 +2396,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     {
         write_geodetic_levels(x_obs, y_obs, integrated_levels, *options.geodetic.frame,
                 latlon_companion(job.output), options.scattered);
+    }
+
+    if (options.want_csel)
+    {
+        log("Writing the C-weighted sound exposure level to ", job.csel_output, ".");
+        write_levels(x_obs, y_obs, csel_levels, job.csel_output, options.scattered, options.unit);
+        if (options.latlon)
+        {
+            write_geodetic_levels(x_obs, y_obs, csel_levels, *options.geodetic.frame,
+                    latlon_companion(job.csel_output), options.scattered);
+        }
     }
 
     if (!options.metric_file.empty())
@@ -2430,9 +2561,15 @@ int run(int argc, char* argv[])
     std::vector<std::string> out_files = {"integrated/197421_LAE.csv"};
     std::vector<std::string> state_files;
     std::string dnl_file = "";
+    std::string lden_file = "";
+    std::string cnel_file = "";
     std::string lamax_file = "";
+    std::string lamax_weighting = "fast";
     std::string nax_file = "";
     double nax_threshold = std::numeric_limits<double>::quiet_NaN();
+    std::string ta_file = "";
+    double ta_threshold = std::numeric_limits<double>::quiet_NaN();
+    std::vector<std::string> csel_files;
     std::string coverage_file = "";
     bool full_history = false;
     double utc_offset = 0.0;
@@ -2574,25 +2711,51 @@ int run(int argc, char* argv[])
     auto* gridstep_option = app.add_option("--gridstep", grid_step,
             "Observer grid spacing, in --units (default 25 m, = 82.021 ft).");
     app.add_option("-D,--dnlfile", dnl_file,
-            "Write the day-night level (DNL: the energy average over a 24-hour day, night "
-            "penalized), summed over every trajectory, to this file.");
+            "Write the day-night level (DNL: the energy average over a 24-hour day, 22:00-07:00 "
+            "night +10 dB), summed over every trajectory, to this file.");
+    app.add_option("--lden_file", lden_file,
+            "Write the day-evening-night level (Lden, EU Directive 2002/49/EC: 19:00-23:00 "
+            "evening +5 dB, 23:00-07:00 night +10 dB, over 24 hours), summed over every "
+            "trajectory, to this file.");
+    app.add_option("--cnel_file", cnel_file,
+            "Write the community noise equivalent level (CNEL, California Title 21: 19:00-22:00 "
+            "evening +4.77 dB, 22:00-07:00 night +10 dB, over 24 hours), summed over every "
+            "trajectory, to this file.");
     app.add_option("--lamax_file", lamax_file,
-            "Write each observer's LAmax, the highest A-weighted level over the operation, "
-            "dB, to this file.");
+            "Write each observer's LAmax, the highest A-weighted level over every operation, "
+            "time-weighted per --lamax_weighting (LAFmax by default), dB, to this file.");
+    auto* lamax_weighting_option = app.add_option("--lamax_weighting", lamax_weighting,
+            "Time weighting for --lamax_file, --nax_file and --ta_file, in reception time: fast "
+            "(IEC 61672 F, 0.125 s; default), slow (S, 1 s), leq0.5 (the largest 0.5 s Leq, ECAC "
+            "Doc 32's LASmax surrogate) or instantaneous (the largest sample, what --lamax_file "
+            "wrote before). Refused when the history is coarser than half the time constant.")
+            ->check(CLI::IsMember({"fast", "slow", "leq0.5", "instantaneous"}));
     app.add_option("--nax_file", nax_file,
-            "Write each observer's NAx, the number of operations whose LAmax reaches "
-            "--nax_threshold, to this file.");
+            "Write each observer's NAx, the number of operations whose LAmax (per "
+            "--lamax_weighting) reaches --nax_threshold, to this file.");
     app.add_option("--nax_threshold", nax_threshold,
             "The LAmax, dBA, that an operation must reach to count toward NAx. Required with "
             "--nax_file: there is no default, so the study's threshold is always stated.");
+    app.add_option("--ta_file", ta_file,
+            "Write each observer's time above --ta_threshold: seconds of reception time the "
+            "level, time-weighted per --lamax_weighting, exceeds it, summed over every "
+            "trajectory.");
+    app.add_option("--ta_threshold", ta_threshold,
+            "The level, dBA, that --ta_file counts the time above. Required with --ta_file: "
+            "there is no default.");
+    app.add_option("--csel_file", csel_files,
+            "Write the C-weighted sound exposure level (LCE) per observer, by SEL's window rule, "
+            "to this file: one name, or one per trajectory (with one name and several "
+            "trajectories, each writes <track>_LCE.csv beside it). Spectral path only.");
     app.add_option("--coverage_file", coverage_file,
             "Write, per observer, the energy-weighted share of its levels that came from cells "
             "the database did not measure (straight rays only; needs a database with coverage).");
     app.add_flag("--full_history", full_history,
-            "Integrate each SEL over the whole history rather than the event's 10 dB-down "
-            "window, as full-history tools do. Slower: no window is found.");
+            "Integrate each exposure (SEL, C-SEL, and each operation's share of DNL, Lden and "
+            "CNEL) over the whole history rather than the event's 10 dB-down window, as AAM and "
+            "NORAH2 do. Slower: no window is found.");
     app.add_option("--utc_offset", utc_offset,
-            "Hours from UTC to local time, for the 22:00-07:00 DNL night window.");
+            "Hours from UTC to local time, for the DNL, Lden and CNEL periods.");
     app.add_option("--powerfile", power_file,
             "Write per-state shaft power, if the database carries any, to this file.");
     app.add_option("--export_sphere", sphere_file,
@@ -2789,11 +2952,33 @@ int run(int argc, char* argv[])
             state_files.push_back((directory / (stem + "_state.csv")).string());
         }
     }
+    if (csel_files.size() == 1 && path_count > 1)
+    {
+        // As -o: one C-SEL file per track, named after it.
+        const auto directory = std::filesystem::path(csel_files.front()).parent_path();
+        csel_files.clear();
+        for (const auto& path : path_files)
+        {
+            const auto stem = std::filesystem::path(path).stem().string();
+            csel_files.push_back((directory / (stem + "_LCE.csv")).string());
+        }
+    }
     expand_per_path(database_files, "database files");
     expand_per_path(vehicle_files, "vehicle files");
     expand_per_path(out_files, "output files");
     if (!state_files.empty())
         expand_per_path(state_files, "state files");
+    if (!csel_files.empty())
+    {
+        expand_per_path(csel_files, "C-SEL files");
+        for (std::size_t i = 0; i < path_count; i++)
+        {
+            if (std::filesystem::path(csel_files[i]).lexically_normal()
+                    == std::filesystem::path(out_files[i]).lexically_normal())
+                input_error("--csel_file and -o name the same file (", csel_files[i],
+                        "); the C-weighted SEL would overwrite the A-weighted one.");
+        }
+    }
     // Two trajectories writing one file is never what was meant: the later
     // overwrites the earlier and the run still exits 0.  This catches equal
     // track stems (tracks from two directories) and an explicit -o or -S given
@@ -2810,6 +2995,8 @@ int run(int argc, char* argv[])
         require_distinct(out_files, "output file");
         if (!state_files.empty())
             require_distinct(state_files, "state file");
+        if (!csel_files.empty())
+            require_distinct(csel_files, "C-SEL file");
         if (!time_history_prefix.empty() || !band_history_prefix.empty())
         {
             std::vector<std::string> stems;
@@ -3020,21 +3207,35 @@ int run(int argc, char* argv[])
     auto& x_obs = observer_set.x;
     auto& y_obs = observer_set.y;
     std::vector<double> integrated_levels(observers.size());
-    // DNL is a property of the whole set of operations, not of one flight: each
-    // trajectory's day-night level is an energy, and they sum.
-    const bool want_dnl = !dnl_file.empty();
-    std::vector<double> dnl_energy(want_dnl ? observers.size() : 0, 0.0);
+    // DNL, Lden and CNEL are properties of the whole set of operations, not of
+    // one flight: each trajectory's penalized exposure is an energy, and they sum.
+    const std::array<const std::string*, day_metric_count> day_files = {&dnl_file, &lden_file, &cnel_file};
+    std::array<bool, day_metric_count> want_day_metric {};
+    RunTotals totals;
+    for (std::size_t m = 0; m < day_metric_count; m++)
+    {
+        want_day_metric[m] = !day_files[m]->empty();
+        totals.day_energy[m].assign(want_day_metric[m] ? observers.size() : 0, 0.0);
+    }
     const bool want_lamax = !lamax_file.empty();
-    std::vector<double> lamax(want_lamax ? observers.size() : 0,
-            -std::numeric_limits<double>::infinity());
+    totals.lamax.assign(want_lamax ? observers.size() : 0, -std::numeric_limits<double>::infinity());
     const bool want_nax = !nax_file.empty();
-    std::vector<double> nax(want_nax ? observers.size() : 0, 0.0);
+    totals.nax.assign(want_nax ? observers.size() : 0, 0.0);
+    const bool want_ta = !ta_file.empty();
+    totals.time_above.assign(want_ta ? observers.size() : 0, 0.0);
     const bool want_coverage = !coverage_file.empty();
-    std::vector<std::array<double, 2>> coverage(want_coverage ? observers.size() : 0,
-            std::array<double, 2> {0.0, 0.0});
+    totals.coverage.assign(want_coverage ? observers.size() : 0, std::array<double, 2> {0.0, 0.0});
+    const bool want_csel = !csel_files.empty();
     if (want_nax && !std::isfinite(nax_threshold))
         input_error("--nax_file needs --nax_threshold, the LAmax in dBA that counts an operation. "
                 "There is no default: give the threshold your study uses.");
+    if (want_ta && !std::isfinite(ta_threshold))
+        input_error("--ta_file needs --ta_threshold, the level in dBA it counts the time above. "
+                "There is no default: give the threshold your study uses.");
+    const LevelWeighting level_weighting = parse_level_weighting(lamax_weighting);
+    if (lamax_weighting_option->count() > 0 && !want_lamax && !want_nax && !want_ta)
+        input_error("--lamax_weighting sets the time weighting of --lamax_file, --nax_file and "
+                "--ta_file, and none of them is given.");
 
     // Outlives the loop so the plotting block below, which only runs for a
     // single trajectory, can still reach it.
@@ -3049,6 +3250,22 @@ int run(int argc, char* argv[])
         input_error("--ground_effect needs the spectral path: the ground effect is a function "
                     "of frequency, and the broadband path (--no-spectral or --db_cutoff) has no "
                     "spectrum to apply it to.");
+    }
+    if (want_csel && !spectral)
+    {
+        input_error("--csel_file needs the spectral path: C-weighting reweights the band levels, "
+                    "and the broadband path (--no-spectral) carries one A-weighted level.");
+    }
+    if (want_csel && !std::isnan(db_cutoff))
+    {
+        input_error("--csel_file does not combine with --db_cutoff: the cutoff is proven on the "
+                    "A-weighted level, and a state it skips can still carry C-weighted energy, "
+                    "which sits mostly below 100 Hz.");
+    }
+    if (want_csel && !std::isnan(ambient_level))
+    {
+        input_error("--csel_file does not combine with -a: the ambient is an A-weighted level, "
+                    "with no spectrum to C-weight.");
     }
     if (!band_history_prefix.empty() && !spectral)
     {
@@ -3171,10 +3388,14 @@ int run(int argc, char* argv[])
     options.trim_start = trim_start;
     options.utc_offset = utc_offset;
     options.scattered = scattered;
-    options.want_dnl = want_dnl;
+    options.want_day_metric = want_day_metric;
     options.want_lamax = want_lamax;
     options.want_nax = want_nax;
     options.nax_threshold = nax_threshold;
+    options.want_ta = want_ta;
+    options.ta_threshold = ta_threshold;
+    options.lamax_weighting = level_weighting;
+    options.want_csel = want_csel;
     options.want_coverage = want_coverage;
     options.full_history = full_history;
     options.write_time_history = write_time_history;
@@ -3214,10 +3435,10 @@ int run(int argc, char* argv[])
             job.vehicle = vehicle_files[path_index];
             job.output = out_files[path_index];
             job.state = state_files.empty() ? std::string() : state_files[path_index];
+            job.csel_output = csel_files.empty() ? std::string() : csel_files[path_index];
             job.count = path_count;
             trajectory_holder = process_trajectory(database, job, options, observers,
-                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, dnl_energy,
-                    lamax, nax, coverage);
+                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
         }
         catch (const std::exception& problem)
         {
@@ -3231,37 +3452,53 @@ int run(int argc, char* argv[])
         log(failed_paths, " of ", path_count, " trajectories could not be processed.");
     }
 
-    if (want_dnl)
+    for (std::size_t m = 0; m < day_metric_count; m++)
     {
-        // DNL is the energy average over a 24-hour day: the summed event energies
-        // over 86 400 s, not their raw sum (which reads 49.37 dB high).
+        if (!want_day_metric[m])
+            continue;
+        // Each is the energy average over a 24-hour day: the summed event
+        // energies over 86 400 s, not their raw sum (which reads 49.37 dB high).
         constexpr double seconds_per_day = 86400.0;
-        std::vector<double> dnl(dnl_energy.size());
-        for (std::size_t i = 0; i < dnl_energy.size(); i++)
-            dnl[i] = 10.0 * std::log10(dnl_energy[i] / seconds_per_day);
-        log("Writing day-night level over ", path_count,
-                path_count == 1 ? " operation to " : " operations to ", dnl_file);
-        write_levels(x_obs, y_obs, dnl, dnl_file, scattered, unit);
+        const auto& energy = totals.day_energy[m];
+        const std::string& file = *day_files[m];
+        std::vector<double> level(energy.size());
+        for (std::size_t i = 0; i < energy.size(); i++)
+            level[i] = 10.0 * std::log10(energy[i] / seconds_per_day);
+        log("Writing the ", day_metric_name(static_cast<DayMetric>(m)), " over ", path_count,
+                path_count == 1 ? " operation" : " operations",
+                full_history ? ", each integrated over its whole history," : ", each over its own 10 dB-down window,",
+                " to ", file);
+        write_levels(x_obs, y_obs, level, file, scattered, unit);
         if (latlon)
-            write_geodetic_levels(x_obs, y_obs, dnl, *frame, latlon_companion(dnl_file), scattered);
+            write_geodetic_levels(x_obs, y_obs, level, *frame, latlon_companion(file), scattered);
     }
 
     if (want_lamax)
     {
-        log("Writing LAmax over ", path_count,
+        log("Writing LAmax (", maximum_name(level_weighting), ") over ", path_count,
                 path_count == 1 ? " operation to " : " operations to ", lamax_file);
-        write_levels(x_obs, y_obs, lamax, lamax_file, scattered, unit);
+        write_levels(x_obs, y_obs, totals.lamax, lamax_file, scattered, unit);
         if (latlon)
-            write_geodetic_levels(x_obs, y_obs, lamax, *frame, latlon_companion(lamax_file), scattered);
+            write_geodetic_levels(x_obs, y_obs, totals.lamax, *frame, latlon_companion(lamax_file), scattered);
     }
 
     if (want_nax)
     {
-        log("Writing NAx (operations with LAmax at or above ", nax_threshold, " dBA) over ",
-                path_count, path_count == 1 ? " operation to " : " operations to ", nax_file);
-        write_levels(x_obs, y_obs, nax, nax_file, scattered, unit);
+        log("Writing NAx (operations with ", maximum_name(level_weighting), " at or above ", nax_threshold,
+                " dBA) over ", path_count, path_count == 1 ? " operation to " : " operations to ", nax_file);
+        write_levels(x_obs, y_obs, totals.nax, nax_file, scattered, unit);
         if (latlon)
-            write_geodetic_levels(x_obs, y_obs, nax, *frame, latlon_companion(nax_file), scattered);
+            write_geodetic_levels(x_obs, y_obs, totals.nax, *frame, latlon_companion(nax_file), scattered);
+    }
+
+    if (want_ta)
+    {
+        log("Writing the time above ", ta_threshold, " dBA (", to_string(level_weighting),
+                " weighting, seconds of reception time) over ", path_count,
+                path_count == 1 ? " operation to " : " operations to ", ta_file);
+        write_levels(x_obs, y_obs, totals.time_above, ta_file, scattered, unit);
+        if (latlon)
+            write_geodetic_levels(x_obs, y_obs, totals.time_above, *frame, latlon_companion(ta_file), scattered);
     }
 
     if (want_coverage)
@@ -3269,6 +3506,7 @@ int run(int argc, char* argv[])
         // The energy-weighted fraction of each observer's levels that came from
         // cells the database did not measure.  An observer that heard nothing
         // has no fraction to give, and is written as NaN.
+        const auto& coverage = totals.coverage;
         std::vector<double> share(coverage.size());
         for (std::size_t i = 0; i < coverage.size(); i++)
         {

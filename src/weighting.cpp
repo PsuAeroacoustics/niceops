@@ -28,7 +28,27 @@ double a_weighting(double frequency)
     return 10.0 * std::log10(first) + 10.0 * std::log10(second);
 }
 
-std::vector<double> a_weighting_gains(const std::vector<double>& frequencies, BandLimits limits)
+double c_weighting(double frequency)
+{
+    if (frequency <= 0.0)
+        return -300.0;
+
+    const double f2 = frequency * frequency;
+    const double f4 = f2 * f2;
+    // a_weighting's `second`, written the same way.  2.242881e16 is
+    // 12194.22^4 10^(0.062/10): the upper pole's numerator, squared for a
+    // power ratio, and the 1 kHz normalization.
+    const double ratio = 2.242881e16 * f4
+            / ((f2 + 20.598997 * 20.598997) * (f2 + 20.598997 * 20.598997)
+                    * (f2 + 12194.22 * 12194.22) * (f2 + 12194.22 * 12194.22));
+    return 10.0 * std::log10(ratio);
+}
+
+namespace {
+
+template <typename Weight>
+std::vector<double> weighting_gains(const std::vector<double>& frequencies, BandLimits limits,
+        Weight&& weight)
 {
     std::vector<double> gains;
     gains.reserve(frequencies.size());
@@ -36,10 +56,21 @@ std::vector<double> a_weighting_gains(const std::vector<double>& frequencies, Ba
     {
         // Exactly zero outside the limits, so an excluded band contributes
         // nothing at all rather than something very small.
-        gains.push_back(limits.contains(frequency) ? std::pow(10.0, a_weighting(frequency) / 10.0)
-                                                   : 0.0);
+        gains.push_back(limits.contains(frequency) ? std::pow(10.0, weight(frequency) / 10.0) : 0.0);
     }
     return gains;
+}
+
+} // namespace
+
+std::vector<double> c_weighting_gains(const std::vector<double>& frequencies, BandLimits limits)
+{
+    return weighting_gains(frequencies, limits, c_weighting);
+}
+
+std::vector<double> a_weighting_gains(const std::vector<double>& frequencies, BandLimits limits)
+{
+    return weighting_gains(frequencies, limits, a_weighting);
 }
 
 double weighted_level(const double* band_levels, const std::vector<double>& gains)

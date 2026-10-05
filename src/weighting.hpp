@@ -22,6 +22,14 @@ namespace niceops {
 // -300 dB, as panam does, rather than producing a NaN from log10(0).
 double a_weighting(double frequency);
 
+// C-weighting in dB at a frequency (IEC 61672-1:2013, Annex E): the A curve's
+// outer pole pairs alone, f4^2 f^2 / ((f^2 + f1^2)(f^2 + f4^2)) with f1 =
+// 20.598997 Hz and f4 = 12194.217 Hz, normalized by C1000 = -0.062 dB.  It is
+// exactly the second factor of panam's A-weighting, constant and all, so the
+// two curves are built from one set of numbers.  Non-positive frequencies
+// weight to -300 dB, as a_weighting's do.
+double c_weighting(double frequency);
+
 // The frequency range a metric is integrated over.  The default spans the
 // audible range, so it keeps every band of any plausible database until a run
 // narrows it.
@@ -43,6 +51,9 @@ struct BandLimits
 // Precomputed because the acoustic loop evaluates this for every observer at
 // every trajectory state; the weighting depends only on the band centers.
 std::vector<double> a_weighting_gains(const std::vector<double>& frequencies, BandLimits limits);
+
+// The same for C-weighting (--csel_file).
+std::vector<double> c_weighting_gains(const std::vector<double>& frequencies, BandLimits limits);
 
 // Overall level in dB from per-band levels and gains from a_weighting_gains.
 //
