@@ -38,6 +38,7 @@ to know before changing the numerics, are in [`CLAUDE.md`](../CLAUDE.md).
   - [Ground effect](#ground-effect)
   - [Receivers](#receivers)
   - [Ground-plane microphones](#ground-plane-microphones)
+  - [Terrain](#terrain)
   - [Refraction](#refraction)
   - [Refraction through the profile's layers](#refraction-through-the-profiles-layers)
   - [Micro-shadows and skip zones](#micro-shadows-and-skip-zones)
@@ -277,7 +278,8 @@ r to the microphone, with r held at no less than R<sub>s</sub>. There are two pa
 - **Spectral**, the default for a database with spectra. Each band is spread the same way and
   absorbed at its own ISO 9613-1 coefficient. The ground effect, the receiver, refraction and
   propagation tables act on each band. The bands are then A-weighted, limited to
-  `--band_limits` and summed in energy.
+  `--band_limits` and summed in energy. The ground is the plane z = 0 unless `--terrain` gives
+  each path its own mean ground plane ([Terrain](#terrain)).
 
 ### Exposure
 
@@ -508,6 +510,7 @@ record, is biased less.
 | Refraction | `src/propagation.hpp`, `src/refraction.cpp`, `src/stratified.cpp` |
 | Parabolic equation and exact solutions | `src/pe.cpp`, `src/pade_propagator.cpp`, `src/exact_solutions.cpp`, `src/airy.cpp` |
 | Propagation loss tables | `src/propagation_table.cpp` |
+| Terrain | `src/terrain.cpp`, `terrain_ray` in `src/propagation.hpp` |
 
 ## Running NICE-OPS
 
@@ -533,10 +536,14 @@ record, is biased less.
 | `-m`, `--metricfile` | Append overall noise metrics to this file: the case name, the energy mean of the per-observer SELs (10 lg of the mean of 10^(L/10), not a mean of decibels), their maximum, and the share above 65 dB. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. It also turns the AC format's compass heading into the local frame, for the hover nose and `--nose heading`. |
-| `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. |
+| `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. With `--terrain` it is the height of the local z = 0 on the trajectory's datum, and an AC track's own alt − z must match it. |
 | `--path_smoothing` | How far, RMS per axis in `--units`, the path fitted through a WGS84 track may sit from the given positions. Default 10 ft. Zero interpolates exactly, which on measured positions makes the load factor track coordinate rounding. |
 | `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. Required with `-D`, `--lden_file` or `--cnel_file` when the track has no `utcsec` column (it used to default to midnight, which is night, so the whole footprint took the 10 dB penalty). |
 | `--latlon` | Also write each level file as latitude, longitude, level. |
+| `--terrain` | A bare-earth elevation grid (netCDF, e.g. USGS 3DEP). Grid observers stand on it, and the ground model and plate take each path's mean ground plane instead of the plane z = 0. Needs the run's frame (`--origin`, `--frame_bearing`). Not with `--refraction` or `--propagation_table`. See [Terrain](#terrain). |
+| `--terrain_offset` | Added to every `--terrain` height, in `--units`, to put the grid on the trajectory's vertical datum. Default 0. At Amedee −23.6 m (−77.43 ft): 3DEP is NAVD88, the 2017 tracks ellipsoidal. |
+| `--terrain_step` | Spacing, in `--units`, of the terrain samples each path's mean ground plane is fitted to. Default: the grid's own spacing, at least 5 m. |
+| `--observers_on_terrain` | With `--terrain` and `-b`: take each observer's ground height from the terrain instead of the file's z. |
 | `-l`, `--logfile` | Log file (default `log/niceops.log`). |
 | `-L`, `--loglevel` | `trace`, `info`, `warn`, `error` or `fatal` (default `info`). |
 
@@ -618,9 +625,9 @@ record, is biased less.
 `--units` selects the length unit for the whole interface: `ft` (the default) or `m`. It covers
 
 - every length on the command line — `--grid`, `--gridstep`, `--trim`, `--ground_elevation`,
-  `--receiver_height`, `--path_smoothing`, `--roughness_length`, `--surface_layer_depth`, and
-  the anemometer height in `--wind` (whose speed names its own unit, as the wind columns of an
-  `--atmosphere` file do);
+  `--receiver_height`, `--path_smoothing`, `--terrain_offset`, `--terrain_step`,
+  `--roughness_length`, `--surface_layer_depth`, and the anemometer height in `--wind` (whose
+  speed names its own unit, as the wind columns of an `--atmosphere` file do);
 - every file carrying a length — trajectory input, observer lists, level output, time histories;
 - the axis labels on the figures.
 
@@ -854,6 +861,7 @@ bands, and that a full-band run does not.
 | Database (`-d`) | netCDF `.nod`: one group per operating condition (advance ratio μ, flight path angle γ, thrust coefficient C<sub>T</sub>), each holding scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor. |
 | Vehicle (`-v`) | JSON with `Main Rotor.radius`, `Main Rotor.tip speed`, `Vehicle.weight` (mass in kg) and `Atmosphere.density`. |
 | Observers (`-b`) | CSV of scattered observer positions, in feet: `x,y,z`, `id,x,y,z`, or `id,x,y,z,height` with each microphone's height above the ground (see [Receivers](#receivers)). The first line is always taken as a header. Without it, a 120×120 grid spanning −1500…1475 m is used. |
+| Terrain (`--terrain`) | netCDF: 1-D `latitude` and `longitude` (degrees, strictly increasing) and `elevation(latitude, longitude)` in **meters**, whatever `--units` says; an optional global `vertical_datum` text attribute. Missing nodes are NaN, `_FillValue` or `missing_value`. See [Terrain](#terrain). |
 
 Input and output files use **feet**; the computation is metric internally.
 
@@ -1510,6 +1518,203 @@ Weideman's series within 1e-11.
 
 The peak search and `--db_cutoff` bound the plate with `PlateReceiver::gain_bounds`, so both
 keep working. The `plate_windowed_is_exact` ctest checks that skipped states change nothing.
+
+### Terrain
+
+Without `--terrain` the ground is the plane z = 0 everywhere: the ground model and the plate take
+the source's height above it and the horizontal distance, whatever height an observer stands
+at. `--terrain FILE` gives the ground a shape. Two things change:
+
+- **Grid observers stand on the terrain**: each one's z is the ground's there, and its
+  microphone is `--receiver_height` (or the plate) above that.
+- **Each source–receiver pair's ground geometry is taken over its mean ground plane**: the
+  least-squares line through the terrain heights along the path's ground projection, from the
+  observer to the source's footprint. This is the "mean plane" of CNOSSOS-EU (Directive (EU)
+  2015/996, Annex II, 2.5.6), the construction NORAH2 and ECAC Doc 32 use over terrain.
+
+Spreading, absorption and the sphere lookup still take the real three-dimensional path from the
+source to the microphone. Only the ground term changes.
+
+**The geometry.** In the vertical plane through the path, let the mean ground line be
+z = a + b s, with s the horizontal distance from the observer. The source is at distance D and
+height z<sub>s</sub>, and the microphone is over the observer at z<sub>m</sub>. Measured
+perpendicular to the line:
+
+    h_s = (z_s - (a + b D)) / sqrt(1 + b^2)
+    h_r = (z_m - a) / sqrt(1 + b^2)
+    d   = (D + b (z_s - z_m)) / sqrt(1 + b^2)
+
+This is a rotation of the plane, so the source–microphone distance is unchanged. Ground that
+rises toward the source lowers h<sub>s</sub> and lengthens d, which lowers the grazing angle.
+Ground that falls away does the opposite. For a nearly overhead source over ground falling toward
+it, d comes out negative: the source's foot on the line lies behind the microphone's. The ground
+model takes its size, which keeps its direct path equal to the real range, and a plate is crossed
+from the other side. What each receiver takes:
+
+| Receiver | Ground model's geometry |
+| --- | --- |
+| point receiver (pole) | source height h<sub>s</sub>, receiver height h<sub>r</sub>, distance d. The microphone's height above each path's plane is its own, so the model is evaluated exactly for every pair (see cost below). |
+| flush plate | the plate lies along the plane under its microphone: source height h<sub>s</sub> − h<sub>r</sub>, distance d. |
+| no ground model | nothing changes but where the observers stand. |
+
+A height that comes out below the plane is set to zero, as CNOSSOS-EU does with a negative
+equivalent height. This happens for a receiver in a dip, and for a source behind rising ground.
+The second case is screening, which is not modeled (below). The log counts how many evaluations
+were affected.
+
+On level ground at z = 0 every one of these is the plain geometry, bit for bit. A level terrain
+file therefore reproduces the run without it, which is the first thing the tests check.
+
+**Datums.** The local frame's z = 0 is `--ground_elevation` on the trajectory's own vertical
+datum, as for a WGS84 track (see [Geodetic coordinates](#geodetic-coordinates)). The ground's z
+is
+
+    z_ground(x, y) = H(latitude, longitude) + --terrain_offset - --ground_elevation
+
+where H is the grid's height, interpolated bilinearly, and the position is found by inverting
+the run's frame projection. So the run needs a frame: `--origin`, and `--frame_bearing` for
+rotated axes (or a WGS84 track, which brings its own frame). NICE-OPS does not convert between
+datums. `--terrain_offset` is how you state the difference, and the log repeats it.
+
+*The 2017 Amedee data* are the case to know. The 3DEP grid is NAVD88. The flight altitudes and
+the surveyed microphone heights are ellipsoidal (WGS84): the microphone list's `Hgt(m)` sits
+23.6 m below 3DEP at every microphone (standard deviation 0.03 m). The difference is the local
+geoid height. The AC tracks' `alt` less `z` puts their z = 0 at 3926.7 ft ellipsoidal, which is
+the reference point's `ref_elips_ft`. A run there is:
+
+```sh
+niceops -t 286264AC.csv -b 286264_observers.csv ... \
+    --origin <ref_lat> <ref_lon> --frame_bearing <bearing of the track's +x> \
+    --ground_elevation 3926.74 --terrain amedee_3dep.nc --terrain_offset -77.43
+```
+
+The validation harness's `terrain/dem_to_netcdf.py` crops a 3DEP GeoTIFF into this format, and
+`terrain/README.md` there documents the datum finding.
+
+**What the run checks**, since a datum or frame mistake gives a plausible-looking wrong answer:
+
+- The grid must cover every observer and every state's footprint, with a margin, and have no
+  missing node there. Otherwise the run is refused, and the message names the extent it needs.
+  Heights must be in meters. A grid that declares another unit is refused.
+- An AC track records each state's latitude, longitude and altitude beside its x/y/z. The run's
+  frame must put the latitudes and longitudes within 30 m rms of the x/y, or it is refused,
+  because the terrain would be read under the wrong place. Above 3 m it warns. The demo track
+  agrees to 0.85 ft, and the 2017 tracks to 1–5 ft. Where the track's alt − z is one number
+  (within 1 m), `--ground_elevation` must match it to 1 m.
+- A state more than 10 m below the terrain under it is refused as a datum mismatch: leaving out
+  `--ground_elevation` at Amedee puts the ground 1197 m above every state. A state up to 10 m
+  below is warned about, since that is within the terrain's own error (3DEP's is 1–2 m) or a
+  landing.
+- Scattered observers (`-b`) keep their file's z. Where it disagrees with the terrain by more
+  than 1 m, the run warns and gives the median and worst disagreement, since a uniform offset is
+  a datum mistake. `--observers_on_terrain` stands them on the terrain instead. At Amedee the
+  surveyed microphones sit 0.06–0.14 ft from 3DEP in the median and 0.84 ft at worst.
+
+**What is not modeled.**
+
+- Terrain does not screen or diffract. A ridge between source and receiver is a source below the
+  mean plane, and its height is set to zero.
+- Each path's ground is one plane. Reflections off slopes away from that plane, and the
+  terrain's roughness about it, are left out.
+- **`--refraction` is refused with `--terrain`.** The ray models reflect off, and cast their
+  shadows onto, the flat ground z = 0. Handing them a tilted plane per path would be a different
+  model, not this one. `--propagation_table` is refused for the same reason: its source and
+  receiver heights are over flat ground.
+- The broadband path (`--no-spectral`) has no ground model, so there `--terrain` only sets where
+  the observers stand.
+
+For an elevated source, the specular reflection point is close to the receiver, at
+d·h<sub>r</sub>/(h<sub>s</sub> + h<sub>r</sub>). A plane fitted over the whole path also weighs
+terrain that the reflection never sees. That is the standard practice, and on smooth ground the
+two agree. A receiver's h<sub>r</sub> above the plane follows the ground at its foot relative to
+the plane, so it carries the grid's own decimeter-scale error. That error matters more for a
+point receiver than for a plate (see the Amedee figures below).
+
+**How the plane is found, and what it costs.** Fitting each pair's profile directly would mean
+about 300 terrain samples for a 3 km path, 94 million times on the demo grid. Instead:
+
+1. Per trajectory, the grid is resampled onto the local frame every `--terrain_step` (default:
+   the grid's own spacing, at least 5 m). Each later read is then bilinear in local meters, with
+   no inverse projection.
+2. Per observer, profiles run along 1440 fixed bearings (every 0.25°, 13 m apart at 3 km), each
+   sampled every step. They are kept as running sums of z and k·z, from which the least-squares
+   line over any whole number of steps costs a few flops. A bearing is sampled only when a pair
+   first needs it, and only as far as that pair needs.
+3. A path between two bearings, or ending between two samples, takes the line interpolated
+   linearly in bearing and in length between the four fits around it. That keeps it continuous.
+   A path shorter than one step takes the fit over the first step along its bearing.
+
+Along a bearing, at a whole number of steps, this is the direct least-squares fit
+(`tests/test_terrain.cpp`, to 1e-9 in slope). On a uniform plane it is exact up to the cosine's
+curvature between bearings: a 0.05 slope errs by 1e-7, or 0.4 mm at 3 km. On rolling synthetic
+terrain with ±15 m hills it stays within 0.15 m of the direct fit at both ends of every path
+tried.
+
+Cost on the full demo grid (S-76D track, B407 database, 14,400 observers × 6,551 states,
+14 threads, `--humidity 20`):
+
+| | CPU, level ground (no `--terrain`) | level `--terrain` | hilly `--terrain` |
+| --- | --- | --- | --- |
+| `--ground_effect`, 1.2 m point receivers | 32 s | 35 s | 127 s |
+| `--plate_table` | 71 s | 75 s | 75 s |
+
+The planes cost about 3 s of CPU, roughly 35 ns a pair. Point receivers over real terrain cost 4x,
+because each pair's receiver height differs from the one height the `GroundTable` was built for,
+so the model is evaluated exactly (as with `--exact_ground`). On level terrain the height is the
+pole's and the table is read. Plates keep their table either way. For the 2017 arrays (about
+40 microphones) none of this is noticeable.
+
+**How it was checked.**
+
+- *Level terrain reproduces the run without it, byte for byte*: point receivers, plates, and
+  scattered observers stood on it (`terrain_flat_*_is_flat`).
+- *A uniformly tilted plane gives the closed-form h<sub>s</sub>, h<sub>r</sub> and d*, nearly
+  overhead included, for point receivers and plates. The rest of the path record stays the
+  straight line's. The plane's own geometry is a rotation, and is hand-checked for rising and
+  falling ground (`tests/test_terrain.cpp`).
+- *The hills runs are pinned* (`terrain_hills_point_golden`, `terrain_hills_plate_golden`, at
+  1e-6), because the windowed and marched runs come from one binary: treating the plate as a point
+  receiver at its call site moved cells by 0.01 dB and passed every other terrain test.
+- *The peak search stays exact.* The ground's gain bounds (`ground_gain_bounds`,
+  `PlateReceiver::gain_bounds`) hold for any geometry and any receiver height, so the windowed run
+  over hills equals the march (`terrain_hills_point_windowed_is_exact`,
+  `terrain_hills_plate_windowed_is_exact`).
+- *The terrain reaches the ground model, not just the observers.* Microphones stood on the hills
+  through an observer file, without `--terrain`, give different levels, and the same pair with
+  no ground model agrees (`terrain_reaches_the_ground_model`,
+  `terrain_without_ground_places_observers`). A level that reads the `GroundTable` at the wrong
+  height is caught in `tests/test_spectral_propagation.cpp`.
+- *Every refusal above has a CTest* that passes on its message.
+
+**What it changes.** At Amedee the ground is flat to within about a meter over the test range.
+Along every track-to-microphone path within 3 km, a mean plane departs from the ground by at
+most 0.3 m (harness `terrain/README.md`). With the 3DEP grid, on the paper's configuration
+(station air, flush plates, the shipped B407 database for day 286 and the held-out one for
+day 284), with against without `--terrain`:
+
+| runs | microphone-runs | mean ΔSEL | largest \|ΔSEL\| |
+| --- | --- | --- | --- |
+| 286264, 286265 (approaches) | 92 | −0.003 dB | 0.026 dB |
+| 284153, 284197 (steady) | 94 | −0.006 dB | 0.023 dB |
+| all four | 186 | −0.004 dB (rms 0.007) | 0.026 dB |
+
+So terrain does not explain the paper's residuals at Amedee. 1.2 m pole microphones move more:
+on 286264 and 284153, up to 0.11 dB with `--observers_on_terrain` and 0.19 dB with the surveyed z. Their height above
+each plane follows the decimeter-scale relief and the grid's error at their feet.
+
+At a sloped site it matters. A 1–3° slope along the path changes the grazing angle by the slope.
+Through the plate table and the B407 spectrum, that is about 1 dB at 5° peak elevation and 0.3–0.7
+dB at 10°, for flush plates. At 1.2 m it is tenths of a dB:
+
+| peak elevation | plate, slope −3° / −1° / +1° / +3° | 1.2 m pole, 500 m, the same slopes |
+| --- | --- | --- |
+| 5° | −5.0 / −1.05 / +0.77 / +1.83 dB | −0.52 / +0.16 / 0.00 / +0.23 dB |
+| 7.5° | −2.1 / −0.53 / +0.42 / +1.06 | −0.11 / −0.12 / +0.15 / +0.56 |
+| 10° | −1.2 / −0.32 / +0.27 / +0.69 | −0.49 / −0.20 / +0.23 / +0.50 |
+| 20° | −0.29 / −0.09 / +0.08 / +0.21 | −0.43 / −0.04 / −0.03 / +0.04 |
+
+(A positive slope raises the elevation over the plane. These come from the evaluation's
+standalone model of the plate and pole at the changed elevation, not from a NICE-OPS run.)
 
 ### Refraction
 

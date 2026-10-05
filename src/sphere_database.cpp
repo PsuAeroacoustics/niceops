@@ -2115,6 +2115,17 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
             plate->power_ratio(path.source_height, path.ground_distance, azimuth,
                     correction.data(), first_band, last_band);
         }
+        else if (!std::isnan(path.receiver_height) && path.receiver_height != ground->receiver_height)
+        {
+            // Over terrain (terrain_ray) the microphone's height above each
+            // path's mean ground line is its own, and a GroundTable holds one
+            // height, so the model is evaluated exactly at this one.
+            GroundModel here = *ground;
+            here.receiver_height = path.receiver_height;
+            excess_ground_attenuation(here, *impedance, path.source_height,
+                    path.ground_distance, sound_speed, frequencies_, correction.data(),
+                    first_band, last_band, true);
+        }
         else if (ground_table != nullptr)
         {
             ground_table->power_ratio(path.source_height, path.ground_distance,

@@ -121,6 +121,7 @@ feet, must be run without it. The `-S` state file is always metric. See
 | `--ground_effect` / `--no-ground_effect` | Ground reflection on the spectral path, on by default there. |
 | `--atmosphere`, `--refraction` | A stratified atmosphere profile, and curved rays through it. |
 | `--wind` | The profile built from one surface wind (`12kt,270`) instead of a file. |
+| `--terrain` | A terrain grid (e.g. USGS 3DEP): observers stand on it, and the ground model takes each path's mean ground plane. |
 | `-j` | Worker threads. 0 (the default) uses every core; output is identical at any count. |
 | `-p`, `-f` | Plot the footprint, or save it to a file. |
 
