@@ -450,7 +450,7 @@ uses.
 
 The shipped AC tracks are the case where the axes are not east/north: their x/y run along a
 compass bearing of **210°**, the approach heading, not along the wandering heading in the
-file's own column 8. Their ground plane sits 54.2651 ft below their altitude column. So
+file's own column 9. Their ground plane sits 54.2651 ft below their altitude column. So
 ```sh
 ./build/niceops -t track.csv --origin 39.8104276 -74.4263086 --frame_bearing 210 \
                 --ground_elevation 54.2651
@@ -625,8 +625,9 @@ gave −0.03 [−0.22, +0.16] dB, the opposite turn +0.47, and on the calm day i
 each track's velocity onto its heading; the option reproduces that to 0.01 dB in rms, and up to
 0.5 dB at a microphone, because turning the velocity also moved the path angle relative to the
 tip-path plane by up to 1.4 degrees in a turn, where the option leaves the flight condition
-alone. Scripts: the validation job's `adopt/impl/heading/measure/` (`run_nose.py`,
-`score_nose.py`).
+alone. The runs are the validation harness's paper cases (`paper/fidelity_study.py`), each
+given `--nose heading` and its own `--frame_bearing`, scored as `paper/results.py` scores them,
+with the bootstrap resampling whole runs.
 
 **How it is checked.** Unit tests pin the crab's sign against a synthetic crosswind whose crab
 is known (and against `CompassToLocal`, which turns the wind, so the two conventions are one),

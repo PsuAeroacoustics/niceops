@@ -1241,7 +1241,7 @@ touching it:
   difference. In `tracks/S-76D/197421AC.csv` it is a constant 54.2651 ft, which is how that
   file's own alt and z columns relate.
 - **The shipped AC tracks' local frame runs +x along a compass bearing of 210°** — the approach
-  heading, not the instantaneous heading in column 8, which wanders over 25°. With that bearing
+  heading, not the instantaneous heading in column 9 (`data[8]`), which wanders over 25°. With that bearing
   the projection reproduces that file's own x/y to under a meter over 3.2 km, which is the
   check that the port of the transform is the one its producer used.
 - **One frame per run, settled before anything loads.** Every trajectory in a run shares the
@@ -1288,7 +1288,7 @@ touching it:
   of a knot in any direction, and the nose went wherever it pointed. Between 3 and 8 kt
   (`velocity_nose_speed`) the nose turns from the heading to the velocity on a smoothstep weight,
   the horizontal angle the short way round, so there is no step; the hard switch at 5 kt it
-  replaced stepped the level 2.2-4.4 dB for a nose rotated 30-90 degrees. The AC format's column 8
+  replaced stepped the level 2.2-4.4 dB for a nose rotated 30-90 degrees. The AC format's column 9
   (`State::heading`, compass, NaN for the geodetic formats) is turned into the local frame by
   `--frame_bearing` (or east under a settled geodetic frame) whenever the run knows one, and
   only otherwise by an offset inferred from the track's states over 20 kt -- the circular mean
