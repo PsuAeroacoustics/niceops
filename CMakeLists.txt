@@ -589,6 +589,21 @@ set_tests_properties(stratified_duct_point stratified_duct_point_marched stratif
 add_test(NAME stratified_duct_point_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME stratified_duct_plate_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_plate.csv integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_duct_point_windowed_is_exact stratified_duct_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# Discretization independence: example_windy.csv with a calm, isothermal floor 0.1 ft thick (a level
+# at 0.1 ft, as fast as the ground) against the same profile without it.  Ray theory sent the upwind
+# shadow's limiting ray along the floor without limit, and flush microphones on it came out up to
+# 39 dB low on this grid; no band of the run resolves a floor that thin (resolved_pass, stratified.cpp).
+# What may remain is the floor itself, which reshapes the lowest layer (0.05 dB at 1.2 m), and the
+# cap's slack, which leaves the boundary about a third of 2 k h^2 farther out (~2% at 10 kHz):
+# 0.26 dB at worst on the plates, at the shadow's edge.  0.4 dB absolute.
+add_test(NAME stratified_windy_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 -L warn -o integrated/stratified_windy_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 -L warn -o integrated/stratified_calm_floor_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --refraction stratified --frame_bearing 210 --ground_effect --gridstep 984 -L warn -o integrated/stratified_calm_floor_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_windy_plate stratified_calm_floor_plate stratified_calm_floor_point PROPERTIES FIXTURES_SETUP stratified_calm_floor_runs)
+add_test(NAME stratified_calm_floor_plate_is_floorless COMMAND golden_compare integrated/stratified_calm_floor_plate.csv integrated/stratified_windy_plate.csv 0.4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_point_is_floorless COMMAND golden_compare integrated/stratified_calm_floor_point.csv integrated/stratified_windy_point.csv 0.4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_calm_floor_plate_is_floorless PROPERTIES FIXTURES_REQUIRED stratified_calm_floor_runs)
+set_tests_properties(stratified_calm_floor_point_is_floorless PROPERTIES FIXTURES_REQUIRED "stratified_calm_floor_runs;stratified_runs")
 # Pinned footprints, since windowed-versus-marched compares two runs of one binary and a change
 # to the arrivals' summation, bounce loss, ground geometry or completeness passes it: dropping the
 # extra arrivals from the energy sum and the primary's bounce loss moved the duct footprint by up

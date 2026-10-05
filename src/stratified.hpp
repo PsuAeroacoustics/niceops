@@ -46,6 +46,25 @@ namespace niceops {
 // add in energy, so the summed field can exceed this per-ray cap.
 inline constexpr double max_focusing_gain_db = 10.0;
 
+// The highest frequency the layered solve must answer for, Hz, unless told
+// otherwise: the top third-octave band of every shipped database.  A run
+// passes its own highest band (LayeredSoundSpeed's constructor).
+//
+// It sets the finest vertical structure the rays are allowed to see at the
+// fastest air.  Ray theory sends the limiting ray of a ground-grazing shadow
+// along a flat or nearly flat stretch of that air without limit -- a calm,
+// isothermal floor 3 cm thick put the shadow boundary 20 km out, and the pairs
+// short of it got near-grazing rays with tubes tens of times their range,
+// 22-28 dB low -- where a wave confined to a stretch h tall diffracts out of
+// it within about k h^2.  So a downward ray is not followed past the invariant
+// at which its horizontal travel through the limiting ray's turning region
+// (the heights within one radian of vertical phase of the fastest air) would
+// exceed 2 k h^2, k at this frequency.  In any linear gradient ray theory
+// itself travels 2/3 of that there, so a resolved profile never reaches it;
+// the highest band gives the largest k, so the limit removes only what no
+// band of the run resolves (resolved_pass in stratified.cpp).
+inline constexpr double default_resolution_frequency = 10000.0; // Hz
+
 // The profile's levels and, per level, the sound speed and local-frame wind:
 // the effective sound speed along any bearing is c + hx w_x + hy w_y there.
 class LayeredSoundSpeed
@@ -54,7 +73,10 @@ public:
     LayeredSoundSpeed() = default;
     // Wind turned into the local frame whose +x axis points along compass
     // bearing `frame_bearing`, degrees, as EffectiveSoundSpeed does.
-    LayeredSoundSpeed(const AtmosphereProfile& profile, double frame_bearing);
+    // `resolution_frequency`: the highest frequency the run evaluates, Hz
+    // (default_resolution_frequency).
+    LayeredSoundSpeed(const AtmosphereProfile& profile, double frame_bearing,
+            double resolution_frequency = default_resolution_frequency);
 
     std::size_t levels() const
     {
@@ -67,12 +89,17 @@ public:
     // The effective sound speed at each level along horizontal direction
     // (hx, hy), written into `out` (room for levels()).
     void along(double hx, double hy, double* out) const;
+    double resolution_frequency() const
+    {
+        return resolution_frequency_;
+    }
 
 private:
     std::vector<double> heights_;
     std::vector<double> sound_speed_;
     std::vector<double> wind_x_;
     std::vector<double> wind_y_;
+    double resolution_frequency_ = default_resolution_frequency;
 };
 
 // One path's effective sound speed: piecewise linear between `levels` heights
@@ -82,6 +109,10 @@ struct Layers
     const double* z = nullptr;
     const double* c = nullptr;
     std::size_t levels = 0;
+    // The highest frequency the rays answer for, Hz: it limits the vertical
+    // structure they see at the fastest air (default_resolution_frequency).
+    // 0 is plain ray theory, followed along flat air without limit.
+    double resolution_frequency = default_resolution_frequency;
 
     double at(double height) const;
     // Whether the effective sound speed is the same everywhere on the path's

@@ -1457,8 +1457,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const double bearing = std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing;
         effective_sound_speed = EffectiveSoundSpeed(*profile, bearing, z_low,
                 z_high + EffectiveSoundSpeed::min_fit_span);
+        // The layered solve follows flat air at a path's fastest height only
+        // as far as the highest band evaluated resolves it (stratified.hpp).
         if (options.stratified)
-            layered_sound_speed = LayeredSoundSpeed(*profile, bearing);
+            layered_sound_speed = LayeredSoundSpeed(*profile, bearing, database.band_centers()[last_band - 1]);
         state_moments.reserve(nt);
         for (const auto& state : source_states)
             state_moments.push_back(effective_sound_speed->moments(state.position.z));
@@ -1529,6 +1531,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 options.scattering > 0.0 ? ", filled by turbulent scattering at gamma_T " : ", capped at ",
                 options.scattering > 0.0 ? options.scattering : options.shadow_floor,
                 options.scattering > 0.0 ? "." : " dB.");
+        if (options.stratified)
+            log("  a ray along flat air at a path's fastest height is followed only as far as "
+                "the highest band evaluated, ", layered_sound_speed->resolution_frequency(),
+                    " Hz, resolves it.");
         if (profile->has_wind() && std::isnan(options.frame_bearing))
         {
             log("  the profile's wind directions are compass bearings, turned into the local "
@@ -2634,7 +2640,8 @@ int run(int argc, char* argv[])
             "Refraction through the --atmosphere profile: none (default); linear -- curved rays "
             "through its effective sound speed (temperature and wind) fitted to a straight line "
             "per path; or stratified -- through the profile's own layers, slower but without "
-            "the fit. Both give shadow zones under upward refraction.")
+            "the fit, resolving them only as finely as the highest band evaluated can. Both "
+            "give shadow zones under upward refraction.")
             ->check(CLI::IsMember({"none", "linear", "stratified"}));
     app.add_flag("--tunneling", tunneling,
             "--refraction stratified: also take the rays turned back from aloft that turn again just "
