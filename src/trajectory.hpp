@@ -62,8 +62,10 @@ struct State
     double wx = 0.0;
     double wy = 0.0;
     // Compass heading of the nose, degrees from true north: the AC format's
-    // column 8.  NaN where the file carries none (the geodetic formats).  Only
-    // the sphere's orientation at hover reads it (nose_direction).
+    // column 9 (data[8]), or a static operation's heading column.  NaN where the
+    // file carries none (the geodetic formats).  Only the sphere's orientation
+    // reads it: at hover, and at every speed under --nose heading
+    // (nose_direction).
     double heading = std::numeric_limits<double>::quiet_NaN();
 };
 
@@ -73,6 +75,30 @@ inline std::array<double, 3> air_velocity(const State& s)
 {
     return {s.vx - s.wx, s.vy - s.wy, s.vz};
 }
+
+// The ground velocity, whatever wind relative_to_air() has set.
+inline std::array<double, 3> ground_velocity(const State& s)
+{
+    return {s.vx, s.vy, s.vz};
+}
+
+// Where the sphere frame's nose comes from (--nose).  `velocity` is the velocity
+// the flight conditions take (air_velocity: the ground velocity, or under
+// --speed_reference air the air velocity); `ground_velocity` is the ground
+// velocity whatever --speed_reference says, so the nose and mu can be referred
+// separately; `heading` is the state's compass heading at every speed.  The
+// first two turn to the heading at hover (below); the sphere frame projects any
+// of them into the tip-path plane (sphere_frame).
+enum class NoseSource
+{
+    velocity,
+    ground_velocity,
+    heading,
+};
+
+// "velocity", "ground_velocity" or "heading"; nullopt for anything else.
+std::optional<NoseSource> parse_nose_source(const std::string& name);
+const char* to_string(NoseSource source);
 
 // The sphere's nose turns from the heading to the velocity as the horizontal
 // speed rises through this band, on a smoothstep weight.  Below the lower edge
@@ -84,20 +110,36 @@ inline std::array<double, 3> air_velocity(const State& s)
 constexpr double heading_nose_speed = 3.0 * 1852.0 / 3600.0; // m/s
 constexpr double velocity_nose_speed = 8.0 * 1852.0 / 3600.0; // m/s
 
-// The local frame's angle atan2(y, x) of compass heading h is offset - h; this
-// is that offset, radians.  Inferred from the track, as the circular mean of
-// atan2(vy, vx) + heading over its states faster than 20 kt, when it has 50
-// such -- which also folds in the few degrees an INS heading sits off the
-// ground track, so the nose does not step where the switch to velocity is
-// made.  Otherwise from `frame_bearing` (degrees, NaN when not given), the
-// bearing of +x, where the offset is the bearing itself.  nullopt when neither
-// is available or the file carries no heading.
-std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing);
+// The smoothstep weight the nose gives the velocity at horizontal speed
+// `speed`, m/s: 0 at or below heading_nose_speed, 1 at or above
+// velocity_nose_speed.
+double nose_velocity_weight(double speed);
 
-// The direction the sphere's nose takes for a state: its air velocity above
-// velocity_nose_speed, the heading (horizontal) below heading_nose_speed, and
-// between them the horizontal angle turned from one to the other.
-std::array<double, 3> nose_direction(const State& state, std::optional<double> offset);
+// The local frame's angle atan2(y, x) of compass heading h is offset - h; this
+// is that offset, radians.  From `frame_bearing` (degrees, NaN when the run
+// knows no frame), the bearing of +x, where the offset is the bearing itself.
+// Only when there is no frame is it inferred from the track, as the circular
+// mean of atan2(vy, vx) + heading over its states faster than 20 kt, when it
+// has 50 such, the velocity being air_velocity, or the ground velocity when
+// `ground` is set.  That fit folds the mean crab -- the heading's angle off the
+// track, a few degrees of INS bias and, in a crosswind, the wind correction --
+// into the offset, so a hover heading read through it is off by that much;
+// it is the fallback, never preferred to a known frame.  nullopt when neither
+// is available or the file carries no heading.
+std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing,
+        bool ground = false);
+
+// The direction the sphere's nose takes for a state.  For `velocity` and
+// `ground_velocity`: that velocity above velocity_nose_speed, the heading
+// (horizontal) below heading_nose_speed, and between them the horizontal angle
+// turned from one to the other.  For `heading`: the heading's horizontal
+// direction at every speed, carrying the air velocity's climb (vz over the
+// horizontal speed) by nose_velocity_weight, so that a heading along the track
+// gives exactly the direction `velocity` does, climbs and descents included.
+// `heading` needs an offset and a finite heading (the caller checks; without
+// them this returns the air velocity, as the others do).
+std::array<double, 3> nose_direction(const State& state, std::optional<double> offset,
+        NoseSource source = NoseSource::velocity);
 
 inline std::ostream& operator<<(std::ostream& os, const State& s)
 {
@@ -236,6 +278,23 @@ public:
 
     std::vector<State> states;
     dimensional_data vehicle;
+
+    // Where an AC state file says its states are, besides x/y/z: latitude and
+    // longitude (degrees) and altitude (m, on the file's own vertical datum),
+    // with the state's x, y, z (m) beside them.  Kept as read, before any trim,
+    // so that --terrain can check the run's frame (--origin, --frame_bearing)
+    // and --ground_elevation against the track itself.  Empty for the other
+    // formats; rows whose lat/lon/alt are not numbers are left out.
+    struct RecordedPosition
+    {
+        double latitude;
+        double longitude;
+        double altitude;
+        double x;
+        double y;
+        double z;
+    };
+    std::vector<RecordedPosition> recorded;
 
 private:
     std::optional<LocalFrame> frame_;

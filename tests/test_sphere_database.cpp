@@ -5,6 +5,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -426,6 +427,60 @@ TEST_CASE("speed_reference is read from the database root", "[sphere_database]")
     REQUIRE(parse_speed_reference("air") == SpeedReference::air);
     REQUIRE(!parse_speed_reference("Air").has_value());
     REQUIRE(std::string(to_string(SpeedReference::ground)) == "ground");
+}
+
+TEST_CASE("azimuth_reference is read from the database root and survives export", "[sphere_database]")
+{
+    // Absent is the track, as every database built before the attribute was;
+    // the Database still says that it was absent, so a run can tell an
+    // explicit --nose against the file from one against a default.
+    Database source("databases/S-76D_M3.nod");
+    REQUIRE(source.azimuth_reference() == AzimuthReference::track);
+    REQUIRE_FALSE(source.recorded_azimuth_reference().has_value());
+    auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    REQUIRE_FALSE(sphere.azimuth_reference.has_value());
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_azimuth_reference.nod").string();
+
+    const auto with_attribute = [&](const char* value) {
+        write_sphere(sphere, path);
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "azimuth_reference", std::strlen(value), value)
+                == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+
+    // An export of a database that records nothing records nothing.
+    write_sphere(sphere, path);
+    REQUIRE_FALSE(Database(path).recorded_azimuth_reference().has_value());
+    with_attribute("heading");
+    {
+        const Database reloaded(path);
+        REQUIRE(reloaded.azimuth_reference() == AzimuthReference::heading);
+        REQUIRE(reloaded.recorded_azimuth_reference() == AzimuthReference::heading);
+        // And re-exported, it carries the attribute on.
+        const auto again = reloaded.interpolate_sphere(0.15, -4.0, 0.006);
+        REQUIRE(again.azimuth_reference == AzimuthReference::heading);
+        const auto copy = (std::filesystem::temp_directory_path() / "niceops_azimuth_copy.nod").string();
+        write_sphere(again, copy);
+        REQUIRE(Database(copy).recorded_azimuth_reference() == AzimuthReference::heading);
+        std::filesystem::remove(copy);
+    }
+    with_attribute("track");
+    REQUIRE(Database(path).recorded_azimuth_reference() == AzimuthReference::track);
+    // Anything else is refused rather than guessed at, padding aside.
+    with_attribute("heading  ");
+    REQUIRE(Database(path).azimuth_reference() == AzimuthReference::heading);
+    with_attribute("nose");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("azimuth_reference is 'nose'"));
+    std::filesystem::remove(path);
+
+    REQUIRE(parse_azimuth_reference("heading") == AzimuthReference::heading);
+    REQUIRE(parse_azimuth_reference("track") == AzimuthReference::track);
+    REQUIRE(!parse_azimuth_reference("Heading").has_value());
+    REQUIRE(std::string(to_string(AzimuthReference::heading)) == "heading");
+    REQUIRE(std::string(to_string(AzimuthReference::track)) == "track");
 }
 
 TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")
@@ -906,6 +961,28 @@ TEST_CASE("fixed_load_factor: query above the reference scales by 20*log10(load 
         REQUIRE(approx_equal(blend.level_correction_db, expected));
         REQUIRE(approx_equal(db.eval(db.sphere_radius(), 0.0, 90.0, blend), 100.0 + expected));
     }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("source coverage distinguishes clamping from analytic load scaling", "[sphere_database]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_source_coverage.nod", fixed_load_factor_conditions, true);
+    Database db(path);
+    const auto inside = db.blend_at(0.0, 0.0, test_ct_reference);
+    CHECK_FALSE(inside.advance_ratio_clamped);
+    CHECK_FALSE(inside.flight_path_angle_clamped);
+    CHECK_FALSE(inside.thrust_coefficient_clamped);
+    const auto outside = db.blend_at(-0.1, 1.1, 2.0 * test_ct_reference);
+    CHECK(outside.advance_ratio_clamped);
+    CHECK(outside.flight_path_angle_clamped);
+    CHECK_FALSE(outside.thrust_coefficient_clamped);
+    CHECK(outside.level_correction_db > 0.0);
+    const auto boundary = db.blend_at(0.0, 1.0, 2.0 * test_ct_reference);
+    CHECK_FALSE(boundary.advance_ratio_clamped);
+    CHECK_FALSE(boundary.flight_path_angle_clamped);
+    CHECK(db.eval(db.sphere_radius(), 0.0, 90.0, outside)
+            == db.eval(db.sphere_radius(), 0.0, 90.0, boundary));
     std::filesystem::remove(path);
 }
 
@@ -1718,4 +1795,257 @@ TEST_CASE("Grid-shaped coverage counts an unmeasured band by its A-weighted ener
     // The two bands bracket the cases: 100 Hz carries about 1%, 800 Hz about two thirds.
     CHECK(gains[0] / total < 0.02);
     CHECK(gains[3] / total > 0.6);
+}
+
+// --blend and --load_factor_correction through Database::blend_at.  The
+// fixtures give each sphere one constant level, so the level at the sphere's
+// surface (no spreading, EAA 0) says which spheres a blend took and by how
+// much.  The search rules themselves are swept on synthetic condition sets in
+// test_condition_selection.cpp.
+namespace {
+
+double surface_level(const Database& db, const Database::Blend& blend)
+{
+    return db.eval(db.sphere_radius(), 0.0, 90.0, blend);
+}
+
+// A tip speed of 100 kt, so an advance ratio is knots / 100.
+constexpr double tip_speed_100_kt = 100.0 * 1852.0 / 3600.0;
+
+} // namespace
+
+TEST_CASE("--blend nearest takes the stored condition nearest in the normalized space",
+        "[sphere_database][blend]")
+{
+    // mu spans 0.3 and gamma 20 degrees: in raw units gamma would decide every
+    // distance, which is why the search runs where the triangulation does.
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.0, -10.0, test_ct_reference, 100.0},
+        {0.3, -10.0, test_ct_reference, 110.0},
+        {0.0, 10.0, test_ct_reference, 120.0},
+    };
+    const auto path = write_fixed_load_factor_test_database("niceops_blend_nearest.nod", conditions, true);
+    const Database db(path);
+    Database::BlendOptions nearest;
+    nearest.policy = BlendPolicy::nearest;
+
+    // (0.2, 1): normalized (0.67, 0.55), nearest sphere 1; in raw units
+    // sphere 2 (gamma 9 degrees away against 11) would have been.
+    const auto blend = db.blend_at(0.2, 1.0, test_ct_reference, nearest);
+    REQUIRE(blend.weights[0] == 1.0);
+    for (std::size_t k = 1; k < blend.weights.size(); k++)
+    {
+        REQUIRE(blend.weights[k] == 0.0);
+        REQUIRE(blend.indices[k] == blend.indices[0]);
+    }
+    REQUIRE(surface_level(db, blend) == 110.0);
+    REQUIRE(surface_level(db, db.blend_at(0.05, -8.0, test_ct_reference, nearest)) == 100.0);
+    REQUIRE(surface_level(db, db.blend_at(0.02, 6.0, test_ct_reference, nearest)) == 120.0);
+    // Outside the envelope it is still the nearest, from the clamped query.
+    REQUIRE(surface_level(db, db.blend_at(0.9, -30.0, test_ct_reference, nearest)) == 110.0);
+
+    // The default is unchanged: inside the triangle, a blend, not a pick.
+    // (0.1, -5) is normalized (1/3, 1/4); sphere 0 is nearest.
+    REQUIRE(surface_level(db, db.blend_at(0.1, -5.0, test_ct_reference, nearest)) == 100.0);
+    REQUIRE(surface_level(db, db.blend_at(0.1, -5.0, test_ct_reference))
+            == Catch::Approx(100.0 * 5.0 / 12.0 + 110.0 / 3.0 + 120.0 / 4.0));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("--blend aam brackets speed in each path-angle row, then path angle", "[sphere_database][blend]")
+{
+    // Rows at -6 and -3 degrees with 60 and 75 kt in each; levels that are not
+    // linear in (speed, angle), so AAM's bilinear blend and the Delaunay
+    // blend differ.
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.60, -6.0, test_ct_reference, 100.0},
+        {0.75, -6.0, test_ct_reference, 106.0},
+        {0.60, -3.0, test_ct_reference, 110.0},
+        {0.75, -3.0, test_ct_reference, 120.0},
+        {0.60, 4.0, test_ct_reference, 130.0},
+    };
+    const auto path = write_fixed_load_factor_test_database("niceops_blend_aam.nod", conditions, true);
+    const Database db(path);
+    REQUIRE(db.aam_layer_count() == 1);
+    Database::BlendOptions aam;
+    aam.policy = BlendPolicy::aam;
+    aam.tip_speed = tip_speed_100_kt;
+
+    // 65 kt at -4.5 degrees: a third of the way across each row's speeds, half
+    // way across the rows (3 degrees apart, inside the approach gate).
+    const double expected = 0.5 * (100.0 + 6.0 / 3.0) + 0.5 * (110.0 + 10.0 / 3.0);
+    const auto blend = db.blend_at(0.65, -4.5, test_ct_reference, aam);
+    REQUIRE(surface_level(db, blend) == Catch::Approx(expected).epsilon(1e-14));
+    REQUIRE(surface_level(db, db.blend_at(0.65, -4.5, test_ct_reference)) != Catch::Approx(expected));
+
+    // Climbing at 0.5 degrees: the -3/+4 rows are 7 degrees apart, past even
+    // the departure gate, so the nearer row (-3) alone.
+    REQUIRE(surface_level(db, db.blend_at(0.60, 0.5, test_ct_reference, aam)) == 110.0);
+    // 110 kt: past every speed, the fastest in the row.
+    REQUIRE(surface_level(db, db.blend_at(1.10, -6.0, test_ct_reference, aam)) == 106.0);
+
+    // The 20 kt gate is converted with the tip speed: at 100 kt, mu 0.60 and
+    // 0.75 are 15 kt apart and interpolated; at 150 kt they are 22.5 kt
+    // apart, past the gate, and a state between them takes the nearer alone.
+    aam.tip_speed = tip_speed_100_kt * 1.5;
+    REQUIRE(surface_level(db, db.blend_at(0.65, -6.0, test_ct_reference, aam)) == 100.0);
+
+    // A database with no tip speed of its own needs the vehicle's.
+    aam.tip_speed = std::numeric_limits<double>::quiet_NaN();
+    REQUIRE_THROWS(db.blend_at(0.65, -4.5, test_ct_reference, aam));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("--blend aam searches the nearest thrust layer of a load-factor database",
+        "[sphere_database][blend]")
+{
+    // Not fixed_load_factor: two thrust coefficients, each a layer with its
+    // own spheres.  AAM has no thrust axis, so a state takes the nearer
+    // layer and searches it alone.
+    const double low = 0.004, high = 0.008;
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.5, -6.0, low, 100.0},
+        {0.7, -6.0, low, 102.0},
+        {0.5, 0.0, low, 104.0},
+        {0.7, 0.0, low, 106.0},
+        {0.5, -6.0, high, 110.0},
+        {0.7, -6.0, high, 112.0},
+        {0.5, 0.0, high, 114.0},
+        {0.7, 0.0, high, 116.0},
+    };
+    const auto path = write_fixed_load_factor_test_database("niceops_blend_aam_layers.nod", conditions, false);
+    const Database db(path);
+    REQUIRE_FALSE(db.fixed_load_factor());
+    REQUIRE(db.aam_layer_count() == 2);
+    REQUIRE(db.aam_single_sphere_layers() == 0);
+    Database::BlendOptions aam;
+    aam.policy = BlendPolicy::aam;
+    aam.tip_speed = tip_speed_100_kt;
+    REQUIRE(surface_level(db, db.blend_at(0.5, -6.0, 0.0055, aam)) == 100.0);
+    REQUIRE(surface_level(db, db.blend_at(0.5, -6.0, 0.0065, aam)) == 110.0);
+    // Exactly between: the higher thrust, as speed ties take the faster.
+    REQUIRE(surface_level(db, db.blend_at(0.5, -6.0, 0.006, aam)) == 110.0);
+    // Within the layer it is the ordinary search: 60 kt, a row pair 6 degrees
+    // apart (past the 3 degree approach gate), so the nearer row, two speeds.
+    REQUIRE(surface_level(db, db.blend_at(0.6, -2.0, 0.0079, aam)) == Catch::Approx(115.0));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("--blend aam counts the thrust layers that hold one sphere", "[sphere_database][blend]")
+{
+    // C_T scattered sphere by sphere rather than layered: every layer is one
+    // sphere, and the run warns that AAM's search has nothing to bracket.
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.5, -6.0, 0.0040, 100.0},
+        {0.7, -6.0, 0.0050, 102.0},
+        {0.5, 0.0, 0.0060, 104.0},
+        {0.7, 0.0, 0.0075, 106.0},
+    };
+    const auto path = write_fixed_load_factor_test_database("niceops_blend_aam_scattered.nod", conditions, false);
+    const Database db(path);
+    REQUIRE(db.aam_layer_count() == 4);
+    REQUIRE(db.aam_single_sphere_layers() == 4);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("two-sided load-factor correction follows the law below the reference, to a floor",
+        "[sphere_database][blend]")
+{
+    const auto path = write_fixed_load_factor_test_database(
+            "niceops_fixed_lf_two_sided.nod", fixed_load_factor_conditions, true);
+    const Database db(path);
+    Database::BlendOptions two_sided;
+    two_sided.load_factor_correction = LoadFactorCorrection::two_sided;
+    two_sided.min_load_factor = 0.5;
+
+    for (double load_factor : {0.5, 0.8, 1.0, 1.3, 3.0})
+    {
+        const auto blend = db.blend_at(0.0, 0.0, test_ct_reference * load_factor, two_sided);
+        REQUIRE(blend.level_correction_db == Catch::Approx(20.0 * std::log10(load_factor)).margin(1e-12));
+        REQUIRE(surface_level(db, blend) == Catch::Approx(100.0 + 20.0 * std::log10(load_factor)));
+        // One-sided, the same states: nothing below the reference, the same law above it.
+        const auto one_sided = db.blend_at(0.0, 0.0, test_ct_reference * load_factor);
+        REQUIRE(one_sided.level_correction_db
+                == (load_factor > 1.0 ? blend.level_correction_db : 0.0));
+    }
+    // Below the floor the correction is held there, through zero and below
+    // (a state at negative g has a negative C_T, and no logarithm).
+    for (double load_factor : {0.49, 0.2, 0.0, -0.5})
+    {
+        const auto blend = db.blend_at(0.0, 0.0, test_ct_reference * load_factor, two_sided);
+        REQUIRE(blend.level_correction_db == Catch::Approx(20.0 * std::log10(0.5)));
+    }
+    two_sided.min_load_factor = 0.25;
+    REQUIRE(db.blend_at(0.0, 0.0, test_ct_reference * 0.3, two_sided).level_correction_db
+            == Catch::Approx(20.0 * std::log10(0.3)));
+    REQUIRE(db.blend_at(0.0, 0.0, test_ct_reference * 0.1, two_sided).level_correction_db
+            == Catch::Approx(20.0 * std::log10(0.25)));
+
+    // An exported sphere carries it too.
+    const auto sphere = db.interpolate_sphere(0.0, 0.0, test_ct_reference * 0.5,
+            Database::BlendOptions {BlendPolicy::barycentric, LoadFactorCorrection::two_sided, 0.5});
+    for (const auto& cell : sphere.cells)
+        if (cell.dBA > -1000.0)
+            REQUIRE(cell.dBA == Catch::Approx(100.0 + 20.0 * std::log10(0.5)));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("direction bounds hold for two-sided corrections and the other policies",
+        "[sphere_database][blend][bounds]")
+{
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.60, -6.0, test_ct_reference, 100.0},
+        {0.75, -6.0, test_ct_reference, 106.0},
+        {0.60, -3.0, test_ct_reference, 110.0},
+        {0.75, -3.0, test_ct_reference, 120.0},
+        {0.60, 4.0, test_ct_reference, 130.0},
+    };
+    const auto path = write_fixed_load_factor_test_database("niceops_blend_bounds.nod", conditions, true);
+    const Database db(path);
+    for (const auto policy : {BlendPolicy::barycentric, BlendPolicy::nearest, BlendPolicy::aam})
+    {
+        Database::BlendOptions options;
+        options.policy = policy;
+        options.tip_speed = tip_speed_100_kt;
+        options.load_factor_correction = LoadFactorCorrection::two_sided;
+        std::vector<Database::SourceState> states;
+        // Two states at one condition and different load factors, and a few
+        // more around the envelope.
+        for (const auto& c : std::vector<std::array<double, 3>> {
+                     {0.65, -4.5, 0.6}, {0.65, -4.5, 1.0}, {0.62, 0.5, 0.3}, {0.9, -9.0, 1.7}})
+        {
+            states.push_back(db.source_state(Vec3(0.0, 0.0, 100.0), Vec3(50.0, 0.0, -5.0),
+                    Vec3(0.05, 0.0, 1.0), c[0], c[1], test_ct_reference * c[2], options));
+        }
+        const auto bounds = db.direction_bounds(states);
+        REQUIRE(bounds.usable());
+        const double radius = db.sphere_radius();
+        for (std::size_t s = 0; s < states.size(); s++)
+        {
+            for (double x = -300.0; x <= 300.0; x += 37.0)
+            {
+                for (double y = -300.0; y <= 300.0; y += 41.0)
+                {
+                    const Vec3 observer(x, y, 0.0);
+                    const Vec3 delta = observer - states[s].position;
+                    const double squared_range = delta.squaredNorm();
+                    if (squared_range <= radius * radius)
+                        continue;
+                    const int bin = DirectionBounds::bin(states[s].frame.nose.dot(delta),
+                            states[s].frame.normal.dot(delta),
+                            states[s].frame.starboard.dot(delta), squared_range);
+                    const double level = db.level_at_observer(observer, states[s]);
+                    INFO("policy " << to_string(policy) << ", state " << s);
+                    REQUIRE(bounds.numerator(s, bin)
+                            >= std::pow(10.0, 0.1 * level) * squared_range * (1.0 - 1e-9));
+                }
+            }
+        }
+        // cull_range stays a bound under a negative correction.
+        const double cutoff = 95.0;
+        const double range = db.cull_range(states[0].blend, cutoff);
+        REQUIRE(std::isfinite(range));
+        REQUIRE(db.eval(range, 0.0, 90.0, states[0].blend) <= cutoff + 1e-9);
+    }
+    std::filesystem::remove(path);
 }

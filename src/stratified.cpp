@@ -320,6 +320,268 @@ struct Families
     double limiting_p = 0.0;
 };
 
+// int_{z0}^{z1} sin(angle to the horizontal) dz for a ray of invariant p that
+// does not turn on [z0, z1], c linear between c0 and c1: the vertical phase per
+// unit wavenumber.  With u = p c the integrand is sqrt(1 - u^2) du / (p g), whose
+// antiderivative is (u q + asin u) / 2; the difference of the two asin is taken
+// as one atan2, and a layer too flat for the quotient is the trapezoid.
+double vertical_phase(double p, double z0, double c0, double z1, double c1)
+{
+    const double dz = z1 - z0;
+    if (!(dz > 0.0))
+        return 0.0;
+    const double u0 = p * c0, u1 = p * c1;
+    const double q0 = sine(p, c0), q1 = sine(p, c1);
+    const double du = u1 - u0;
+    if (std::fabs(du) <= 1e-9 * std::max(std::fabs(u0), std::fabs(u1)))
+        return 0.5 * (q0 + q1) * dz;
+    return dz * (u1 * q1 - u0 * q0 + std::atan2(u1 * q0 - u0 * q1, u0 * u1 + q0 * q1)) / (2.0 * du);
+}
+
+// The largest invariant, at most `pass`, whose ray the wave can follow past the
+// fastest air of [z_r, z_s] (c_rs), for families().
+//
+// A ray of invariant 1/c_rs is horizontal where the air is that fast.  If the
+// air around that height has any gradient, the ray turns there over a vertical
+// extent the wave resolves at high enough frequency, and the range of the rays
+// approaching it converges.  If it is flat -- a calm, isothermal floor, a
+// profile written to a few decimals -- the ray runs along it without limit, and
+// the downward family's last rays (pass is 1/c_rs less 1e-12) reached 20 km
+// across a 3 cm floor, a figure set by that inset alone.  The shadow boundary
+// went with them, and with it the hand-over and ShadowTransition; the pairs
+// short of it took near-grazing rays whose tubes were tens of times their
+// range, 22-28 dB low, where the same profile without the floor was not.
+//
+// No wave can be steered along a stretch thinner than its vertical wavelength
+// at that angle: one confined to a height h diffracts out of it within about
+// k h^2.  So around each height where the air is this fast, the turning region
+// is taken to run to where the limiting ray has gathered one radian of
+// vertical phase, k int sin dz = 1, at the highest frequency the run evaluates
+// (Layers::resolution_frequency), and the ray's horizontal travel across it,
+// over its height h, is capped at 1.5 k h^2.  In a linear gradient ray theory
+// itself travels (4/3) k h^2 there (sqrt(2 R h) against an Airy height h with
+// k^2 h^3 = 9 R / 8), 8/9 of the cap, and less on exact arcs; so the cap
+// leaves every resolved turning alone and binds only on flat or nearly flat
+// air, which gathers no phase.  The margin is what a floor may still add: the
+// cap's slack over (4/3) k h^2.  At 2 k h^2 that was 0.26 dB on the demo
+// grid's plates under a 0.1 ft calm floor, and 0.67 dB with the run's top band
+// at 200 Hz, for a floor a fiftieth of its wavelength; at 1.5, 0.12 and 0.19.  Where it
+// binds, the family stops at the invariant whose travel across the region is
+// the cap, whose ray still crosses the region at a small but finite angle; the
+// boundary is where that ray lands, and past it is shadow -- what the profile
+// without the floor gives, to within the cap's slack over what ray theory
+// travels in a resolved turning.
+//
+// The region is a property of the air, not of the path: where the path ends
+// before the radian is gathered, the walk goes on past it, up through the
+// profile or down to the ground, for as far as the limiting ray could go (not
+// into air faster than 1/pass, where it would have turned).  Only the travel
+// inside the path, which is all the ray has, is held to the cap.  Cut off at
+// the path's ends, a source within a radian of the fastest height -- 1.5 m
+// over a 1.2 m microphone at 10 kHz under a plain lapse, 5 m at 200 Hz in a
+// light wind -- had a region as short as the path, and the cap bound on
+// smooth gradients: one such boundary came in from 789 m to 34 m.
+//
+// `pass` is returned unchanged, bit for bit, wherever the cap does not bind.
+double resolved_pass(const Path& path, double z_s, double z_r, double c_rs, double pass)
+{
+    const Layers& L = path.L;
+    if (!(L.resolution_frequency > 0.0) || !std::isfinite(L.resolution_frequency) || !(z_s > z_r))
+        return pass;
+    const double k = 2.0 * pi * L.resolution_frequency / c_rs;
+    // The heights the path crosses, indexed 0 to n - 1: z_r, the levels
+    // strictly between, z_s.  Segment i runs from height i to i + 1.
+    const std::size_t first = static_cast<std::size_t>(std::upper_bound(L.z, L.z + L.levels, z_r) - L.z);
+    const std::size_t past = static_cast<std::size_t>(std::lower_bound(L.z, L.z + L.levels, z_s) - L.z);
+    const int n = 2 + static_cast<int>(past > first ? past - first : 0);
+    const double c_r = L.at(z_r), c_s = L.at(z_s);
+    auto zb = [&](int i) { return i == 0 ? z_r : i == n - 1 ? z_s : L.z[first + i - 1]; };
+    auto cb = [&](int i) { return i == 0 ? c_r : i == n - 1 ? c_s : L.c[first + i - 1]; };
+    // Segment i's phase, and a floor under it for one square root: on a layer
+    // q^2 is a concave quadratic in z, so q is concave and its trapezoid never
+    // exceeds its integral.
+    auto phase_of = [&](int i) { return k * vertical_phase(pass, zb(i), cb(i), zb(i + 1), cb(i + 1)); };
+    auto phase_floor = [&](int i) {
+        return 0.5 * k * (sine(pass, cb(i)) + sine(pass, cb(i + 1))) * (zb(i + 1) - zb(i));
+    };
+    // Where in segment i the phase gathered from its end nearer the fastest air
+    // (the top, if `from_top`) reaches `target`, which is less than the
+    // segment's `total`.  Safeguarded Newton on the distance from that end; the
+    // first guess takes q to grow as the square root of it, as from a turning
+    // height, so the phase as its 3/2 power.
+    auto inside_of = [&](double z0, double c0, double z1, double c1, bool from_top, double target,
+            double total) {
+        const double length = z1 - z0;
+        auto speed = [&](double d) {
+            return from_top ? c1 + d / length * (c0 - c1) : c0 + d / length * (c1 - c0);
+        };
+        auto gathered = [&](double d) {
+            return from_top ? k * vertical_phase(pass, z1 - d, speed(d), z1, c1)
+                            : k * vertical_phase(pass, z0, c0, z0 + d, speed(d));
+        };
+        double lo = 0.0, hi = length;
+        double d = length * std::pow(std::clamp(target / total, 0.0, 1.0), 2.0 / 3.0);
+        for (int iteration = 0; iteration < 60 && hi - lo > 1e-12 * length; iteration++)
+        {
+            const double miss = gathered(d) - target;
+            if (std::fabs(miss) <= 1e-10)
+                break;
+            (miss < 0.0 ? lo : hi) = d;
+            const double slope = k * sine(pass, speed(d));
+            const double next = slope > 0.0 ? d - miss / slope : 0.5 * (lo + hi);
+            d = next > lo && next < hi ? next : 0.5 * (lo + hi);
+        }
+        return from_top ? z1 - d : z0 + d;
+    };
+    auto inside = [&](int i, bool from_top, double target, double total) {
+        return inside_of(zb(i), cb(i), zb(i + 1), cb(i + 1), from_top, target, total);
+    };
+    // Past the path's end at z_end (speed c_end), up through the profile or
+    // down to the ground: the height at which `remaining` more phase is
+    // gathered, or the first height the limiting ray cannot pass -- air faster
+    // than 1/pass, where it turns, or the ground -- if that comes first.  Above
+    // the top level the air is constant; a ray horizontal there (the profile's
+    // fastest air extending to its top) never gathers it, and the region is
+    // unbounded.
+    const double turning_speed = 1.0 / pass;
+    auto beyond = [&](double z_end, double c_end, bool up, double remaining) {
+        double z0 = z_end, c0 = c_end;
+        // One piece from (z0, c0) toward (z1, c1), cut short where the ray
+        // would turn; true when the walk ends in it.
+        double edge = z_end;
+        auto piece = [&](double z1, double c1) {
+            bool turns = false;
+            if (c1 > turning_speed)
+            {
+                z1 = z0 + (z1 - z0) * (turning_speed - c0) / (c1 - c0);
+                c1 = turning_speed;
+                turns = true;
+            }
+            const bool upward = z1 > z0;
+            const double lo = upward ? z0 : z1, hi = upward ? z1 : z0;
+            const double c_lo = upward ? c0 : c1, c_hi = upward ? c1 : c0;
+            const double gathered = k * vertical_phase(pass, lo, c_lo, hi, c_hi);
+            if (gathered >= remaining)
+            {
+                edge = inside_of(lo, c_lo, hi, c_hi, !upward, remaining, gathered);
+                return true;
+            }
+            remaining -= gathered;
+            z0 = z1;
+            c0 = c1;
+            edge = z1;
+            return turns;
+        };
+        if (up)
+        {
+            for (const double* level = std::upper_bound(L.z, L.z + L.levels, z_end); level != L.z + L.levels;
+                    ++level)
+            {
+                if (piece(*level, L.c[level - L.z]))
+                    return edge;
+            }
+            const double q = sine(pass, c0);
+            return q > 0.0 ? z0 + remaining / (k * q) : std::numeric_limits<double>::infinity();
+        }
+        for (const double* level = std::lower_bound(L.z, L.z + L.levels, z_end); level != L.z;)
+        {
+            --level;
+            if (!(*level > 0.0))
+                break;
+            if (piece(*level, L.c[level - L.z]))
+                return edge;
+        }
+        if (z0 > 0.0)
+            piece(0.0, L.at(0.0));
+        return edge;
+    };
+    // The walk from a run of heights at the fastest air, one way: the segment
+    // in which one radian is reached and what remains of it there, or none
+    // (-1) if the path ends first, with what remains of it then (`beyond`
+    // carries on from there).  `next_to_run`: that segment adjoins the run.
+    // When the trapezoid alone shows it (total 0), nothing was integrated.
+    struct Reach
+    {
+        int segment = -1;
+        double target = 0.0, total = 0.0;
+        bool next_to_run = false;
+    };
+    auto walk = [&](int from, int step, bool single) {
+        Reach out;
+        double phase = 0.0;
+        for (int i = from; step < 0 ? i > 0 : i + 1 < n; i += step)
+        {
+            const int segment = step < 0 ? i - 1 : i;
+            if (single && i == from && phase_floor(segment) >= 1.0)
+            {
+                out.segment = segment;
+                out.next_to_run = true;
+                return out;
+            }
+            const double piece = phase_of(segment);
+            if (phase + piece >= 1.0)
+            {
+                out = {segment, 1.0 - phase, piece, i == from};
+                return out;
+            }
+            phase += piece;
+        }
+        out.target = 1.0 - phase;
+        return out;
+    };
+    const double fastest = c_rs * (1.0 - 1e-12);
+    double result = pass;
+    for (int a = 0; a < n; a++)
+    {
+        if (!(cb(a) >= fastest))
+            continue;
+        int b = a;
+        while (b + 1 < n && cb(b + 1) >= fastest)
+            b++;
+        const Reach below = walk(a, -1, a == b);
+        const Reach above = walk(b, +1, a == b);
+        // A single height at the fastest air whose radian is gathered within
+        // the segment on each side of it (or that ends the path there) is a
+        // resolved turning in a linear gradient: the cap does not bind.
+        if (a == b && (a == 0 || below.next_to_run) && (b == n - 1 || above.next_to_run))
+        {
+            a = b;
+            continue;
+        }
+        auto edge = [&](const Reach& reach, bool from_top, double end, double c_end) {
+            if (reach.segment < 0)
+                return beyond(end, c_end, !from_top, reach.target);
+            if (reach.total == 0.0) // the floor alone placed it: integrate now
+                return inside(reach.segment, from_top, 1.0, phase_of(reach.segment));
+            return inside(reach.segment, from_top, reach.target, reach.total);
+        };
+        const double lo = edge(below, true, z_r, c_r);
+        const double hi = edge(above, false, z_s, c_s);
+        const double h = hi - lo;
+        const double cap = 1.5 * k * h * h;
+        // The ray's own travel: inside the path.
+        const double from = std::max(lo, z_r), to = std::min(hi, z_s);
+        if (!(cap < std::numeric_limits<double>::infinity()) || path.between<false>(pass, from, to).dx <= cap)
+        {
+            a = b;
+            continue;
+        }
+        // The travel across the region rises with p: bisect on s = 1 - p c_rs,
+        // in log s, between pass and a vertical ray, keeping the side within
+        // the cap.
+        double s_lo = std::log(std::max(1.0 - pass * c_rs, 1e-300)), s_hi = 0.0;
+        for (int iteration = 0; iteration < 80; iteration++)
+        {
+            const double mid = 0.5 * (s_lo + s_hi);
+            const double p = (1.0 - std::exp(mid)) / c_rs;
+            (path.between<false>(p, from, to).dx > cap ? s_lo : s_hi) = mid;
+        }
+        result = std::min(result, (1.0 - std::exp(s_hi)) / c_rs);
+        a = b;
+    }
+    return result;
+}
+
 Families families(const Path& path, double z_s, double z_r, bool reflected)
 {
     constexpr double inset = 1e-12;
@@ -341,7 +603,15 @@ Families families(const Path& path, double z_s, double z_r, bool reflected)
     }
     const double c_rs = path.fastest(z_r, z_s);
     const double c_0r = path.fastest(0.0, z_r);
-    const double pass = std::min(1.0 / c_s, 1.0 / c_rs) * (1.0 - inset);
+    // Not past what the wave resolves at the fastest air (resolved_pass) --
+    // unless that air is the source's and there is faster air above it.  Then
+    // pass is the horizontal launch, where the downward family meets the
+    // families launched up to turn aloft, and is no end of the rays: capping it
+    // opened a gap between them that no ray reached, a false shadow inside the
+    // lit zone of a downward-refracting profile.
+    const double unresolved = std::min(1.0 / c_s, 1.0 / c_rs) * (1.0 - inset);
+    const bool launch_junction = c_up > c_s && !(c_rs > c_s);
+    const double pass = launch_junction ? unresolved : resolved_pass(path, z_s, z_r, c_rs, unresolved);
     const double dip = 1.0 / c_0r * (1.0 + inset);
     const double turn = 1.0 / c_up * (1.0 + inset);
     push({false, false}, 0.0, pass, true);
@@ -540,8 +810,9 @@ bool Layers::uniform() const
     return true;
 }
 
-LayeredSoundSpeed::LayeredSoundSpeed(const AtmosphereProfile& profile, double frame_bearing)
-    : heights_(profile.height)
+LayeredSoundSpeed::LayeredSoundSpeed(const AtmosphereProfile& profile, double frame_bearing,
+        double resolution_frequency)
+    : heights_(profile.height), resolution_frequency_(resolution_frequency)
 {
     const CompassToLocal to_local(frame_bearing);
     for (std::size_t k = 0; k < heights_.size(); k++)
@@ -961,7 +1232,7 @@ Layers path_layers(const LayeredSoundSpeed& air, double hx, double hy, std::vect
 {
     scratch.resize(air.levels());
     air.along(hx, hy, scratch.data());
-    return Layers {air.heights().data(), scratch.data(), air.levels()};
+    return Layers {air.heights().data(), scratch.data(), air.levels(), air.resolution_frequency()};
 }
 
 } // namespace

@@ -14,7 +14,8 @@ reads off the level in the direction of each observer. It then carries that leve
 ground. A broadband database uses its own attenuation factor. A database with spectra is
 propagated band by band, with ISO 9613-1 absorption, ground reflection and, optionally,
 refraction through a stratified, windy atmosphere. Each observer's level history is integrated
-into a sound exposure level (SEL), and a set of operations into a day-night level (DNL).
+into a sound exposure level (SEL), and a set of operations into a day-night level (DNL);
+Lden, CNEL, LAFmax, time above, C-weighted SEL and EPNL are available on request.
 
 This file covers building NICE-OPS and running a first case. **[The manual](docs/MANUAL.md)**
 covers every option, the theory behind each model, and how each model was checked.
@@ -88,8 +89,13 @@ with ground effect, by default. That path needs a relative humidity, from the ve
 
 - `-o`: the SEL per observer. Gridded output writes the x and y axes on the first two lines, then
   one row of levels per y.
-- `-D`: the day-night level, summed over every trajectory in the run.
+- `-D`, `--lden_file`, `--cnel_file`: the day-night, day-evening-night and community noise
+  equivalent levels, summed over every trajectory in the run.
+- `--lamax_file`, `--nax_file`, `--ta_file`, `--csel_file`: LAFmax, NAx, time above a
+  threshold and the C-weighted SEL.
 - `-i`, `--band_history`: per-observer level and band time histories.
+- `--epnl_file`, `--band_frames`: per-observer EPNL (14 CFR 36 A36.4), and the band levels in
+  0.5 s reception-time frames it is computed from, as netCDF.
 - `-S`: the derived trajectory state (position, velocity, load factor, C<sub>T</sub>, μ, flight
   path angles).
 - `--latlon`: a latitude, longitude, level companion to every level file.
@@ -115,6 +121,8 @@ feet, must be run without it. The `-S` state file is always metric. See
 | `--spectral` / `--no-spectral` | Per-band propagation, on by default when the database carries spectra. |
 | `--ground_effect` / `--no-ground_effect` | Ground reflection on the spectral path, on by default there. |
 | `--atmosphere`, `--refraction` | A stratified atmosphere profile, and curved rays through it. |
+| `--wind` | The profile built from one surface wind (`12kt,270`) instead of a file. |
+| `--terrain` | A terrain grid (e.g. USGS 3DEP): observers stand on it, and the ground model takes each path's mean ground plane. |
 | `-j` | Worker threads. 0 (the default) uses every core; output is identical at any count. |
 | `-p`, `-f` | Plot the footprint, or save it to a file. |
 
@@ -127,7 +135,7 @@ feet, must be run without it. The `-S` state file is always metric. See
 | `databases/` | Noise databases and vehicle files. `S-76D_M3.nod` is the demo database. The AS350, B407, Be206L3, EC130, RO-44 and RO-66 `_fixed_load_factor` databases carry spectra, built from the 2017 Noise Abatement flight test. |
 | `tracks/` | Flight tracks in the AC state format, for the S-76D, AW139 and B205. |
 | `arrays/` | `coyle_approach.csv`, a scattered microphone array. |
-| `atmospheres/` | Profiles for `--atmosphere`: the ISA (`isa.csv`), a windy log law (`example_windy.csv`), a morning inversion (`example_inversion.csv`) and B407's own uniform atmosphere. |
+| `atmospheres/` | Profiles for `--atmosphere`: the ISA (`isa.csv`), a windy log law (`example_windy.csv`, and `example_windy_calm_floor.csv` with a 0.1 ft calm floor for a test), a morning inversion (`example_inversion.csv`) and B407's own uniform atmosphere. |
 | `plates/` | Ground-plate microphone tables for `--plate_table`. |
 
 ## Documentation
@@ -136,6 +144,8 @@ feet, must be run without it. The `-S` state file is always metric. See
   propagation models, their checks against exact and full-wave solutions, and performance.
 - [`CLAUDE.md`](CLAUDE.md): developer notes on the port's history, the shape of the hot path,
   and the pitfalls to know before changing the numerics.
+- [`docs/FIDELITY.md`](docs/FIDELITY.md): fidelity status and validation, with current
+  measurement evidence, experimental source improvements and propagation-table error checks.
 
 **Results from before September 2026 are not comparable to results after.** See
 [Changes that affect results](docs/MANUAL.md#changes-that-affect-results).

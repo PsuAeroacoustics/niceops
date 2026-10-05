@@ -20,6 +20,7 @@
 #include "sphere_database.hpp"
 #include "trajectory.hpp"
 #include "util/csv.hpp"
+#include "util/paths.hpp"
 
 using namespace niceops;
 
@@ -786,6 +787,155 @@ TEST_CASE("at hover the sphere's nose is the heading, turned into the local fram
     CHECK(nose_direction(bare, 1.0)[0] == 0.1);
 }
 
+TEST_CASE("a known frame, not the track's fit, turns the hover heading", "[trajectory][nose]")
+{
+    // A crabbed approach: fast states track west (+x of a 270 frame) on a
+    // heading of 283, 13 degrees right of the track into a wind from the right.
+    // The fit takes the mean of heading against track and so absorbs the crab:
+    // read through it, a hover on 283 would point the nose along 270.  With the
+    // frame known the hover nose is the heading the file gives.
+    State fast {};
+    fast.vx = 40.0;
+    fast.heading = 283.0;
+    std::vector<State> states(60, fast);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const auto fitted = heading_offset(states, nan);
+    REQUIRE(fitted.has_value());
+    CHECK(std::remainder(*fitted * 180.0 / pi - 283.0, 360.0) == Catch::Approx(0.0).margin(1e-9));
+    const auto framed = heading_offset(states, 270.0);
+    REQUIRE(framed.has_value());
+    CHECK(*framed == 270.0 * pi / 180.0);
+    State hover = fast;
+    hover.vx = 0.1;
+    // Compass 283 is 13 degrees clockwise of the +x bearing, so local -13 degrees.
+    const auto nose = nose_direction(hover, framed);
+    CHECK(std::atan2(nose[1], nose[0]) * 180.0 / pi == Catch::Approx(-13.0).epsilon(1e-12));
+    // The ground flag fits against the ground velocity, not the air's.
+    for (auto& s : states)
+    {
+        s.wx = 0.0;
+        s.wy = -40.0; // an air velocity of (40, 40): 45 degrees off the ground track
+    }
+    CHECK(std::remainder(*heading_offset(states, nan, true) * 180.0 / pi - 283.0, 360.0)
+            == Catch::Approx(0.0).margin(1e-9));
+    CHECK(std::remainder(*heading_offset(states, nan) * 180.0 / pi - 328.0, 360.0)
+            == Catch::Approx(0.0).margin(1e-9));
+}
+
+TEST_CASE("--nose heading points the nose along the heading, crab and all", "[trajectory][nose]")
+{
+    REQUIRE(parse_nose_source("velocity") == NoseSource::velocity);
+    REQUIRE(parse_nose_source("ground_velocity") == NoseSource::ground_velocity);
+    REQUIRE(parse_nose_source("heading") == NoseSource::heading);
+    REQUIRE_FALSE(parse_nose_source("Heading").has_value());
+    REQUIRE_FALSE(parse_nose_source("track").has_value());
+    for (const auto source : {NoseSource::velocity, NoseSource::ground_velocity, NoseSource::heading})
+        REQUIRE(parse_nose_source(to_string(source)) == source);
+
+    // A synthetic crosswind whose crab is known.  +x east (bearing 90), the
+    // aircraft tracking north at 30 m/s over the ground through a 5 m/s wind
+    // blowing toward the east.  Without sideslip it points along its air
+    // velocity, (-5, 30): into the wind, left of the track, on a compass heading
+    // of atan2(-5, 30) = -9.46 degrees.  Compass headings turn clockwise from
+    // north and the local frame counterclockwise from +x, so a sign error here
+    // puts the nose 19 degrees off, on the downwind side.
+    State crabbed {};
+    crabbed.vy = 30.0;
+    crabbed.vz = 1.5;
+    crabbed.wx = 5.0;
+    crabbed.heading = std::atan2(-5.0, 30.0) * 180.0 / pi + 360.0;
+    const double east = 90.0 * pi / 180.0;
+    const auto heading = nose_direction(crabbed, east, NoseSource::heading);
+    CHECK(heading[0] / heading[1] == Catch::Approx(-5.0 / 30.0).epsilon(1e-12));
+    CHECK(heading[1] > 0.0);
+    // The same direction the air velocity gives (--speed_reference air), climb
+    // included: the climb is the air velocity's, over its horizontal speed.
+    const auto air = nose_direction(crabbed, east, NoseSource::velocity);
+    CHECK(air[0] == -5.0);
+    CHECK(air[1] == 30.0);
+    CHECK(heading[2] == Catch::Approx(1.5 / std::hypot(5.0, 30.0)).epsilon(1e-12));
+    // ground_velocity ignores the wind, whatever --speed_reference set.
+    const auto ground = nose_direction(crabbed, east, NoseSource::ground_velocity);
+    CHECK(ground[0] == 0.0);
+    CHECK(ground[1] == 30.0);
+    CHECK(ground[2] == 1.5);
+    // CompassToLocal, which turns the wind, agrees on the heading's direction:
+    // one convention for both.
+    const double h = crabbed.heading * pi / 180.0;
+    const auto local = CompassToLocal(90.0)({std::sin(h), std::cos(h)});
+    CHECK(std::atan2(heading[1], heading[0]) == Catch::Approx(std::atan2(local[1], local[0])).epsilon(1e-12));
+    // And in the shipped tracks' frame (+x along 210), a heading of 220 is 10
+    // degrees clockwise of +x: local -10 degrees, toward -y.
+    State shipped {};
+    shipped.vx = 40.0;
+    shipped.heading = 220.0;
+    const auto turned = nose_direction(shipped, 210.0 * pi / 180.0, NoseSource::heading);
+    CHECK(std::atan2(turned[1], turned[0]) * 180.0 / pi == Catch::Approx(-10.0).epsilon(1e-12));
+    // With no offset or no heading it is the velocity, as the others are.
+    CHECK(nose_direction(shipped, std::nullopt, NoseSource::heading)[0] == 40.0);
+}
+
+TEST_CASE("--nose heading along the track gives the velocity's sphere frame", "[trajectory][nose]")
+{
+    // A heading that is the track's own compass bearing reproduces the default
+    // nose exactly, turns, climbs and descents included, and through the sphere
+    // frame's projection into a tilted tip-path plane.  This is what lets the
+    // CTest nose_heading_on_track_is_velocity hold to 1e-9.
+    const double bearing = 210.0;
+    for (const auto& velocity : std::vector<std::array<double, 3>> {{40.0, 0.0, 0.0},
+                 {30.0, -12.0, -3.0}, {-8.0, 25.0, 4.0}, {-30.0, -30.0, 0.5}, {4.2, 0.3, -1.0}})
+    {
+        State s {};
+        s.vx = velocity[0];
+        s.vy = velocity[1];
+        s.vz = velocity[2];
+        s.heading = bearing - std::atan2(s.vy, s.vx) * 180.0 / pi;
+        const auto v = nose_direction(s, bearing * pi / 180.0, NoseSource::velocity);
+        const auto n = nose_direction(s, bearing * pi / 180.0, NoseSource::heading);
+        const Vec3 normal(0.08, -0.05, 1.0);
+        const auto a = sphere_frame(Vec3(v[0], v[1], v[2]), normal);
+        const auto b = sphere_frame(Vec3(n[0], n[1], n[2]), normal);
+        CHECK((a.nose - b.nose).norm() < 1e-12);
+        CHECK((a.starboard - b.starboard).norm() < 1e-12);
+    }
+}
+
+TEST_CASE("--nose heading takes the climb out at hover, continuously", "[trajectory][nose]")
+{
+    // Below 3 kt the velocity is drift and its climb angle means nothing, so the
+    // nose is the horizontal heading; by 8 kt it carries the velocity's climb in
+    // full.  Between, the same smoothstep the velocity nose turns by, with no
+    // step anywhere.  The horizontal direction is the heading at every speed.
+    REQUIRE(nose_velocity_weight(0.0) == 0.0);
+    REQUIRE(nose_velocity_weight(heading_nose_speed) == 0.0);
+    REQUIRE(nose_velocity_weight(velocity_nose_speed) == 1.0);
+    REQUIRE(nose_velocity_weight(100.0) == 1.0);
+    const double offset = 270.0 * pi / 180.0;
+    double previous = std::numeric_limits<double>::quiet_NaN();
+    for (int i = 0; i <= 1000; i++)
+    {
+        State s {};
+        s.vx = 0.01 * i * 1852.0 / 3600.0 * std::cos(0.7); // 0 to 10 kt
+        s.vy = 0.01 * i * 1852.0 / 3600.0 * std::sin(0.7);
+        s.vz = -0.8;
+        const double speed = std::hypot(s.vx, s.vy);
+        s.heading = 300.0;
+        const auto n = nose_direction(s, offset, NoseSource::heading);
+        CHECK(std::atan2(n[1], n[0]) * 180.0 / pi == Catch::Approx(-30.0).epsilon(1e-12));
+        CHECK(std::hypot(n[0], n[1]) == Catch::Approx(1.0).epsilon(1e-14));
+        // The nose's elevation, which must move continuously and end at the
+        // velocity's own path angle.
+        const double elevation = std::atan(n[2]);
+        if (speed <= heading_nose_speed)
+            CHECK(n[2] == 0.0);
+        if (speed >= velocity_nose_speed)
+            CHECK(elevation == Catch::Approx(std::atan2(-0.8, speed)).epsilon(1e-12));
+        if (!std::isnan(previous))
+            CHECK(std::fabs(elevation - previous) < 0.01);
+        previous = elevation;
+    }
+}
+
 namespace {
 
 // The demo AC track as text, with `change(row, fields)` applied to every data
@@ -1017,4 +1167,80 @@ TEST_CASE("A static operation holds the aircraft at hover, nose on each hold's h
         message = problem.what();
     }
     REQUIRE(message.find("share one position") != std::string::npos);
+}
+
+TEST_CASE("write the heading tracks and database for the --nose CTests", "[.heading_tracks]")
+{
+    // Not a test: CMakeLists.txt's nose_heading_build runs it (by its hidden tag).
+    // From the demo track it writes two copies differing only in the heading
+    // column (column 9, compass degrees): integrated/heading_on_track.csv, whose
+    // heading is the ground track's own compass bearing in the shipped tracks'
+    // frame (+x along 210), and integrated/heading_crabbed.csv, the same turned
+    // 15 degrees clockwise -- a crab of +15 at every state; and two copies
+    // ending in a hover (below).  And a one-sphere
+    // database from the demo database whose root says azimuth_reference =
+    // heading, for the database default.
+    const double bearing = 210.0;
+    std::ifstream in("tracks/S-76D/197421AC.csv");
+    REQUIRE(in);
+    ensure_parent_directory("integrated/heading_on_track.csv");
+    std::ofstream on_track("integrated/heading_on_track.csv");
+    std::ofstream crabbed("integrated/heading_crabbed.csv");
+    // And two that end in a hover: the last 1000 states drift at 0.3 ft/s on
+    // their own compass track as heading.  Before it the one flies crabbed 15
+    // degrees and the other not.  A known frame turns both hovers' headings
+    // alike; the track's fit, which absorbs the first one's crab, did not.
+    std::ofstream hover_crabbed("integrated/heading_hover_crabbed.csv");
+    std::ofstream hover_straight("integrated/heading_hover_straight.csv");
+    std::vector<std::string> lines;
+    std::string line;
+    REQUIRE(std::getline(in, line));
+    for (auto* out : {&on_track, &crabbed, &hover_crabbed, &hover_straight})
+        *out << line << '\n';
+    while (std::getline(in, line))
+        lines.push_back(line);
+    std::size_t rows = 0;
+    for (std::size_t row = 0; row < lines.size(); row++)
+    {
+        std::vector<std::string> fields;
+        std::stringstream split(lines[row]);
+        for (std::string field; std::getline(split, field, ',');)
+            fields.push_back(field);
+        if (fields.size() != 27)
+            continue;
+        const double vx = std::stod(fields[11]), vy = std::stod(fields[13]);
+        const double track = bearing - std::atan2(vy, vx) * 180.0 / pi;
+        const auto number = [](double value) {
+            std::ostringstream text;
+            text << std::fixed << std::setprecision(12) << std::setw(16) << value;
+            return text.str();
+        };
+        const auto write = [&](std::ofstream& out, double heading) {
+            fields[8] = number(heading);
+            for (std::size_t k = 0; k < fields.size(); k++)
+                out << (k ? "," : "") << fields[k];
+            out << '\n';
+        };
+        write(on_track, track);
+        write(crabbed, track + 15.0);
+        if (row + 1000 >= lines.size())
+        {
+            const double scale = 0.3 / std::hypot(vx, vy);
+            fields[11] = number(vx * scale);
+            fields[13] = number(vy * scale);
+            write(hover_crabbed, track);
+            write(hover_straight, track);
+        }
+        else
+        {
+            write(hover_crabbed, track + 15.0);
+            write(hover_straight, track);
+        }
+        rows++;
+    }
+    REQUIRE(rows > 1000);
+    Database source("databases/S-76D_M3.nod");
+    auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    sphere.azimuth_reference = AzimuthReference::heading;
+    write_sphere(sphere, "integrated/heading_sphere.nod");
 }

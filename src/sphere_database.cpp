@@ -167,43 +167,68 @@ bool read_coverage(int group_id, std::vector<int>& coverage)
     return true;
 }
 
-// The root attribute speed_reference, as text.  Absent is the ground.  panam
-// writes it with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is
-// accepted too.
-SpeedReference read_speed_reference(int ncid)
+// A root text attribute, or nullopt when the file has none.  panam writes them
+// with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is accepted
+// too.  Anything else is refused by name rather than read as absent.
+std::optional<std::string> read_root_text(int ncid, const char* name)
 {
     nc_type type = NC_NAT;
     std::size_t length = 0;
-    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, "speed_reference", &type, &length))
-        return SpeedReference::ground;
+    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, name, &type, &length))
+        return std::nullopt;
     std::string text;
     if (type == NC_CHAR)
     {
         text.resize(length);
-        if (NC_NOERR != nc_get_att_text(ncid, NC_GLOBAL, "speed_reference", text.data()))
-            input_error("Found but could not read the database attribute speed_reference.");
+        if (NC_NOERR != nc_get_att_text(ncid, NC_GLOBAL, name, text.data()))
+            input_error("Found but could not read the database attribute ", name, ".");
     }
     else if (type == NC_STRING && length == 1)
     {
         char* value = nullptr;
-        if (NC_NOERR != nc_get_att_string(ncid, NC_GLOBAL, "speed_reference", &value))
-            input_error("Found but could not read the database attribute speed_reference.");
+        if (NC_NOERR != nc_get_att_string(ncid, NC_GLOBAL, name, &value))
+            input_error("Found but could not read the database attribute ", name, ".");
         text = value == nullptr ? "" : value;
         nc_free_string(1, &value);
     }
     else
     {
-        input_error("The database attribute speed_reference is not text.");
+        input_error("The database attribute ", name, " is not text.");
     }
     // Fixed-width writers pad with NULs or blanks.
     text.erase(text.find_last_not_of(std::string(" \0", 2)) + 1);
-    const auto reference = parse_speed_reference(text);
+    return text;
+}
+
+// The root attribute speed_reference.  Absent is the ground.
+SpeedReference read_speed_reference(int ncid)
+{
+    const auto text = read_root_text(ncid, "speed_reference");
+    if (!text)
+        return SpeedReference::ground;
+    const auto reference = parse_speed_reference(*text);
     if (!reference)
     {
-        input_error("The database attribute speed_reference is '", text,
+        input_error("The database attribute speed_reference is '", *text,
                 "'; expected 'ground' or 'air'.");
     }
     return *reference;
+}
+
+// The root attribute azimuth_reference, nullopt when absent (which the
+// Database reads as the track).
+std::optional<AzimuthReference> read_azimuth_reference(int ncid)
+{
+    const auto text = read_root_text(ncid, "azimuth_reference");
+    if (!text)
+        return std::nullopt;
+    const auto reference = parse_azimuth_reference(*text);
+    if (!reference)
+    {
+        input_error("The database attribute azimuth_reference is '", *text,
+                "'; expected 'track' or 'heading'.");
+    }
+    return reference;
 }
 
 // Read an integer-valued scalar, converting from whatever numeric type the
@@ -322,6 +347,20 @@ std::optional<SpeedReference> parse_speed_reference(const std::string& name)
 const char* to_string(SpeedReference reference)
 {
     return reference == SpeedReference::air ? "air" : "ground";
+}
+
+std::optional<AzimuthReference> parse_azimuth_reference(const std::string& name)
+{
+    if (name == "track")
+        return AzimuthReference::track;
+    if (name == "heading")
+        return AzimuthReference::heading;
+    return std::nullopt;
+}
+
+const char* to_string(AzimuthReference reference)
+{
+    return reference == AzimuthReference::heading ? "heading" : "track";
 }
 
 // Repair the azimuth labels of a sphere written by a pre-versioned builder.
@@ -965,6 +1004,7 @@ Database::Database(const std::string& datafile_path)
     if (NC_NOERR == get_scalar(file_ncid, "vehicle_weight_newtons", &root_value))
         vehicle_weight_newtons_ = root_value;
     speed_reference_ = read_speed_reference(file_ncid);
+    azimuth_reference_ = read_azimuth_reference(file_ncid);
     // The atmosphere the broadband EAA was built in, when the builder recorded
     // all three of its values; the rotor speed the spheres were built at.
     const auto build_temperature = read_double_attribute(file_ncid, "build_temperature_K");
@@ -978,6 +1018,8 @@ Database::Database(const std::string& datafile_path)
                 build_atmosphere_->pressure_kpa, " kPa, ",
                 build_atmosphere_->relative_humidity_percent, " % RH.");
     info("Database flight conditions are referred to the ", to_string(speed_reference_), ".");
+    info("Database sphere azimuth is measured from the ", to_string(azimuth_reference()),
+            azimuth_reference_ ? "." : " (the file does not say; the track is the default).");
 
     auto group_ids = get_group_ids(file_ncid);
     // Every field below is filled from the loop over these groups.  With none,
@@ -1493,6 +1535,48 @@ Database::Database(const std::string& datafile_path)
         if (!fixed_load_factor_)
             require_varying("thrust coefficient", thrust_coefficient_min, thrust_coefficient_max);
     }
+    // BlendPolicy::aam's search, over the raw conditions (it brackets in speed
+    // and flight path angle, not in the normalized space).  AAM has no thrust
+    // axis.  On a fixed_load_factor database the law carries C_T and every
+    // sphere is in the one layer; otherwise the spheres are grouped by their
+    // stored C_T (a database built over load factors stores a few distinct
+    // values), and a state searches the layer nearest its own.
+    {
+        std::vector<std::size_t> order(advance_ratios.size());
+        std::iota(order.begin(), order.end(), std::size_t {0});
+        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+            return thrust_coefficients[a] < thrust_coefficients[b];
+        });
+        const auto same_layer = [](double a, double b) {
+            return std::fabs(a - b) <= 1e-9 * std::max(std::fabs(a), std::fabs(b));
+        };
+        std::vector<std::vector<std::size_t>> members;
+        std::vector<double> layer_ct;
+        for (const std::size_t i : order)
+        {
+            if (members.empty() || (!fixed_load_factor_ && !same_layer(layer_ct.back(), thrust_coefficients[i])))
+            {
+                members.emplace_back();
+                layer_ct.push_back(thrust_coefficients[i]);
+            }
+            members.back().push_back(i);
+        }
+        aam_layers_.clear();
+        for (std::size_t l = 0; l < members.size(); l++)
+        {
+            std::sort(members[l].begin(), members[l].end());
+            std::vector<double> mu, gamma;
+            for (const std::size_t i : members[l])
+            {
+                mu.push_back(advance_ratios[i]);
+                gamma.push_back(flight_path_angles[i]);
+            }
+            AamLayer layer {layer_ct[l], {}, members[l].size()};
+            layer.selector.build(mu, gamma, members[l]);
+            aam_layers_.push_back(std::move(layer));
+        }
+    }
+
     // Normalize operating conditions
     for (auto& x : advance_ratios)
         x = unit_interval(x, advance_ratio_min, advance_ratio_max);
@@ -1525,6 +1609,7 @@ Database::Database(const std::string& datafile_path)
         if (!fixed_load_factor_)
             conditions[i * active_condition_dims_ + 2] = thrust_coefficients[i];
     }
+    normalized_conditions_ = conditions;
     // The triangulation touches no netCDF state, and nc_close takes about as long:
     // it tears down the metadata netCDF-4 read for every group at nc_open, about
     // 0.1 s for the shipped file's 1312.  So they run at once.
@@ -1546,64 +1631,142 @@ Database::Database(const std::string& datafile_path)
 }
 
 Database::Blend Database::blend_at(double advance_ratio, double flight_path_angle,
-        double thrust_coefficient) const
+        double thrust_coefficient, const BlendOptions& options) const
 {
     // The raw query CT, kept before it is normalized below (or, for a
     // fixed_load_factor database, not used for normalization at all): the
     // analytic load-factor correction compares it against
     // reference_thrust_coefficient_ in physical units, not normalized ones.
     const double raw_thrust_coefficient = thrust_coefficient;
-
-    // Normalize flight condition and limit range to [0.0,1.0]
-    advance_ratio = clamp01(unit_interval(advance_ratio, advance_ratio_min, advance_ratio_max));
-    flight_path_angle = clamp01(
-            unit_interval(flight_path_angle, flight_path_angle_min, flight_path_angle_max));
-
     Blend blend;
-    if (fixed_load_factor_)
-    {
-        // CT is not part of this triangulation -- see the member comment on
-        // fixed_load_factor_ -- so the interpolator only ever sees (mu, gamma)
-        // and writes 3 of Blend's 4 slots; the 4th is padding, weight 0,
-        // matching the existing convention for a degenerate blend (see
-        // cull_range's comment on "Skip the padding").
-        const double condition[2] = {advance_ratio, flight_path_angle};
-        interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
-        blend.weights[3] = 0.0;
-        blend.indices[3] = blend.indices[0];
-        trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+    blend.advance_ratio_clamped = advance_ratio < advance_ratio_min || advance_ratio > advance_ratio_max;
+    blend.flight_path_angle_clamped = flight_path_angle < flight_path_angle_min || flight_path_angle > flight_path_angle_max;
+    blend.thrust_coefficient_clamped = !fixed_load_factor_
+            && (thrust_coefficient < thrust_coefficient_min || thrust_coefficient > thrust_coefficient_max);
 
-        // The correction only ever adds level: panam's own convention leaves
-        // load factors at or below 1 g unscaled from the stored reference
-        // rather than extrapolating them down (a descent or a light-thrust
-        // condition is not assumed to follow the same simple scaling law a
-        // maneuvering pull-up does), and there is no upper bound on how far
-        // above the reference a query may extrapolate.
-        blend.level_correction_db = raw_thrust_coefficient > reference_thrust_coefficient_
-                ? 20.0 * std::log10(raw_thrust_coefficient / reference_thrust_coefficient_)
-                : 0.0;
-        trace("Load factor correction (dB): ", blend.level_correction_db);
+    if (options.policy == BlendPolicy::aam)
+    {
+        blend_aam(advance_ratio, flight_path_angle, thrust_coefficient, options, blend);
     }
     else
     {
-        thrust_coefficient = clamp01(
-                unit_interval(thrust_coefficient, thrust_coefficient_min, thrust_coefficient_max));
-        trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
-                ", CT = ", thrust_coefficient);
-
+        // Normalize flight condition and limit range to [0.0,1.0]
+        advance_ratio = clamp01(unit_interval(advance_ratio, advance_ratio_min, advance_ratio_max));
+        flight_path_angle = clamp01(
+                unit_interval(flight_path_angle, flight_path_angle_min, flight_path_angle_max));
+        if (!fixed_load_factor_)
+        {
+            thrust_coefficient = clamp01(
+                    unit_interval(thrust_coefficient, thrust_coefficient_min, thrust_coefficient_max));
+            trace("Normalized operating condition is: ", "μ  = ", advance_ratio, ", γ  = ", flight_path_angle,
+                    ", CT = ", thrust_coefficient);
+        }
+        // CT is not part of a fixed_load_factor triangulation -- see the member
+        // comment on fixed_load_factor_ -- so the query is (mu, gamma) there.
         const double condition[condition_dims] = {advance_ratio, flight_path_angle, thrust_coefficient};
-        interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
+
+        if (options.policy == BlendPolicy::nearest)
+        {
+            // The stored condition nearest the state in the space the
+            // triangulation is built in, taken whole.  The padding repeats it,
+            // rather than pointing at sphere 0 as a degenerate barycentric
+            // blend does, so the bounds group it with itself alone.
+            const std::size_t count = normalized_conditions_.size() / active_condition_dims_;
+            const std::size_t nearest = nearest_point(active_condition_dims_, count,
+                    normalized_conditions_.data(), condition);
+            blend.weights.fill(0.0);
+            blend.weights[0] = 1.0;
+            blend.indices.fill(nearest);
+        }
+        else
+        {
+            interpolator_.barycentric(condition, blend.weights.data(), blend.indices.data());
+            if (fixed_load_factor_)
+            {
+                // The interpolator only ever sees (mu, gamma) and writes 3 of
+                // Blend's 4 slots; the 4th is padding, weight 0, matching the
+                // existing convention for a degenerate blend (see cull_range's
+                // comment on "Skip the padding").
+                blend.weights[3] = 0.0;
+                blend.indices[3] = blend.indices[0];
+            }
+        }
         trace("Barycentric weights: ", blend.weights, " and indicies ", blend.indices);
+    }
+
+    if (fixed_load_factor_)
+    {
+        // One-sided, the correction only ever adds level: panam's own
+        // convention leaves load factors at or below 1 g unscaled from the
+        // stored reference rather than extrapolating them down (a descent or
+        // a light-thrust condition is not assumed to follow the same simple
+        // scaling law a maneuvering pull-up does), and the caller holds the
+        // top at --max_load_factor.  Two-sided, the same law runs below the
+        // reference too, held at min_load_factor so that a state near zero g
+        // (or below it) is not taken tens of dB down a logarithm.
+        if (options.load_factor_correction == LoadFactorCorrection::two_sided)
+        {
+            const double floor = options.min_load_factor * reference_thrust_coefficient_;
+            blend.level_correction_db = 20.0 * std::log10(
+                    std::max(raw_thrust_coefficient, floor) / reference_thrust_coefficient_);
+        }
+        else
+        {
+            blend.level_correction_db = raw_thrust_coefficient > reference_thrust_coefficient_
+                    ? 20.0 * std::log10(raw_thrust_coefficient / reference_thrust_coefficient_)
+                    : 0.0;
+        }
+        trace("Load factor correction (dB): ", blend.level_correction_db);
     }
     return blend;
 }
 
+void Database::blend_aam(double advance_ratio, double flight_path_angle, double thrust_coefficient,
+        const BlendOptions& options, Blend& blend) const
+{
+    // AAM's 20 kt gate in the database's own speed unit, advance ratio: the
+    // spheres' mu were formed with the database's tip speed, so that is the
+    // one to convert with; the caller's stands in for a database without one.
+    const double tip_speed = std::isfinite(tip_speed_) ? tip_speed_ : options.tip_speed;
+    if (!(tip_speed > 0.0) || !std::isfinite(tip_speed))
+    {
+        input_error("--blend aam needs the rotor tip speed to turn its 20 kt speed gate into advance "
+                "ratio, and neither the database nor the vehicle gives one.");
+    }
+    constexpr double knot = 1852.0 / 3600.0; // m/s
+    const double speed_gate = options.aam_limits.speed_kt * knot / tip_speed;
+
+    // The thrust layer nearest the state (the only one on a fixed_load_factor
+    // database); a state exactly between two takes the higher thrust, as the
+    // speed search takes the faster sphere.
+    std::size_t layer = 0;
+    for (std::size_t l = 1; l < aam_layers_.size(); l++)
+    {
+        const double here = std::fabs(aam_layers_[l].thrust_coefficient - thrust_coefficient);
+        const double best = std::fabs(aam_layers_[layer].thrust_coefficient - thrust_coefficient);
+        if (here <= best)
+            layer = l;
+    }
+    std::array<double, 4> weights {};
+    std::array<std::size_t, 4> ids {};
+    const std::size_t filled = aam_layers_[layer].selector.select(advance_ratio, flight_path_angle,
+            speed_gate, options.aam_limits, weights, ids);
+    for (std::size_t k = 0; k < blend.weights.size(); k++)
+    {
+        // Unused slots repeat the first sphere at weight 0, so the bounds see
+        // only the spheres actually blended.
+        blend.weights[k] = k < filled ? weights[k] : 0.0;
+        blend.indices[k] = k < filled ? ids[k] : ids[0];
+    }
+    trace("AAM weights: ", blend.weights, " and indices ", blend.indices);
+}
+
 Database::SourceState Database::source_state(const Vec3& source,
         const Vec3& velocity, const Vec3& normal, double advance_ratio,
-        double flight_path_angle, double thrust_coefficient) const
+        double flight_path_angle, double thrust_coefficient, const BlendOptions& options) const
 {
     return {source, sphere_frame(velocity, normal),
-            blend_at(advance_ratio, flight_path_angle, thrust_coefficient)};
+            blend_at(advance_ratio, flight_path_angle, thrust_coefficient, options)};
 }
 
 double Database::eval(double range, double phi, double theta, double advance_ratio,
@@ -1952,6 +2115,17 @@ inline double Database::spectral_level_impl(const RayPath& path, const SourceSta
             plate->power_ratio(path.source_height, path.ground_distance, azimuth,
                     correction.data(), first_band, last_band);
         }
+        else if (!std::isnan(path.receiver_height) && path.receiver_height != ground->receiver_height)
+        {
+            // Over terrain (terrain_ray) the microphone's height above each
+            // path's mean ground line is its own, and a GroundTable holds one
+            // height, so the model is evaluated exactly at this one.
+            GroundModel here = *ground;
+            here.receiver_height = path.receiver_height;
+            excess_ground_attenuation(here, *impedance, path.source_height,
+                    path.ground_distance, sound_speed, frequencies_, correction.data(),
+                    first_band, last_band, true);
+        }
         else if (ground_table != nullptr)
         {
             ground_table->power_ratio(path.source_height, path.ground_distance,
@@ -2029,7 +2203,7 @@ double Database::shaft_power(const Blend& blend) const
 }
 
 Database::Sphere Database::interpolate_sphere(double advance_ratio, double flight_path_angle,
-        double thrust_coefficient) const
+        double thrust_coefficient, const BlendOptions& options) const
 {
     Sphere sphere;
     sphere.advance_ratio = advance_ratio;
@@ -2037,6 +2211,7 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.thrust_coefficient = thrust_coefficient;
     sphere.radius = sphere_radius_;
     sphere.speed_reference = speed_reference_;
+    sphere.azimuth_reference = azimuth_reference_;
     sphere.tip_speed = tip_speed_;
     sphere.rotor_radius = rotor_radius_;
     sphere.vehicle_weight_newtons = vehicle_weight_newtons_;
@@ -2065,7 +2240,7 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     // a sphere exported at an operating condition the database already holds
     // comes back bit-for-bit as that sphere's own data.  Resolving it is a
     // Delaunay locate walk, so it is done once and shared with the power lookup.
-    const auto blend = blend_at(advance_ratio, flight_path_angle, thrust_coefficient);
+    const auto blend = blend_at(advance_ratio, flight_path_angle, thrust_coefficient, options);
     sphere.shaft_power = shaft_power(blend);
     sphere.cells.resize(phis.size() * thetas.size());
     for (std::size_t m = 0; m < phis.size(); m++)
@@ -2147,9 +2322,10 @@ double Database::cull_range(const Blend& blend, double cutoff) const
     if (!std::isfinite(blended_max))
         return unbounded;
     // blend.level_correction_db is 0 except on a fixed_load_factor database
-    // queried above its reference load factor, where it only ever adds level
-    // (see blend_at()) -- so adding it here keeps this a valid upper bound
-    // rather than an approximate one.
+    // queried away from its reference load factor, where it shifts every level
+    // of the blend by the same number of dB (see blend_at()) -- so adding it
+    // here keeps this a valid upper bound rather than an approximate one,
+    // whichever sign it has.
     blended_max += blend.level_correction_db;
 
     // Spherical spreading alone takes that peak below the cutoff at this range,
@@ -2657,6 +2833,13 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     const std::string reference = to_string(sphere.speed_reference);
     nc_check(nc_put_att_text(file, NC_GLOBAL, "speed_reference", reference.size(), reference.c_str()),
             "writing speed_reference");
+    if (sphere.azimuth_reference)
+    {
+        const std::string azimuth = to_string(*sphere.azimuth_reference);
+        nc_check(nc_put_att_text(file, NC_GLOBAL, "azimuth_reference", azimuth.size(),
+                         azimuth.c_str()),
+                "writing azimuth_reference");
+    }
 
     int group = 0;
     nc_check(nc_def_grp(file, "sphere0", &group), "defining group sphere0");

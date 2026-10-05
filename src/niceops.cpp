@@ -5,6 +5,7 @@
 // output and optional matplotlib figures.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -20,6 +21,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <CLI/CLI.hpp>
@@ -32,11 +34,14 @@
 
 #include "atmosphere.hpp"
 #include "atmosphere_profile.hpp"
+#include "band_frames.hpp"
+#include "pnl.hpp"
 #include "refraction.hpp"
 #include "stratified.hpp"
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
+#include "terrain.hpp"
 #include "weighting.hpp"
 #include "sphere_database.hpp"
 #include "trajectory.hpp"
@@ -45,6 +50,7 @@
 #include "util/paths.hpp"
 #include "util/parallel.hpp"
 #include "util/sel.hpp"
+#include "util/time_weighting.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
 
@@ -222,6 +228,55 @@ void write_band_history_file(const std::vector<BandHistoryRow>& rows,
                 file << band_levels[it * nb + band];
         }
         file << "\n";
+    }
+}
+
+// One observer's EPNL (--epnl_file), from its 0.5 s reception-time frames.
+struct EpnlRow
+{
+    // False when no frame has a finite PNLT -- the observer heard nothing above
+    // the noy floor -- and the metric has no value.
+    bool valid = false;
+    // The result without its per-record histories, which on a grid would be
+    // kept for every observer only to be thrown away.
+    EpnlResult result;
+    // The tone correction PNLTM carries (PNLTM - PNL at its record: the
+    // record's own C, or the five-record mean when the band-sharing check
+    // raised it), and the band its record's C came from, Hz; NaN for none.
+    double tone = 0.0;
+    double tone_band = 0.0;
+    double pnltm_time = 0.0;
+    double first_time = 0.0;
+    double last_time = 0.0;
+};
+
+void write_epnl_file(const std::vector<EpnlRow>& rows, const std::vector<Vec3>& microphones,
+        LengthUnit unit, const std::string& filename)
+{
+    info("Writing EPNL to ", filename);
+    auto file = open_output(filename);
+    file << std::setprecision(10);
+    const std::string u = unit.name;
+    file << "observer,x(" << u << "),y(" << u << "),z(" << u << "),EPNL(EPNdB),PNLTM(TPNdB),"
+         << "duration_correction(dB),tone_correction(dB),tone_band(Hz),bandshare_adjusted,"
+         << "PNLTM_time(s),duration_first(s),duration_last(s),clipped\n";
+    for (std::size_t i = 0; i < rows.size(); i++)
+    {
+        const auto& m = microphones[i];
+        file << i << "," << m.x / unit.to_meters << "," << m.y / unit.to_meters << ","
+             << m.z / unit.to_meters << ",";
+        const auto& row = rows[i];
+        if (!row.valid)
+        {
+            // Written as silence rather than left out, so the rows stay one per
+            // observer, in order.
+            file << "-inf,-inf,nan,nan,nan,0,nan,nan,nan,0\n";
+            continue;
+        }
+        const auto& r = row.result;
+        file << r.epnl << "," << r.pnltm << "," << r.duration_correction << "," << row.tone << ","
+             << row.tone_band << "," << (r.bandshare_adjusted ? 1 : 0) << "," << row.pnltm_time << ","
+             << row.first_time << "," << row.last_time << "," << (r.clipped ? 1 : 0) << "\n";
     }
 }
 
@@ -552,6 +607,11 @@ struct RunOptions
     // A fixed_load_factor database's load-factor law is an extrapolation above
     // the load factors its source supports; it is held at this many g.
     double max_load_factor = 2.0;
+    // --blend, --load_factor_correction and --min_load_factor: how a state's
+    // condition picks its spheres, and whether the load-factor law also runs
+    // below the reference (condition_selection.hpp).  The tip speed is filled
+    // per trajectory from its vehicle.
+    Database::BlendOptions blend;
     // Warn, rather than refuse, a vehicle file that disagrees with the database
     // by more than 2 percent.
     bool accept_vehicle_mismatch = false;
@@ -567,6 +627,14 @@ struct RunOptions
     // (propagation_table.hpp).
     std::shared_ptr<const PropagationTable> propagation_table;
     std::string propagation_table_path;
+    // --terrain, read once for the run: the ground models take each path's
+    // mean ground line from it (terrain_ray), resampled per trajectory onto the
+    // local frame every terrain_step meters with terrain_offset (m) added.
+    // Grid observers already stand on it (run()).
+    std::shared_ptr<const Terrain> terrain;
+    std::string terrain_path;
+    double terrain_offset = 0.0;
+    double terrain_step = 0.0;
     // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
     // whatever the file said".
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -578,6 +646,11 @@ struct RunOptions
     // in for the rest.  Pressure may be missing, in which case each trajectory
     // fills it hydrostatically from its own surface pressure.
     std::optional<AtmosphereProfile> atmosphere;
+    // --wind: the profile is built per trajectory from one surface observation
+    // instead (synthetic_profile), since its surface air is the trajectory's
+    // vehicle file's and its top has to clear the trajectory.  Never set
+    // together with `atmosphere`.
+    std::optional<SurfaceWind> surface_wind;
     // --refraction linear: curved rays through the profile's equivalent linear
     // effective sound speed, fitted per path (refraction.hpp).  --refraction
     // stratified: through the profile's own layers (stratified.hpp).  Both need
@@ -598,16 +671,31 @@ struct RunOptions
     // Which velocity the flight conditions are taken from (--speed_reference).
     // Unset follows each database's own speed_reference attribute.
     std::optional<SpeedReference> speed_reference;
+    // Where the sphere's nose comes from (--nose).  Unset follows each
+    // database's own azimuth_reference attribute.
+    std::optional<NoseSource> nose;
     // Meters, after the --units conversion; NaN means the trim is off.
     double trim_start = 0.0;
     double utc_offset = 0.0;
     bool scattered = false;
-    bool want_dnl = false;
+    // -D, --lden_file, --cnel_file, indexed by DayMetric.
+    std::array<bool, day_metric_count> want_day_metric {};
     bool want_lamax = false;
     bool want_nax = false;
     double nax_threshold = std::numeric_limits<double>::quiet_NaN();
+    // --ta_file: seconds the weighted level exceeds ta_threshold.
+    bool want_ta = false;
+    double ta_threshold = std::numeric_limits<double>::quiet_NaN();
+    // The time weighting LAmax, NAx and TA read the level through
+    // (--lamax_weighting), in reception time.
+    LevelWeighting lamax_weighting = LevelWeighting::fast;
+    // --csel_file: the C-weighted SEL, from the band levels.
+    bool want_csel = false;
     bool want_coverage = false;
     bool full_history = false;
+    // --epnl_file's tone correction: tones in bands below their noy threshold
+    // excluded (pnl.hpp), unless --no-epnl_masking.
+    ToneMasking epnl_masking = ToneMasking::below_noy_floor;
     bool write_time_history = false;
     bool write_state = false;
     std::string time_history_prefix;
@@ -631,21 +719,44 @@ struct RunOptions
 struct PathJob
 {
     std::string trajectory;
+    std::string database;
     std::string vehicle;
     std::string output;
     std::string state;
+    // --write_atmosphere: where the --wind profile goes; empty for nowhere.
+    std::string atmosphere_out;
+    // The C-weighted SEL's file (--csel_file); empty for none.
+    std::string csel_output;
+    // --epnl_file and --band_frames for this trajectory; empty for none.
+    std::string epnl;
+    std::string band_frames;
     std::size_t count = 1;
+};
+
+// What every trajectory of a run adds to, per observer: each day-evening-night
+// metric's penalized energy (summed, normalized to the day at the end), the
+// largest weighted level, the NAx count, the time above, and the coverage
+// report's two energies.  A metric not asked for keeps an empty vector.
+struct RunTotals
+{
+    std::array<std::vector<double>, day_metric_count> day_energy;
+    std::vector<double> lamax;
+    std::vector<double> nax;
+    std::vector<double> time_above;
+    std::vector<std::array<double, 2>> coverage;
 };
 
 // Take the trajectory's flight conditions against the air when its database's
 // were: the database's speed_reference attribute, unless --speed_reference
-// overrides it.  The wind at each state is the --atmosphere profile's at its
-// height, turned into the local frame by --frame_bearing.  A run with no wind
-// profile cannot refer anything to the air, and treating it as calm would
-// quietly mix the two references, so it is refused -- --speed_reference ground
-// says so explicitly.  Returns whether the trajectory is now air-referenced.
+// overrides it.  The wind at each state is the profile's at its height (the
+// --atmosphere file's, or the one --wind built), turned into the local frame by
+// --frame_bearing.  A run with no wind profile cannot refer anything to the
+// air, and treating it as calm would quietly mix the two references, so it is
+// refused -- --speed_reference ground says so explicitly.  A --wind observation
+// of zero is the exception: calm was stated, not assumed, and the air velocity
+// is the ground velocity.  Returns whether the trajectory is now air-referenced.
 bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
-        const RunOptions& options)
+        const RunOptions& options, const AtmosphereProfile* atmosphere)
 {
     const SpeedReference built = database.speed_reference();
     const SpeedReference wanted = options.speed_reference.value_or(built);
@@ -656,15 +767,21 @@ bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
     }
     if (wanted == SpeedReference::ground)
         return false;
-    if (!options.atmosphere || !options.atmosphere->has_wind())
+    if (options.surface_wind && options.surface_wind->speed == 0.0)
+    {
+        log("Flight conditions referred to the air, which --wind says is calm: the air velocity is "
+            "the ground velocity.");
+        return false;
+    }
+    if (!atmosphere || !atmosphere->has_wind())
     {
         input_error(options.speed_reference ? "--speed_reference air"
                                             : "This database is referred to the air, and",
-                " needs the wind at the aircraft: give --atmosphere with wind columns, or "
-                "--speed_reference ground to take the ground velocity as the airspeed.");
+                " needs the wind at the aircraft: give --atmosphere with wind columns, or --wind, "
+                "or --speed_reference ground to take the ground velocity as the airspeed.");
     }
     const CompassToLocal to_local(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
-    const AtmosphereProfile& profile = *options.atmosphere;
+    const AtmosphereProfile& profile = *atmosphere;
     const double strongest = trajectory.relative_to_air(
             [&](double z) { return to_local(profile.wind_at(z)); });
     log("Flight conditions referred to the air: mu, the path angle and the sphere's nose follow "
@@ -688,6 +805,194 @@ bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
     return true;
 }
 
+// The compass bearing of the local +x axis when the run knows it: --frame_bearing,
+// or east when a geodetic frame was settled without one (it is then east/north).
+// NaN when neither, which for an AC track means its x/y may be turned by any
+// angle.
+double known_frame_bearing(const RunOptions& options)
+{
+    if (!std::isnan(options.frame_bearing))
+        return options.frame_bearing;
+    return options.geodetic.frame ? 90.0 : std::numeric_limits<double>::quiet_NaN();
+}
+
+// Where one trajectory's sphere nose comes from, and the offset that turns its
+// compass headings into the local frame (see heading_offset).
+struct NoseSetup
+{
+    NoseSource source = NoseSource::velocity;
+    std::optional<double> offset;
+};
+
+// Settle the nose: --nose, or what the database's azimuth_reference implies
+// (heading for "heading", the velocity for "track" or nothing).  --nose against
+// a database that records the other is a warning, since the sphere is then read
+// a crab angle off the direction it was built along.
+//
+// Heading mode takes its offset from the frame and nowhere else.  heading_offset's
+// fit, the fallback the hover nose uses when the run knows no frame, is the
+// circular mean of heading against track: it folds the track's mean crab into
+// the offset, and heading mode read through it would point the nose back along
+// the mean track, undoing the very thing it is for.  So a run with no frame is
+// refused.  A track with no heading at all is refused when --nose heading was
+// asked for; when only the database implied it, the nose falls back to the
+// velocity with a warning, there being nothing the run could be given instead.
+NoseSetup settle_nose(const Trajectory& trajectory, const Database& database,
+        const RunOptions& options, const std::string& trajectory_file)
+{
+    const auto& recorded = database.recorded_azimuth_reference();
+    const AzimuthReference built = database.azimuth_reference();
+    NoseSetup setup;
+    setup.source = built == AzimuthReference::heading ? NoseSource::heading : NoseSource::velocity;
+    if (options.nose)
+    {
+        const bool wants_heading = *options.nose == NoseSource::heading;
+        if (recorded && wants_heading != (built == AzimuthReference::heading))
+        {
+            warn("--nose ", to_string(*options.nose), " overrides the database, whose sphere "
+                    "azimuth is measured from the ", to_string(built), " (its azimuth_reference "
+                    "attribute): the sphere is read turned by the crab angle from the direction "
+                    "it was built along.");
+        }
+        else if (!recorded && wants_heading)
+        {
+            log("--nose heading on a database that does not record its azimuth reference, "
+                "which is taken to be the track.");
+        }
+        setup.source = *options.nose;
+    }
+    const auto& states = trajectory.states;
+    const double frame = known_frame_bearing(options);
+    if (setup.source != NoseSource::heading)
+    {
+        setup.offset = heading_offset(states, frame, setup.source == NoseSource::ground_velocity);
+        return setup;
+    }
+    const char* asked = options.nose ? "--nose heading" : "The database's azimuth_reference (heading)";
+    const auto with_heading = std::count_if(states.begin(), states.end(),
+            [](const State& s) { return std::isfinite(s.heading); });
+    if (with_heading == 0)
+    {
+        if (options.nose)
+        {
+            input_error("--nose heading needs the nose's compass heading, and ", trajectory_file,
+                    " carries none: a WGS84 track has no heading column (the AC format's "
+                    "column 9 and a static operation's heading column are read). Use --nose "
+                    "velocity.");
+        }
+        warn("The database measures its sphere azimuth from the heading, and ", trajectory_file,
+                " carries none (a WGS84 track has no heading column): the nose follows the "
+                "velocity instead, as if the aircraft flew with no crab. Give --nose velocity "
+                "to say so.");
+        setup.source = NoseSource::velocity;
+        setup.offset = heading_offset(states, frame);
+        return setup;
+    }
+    if (static_cast<std::size_t>(with_heading) != states.size())
+    {
+        const auto first = std::find_if(states.begin(), states.end(),
+                [](const State& s) { return !std::isfinite(s.heading); });
+        input_error(asked, " needs a heading at every state, and ", trajectory_file, " has ",
+                states.size() - static_cast<std::size_t>(with_heading), " without one, the first "
+                "at t = ", first->t, " s.");
+    }
+    if (std::isnan(frame))
+    {
+        input_error(asked, " turns each state's compass heading into the local frame, and "
+                "needs that frame's bearing: give --frame_bearing, the compass bearing of +x "
+                "(the shipped AC tracks run +x along 210 degrees)", options.nose ? "" : ", or --nose "
+                "velocity", ". It is not inferred from the track, as the hover nose's offset is "
+                "when no frame is given: that fit absorbs the mean crab (heading minus track), "
+                "and the nose would come back along the mean track.");
+    }
+    setup.offset = frame * pi / 180.0;
+    return setup;
+}
+
+// The --wind profile for one trajectory: the surface air is the trajectory's
+// own (its vehicle file's, under --temperature, --humidity and --pressure), and
+// the top clears the highest state and microphone.  Written to
+// job.atmosphere_out when --write_atmosphere asked for it.
+AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
+        const RunOptions& options, const std::vector<Vec3>& observers,
+        const std::vector<double>& microphone_heights)
+{
+    const SurfaceWind& wind = *options.surface_wind;
+    const auto& vehicle = trajectory.vehicle;
+    Atmosphere surface = vehicle.atmosphere;
+    if (!std::isnan(options.temperature_override))
+        surface.temperature = options.temperature_override;
+    if (!std::isnan(options.pressure_override))
+        surface.pressure = options.pressure_override;
+    if (!std::isnan(options.humidity_override))
+        surface.relative_humidity = options.humidity_override;
+    // The same refusal the spectral path makes without a profile: the whole
+    // humidity profile is carried up from this one value.
+    if (std::isnan(options.humidity_override) && !vehicle.humidity_given)
+    {
+        input_error("--wind builds the humidity profile from the surface humidity, and none is set "
+                    "(no --humidity, and ", job.vehicle, " gives none). Give --humidity, or add "
+                    "\"relative humidity\" to the vehicle file or its Atmosphere section.");
+    }
+    if (const auto problem = temperature_problem(surface.temperature); !problem.empty())
+        input_error("--wind: the surface temperature from ", job.vehicle, ": ", problem);
+    if (const auto problem = pressure_problem(surface.pressure); !problem.empty())
+        input_error("--wind: the surface pressure from ", job.vehicle, ": ", problem);
+    if (const auto problem = humidity_problem(surface.relative_humidity); !problem.empty())
+        input_error("--wind: the surface humidity from ", job.vehicle, ": ", problem);
+
+    // Every height a path reaches.  The microphone heights are taken at their
+    // largest, which can only raise the top.
+    double highest = 0.0;
+    for (const auto& state : trajectory.states)
+        highest = std::max(highest, state.z);
+    const double receiver = std::max(options.ground.receiver_height,
+            microphone_heights.empty()
+                    ? 0.0
+                    : *std::max_element(microphone_heights.begin(), microphone_heights.end()));
+    for (const auto& observer : observers)
+        highest = std::max(highest, observer.z + receiver);
+
+    const AtmosphereProfile profile = synthetic_profile(wind, surface, highest);
+    const LengthUnit unit = options.unit;
+    const std::size_t top = profile.height.size() - 1;
+    log("Atmosphere built from --wind: ", wind.speed, " m/s (", wind.speed * 3600.0 / 1852.0,
+            " kt) from ", wind.direction, " degrees at ", wind.height / unit.to_meters, " ",
+            unit.name, ", roughness length ", wind.roughness_length / unit.to_meters, " ", unit.name,
+            ", ", describe(wind.stability), "; ", profile.height.size(), " levels to ",
+            profile.top() / unit.to_meters, " ", unit.name, " (", wind.levels_per_decade,
+            " per factor of ten from ", wind.first_level() / unit.to_meters, " ", unit.name, ").");
+    log("  wind ", wind.speed_at(wind.surface_layer_depth), " m/s at the top of the surface "
+            "layer, ", wind.surface_layer_depth / unit.to_meters, " ", unit.name, ", and held above "
+            "it; ", profile.temperature.front(), " K, ", profile.pressure.front(), " kPa, ",
+            profile.relative_humidity.front(), "% RH at the ground, and ", profile.temperature[top],
+            " K, ", profile.pressure[top], " kPa, ", profile.relative_humidity[top],
+            "% RH at the top (water vapor held).");
+    if (*std::max_element(profile.relative_humidity.begin(), profile.relative_humidity.end())
+            >= 100.0)
+    {
+        warn("--wind: the surface air saturates on its way up to ", profile.top() / unit.to_meters,
+                " ", unit.name, "; the relative humidity is held at 100 percent above that.");
+    }
+    if (!job.atmosphere_out.empty())
+    {
+        // --humidity 0 is completely dry air, which humidity_problem accepts;
+        // read_atmosphere_profile refuses a file whose humidity never exceeds 1
+        // percent, taking it for a fraction.  The run is right, but its file
+        // will not replay, and that should be said now rather than then.
+        if (*std::max_element(profile.relative_humidity.begin(), profile.relative_humidity.end())
+                <= 1.0)
+        {
+            warn("--write_atmosphere: ", job.atmosphere_out, " is completely dry air, and "
+                    "--atmosphere refuses a profile whose relative humidity never exceeds 1 percent "
+                    "(it takes it for a fraction), so it will not replay as written.");
+        }
+        write_atmosphere_profile(profile, job.atmosphere_out, unit);
+        log("  written to ", job.atmosphere_out, ".");
+    }
+    return profile;
+}
+
 // Compute one trajectory's footprint and write its outputs, returning the
 // trajectory itself for the single-path plotting block.  Anything that throws
 // in here condemns this trajectory alone; the caller catches and moves on.
@@ -695,9 +1000,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const RunOptions& options, const std::vector<Vec3>& observers,
         const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
         const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
-        std::vector<double>& dnl_energy, std::vector<double>& lamax, std::vector<double>& nax,
-        std::vector<std::array<double, 2>>& coverage)
+        RunTotals& totals)
 {
+    auto& lamax = totals.lamax;
+    auto& nax = totals.nax;
+    auto& coverage = totals.coverage;
     // Create trajectory from CSV data
     Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
     // Ground effect is on by default, but it acts on per-band levels, so it is
@@ -775,7 +1082,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Refer mu, the path angle and the sphere's nose to the velocity the
     // database's conditions were taken from.  After the trim, which cuts the
     // approach at its slowest point over the ground, not through the air.
-    const bool air_referenced = refer_to_database_speed(trajectory, database, options);
+    const std::optional<AtmosphereProfile> synthesized = options.surface_wind
+            ? std::optional<AtmosphereProfile>(wind_profile(trajectory, job, options, observers,
+                      microphone_heights))
+            : std::nullopt;
+    // The profile this trajectory propagates through, whichever option gave it.
+    const std::optional<AtmosphereProfile>& atmosphere
+            = options.surface_wind ? synthesized : options.atmosphere;
+    const bool air_referenced = refer_to_database_speed(trajectory, database, options,
+            atmosphere ? &*atmosphere : nullptr);
+    // And the sphere's nose, which may be refused, before anything costs time.
+    const NoseSetup nose_setup = settle_nose(trajectory, database, options, job.trajectory);
 
     // And time series data
     const std::size_t nt = trajectory.states.size();
@@ -803,39 +1120,129 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
     }
 
+    // An exponential time weighting over fewer than two samples per time
+    // constant reports the sampling, not the signal: on a 0.5 s history the
+    // fast detector (tau 0.125 s) settles fully within every sample and its
+    // "maximum" is the largest sample again, under another name.  Refused,
+    // since the number would look like a meter reading.
+    //
+    // The check is on the integration step, the mean interval, because that is
+    // the step every sample is weighted by (T times its reception factor), in
+    // the time weighting as in the SEL.  Not on the longest interval: the 2017
+    // AC tracks are 0.02 s with the odd dropout of up to 0.14 s, which the
+    // longest interval would refuse while the history the detector sees is
+    // uniform.  A part in 1e9 of slack lets a track at exactly tau/2 pass.
+    const bool want_weighted_level = options.want_lamax || options.want_nax || options.want_ta;
+    if (want_weighted_level && nt >= 2
+            && integration_step > coarsest_weighting_step(options.lamax_weighting) * (1.0 + 1e-9))
+    {
+        input_error("--lamax_weighting ", to_string(options.lamax_weighting), " (", maximum_name(options.lamax_weighting),
+                ", time constant ", weighting_time_constant(options.lamax_weighting), " s) needs the level history "
+                "sampled at least every ", coarsest_weighting_step(options.lamax_weighting), " s, half its time "
+                "constant, and ", job.trajectory, " is sampled every ", integration_step, " s. A WGS84 track "
+                "is refitted onto a finer -s; the 27-column AC format is used as sampled, so it needs a finer "
+                "file. Or choose another --lamax_weighting: slow needs 0.5 s, leq0.5 0.25 s, and instantaneous "
+                "takes any step.");
+    }
+
+    // The day-evening-night penalties (-D, --lden_file, --cnel_file), per
+    // state, from the track's UTC seconds shifted into local time.  Each is a
+    // level added to the sample (0 outside its periods).
+    std::array<std::vector<double>, day_metric_count> day_penalty;
+    for (std::size_t m = 0; m < day_metric_count; m++)
+    {
+        if (!options.want_day_metric[m])
+            continue;
+        const auto metric = static_cast<DayMetric>(m);
+        day_penalty[m].resize(nt);
+        for (std::size_t it = 0; it < nt; it++)
+        {
+            if (std::isnan(trajectory.states[it].utcsec))
+            {
+                // A NaN fails both halves of a period's window test, so a track
+                // with no clock was classed as daytime -- or, when the start
+                // defaulted to zero, as UTC midnight, i.e. night: +10 dB on the
+                // whole footprint, silently.  Either way the answer was made up.
+                input_error(day_metric_option(metric), " needs the time of day, and ", job.trajectory,
+                        " does not carry one: it has no utcsec column. Give --start_utc <seconds since UTC "
+                        "midnight at t = 0>.");
+            }
+            day_penalty[m][it] = schedule_penalty(trajectory.states[it].utcsec, options.utc_offset, metric);
+        }
+    }
+
+    // How each state's condition picks its spheres (--blend), and the
+    // load-factor law's sides (--load_factor_correction).  The tip speed is
+    // this trajectory's vehicle's, for a database that records none of its own.
+    Database::BlendOptions blend_options = options.blend;
+    blend_options.tip_speed = trajectory.vehicle.tip_speed;
+    const bool two_sided = blend_options.load_factor_correction == LoadFactorCorrection::two_sided;
+    if (two_sided && !database.fixed_load_factor())
+    {
+        input_error("--load_factor_correction two_sided applies a fixed_load_factor database's law, and the "
+                "database given for ", job.trajectory, " is not one: its load factors are spheres, "
+                "blended like any other condition.");
+    }
+    if (blend_options.policy != BlendPolicy::barycentric)
+    {
+        log("Sphere selection: --blend ", to_string(blend_options.policy),
+                blend_options.policy == BlendPolicy::nearest
+                        ? " (the nearest stored condition at every state)."
+                        : " (AAM v3.1: bracketing in speed, then flight path angle, within 20 kt and 3/5 deg).");
+        if (blend_options.policy == BlendPolicy::aam && !database.fixed_load_factor())
+        {
+            log("--blend aam: AAM has no thrust axis; each state searches the nearest of this "
+                    "database's ", database.aam_layer_count(), " thrust-coefficient layers.");
+            if (const std::size_t single = database.aam_single_sphere_layers(); single > 0)
+            {
+                warn("--blend aam: ", single, " of the database's ", database.aam_layer_count(),
+                        " thrust-coefficient layers hold a single sphere, which a state nearest that "
+                        "C_T takes whatever its speed and path angle. AAM's search needs the spheres "
+                        "layered in C_T, not scattered.");
+            }
+        }
+    }
+    if (two_sided)
+        log("Load-factor correction is two-sided, held at ", blend_options.min_load_factor, " g and ",
+                options.max_load_factor, " g.");
+
     // The source geometry and the blend of database operating conditions depend
     // only on the trajectory state, so build them once here rather than once
     // per (observer, state) pair.  The blend is a Delaunay locate() walk
     // and was by far the largest single cost in the program; this turns
     // observers*states of them into states of them.
-    // Night classification for the DNL penalty, from the AC format's UTC
-    // seconds column shifted into local time.
-    std::vector<char> night(options.want_dnl ? nt : 0);
-    for (std::size_t it = 0; it < night.size(); it++)
-    {
-        if (std::isnan(trajectory.states[it].utcsec))
-        {
-            // A NaN fails both halves of is_night's window test, so a track with
-            // no clock was classed as daytime -- or, when the start defaulted to
-            // zero, as UTC midnight, i.e. night: +10 dB on the whole footprint,
-            // silently.  Either way the answer was made up.
-            input_error("-D needs the time of day, and ", job.trajectory, " does not carry one: "
-                    "it has no utcsec column. Give --start_utc <seconds since UTC midnight at "
-                    "t = 0>.");
-        }
-        night[it] = is_night(trajectory.states[it].utcsec, options.utc_offset) ? 1 : 0;
-    }
-
-    // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
-    const auto offset = heading_offset(trajectory.states, options.frame_bearing);
-    std::size_t by_heading = 0, slow = 0, load_capped = 0;
+    // The sphere's nose: the velocity, or at hover the heading; or under --nose
+    // heading the heading throughout (nose_direction, settle_nose).
+    const auto& offset = nose_setup.offset;
+    const NoseSource nose_source = nose_setup.source;
+    std::size_t by_heading = 0, slow = 0, load_capped = 0, load_floored = 0;
+    // Heading minus ground track over the states the track is defined at, as a
+    // circular mean and an rms about it (heading mode's log).
+    double crab_cos = 0.0, crab_sin = 0.0;
+    std::vector<double> crabs;
+    std::size_t mu_clamped = 0, fpa_clamped = 0, ct_clamped = 0, load_scaled = 0, load_lowered = 0;
+    std::array<std::size_t, 4> spheres_blended {};
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
     {
-        const auto velocity = air_velocity(state);
-        const auto nose = nose_direction(state, offset);
-        if (std::hypot(velocity[0], velocity[1]) < velocity_nose_speed)
+        const auto velocity = nose_source == NoseSource::ground_velocity ? ground_velocity(state)
+                                                                          : air_velocity(state);
+        const auto nose = nose_direction(state, offset, nose_source);
+        if (nose_source == NoseSource::heading)
+        {
+            if (std::hypot(state.vx, state.vy) >= velocity_nose_speed)
+            {
+                // Compass heading minus compass track: the track's local angle
+                // less the nose's, the frame turning the other way.
+                const double crab = std::remainder(std::atan2(state.vy, state.vx)
+                        - std::atan2(nose[1], nose[0]), 2.0 * pi);
+                crab_cos += std::cos(crab);
+                crab_sin += std::sin(crab);
+                crabs.push_back(crab);
+            }
+        }
+        else if (std::hypot(velocity[0], velocity[1]) < velocity_nose_speed)
         {
             slow++;
             if (nose != velocity)
@@ -843,7 +1250,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
         // On a fixed_load_factor database the load-factor law is the analytic
         // correction 20 lg(C_T / C_T,ref), an extrapolation above the load
-        // factors its source supports.  It is held at --max_load_factor.
+        // factors its source supports.  It is held at --max_load_factor, and
+        // two-sided at --min_load_factor below (blend_at() applies that floor).
         double thrust_coefficient = state.CT;
         if (database.fixed_load_factor())
         {
@@ -853,19 +1261,88 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 thrust_coefficient = ceiling;
                 load_capped++;
             }
+            if (two_sided && thrust_coefficient
+                    < blend_options.min_load_factor * database.reference_thrust_coefficient())
+                load_floored++;
         }
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
                 Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
-                options.qsam ? state.fpa_e : state.fpa, thrust_coefficient));
+                options.qsam ? state.fpa_e : state.fpa, thrust_coefficient, blend_options));
+        const auto& blend = source_states.back().blend;
+        mu_clamped += blend.advance_ratio_clamped;
+        fpa_clamped += blend.flight_path_angle_clamped;
+        ct_clamped += blend.thrust_coefficient_clamped;
+        load_scaled += blend.level_correction_db > 0.0;
+        load_lowered += blend.level_correction_db < 0.0;
+        if (blend_options.policy == BlendPolicy::aam)
+        {
+            std::size_t used = 0;
+            for (const double weight : blend.weights)
+                used += weight > 0.0;
+            spheres_blended[std::max<std::size_t>(used, 1) - 1]++;
+        }
     }
+    if (blend_options.policy == BlendPolicy::aam)
+    {
+        // How often the gates let AAM interpolate at all: a state on one
+        // sphere is either on a stored condition or past every gate.
+        log("--blend aam over ", nt, " states: 4 spheres at ", spheres_blended[3], ", 3 at ",
+                spheres_blended[2], ", 2 at ", spheres_blended[1], ", 1 at ", spheres_blended[0], ".");
+    }
+    log("Source axis coverage over ", nt, " states: advance ratio clamped ", mu_clamped,
+            ", flight-path angle clamped ", fpa_clamped, ", thrust coefficient clamped ", ct_clamped,
+            "; analytic load-factor correction applied ", load_scaled,
+            two_sided ? " (raising), " : ".", two_sided ? std::to_string(load_lowered) : std::string(),
+            two_sided ? " (lowering)." : "");
+    if (load_floored > 0)
+    {
+        warn(load_floored, " of ", nt, " states are below ", blend_options.min_load_factor, " g on a "
+                "fixed_load_factor database; the two-sided load-factor correction is held at ",
+                blend_options.min_load_factor, " g (--min_load_factor).");
+    }
+    if (mu_clamped || fpa_clamped || ct_clamped)
+        warn("Flight conditions exceed the source database's axis ranges: advance ratio ", mu_clamped,
+                ", flight-path angle ", fpa_clamped, ", thrust coefficient ", ct_clamped,
+                " of ", nt, " states. These queries use clamped source conditions.");
     if (load_capped > 0)
     {
         warn(load_capped, " of ", nt, " states exceed ", options.max_load_factor, " g on a "
                 "fixed_load_factor database, where the load-factor correction is an extrapolation. "
                 "Held at ", options.max_load_factor, " g (--max_load_factor).");
     }
-    if (slow > 0)
+    if (nose_source == NoseSource::heading)
+    {
+        std::ostringstream crab_text;
+        if (!crabs.empty())
+        {
+            const double mean = std::atan2(crab_sin, crab_cos);
+            double sum = 0.0;
+            for (const double crab : crabs)
+            {
+                const double d = std::remainder(crab - mean, 2.0 * pi);
+                sum += d * d;
+            }
+            const double mean_degrees = mean * 180.0 / pi;
+            crab_text << " Over the " << crabs.size() << " states above 8 kt it sits "
+                      << mean_degrees << " degrees from the ground track (heading minus track, "
+                      << "positive with the nose right of the track), rms "
+                      << std::sqrt(sum / static_cast<double>(crabs.size())) * 180.0 / pi
+                      << " degrees about that.";
+            // A helicopter crabs by the wind's share of its airspeed; tens of
+            // degrees on average over a whole track is a frame turned the wrong
+            // way, not a crosswind.
+            if (std::fabs(mean_degrees) > 45.0)
+            {
+                warn("--nose heading: the heading sits ", mean_degrees, " degrees from the ground "
+                        "track on average over ", job.trajectory, ". Is --frame_bearing (",
+                        *offset * 180.0 / pi, ") the bearing of this track's +x axis?");
+            }
+        }
+        log("The sphere's nose is the compass heading at all ", nt, " states, turned into the "
+            "local frame by a frame bearing of ", *offset * 180.0 / pi, " degrees.", crab_text.str());
+    }
+    else if (slow > 0)
     {
         if (by_heading > 0)
             info(by_heading, " of ", slow, " states under 8 kt turn the sphere's nose from the velocity "
@@ -932,6 +1409,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::filesystem::create_directories(directory);
     }
     const bool write_band_history = !options.band_history_prefix.empty();
+    // The C-weighted SEL is formed from the same per-band levels the band
+    // history writes, so both record them.
+    const bool record_bands = write_band_history || options.want_csel;
     if (write_band_history)
     {
         const auto directory = std::filesystem::path(options.band_history_prefix).parent_path();
@@ -1012,6 +1492,147 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         log("Receivers: ", summary.str(), "; each level is evaluated at its microphone.");
     }
 
+    // --terrain: the ground under this trajectory's scene, on the run's frame,
+    // and the checks that the track and the terrain mean the same place and the
+    // same heights.  The observers already stand on it (run()).
+    std::optional<TerrainRaster> terrain_raster;
+    if (options.terrain)
+    {
+        const LocalFrame& frame = *options.geodetic.frame;
+        const LengthUnit& unit = options.unit;
+        const auto& recorded = trajectory.recorded;
+        if (!recorded.empty())
+        {
+            // An AC state file records each state's latitude and longitude beside
+            // its x/y, so the run's frame can be checked against the track's own:
+            // with a wrong --origin or --frame_bearing the terrain would be read
+            // under some other place.  The demo track agrees with its own frame
+            // to 0.85 ft rms, the 2017 Amedee tracks with theirs to 1-5 ft.
+            const std::size_t stride = std::max<std::size_t>(1, recorded.size() / 500);
+            double squares = 0.0;
+            std::size_t count = 0;
+            for (std::size_t k = 0; k < recorded.size(); k += stride)
+            {
+                const Vec3 p = frame.to_local(Geodetic {recorded[k].latitude, recorded[k].longitude, 0.0});
+                squares += (p.x - recorded[k].x) * (p.x - recorded[k].x) + (p.y - recorded[k].y) * (p.y - recorded[k].y);
+                count++;
+            }
+            const double rms = std::sqrt(squares / static_cast<double>(count));
+            constexpr double refused_rms = 30.0; // m
+            constexpr double warned_rms = 3.0;   // m
+            if (rms > refused_rms)
+            {
+                input_error("--terrain: ", job.trajectory, "'s own latitudes and longitudes put its states ",
+                        rms / unit.to_meters, " ", unit.name, " rms from its x/y in this run's frame (--origin ",
+                        frame.reference().latitude, " ", frame.reference().longitude, ", --frame_bearing ",
+                        std::isnan(options.frame_bearing) ? std::string("unset, +x east")
+                                                          : std::to_string(options.frame_bearing),
+                        "), so the terrain would be read under the wrong place. Give the origin and bearing "
+                        "its x/y were made with.");
+            }
+            const std::string frame_note = std::string("  the track's latitudes and longitudes sit ")
+                    + std::to_string(rms / unit.to_meters) + " " + unit.name + " rms from its x/y in this run's frame.";
+            if (rms > warned_rms)
+                warn(frame_note, " Check --origin and --frame_bearing.");
+            else
+                log(frame_note);
+            // And its altitude: z = 0 is, on the track's own datum, at alt - z,
+            // which is what --ground_elevation must be for the terrain's heights
+            // (put on that datum by --terrain_offset) to land at the right z.
+            // Checked only where alt - z is one number along the track.
+            std::vector<double> datum(recorded.size());
+            for (std::size_t k = 0; k < recorded.size(); k++)
+                datum[k] = recorded[k].altitude - recorded[k].z;
+            const auto [low, high] = std::minmax_element(datum.begin(), datum.end());
+            std::nth_element(datum.begin(), datum.begin() + datum.size() / 2, datum.end());
+            const double median = datum[datum.size() / 2];
+            constexpr double datum_tolerance = 1.0; // m
+            if (*high - *low <= datum_tolerance)
+            {
+                if (std::fabs(median - options.geodetic.ground_elevation) > datum_tolerance)
+                {
+                    input_error("--terrain: ", job.trajectory, " puts its z = 0 at altitude ",
+                            median / unit.to_meters, " ", unit.name, " (its alt less its z), but "
+                            "--ground_elevation is ", options.geodetic.ground_elevation / unit.to_meters, " ",
+                            unit.name, ". The terrain's heights would be ",
+                            (median - options.geodetic.ground_elevation) / unit.to_meters, " ", unit.name,
+                            " off against the track. Give --ground_elevation ", median / unit.to_meters, ".");
+                }
+                log("  the track's z = 0 is at altitude ", median / unit.to_meters, " ", unit.name,
+                        " on its own datum, which --ground_elevation matches.");
+            }
+            else
+            {
+                log("  the track's alt less its z varies by ", (*high - *low) / unit.to_meters, " ", unit.name,
+                        ", so --ground_elevation is not checked against it.");
+            }
+        }
+
+        // The raster covers every observer and every state's footprint, with a
+        // margin for the rays GroundPlaneCache samples: a step past the far end
+        // of a path, and a bearing step to either side of it.
+        double x_low = std::numeric_limits<double>::infinity(), x_high = -x_low;
+        double y_low = x_low, y_high = -x_low;
+        for (const auto& o : observers)
+        {
+            x_low = std::min(x_low, o.x); x_high = std::max(x_high, o.x);
+            y_low = std::min(y_low, o.y); y_high = std::max(y_high, o.y);
+        }
+        for (const auto& state : source_states)
+        {
+            x_low = std::min(x_low, state.position.x); x_high = std::max(x_high, state.position.x);
+            y_low = std::min(y_low, state.position.y); y_high = std::max(y_high, state.position.y);
+        }
+        const double step = options.terrain_step;
+        const double margin = 2.0 * step
+                + std::hypot(x_high - x_low, y_high - y_low) * (2.0 * pi / GroundPlaneCache::bearings);
+        const auto raster_start = std::chrono::steady_clock::now();
+        terrain_raster.emplace(*options.terrain, frame, x_low - margin, x_high + margin, y_low - margin,
+                y_high + margin, step, options.terrain_offset - options.geodetic.ground_elevation);
+        log("  terrain sampled onto the local frame: ", terrain_raster->nodes(), " points every ",
+                step / unit.to_meters, " ", unit.name, " in ",
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - raster_start).count(), " s.");
+
+        // A state under the ground is a datum mistake, not a flight: missing
+        // --ground_elevation puts the terrain a whole site elevation above every
+        // state.  A few meters is the terrain's own error (3DEP's is 1-2 m) or a
+        // landing, and is let through: such a state's height above a path's mean
+        // ground is taken as zero where it falls below it (terrain_ray).
+        constexpr double refused_depth = 10.0; // m
+        std::size_t below = 0;
+        double deepest = 0.0;
+        double clearance = std::numeric_limits<double>::infinity();
+        for (const auto& state : source_states)
+        {
+            const double depth = terrain_raster->height(state.position.x, state.position.y) - state.position.z;
+            clearance = std::min(clearance, -depth);
+            if (depth > 0.0)
+            {
+                below++;
+                deepest = std::max(deepest, depth);
+            }
+        }
+        if (deepest > refused_depth)
+        {
+            input_error("--terrain: ", below, " of ", nt, " states of ", job.trajectory, " are below the "
+                    "terrain under them, the deepest by ", deepest / unit.to_meters, " ", unit.name,
+                    ". The trajectory and the terrain are on different vertical datums: the ground's z is "
+                    "the terrain height + --terrain_offset - --ground_elevation, which must be the "
+                    "track's own height of z = 0 on the terrain's datum.");
+        }
+        if (below > 0)
+        {
+            warn(below, " of ", nt, " states of ", job.trajectory, " are up to ", deepest / unit.to_meters, " ",
+                    unit.name, " below the terrain under them, within the terrain's own error; where a "
+                    "source falls below a path's mean ground its height above it is taken as zero.");
+        }
+        else
+        {
+            log("  the trajectory clears the terrain under it by ", clearance / unit.to_meters, " ",
+                    unit.name, " at least.");
+        }
+    }
+
     // With --db_cutoff, skip any (observer, state) pair whose level is provably
     // below the cutoff.  The bound is per state, from the loudest sphere the
     // state blends and spherical spreading alone, so it never discards a sample
@@ -1038,6 +1659,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // than per observer: the coefficients cost a pow() and two exp() per band.
     std::vector<double> absorption;
     std::vector<double> band_gains;
+    // --csel_file's C-weighting, over the same --band_limits as band_gains.
+    std::vector<double> c_gains;
     // With --atmosphere, absorption integrated through the profile instead
     // (LayeredAbsorption), and its running integral at each state's height,
     // [state][band], so the observer loop never looks a state's up twice.
@@ -1060,6 +1683,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // sorted, so the limits always select a range rather than a scattered set.
     std::size_t first_band = 0;
     std::size_t last_band = 0;
+    // --epnl_file: where each of the 24 PNL bands sits among the database's.
+    std::array<std::size_t, pnl_band_count> pnl_bands {};
     // --propagation_table: where the run's bands sit in it, and, for a table
     // that already includes absorption, the zero coefficients that keep the
     // run from taking it twice.
@@ -1085,11 +1710,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // of the air at the surface.  A profile without pressure takes the surface
     // pressure the vehicle file (or --pressure) gives, as `air` now holds.
     std::optional<AtmosphereProfile> profile;
-    if (options.atmosphere)
+    if (atmosphere)
     {
-        profile = options.atmosphere->has_pressure()
-                ? *options.atmosphere
-                : options.atmosphere->with_hydrostatic_pressure(air.pressure);
+        profile = atmosphere->has_pressure() ? *atmosphere
+                                             : atmosphere->with_hydrostatic_pressure(air.pressure);
         air = profile->at(0.0);
     }
     const double sound_speed = air.sound_speed();
@@ -1105,24 +1729,37 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     bool spectral = options.spectral;
     if (spectral && !database.has_spectra())
     {
-        if (options.spectral_explicit || options.ground_effect_given || options.atmosphere
+        if (options.spectral_explicit || options.ground_effect_given || atmosphere
                 || options.propagation_table)
         {
+            const std::string profile_option = options.surface_wind ? "--wind" : "--atmosphere";
             const std::string asked = options.propagation_table ? "--propagation_table"
                     : options.ground_effect_given               ? "--ground_effect"
-                    : options.atmosphere                        ? "--atmosphere"
+                    : atmosphere                                ? profile_option
                                                                 : "--spectral";
             input_error(asked
                     + " needs a database carrying per-band spectra; this one has none. Rebuild "
                       "it with spectra, or propagate the broadband level with --no-spectral"
-                    + (options.ground_effect_given ? " and no ground effect."
-                                    : options.atmosphere ? " and no --atmosphere."
-                                                         : "."));
+                    + (options.ground_effect_given ? std::string(" and no ground effect.")
+                                    : atmosphere ? " and no " + profile_option + "."
+                                                 : std::string(".")));
         }
         if (!options.band_history_prefix.empty())
         {
             input_error("--band_history needs a database carrying per-band spectra; this one "
                         "has none.");
+        }
+        if (options.want_csel)
+        {
+            // C-weighting is a weighting of the spectrum: a broadband database
+            // has one A-weighted level and nothing to reweight.
+            input_error("--csel_file needs a database carrying per-band spectra, to C-weight; this "
+                        "one has none.");
+        }
+        if (!job.epnl.empty() || !job.band_frames.empty())
+        {
+            input_error(!job.epnl.empty() ? "--epnl_file" : "--band_frames",
+                    " needs a database carrying per-band spectra; this one has none.");
         }
         log("Database carries no per-band spectra: propagating the broadband level with its "
             "EAA factor.");
@@ -1131,7 +1768,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     {
         // What this trajectory is propagated with, on stdout, so a footprint
         // states its own configuration rather than leaving it in the log file.
-        const char* humidity_from = !std::isnan(options.humidity_override) ? "--humidity"
+        const char* humidity_from = options.atmosphere ? "the --atmosphere profile's ground level"
+                : !std::isnan(options.humidity_override) ? "--humidity"
                 : trajectory.vehicle.humidity_given ? "vehicle file" : "default, not given";
         const double receiver = options.ground.receiver_height / options.unit.to_meters;
         std::cout << "Physics: "
@@ -1141,7 +1779,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                     : std::string("off"))
                   << "; air " << air.temperature << " K, " << air.pressure << " kPa, "
                   << air.relative_humidity << " % RH (" << humidity_from << ")"
-                  << (profile ? ", layered profile" : "")
+                  << (profile ? (options.surface_wind ? ", layered profile from --wind" : ", layered profile")
+                              : "")
                   << (options.refraction ? "; refraction on" : "") << ".\n";
         // The broadband path carries the EAA factor the database was built
         // with, so the run's air only enters through the spreading and the
@@ -1176,11 +1815,49 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
         absorption = absorption_coefficients(air, bands);
         band_gains = a_weighting_gains(bands, options.band_limits);
+        if (options.want_csel)
+            c_gains = c_weighting_gains(bands, options.band_limits);
         while (first_band < bands.size() && band_gains[first_band] == 0.0)
             first_band++;
         last_band = bands.size();
         while (last_band > first_band && band_gains[last_band - 1] == 0.0)
             last_band--;
+
+        // EPNL is defined over the 24 one-third-octave bands 50 Hz to 10 kHz
+        // (A36.4), and the noy tables and the tone correction need every one of
+        // them: a missing band is not a quiet band, and leaving it out would
+        // move the tone correction's background and the noy sum alike.  Bands
+        // the database has outside them (10 to 40 Hz) are ignored, as the
+        // regulation ignores them.
+        if (!job.epnl.empty())
+        {
+            std::vector<double> missing;
+            pnl_bands = pnl_band_indices(bands, missing);
+            if (!missing.empty())
+            {
+                std::ostringstream list;
+                for (std::size_t i = 0; i < missing.size(); i++)
+                    list << (i ? ", " : "") << missing[i];
+                input_error("--epnl_file needs the 24 one-third-octave bands from 50 Hz to 10 kHz "
+                            "(14 CFR 36 A36.4); the database (bands ", bands.front(), " to ",
+                        bands.back(), " Hz) lacks ", list.str(), " Hz.");
+            }
+            for (const std::size_t band : pnl_bands)
+            {
+                if (band < first_band || band >= last_band)
+                {
+                    input_error("--epnl_file needs the bands from 50 Hz to 10 kHz evaluated, and "
+                                "--band_limits ", options.band_limits.low, " to ",
+                            options.band_limits.high, " Hz leaves out the ", bands[band],
+                            " Hz band. Widen it to take in at least 50 to 10000 Hz.");
+                }
+            }
+            log(options.epnl_masking == ToneMasking::below_noy_floor
+                            ? "EPNL: tones in bands below their noy threshold are excluded from the tone "
+                              "correction (--no-epnl_masking for the procedure as written)."
+                            : "EPNL: the tone correction as written, every band eligible "
+                              "(--no-epnl_masking).");
+        }
 
         // Where each value came from, so a default is not mistaken for a
         // measurement: the vehicle file usually gives a temperature and a
@@ -1305,6 +1982,28 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         for (const double cy : {lo_y, hi_y})
                             r_max = std::max(r_max, std::hypot(std::hypot(cx - state.position.x,
                                     cy - state.position.y), state.position.z));
+                if (terrain_raster)
+                {
+                    // Over terrain the geometry is taken over each path's mean
+                    // ground, which can lie below z = 0: reach down to the lowest
+                    // observer, and past it by the observers' relief and the
+                    // tallest microphone, which bound how far below a microphone
+                    // its foot on a mean ground line can be.
+                    double z_low = std::numeric_limits<double>::infinity();
+                    double z_high = -z_low;
+                    for (const auto& o : observers)
+                    {
+                        z_low = std::min(z_low, o.z);
+                        z_high = std::max(z_high, o.z);
+                    }
+                    const double tallest = *std::max_element(microphone_height.begin(), microphone_height.end());
+                    for (const auto& state : source_states)
+                        for (const double cx : {lo_x, hi_x})
+                            for (const double cy : {lo_y, hi_y})
+                                r_max = std::max(r_max, std::hypot(std::hypot(cx - state.position.x,
+                                        cy - state.position.y), state.position.z - z_low)
+                                                + (z_high - z_low) + tallest);
+                }
                 return r_max * 1.01;
             };
             for (const double height : point_heights)
@@ -1444,8 +2143,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const double bearing = std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing;
         effective_sound_speed = EffectiveSoundSpeed(*profile, bearing, z_low,
                 z_high + EffectiveSoundSpeed::min_fit_span);
+        // The layered solve follows flat air at a path's fastest height only
+        // as far as the highest band evaluated resolves it (stratified.hpp).
         if (options.stratified)
-            layered_sound_speed = LayeredSoundSpeed(*profile, bearing);
+            layered_sound_speed = LayeredSoundSpeed(*profile, bearing, database.band_centers()[last_band - 1]);
         state_moments.reserve(nt);
         for (const auto& state : source_states)
             state_moments.push_back(effective_sound_speed->moments(state.position.z));
@@ -1516,6 +2217,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 options.scattering > 0.0 ? ", filled by turbulent scattering at gamma_T " : ", capped at ",
                 options.scattering > 0.0 ? options.scattering : options.shadow_floor,
                 options.scattering > 0.0 ? "." : " dB.");
+        if (options.stratified)
+            log("  a ray along flat air at a path's fastest height is followed only as far as "
+                "the highest band evaluated, ", layered_sound_speed->resolution_frequency(),
+                    " Hz, resolves it.");
         if (profile->has_wind() && std::isnan(options.frame_bearing))
         {
             log("  the profile's wind directions are compass bearings, turned into the local "
@@ -1544,9 +2249,24 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             input_error("--coverage_file reports the straight-ray levels: it does not combine with "
                     "--refraction or -a.");
     }
-    const bool needs_full_history = options.write_time_history || options.want_dnl
-            || options.full_history || options.want_lamax || options.want_nax
-            || write_band_history;
+    const bool any_day_metric = std::any_of(options.want_day_metric.begin(),
+            options.want_day_metric.end(), [](bool b) { return b; });
+    // --epnl_file and --band_frames need every state's bands, in reception-time
+    // frames.  The EPNL's window is found on PNLT, which the A-weighted bound
+    // says nothing about, so the windowed search cannot serve them.
+    const bool want_epnl = !job.epnl.empty();
+    const bool want_band_frames = !job.band_frames.empty();
+    const bool want_frames = want_epnl || want_band_frames;
+    if (want_frames && (!spectral || add_ambient))
+    {
+        // run() refuses both up front; this is the backstop.
+        input_error(want_epnl ? "--epnl_file" : "--band_frames",
+                " needs the spectral path and no -a: the ambient is an A-weighted level with no "
+                "spectrum to add to the bands.");
+    }
+    const bool needs_full_history = options.write_time_history || any_day_metric
+            || options.full_history || options.want_lamax || options.want_nax || options.want_ta
+            || options.want_csel || write_band_history || want_frames;
     // The coverage report needs every state's level, so nothing is skipped.
     const bool bounded = !level_is_transformed && !options.want_coverage;
     DirectionBounds direction_bounds;
@@ -1662,8 +2382,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     //   every sample is wanted, not just the window's:
     //     -i / --history writes the whole time history, skipped states included
     //     --band_history the same, per band
+    //     --epnl_file / --band_frames  every state's bands, into frames
     //     -D / --dnlfile the day-night window is found on a penalized history,
-    //                    which a window found on the raw one does not cover
+    //                    which a window found on the raw one does not cover;
+    //                    --lden_file and --cnel_file the same
+    //     --lamax_file, --nax_file, --ta_file
+    //                    the time weighting runs over the whole history
+    //     --csel_file    the C-weighted window is not the A-weighted one, and
+    //                    every state's bands are needed to find it
     //
     // A new option that does either belongs in the matching term above.
     // --db_cutoff stands apart: its culling is a deliberate metric change, so
@@ -1720,9 +2446,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::atomic<std::size_t> shadowed_samples {0};
     std::atomic<std::size_t> table_samples {0};
     std::atomic<std::size_t> fallback_samples {0};
+    std::atomic<std::size_t> terrain_samples {0};
+    std::atomic<std::size_t> terrain_raised {0};
     // The table's bearings are compass bearings; the run's x/y are turned from
     // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
     const CompassToLocal compass(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
+
+    // This trajectory's C-weighted SEL per observer (--csel_file).
+    std::vector<double> csel_levels(options.want_csel ? observers.size() : 0);
+    // Per observer, each written only by the worker that owns the observer.
+    std::vector<EpnlRow> epnl_rows(want_epnl ? observers.size() : 0);
+    std::vector<ObserverFrames> observer_frames(want_band_frames ? observers.size() : 0);
 
     const auto acoustics_start = std::chrono::steady_clock::now();
 
@@ -1733,14 +2467,25 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> levels(nt);
         std::vector<double> ranges(nt);
         std::vector<double> penalized;
-        // --band_history: every state's band levels, and the geometry each
-        // was reached along.
-        const std::size_t history_bands = write_band_history ? database.band_centers().size() : 0;
+        // Each sample's reception-time duration, for the time weighting.
+        std::vector<double> durations;
+        // --csel_file: the C-weighted history.
+        std::vector<double> c_levels(options.want_csel ? nt : 0);
+        // --band_history, --csel_file, --epnl_file and --band_frames: every
+        // state's band levels, and (for the history) the geometry each was
+        // reached along.  The EPNL and frame outputs keep the levels for the
+        // frames.
+        const bool keep_bands = record_bands || want_frames;
+        const std::size_t history_bands = keep_bands ? database.band_centers().size() : 0;
         std::vector<double> band_levels(nt * history_bands);
         std::vector<BandHistoryRow> band_rows(write_band_history ? nt : 0);
+        BandFrames frames(want_frames ? last_band - first_band : 0, pnl_record_seconds);
+        std::vector<PnlSpectrum> pnl_history;
         auto record_path = [&](std::size_t it, const RayPath& path) {
-            if (!write_band_history)
+            if (!keep_bands)
                 return static_cast<double*>(nullptr);
+            if (!write_band_history)
+                return band_levels.data() + it * history_bands;
             auto& row = band_rows[it];
             const auto angles = lookup_angles(source_states[it].frame, path.direction,
                     !database.upper_hemisphere_measured());
@@ -1852,6 +2597,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> shadow(effective_sound_speed ? database.band_centers().size() : 0, 0.0);
         std::vector<double> table_loss(options.propagation_table ? database.band_centers().size() : 0, 0.0);
         std::size_t tabled_here = 0, fallback_here = 0;
+        // --terrain: each observer's mean ground lines (GroundPlaneCache), and
+        // how many pairs took one, and how many had a height raised to zero.
+        std::optional<GroundPlaneCache> planes;
+        if (terrain_raster)
+            planes.emplace(*terrain_raster);
+        std::size_t terrain_here = 0, raised_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
         std::size_t shadowed_here = 0;
         // --refraction stratified's other eigenrays: each one's loss from its
@@ -1877,6 +2628,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const double plate_mic_azimuth = flush && options.plate_orientation.outboard
                     ? outboard_azimuth(observer, source_states)
                     : options.plate_orientation.azimuth;
+            // Over terrain the ground model's geometry is taken over each path's
+            // mean ground line, from this observer's foot toward the source's.
+            const bool over_terrain = planes.has_value() && ground_here != nullptr;
+            if (over_terrain)
+                planes->set_observer(observers[index].x, observers[index].y);
             // The straight-ray spectral level: from --propagation_table where
             // it covers the pair, with the table's level in place of the ground
             // model's and spreading and absorption as ever; otherwise the run's
@@ -1929,6 +2685,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 double level = 0.0;
                 if (options.propagation_table && table_level(it, bands_out, level))
                     return level;
+                if (over_terrain)
+                {
+                    const Vec3& source = source_states[it].position;
+                    const double dx = source.x - observer.x;
+                    const double dy = source.y - observer.y;
+                    bool raised = false;
+                    const RayPath path = terrain_ray(source, observer,
+                            planes->line_to(dx, dy, std::sqrt(dx * dx + dy * dy)), flush, &raised);
+                    terrain_here++;
+                    raised_here += raised;
+                    return database.spectral_level_along(path, source_states[it], absorption_for(it, observer),
+                            band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
+                            packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, nullptr, nullptr,
+                            bands_out);
+                }
                 return database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
                         band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, bands_out);
@@ -1951,7 +2722,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 if (options.propagation_table)
                 {
                     double level = 0.0;
-                    double* table_bands_out = write_band_history
+                    double* table_bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
                     if (table_level(it, table_bands_out, level))
@@ -2125,7 +2896,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         culled_here++;
                         continue;
                     }
-                    double* bands_out = write_band_history
+                    double* bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
                     double level = spectral ? straight_level(it, bands_out)
@@ -2141,17 +2912,43 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             integrated_levels[index] = options.full_history
                     ? full_sound_exposure_level(levels, integration_step, ranges, sound_speed)
                     : sound_exposure_level(levels, integration_step, ranges, sound_speed);
-            if (options.want_lamax || options.want_nax)
+            if (options.want_csel)
             {
-                // The history is complete here (needs_full_history), so this is
-                // the true peak over the whole operation, not a windowed one.
-                const double peak = *std::max_element(levels.begin(), levels.end());
-                if (options.want_lamax)
-                    lamax[index] = std::max(lamax[index], peak);
-                // NAx: operations whose own peak reaches the threshold.  Each
-                // trajectory is one operation, so the count adds per trajectory.
-                if (options.want_nax && peak >= options.nax_threshold)
-                    nax[index] += 1.0;
+                // The C-weighted level of every state, from the bands the
+                // A-weighted one was summed from, and its SEL by the same rule
+                // as SEL's: the 10 dB-down window of the C-weighted history
+                // itself (or the whole of it under --full_history).  A state
+                // with no A-weighted energy has no band energy either.
+                for (std::size_t it = 0; it < nt; it++)
+                {
+                    c_levels[it] = levels[it] == -std::numeric_limits<double>::infinity()
+                            ? levels[it]
+                            : weighted_level(band_levels.data() + it * history_bands, c_gains);
+                }
+                csel_levels[index] = options.full_history
+                        ? full_sound_exposure_level(c_levels, integration_step, ranges, sound_speed)
+                        : sound_exposure_level(c_levels, integration_step, ranges, sound_speed);
+            }
+            if (want_weighted_level)
+            {
+                // The history is complete here (needs_full_history), so the
+                // weighting runs over the whole operation, in reception time:
+                // each sample lasts what it lasts in the SEL integral.
+                reception_durations(nt, integration_step, ranges, sound_speed, durations);
+                if (options.want_lamax || options.want_nax)
+                {
+                    const double peak = weighted_maximum(levels, durations, options.lamax_weighting);
+                    if (options.want_lamax)
+                        lamax[index] = std::max(lamax[index], peak);
+                    // NAx: operations whose own peak reaches the threshold.  Each
+                    // trajectory is one operation, so the count adds per trajectory.
+                    if (options.want_nax && peak >= options.nax_threshold)
+                        nax[index] += 1.0;
+                }
+                // Time above: seconds, adding across operations.
+                if (options.want_ta)
+                    totals.time_above[index] += time_above(levels, durations, options.lamax_weighting,
+                            options.ta_threshold);
             }
             if (options.want_coverage)
             {
@@ -2176,15 +2973,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 coverage[index][0] += unmeasured_energy;
                 coverage[index][1] += energy;
             }
-            if (options.want_dnl)
+            for (std::size_t m = 0; m < day_metric_count; m++)
             {
+                if (!options.want_day_metric[m])
+                    continue;
                 // Energies add across operations; the logarithm comes at the
                 // end, once every trajectory has contributed.  Each observer
                 // index belongs to exactly one worker, and the trajectories run
-                // one after another, so this needs no synchronization.
-                dnl_energy[index] += std::pow(
-                        10.0, 0.1 * day_night_level(levels, integration_step, night, penalized, ranges,
-                                              sound_speed));
+                // one after another, so this needs no synchronization.  The
+                // operation's window is its own penalized 10 dB-down window, or
+                // the whole history under --full_history.
+                totals.day_energy[m][index] += std::pow(10.0,
+                        0.1 * penalized_exposure_level(levels, integration_step, day_penalty[m], penalized,
+                                      ranges, sound_speed, options.full_history));
             }
             if (options.write_time_history)
             {
@@ -2193,6 +2994,62 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         + std::to_string(index) + ".csv";
                 write_time_history_file(levels, integration_step, observer(0), observer(1),
                         time_history_filename, options.unit);
+            }
+            if (want_frames)
+            {
+                // Every state's bands into 0.5 s reception-time frames (see
+                // band_frames.hpp), weighted by its share of reception time as
+                // the SEL integral weights it.  A culled state (level -inf)
+                // carries no energy here either.
+                frames.accumulate(
+                        nt, [&](std::size_t it) { return std::isfinite(levels[it]); },
+                        [&](std::size_t it) { return trajectory.states[it].t + ranges[it] / sound_speed; },
+                        [&](std::size_t it) {
+                            return integration_step
+                                    * reception_factor(it, nt, integration_step, sound_speed,
+                                            [&](std::size_t k) { return ranges[k]; });
+                        },
+                        [&](std::size_t it) { return band_levels.data() + it * history_bands + first_band; });
+                if (want_epnl)
+                {
+                    auto& row = epnl_rows[index];
+                    pnl_history.resize(frames.count());
+                    for (std::size_t k = 0; k < frames.count(); k++)
+                        for (std::size_t b = 0; b < pnl_band_count; b++)
+                            pnl_history[k][b] = frames.level(k, pnl_bands[b] - first_band);
+                    // Every frame below the noy floor (or none at all): no
+                    // finite PNLT, and no EPNL.  Checked here rather than caught,
+                    // since a far observer on a grid is an ordinary case.
+                    row.valid = false;
+                    for (const auto& spectrum : pnl_history)
+                        row.valid = row.valid || std::isfinite(perceived_noise_level(spectrum));
+                    if (row.valid)
+                    {
+                        auto& r = row.result;
+                        r = effective_perceived_noise_level(pnl_history, pnl_record_seconds, true,
+                                options.epnl_masking);
+                        row.tone = r.pnltm - r.pnl[r.peak];
+                        row.tone_band = r.tone[r.peak] > 0.0 ? pnl_band_centers[r.tone_band[r.peak]]
+                                                             : std::numeric_limits<double>::quiet_NaN();
+                        row.pnltm_time = frames.center(r.peak);
+                        row.first_time = frames.center(r.first);
+                        row.last_time = frames.center(r.last);
+                        r.pnlt = {};
+                        r.pnl = {};
+                        r.tone = {};
+                        r.tone_band = {};
+                    }
+                }
+                if (want_band_frames)
+                {
+                    auto& kept = observer_frames[index];
+                    kept.first = frames.first();
+                    kept.count = frames.count();
+                    kept.levels.resize(frames.count() * frames.bands());
+                    for (std::size_t k = 0; k < frames.count(); k++)
+                        for (std::size_t b = 0; b < frames.bands(); b++)
+                            kept.levels[k * frames.bands() + b] = static_cast<float>(frames.level(k, b));
+                }
             }
             if (write_band_history)
             {
@@ -2212,7 +3069,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         shadowed_samples += shadowed_here;
         table_samples += tabled_here;
         fallback_samples += fallback_here;
+        terrain_samples += terrain_here;
+        terrain_raised += raised_here;
     });
+
+    if (terrain_raster)
+    {
+        if (ground_model == nullptr)
+            log("--terrain: no ground model runs, so the terrain sets only where the observers stand.");
+        else
+            log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane; in ",
+                    terrain_raised.load(), " of them a source or receiver below it was raised onto it (a "
+                    "receiver in a dip, or a source behind rising ground, which is not screened).");
+    }
 
     if (options.propagation_table)
     {
@@ -2265,10 +3134,49 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 latlon_companion(job.output), options.scattered);
     }
 
+    if (options.want_csel)
+    {
+        log("Writing the C-weighted sound exposure level to ", job.csel_output, ".");
+        write_levels(x_obs, y_obs, csel_levels, job.csel_output, options.scattered, options.unit);
+        if (options.latlon)
+        {
+            write_geodetic_levels(x_obs, y_obs, csel_levels, *options.geodetic.frame,
+                    latlon_companion(job.csel_output), options.scattered);
+        }
+    }
+
     if (!options.metric_file.empty())
     {
         auto casename = std::filesystem::path(job.trajectory).stem().string();
         append_metrics_file(options.metric_file, casename, integrated_levels);
+    }
+
+    if (want_epnl)
+        write_epnl_file(epnl_rows, microphones, options.unit, job.epnl);
+    if (want_band_frames)
+    {
+        BandFramesFile meta;
+        meta.trajectory = job.trajectory;
+        meta.database = job.database;
+        meta.frame_length = pnl_record_seconds;
+        meta.band_centers.assign(database.band_centers().begin() + static_cast<std::ptrdiff_t>(first_band),
+                database.band_centers().begin() + static_cast<std::ptrdiff_t>(last_band));
+        meta.length_unit = options.unit.name;
+        for (std::size_t i = 0; i < observer_count; i++)
+        {
+            meta.x.push_back(microphones[i].x / options.unit.to_meters);
+            meta.y.push_back(microphones[i].y / options.unit.to_meters);
+            meta.z.push_back(microphones[i].z / options.unit.to_meters);
+            meta.height.push_back(microphone_height[i] / options.unit.to_meters);
+        }
+        if (!options.scattered)
+        {
+            for (const double x : x_obs)
+                meta.grid_x.push_back(x / options.unit.to_meters);
+            for (const double y : y_obs)
+                meta.grid_y.push_back(y / options.unit.to_meters);
+        }
+        write_band_frames(job.band_frames, meta, observer_frames);
     }
 
     if (options.write_state)
@@ -2417,11 +3325,18 @@ int run(int argc, char* argv[])
     std::vector<std::string> out_files = {"integrated/197421_LAE.csv"};
     std::vector<std::string> state_files;
     std::string dnl_file = "";
+    std::string lden_file = "";
+    std::string cnel_file = "";
     std::string lamax_file = "";
+    std::string lamax_weighting = "fast";
     std::string nax_file = "";
     double nax_threshold = std::numeric_limits<double>::quiet_NaN();
+    std::string ta_file = "";
+    double ta_threshold = std::numeric_limits<double>::quiet_NaN();
+    std::vector<std::string> csel_files;
     std::string coverage_file = "";
     bool full_history = false;
+    bool epnl_masking = true;
     double utc_offset = 0.0;
     double trim_start = std::numeric_limits<double>::quiet_NaN();
     // Lengths on this command line are in whatever --units selects, feet by
@@ -2459,6 +3374,8 @@ int run(int argc, char* argv[])
     bool write_time_history = false;
     std::string time_history_prefix = "";
     std::string band_history_prefix;
+    std::vector<std::string> epnl_files;
+    std::vector<std::string> band_frames_files;
     std::string metric_file = "";
     bool qsam = true;
     bool self_test = false;
@@ -2468,6 +3385,9 @@ int run(int argc, char* argv[])
     std::vector<double> band_limits;
     bool ground_effect = true;
     double max_load_factor = 2.0;
+    std::string blend_policy = "barycentric";
+    std::string load_factor_correction = "one_sided";
+    double min_load_factor = 0.5;
     bool accept_vehicle_mismatch = false;
     double flow_resistance = flow_resistance::grassy_field;
     double receiver_height = 1.2; // meters
@@ -2480,12 +3400,24 @@ int run(int argc, char* argv[])
     double roughness = 0.0;          // m
     std::string plate_table;
     std::string propagation_table;
+    std::string terrain_file;
+    double terrain_offset = 0.0;  // meters
+    double terrain_step = 0.0;    // meters; 0 follows the terrain's own spacing
+    bool observers_on_terrain = false;
     std::string plate_mic_azimuth = "outboard";
     bool exact_ground = false;
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
     std::string atmosphere_file;
+    // --wind and the options that shape the profile built from it.  The
+    // lengths are meters until the --units seam, like every default.
+    std::string wind_text;
+    double roughness_length = SurfaceWind().roughness_length;
+    double surface_layer_depth = SurfaceWind().surface_layer_depth;
+    std::string stability = "neutral";
+    int profile_levels = SurfaceWind().levels_per_decade;
+    std::string write_atmosphere;
     std::string refraction = "none";
     double shadow_floor = 20.0;
     bool tunneling = false;
@@ -2493,6 +3425,8 @@ int run(int argc, char* argv[])
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
     std::string speed_reference;
+    // Empty follows the database's azimuth_reference attribute.
+    std::string nose;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
     // trajectory; an unset bearing leaves the axes east/north, which is what a
     // map wants -- the shipped AC tracks are the other case, their +x running
@@ -2537,6 +3471,22 @@ int run(int argc, char* argv[])
             "Per-band time history file prefix: one file per observer, a row per trajectory "
             "state with its emission and reception times, geometry, A-weighted level and each "
             "band's unweighted level at the microphone. Needs the spectral path.");
+    app.add_option("--epnl_file", epnl_files,
+            "Write each observer's EPNL (14 CFR 36 A36.4), PNLTM and duration correction to this "
+            "CSV, from one-third-octave levels in 0.5 s reception-time frames. Once, or once per "
+            "trajectory; with several trajectories and one name, each is named after its track "
+            "(<stem>_EPNL.csv). Needs the spectral path and the 24 bands 50 Hz-10 kHz.");
+    app.add_flag("--epnl_masking,!--no-epnl_masking", epnl_masking,
+            "--epnl_file's tone correction: a band below its noy threshold (Table A36-3's SPL(d)) "
+            "enters the tone correction at that threshold and carries no tone itself, as tones in "
+            "masked bands are excluded from a measured spectrum's (default on; --no-epnl_masking "
+            "takes the procedure as written, which reads absorption's plunge in the top bands as "
+            "tones).");
+    app.add_option("--band_frames", band_frames_files,
+            "Write each observer's band levels in 0.5 s reception-time frames to this netCDF file "
+            "(level by observer, frame and band, with the coordinates). Once, or once per "
+            "trajectory; with several trajectories and one name, each is named after its track "
+            "(<stem>_band_frames.nc). Needs the spectral path.");
     app.add_option("-m,--metricfile", metric_file, "File to append overall noise metrics.");
     app.add_option("-b,--observer", observer_file, "Observer file name.");
     app.add_flag("-q,--qsam,!--no-qsam", qsam, "Extended QSAM (default on; --no-qsam disables)");
@@ -2561,25 +3511,51 @@ int run(int argc, char* argv[])
     auto* gridstep_option = app.add_option("--gridstep", grid_step,
             "Observer grid spacing, in --units (default 25 m, = 82.021 ft).");
     app.add_option("-D,--dnlfile", dnl_file,
-            "Write the day-night level (DNL: the energy average over a 24-hour day, night "
-            "penalized), summed over every trajectory, to this file.");
+            "Write the day-night level (DNL: the energy average over a 24-hour day, 22:00-07:00 "
+            "night +10 dB), summed over every trajectory, to this file.");
+    app.add_option("--lden_file", lden_file,
+            "Write the day-evening-night level (Lden, EU Directive 2002/49/EC: 19:00-23:00 "
+            "evening +5 dB, 23:00-07:00 night +10 dB, over 24 hours), summed over every "
+            "trajectory, to this file.");
+    app.add_option("--cnel_file", cnel_file,
+            "Write the community noise equivalent level (CNEL, California Title 21: 19:00-22:00 "
+            "evening +4.77 dB, 22:00-07:00 night +10 dB, over 24 hours), summed over every "
+            "trajectory, to this file.");
     app.add_option("--lamax_file", lamax_file,
-            "Write each observer's LAmax, the highest A-weighted level over the operation, "
-            "dB, to this file.");
+            "Write each observer's LAmax, the highest A-weighted level over every operation, "
+            "time-weighted per --lamax_weighting (LAFmax by default), dB, to this file.");
+    auto* lamax_weighting_option = app.add_option("--lamax_weighting", lamax_weighting,
+            "Time weighting for --lamax_file, --nax_file and --ta_file, in reception time: fast "
+            "(IEC 61672 F, 0.125 s; default), slow (S, 1 s), leq0.5 (the largest 0.5 s Leq, ECAC "
+            "Doc 32's LASmax surrogate) or instantaneous (the largest sample, what --lamax_file "
+            "wrote before). Refused when the history is coarser than half the time constant.")
+            ->check(CLI::IsMember({"fast", "slow", "leq0.5", "instantaneous"}));
     app.add_option("--nax_file", nax_file,
-            "Write each observer's NAx, the number of operations whose LAmax reaches "
-            "--nax_threshold, to this file.");
+            "Write each observer's NAx, the number of operations whose LAmax (per "
+            "--lamax_weighting) reaches --nax_threshold, to this file.");
     app.add_option("--nax_threshold", nax_threshold,
             "The LAmax, dBA, that an operation must reach to count toward NAx. Required with "
             "--nax_file: there is no default, so the study's threshold is always stated.");
+    app.add_option("--ta_file", ta_file,
+            "Write each observer's time above --ta_threshold: seconds of reception time the "
+            "level, time-weighted per --lamax_weighting, exceeds it, summed over every "
+            "trajectory.");
+    app.add_option("--ta_threshold", ta_threshold,
+            "The level, dBA, that --ta_file counts the time above. Required with --ta_file: "
+            "there is no default.");
+    app.add_option("--csel_file", csel_files,
+            "Write the C-weighted sound exposure level (LCE) per observer, by SEL's window rule, "
+            "to this file: one name, or one per trajectory (with one name and several "
+            "trajectories, each writes <track>_LCE.csv beside it). Spectral path only.");
     app.add_option("--coverage_file", coverage_file,
             "Write, per observer, the energy-weighted share of its levels that came from cells "
             "the database did not measure (straight rays only; needs a database with coverage).");
     app.add_flag("--full_history", full_history,
-            "Integrate each SEL over the whole history rather than the event's 10 dB-down "
-            "window, as full-history tools do. Slower: no window is found.");
+            "Integrate each exposure (SEL, C-SEL, and each operation's share of DNL, Lden and "
+            "CNEL) over the whole history rather than the event's 10 dB-down window, as AAM and "
+            "NORAH2 do. Slower: no window is found.");
     app.add_option("--utc_offset", utc_offset,
-            "Hours from UTC to local time, for the 22:00-07:00 DNL night window.");
+            "Hours from UTC to local time, for the DNL, Lden and CNEL periods.");
     app.add_option("--powerfile", power_file,
             "Write per-state shaft power, if the database carries any, to this file.");
     app.add_option("--export_sphere", sphere_file,
@@ -2603,6 +3579,37 @@ int run(int argc, char* argv[])
             "Largest load factor, in g, a fixed_load_factor database's load-factor correction "
             "is taken to. Above it the correction is held, and the run says so (default 2).")
             ->check(CLI::PositiveNumber);
+    app.add_option("--blend", blend_policy,
+            "How a state's flight condition picks the database spheres it is evaluated from: "
+            "barycentric (default) -- blended in dB over the Delaunay simplex holding it, "
+            "nearest outside the hull; nearest -- the one stored condition nearest it, at every "
+            "state (the closest a trajectory tool comes to ECAC Doc 32's one hemisphere per "
+            "segment); or aam -- AAM v3.1's search, up to four spheres bracketing it in speed "
+            "and then flight path angle, within 20 kt and 3 deg descending or 5 deg otherwise, "
+            "the nearest sphere where nothing brackets it.")
+            ->check(CLI::IsMember({"barycentric", "nearest", "aam"}));
+    app.add_option("--load_factor_correction", load_factor_correction,
+            "A fixed_load_factor database's load-factor law, 20 lg(CT/CT_ref): one_sided "
+            "(default) applies it only above the reference load factor, as panam does; "
+            "two_sided below it too, down to --min_load_factor.")
+            ->check(CLI::IsMember({"one_sided", "two_sided"}));
+    auto* min_load_factor_option = app.add_option("--min_load_factor", min_load_factor,
+            "--load_factor_correction two_sided: the smallest load factor, in g, the law is "
+            "taken to; below it the correction is held, and the run says so (default 0.5).")
+            ->check(CLI::Validator(
+                    [](std::string& text) -> std::string {
+                        double value = 0.0;
+                        try
+                        {
+                            value = std::stod(text);
+                        }
+                        catch (const std::exception&)
+                        {
+                            return "not a number";
+                        }
+                        return value > 0.0 && value <= 1.0 ? std::string() : std::string("must be in (0, 1]");
+                    },
+                    "in (0, 1]"));
     app.add_flag("--accept_vehicle_mismatch", accept_vehicle_mismatch,
             "Warn, rather than refuse, a vehicle file that disagrees with the database by more "
             "than 2 percent.");
@@ -2617,11 +3624,42 @@ int run(int argc, char* argv[])
             "pressure against height (see README). Per-band absorption is integrated through "
             "it, and its ground level replaces the vehicle file's atmosphere. Spectral path "
             "only.");
+    app.add_option("--wind", wind_text,
+            "Build the stratified atmosphere from one surface wind instead of an --atmosphere file: "
+            "SPEED,DIRECTION[,HEIGHT]. SPEED names its unit (12kt, 6.2mps or 14mph); DIRECTION is "
+            "the compass bearing, degrees, the wind blows FROM (as an --atmosphere file's "
+            "wind_direction), turned into the local frame by --frame_bearing; HEIGHT is the "
+            "anemometer's, in --units (default 10 m). The wind follows the neutral log law over "
+            "--roughness_length up to --surface_layer_depth and is held above; the temperature "
+            "lapses dry-adiabatically from the surface air (vehicle file, --temperature, "
+            "--humidity, --pressure), pressure is hydrostatic and the water vapor is held. "
+            "Not with --atmosphere. Spectral path only.");
+    auto* roughness_length_option = app.add_option("--roughness_length", roughness_length,
+            "--wind: aerodynamic roughness length z0 of the ground, in --units (default 0.03 m, "
+            "= 0.0984 ft: open flat terrain, short grass, airfields; Davenport-Wieringa). "
+            "Not --roughness, which is the acoustic ground's RMS height.");
+    auto* surface_layer_option = app.add_option("--surface_layer_depth", surface_layer_depth,
+            "--wind: height, in --units, up to which the wind follows its law; above it the wind "
+            "is held (default 200 m, = 656.2 ft).");
+    auto* stability_option = app.add_option("--stability", stability,
+            "--wind: neutral (default; the log law, the one checked against measurements), or a "
+            "TA Luft class I, II, III/1, III/2, IV, V (Pasquill F to A): a power-law wind and a "
+            "temperature gradient in the surface layer. The classes are unvalidated.")
+            ->check(CLI::IsMember(stability_names(), CLI::ignore_case));
+    auto* profile_levels_option = app.add_option("--profile_levels", profile_levels,
+            "--wind: levels per factor of ten in height in the built profile (default 16). Results "
+            "do not depend on it; raise it to check that they do not.");
+    app.add_option("--write_atmosphere", write_atmosphere,
+            "--wind: write the profile built for each trajectory as an --atmosphere CSV (z, T_K, "
+            "RH, p_kPa, u_mps, v_mps), so the run can be repeated and inspected. With several "
+            "trajectories and one name, each is named after its track "
+            "(<track>_atmosphere.csv).");
     app.add_option("--refraction", refraction,
-            "Refraction through the --atmosphere profile: none (default); linear -- curved rays "
+            "Refraction through the --atmosphere (or --wind) profile: none (default); linear -- curved rays "
             "through its effective sound speed (temperature and wind) fitted to a straight line "
             "per path; or stratified -- through the profile's own layers, slower but without "
-            "the fit. Both give shadow zones under upward refraction.")
+            "the fit, resolving them only as finely as the highest band evaluated can. Both "
+            "give shadow zones under upward refraction.")
             ->check(CLI::IsMember({"none", "linear", "stratified"}));
     app.add_flag("--tunneling", tunneling,
             "--refraction stratified: also take the rays turned back from aloft that turn again just "
@@ -2655,16 +3693,25 @@ int run(int argc, char* argv[])
     app.add_option("--frame_bearing", frame_bearing,
             "Compass bearing, degrees, of the local +x axis. Default: x east, y north. "
             "The shipped AC tracks use 210.");
+    app.add_option("--nose", nose,
+            "Where the sphere's nose (its azimuth reference) points: velocity, the velocity "
+            "--speed_reference selects; ground_velocity, the ground velocity whatever "
+            "--speed_reference says; or heading, the track's compass heading at every speed "
+            "(needs --frame_bearing for an AC track, and a heading column). The first two turn "
+            "to the heading below 8 kt. Default: what the database's azimuth_reference records; "
+            "velocity if it records nothing.")
+            ->check(CLI::IsMember({"velocity", "ground_velocity", "heading"}));
     app.add_option("--speed_reference", speed_reference,
-            "Which velocity sets the flight condition -- mu, the path angle and the sphere's "
-            "nose: ground, or air (the ground velocity less the --atmosphere profile's wind at "
-            "the aircraft). Default: what the database records it was built with; ground if it "
+            "Which velocity sets the flight condition -- mu, the path angle and (under --nose "
+            "velocity) the sphere's nose: ground, or air (the ground velocity less the wind at the "
+            "aircraft, from --atmosphere or --wind). Default: what the database records it was built with; ground if it "
             "records nothing.")
             ->check(CLI::IsMember({"ground", "air"}));
     auto* ground_elevation_option = app.add_option("--ground_elevation", ground_elevation,
             "Elevation of the observer plane above mean sea level, in --units. Subtracted "
             "from a geodetic track's altitude column to give height above the observers "
-            "(default 0).");
+            "(default 0). With --terrain it places the local z = 0 against the terrain's heights; "
+            "an AC track's own alt - z must match it.");
     app.add_option("--start_utc", start_utc,
             "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
             "window (-D). Required with -D when the track has no utcsec column; ignored "
@@ -2717,6 +3764,25 @@ int run(int argc, char* argv[])
             "height and range, for one stratified atmosphere over uniform ground. It replaces the "
             "ground and ray models wherever it covers a pair; elsewhere --ground_effect (or free "
             "field) applies. Spectral path only; not with --refraction or --plate_table.");
+    app.add_option("--terrain", terrain_file,
+            "A bare-earth elevation grid (netCDF: latitude, longitude, elevation(latitude, "
+            "longitude) in meters, e.g. USGS 3DEP). Grid observers stand on it, and the ground "
+            "model and plate take each path's least-squares mean ground plane (CNOSSOS-EU, "
+            "NORAH2 / ECAC Doc 32) in place of the plane z = 0. Needs the run's frame (--origin, "
+            "and --frame_bearing for rotated x/y, or a geodetic track). No screening or "
+            "diffraction by terrain; not with --refraction or --propagation_table.");
+    auto* terrain_offset_option = app.add_option("--terrain_offset", terrain_offset,
+            "Added to every --terrain height, in --units, to put it on the trajectory's vertical "
+            "datum (default 0). At Amedee 3DEP is NAVD88 and the 2017 tracks are ellipsoidal: "
+            "-23.6 m (-77.4 ft). The ground's local z is then the height plus this, less "
+            "--ground_elevation.");
+    auto* terrain_step_option = app.add_option("--terrain_step", terrain_step,
+            "Spacing, in --units, of the terrain samples each path's mean ground plane is fitted "
+            "to (default: the terrain grid's own spacing, at least 5 m).");
+    app.add_flag("--observers_on_terrain", observers_on_terrain,
+            "With --terrain and -b: take each observer's ground height from the terrain, "
+            "ignoring the file's z. Without it the file's z stands, and a disagreement over 1 m "
+            "is warned about.");
 
     try
     {
@@ -2725,6 +3791,17 @@ int run(int argc, char* argv[])
     catch (const CLI::ParseError& e)
     {
         return app.exit(e);
+    }
+
+    Database::BlendOptions blend_options;
+    blend_options.policy = *parse_blend_policy(blend_policy);
+    blend_options.load_factor_correction = *parse_load_factor_correction(load_factor_correction);
+    blend_options.min_load_factor = min_load_factor;
+    if (min_load_factor_option->count() > 0
+            && blend_options.load_factor_correction != LoadFactorCorrection::two_sided)
+    {
+        input_error("--min_load_factor is the floor of the two-sided load-factor law; it needs "
+                "--load_factor_correction two_sided.");
     }
 
     if ((!sphere_file.empty() || !aam_file.empty()) && sphere_condition.size() != 3)
@@ -2764,6 +3841,22 @@ int run(int argc, char* argv[])
             out_files.push_back((directory / (stem + "_LAE.csv")).string());
         }
     }
+    std::vector<std::string> atmosphere_out_files;
+    if (!write_atmosphere.empty())
+    {
+        if (path_count == 1)
+            atmosphere_out_files.push_back(write_atmosphere);
+        else
+        {
+            // As the state file: one name for several tracks would hold only the last profile.
+            const auto directory = std::filesystem::path(write_atmosphere).parent_path();
+            for (const auto& path : path_files)
+            {
+                const auto stem = std::filesystem::path(path).stem().string();
+                atmosphere_out_files.push_back((directory / (stem + "_atmosphere.csv")).string());
+            }
+        }
+    }
     if (state_files.size() == 1 && path_count > 1)
     {
         // The same goes for the state file: one name for several tracks would
@@ -2776,11 +3869,39 @@ int run(int argc, char* argv[])
             state_files.push_back((directory / (stem + "_state.csv")).string());
         }
     }
+    // --csel_file, --epnl_file and --band_frames are per operation, as -S is:
+    // one name for several tracks is split into one per track, beside it.
+    auto name_per_track = [&](std::vector<std::string>& names, const char* suffix) {
+        if (names.size() != 1 || path_count <= 1)
+            return;
+        const auto directory = std::filesystem::path(names.front()).parent_path();
+        names.clear();
+        for (const auto& path : path_files)
+            names.push_back((directory / (std::filesystem::path(path).stem().string() + suffix)).string());
+    };
+    name_per_track(csel_files, "_LCE.csv");
+    name_per_track(epnl_files, "_EPNL.csv");
+    name_per_track(band_frames_files, "_band_frames.nc");
+    if (!epnl_files.empty())
+        expand_per_path(epnl_files, "--epnl_file names");
+    if (!band_frames_files.empty())
+        expand_per_path(band_frames_files, "--band_frames names");
     expand_per_path(database_files, "database files");
     expand_per_path(vehicle_files, "vehicle files");
     expand_per_path(out_files, "output files");
     if (!state_files.empty())
         expand_per_path(state_files, "state files");
+    if (!csel_files.empty())
+    {
+        expand_per_path(csel_files, "C-SEL files");
+        for (std::size_t i = 0; i < path_count; i++)
+        {
+            if (std::filesystem::path(csel_files[i]).lexically_normal()
+                    == std::filesystem::path(out_files[i]).lexically_normal())
+                input_error("--csel_file and -o name the same file (", csel_files[i],
+                        "); the C-weighted SEL would overwrite the A-weighted one.");
+        }
+    }
     // Two trajectories writing one file is never what was meant: the later
     // overwrites the earlier and the run still exits 0.  This catches equal
     // track stems (tracks from two directories) and an explicit -o or -S given
@@ -2797,6 +3918,14 @@ int run(int argc, char* argv[])
         require_distinct(out_files, "output file");
         if (!state_files.empty())
             require_distinct(state_files, "state file");
+        if (!atmosphere_out_files.empty())
+            require_distinct(atmosphere_out_files, "--write_atmosphere file (their tracks share a file name)");
+        if (!csel_files.empty())
+            require_distinct(csel_files, "C-SEL file");
+        if (!epnl_files.empty())
+            require_distinct(epnl_files, "--epnl_file");
+        if (!band_frames_files.empty())
+            require_distinct(band_frames_files, "--band_frames file");
         if (!time_history_prefix.empty() || !band_history_prefix.empty())
         {
             std::vector<std::string> stems;
@@ -2943,8 +4072,19 @@ int run(int argc, char* argv[])
         }
         // A standalone job: interpolate the database down to one operating
         // condition and write that sphere out.  No trajectory is involved.
+        // --blend and --load_factor_correction apply here as in a run: an
+        // exported sphere is what a state at this condition would hear.
+        auto export_blend = blend_options;
+        if (export_blend.policy == BlendPolicy::aam && std::isnan(database.tip_speed()))
+            export_blend.tip_speed = configure_vehicle(vehicle_files.front()).tip_speed;
+        if (export_blend.load_factor_correction == LoadFactorCorrection::two_sided
+                && !database.fixed_load_factor())
+        {
+            input_error("--load_factor_correction two_sided applies a fixed_load_factor database's "
+                    "law, and ", loaded_database, " is not one: its load factors are spheres.");
+        }
         const auto sphere = database.interpolate_sphere(
-                sphere_condition[0], sphere_condition[1], sphere_condition[2]);
+                sphere_condition[0], sphere_condition[1], sphere_condition[2], export_blend);
         if (!sphere_file.empty())
             write_sphere(sphere, sphere_file);
         if (!aam_file.empty())
@@ -2999,6 +4139,10 @@ int run(int argc, char* argv[])
     to_meters(path_smoothing_option, path_smoothing);
     to_meters(trim_option, trim_start);
     to_meters(ground_elevation_option, ground_elevation);
+    to_meters(roughness_length_option, roughness_length);
+    to_meters(surface_layer_option, surface_layer_depth);
+    to_meters(terrain_offset_option, terrain_offset);
+    to_meters(terrain_step_option, terrain_step);
 
     ObserverSet observer_set = scattered
             ? scattered_observers(observer_file, unit)
@@ -3007,21 +4151,35 @@ int run(int argc, char* argv[])
     auto& x_obs = observer_set.x;
     auto& y_obs = observer_set.y;
     std::vector<double> integrated_levels(observers.size());
-    // DNL is a property of the whole set of operations, not of one flight: each
-    // trajectory's day-night level is an energy, and they sum.
-    const bool want_dnl = !dnl_file.empty();
-    std::vector<double> dnl_energy(want_dnl ? observers.size() : 0, 0.0);
+    // DNL, Lden and CNEL are properties of the whole set of operations, not of
+    // one flight: each trajectory's penalized exposure is an energy, and they sum.
+    const std::array<const std::string*, day_metric_count> day_files = {&dnl_file, &lden_file, &cnel_file};
+    std::array<bool, day_metric_count> want_day_metric {};
+    RunTotals totals;
+    for (std::size_t m = 0; m < day_metric_count; m++)
+    {
+        want_day_metric[m] = !day_files[m]->empty();
+        totals.day_energy[m].assign(want_day_metric[m] ? observers.size() : 0, 0.0);
+    }
     const bool want_lamax = !lamax_file.empty();
-    std::vector<double> lamax(want_lamax ? observers.size() : 0,
-            -std::numeric_limits<double>::infinity());
+    totals.lamax.assign(want_lamax ? observers.size() : 0, -std::numeric_limits<double>::infinity());
     const bool want_nax = !nax_file.empty();
-    std::vector<double> nax(want_nax ? observers.size() : 0, 0.0);
+    totals.nax.assign(want_nax ? observers.size() : 0, 0.0);
+    const bool want_ta = !ta_file.empty();
+    totals.time_above.assign(want_ta ? observers.size() : 0, 0.0);
     const bool want_coverage = !coverage_file.empty();
-    std::vector<std::array<double, 2>> coverage(want_coverage ? observers.size() : 0,
-            std::array<double, 2> {0.0, 0.0});
+    totals.coverage.assign(want_coverage ? observers.size() : 0, std::array<double, 2> {0.0, 0.0});
+    const bool want_csel = !csel_files.empty();
     if (want_nax && !std::isfinite(nax_threshold))
         input_error("--nax_file needs --nax_threshold, the LAmax in dBA that counts an operation. "
                 "There is no default: give the threshold your study uses.");
+    if (want_ta && !std::isfinite(ta_threshold))
+        input_error("--ta_file needs --ta_threshold, the level in dBA it counts the time above. "
+                "There is no default: give the threshold your study uses.");
+    const LevelWeighting level_weighting = parse_level_weighting(lamax_weighting);
+    if (lamax_weighting_option->count() > 0 && !want_lamax && !want_nax && !want_ta)
+        input_error("--lamax_weighting sets the time weighting of --lamax_file, --nax_file and "
+                "--ta_file, and none of them is given.");
 
     // Outlives the loop so the plotting block below, which only runs for a
     // single trajectory, can still reach it.
@@ -3037,6 +4195,22 @@ int run(int argc, char* argv[])
                     "of frequency, and the broadband path (--no-spectral or --db_cutoff) has no "
                     "spectrum to apply it to.");
     }
+    if (want_csel && !spectral)
+    {
+        input_error("--csel_file needs the spectral path: C-weighting reweights the band levels, "
+                    "and the broadband path (--no-spectral) carries one A-weighted level.");
+    }
+    if (want_csel && !std::isnan(db_cutoff))
+    {
+        input_error("--csel_file does not combine with --db_cutoff: the cutoff is proven on the "
+                    "A-weighted level, and a state it skips can still carry C-weighted energy, "
+                    "which sits mostly below 100 Hz.");
+    }
+    if (want_csel && !std::isnan(ambient_level))
+    {
+        input_error("--csel_file does not combine with -a: the ambient is an A-weighted level, "
+                    "with no spectrum to C-weight.");
+    }
     if (!band_history_prefix.empty() && !spectral)
     {
         input_error("--band_history needs the spectral path: the broadband path (--no-spectral "
@@ -3044,6 +4218,22 @@ int run(int argc, char* argv[])
     }
     if (!propagation_table.empty() && !spectral)
         input_error("--propagation_table needs the spectral path.");
+    for (const auto& [names, option] : {std::pair {&epnl_files, "--epnl_file"},
+                 std::pair {&band_frames_files, "--band_frames"}})
+    {
+        if (names->empty())
+            continue;
+        if (!spectral)
+        {
+            input_error(option, " needs the spectral path: the broadband path (--no-spectral) "
+                        "carries no bands.");
+        }
+        if (!std::isnan(ambient_level))
+        {
+            input_error(option, " does not combine with -a: the ambient is an A-weighted level, "
+                        "with no spectrum to add to the bands.");
+        }
+    }
     if (!plate_table.empty() && !ground_effect)
     {
         input_error("--plate_table needs --ground_effect: the plate's level depends on the "
@@ -3060,10 +4250,34 @@ int run(int argc, char* argv[])
                     "the broadband path (--no-spectral) carries one level attenuated by the "
                     "database's own EAA factor.");
     }
-    if (refraction != "none" && atmosphere_file.empty())
+    if (!wind_text.empty() && !atmosphere_file.empty())
     {
-        input_error("--refraction ", refraction, " needs --atmosphere: it refracts through the "
-                    "profile's temperature and wind.");
+        input_error("--wind builds the atmosphere that --atmosphere would read; give one or the "
+                    "other. (--write_atmosphere saves the built one in the file format.)");
+    }
+    if (!wind_text.empty() && !spectral)
+    {
+        input_error("--wind needs the spectral path: the profile it builds is integrated per band, "
+                    "and the broadband path (--no-spectral) carries one level attenuated by the "
+                    "database's own EAA factor.");
+    }
+    if (wind_text.empty())
+    {
+        for (const auto& [option, name] : {std::pair {roughness_length_option, "--roughness_length"},
+                     std::pair {surface_layer_option, "--surface_layer_depth"},
+                     std::pair {stability_option, "--stability"},
+                     std::pair {profile_levels_option, "--profile_levels"}})
+        {
+            if (option->count() > 0)
+                input_error(name, " shapes the profile --wind builds, and there is no --wind.");
+        }
+        if (!write_atmosphere.empty())
+            input_error("--write_atmosphere writes the profile --wind builds, and there is no --wind.");
+    }
+    if (refraction != "none" && atmosphere_file.empty() && wind_text.empty())
+    {
+        input_error("--refraction ", refraction, " needs --atmosphere or --wind: it refracts "
+                    "through the profile's temperature and wind.");
     }
     if (!(shadow_floor >= 0.0))
         input_error("--shadow_floor must not be negative, got ", shadow_floor, ".");
@@ -3079,6 +4293,126 @@ int run(int argc, char* argv[])
     {
         input_error("--atmosphere gives temperature and humidity at every height; --temperature "
                     "and --humidity would contradict it.");
+    }
+
+    // --terrain, and what it does to the observers.
+    std::shared_ptr<const Terrain> terrain;
+    if (terrain_file.empty())
+    {
+        if (terrain_offset_option->count() > 0 || terrain_step_option->count() > 0 || observers_on_terrain)
+            input_error("--terrain_offset, --terrain_step and --observers_on_terrain need --terrain.");
+    }
+    else
+    {
+        // Ground-reflected rays, shadow boundaries and the table's receiver
+        // heights are all built over the plane z = 0; handing them a tilted
+        // plane per path would be a different model, not this one.
+        if (refraction != "none")
+        {
+            input_error("--terrain does not combine with --refraction: the ray models reflect off, "
+                        "and cast their shadows onto, the flat ground z = 0. Use --terrain with "
+                        "straight rays, or --refraction over flat ground.");
+        }
+        if (!propagation_table.empty())
+        {
+            input_error("--terrain does not combine with --propagation_table: the table's source "
+                        "and receiver heights are over flat ground.");
+        }
+        if (observers_on_terrain && !scattered)
+            input_error("--observers_on_terrain is for an observer file (-b); grid observers always "
+                        "stand on the terrain.");
+        if (!frame)
+        {
+            input_error("--terrain needs to know where this run's x/y lie on the ground: give "
+                        "--origin <latitude> <longitude> of the x/y origin (and --frame_bearing for "
+                        "rotated axes -- the shipped AC tracks use 210), or use a geodetic "
+                        "trajectory, which carries its own.");
+        }
+        if (terrain_step_option->count() > 0 && !(terrain_step > 0.0 && std::isfinite(terrain_step)))
+            input_error("--terrain_step must be a positive length, not ", terrain_step / unit.to_meters, " ",
+                    unit.name, ".");
+        if (!std::isfinite(terrain_offset))
+            input_error("--terrain_offset must be a number, not ", terrain_offset, ".");
+        terrain = std::make_shared<const Terrain>(terrain_file);
+        if (terrain_step_option->count() == 0)
+            terrain_step = std::max(terrain->spacing_meters(), min_terrain_step);
+        // The local frame's z is height above --ground_elevation on the
+        // trajectory's datum; --terrain_offset puts the grid on that datum.
+        const double height_offset = terrain_offset - ground_elevation;
+        log("Terrain: ", terrain_file, " (vertical datum ", terrain->vertical_datum(), "; latitudes ",
+                terrain->south(), " to ", terrain->north(), ", longitudes ", terrain->west(), " to ",
+                terrain->east(), ", spacing ", terrain->spacing_meters(), " m). Ground z = height + "
+                "--terrain_offset ", terrain_offset / unit.to_meters, " ", unit.name,
+                " - --ground_elevation ", ground_elevation / unit.to_meters, " ", unit.name,
+                "; each path's mean ground plane is fitted to samples every ",
+                terrain_step / unit.to_meters, " ", unit.name, ".");
+        // Each observer's ground, read from the grid itself rather than the
+        // per-trajectory raster, which is a resampling of it.
+        std::vector<double> ground(observers.size());
+        std::size_t uncovered = 0;
+        std::size_t first_uncovered = 0;
+        for (std::size_t i = 0; i < observers.size(); i++)
+        {
+            const Geodetic where = frame->to_geodetic(Vec3(observers[i].x, observers[i].y, 0.0));
+            ground[i] = terrain->elevation(where.latitude, where.longitude) + height_offset;
+            if (!std::isfinite(ground[i]) && uncovered++ == 0)
+                first_uncovered = i;
+        }
+        if (uncovered > 0)
+        {
+            const Geodetic where = frame->to_geodetic(Vec3(observers[first_uncovered].x,
+                    observers[first_uncovered].y, 0.0));
+            input_error("--terrain ", terrain_file, " has no height at ", uncovered, " of the ",
+                    observers.size(), " observers, the first at x ", observers[first_uncovered].x / unit.to_meters,
+                    ", y ", observers[first_uncovered].y / unit.to_meters, " ", unit.name, " (latitude ",
+                    where.latitude, ", longitude ", where.longitude, "): outside the grid, which covers "
+                    "latitudes ", terrain->south(), " to ", terrain->north(), " and longitudes ",
+                    terrain->west(), " to ", terrain->east(), ", or on a missing node. Check --origin "
+                    "and --frame_bearing.");
+        }
+        if (!scattered || observers_on_terrain)
+        {
+            for (std::size_t i = 0; i < observers.size(); i++)
+                observers[i].z = ground[i];
+            const auto [low, high] = std::minmax_element(ground.begin(), ground.end());
+            log("  observers stand on the terrain, from ", *low / unit.to_meters, " to ",
+                    *high / unit.to_meters, " ", unit.name, " in the local frame's z",
+                    scattered ? " (the observer file's z is not used)." : ".");
+        }
+        else
+        {
+            // The file's z stands, but a surveyed microphone and a terrain grid on
+            // one datum agree to the grid's own accuracy -- at Amedee 0.03 m
+            // standard deviation once the 23.6 m datum offset is applied -- so a
+            // larger disagreement is most likely a datum or frame mistake.
+            constexpr double disagreement = 1.0; // m
+            std::size_t off = 0;
+            std::size_t worst = 0;
+            std::vector<double> differences(observers.size());
+            for (std::size_t i = 0; i < observers.size(); i++)
+            {
+                differences[i] = observers[i].z - ground[i];
+                if (std::fabs(differences[i]) > disagreement)
+                    off++;
+                if (std::fabs(differences[i]) > std::fabs(differences[worst]))
+                    worst = i;
+            }
+            std::vector<double> sorted = differences;
+            std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+            const double median = sorted[sorted.size() / 2];
+            log("  observers keep the observer file's z; it sits ", median / unit.to_meters, " ",
+                    unit.name, " from the terrain in the median, ", differences[worst] / unit.to_meters,
+                    " at worst.");
+            if (off > 0)
+            {
+                warn("--terrain and the observer file disagree by more than ", disagreement / unit.to_meters,
+                        " ", unit.name, " at ", off, " of ", observers.size(), " observers (median ",
+                        median / unit.to_meters, ", worst ", differences[worst] / unit.to_meters, " ",
+                        unit.name, " at data row ", worst + 1, "). A uniform offset is a datum mismatch "
+                        "(--terrain_offset, --ground_elevation); give --observers_on_terrain to stand "
+                        "them on the terrain instead.");
+            }
+        }
     }
 
     // Everything the trajectory loop needs that does not vary between
@@ -3098,6 +4432,14 @@ int run(int argc, char* argv[])
     options.ground_effect = ground_effect;
     options.ground_effect_given = ground_explicit;
     options.max_load_factor = max_load_factor;
+    options.blend = blend_options;
+    if (blend_options.load_factor_correction == LoadFactorCorrection::two_sided
+            && min_load_factor > max_load_factor)
+    {
+        input_error("--min_load_factor ", min_load_factor, min_load_factor_option->count() > 0 ? "" : " (the default)",
+                " is above --max_load_factor ", max_load_factor, ": the two-sided law's floor must not "
+                "be above its ceiling.");
+    }
     options.accept_vehicle_mismatch = accept_vehicle_mismatch;
     options.ground.flow_resistance = flow_resistance;
     options.ground.receiver_height = receiver_height;
@@ -3109,6 +4451,10 @@ int run(int argc, char* argv[])
     options.ground.gamma_t = gamma_t;
     options.ground.roughness = roughness;
     options.exact_ground = exact_ground;
+    options.terrain = terrain;
+    options.terrain_path = terrain_file;
+    options.terrain_offset = terrain_offset;
+    options.terrain_step = terrain_step;
     if (!propagation_table.empty())
     {
         options.propagation_table = std::make_shared<const PropagationTable>(PropagationTable::load(propagation_table));
@@ -3145,6 +4491,38 @@ int run(int argc, char* argv[])
     options.frame_bearing = frame_bearing;
     if (!speed_reference.empty())
         options.speed_reference = parse_speed_reference(speed_reference);
+    if (!nose.empty())
+        options.nose = parse_nose_source(nose);
+    if (!wind_text.empty())
+    {
+        SurfaceWind wind = parse_surface_wind(wind_text, unit);
+        wind.roughness_length = roughness_length;
+        wind.surface_layer_depth = surface_layer_depth;
+        wind.stability = parse_stability(stability);
+        wind.levels_per_decade = profile_levels;
+        if (const auto problem = surface_wind_problem(wind, unit); !problem.empty())
+            input_error("--wind: ", problem);
+        if (wind.stability != Stability::neutral)
+        {
+            warn("--stability ", stability, ": ", describe(wind.stability), ". The stability classes "
+                    "are unvalidated: on the 2017 windy day an assumed stable class was 0.3 dB rms "
+                    "worse than the neutral log law. Prefer neutral unless the class is known.");
+        }
+        if (wind.height < 10.0 * wind.roughness_length)
+        {
+            warn("--wind: the anemometer at ", wind.height / unit.to_meters, " ", unit.name,
+                    " stands within ten roughness lengths of the ground (z0 ",
+                    wind.roughness_length / unit.to_meters, " ", unit.name, "), where the surface "
+                    "layer's law does not yet hold; the profile carried up from it is uncertain.");
+        }
+        if (wind.speed > 0.0 && refraction != "none" && std::isnan(frame_bearing) && !frame)
+        {
+            warn("--wind: the direction is a compass bearing, turned into the local frame taking "
+                 "+x as east. If this run's x/y are rotated -- the shipped AC tracks run +x along "
+                 "210 degrees -- give --frame_bearing.");
+        }
+        options.surface_wind = wind;
+    }
     if (!atmosphere_file.empty())
     {
         options.atmosphere = read_atmosphere_profile(atmosphere_file, unit, ground_elevation);
@@ -3158,12 +4536,17 @@ int run(int argc, char* argv[])
     options.trim_start = trim_start;
     options.utc_offset = utc_offset;
     options.scattered = scattered;
-    options.want_dnl = want_dnl;
+    options.want_day_metric = want_day_metric;
     options.want_lamax = want_lamax;
     options.want_nax = want_nax;
     options.nax_threshold = nax_threshold;
+    options.want_ta = want_ta;
+    options.ta_threshold = ta_threshold;
+    options.lamax_weighting = level_weighting;
+    options.want_csel = want_csel;
     options.want_coverage = want_coverage;
     options.full_history = full_history;
+    options.epnl_masking = epnl_masking ? ToneMasking::below_noy_floor : ToneMasking::none;
     options.write_time_history = write_time_history;
     options.write_state = write_state;
     options.time_history_prefix = time_history_prefix;
@@ -3198,13 +4581,18 @@ int run(int argc, char* argv[])
         }
             PathJob job;
             job.trajectory = path_files[path_index];
+            job.database = database_files[path_index];
+            job.epnl = epnl_files.empty() ? std::string() : epnl_files[path_index];
+            job.band_frames = band_frames_files.empty() ? std::string() : band_frames_files[path_index];
             job.vehicle = vehicle_files[path_index];
             job.output = out_files[path_index];
             job.state = state_files.empty() ? std::string() : state_files[path_index];
+            job.atmosphere_out = atmosphere_out_files.empty() ? std::string()
+                                                              : atmosphere_out_files[path_index];
+            job.csel_output = csel_files.empty() ? std::string() : csel_files[path_index];
             job.count = path_count;
             trajectory_holder = process_trajectory(database, job, options, observers,
-                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, dnl_energy,
-                    lamax, nax, coverage);
+                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
         }
         catch (const std::exception& problem)
         {
@@ -3218,37 +4606,53 @@ int run(int argc, char* argv[])
         log(failed_paths, " of ", path_count, " trajectories could not be processed.");
     }
 
-    if (want_dnl)
+    for (std::size_t m = 0; m < day_metric_count; m++)
     {
-        // DNL is the energy average over a 24-hour day: the summed event energies
-        // over 86 400 s, not their raw sum (which reads 49.37 dB high).
+        if (!want_day_metric[m])
+            continue;
+        // Each is the energy average over a 24-hour day: the summed event
+        // energies over 86 400 s, not their raw sum (which reads 49.37 dB high).
         constexpr double seconds_per_day = 86400.0;
-        std::vector<double> dnl(dnl_energy.size());
-        for (std::size_t i = 0; i < dnl_energy.size(); i++)
-            dnl[i] = 10.0 * std::log10(dnl_energy[i] / seconds_per_day);
-        log("Writing day-night level over ", path_count,
-                path_count == 1 ? " operation to " : " operations to ", dnl_file);
-        write_levels(x_obs, y_obs, dnl, dnl_file, scattered, unit);
+        const auto& energy = totals.day_energy[m];
+        const std::string& file = *day_files[m];
+        std::vector<double> level(energy.size());
+        for (std::size_t i = 0; i < energy.size(); i++)
+            level[i] = 10.0 * std::log10(energy[i] / seconds_per_day);
+        log("Writing the ", day_metric_name(static_cast<DayMetric>(m)), " over ", path_count,
+                path_count == 1 ? " operation" : " operations",
+                full_history ? ", each integrated over its whole history," : ", each over its own 10 dB-down window,",
+                " to ", file);
+        write_levels(x_obs, y_obs, level, file, scattered, unit);
         if (latlon)
-            write_geodetic_levels(x_obs, y_obs, dnl, *frame, latlon_companion(dnl_file), scattered);
+            write_geodetic_levels(x_obs, y_obs, level, *frame, latlon_companion(file), scattered);
     }
 
     if (want_lamax)
     {
-        log("Writing LAmax over ", path_count,
+        log("Writing LAmax (", maximum_name(level_weighting), ") over ", path_count,
                 path_count == 1 ? " operation to " : " operations to ", lamax_file);
-        write_levels(x_obs, y_obs, lamax, lamax_file, scattered, unit);
+        write_levels(x_obs, y_obs, totals.lamax, lamax_file, scattered, unit);
         if (latlon)
-            write_geodetic_levels(x_obs, y_obs, lamax, *frame, latlon_companion(lamax_file), scattered);
+            write_geodetic_levels(x_obs, y_obs, totals.lamax, *frame, latlon_companion(lamax_file), scattered);
     }
 
     if (want_nax)
     {
-        log("Writing NAx (operations with LAmax at or above ", nax_threshold, " dBA) over ",
-                path_count, path_count == 1 ? " operation to " : " operations to ", nax_file);
-        write_levels(x_obs, y_obs, nax, nax_file, scattered, unit);
+        log("Writing NAx (operations with ", maximum_name(level_weighting), " at or above ", nax_threshold,
+                " dBA) over ", path_count, path_count == 1 ? " operation to " : " operations to ", nax_file);
+        write_levels(x_obs, y_obs, totals.nax, nax_file, scattered, unit);
         if (latlon)
-            write_geodetic_levels(x_obs, y_obs, nax, *frame, latlon_companion(nax_file), scattered);
+            write_geodetic_levels(x_obs, y_obs, totals.nax, *frame, latlon_companion(nax_file), scattered);
+    }
+
+    if (want_ta)
+    {
+        log("Writing the time above ", ta_threshold, " dBA (", to_string(level_weighting),
+                " weighting, seconds of reception time) over ", path_count,
+                path_count == 1 ? " operation to " : " operations to ", ta_file);
+        write_levels(x_obs, y_obs, totals.time_above, ta_file, scattered, unit);
+        if (latlon)
+            write_geodetic_levels(x_obs, y_obs, totals.time_above, *frame, latlon_companion(ta_file), scattered);
     }
 
     if (want_coverage)
@@ -3256,6 +4660,7 @@ int run(int argc, char* argv[])
         // The energy-weighted fraction of each observer's levels that came from
         // cells the database did not measure.  An observer that heard nothing
         // has no fraction to give, and is written as NaN.
+        const auto& coverage = totals.coverage;
         std::vector<double> share(coverage.size());
         for (std::size_t i = 0; i < coverage.size(); i++)
         {

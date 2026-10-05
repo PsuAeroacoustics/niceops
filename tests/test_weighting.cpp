@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include "weighting.hpp"
@@ -124,4 +125,41 @@ TEST_CASE("weighted_level integrates bands on an energy basis", "[weighting]")
             == -std::numeric_limits<double>::infinity());
 
     REQUIRE(weighted_level(nullptr, {}) == -std::numeric_limits<double>::infinity());
+}
+
+TEST_CASE("C-weighting matches IEC 61672-1", "[weighting]")
+{
+    // IEC 61672-1:2013 Table 3, the C-weighting at the base-ten band centers
+    // f = 1000 * 10^(n/10), given to 0.1 dB; the closed form is within rounding.
+    const std::vector<std::pair<int, double>> table = {{-20, -14.3}, {-19, -11.2}, {-18, -8.5},
+            {-17, -6.2}, {-16, -4.4}, {-15, -3.0}, {-14, -2.0}, {-13, -1.3}, {-12, -0.8},
+            {-11, -0.5}, {-10, -0.3}, {-9, -0.2}, {-8, -0.1}, {-7, 0.0}, {-3, 0.0}, {0, 0.0},
+            {1, 0.0}, {2, -0.1}, {3, -0.2}, {4, -0.3}, {5, -0.5}, {6, -0.8}, {7, -1.3}, {8, -2.0},
+            {9, -3.0}, {10, -4.4}, {11, -6.2}, {12, -8.5}, {13, -11.2}};
+    for (const auto& [n, weight] : table)
+        check_close(c_weighting(1000.0 * std::pow(10.0, 0.1 * n)), weight, 0.05);
+
+    // 0 dB at 1 kHz, to the normalization constant's six figures.
+    check_close(c_weighting(1000.0), 0.0, 1e-5);
+
+    // The A curve is the C curve times its two inner pole pairs, so their
+    // difference is those alone -- the shared constants cannot drift apart.
+    for (const double f : {31.5, 63.0, 250.0, 1000.0, 4000.0, 12500.0})
+    {
+        const double f2 = f * f;
+        const double inner = 1.562339 * f2 * f2
+                / ((f2 + 107.65265 * 107.65265) * (f2 + 737.86223 * 737.86223));
+        check_close(a_weighting(f) - c_weighting(f), 10.0 * std::log10(inner), 1e-12);
+    }
+
+    REQUIRE(c_weighting(0.0) == -300.0);
+
+    // The gains carry the band limits exactly as the A gains do.
+    const std::vector<double> bands = {10.0, 50.0, 500.0, 5000.0, 30000.0};
+    const auto gains = c_weighting_gains(bands, BandLimits {});
+    REQUIRE(gains[0] == 0.0);
+    REQUIRE(gains[4] == 0.0);
+    check_close(10.0 * std::log10(gains[1]), c_weighting(50.0), 1e-12);
+    // A band at 50 Hz, 30 dB down under A, is 1.3 dB down under C.
+    check_close(10.0 * std::log10(gains[1]), -1.300, 0.001);
 }

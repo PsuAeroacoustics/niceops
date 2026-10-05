@@ -158,6 +158,12 @@ from the C++ build, the one that carries the change; `golden/state_197421.csv` d
 
 `regression_golden` and `state_golden` both pass.
 
+`golden/metrics_197421_{lafmax,na64,ta70}.csv` (LAFmax, NA64 and TA70 on the demo case at
+`--gridstep 1640`) were made from the C++ build that added `--lamax_weighting`, and checked against
+an independent brute-force evaluation, not against D, which had no time weighting. They share
+`regression_golden`'s database and track, so a change that moves it moves them; see "Output
+metrics" below.
+
 To regenerate them, follow the `regenerate-goldens` skill
 (`.claude/skills/regenerate-goldens/SKILL.md`) — it builds the D original in a scratch
 worktree and covers the three traps (wrong `niceops.d` revision, D's 6-significant-figure
@@ -180,12 +186,12 @@ The unit tests are a Catch2 binary, so you can run a single case or tag directly
 ./niceops_unit_tests --list-tests
 ```
 
-CTest defines about ninety tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
+CTest defines about two hundred and sixty tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
 
 - `regression_default` — runs `niceops -S state/ci_state.csv`; one run feeds both golden comparisons.
 - `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion. It checks the stored dBA **and EAA** at 1e-9 (eval() returns the stored double exactly at a sphere's own condition and a grid node -- 0 difference over 22 million samples; the D original's 1% let a channel filed one grid cell off pass 60-90% of samples), and **`--self_test` now exits when it is done** instead of going on to run the demo case, which rewrote the file `regression_golden` reads under any test running beside it.
 
-**Mutation-guarded behavior.** A review mutated the code one line at a time and wrote tests for what survived; these are the ones to keep when refactoring (each fails on the mutant it was written for): `an exported sphere reloads as the sphere it was, cell for cell` (swapped dBA/EAA, dropped load-factor correction), the AAM readback, `a negative excess-attenuation factor turns the bounds off` (the windowed run's exactness), `unevenly spaced knots give a continuous, natural spline` (every other spline test used `linspace`, where a transposed h[j]/h[j+1] is invisible), `the fit projects the wind onto the path's own direction` and `a short fit span is widened upward` and `a flush microphone sees the direct ray arrive at its own angle` (a flipped northward wind sign, widening downward, sin/cos swapped in the plate branch), `the plate's azimuth is the ray's bearing turned by the microphone's offset` and `outboard puts the microphone away from the track` (`plate_frame_azimuth` and `outboard_azimuth` live in `plate_receiver.hpp`, one definition for both callers), `add_bounce_loss is the plane-wave reflection loss`, the three `stratified_*_golden` CTests (windowed-versus-marched compares two runs of one binary, so dropping the extra arrivals from the sum moved the duct footprint 7.8 dB with every stratified test green; regenerate those goldens with the build that changed the arrivals on purpose), `scattering_windowed_is_exact` (no CTest ran `--scattering`), `propagation_table_bump_*` (an eight-bearing table with +25 dB beyond 1500 m and a cos(bearing) tilt, written by the hidden Catch case `[.bump_table]` from the ground-model table, run with `--frame_bearing 210`: a bound that left the table's gain out differed from the marched run by 0.57 dB in 21 of 23 cells and passed every CTest; the table-with-absorption twin must differ from it) and `CompassToLocal turns east/north ...` (the table's bearing is its `east_north` inverse, swapped atan2 arguments passed everything with only one-bearing tables), `every simplex has an empty circumsphere` (through the public API: whatever simplex a query lands in, no input point is inside its circumsphere) and `in_sphere agrees with an exact integer oracle` (128-bit Bareiss on lattice points, dimensions 1-5, ties included; the oracle needs no sign convention because the simplex's centroid is always inside). **A mutation check that restores a file with `mv` leaves it older than the objects built from the mutant, and make then considers it up to date**: `touch` it, or `cp` it back.
+**Mutation-guarded behavior.** A review mutated the code one line at a time and wrote tests for what survived; these are the ones to keep when refactoring (each fails on the mutant it was written for): `an exported sphere reloads as the sphere it was, cell for cell` (swapped dBA/EAA, dropped load-factor correction), the AAM readback, `a negative excess-attenuation factor turns the bounds off` (the windowed run's exactness), `unevenly spaced knots give a continuous, natural spline` (every other spline test used `linspace`, where a transposed h[j]/h[j+1] is invisible), `the fit projects the wind onto the path's own direction` and `a short fit span is widened upward` and `a flush microphone sees the direct ray arrive at its own angle` (a flipped northward wind sign, widening downward, sin/cos swapped in the plate branch), `the plate's azimuth is the ray's bearing turned by the microphone's offset` and `outboard puts the microphone away from the track` (`plate_frame_azimuth` and `outboard_azimuth` live in `plate_receiver.hpp`, one definition for both callers), `add_bounce_loss is the plane-wave reflection loss`, the three `stratified_*_golden` CTests (windowed-versus-marched compares two runs of one binary, so dropping the extra arrivals from the sum moved the duct footprint 7.8 dB with every stratified test green; regenerate those goldens with the build that changed the arrivals on purpose), `scattering_windowed_is_exact` (no CTest ran `--scattering`), `propagation_table_bump_*` (an eight-bearing table with +25 dB beyond 1500 m and a cos(bearing) tilt, written by the hidden Catch case `[.bump_table]` from the ground-model table, run with `--frame_bearing 210`: a bound that left the table's gain out differed from the marched run by 0.57 dB in 21 of 23 cells and passed every CTest; the table-with-absorption twin must differ from it) and `CompassToLocal turns east/north ...` (the table's bearing is its `east_north` inverse, swapped atan2 arguments passed everything with only one-bearing tables), `every simplex has an empty circumsphere` (through the public API: whatever simplex a query lands in, no input point is inside its circumsphere) and `in_sphere agrees with an exact integer oracle` (128-bit Bareiss on lattice points, dimensions 1-5, ties included; the oracle needs no sign convention because the simplex's centroid is always inside), and `a calm floor thinner than a wavelength leaves the shadow boundary where it was`, `the resolution limit leaves every resolved turning alone`, `a thick flat floor is followed as far as the highest band resolves it`, `a path shorter than the turning region keeps its rays` and `a run's resolution frequency reaches every path's layers`, with the CTests `stratified_calm_floor_plate_is_floorless` and `stratified_calm_floor_plate_200hz_golden` (`resolved_pass` removed, its cap at k h^2 or back at 2 k h^2, its frequency fixed at 10 kHz, the turning region stopped at the path's ends, the horizontal launch capped, the band dropped in `path_layers`, the `LayeredSoundSpeed` constructor or `process_trajectory`). For EPNL: the generated table in `tests/test_pnl.cpp` (the band-24 extrapolation on a slope, step 3(b) at a zero slope, the band-sharing mean truncated at the record's end, the unrounded duration constant, either half of the tone masking), `epnl_frames_are_consistent` (the reception factor in the frames' weights, the frames' band offset, the run not passing `--epnl_masking` on), and `epnl_frames_follow_reception_time` (states filed at t - r/c, or at their emission time: the energy check is blind to *when*). **A mutation check that restores a file with `mv` leaves it older than the objects built from the mutant, and make then considers it up to date**: `touch` it, or `cp` it back.
 
 - `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All cases pass (tens of thousands of assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
 - `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines.
@@ -217,7 +223,10 @@ Default demo case (no arguments): trajectory `tracks/S-76D/197421AC.csv`, databa
 
 **`--units` picks the length unit for the whole interface** -- `ft` (default) or `m` -- covering
 every length on the command line (`--grid`, `--gridstep`, `--trim`, `--ground_elevation`,
-`--receiver_height`, `--path_smoothing`), every file carrying a length, and the figure axes.
+`--receiver_height`, `--path_smoothing`, `--roughness_length`, `--surface_layer_depth`, the
+anemometer height in `--wind`), every file carrying a length, and the figure axes. Speeds are not
+lengths: `--wind`'s speed names its unit (`12kt`, `6.2mps`, `14mph`), as an `--atmosphere`
+file's wind columns must, and a bare number is refused rather than read in `--units`.
 Internal computation is metric (`ft2m` and `LengthUnit` in `src/util/constants.hpp`); the
 conversion is one seam in `run()`.  Four of those options used to be metric while every file was
 feet, which is the inconsistency this removes.
@@ -270,20 +279,26 @@ screen; these now fail, or warn, with the cause named. Know them before adding a
   and CT unless `fixed_load_factor`) and may not hold two spheres at one condition; both were
   silent NaN or hang before. Test fixtures with one thrust coefficient carry the flag.
 - **Several trajectories in one run** name `-i` / `--band_history` files for their track and
-  derive `-S` names as `-o` does, and two trajectories asked to write one file are refused.
+  derive `-S`, `--csel_file`, `--epnl_file`, `--band_frames` and `--write_atmosphere` names as
+  `-o` does (`<track>_LCE.csv`, `<track>_EPNL.csv`, `<track>_band_frames.nc`,
+  `<track>_atmosphere.csv`), and two trajectories asked to write one file are refused.
+- **`--terrain` checks the datum and the frame against the track** where the track can say
+  (an AC file's lat/lon and alt beside its x/y/z), refuses states under the ground and grids
+  that miss the scene, and warns when scattered observers' z disagrees with the terrain; see the
+  `src/terrain` entry under Architecture. The grid's heights must be meters.
 - **CTests that test these pass on the message text** (`PASS_REGULAR_EXPRESSION`), which
   replaces the exit-status check, so a usage error or a missing file cannot satisfy them;
   `golden_compare` itself is tested on NaN and infinity.
 
 ## Architecture
 
-Pipeline in `main()` (`src/niceops.cpp`): load `Database` + `Trajectory` → for each observer and each trajectory state, compute instantaneous dBA via `Database::level_at_observer` → integrate the time history into a sound exposure level (SEL) using the 10-dB-down-from-peak window (`peak_range`/`sound_exposure_level` in `src/util/sel.hpp`) → write CSV output and optional matplotlib figures.
+Pipeline in `main()` (`src/niceops.cpp`): load `Database` + `Trajectory` → for each observer and each trajectory state, compute instantaneous dBA via `Database::level_at_observer` → integrate the time history into a sound exposure level (SEL) using the 10-dB-down-from-peak window (`peak_range`/`sound_exposure_level` in `src/util/sel.hpp`; the whole history under `--full_history`, which also governs DNL, Lden and CNEL) → write CSV output and optional matplotlib figures.
 
 ### Why the hot path is shaped the way it is
 
 A default run evaluates 14,400 observers × 6,551 states = 94.3M times, so anything left in `eval` costs ~100 M×. Do not "simplify" these back:
 
-- **`Database::SourceState` is built once per trajectory state, in `main`, and reused across every observer.** It carries the source position, the `SphereFrame` (unit TPP normal, nose, starboard) and the `Blend` (four bracketing spheres + barycentric weights). The `Blend` is a Delaunay `locate()` walk and was ~60% of the whole run when it sat inside `eval`. Anything that depends only on (μ, γ, CT) or on attitude belongs here, not in `eval`.
+- **`Database::SourceState` is built once per trajectory state, in `main`, and reused across every observer.** It carries the source position, the `SphereFrame` (unit TPP normal, nose, starboard) and the `Blend` (four bracketing spheres + barycentric weights, or under `--blend nearest|aam` the selection `condition_selection.cpp` makes, padded to four slots). The barycentric `Blend` is a Delaunay `locate()` walk and was ~60% of the whole run when it sat inside `eval`. Anything that depends only on (μ, γ, CT) or on attitude belongs here, not in `eval`.
 - **`lookup_angles` is split**: `sphere_frame(velocity, normal)` is per state, `lookup_angles(frame, direction)` is per observer. The four-argument overload still exists for the unit tests and composes the two.
 - **`lookup_angles` takes three dot products and no projection.** `{nose, normal, starboard}` is orthonormal, so the propagation direction's components in the plane normal to the nose are just `normal.dot(d)` and `starboard.dot(d)`; forming the projected vector and normalizing it (a square root and three divides) scaled both by the same positive length, which the angle does not depend on. `phi` is then `atan(across / |up|)` below the plane, and `copysign(pi, across) - atan(across / up)` above it, which is `atan2(across, -up)` without the quadrant handling. Above the plane is read from the database's own upper half, when every condition group stores one (`upper_hemisphere_measured()`); a database without it folds the direction onto the lower half, as before. The 0/0 case at the poles is caught explicitly. The seam at 180 degrees is a real cell: `GridAxis::set_period(360)` makes the cell from the last phi knot to the first, one period on, and `locate()` interpolates across it.
 - **The level grid is one flat `vector<Sample>`** (`{dBA, EAA}` pairs), indexed `(i_phi * n_theta + i_theta) * n_conditions + condition`, not `vector<vector<vector<double>>>`. Both metrics are read together, so they share a cache line. A condition-major layout was tried and is *worse* — it also breaks bit-exactness via different FMA contraction.
@@ -386,9 +401,14 @@ bound is taken along each ray's launch direction at its ray tube's range; for a 
 stratified arrivals, the loudest arrival's direction over the harmonic sum of their squared
 ranges, `bound_geometry`). It is skipped, and the loop marches every state, for `-a` (the level
 is transformed after eval), `-i` and `--band_history` (the whole history is written),
-`-D` (the day-night window is found on a penalized history, which a window found on the raw one
-need not cover), `--db_cutoff` (which culls on its own terms), and any database with a negative
-excess-attenuation factor, where dropping that term is not a loss.
+`--epnl_file` and `--band_frames` (every state's bands go into the frames, and the EPNL's window
+is found on PNLT, which the A-weighted bound says nothing about),
+`-D`, `--lden_file` and `--cnel_file` (the window is found on a penalized history, which a
+window found on the raw one need not cover), `--lamax_file`, `--nax_file` and `--ta_file` (the
+time weighting runs over the whole history), `--csel_file` (the C-weighted window is not the
+A-weighted one, and every state's bands are needed to find it), `--full_history`, `--db_cutoff`
+(which culls on its own terms), and any database with a negative excess-attenuation factor,
+where dropping that term is not a loss.
 
 What it saves depends on how dear an evaluation is. Under the outermost-crossing rule it
 evaluates most of what it is shown: on the broadband demo case it evaluated 93.9% of the pairs
@@ -443,13 +463,51 @@ The reason the intuition fails is worth keeping: observers sweep a 120×120 grou
 
 **The SEL integral takes its time step from the trajectory, not from `-s`.** `sound_exposure_level` weights every sample by a time step, and `-s` is only the resampling step for `adapt()` — the two coincide *only* when `adapt()` actually resamples onto that grid, and it is commented out in `main`. Every shipped track is sampled at 0.02 s, so using the 0.5 s default as the weight overstated every level by exactly `10*log10(0.5/0.02) = 13.98 dB`. `main` now derives the step via `uniform_sample_interval()` and logs it, warning if the sampling is not uniform. If you re-enable `adapt()`, it resamples to `-s` and the derived step follows automatically.
 
-- `src/sphere_database.{hpp,cpp}` — `Database` class. Loads a netCDF noise database (`.nod`): one group per operating condition (μ advance ratio, γ flight path angle, CT thrust coefficient), each holding scattered (phi, θ) channels of dBA level and EAA excess-attenuation factor. `eval()` computes ground level: geometry → sphere angles (`lookup_angles`), barycentric interpolation between operating conditions, periodic bilinear interpolation on the sphere grid, then spherical spreading + excess attenuation, `EAA * (range - r_sphere) / 1000` — EAA being
+- `src/sphere_database.{hpp,cpp}` — `Database` class. Loads a netCDF noise database (`.nod`): one group per operating condition (μ advance ratio, γ flight path angle, CT thrust coefficient), each holding scattered (phi, θ) channels of dBA level and EAA excess-attenuation factor. `eval()` computes ground level: geometry → sphere angles (`lookup_angles`), barycentric interpolation between operating conditions (`--blend` offers two other selections; see `condition_selection` below), periodic bilinear interpolation on the sphere grid, then spherical spreading + excess attenuation, `EAA * (range - r_sphere) / 1000` — EAA being
 the total A-weighted attenuation over the 1000 m reference distance the database was built at,
 which is exactly how panam writes and consumes it. Ground effect: see `--ground_effect`, on by default wherever the spectral path runs. Only `same_grid == true` databases are supported (the interpolation path is unimplemented). Free functions (`bracket`, `periodic_bilinear_interp`, `lookup_angles`, the geometry helpers) are exported in the header so the unit tests can reach them.
   **The loader's guards**: scalars and arrays are read as `double` whatever the file stores (`nc_get_var` copies the external type's bytes unconverted, so a float32 `.nod` loaded as a radius of 0 and NaN footprints with exit 0), and a "scalar" reads element 0 only; a sphere layout that leaves grid cells without a channel (they would read as 0 dBA) or drops channels that match no angle of sphere 0's axes is warned about once per distinct layout, first three (none of the 20 shipped databases trips it; `B407_M3`'s 934 zero channels are written zeros, not unreached cells); `sphere_frame` with no velocity, or velocity along the thrust axis, takes +x's projection for its nose instead of a zero frame that looked every observer up at (phi 0, theta 90); and the sphere writers check `nc_close`'s status, which is where HDF5's buffering reports a full disk. **An exported sphere carries the root the loader interprets** (`Database::Sphere::speed_reference`, `tip_speed`, `rotor_radius`, `vehicle_weight_newtons`, written at the root where the source had them), so it reloads as air- or ground-referenced as its source was; `--export_sphere`/`--export_aam` refuse an output that is the database being read (they write with `NC_CLOBBER`), and `interpolate_sphere` warns when the requested condition is outside the envelope (`blend_at` clamps it, and the file is labeled with what was asked for). `an exported sphere reloads as the sphere it was, cell for cell` and the AAM readback test pin the payload; swapped dBA/EAA or a dropped load-factor correction used to pass the whole suite.
 - `src/predicates.{hpp,cpp}` — exact orientation and in-sphere tests via Shewchuk expansions, with a filtered double fast path. The recursion, `exact_determinant_recurse`, takes its matrix as an **array of pointers** and builds its minors the same way: the entries are expansions, which are heap-allocated vectors, and copying `(size-1)^2` of them at every level of a factorial recursion put `malloc` and `free` at the top of the database-load profile. Callers use the `std::vector<Expansion>` overload of `exact_determinant`, which adapts to the pointer form once; it asserts `size <= MAX_PREDICATE_SIZE` so the fixed stack buffers the recursion uses guard themselves rather than relying on each entry point's `fatal()`. The exact path is taken often here — mass degeneracy is the point — so it is worth keeping allocation-free. **The exactness is not optional**: the operating conditions are a prism (164 flight conditions x 8 thrust coefficients), so whole families of points are *exactly* cospherical and a rounded in-sphere test answers the same question two different ways, which leaves Bowyer-Watson's cavity non-star-shaped. Assumes normal (non-subnormal) coordinates; conditions are normalized into [0, 1] first.
 - `src/delaunay.{hpp,cpp}` — Delaunay triangulation in arbitrary dimension, Bowyer-Watson on those predicates. Dimension is a constructor argument, not a template parameter, so a fourth operating parameter costs nothing here. A simplex whose circumsphere passes exactly through the new point is left standing: a point *on* a circumsphere does not violate the Delaunay condition, and leaving it is what keeps the choice consistent under mass degeneracy.
 - `src/interpolator.{hpp,cpp}` — barycentric weights over the operating-condition space, on top of `delaunay.hpp`. Replaced CGAL's `Delaunay_triangulation_3`, and Boost/GMP/MPFR went with it. Databases with fewer than `dim + 1` conditions (a single exported sphere) skip the triangulation and take the nearest condition.
+- `src/condition_selection.{hpp,cpp}` — `--blend nearest|aam` and `--load_factor_correction
+  one_sided|two_sided`, carried into `Database::blend_at` (and `source_state`,
+  `interpolate_sphere`) as a `BlendOptions` whose defaults are the old behavior. Comparison
+  options, not improvements: scored against the 2017 data both alternatives are worse on SEL
+  than barycentric on day 286 and day 284 (`docs/MANUAL.md` has the table). Things to keep:
+  - **The default path is byte-identical.** `blend_barycentric_is_golden` names
+    `--blend barycentric --load_factor_correction one_sided` and compares with the golden, and
+    the barycentric runs reproduced the paper's pinned 6bbd6bb outputs digit for digit.
+  - **`BlendOptions` is at namespace scope**, with `Database::BlendOptions` an alias. Nested in
+    `Database`, its member initializers made `= {}` default arguments of `Database`'s own members
+    ill-formed ("default member initializer needed within definition of enclosing class").
+  - **`nearest` searches the normalized space** the triangulation uses (`normalized_conditions_`),
+    with the query clamped. In raw units the path angle decides every distance. Its padding slots
+    repeat the chosen index at weight 0, not sphere 0 as a degenerate barycentric blend does, so
+    the bounds group it with itself.
+  - **`aam` is built from the raw conditions, before the constructor normalizes them in place**
+    (`aam_layers_`): one `AamSelector` per stored C_T (one in all on a fixed_load_factor database,
+    where the law carries C_T), over advance ratio and path angle. Speeds stay in advance ratio;
+    the 20 kt gate is converted per query with the database's own tip speed, the vehicle's only
+    when the database records none, and a run with neither is refused. Layers group C_T equal to
+    1e-9 relative, which every shipped load-factor database (8 values) meets; one whose C_T is
+    scattered per sphere would make every layer one sphere and pin each state to the sphere
+    nearest its C_T, so the run warns on single-sphere layers (`aam_single_sphere_layers`).
+  - **The AAM rules, as read** (each has a mutation-guarded test in
+    `tests/test_condition_selection.cpp` or `[blend]` in `test_sphere_database.cpp`): sphere
+    angles rounded to 0.5 degrees (halves away from zero), the state's not; gates are maxima, a
+    pair exactly as wide still interpolates; 3 degrees for a descending state, 5 otherwise;
+    path-angle ties by Table 2-8's *labels* (approach higher, departure lower), not its
+    contradictory signs; speed ties to the faster; past a gate the nearest row, then the nearest
+    speed in it (hierarchical, never a combined distance); two spheres in a row at one speed take
+    the nearer stored angle; thrust layers tie to the higher C_T. Do not "simplify" the fallback
+    to a Euclidean nearest: AAM selects path angle first.
+  - **Two-sided puts its floor inside `blend_at`** (`min_load_factor`), so a C_T at or below zero
+    (negative g) never reaches the logarithm; `process_trajectory` only counts the states held.
+    A negative `level_correction_db` is still one uniform shift of the blend, which is why the
+    direction bounds (`group_blends`' per-state scale) and `cull_range` stay exact; the
+    `blend_*_windowed_is_exact` CTests run two-sided to hold that. Two-sided on a database whose
+    load factors are spheres is refused, as is `--min_load_factor` without two-sided.
 - `src/atmosphere.{hpp,cpp}` — ISO 9613-1:1993 atmospheric absorption, ported term for term
   from panam's `panam_acoustics/iso_9613_1_1993.py` and pinned against values generated by
   running that module (`tests/test_atmosphere.cpp`). **Pressure is in kPa**, matching the
@@ -491,9 +549,55 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   - **`atmosphere_uniform_is_homogeneous` compares at 1e-9, not byte-for-byte.** A mean of a
     uniform integral is the coefficient to a few ULP. Do not "fix" it by comparing bytes.
   - **Wind columns are ignored** and named in the log.
+  - **`--wind` builds the profile instead** (`synthetic_profile`, `SurfaceWind`): a neutral log
+    law through one surface observation, held above `--surface_layer_depth`, a dry-adiabatic
+    lapse from the run's surface air, hydrostatic pressure, water vapor held. On the held-out
+    windy day 284 (stratified + plate) it scores 1.60-1.62 dB rms against the measured LIDAR and
+    balloon profile's 1.69 and straight rays' 2.35; calm day 286 1.25 against 1.26. The things
+    to preserve:
+    - **Never emit a calm level above z = 0.** `--refraction stratified` takes one (rows at 0
+      and 0.1 ft, both still) as a thin layer that put levels 22-28 dB low. The log law is zero
+      at z0, so the first level above the ground is ten roughness lengths up (or the anemometer,
+      if lower), and `synthetic_profile` throws `logic_error` if a level there comes out calm.
+      Do not "refine near the ground" by adding levels at or below z0. A calm observation gives
+      a profile with *no wind columns*, not columns of zeros; `refer_to_database_speed` treats a
+      `--wind` of zero as calm stated, so `--speed_reference air` is not refused for it.
+    - **Built per trajectory, in `process_trajectory`, not in `run()`.** Its surface air is that
+      trajectory's vehicle file's (under `--temperature` and friends, which `--wind`, unlike
+      `--atmosphere`, accepts) and its top has to clear that track. Inside `process_trajectory`
+      the profile is the local `atmosphere`, never `options.atmosphere`, which is empty under
+      `--wind`: anything new that reads the profile there has to take the local.
+    - **The top is max(surface layer, 1.05 x highest path), and no lower.** Above both, the wind
+      is held and the air lapses, so c + w.h falls with height in every direction and no ray
+      returns from air the profile leaves out. A stable class's inversion runs to the top of the
+      surface layer, which is why the top never stops at the trajectory.
+    - **The anemometer, the top of the surface layer and the top are exact levels.** The
+      profile passes through the observation, and the kink at the layer's top is a level rather
+      than smeared into whichever layer straddles it.
+    - **Discretization is checked through the real run** (`wind_is_discretization_independent`:
+      16 -> 64 levels a decade, plate microphones over the Coyle array, 0.016 dB of a 0.1 dB
+      allowance). It is on plates and not on a point-receiver grid for a reason: grid cells
+      1500 m out downwind move +-0.2 dB with *any* change of layering and do not settle from 8
+      levels a decade to 100. That is the stratified arrival search, whose samples follow the
+      layers, not the profile. Do not tighten the tolerance onto that floor, or chase it here.
+    - **`--write_atmosphere` replays to 1e-9** (`wind_is_its_written_profile`): 17 digits, the
+      wind as u/v components rather than speed and direction (no trigonometric round trip), and
+      the pressure written, so the replay does not re-integrate it. A replay compares the run with
+      itself, so it is blind to the plumbing in `run()` and `wind_profile`: `wind_profile_is_its_law`
+      holds a written profile to an independent closed-form oracle
+      (`tests/data/wind_profile_expected.{py,csv}`, 1e-12) and fails on a length left in feet, a
+      dropped `--temperature`/`--pressure` override, or `--profile_levels` not passed on. Change the
+      generator on purpose and regenerate the CSV from the script, not from the binary.
+    - **The bottom layer, 0 to 10 z0, is linear and `--profile_levels` does not refine it.** Filling
+      it with the log law moves day 284 by 0.15 dB at most (0.014 rms). Do not "fix" that by
+      starting the levels nearer z0: those levels carry almost no wind, the thin layer above.
+    - **The stability classes are unvalidated, and warn.** TA Luft's exponents and RG 1.23's
+      gradients, as SELENE has them. Class II scored 2.22 dB on day 284, IV 1.57; one day picked
+      after the fact chooses nothing. Do not make one a default without measurements of the class.
 
   The roadmap this starts (refraction, then urban) is in the Claude Doc "NICE-OPS:
-  Atmospheric and Urban Propagation Options".
+  Atmospheric and Urban Propagation Options"; `reports/` holds its 2026-09-26 snapshot, and
+  `reports/Urban canyon propagation methods.md` works out the urban step.
 - `src/refraction.{hpp,cpp}` — `--refraction linear` (roadmap step 4). Per path, a
   least-squares line through the effective sound speed c(z) + w(z).h over the heights the path
   spans (`EffectiveSoundSpeed`: running integrals of c, w_x, w_y and z times each on a 1 m
@@ -676,6 +780,68 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     (dx = p(c0+c1)dz/(q0+q1), plus log1p and atan2 forms for time and arc). They were checked
     against a 200,000-point quadrature to 3e-15. At a turning point the sine is pinned to 0:
     computing it as sqrt(1 - p^2 c^2) leaves ~1e-8 of rounding, which is 1e-7 in range.
+  - **Flat air at the fastest height is followed only as far as the highest band resolves it**
+    (`resolved_pass`, called by `families()` on the `pass` end every arrival family shares). The
+    invariant 1/c_rs is horizontal where the air is fastest; with a gradient there the range of
+    the rays approaching it converges, in flat air it does not. A log law calm below z0 and
+    written to three decimals leaves an exactly flat floor at the ground, and on day 284 a 0.1 ft
+    one put the upwind boundary 20 km out (the 1e-12 inset over a 3 cm floor, nothing physical):
+    no hand-over, no transition, and flush microphones 22-28 dB low, SEL rms 1.63 -> 4.18. The
+    turning region is the heights within one radian of vertical phase (k int sin dz, k at
+    `Layers::resolution_frequency`, which a run sets to its highest band) of the fastest air,
+    and the limiting ray's travel across it is capped at 1.5 k h^2: a wave confined to h leaves
+    it within ~k h^2. Things to keep:
+    - **The 1.5 is set by what it must leave alone and what it may add.** Ray theory travels
+      (4/3) k h^2 across a linear gradient's region (sqrt(2 R h) against k^2 h^3 = 9R/8), less
+      on exact arcs, so a cap above that never binds there and `pass` comes back bit for bit; at
+      k h^2 it binds on every linear profile (`the resolution limit leaves every resolved turning
+      alone` fails). What a floor can still add is the cap's slack over (4/3) k h^2, and it grows
+      as k^(-1/3): at 2 k h^2, the implementer's first choice, the 0.1 ft floor moved the demo
+      plates 0.26 dB, and 0.67 dB with the top band at 200 Hz; at 1.5, 0.12 and 0.19. Day 284's
+      measured-profile runs move under 0.0007 dB either way. Do not raise it for margin.
+    - **The highest band, not a typical one**: the geometry is one for all bands and the
+      largest k removes only what no band resolves. ShadowTransition moves each band's
+      boundary toward the fit's as before. A consequence worth knowing: `--band_limits` moves
+      a floored profile's boundary.
+    - **Do not replace it with merging thin layers.** Any thickness threshold leaves a cliff
+      just above it, since a flat floor of any thickness diverges; the cap is continuous in the
+      floor's thickness (0.1 ft: 186 -> 187 m; 1 m: 544 m at 10 kHz, 707 km uncapped), and the
+      region, a set of heights, does not depend on how many levels describe the same air.
+    - **The shortcut is exact, not a heuristic**: a single fastest height whose radian is gathered
+      within the segment on each side is a linear turning, and q's trapezoid floors the phase
+      (q is concave on a layer). Only past that does it integrate (closed form, `vertical_phase`)
+      and solve for the edges (safeguarded Newton). Cost: nothing measurable on
+      `example_windy.csv`, ~3% on `example_inversion.csv`.
+    - **The region belongs to the air, not to the path** (`beyond`). Where the path ends before
+      the radian, the walk carries on up through the profile and down to the ground, as far as
+      the limiting ray could go (not into air faster than 1/pass), and only the travel inside the
+      path is held to the cap. The first version stopped at the path's ends, which proves
+      nothing: a source within a radian of the fastest height had a region as short as the path,
+      and the cap bound on smooth gradients -- a 1.5 m source over a 1.2 m microphone under a
+      plain lapse had its boundary brought in from 789 m to 34 m at 10 kHz, and at a 200 Hz top
+      band it bound for sources to 10 m in any light wind. With the next item, 274 of 728 cases
+      of a sweep of log laws differed from plain ray theory; with both fixed, none by more than
+      1e-7 dB (interior maxima under a light tailwind). The ground is a hard stop.
+    - **Not at the horizontal launch** (`launch_junction` in `families()`). Where c_rs is the
+      source's own speed and the air above is faster, pass is where the downward family meets
+      the families launched up to turn aloft, not an end of the rays. Capping it opened a gap
+      between them inside the lit zone, receivers with no ray under any downward refraction.
+      That, not the flat 180-190 ft of `example_inversion.csv` (a source there has faster air
+      above it), is what moved the duct goldens by 9.2e-4 dB in the first version; with the
+      junction left alone they are back to the bit. A flat stretch at the source's own height
+      under such a profile is left to plain ray theory, as before.
+    - **The goldens did not move**, but for five cells of `stratified_windy_point` by up to
+      4e-6 dB: near crosswind the lowest layer of `example_windy.csv` is within 1e-4 m/s of
+      flat, and its rays ran 1-40 km before the cap. The paper's measured-profile runs move under
+      0.0006 dB (day 284) and 0.0002 dB (day 286).
+    - Point receivers above a floor were never affected (the dipping family turns at the floor's
+      top, in its gradient). A profile whose lowest level is above the ground has a floor of
+      that height, constant below it; the cap follows a thick one for kilometers.
+    - `stratified_calm_floor_plate_is_floorless` holds the floor to 0.3 dB of the profile
+      without it (0.12 measured; 39 dB unfixed). `stratified_calm_floor_plate_200hz_golden` is
+      the only run at a top band other than 10 kHz, so it is what fails if `process_trajectory`
+      stops handing `LayeredSoundSpeed` its band (`a run's resolution frequency reaches every
+      path's layers` covers `path_layers`).
   - **The RK4 trace in `tests/test_stratified.cpp` is fussy, for reasons worth knowing.** A
     finite-difference gradient rounds to 1e-8 /s, which is 1e-4 m over a km of ray. A step that
     straddles a level integrates across the gradient's jump and drops to first order. Even a
@@ -1076,8 +1242,8 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     ShadowTransition places a plate. **With `--refraction` the table takes the pairs it
     covers and the ray model the rest** (`table_level` first in `refracted_level`); that
     run evaluates every state, since its bounds were not built for both geometries.
-  - **Not done:** ground elevation (flat ground at z = 0), and a sphere lookup along a
-    refracted launch direction (the table cannot say what it is).
+  - **Not done:** ground elevation (flat ground at z = 0; `--terrain` refuses a table), and a
+    sphere lookup along a refracted launch direction (the table cannot say what it is).
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its
@@ -1090,13 +1256,153 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   The point receiver's direct path ended on the ground until this went in, while its ground
   model put the microphone 1.2 m up. Point-receiver SEL moved by up to ±0.8 dB on the demo
   grid, almost all from the low states; plates and the goldens did not move.
+- `src/pnl.{hpp,cpp}`, `src/band_frames.{hpp,cpp}` — `--epnl_file` and `--band_frames`: EPNL
+  (14 CFR 36 A36.4) from one-third-octave levels in 0.5 s reception-time frames, and the frames
+  themselves as an (observer, frame, band) netCDF file. The things to preserve:
+  - **`pnl.cpp` is panam's `flight_acoustics.py` (eeb040b), term for term**, including panam's
+    reading of the regulation where readings differ: 500 Hz is in Table A36-2's *middle* range,
+    the duration is the contiguous PNLTM - 10 interval with its dips, D uses 10 lg(dt/10 s)
+    unrounded (not the regulation's -13), and the A36.4.4.2 band-sharing check is applied, with
+    the five-record mean truncated at the record's ends. panam's comments say the MATLAB
+    `EPNLcalc.m` differs on the first three on purpose; do not "fix" the port toward it. A change
+    here is a change to panam first.
+  - **The reference values in `tests/test_pnl.cpp` are generated, not typed**:
+    `PANAM=... python tools/pnl_reference.py` prints the block between the `clang-format off/on`
+    lines. Regenerate rather than edit. Two spectra exist only for mutants that every other case
+    let through: a 10 kHz tone *on a slope* (on a flat spectrum s(23) = 0, so dropping it from
+    SPL'(24) = SPL(23) + s(23) is invisible) and a rise that levels off to a slope of exactly 0
+    (the only place step 3(b)'s "zero or negative" differs from "negative"; a plateau after a
+    sharp rise is encircled by 3(a) anyway). The inputs are 0.1 dB literals and the histories
+    `base + envelope (+ add)`, so both sides parse and add the same doubles.
+  - **`--epnl_masking` (default on) is not panam's and not optional for a prediction.** A band
+    below its noy threshold SPL(d) enters the tone correction's steps 1-7 at SPL(d) and carries no
+    tone itself (`ToneMasking::below_noy_floor`; the library's default stays `none`, panam's). The
+    literal procedure reads absorption's plunge in the top bands (10 kHz at a median -194 dB at
+    PNLTM), and an inaudible band rising out of it, as tones of up to 20/3 dB: on the demo track over a
+    100 m grid 615 of 961 observers took their PNLTM tone from an inaudible band and EPNL read a
+    median 1.0 dB, up to 5.4, high. A measurement never sees this (its noise floor), and
+    certification excludes tones in masked bands (FAA AC 36-4 App. 2). **Both halves are needed**:
+    exclusion alone leaves an audible band before a plunge with a crashed background (20/3 dB),
+    and reconstruction alone lets masked 8 and 10 kHz bands, rising 17 and 21 dB along SPL(d),
+    read as a tone; the reference table has a spectrum for each, and dropping either half fails
+    it. The references come from panam's procedure on the reconstructed spectrum with the masked
+    factors zeroed (`per_band_factors` in `tools/pnl_reference.py`, checked against panam's own
+    tone correction first). Masking can raise an EPNL a little (0.2 dB once on that grid: the
+    band-sharing check and the duration pick other records), so `epnl_masking_lowers_tones`
+    asserts only that some EPNL falls, never that none rises. On the 2017 measured spectra it moves
+    EPNL 0.01 dB rms; on the predictions it is what made the 24-band EPNL agree with the 5 kHz-
+    filled one (it read 0.04-0.19 dB above, all of it inaudible tones).
+  - **A frame is an energy integral, not a mean of the states in it.** Each state's band energy
+    is spread over [t_r - w/2, t_r + w/2], t_r = t + r/c and w = T x `reception_factor` -- the
+    SEL integral's own weight -- and split between frames by overlap. That is what makes the
+    frames sum to the whole-history exposure exactly, and `check_band_frames` holds the
+    frames' A-weighted energy to a `--full_history` run's SEL at 1e-4 dB (float storage): drop
+    the reception factor, or file states whole under their center's frame, and it fails. It is
+    blind to *when* the energy arrives, so `check_band_frames --history` rebuilds every frame from
+    a `--band_history` run of the same case (whose reception times are formed separately, where the
+    history is written) and compares them frame by frame, the partial first and last frames
+    excepted. Frames sit at multiples of 0.5 s on the trajectory's clock so a grid's observers share
+    one axis.
+  - **A missing PNL band is refused, never filled.** The databases' bands are matched to the
+    nominal centers within 5 percent (`pnl_band_indices`); a database without one, or
+    `--band_limits` leaving one out, stops the trajectory with the bands named. Filling (the
+    harness's 5 kHz - 5/10/15 dB for measured frames) belongs to the comparison, not the tool.
+  - **Without `--band_history`, `record_path` returns the band buffer and skips the geometry**
+    (`lookup_angles`, an asin): it runs per state per observer. The accumulation uses
+    exp(L ln10/10), as `weighted_level` does.
+  - **`--band_frames` holds every observer's frames, as float, until the write** (about 450 MB on
+    the demo grid, 0.9 GB resident). Each observer's record is one chunk, shuffled and deflated at
+    level 1: +2.2 s and 28 percent smaller there. `nc_close`'s status is checked, as the sphere
+    writers check it.
+  - **`EpnlRow` keeps scalars, not `EpnlResult`'s per-record histories**, which on a grid were
+    four vectors per observer kept only to read one element.
+  - Against the 2017 data (four detail runs, `docs/MANUAL.md`): predicted minus measured EPNL,
+    masked on both sides and both limited to 5 kHz, where the measured frames stop, -0.33 / -0.09
+    dB median, 1.22 / 1.26 rms on the calm approaches (`station_plate` / `stratified_plate`), -0.22
+    / -0.88 and 2.70 / 1.90 on the windy steady runs (unmasked: -0.25 / +0.02, 1.23 / 1.33, -0.22
+    / -0.80, 2.85 / 1.87). PNLTM reads 0.75-1.4 dB low, about half of it a tone correction
+    0.4-0.5 dB smaller than measured.
+- `src/terrain.{hpp,cpp}`, `terrain_ray` in `src/propagation.hpp` -- `--terrain`: a bare-earth
+  grid (the harness's `terrain/dem_to_netcdf.py` netCDF; USGS 3DEP), compiled but called by
+  nothing until this. Grid observers stand on it, and each pair's ground geometry is
+  taken over the least-squares mean ground line along its ground projection, observer to the
+  source's footprint (CNOSSOS-EU's mean plane, NORAH2 / ECAC Doc 32's practice over terrain).
+  Spreading, absorption and the sphere lookup keep the true 3-D path. The things to preserve:
+  - **Level terrain is the flat run, byte for byte** (`terrain_flat_*_is_flat`, point, plate
+    and scattered). That rests on three spellings: `Terrain::elevation` and
+    `TerrainRaster::height` interpolate from a corner (`a + f (b - a)`), because the product
+    form's four weights do not sum to exactly 1 and a constant grid came out 1.9e-13 ft off;
+    `plane_geometry` divides by sqrt(1 + b^2) rather than multiplying by its reciprocal, so a
+    level line divides by exactly 1; and the test grid is written as
+    `-((-1250 * 0.3048) - (54.2651 * 0.3048))`, the height `--terrain_offset -1250` and
+    `--ground_elevation 54.2651` take back to zero in the program's own arithmetic.
+  - **The ground's z is H + `--terrain_offset` - `--ground_elevation`**, the same
+    `--ground_elevation` that is a WGS84 track's z = 0. NICE-OPS converts no datums. At Amedee
+    3DEP is NAVD88 and the 2017 tracks and microphones are ellipsoidal: offset -23.6 m, and
+    `--ground_elevation` 3926.7 ft (the AC tracks' alt - z). Leaving out either is a plausible
+    wrong answer, so the run checks what it can: an AC track's own lat/lon against the frame
+    (refused past 30 m rms, warned past 3; `Trajectory::recorded`, kept as read, before any
+    trim), its alt - z against `--ground_elevation` (1 m), any state more than 10 m under the
+    terrain (refused, a datum error; less is warned, 3DEP's own error), and scattered observers'
+    z against the terrain (warned past 1 m; `--observers_on_terrain` takes the terrain's). Every
+    refusal has a CTest on its message.
+  - **A point receiver's height above each line is its own** (`RayPath::receiver_height`,
+    NaN for every other path), so `spectral_level_impl` evaluates the ground model exactly
+    when it differs from the model's -- *before* the `GroundTable` branch, which holds one
+    height. That costs 4x on the demo grid over real terrain (127 against 32 s CPU). Do not
+    read the table at the pole's height instead: a height error of delta moves the path
+    difference by 2 delta sin(grazing), a radian at 1 kHz for 0.3 m at 30 degrees. A plate lies
+    along the line under its microphone and keeps its table (source height h_s - h_r).
+    `a path's own receiver height is the ground model's, past its table` holds the branch.
+  - **Heights below the line are raised to zero**, CNOSSOS-EU's rule: a receiver in a dip, or
+    a source behind rising ground -- which is screening, and not modeled. The log counts them.
+  - **A negative distance along the line is taken by its size, not clamped to zero.** A nearly
+    overhead source over ground falling toward it has its foot behind the microphone's; the
+    image construction depends on d^2, so |d| keeps the model's direct path equal to the real
+    range (zero shortened it), and `terrain_ray` turns `separation` round so a plate is crossed
+    from the side the arrival actually comes from. `a source whose foot lies behind the
+    microphone's keeps the real range` holds both.
+  - **`terrain_hills_point_golden` and `terrain_hills_plate_golden` pin the hills runs** at 1e-6
+    (`golden/terrain_hills_*.csv`, made by the build that added them). The windowed/marched
+    pair compares one binary with itself, so a call-site mutation that handed the plate's
+    microphone to `terrain_ray` as a point receiver moved cells by 0.01 dB and passed every other
+    terrain test. Regenerate them only with a deliberate change, and say so.
+  - **`GroundPlaneCache`, not a fit per pair.** A direct fit is ~300 samples for a 3 km path,
+    a microsecond, 94 million times. The cache keeps running sums of z and k z along 1440 fixed
+    bearings per observer, sampled lazily and only as far as a pair needs, so any whole-step fit
+    is a few flops (`line_from_sums`), and a pair takes the four fits around it interpolated in
+    bearing and length (continuous; exact along a ray at a whole step, to 2e-7 in slope on a
+    plane). A path shorter than one step takes the first step's fit along its bearing, not a
+    one-sample "fit" with zero slope, which was wrong for every nearly overhead state on a
+    slope. Heights are summed relative to the observer's, or a 1000 m site cancels in
+    `sum_kz - n/2 sum_z`. The terrain is resampled once per trajectory onto the local frame
+    (`TerrainRaster`: an inverse projection per node, not per sample), with a margin of two
+    steps plus the diagonal times the bearing step, which is how far a bracketing ray reaches.
+    About 35 ns a pair; the mutation that read one bearing twice fails two cases in
+    `tests/test_terrain.cpp`.
+  - **The bounds need nothing new**: `ground_gain_bounds` and `PlateReceiver::gain_bounds`
+    hold for every geometry and receiver height, and the bound test's geometry is the true
+    3-D path, as the level's spreading is. `terrain_hills_*_windowed_is_exact` holds it. The
+    tables' reach (`reach()` in `process_trajectory`) extends below z = 0 under terrain; node
+    placement does not depend on the reach, so the flat case is unmoved.
+  - **Refused with `--refraction` and `--propagation_table`**: the ray models reflect off and
+    shadow onto z = 0, and the table's heights are over flat ground. A tilted plane per path
+    handed to them would be another model.
+  - **Observers' ground is read from the grid itself in `run()`**, once, not from the raster,
+    which is a resampling of it.
+  - At Amedee, on the paper's plate configuration (two day-286 approaches, two day-284 steady
+    runs), terrain moves SEL by at most 0.026 dB (rms 0.007); 1.2 m poles by up to 0.19 dB,
+    because h_r above each plane carries the grid's decimeter-scale error at the microphone's
+    foot. The evaluation's estimate for a 1-3 degree slope is ~1 dB for plates at 5-10 degrees
+    of peak elevation (manual, "Terrain").
 - `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
   than a table, so it evaluates at whatever band centers a database carries) and band-limited
   energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but
   -1.49e-6 dB; a test asserting exact 0 there will fail. `a_weighting_gains()` folds the
   weighting and the band limit into one per-band multiply, with excluded bands exactly zero.
   `weighted_level()` returns -infinity for silence, not 0 dB, so an excluded spectrum cannot
-  survive an energy sum as a quiet-but-real level.
+  survive an energy sum as a quiet-but-real level. `c_weighting()` / `c_weighting_gains()` are
+  the C curve for `--csel_file`, from the same constants (see "Output metrics" above).
 - `src/faddeeva.{hpp,cpp}` — the Faddeeva function w(z) = exp(-z²)erfc(-iz), Weideman's 32-term
   rational approximation. The series is evaluated as **four interleaved Horner chains over
   t⁴** rather than one over t: 31 dependent complex multiply-adds is a latency chain, not a
@@ -1218,6 +1524,59 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
 - `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does -- and returns the weighted least-squares line in closed form when `tol` reaches that line's residual (the search it replaced climbed lambda to 1e200 and, from ~30,000 samples, lost positive definiteness on the way and refused a straight, level leg; the system's condition number goes as n^4, so past ~40,000 points a `tol` just under the line's residual is unreachable and the last solvable lambda is used, with a warning). `within_tolerance_extended` does the same over a track padded along a local quadratic at each end, which is what a dense geodetic track uses (see "Velocity and load factor are derived" above). `trajectory.cpp` uses it directly. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
+
+### Output metrics: time weighting, the day schedules, C-SEL
+
+`--lamax_weighting`, `--ta_file`, `--lden_file`, `--cnel_file` and `--csel_file`
+(`src/util/time_weighting.hpp`, the schedules in `src/util/sel.hpp`; the manual's "Maximum level,
+time above and C-weighted SEL" has the definitions and the measured comparison). What to keep:
+
+- **The time weighting runs in reception time, on the SEL integral's own weights.**
+  `reception_durations` is T times `reception_factor`, the very weights `sel_over_window`
+  applies, so a maximum, a time above and an exposure from one history hear it on one clock. The
+  samples are a piecewise-constant mean square over those durations and the weightings are
+  evaluated on it **exactly**: the exponential's maximum is at a sample's end (it relaxes
+  monotonically within one), and the running 0.5 s Leq is linear between the instants where
+  *either* edge of its window crosses a sample boundary (`for_each_window_piece` merges both
+  sets). Do not resample onto a grid or block it first, as the harness does to mirror the
+  measured 0.1 s frames: that is what the harness's LAFmax differs by (+0.03 to +0.06 dB median),
+  not the filter. Dropping the trailing-edge breakpoints passes every closed form but one, `the
+  running Leq turns where the window's trailing edge crosses a sample`; using one step for every
+  sample instead of each duration fails `the weighting follows each sample's own duration`. The
+  call site has its own guard: `lafmax_golden`, `nax_golden` and `ta_golden` (demo case, broadband
+  S-76D, `--gridstep 1640`), checked independently with a brute-force reception-time detector to
+  1e-4 dB. Handing `reception_durations` no ranges (emission time) fails the first and last; NAx
+  counting the instantaneous peak fails `nax_golden` (64 dBA sits between them at three cells).
+  Nothing else in the suite caught either. They move with anything that moves `regression_golden`;
+  regenerate them from the same build, and say so.
+- **The tau/2 refusal is on the integration step (the mean), not the longest interval.** The
+  2017 AC tracks are 0.02 s with dropouts up to 0.14 s; testing the longest interval refused
+  every one of them, while the durations the detector actually sees are T times a reception
+  factor and never contain the dropout. A coarser track is refused with the -s advice rather
+  than given an exponential that settles within every sample.
+- **`instantaneous` returns `*max_element(levels)`, not a round trip through the mean square**,
+  so it reproduces the pre-option `--lamax_file` to the bit (checked against `6bbd6bb` on four
+  2017 runs). `fast` is the default since this change; the manual's "Changes that affect results"
+  says so.
+- **The day metrics add a penalty per sample, 0.0 outside its periods**
+  (`penalized_exposure_level`), so `-D` stayed byte-identical to the night-flag form it replaced
+  (`day_night_level`, kept as a wrapper for the tests). The window is found after the penalty;
+  `--full_history` now integrates the whole history for DNL, Lden and CNEL too, where DNL used
+  to ignore it. The CTests `lden_at_22h30_is_not_dnl` and friends pin the period boundaries by
+  which metrics coincide at 22:30 and 23:30 local; the clock refusal names the option asked for
+  (`dnl_needs_a_clock` matches "-D needs the time of day").
+- **C-SEL reuses `--band_history`'s per-band recording** (`record_bands`, `record_path`): every
+  path that writes `bands_out` for the band history -- straight, table, refracted, each extra
+  arrival -- feeds it, so a new propagation branch that forgets `bands_out` breaks both. Bands
+  outside [first_band, last_band) are never written, which is safe only because the C gains are
+  exactly zero there (same `--band_limits`). It is refused with `--db_cutoff` (a state culled on
+  the A-weighted bound has stale bands and may carry C-weighted energy) and with `-a`.
+  `csel_at_1khz_is_sel` checks the wiring (both curves are 0 dB at 1 kHz, to 1.5e-6), and
+  `csel_is_not_sel` that the C gains are what is applied.
+- **`c_weighting` is the A curve's second factor, constant and all** (2.242881e16 =
+  12194.22^4 10^(0.0619/10), C1000 being -0.062 dB to IEC's three figures). The test that A - C
+  equals the inner pole pairs to 1e-12 dB keeps the two from drifting apart.
+
 ### Geodetic trajectory input
 
 A trajectory may be given in WGS84 (latitude, longitude, altitude) instead of the 27-column AC
@@ -1240,7 +1599,7 @@ touching it:
   difference. In `tracks/S-76D/197421AC.csv` it is a constant 54.2651 ft, which is how that
   file's own alt and z columns relate.
 - **The shipped AC tracks' local frame runs +x along a compass bearing of 210°** — the approach
-  heading, not the instantaneous heading in column 8, which wanders over 25°. With that bearing
+  heading, not the instantaneous heading in column 9 (`data[8]`), which wanders over 25°. With that bearing
   the projection reproduces that file's own x/y to under a meter over 3.2 km, which is the
   check that the port of the transform is the one its producer used.
 - **One frame per run, settled before anything loads.** Every trajectory in a run shares the
@@ -1269,7 +1628,7 @@ touching it:
   **A dense track's ends are freed from the natural condition** (`fit_path`,
   `SmoothingSpline::within_tolerance_extended`). A natural spline's second derivative is zero at
   the first and last knot and still a third low four seconds in, so the load factor, and with it
-  CT, is wrong exactly where a track that starts or stops mid-manoeuvre is loudest. For positions
+  CT, is wrong exactly where a track that starts or stops mid-maneuver is loudest. For positions
   at 0.5 s spacing or finer with a nonzero `--path_smoothing`, the fit is made over the track
   extended by 10 s each way along a local quadratic through the last 3 s, so the natural
   condition lands on the extension, and only the part over the data is kept. Dense demo
@@ -1287,13 +1646,46 @@ touching it:
   of a knot in any direction, and the nose went wherever it pointed. Between 3 and 8 kt
   (`velocity_nose_speed`) the nose turns from the heading to the velocity on a smoothstep weight,
   the horizontal angle the short way round, so there is no step; the hard switch at 5 kt it
-  replaced stepped the level 2.2-4.4 dB for a nose rotated 30-90 degrees. The AC format's column 8
+  replaced stepped the level 2.2-4.4 dB for a nose rotated 30-90 degrees. The AC format's column 9
   (`State::heading`, compass, NaN for the geodetic formats) is turned into the local frame by
-  an offset inferred from the track's states over 20 kt -- the circular mean of the velocity's
-  angle plus the heading, which folds in the INS heading's few degrees off the ground track --
-  or, for a track with none (a hover), by `--frame_bearing`. Neither: the drift, with a warning.
+  `--frame_bearing` (or east under a settled geodetic frame) whenever the run knows one, and
+  only otherwise by an offset inferred from the track's states over 20 kt -- the circular mean
+  of the velocity's angle plus the heading, which folds in the INS heading's few degrees off the
+  ground track and the mean crab (see `--nose` below for why the frame now wins). Neither: the
+  drift, with a warning.
   No shipped track goes under 10 kt and no day-286 approach under 13, so neither the goldens
   nor the approaches move; the 2017 hover runs (H1-H12) do.
+- **`--nose velocity|ground_velocity|heading`** (`NoseSource`, `nose_direction`; settled per
+  trajectory in `settle_nose`, niceops.cpp). Where the sphere frame's nose comes from; the
+  default follows the database's root `azimuth_reference` (`track`/`heading`, absent = track,
+  read beside `speed_reference` by `read_root_text`). The things to preserve:
+  - **Heading mode's offset comes from the frame and nowhere else** (`--frame_bearing`, or 90
+    under a settled geodetic frame: `known_frame_bearing`). Never from `heading_offset`'s fit:
+    that is the circular mean of heading against track, so it folds the track's mean crab into
+    the offset, and heading mode read through it puts the nose back on the mean track -- the
+    option would then do nothing on a steady crabbed run, which is exactly the case it was
+    measured on (day 284, 1.69 -> 1.54 dB SEL rms, `stratified_plate`). No frame is refused.
+  - **The frame also beats the fit for the hover nose** (`heading_offset` returns it first). The
+    fit used to win whenever a track had 50 states over 20 kt, so an approach ending in hover had
+    its hover nose turned by the approach's mean crab. Only fast-then-hover tracks move; none in
+    the repo or the 2017 B407 set. `nose_hover_takes_the_frame` runs two synthetic ones that
+    differ only in the approach's crab (the old precedence fails it).
+  - **Heading mode keeps the velocity's climb** (vz over horizontal speed, faded below 8 kt by
+    `nose_velocity_weight`, the same smoothstep the hover blend uses), so a heading along the
+    track is parallel to the velocity and `nose_heading_on_track_is_velocity` holds at 1e-9
+    through turns and descents. A horizontal-only heading would differ wherever the tip-path
+    plane tilts sideways.
+  - **Only the nose moves.** mu, `fpa`, `fpa_e` and CT come from the velocity as before. The
+    experiment that motivated it turned each track's velocity onto its heading instead, which
+    also moved `fpa_e` by up to 1.4 degrees in turns (the load-factor normal tilts sideways);
+    that is why the option and the emulation differ by up to 0.5 dB at a microphone, 0.01 in rms.
+  - **Crab sign:** compass headings turn clockwise from north and the local frame counterclockwise
+    from +x, so the local angle is bearing - heading, as `CompassToLocal` turns the wind. The test
+    `--nose heading points the nose along the heading, crab and all` holds both to one synthetic
+    crosswind.
+  - A track with no heading at all is refused under an explicit `--nose heading` and falls back
+    to the velocity with a warning when only the database implied it; a single missing heading is
+    refused. `--export_sphere` writes `azimuth_reference` only when the source recorded one.
 - **`--speed_reference`** (roadmap step 3, the NICE-OPS half). It takes the flight condition
   against the air, not the ground. The things to preserve:
   - **Scope.** `Trajectory::relative_to_air` sets each state's wind (`State::wx`, `wy`) and
@@ -1310,9 +1702,10 @@ touching it:
   - **One rotation.** `CompassToLocal` (atmosphere_profile.hpp) turns east/north into the
     local frame for this and for both ray models. Before it, refraction.cpp and
     stratified.cpp each spelled the rotation out, with the same expression.
-  - **panam's side is not built yet.** It has to use the same definition, the manual's
-    "Speed reference" section, and write the attribute. Until it does, every database is
-    ground-referenced, and an air run against one mixes the two.
+  - **panam writes the attribute** (eeb040b and since, `build_empirical_database(...,
+    speed_reference=...)`, default `ground`), but its 2017 recipes still build against the
+    ground, so every database so far is ground-referenced and an air run against one mixes the
+    two.
 - `src/plotting.{hpp,cpp}` — `plt::` facade replacing the vendored matplotlib-d binding. Embeds Python via pybind11 and calls matplotlib directly; the interpreter is created lazily on first use, so non-plotting runs never pay the import cost.
 
 ### D standard-library replacements

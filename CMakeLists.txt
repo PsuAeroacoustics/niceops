@@ -180,6 +180,8 @@ add_library(niceops_core STATIC
   src/airy.cpp
   src/exact_solutions.cpp
   src/weighting.cpp
+  src/pnl.cpp
+  src/band_frames.cpp
   src/faddeeva.cpp
   src/ground_effect.cpp
   src/plate_receiver.cpp
@@ -193,6 +195,7 @@ add_library(niceops_core STATIC
   # resolves archives in a single pass and failed on it; ld64 did not, so it
   # only ever broke Linux.
   src/interpolator.cpp
+  src/condition_selection.cpp
   src/trajectory.cpp
   ${NICEOPS_PLOTTING_SOURCE}
   src/smoothing_spline.cpp
@@ -226,6 +229,7 @@ target_link_libraries(niceops niceops_core CLI11::CLI11 Threads::Threads)
 # Unit tests (Catch2)
 add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
+  tests/test_time_weighting.cpp
   tests/test_parallel.cpp
   tests/test_build.cpp
   tests/test_iota.cpp
@@ -245,11 +249,13 @@ add_executable(niceops_unit_tests
   tests/test_shadow_attenuation.cpp
   tests/test_shadow_transition.cpp
   tests/test_weighting.cpp
+  tests/test_pnl.cpp
   tests/test_ground_effect.cpp
   tests/test_plate_receiver.cpp
   tests/test_spectral_propagation.cpp
   tests/test_predicates.cpp
   tests/test_delaunay.cpp
+  tests/test_condition_selection.cpp
   tests/test_trajectory.cpp
   tests/test_csv.cpp
   tests/test_legacy_repair.cpp
@@ -259,6 +265,9 @@ target_link_libraries(niceops_unit_tests niceops_core Catch2::Catch2WithMain)
 
 # Golden output comparison tool (numeric, elementwise)
 add_executable(golden_compare tests/golden_compare.cpp)
+# What --epnl_file and --band_frames wrote, checked against each other and the SEL.
+add_executable(check_band_frames tests/check_band_frames.cpp)
+target_link_libraries(check_band_frames niceops_core)
 # Refraction models against the parabolic equation on one path (tools/pe_compare.cpp):
 # a research tool, not part of a run.
 add_executable(niceops_pe_compare tools/pe_compare.cpp)
@@ -278,6 +287,11 @@ target_link_libraries(niceops_benchmark niceops_core CLI11::CLI11 Threads::Threa
 
 # Add testing with CTest
 enable_testing()
+add_test(NAME propagation_table_midpoint_validation COMMAND ${CMAKE_COMMAND}
+  -DTOOL=$<TARGET_FILE:niceops_propagation_table>
+  -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_validation
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_table_validation.cmake
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 # One default run feeds both the LAE and state golden comparisons
 add_test(NAME regression_default COMMAND niceops -S state/ci_state.csv --no-spectral --no-ground_effect WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # The two golden comparisons read files this run writes.  CI happens to run the
@@ -373,6 +387,73 @@ add_test(NAME nax_file_is_written COMMAND sh -c "rm -f integrated/nax.csv && $<T
 add_test(NAME nax_needs_a_threshold COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 --nax_file integrated/nax_unset.csv -o integrated/nax_unset_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(nax_needs_a_threshold PROPERTIES WILL_FAIL TRUE)
 add_test(NAME full_history_runs COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 --full_history -o integrated/full_history.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# Output metrics.  The demo track is flown 14:05-14:08 UTC, so --utc_offset puts
+# it by day (0), at 22:30 local (8.4) and at 23:30 (9.4).  By day DNL, Lden and
+# CNEL penalize nothing and agree; at 22:30 CNEL's night has begun (+10, as
+# DNL's) and Lden's evening has not ended (+5); at 23:30 all three are night.
+# Each pair below fails on a schedule whose boundary has moved.
+set(METRICS_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 -L warn)
+add_test(NAME metrics_by_day COMMAND niceops ${METRICS_RUN} -D integrated/metrics_day_dnl.csv --lden_file integrated/metrics_day_lden.csv --cnel_file integrated/metrics_day_cnel.csv -o integrated/metrics_day.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME metrics_at_22h30 COMMAND niceops ${METRICS_RUN} --utc_offset 8.4 -D integrated/metrics_2230_dnl.csv --lden_file integrated/metrics_2230_lden.csv --cnel_file integrated/metrics_2230_cnel.csv -o integrated/metrics_2230.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME metrics_at_23h30 COMMAND niceops ${METRICS_RUN} --utc_offset 9.4 -D integrated/metrics_2330_dnl.csv --lden_file integrated/metrics_2330_lden.csv --cnel_file integrated/metrics_2330_cnel.csv -o integrated/metrics_2330.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# --full_history governs DNL too: each operation's whole history rather than its
+# own 10 dB-down window, so the two must differ.
+add_test(NAME metrics_full_history COMMAND niceops ${METRICS_RUN} --full_history -D integrated/metrics_full_dnl.csv -o integrated/metrics_full.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# C-SEL: limited to the 1 kHz band, where the C and A curves are both 0 dB (to
+# 1.5e-6 dB), it is SEL, which checks the window, the reception weights and the
+# per-state bands; over every band it is not.
+add_test(NAME metrics_csel_1khz COMMAND niceops ${METRICS_RUN} --band_limits 900 1100 --csel_file integrated/metrics_csel_1khz.csv -o integrated/metrics_sel_1khz.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME metrics_csel COMMAND niceops ${METRICS_RUN} --csel_file integrated/metrics_csel.csv -o integrated/metrics_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# LAmax: the fast weighting is not the instantaneous peak.
+add_test(NAME metrics_lamax_fast COMMAND niceops ${METRICS_RUN} --lamax_file integrated/metrics_lafmax.csv --nax_file integrated/metrics_nax.csv --nax_threshold 45 --ta_file integrated/metrics_ta.csv --ta_threshold 40 -o integrated/metrics_lamax_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME metrics_lamax_instantaneous COMMAND niceops ${METRICS_RUN} --lamax_weighting instantaneous --lamax_file integrated/metrics_lamax_peak.csv -o integrated/metrics_lamax_peak_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(metrics_by_day metrics_at_22h30 metrics_at_23h30 metrics_full_history metrics_csel_1khz metrics_csel metrics_lamax_fast metrics_lamax_instantaneous PROPERTIES FIXTURES_SETUP metrics_runs)
+add_test(NAME lden_by_day_is_dnl COMMAND golden_compare integrated/metrics_day_lden.csv integrated/metrics_day_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME cnel_by_day_is_dnl COMMAND golden_compare integrated/metrics_day_cnel.csv integrated/metrics_day_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME cnel_at_22h30_is_dnl COMMAND golden_compare integrated/metrics_2230_cnel.csv integrated/metrics_2230_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME lden_at_23h30_is_dnl COMMAND golden_compare integrated/metrics_2330_lden.csv integrated/metrics_2330_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME csel_at_1khz_is_sel COMMAND golden_compare integrated/metrics_csel_1khz.csv integrated/metrics_sel_1khz.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The "differs" cases pass on golden_compare's mismatch message, not on its exit
+# status, so a missing file cannot satisfy them.
+add_test(NAME lden_at_22h30_is_not_dnl COMMAND golden_compare integrated/metrics_2230_lden.csv integrated/metrics_2230_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME dnl_full_history_is_not_windowed COMMAND golden_compare integrated/metrics_full_dnl.csv integrated/metrics_day_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME csel_is_not_sel COMMAND golden_compare integrated/metrics_csel.csv integrated/metrics_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME lafmax_is_not_the_peak COMMAND golden_compare integrated/metrics_lafmax.csv integrated/metrics_lamax_peak.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lden_by_day_is_dnl cnel_by_day_is_dnl cnel_at_22h30_is_dnl lden_at_23h30_is_dnl csel_at_1khz_is_sel lden_at_22h30_is_not_dnl dnl_full_history_is_not_windowed csel_is_not_sel lafmax_is_not_the_peak PROPERTIES FIXTURES_REQUIRED metrics_runs)
+set_tests_properties(lden_at_22h30_is_not_dnl dnl_full_history_is_not_windowed csel_is_not_sel lafmax_is_not_the_peak PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+# The call site: LAFmax, NA64 and TA70 on the demo case's broadband database (the
+# one regression_golden pins), against goldens checked independently -- a brute-
+# force fast detector on a 5e-5 s reception-time grid built from the -S state and
+# the -i histories agreed to 1e-4 dB, where the same in emission time is 0.018 dB
+# off.  So these fail if the weighting hears emission time, or NAx counts the
+# instantaneous peak (64 dBA sits between the two at three cells).
+add_test(NAME metrics_broadband COMMAND niceops --gridstep 1640 -L warn --lamax_file integrated/metrics_bb_lafmax.csv --nax_file integrated/metrics_bb_na64.csv --nax_threshold 64 --ta_file integrated/metrics_bb_ta70.csv --ta_threshold 70 -o integrated/metrics_bb.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(metrics_broadband PROPERTIES FIXTURES_SETUP metrics_broadband_run)
+add_test(NAME lafmax_golden COMMAND golden_compare integrated/metrics_bb_lafmax.csv golden/metrics_197421_lafmax.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nax_golden COMMAND golden_compare integrated/metrics_bb_na64.csv golden/metrics_197421_na64.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ta_golden COMMAND golden_compare integrated/metrics_bb_ta70.csv golden/metrics_197421_ta70.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lafmax_golden nax_golden ta_golden PROPERTIES FIXTURES_REQUIRED metrics_broadband_run)
+# What the metrics refuse.  A 1 s geodetic track is resampled onto the 0.5 s -s
+# default, too coarse for the fast detector; at -s 0.05 it runs.
+set(METRICS_GEODETIC -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640)
+add_test(NAME lamax_weighting_refuses_a_coarse_history COMMAND niceops ${METRICS_GEODETIC} --lamax_file integrated/coarse_lamax.csv -o integrated/coarse_lamax_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lamax_weighting_refuses_a_coarse_history PROPERTIES PASS_REGULAR_EXPRESSION "needs the level history sampled at least every 0.0625 s")
+add_test(NAME lamax_weighting_runs_on_a_finer_step COMMAND niceops ${METRICS_GEODETIC} -s 0.05 --lamax_file integrated/fine_lamax.csv -o integrated/fine_lamax_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lamax_weighting_runs_on_a_finer_step PROPERTIES FAIL_REGULAR_EXPRESSION "needs the level history")
+add_test(NAME lden_needs_a_clock COMMAND niceops ${METRICS_GEODETIC} --lden_file integrated/noclock_lden.csv -o integrated/noclock_lden_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lden_needs_a_clock PROPERTIES PASS_REGULAR_EXPRESSION "--lden_file needs the time of day")
+add_test(NAME lamax_weighting_needs_an_output COMMAND niceops ${METRICS_RUN} --lamax_weighting slow -o integrated/weighting_alone.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lamax_weighting_needs_an_output PROPERTIES PASS_REGULAR_EXPRESSION "none of them is given")
+add_test(NAME ta_needs_a_threshold COMMAND niceops ${METRICS_RUN} --ta_file integrated/ta_unset.csv -o integrated/ta_unset_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ta_needs_a_threshold PROPERTIES PASS_REGULAR_EXPRESSION "--ta_file needs --ta_threshold")
+add_test(NAME csel_needs_spectra COMMAND niceops --gridstep 1640 --csel_file integrated/csel_broadband.csv -o integrated/csel_broadband_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(csel_needs_spectra PROPERTIES PASS_REGULAR_EXPRESSION "needs a database carrying per-band spectra, to C-weight")
+add_test(NAME csel_refuses_no_spectral COMMAND niceops ${METRICS_RUN} --no-spectral --csel_file integrated/csel_refused.csv -o integrated/csel_refused_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(csel_refuses_no_spectral PROPERTIES PASS_REGULAR_EXPRESSION "--csel_file needs the spectral path")
+add_test(NAME csel_refuses_db_cutoff COMMAND niceops ${METRICS_RUN} --db_cutoff 40 --csel_file integrated/csel_refused.csv -o integrated/csel_refused_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(csel_refuses_db_cutoff PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with --db_cutoff")
+add_test(NAME csel_refuses_ambient COMMAND niceops ${METRICS_RUN} -a 30 --csel_file integrated/csel_refused.csv -o integrated/csel_refused_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(csel_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with -a")
 add_test(NAME load_factor_is_held_at_the_ceiling COMMAND niceops ${B407_RUN} -v databases/B407.json --max_load_factor 1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(load_factor_is_held_at_the_ceiling PROPERTIES PASS_REGULAR_EXPRESSION "exceed 1 g on a fixed_load_factor database")
 set_tests_properties(vehicle_weight_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle weight disagrees")
@@ -486,6 +567,104 @@ add_test(NAME speed_reference_air_calm_is_ground COMMAND golden_compare integrat
 set_tests_properties(speed_reference_air_calm_is_ground PROPERTIES FIXTURES_REQUIRED atmosphere_runs)
 add_test(NAME speed_reference_air_needs_wind COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/B407_uniform.csv --speed_reference air --gridstep 492 -L warn -o integrated/speed_reference_air_needs_wind.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(speed_reference_air_needs_wind PROPERTIES WILL_FAIL TRUE)
+# --nose.  The hidden Catch case [.heading_tracks] writes two copies of the demo
+# track differing only in the heading column -- the ground track's own compass
+# bearing, and that turned 15 degrees clockwise -- and a one-sphere database whose
+# root says azimuth_reference = heading.  Heading mode along the track has to
+# reproduce the default nose; crabbed, it has to move the footprint; and the
+# database's attribute has to select heading mode by itself.
+add_test(NAME nose_heading_build COMMAND niceops_unit_tests "[.heading_tracks]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_build PROPERTIES FIXTURES_SETUP heading_tracks)
+add_test(NAME nose_default_on_track COMMAND niceops -t integrated/heading_on_track.csv --frame_bearing 210 --gridstep 328 -L warn -o integrated/nose_default_on_track.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_heading_on_track COMMAND niceops -t integrated/heading_on_track.csv --frame_bearing 210 --gridstep 328 --nose heading -L warn -o integrated/nose_heading_on_track.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_heading_crabbed COMMAND niceops -t integrated/heading_crabbed.csv --frame_bearing 210 --gridstep 328 --nose heading -L warn -o integrated/nose_heading_crabbed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_database_heading COMMAND niceops -d integrated/heading_sphere.nod -t integrated/heading_crabbed.csv --frame_bearing 210 --gridstep 328 -L warn -o integrated/nose_database_heading.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_database_heading_explicit COMMAND niceops -d integrated/heading_sphere.nod -t integrated/heading_crabbed.csv --frame_bearing 210 --gridstep 328 --nose heading -L warn -o integrated/nose_database_heading_explicit.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_database_velocity COMMAND niceops -d integrated/heading_sphere.nod -t integrated/heading_crabbed.csv --frame_bearing 210 --gridstep 328 --nose velocity -L warn -o integrated/nose_database_velocity.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_database_velocity PROPERTIES PASS_REGULAR_EXPRESSION "--nose velocity overrides the database, whose sphere azimuth is measured from the heading")
+set_tests_properties(nose_default_on_track nose_heading_on_track nose_heading_crabbed nose_database_heading nose_database_heading_explicit nose_database_velocity PROPERTIES FIXTURES_REQUIRED heading_tracks FIXTURES_SETUP nose_runs)
+add_test(NAME nose_heading_on_track_is_velocity COMMAND golden_compare integrated/nose_heading_on_track.csv integrated/nose_default_on_track.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# A crab of 15 degrees moves the footprint (golden_compare reports a mismatch, which is the pass).
+add_test(NAME nose_heading_crabbed_differs COMMAND golden_compare integrated/nose_heading_crabbed.csv integrated/nose_default_on_track.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_crabbed_differs PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+add_test(NAME nose_database_heading_is_default COMMAND golden_compare integrated/nose_database_heading.csv integrated/nose_database_heading_explicit.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_database_velocity_differs COMMAND golden_compare integrated/nose_database_velocity.csv integrated/nose_database_heading.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_database_velocity_differs PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(nose_heading_on_track_is_velocity nose_heading_crabbed_differs nose_database_heading_is_default nose_database_velocity_differs PROPERTIES FIXTURES_REQUIRED nose_runs)
+# The hover nose: with --frame_bearing given, two tracks whose hovers share a
+# heading and whose approaches differ only in their crab (which the default nose
+# ignores, flying along the velocity) give the same footprint.  The track's own
+# fit, which used to win over the frame, absorbed the crabbed approach's 15
+# degrees and turned that hover's nose by them.
+add_test(NAME nose_hover_crabbed COMMAND niceops -t integrated/heading_hover_crabbed.csv --frame_bearing 210 --gridstep 328 -L warn -o integrated/nose_hover_crabbed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_hover_straight COMMAND niceops -t integrated/heading_hover_straight.csv --frame_bearing 210 --gridstep 328 -L warn -o integrated/nose_hover_straight.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_hover_crabbed nose_hover_straight PROPERTIES FIXTURES_REQUIRED heading_tracks FIXTURES_SETUP nose_hover_runs)
+add_test(NAME nose_hover_takes_the_frame COMMAND golden_compare integrated/nose_hover_crabbed.csv integrated/nose_hover_straight.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_hover_takes_the_frame PROPERTIES FIXTURES_REQUIRED nose_hover_runs)
+# Heading mode is refused with no frame to turn the heading by (the track's own
+# fit would absorb the crab), with a database implying it as with --nose, and on
+# a track with no heading at all.
+add_test(NAME nose_heading_needs_a_frame COMMAND niceops -t integrated/heading_crabbed.csv --nose heading --gridstep 1640 -L warn -o integrated/nose_heading_no_frame.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_needs_a_frame PROPERTIES PASS_REGULAR_EXPRESSION "--nose heading turns each state's compass heading into the local frame, and needs that frame's bearing" FIXTURES_REQUIRED heading_tracks)
+add_test(NAME nose_database_heading_needs_a_frame COMMAND niceops -d integrated/heading_sphere.nod -t integrated/heading_crabbed.csv --gridstep 1640 -L warn -o integrated/nose_database_no_frame.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_database_heading_needs_a_frame PROPERTIES PASS_REGULAR_EXPRESSION "azimuth_reference \\(heading\\) turns each state's compass heading.*or --nose velocity" FIXTURES_REQUIRED heading_tracks)
+add_test(NAME nose_heading_needs_a_heading COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --nose heading -L warn -o integrated/nose_heading_no_heading.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_needs_a_heading PROPERTIES PASS_REGULAR_EXPRESSION "--nose heading needs the nose's compass heading, and tests/data/demo_geodetic_noclock.csv carries none")
+# A database implying heading mode on a track with no heading falls back to the
+# velocity, with a warning, and runs.
+add_test(NAME nose_database_heading_without_heading COMMAND niceops -d integrated/heading_sphere.nod -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -L warn -o integrated/nose_database_no_heading.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_database_heading_without_heading PROPERTIES PASS_REGULAR_EXPRESSION "the nose follows the velocity instead" FIXTURES_REQUIRED heading_tracks)
+# On the spectral path the windowed peak search bounds each state through its
+# sphere frame, so a heading nose has to leave it exact.
+add_test(NAME nose_heading_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t integrated/heading_crabbed.csv --frame_bearing 210 --nose heading --gridstep 984 -L warn -o integrated/nose_heading_spectral.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_heading_spectral_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t integrated/heading_crabbed.csv --frame_bearing 210 --nose heading --gridstep 984 -L warn -D integrated/nose_heading_spectral_dnl.csv -o integrated/nose_heading_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_spectral nose_heading_spectral_marched PROPERTIES FIXTURES_REQUIRED heading_tracks FIXTURES_SETUP nose_spectral_runs)
+add_test(NAME nose_heading_windowed_is_exact COMMAND golden_compare integrated/nose_heading_spectral.csv integrated/nose_heading_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_windowed_is_exact PROPERTIES FIXTURES_REQUIRED nose_spectral_runs)
+# --nose ground_velocity keeps the nose on the ground track under --speed_reference
+# air, which otherwise turns it onto the air velocity: in a wind the two differ.
+add_test(NAME nose_air COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --frame_bearing 210 --speed_reference air --gridstep 984 -L warn -o integrated/nose_air.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_air_ground_velocity COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --frame_bearing 210 --speed_reference air --nose ground_velocity --gridstep 984 -L warn -o integrated/nose_air_ground_velocity.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_air nose_air_ground_velocity PROPERTIES FIXTURES_SETUP nose_air_runs)
+add_test(NAME nose_ground_velocity_is_not_air COMMAND golden_compare integrated/nose_air_ground_velocity.csv integrated/nose_air.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_ground_velocity_is_not_air PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value" FIXTURES_REQUIRED nose_air_runs)
+# --blend and --load_factor_correction (condition_selection.hpp).  Barycentric is the default, so
+# naming it, and the default one-sided law, must reproduce the golden; nearest and aam must run and
+# move it (golden_compare's mismatch is the pass), and differ from each other.  The demo database is
+# S-76D_M3, whose thrust axis is spheres, so aam there searches its thrust layers.
+add_test(NAME blend_barycentric COMMAND niceops --no-spectral --no-ground_effect --blend barycentric --load_factor_correction one_sided -L warn -o integrated/blend_barycentric.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest COMMAND niceops --no-spectral --no-ground_effect --blend nearest -L warn -o integrated/blend_nearest.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_aam COMMAND niceops --no-spectral --no-ground_effect --blend aam -L warn -o integrated/blend_aam.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(blend_barycentric blend_nearest blend_aam PROPERTIES FIXTURES_SETUP blend_runs)
+add_test(NAME blend_barycentric_is_golden COMMAND golden_compare integrated/blend_barycentric.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest_moves_footprint COMMAND golden_compare integrated/blend_nearest.csv golden/197421_LAE.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_aam_moves_footprint COMMAND golden_compare integrated/blend_aam.csv golden/197421_LAE.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_aam_is_not_nearest COMMAND golden_compare integrated/blend_aam.csv integrated/blend_nearest.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(blend_nearest_moves_footprint blend_aam_moves_footprint blend_aam_is_not_nearest PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(blend_barycentric_is_golden blend_nearest_moves_footprint blend_aam_moves_footprint blend_aam_is_not_nearest PROPERTIES FIXTURES_REQUIRED blend_runs)
+# The spectral path's windowed peak search bounds every state by its blend's spheres and its
+# load-factor shift, so each policy, and the two-sided law's negative shifts, must leave it exact
+# against a march (-D forces the march) on a fixed_load_factor database.
+add_test(NAME blend_aam_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --blend aam --load_factor_correction two_sided --gridstep 492 -L warn -o integrated/blend_aam_spectral.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_aam_spectral_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --blend aam --load_factor_correction two_sided --gridstep 492 -L warn -D integrated/blend_aam_spectral_dnl.csv -o integrated/blend_aam_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --blend nearest --gridstep 492 -L warn -o integrated/blend_nearest_spectral.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest_spectral_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --blend nearest --gridstep 492 -L warn -D integrated/blend_nearest_spectral_dnl.csv -o integrated/blend_nearest_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(blend_aam_spectral blend_aam_spectral_marched blend_nearest_spectral blend_nearest_spectral_marched PROPERTIES FIXTURES_SETUP blend_spectral_runs)
+add_test(NAME blend_aam_windowed_is_exact COMMAND golden_compare integrated/blend_aam_spectral.csv integrated/blend_aam_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest_windowed_is_exact COMMAND golden_compare integrated/blend_nearest_spectral.csv integrated/blend_nearest_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# ... and the two-sided law does something on this track, whose load factor runs both sides of 1 g:
+# atmosphere_homogeneous is the same run, barycentric and one-sided.
+add_test(NAME load_factor_two_sided COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --load_factor_correction two_sided --min_load_factor 0.5 --gridstep 492 -L warn -o integrated/load_factor_two_sided.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(load_factor_two_sided PROPERTIES FIXTURES_SETUP blend_spectral_runs)
+add_test(NAME load_factor_two_sided_moves_footprint COMMAND golden_compare integrated/load_factor_two_sided.csv integrated/atmosphere_homogeneous.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(load_factor_two_sided_moves_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(blend_aam_windowed_is_exact blend_nearest_windowed_is_exact load_factor_two_sided_moves_footprint PROPERTIES FIXTURES_REQUIRED "blend_spectral_runs;atmosphere_runs")
+# Refused, on the message: the floor without the two-sided law, and the law on a database whose load
+# factors are spheres.
+add_test(NAME min_load_factor_needs_two_sided COMMAND niceops --min_load_factor 0.3 -L warn -o integrated/min_load_factor_needs_two_sided.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(min_load_factor_needs_two_sided PROPERTIES PASS_REGULAR_EXPRESSION "needs --load_factor_correction two_sided")
+add_test(NAME two_sided_needs_fixed_load_factor COMMAND niceops --no-spectral --no-ground_effect --load_factor_correction two_sided --gridstep 2000 -L warn -o integrated/two_sided_needs_fixed_load_factor.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(two_sided_needs_fixed_load_factor PROPERTIES PASS_REGULAR_EXPRESSION "is not one: its load factors are spheres")
 # The same over arrays/coyle_approach.csv, whose microphones stand at different
 # heights.  A grid's observers share one, so their mean coefficients are formed
 # once per state; these take the per-pair path the grid never reaches.
@@ -545,6 +724,47 @@ set_tests_properties(band_history_leaves_footprint band_history_refracted_is_str
 # The broadband path carries no bands to write.
 add_test(NAME band_history_needs_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --no-spectral --band_history integrated/band_history/broadband -o integrated/band_history_broadband.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(band_history_needs_spectral PROPERTIES WILL_FAIL TRUE)
+# --epnl_file and --band_frames (src/pnl.hpp, src/band_frames.hpp).  The run writes both over
+# flush plate microphones and pole microphones; check_band_frames recomputes every EPNL from the
+# netCDF frames, checks the files against each other and for plausibility, and holds the frames'
+# A-weighted energy to the --full_history SEL of the same case: every state's energy, in reception
+# time, is in the frames.  The frames force a march, which must leave the footprint equal to the
+# peak search's.  A coarse grid checks the grid layout.
+add_test(NAME epnl_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn --epnl_file integrated/epnl/mixed_EPNL.csv --band_frames integrated/epnl/mixed_frames.nc -o integrated/epnl/mixed_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_full_history COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn --full_history -o integrated/epnl/mixed_full_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_windowed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn -o integrated/epnl/mixed_windowed_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_grid COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1312 -L warn --epnl_file integrated/epnl/grid_EPNL.csv --band_frames integrated/epnl/grid_frames.nc -o integrated/epnl/grid_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The same case's band histories, from which check_band_frames --history rebuilds every frame: the
+# energy check cannot see where in time the energy went, and a state filed at its emission time
+# (or at t - r/c) passed it.  And the case once more with --no-epnl_masking, the tone correction as
+# written: on these microphones inaudible bands give tones (one of the eight PNLTM records, and
+# others inside the durations), so some EPNL must read higher.
+add_test(NAME epnl_band_history COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn --band_history integrated/epnl/history/mixed -o integrated/epnl/mixed_history_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_unmasked COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn --no-epnl_masking --epnl_file integrated/epnl/mixed_unmasked_EPNL.csv --band_frames integrated/epnl/mixed_unmasked_frames.nc -o integrated/epnl/mixed_unmasked_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_run epnl_full_history epnl_windowed epnl_grid epnl_band_history epnl_unmasked PROPERTIES FIXTURES_SETUP epnl_runs)
+add_test(NAME epnl_frames_follow_reception_time COMMAND check_band_frames --history integrated/epnl/history/mixed integrated/epnl/mixed_frames.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_unmasked_is_consistent COMMAND check_band_frames --no-masking integrated/epnl/mixed_unmasked_frames.nc integrated/epnl/mixed_unmasked_EPNL.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_masking_lowers_tones COMMAND check_band_frames --compare integrated/epnl/mixed_EPNL.csv integrated/epnl/mixed_unmasked_EPNL.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_frames_follow_reception_time epnl_unmasked_is_consistent epnl_masking_lowers_tones PROPERTIES FIXTURES_REQUIRED epnl_runs)
+add_test(NAME epnl_frames_are_consistent COMMAND check_band_frames integrated/epnl/mixed_frames.nc integrated/epnl/mixed_EPNL.csv integrated/epnl/mixed_full_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_grid_frames_are_consistent COMMAND check_band_frames integrated/epnl/grid_frames.nc integrated/epnl/grid_EPNL.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_leaves_footprint COMMAND golden_compare integrated/epnl/mixed_LAE.csv integrated/epnl/mixed_windowed_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_frames_are_consistent epnl_grid_frames_are_consistent epnl_leaves_footprint PROPERTIES FIXTURES_REQUIRED epnl_runs)
+# Refused, each with its reason: no bands on the broadband path or in a database without spectra,
+# an ambient with no spectrum, and band limits that leave out a PNL band.
+add_test(NAME epnl_needs_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --no-spectral --epnl_file integrated/epnl/refused.csv -o integrated/epnl/refused_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_needs_spectral PROPERTIES PASS_REGULAR_EXPRESSION "--epnl_file needs the spectral path")
+add_test(NAME band_frames_need_spectra COMMAND niceops -d databases/S-76D_M3.nod -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --band_frames integrated/epnl/refused.nc -o integrated/epnl/refused_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(band_frames_need_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--band_frames needs a database carrying per-band spectra")
+add_test(NAME epnl_refuses_ambient COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn -a 40 --epnl_file integrated/epnl/refused.csv -o integrated/epnl/refused_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "--epnl_file does not combine with -a")
+add_test(NAME epnl_needs_its_bands COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --band_limits 100 20000 --epnl_file integrated/epnl/refused.csv -o integrated/epnl/refused_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_needs_its_bands PROPERTIES PASS_REGULAR_EXPRESSION "leaves out the 50 Hz band")
+# Several trajectories and one name: one file per track, named after it.
+add_test(NAME epnl_multi_trajectory_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197405AC.csv -b tests/data/mixed_flush.csv -L warn --epnl_file integrated/epnl_multi/e.csv --band_frames integrated/epnl_multi/f.nc -o integrated/epnl_multi/lae.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_multi_trajectory_names COMMAND ${CMAKE_COMMAND} "-DFILES=integrated/epnl_multi/197421AC_EPNL.csv;integrated/epnl_multi/197405AC_EPNL.csv;integrated/epnl_multi/197421AC_band_frames.nc;integrated/epnl_multi/197405AC_band_frames.nc" "-DABSENT=integrated/epnl_multi/e.csv;integrated/epnl_multi/f.nc" -P tests/check_files.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_multi_trajectory_run PROPERTIES FIXTURES_SETUP epnl_multi_runs)
+set_tests_properties(epnl_multi_trajectory_names PROPERTIES FIXTURES_REQUIRED epnl_multi_runs)
 # A point receiver, refracting through uniform air, ends its ray at the
 # microphone as the straight path does: the two agree.
 add_test(NAME refraction_uniform_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --atmosphere atmospheres/B407_uniform.csv --refraction linear --gridstep 492 -L warn -o integrated/refraction_uniform_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -584,6 +804,31 @@ set_tests_properties(stratified_duct_point stratified_duct_point_marched stratif
 add_test(NAME stratified_duct_point_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME stratified_duct_plate_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_plate.csv integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_duct_point_windowed_is_exact stratified_duct_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# Discretization independence: example_windy.csv with a calm, isothermal floor 0.1 ft thick (a level
+# at 0.1 ft, as fast as the ground) against the same profile without it.  Ray theory sent the upwind
+# shadow's limiting ray along the floor without limit, and flush microphones on it came out up to
+# 39 dB low on this grid; no band of the run resolves a floor that thin (resolved_pass, stratified.cpp).
+# What may remain is the floor itself, which reshapes the lowest layer (0.05 dB at 1.2 m), and the
+# cap's slack over what ray theory travels in a resolved turning, (1.5 - 4/3) k h^2, which leaves the
+# boundary under 1% farther out at 10 kHz: 0.12 dB at worst on the plates, at the shadow's edge.
+# 0.3 dB absolute; the unfixed solve misses by 39 dB.
+add_test(NAME stratified_windy_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 -L warn -o integrated/stratified_windy_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 -L warn -o integrated/stratified_calm_floor_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --refraction stratified --frame_bearing 210 --ground_effect --gridstep 984 -L warn -o integrated/stratified_calm_floor_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_windy_plate stratified_calm_floor_plate stratified_calm_floor_point PROPERTIES FIXTURES_SETUP stratified_calm_floor_runs)
+add_test(NAME stratified_calm_floor_plate_is_floorless COMMAND golden_compare integrated/stratified_calm_floor_plate.csv integrated/stratified_windy_plate.csv 0.3 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_point_is_floorless COMMAND golden_compare integrated/stratified_calm_floor_point.csv integrated/stratified_windy_point.csv 0.3 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_calm_floor_plate_is_floorless PROPERTIES FIXTURES_REQUIRED stratified_calm_floor_runs)
+set_tests_properties(stratified_calm_floor_point_is_floorless PROPERTIES FIXTURES_REQUIRED "stratified_calm_floor_runs;stratified_runs")
+# The run's highest band reaches the layered solve (process_trajectory hands LayeredSoundSpeed its top
+# band, path_layers each path's Layers).  With --band_limits ending at the 200 Hz band the floor is
+# followed farther than at the 10 kHz default, and dropping the band from that call moves these plates;
+# nothing else runs the solve at another frequency.  Pinned at 1e-4 dB like the
+# other stratified goldens; regenerate with the build that changes the cap on purpose.
+add_test(NAME stratified_calm_floor_plate_200hz COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 --band_limits 20 224 -L warn -o integrated/stratified_calm_floor_plate_200hz.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_calm_floor_plate_200hz PROPERTIES FIXTURES_SETUP stratified_calm_floor_200hz_run)
+add_test(NAME stratified_calm_floor_plate_200hz_golden COMMAND golden_compare integrated/stratified_calm_floor_plate_200hz.csv golden/stratified_calm_floor_plate_200hz.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_calm_floor_plate_200hz_golden PROPERTIES FIXTURES_REQUIRED stratified_calm_floor_200hz_run)
 # Pinned footprints, since windowed-versus-marched compares two runs of one binary and a change
 # to the arrivals' summation, bounce loss, ground geometry or completeness passes it: dropping the
 # extra arrivals from the energy sum and the primary's bounce loss moved the duct footprint by up
@@ -595,6 +840,51 @@ add_test(NAME stratified_duct_point_golden COMMAND golden_compare integrated/str
 add_test(NAME stratified_duct_plate_golden COMMAND golden_compare integrated/stratified_duct_plate.csv golden/stratified_duct_plate.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_windy_point_golden PROPERTIES FIXTURES_REQUIRED stratified_runs)
 set_tests_properties(stratified_duct_point_golden stratified_duct_plate_golden PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# --wind builds the profile in memory from one surface wind.  The run has to be exactly the one fed
+# that profile through --atmosphere (--write_atmosphere writes it), and refining its levels from 16
+# a decade to 64 must not move a plate microphone by 0.1 dB (it moves them 0.016).  The plate
+# over the Coyle array under stratified refraction is the configuration measured against the 2017
+# data, and the one whose thin-layer defect a calm level above the ground triggers.
+set(WIND_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b arrays/coyle_approach.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn)
+add_test(NAME wind_built COMMAND niceops ${WIND_RUN} --humidity 30 --wind 10kt,270,33 --write_atmosphere integrated/wind_profile.csv -o integrated/wind_built.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME wind_refined COMMAND niceops ${WIND_RUN} --humidity 30 --wind 10kt,270,33 --profile_levels 64 -o integrated/wind_refined.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_built wind_refined PROPERTIES FIXTURES_SETUP wind_runs)
+add_test(NAME wind_replayed COMMAND niceops ${WIND_RUN} --atmosphere integrated/wind_profile.csv -o integrated/wind_replayed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_replayed PROPERTIES FIXTURES_REQUIRED wind_runs FIXTURES_SETUP wind_replay_runs)
+add_test(NAME wind_is_its_written_profile COMMAND golden_compare integrated/wind_replayed.csv integrated/wind_built.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_is_its_written_profile PROPERTIES FIXTURES_REQUIRED wind_replay_runs)
+add_test(NAME wind_is_discretization_independent COMMAND golden_compare integrated/wind_refined.csv integrated/wind_built.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_is_discretization_independent PROPERTIES FIXTURES_REQUIRED wind_runs)
+# A calm observation is still air, stated rather than assumed, so a database referred to the air
+# takes the ground velocity as the airspeed instead of refusing for want of wind.
+add_test(NAME wind_calm COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 30 -t tracks/S-76D/197421AC.csv --wind 0kt,0 --gridstep 1640 -L warn -o integrated/wind_calm.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME wind_calm_air COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 30 -t tracks/S-76D/197421AC.csv --wind 0kt,0 --speed_reference air --gridstep 1640 -L warn -o integrated/wind_calm_air.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_calm wind_calm_air PROPERTIES FIXTURES_SETUP wind_calm_runs)
+add_test(NAME wind_calm_air_is_ground COMMAND golden_compare integrated/wind_calm_air.csv integrated/wind_calm.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_calm_air_is_ground PROPERTIES FIXTURES_REQUIRED wind_calm_runs)
+# The written profile against its closed forms, through the command line: the log law, the dry
+# lapse, the barometric formula for it and the held water vapor, computed independently
+# (tests/data/wind_profile_expected.py) for a run in feet that sets every shaping option and all
+# three surface overrides.  The replay test above compares the run with itself and cannot see a
+# length left in feet, an override not applied or --profile_levels not passed on; this can.
+add_test(NAME wind_profile_written COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --gridstep 1640 -L warn --wind 12kt,250,6.5 --roughness_length 0.1 --surface_layer_depth 3000 --profile_levels 10 --temperature 288.15 --humidity 40 --pressure 100 --write_atmosphere integrated/wind_profile_law.csv -o integrated/wind_profile_law_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_profile_written PROPERTIES FIXTURES_SETUP wind_law_runs)
+add_test(NAME wind_profile_is_its_law COMMAND golden_compare integrated/wind_profile_law.csv tests/data/wind_profile_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_profile_is_its_law PROPERTIES FIXTURES_REQUIRED wind_law_runs)
+# What --wind refuses, by message: a speed without its unit, a file profile beside it, its shaping
+# options without it, and a surface humidity nobody gave.  The unvalidated classes run, and say so.
+add_test(NAME wind_speed_needs_unit COMMAND niceops --wind 10,270 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_speed_needs_unit PROPERTIES PASS_REGULAR_EXPRESSION "--wind: name the speed's unit")
+add_test(NAME wind_with_atmosphere_refused COMMAND niceops --wind 10kt,270 --atmosphere atmospheres/isa.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_with_atmosphere_refused PROPERTIES PASS_REGULAR_EXPRESSION "give one or the other")
+add_test(NAME wind_options_need_wind COMMAND niceops --roughness_length 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_options_need_wind PROPERTIES PASS_REGULAR_EXPRESSION "--roughness_length shapes the profile --wind builds, and there is no --wind")
+add_test(NAME wind_anemometer_below_roughness_refused COMMAND niceops --wind 10kt,270,0.05 --roughness_length 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_anemometer_below_roughness_refused PROPERTIES PASS_REGULAR_EXPRESSION "the anemometer \\(0.05 ft\\) has to stand above it")
+add_test(NAME wind_needs_humidity COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --wind 10kt,270 --gridstep 1640 -o integrated/wind_needs_humidity.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_needs_humidity PROPERTIES PASS_REGULAR_EXPRESSION "--wind builds the humidity profile from the surface humidity, and none is set")
+add_test(NAME wind_stability_class_warns COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 30 -t tracks/S-76D/197421AC.csv --wind 10kt,270 --stability II --gridstep 1640 -o integrated/wind_stability_class.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_stability_class_warns PROPERTIES PASS_REGULAR_EXPRESSION "The stability classes are unvalidated")
 # --scattering fills shadows with scattered energy, a gain the peak search's bound has to allow: the
 # creeping-wave and scattering caps were the survivors of mutation testing, with no CTest running the option.
 add_test(NAME scattering_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --scattering 3e-6 --gridstep 492 -L warn -o integrated/scattering_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -608,3 +898,72 @@ set_tests_properties(scattering_windowed_is_exact PROPERTIES FIXTURES_REQUIRED s
 add_test(NAME refraction_point_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_point.csv integrated/refraction_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME refraction_plate_windowed_is_exact COMMAND golden_compare integrated/refraction_windy_plate.csv integrated/refraction_windy_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(refraction_point_windowed_is_exact refraction_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED refraction_windy_runs)
+# --terrain (src/terrain.hpp, terrain_ray in src/propagation.hpp).  terrain_files writes two small
+# synthetic grids around the demo track's frame (origin 39.81043 -74.42631, +x along 210 degrees,
+# its z = 0 at altitude 54.2651 ft): one level, at the height --terrain_offset -1250 and
+# --ground_elevation 54.2651 take back to z = 0 exactly, and one of hills falling toward the
+# approach's low end.  Level terrain must reproduce the run without it (point receivers, plates, and
+# scattered observers stood on it), byte for byte in fact; over the hills the peak search must still
+# equal the march, with the point receiver's ground model evaluated at each path's own height.
+set(TERRAIN_DEMO -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 -L warn)
+set(TERRAIN_PLATE --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc)
+set(TERRAIN_FLAT --terrain integrated/terrain_flat.nc --terrain_offset -1250 --ground_elevation 54.2651)
+set(TERRAIN_HILLS --terrain integrated/terrain_hills.nc --ground_elevation 54.2651)
+add_test(NAME terrain_files COMMAND niceops_unit_tests "[.terrain_files]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_files PROPERTIES FIXTURES_SETUP terrain_file)
+add_test(NAME terrain_flat_point_reference COMMAND niceops ${TERRAIN_DEMO} --ground_effect --gridstep 492 -o integrated/terrain_flat_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} --ground_effect --gridstep 492 -o integrated/terrain_flat_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_plate_reference COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_PLATE} --gridstep 492 -o integrated/terrain_flat_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_PLATE} --gridstep 492 -o integrated/terrain_flat_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_scattered_reference COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_PLATE} -b tests/data/coyle_approach_level.csv -o integrated/terrain_flat_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_scattered COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_PLATE} -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_flat_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_point_reference terrain_flat_plate_reference terrain_flat_scattered_reference PROPERTIES FIXTURES_SETUP terrain_flat_runs)
+set_tests_properties(terrain_flat_point terrain_flat_plate terrain_flat_scattered PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_flat_runs)
+add_test(NAME terrain_flat_point_is_flat COMMAND golden_compare integrated/terrain_flat_point.csv integrated/terrain_flat_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_plate_is_flat COMMAND golden_compare integrated/terrain_flat_plate.csv integrated/terrain_flat_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_scattered_is_flat COMMAND golden_compare integrated/terrain_flat_scattered.csv integrated/terrain_flat_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_point_is_flat terrain_flat_plate_is_flat terrain_flat_scattered_is_flat PROPERTIES FIXTURES_REQUIRED terrain_flat_runs)
+add_test(NAME terrain_hills_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --gridstep 492 -o integrated/terrain_hills_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_point_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --gridstep 492 -D integrated/terrain_hills_point_dnl.csv -o integrated/terrain_hills_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_PLATE} --gridstep 492 -o integrated/terrain_hills_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_PLATE} --gridstep 492 -D integrated/terrain_hills_plate_dnl.csv -o integrated/terrain_hills_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_point terrain_hills_point_marched terrain_hills_plate terrain_hills_plate_marched PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_hills_runs)
+add_test(NAME terrain_hills_point_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_point.csv integrated/terrain_hills_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_plate_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_plate.csv integrated/terrain_hills_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_point_windowed_is_exact terrain_hills_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_hills_runs)
+# ... and both are pinned, since the windowed/marched pair compares one binary with itself: passing
+# the plate's receiver as a point receiver at its call site (the plate then measures the source from
+# the line, not from its microphone) moved cells by 0.01 dB with every other terrain test green.
+# Made by the build that added them (adopt/terrain); regenerate only with a deliberate change.
+add_test(NAME terrain_hills_point_golden COMMAND golden_compare integrated/terrain_hills_point.csv golden/terrain_hills_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_plate_golden COMMAND golden_compare integrated/terrain_hills_plate.csv golden/terrain_hills_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_point_golden terrain_hills_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_hills_runs)
+# ... and the hills reach the ground model, not only the observers' heights: the same microphones
+# stood on the hills through an observer file, with no --terrain, differ (golden_compare's mismatch
+# is the pass) -- and without a ground model, where the terrain only places the observers, they agree.
+add_test(NAME terrain_hills_scattered COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_hills_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_scattered_placed COMMAND niceops ${TERRAIN_DEMO} --ground_effect -b integrated/terrain_hills_observers.csv -o integrated/terrain_hills_scattered_placed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_bare COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --no-ground_effect -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_hills_bare.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_bare_placed COMMAND niceops ${TERRAIN_DEMO} --no-ground_effect -b integrated/terrain_hills_observers.csv -o integrated/terrain_hills_bare_placed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_scattered terrain_hills_scattered_placed terrain_hills_bare terrain_hills_bare_placed PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_placed_runs)
+add_test(NAME terrain_reaches_the_ground_model COMMAND golden_compare integrated/terrain_hills_scattered.csv integrated/terrain_hills_scattered_placed.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_reaches_the_ground_model PROPERTIES FIXTURES_REQUIRED terrain_placed_runs PASS_REGULAR_EXPRESSION "mismatch at value")
+add_test(NAME terrain_without_ground_places_observers COMMAND golden_compare integrated/terrain_hills_bare.csv integrated/terrain_hills_bare_placed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_without_ground_places_observers PROPERTIES FIXTURES_REQUIRED terrain_placed_runs)
+# Refusals, passed on their message (a usage error or a missing file cannot satisfy them).
+add_test(NAME terrain_needs_a_frame COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --terrain integrated/terrain_flat.nc -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_needs_a_frame PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "--terrain needs to know where")
+add_test(NAME terrain_checks_ground_elevation COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_flat.nc --terrain_offset -1250 --gridstep 984 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_checks_ground_elevation PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "puts its z = 0 at altitude 54.2651")
+add_test(NAME terrain_refuses_states_underground COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_flat.nc --ground_elevation 54.2651 --gridstep 984 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_refuses_states_underground PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "different vertical datums")
+add_test(NAME terrain_checks_the_frame COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 200 ${TERRAIN_FLAT} --gridstep 984 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_checks_the_frame PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "rms from its x/y")
+add_test(NAME terrain_must_cover_the_observers COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --origin 39.95 -74.42631 --frame_bearing 210 ${TERRAIN_FLAT} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_must_cover_the_observers PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "has no height at")
+add_test(NAME terrain_refuses_refraction COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 ${TERRAIN_FLAT} --atmosphere atmospheres/B407_uniform.csv --refraction linear -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_refuses_refraction PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "does not combine with --refraction")
+add_test(NAME terrain_offset_needs_terrain COMMAND niceops ${TERRAIN_DEMO} --terrain_offset -10 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_offset_needs_terrain PROPERTIES PASS_REGULAR_EXPRESSION "need --terrain")
+add_test(NAME terrain_warns_of_observer_disagreement COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_PLATE} -b arrays/coyle_approach.csv -o integrated/terrain_disagreement.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_warns_of_observer_disagreement PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "disagree by more than")

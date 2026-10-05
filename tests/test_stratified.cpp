@@ -647,3 +647,265 @@ TEST_CASE("a deep duct retains more than 24 arrivals", "[stratified]")
     INFO("most arrivals retained: " << most);
     REQUIRE(most > 24);
 }
+
+namespace {
+
+// An upwind log law like day 284's: a 7 kt headwind at 6.6 ft over z0 = 0.003
+// ft, and the dry-adiabatic lapse, as effective sound speed along the path.
+// With `floor` > 0, the air below `floor` meters is calm and isothermal, as a
+// log law written with zero wind below its roughness length leaves it; with
+// `extra` levels inside that floor too, describing the same air.
+struct Upwind
+{
+    std::vector<double> z, c;
+    Upwind(double floor = 0.0, int extra = 0, double headwind = 7.0 * 0.514444)
+    {
+        const double ft[] = {0, 1, 3, 6.6, 10, 20, 33, 46, 80, 120, 200, 300, 400, 500, 650, 1000};
+        auto speed = [&](double height) {
+            const double t = 283.15 - 0.0098 * height;
+            const double z0 = 0.003 * ft2m, ref = 6.6 * ft2m;
+            const double u = height > z0 ? headwind * std::log(height / z0) / std::log(ref / z0) : 0.0;
+            return 20.05 * std::sqrt(t) - u;
+        };
+        z.push_back(0.0);
+        c.push_back(speed(0.0));
+        for (int k = 1; k <= extra; k++)
+        {
+            z.push_back(floor * k / (extra + 1.0));
+            c.push_back(c[0]);
+        }
+        if (floor > 0.0)
+        {
+            z.push_back(floor);
+            c.push_back(c[0]);
+        }
+        for (double h : ft)
+        {
+            if (h * ft2m > floor)
+            {
+                z.push_back(h * ft2m);
+                c.push_back(speed(h * ft2m));
+            }
+        }
+    }
+    Layers layers(double frequency = default_resolution_frequency) const
+    {
+        return Layers {z.data(), c.data(), z.size(), frequency};
+    }
+};
+
+} // namespace
+
+TEST_CASE("a calm floor thinner than a wavelength leaves the shadow boundary where it was", "[stratified]")
+{
+    // A log law written with no wind below its roughness length, on day 284's
+    // wind, leaves a calm, isothermal floor of 0.1 ft: as fast as the ground,
+    // so the limiting ray of the upwind shadow ran along it.  The downward
+    // family's last ray (1e-12 short of the ground's invariant) crossed it at a
+    // microradian, which put the boundary 20 km out, a figure set by the inset
+    // alone; flush microphones on it came out 22-28 dB low.  No band sees a
+    // floor that thin.  Plain ray theory is resolution_frequency 0.
+    const Upwind open;
+    for (double floor : {0.001, 0.1 * ft2m})
+    {
+        const Upwind calm(floor);
+        for (double z_s : {30.0, 100.0})
+        {
+            for (double z_r : {0.0, 0.5 * floor})
+            {
+                CAPTURE(floor, z_s, z_r);
+                const double b0 = layered_direct_eigenray(open.layers(), z_s, z_r, 1e6, -0.2).boundary;
+                const double b = layered_direct_eigenray(calm.layers(), z_s, z_r, 1e6, -0.2).boundary;
+                REQUIRE(std::isfinite(b0));
+                REQUIRE(std::isfinite(b));
+                // The floor may stretch the boundary by the cap's slack over
+                // what ray theory travels in a resolved turning, (1.5 - 4/3)
+                // k h^2: 1.4 m of 186 at 10 kHz, the most.
+                CHECK(std::fabs(b - b0) < 0.012 * b0);
+                for (double f : {0.8, 0.95, 1.05, 1.2})
+                {
+                    CAPTURE(f);
+                    const auto with = layered_direct_eigenray(calm.layers(), z_s, z_r, f * b0, -0.2);
+                    const auto without = layered_direct_eigenray(open.layers(), z_s, z_r, f * b0, -0.2);
+                    CHECK(with.lit == without.lit);
+                    // Short of the hand-over (handover_fraction), where the
+                    // layered ray's own spreading is what a run takes.
+                    if (f < handover_fraction)
+                        CHECK(std::fabs(20.0 * std::log10(with.spreading_range / without.spreading_range)) < 0.25);
+                }
+                if (floor > 0.01 && z_r == 0.0)
+                    CHECK(layered_direct_eigenray(calm.layers(0.0), z_s, z_r, 1e6, -0.2).boundary > 20.0 * b0);
+            }
+        }
+    }
+}
+
+namespace {
+
+// Every field the layered solve reports, compared exactly.
+bool same(const DirectEigenray& a, const DirectEigenray& b)
+{
+    auto eq = [](double x, double y) { return x == y || (std::isnan(x) && std::isnan(y)); };
+    return a.lit == b.lit && eq(a.launch, b.launch) && eq(a.arrival, b.arrival) && eq(a.spreading_range, b.spreading_range)
+            && eq(a.path_length, b.path_length) && eq(a.travel_time, b.travel_time) && eq(a.boundary, b.boundary)
+            && eq(a.shadow_depth, b.shadow_depth);
+}
+
+} // namespace
+
+TEST_CASE("the resolution limit leaves every resolved turning alone", "[stratified]")
+{
+    // In a linear gradient a ray grazing the fastest air travels (4/3) k h^2
+    // across the heights within one radian of it, 8/9 of the cap, so the limit
+    // must never bind there.  A level a millimeter off the fastest air, on the
+    // same line, keeps the walk from deciding that by its shortcut; it has to
+    // integrate.  With a cap of k h^2 every one of these would bind.
+    for (double gradient : {-5.0, -0.5, -0.05, 0.05, 0.5})
+    {
+        const double c0 = 340.0;
+        const std::vector<double> z {0.0, 1e-3, 0.4, 300.0};
+        std::vector<double> c;
+        for (double h : z)
+            c.push_back(c0 + gradient * h);
+        for (double frequency : {1000.0, 4000.0, 10000.0})
+        {
+            for (double z_s : {30.0, 100.0})
+            {
+                for (double z_r : {0.0, 1e-3, 1.2})
+                {
+                    const Layers resolved {z.data(), c.data(), z.size(), frequency};
+                    const Layers plain {z.data(), c.data(), z.size(), 0.0};
+                    for (double r : {50.0, 200.0, 800.0, 3000.0})
+                    {
+                        CAPTURE(gradient, frequency, z_s, z_r, r);
+                        CHECK(same(layered_direct_eigenray(resolved, z_s, z_r, r, -0.2),
+                                layered_direct_eigenray(plain, z_s, z_r, r, -0.2)));
+                    }
+                }
+            }
+        }
+    }
+    // Nor on a log law without a floor, whose lowest layers are steep.
+    const Upwind open;
+    for (double z_s : {10.0, 30.0, 100.0})
+        for (double z_r : {0.0, 0.02, 1.2})
+            for (double r : {100.0, 300.0, 600.0, 2000.0})
+            {
+                CAPTURE(z_s, z_r, r);
+                CHECK(same(layered_direct_eigenray(open.layers(), z_s, z_r, r, -0.2),
+                        layered_direct_eigenray(open.layers(0.0), z_s, z_r, r, -0.2)));
+            }
+}
+
+TEST_CASE("a path shorter than the turning region keeps its rays", "[stratified]")
+{
+    // The turning region belongs to the air, not to the path.  Cut off at the
+    // path's ends, a low source's region was as short as the path and the cap
+    // bound on smooth gradients: under a plain lapse a 1.5 m source over a
+    // 1.2 m microphone had its boundary brought in from 789 m to 34 m at
+    // 10 kHz, and at 200 Hz sources to 10 m lost theirs in any light wind.
+    // Under a tailwind the source's own height is the fastest air and the
+    // downward family's end is the horizontal launch, where the families
+    // launched up to turn aloft take over; capping it opened a gap between
+    // them, receivers in the lit zone with no ray.  None of these resolve
+    // anything differently from plain ray theory.
+    for (double wind : {-1.0, -0.1, 0.0, 0.03, 0.3, 3.6})
+    {
+        const Upwind air(0.0, 0, wind);
+        for (double frequency : {200.0, 1000.0, 10000.0})
+            for (double z_s : {1.5, 3.0, 5.0, 10.0})
+                for (double z_r : {0.0, 1.2})
+                    for (double r : {30.0, 100.0, 300.0, 800.0, 1e7})
+                    {
+                        CAPTURE(wind, frequency, z_s, z_r, r);
+                        CHECK(same(layered_direct_eigenray(air.layers(frequency), z_s, z_r, r, -0.05),
+                                layered_direct_eigenray(air.layers(0.0), z_s, z_r, r, -0.05)));
+                    }
+    }
+}
+
+TEST_CASE("a flat floor's boundary does not depend on the levels that describe it", "[stratified]")
+{
+    // The turning region is a set of heights, found by integrating the vertical
+    // phase, not a count of layers: the same air described by more levels
+    // gives the same boundary.
+    for (double floor : {0.1 * ft2m, 1.0})
+    {
+        const Upwind few(floor), many(floor, 4);
+        for (double z_s : {30.0, 100.0})
+        {
+            for (double z_r : {0.0, 0.25 * floor})
+            {
+                CAPTURE(floor, z_s, z_r);
+                const double a = layered_direct_eigenray(few.layers(), z_s, z_r, 1e6, -0.2).boundary;
+                const double b = layered_direct_eigenray(many.layers(), z_s, z_r, 1e6, -0.2).boundary;
+                REQUIRE(std::isfinite(a));
+                CHECK(b == Catch::Approx(a).epsilon(1e-6));
+            }
+        }
+    }
+}
+
+TEST_CASE("a thick flat floor is followed as far as the highest band resolves it", "[stratified]")
+{
+    // A meter of calm, isothermal air is ten wavelengths thick at 10 kHz and a
+    // third of one at 100 Hz.  A wave confined to it stays there for about
+    // k h^2, so the higher the run's highest band, the farther the rays along
+    // it are followed -- never to plain ray theory's 700 km.
+    const Upwind calm(1.0), open;
+    for (double z_s : {30.0, 100.0})
+    {
+        CAPTURE(z_s);
+        const double b0 = layered_direct_eigenray(open.layers(), z_s, 0.0, 1e7, -0.2).boundary;
+        double previous = b0;
+        for (double frequency : {100.0, 1000.0, 10000.0})
+        {
+            CAPTURE(frequency);
+            const double b = layered_direct_eigenray(calm.layers(frequency), z_s, 0.0, 1e7, -0.2).boundary;
+            CHECK(b > previous);
+            // At most the cap over the floor and a turning region above it no
+            // taller than the floor again.
+            const double k = 2.0 * pi * frequency / calm.c[0];
+            CHECK(b - b0 < 1.5 * k * 4.0 + 100.0);
+            previous = b;
+        }
+        CHECK(layered_direct_eigenray(calm.layers(0.0), z_s, 0.0, 1e7, -0.2).boundary > 1e5);
+    }
+}
+
+TEST_CASE("a run's resolution frequency reaches every path's layers", "[stratified]")
+{
+    // niceops hands LayeredSoundSpeed its highest band, and each path's Layers
+    // (path_layers) must carry it to resolved_pass, or a run quietly takes the
+    // 10 kHz default whatever its bands.  Through layered_direct_ray, on
+    // atmospheres/example_windy_calm_floor.csv: plain ray theory (0) still runs
+    // the upwind boundary along the floor, the default puts it back where the
+    // profile without the floor has it.
+    const auto read = [](const char* path) {
+        return read_atmosphere_profile(path, feet, 0.0).with_hydrostatic_pressure(101.325);
+    };
+    const auto floored = read("atmospheres/example_windy_calm_floor.csv");
+    const auto open = read("atmospheres/example_windy.csv");
+    const EffectiveSoundSpeed linear(open, 90.0, 0.0, open.top() + 20.0);
+    constexpr double z_s = 100.0, r = 400.0;
+    const Vec3 source(0.0, 0.0, z_s);
+    const Vec3 receiver(-r, 0.0, 0.0); // the wind blows east; propagate west
+    std::vector<double> scratch;
+    auto boundary = [&](const LayeredSoundSpeed& air) {
+        const auto ray = layered_direct_ray(air, linear, source, linear.moments(z_s), receiver,
+                linear.moments(0.0), scratch);
+        return ray.direct.boundary;
+    };
+    REQUIRE(LayeredSoundSpeed(floored, 90.0).resolution_frequency() == default_resolution_frequency);
+    REQUIRE(LayeredSoundSpeed(floored, 90.0, 0.0).resolution_frequency() == 0.0);
+    const double b0 = boundary(LayeredSoundSpeed(open, 90.0));
+    const double plain = boundary(LayeredSoundSpeed(floored, 90.0, 0.0));
+    const double resolved = boundary(LayeredSoundSpeed(floored, 90.0));
+    const double low = boundary(LayeredSoundSpeed(floored, 90.0, 200.0));
+    INFO("boundary without the floor " << b0 << " m; with it, plain " << plain << ", 10 kHz "
+                                       << resolved << ", 200 Hz " << low);
+    REQUIRE(std::isfinite(b0));
+    CHECK(plain > 20.0 * b0);
+    CHECK(std::fabs(resolved - b0) < 0.025 * b0);
+    CHECK(low != resolved);
+}
