@@ -598,6 +598,9 @@ struct RunOptions
     // Which velocity the flight conditions are taken from (--speed_reference).
     // Unset follows each database's own speed_reference attribute.
     std::optional<SpeedReference> speed_reference;
+    // Where the sphere's nose comes from (--nose).  Unset follows each
+    // database's own azimuth_reference attribute.
+    std::optional<NoseSource> nose;
     // Meters, after the --units conversion; NaN means the trim is off.
     double trim_start = 0.0;
     double utc_offset = 0.0;
@@ -688,6 +691,110 @@ bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
     return true;
 }
 
+// The compass bearing of the local +x axis when the run knows it: --frame_bearing,
+// or east when a geodetic frame was settled without one (it is then east/north).
+// NaN when neither, which for an AC track means its x/y may be turned by any
+// angle.
+double known_frame_bearing(const RunOptions& options)
+{
+    if (!std::isnan(options.frame_bearing))
+        return options.frame_bearing;
+    return options.geodetic.frame ? 90.0 : std::numeric_limits<double>::quiet_NaN();
+}
+
+// Where one trajectory's sphere nose comes from, and the offset that turns its
+// compass headings into the local frame (see heading_offset).
+struct NoseSetup
+{
+    NoseSource source = NoseSource::velocity;
+    std::optional<double> offset;
+};
+
+// Settle the nose: --nose, or what the database's azimuth_reference implies
+// (heading for "heading", the velocity for "track" or nothing).  --nose against
+// a database that records the other is a warning, since the sphere is then read
+// a crab angle off the direction it was built along.
+//
+// Heading mode takes its offset from the frame and nowhere else.  heading_offset's
+// fit, the fallback the hover nose uses when the run knows no frame, is the
+// circular mean of heading against track: it folds the track's mean crab into
+// the offset, and heading mode read through it would point the nose back along
+// the mean track, undoing the very thing it is for.  So a run with no frame is
+// refused.  A track with no heading at all is refused when --nose heading was
+// asked for; when only the database implied it, the nose falls back to the
+// velocity with a warning, there being nothing the run could be given instead.
+NoseSetup settle_nose(const Trajectory& trajectory, const Database& database,
+        const RunOptions& options, const std::string& trajectory_file)
+{
+    const auto& recorded = database.recorded_azimuth_reference();
+    const AzimuthReference built = database.azimuth_reference();
+    NoseSetup setup;
+    setup.source = built == AzimuthReference::heading ? NoseSource::heading : NoseSource::velocity;
+    if (options.nose)
+    {
+        const bool wants_heading = *options.nose == NoseSource::heading;
+        if (recorded && wants_heading != (built == AzimuthReference::heading))
+        {
+            warn("--nose ", to_string(*options.nose), " overrides the database, whose sphere "
+                    "azimuth is measured from the ", to_string(built), " (its azimuth_reference "
+                    "attribute): the sphere is read turned by the crab angle from the direction "
+                    "it was built along.");
+        }
+        else if (!recorded && wants_heading)
+        {
+            log("--nose heading on a database that does not record its azimuth reference, "
+                "which is taken to be the track.");
+        }
+        setup.source = *options.nose;
+    }
+    const auto& states = trajectory.states;
+    const double frame = known_frame_bearing(options);
+    if (setup.source != NoseSource::heading)
+    {
+        setup.offset = heading_offset(states, frame, setup.source == NoseSource::ground_velocity);
+        return setup;
+    }
+    const char* asked = options.nose ? "--nose heading" : "The database's azimuth_reference (heading)";
+    const auto with_heading = std::count_if(states.begin(), states.end(),
+            [](const State& s) { return std::isfinite(s.heading); });
+    if (with_heading == 0)
+    {
+        if (options.nose)
+        {
+            input_error("--nose heading needs the nose's compass heading, and ", trajectory_file,
+                    " carries none: a WGS84 track has no heading column (the AC format's "
+                    "column 9 and a static operation's heading column are read). Use --nose "
+                    "velocity.");
+        }
+        warn("The database measures its sphere azimuth from the heading, and ", trajectory_file,
+                " carries none (a WGS84 track has no heading column): the nose follows the "
+                "velocity instead, as if the aircraft flew with no crab. Give --nose velocity "
+                "to say so.");
+        setup.source = NoseSource::velocity;
+        setup.offset = heading_offset(states, frame);
+        return setup;
+    }
+    if (static_cast<std::size_t>(with_heading) != states.size())
+    {
+        const auto first = std::find_if(states.begin(), states.end(),
+                [](const State& s) { return !std::isfinite(s.heading); });
+        input_error(asked, " needs a heading at every state, and ", trajectory_file, " has ",
+                states.size() - static_cast<std::size_t>(with_heading), " without one, the first "
+                "at t = ", first->t, " s.");
+    }
+    if (std::isnan(frame))
+    {
+        input_error(asked, " turns each state's compass heading into the local frame, and "
+                "needs that frame's bearing: give --frame_bearing, the compass bearing of +x "
+                "(the shipped AC tracks run +x along 210 degrees)", options.nose ? "" : ", or --nose "
+                "velocity", ". It is not inferred from the track, as the hover nose's offset is "
+                "when no frame is given: that fit absorbs the mean crab (heading minus track), "
+                "and the nose would come back along the mean track.");
+    }
+    setup.offset = frame * pi / 180.0;
+    return setup;
+}
+
 // Compute one trajectory's footprint and write its outputs, returning the
 // trajectory itself for the single-path plotting block.  Anything that throws
 // in here condemns this trajectory alone; the caller catches and moves on.
@@ -776,6 +883,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // database's conditions were taken from.  After the trim, which cuts the
     // approach at its slowest point over the ground, not through the air.
     const bool air_referenced = refer_to_database_speed(trajectory, database, options);
+    // And the sphere's nose, which may be refused, before anything costs time.
+    const NoseSetup nose_setup = settle_nose(trajectory, database, options, job.trajectory);
 
     // And time series data
     const std::size_t nt = trajectory.states.size();
@@ -826,17 +935,37 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         night[it] = is_night(trajectory.states[it].utcsec, options.utc_offset) ? 1 : 0;
     }
 
-    // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
-    const auto offset = heading_offset(trajectory.states, options.frame_bearing);
+    // The sphere's nose: the velocity, or at hover the heading; or under --nose
+    // heading the heading throughout (nose_direction, settle_nose).
+    const auto& offset = nose_setup.offset;
+    const NoseSource nose_source = nose_setup.source;
     std::size_t by_heading = 0, slow = 0, load_capped = 0;
+    // Heading minus ground track over the states the track is defined at, as a
+    // circular mean and an rms about it (heading mode's log).
+    double crab_cos = 0.0, crab_sin = 0.0;
+    std::vector<double> crabs;
     std::size_t mu_clamped = 0, fpa_clamped = 0, ct_clamped = 0, load_scaled = 0;
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
     {
-        const auto velocity = air_velocity(state);
-        const auto nose = nose_direction(state, offset);
-        if (std::hypot(velocity[0], velocity[1]) < velocity_nose_speed)
+        const auto velocity = nose_source == NoseSource::ground_velocity ? ground_velocity(state)
+                                                                          : air_velocity(state);
+        const auto nose = nose_direction(state, offset, nose_source);
+        if (nose_source == NoseSource::heading)
+        {
+            if (std::hypot(state.vx, state.vy) >= velocity_nose_speed)
+            {
+                // Compass heading minus compass track: the track's local angle
+                // less the nose's, the frame turning the other way.
+                const double crab = std::remainder(std::atan2(state.vy, state.vx)
+                        - std::atan2(nose[1], nose[0]), 2.0 * pi);
+                crab_cos += std::cos(crab);
+                crab_sin += std::sin(crab);
+                crabs.push_back(crab);
+            }
+        }
+        else if (std::hypot(velocity[0], velocity[1]) < velocity_nose_speed)
         {
             slow++;
             if (nose != velocity)
@@ -878,7 +1007,38 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 "fixed_load_factor database, where the load-factor correction is an extrapolation. "
                 "Held at ", options.max_load_factor, " g (--max_load_factor).");
     }
-    if (slow > 0)
+    if (nose_source == NoseSource::heading)
+    {
+        std::ostringstream crab_text;
+        if (!crabs.empty())
+        {
+            const double mean = std::atan2(crab_sin, crab_cos);
+            double sum = 0.0;
+            for (const double crab : crabs)
+            {
+                const double d = std::remainder(crab - mean, 2.0 * pi);
+                sum += d * d;
+            }
+            const double mean_degrees = mean * 180.0 / pi;
+            crab_text << " Over the " << crabs.size() << " states above 8 kt it sits "
+                      << mean_degrees << " degrees from the ground track (heading minus track, "
+                      << "positive with the nose right of the track), rms "
+                      << std::sqrt(sum / static_cast<double>(crabs.size())) * 180.0 / pi
+                      << " degrees about that.";
+            // A helicopter crabs by the wind's share of its airspeed; tens of
+            // degrees on average over a whole track is a frame turned the wrong
+            // way, not a crosswind.
+            if (std::fabs(mean_degrees) > 45.0)
+            {
+                warn("--nose heading: the heading sits ", mean_degrees, " degrees from the ground "
+                        "track on average over ", job.trajectory, ". Is --frame_bearing (",
+                        *offset * 180.0 / pi, ") the bearing of this track's +x axis?");
+            }
+        }
+        log("The sphere's nose is the compass heading at all ", nt, " states, turned into the "
+            "local frame by a frame bearing of ", *offset * 180.0 / pi, " degrees.", crab_text.str());
+    }
+    else if (slow > 0)
     {
         if (by_heading > 0)
             info(by_heading, " of ", slow, " states under 8 kt turn the sphere's nose from the velocity "
@@ -2512,6 +2672,8 @@ int run(int argc, char* argv[])
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
     std::string speed_reference;
+    // Empty follows the database's azimuth_reference attribute.
+    std::string nose;
     // WGS84 input and output.  An unset origin is taken from the first geodetic
     // trajectory; an unset bearing leaves the axes east/north, which is what a
     // map wants -- the shipped AC tracks are the other case, their +x running
@@ -2675,9 +2837,17 @@ int run(int argc, char* argv[])
     app.add_option("--frame_bearing", frame_bearing,
             "Compass bearing, degrees, of the local +x axis. Default: x east, y north. "
             "The shipped AC tracks use 210.");
+    app.add_option("--nose", nose,
+            "Where the sphere's nose (its azimuth reference) points: velocity, the velocity "
+            "--speed_reference selects; ground_velocity, the ground velocity whatever "
+            "--speed_reference says; or heading, the track's compass heading at every speed "
+            "(needs --frame_bearing for an AC track, and a heading column). The first two turn "
+            "to the heading below 8 kt. Default: what the database's azimuth_reference records; "
+            "velocity if it records nothing.")
+            ->check(CLI::IsMember({"velocity", "ground_velocity", "heading"}));
     app.add_option("--speed_reference", speed_reference,
-            "Which velocity sets the flight condition -- mu, the path angle and the sphere's "
-            "nose: ground, or air (the ground velocity less the --atmosphere profile's wind at "
+            "Which velocity sets the flight condition -- mu, the path angle and (under --nose "
+            "velocity) the sphere's nose: ground, or air (the ground velocity less the --atmosphere profile's wind at "
             "the aircraft). Default: what the database records it was built with; ground if it "
             "records nothing.")
             ->check(CLI::IsMember({"ground", "air"}));
@@ -3165,6 +3335,8 @@ int run(int argc, char* argv[])
     options.frame_bearing = frame_bearing;
     if (!speed_reference.empty())
         options.speed_reference = parse_speed_reference(speed_reference);
+    if (!nose.empty())
+        options.nose = parse_nose_source(nose);
     if (!atmosphere_file.empty())
     {
         options.atmosphere = read_atmosphere_profile(atmosphere_file, unit, ground_elevation);

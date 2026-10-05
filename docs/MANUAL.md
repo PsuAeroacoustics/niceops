@@ -26,6 +26,7 @@ to know before changing the numerics, are in [`CLAUDE.md`](../CLAUDE.md).
   - [Spectra](#spectra)
   - [Where the 2017 databases come from](#where-the-2017-databases-come-from)
   - [Speed reference](#speed-reference)
+  - [The sphere's nose](#the-spheres-nose)
 - [Propagation](#propagation)
   - [Broadband and spectral paths](#broadband-and-spectral-paths)
   - [Stratified atmosphere](#stratified-atmosphere)
@@ -96,7 +97,9 @@ database's conditions, and neither says which directions on the sphere were meas
 
 Each sphere is fixed to the rotor. Its axes are the tip-path-plane normal, the nose and
 starboard. The nose is the velocity projected into the tip-path plane. At hover it is the
-heading instead: below 3 kt the heading alone, blending into the velocity by 8 kt. The
+heading instead: below 3 kt the heading alone, blending into the velocity by 8 kt.
+`--nose heading` takes the heading at every speed, which in a crosswind is a crab angle off the
+track ([The sphere's nose](#the-spheres-nose)). The
 direction from the source to the observer gives two angles (`lookup_angles` in
 `src/sphere_database.cpp`):
 
@@ -174,7 +177,7 @@ operations that reach a threshold.
 | `--band_history` | Prefix for per-observer band time history files (see Outputs), named as `-i` names its files. Needs the spectral path. |
 | `-m`, `--metricfile` | Append overall noise metrics to this file: the case name, the energy mean of the per-observer SELs (10 lg of the mean of 10^(L/10), not a mean of decibels), their maximum, and the share above 65 dB. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
-| `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
+| `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. It also turns the AC format's compass heading into the local frame, for the hover nose and `--nose heading`. |
 | `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. |
 | `--path_smoothing` | How far, RMS per axis in `--units`, the path fitted through a WGS84 track may sit from the given positions. Default 10 ft. Zero interpolates exactly, which on measured positions makes the load factor track coordinate rounding. |
 | `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. Required with `-D` when the track has no `utcsec` column (it used to default to midnight, which is night, so the whole footprint took the 10 dB penalty). |
@@ -208,7 +211,8 @@ operations that reach a threshold.
 | `--tunneling` | `--refraction stratified`: also take the rays turned back from aloft that turn again just above the microphone, which the wave reaches through the layer below them (an Airy tail per band). Off by default; see "Micro-shadows and skip zones" below. |
 | `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail per band. Off by default; see below. |
 | `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γT, instead of `--shadow_floor`. Default 0 (off). Needs `--refraction` and `--ground_effect`. |
-| `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
+| `--nose` | Where the sphere's nose points: `velocity`, the velocity `--speed_reference` selects; `ground_velocity`, the ground velocity whatever `--speed_reference` says; or `heading`, the track's compass heading at every speed, so a crabbing aircraft's sphere turns with its airframe. `heading` needs a frame (`--frame_bearing` for an AC track) and a heading column. The first two turn to the heading below 8 kt. Default: what the database's `azimuth_reference` records, `velocity` if it records nothing. See below. |
+| `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and, under `--nose velocity`, the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
 | `--ground_effect`, `--no-ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. On by default wherever the spectral path runs on a database that carries spectra; `--no-ground_effect` turns it off. Asking for it with `--no-spectral` is an error. |
 | `--max_load_factor` | Largest load factor, in g, that a `fixed_load_factor` database's load-factor correction is taken to (default 2). Above it the correction is held, and the run says how many states it held. |
 | `--accept_vehicle_mismatch` | A vehicle file that disagrees with the database by more than 2 percent in tip speed, rotor radius, weight or thrust coefficient at 1 g is refused. Between 1 and 2 percent it is a warning; this flag turns the refusal into a warning. |
@@ -446,7 +450,7 @@ uses.
 
 The shipped AC tracks are the case where the axes are not east/north: their x/y run along a
 compass bearing of **210°**, the approach heading, not along the wandering heading in the
-file's own column 8. Their ground plane sits 54.2651 ft below their altitude column. So
+file's own column 9. Their ground plane sits 54.2651 ft below their altitude column. So
 ```sh
 ./build/niceops -t track.csv --origin 39.8104276 -74.4263086 --frame_bearing 210 \
                 --ground_elevation 54.2651
@@ -518,16 +522,17 @@ reached the fastest +35-degree condition gave an infinite SEL.
 ### Speed reference
 
 A database's flight conditions come from some velocity: μ = |v| / V_tip, the path angle
-asin(v_z / |v|), and the sphere's azimuth reference, which is v projected into the tip-path
-plane. Every database so far took v over the ground. `--speed_reference air` takes it
+asin(v_z / |v|), and, unless `--nose` says otherwise, the sphere's azimuth reference, which is v
+projected into the tip-path plane. Every database so far took v over the ground. `--speed_reference air` takes it
 through the air instead: the ground velocity less the profile's wind at each state's height,
 turned into the local frame by `--frame_bearing`. The load factor, and so CT, stays inertial,
 because the rotor's thrust balances the aircraft's acceleration over the ground whatever
 the air does.
 
 - **The database says which it is,** in a root text attribute `speed_reference`, `ground`
-  or `air`, and NICE-OPS follows it by default. A file without one is ground, which is
-  every database so far; panam does not write the attribute yet.
+  or `air`, and NICE-OPS follows it by default. A file without one is ground. panam writes
+  the attribute (`build_empirical_database(..., speed_reference=...)`, default `ground`; in
+  panam eeb040b and since), and the 2017 databases it builds record `ground`.
   Giving `--speed_reference` against the database is logged as an override.
 - **Air needs a wind.** With no wind columns in `--atmosphere`, an air-referenced run is
   refused rather than taken as calm. `--speed_reference ground` says so explicitly.
@@ -537,6 +542,102 @@ the air does.
 What it moves, on the 2017 Noise Abatement approaches: 1–3% in μ and about 1° of nose on
 calm days. On a 15 kt day, 5–10% in μ and 8–15° of nose. Matching a ground-built database with
 an air-referenced trajectory mixes the two, so change both together.
+
+### The sphere's nose
+
+The sphere's azimuth is measured from its nose, so where the nose points decides which side of
+the sphere every observer reads. `--nose` chooses it:
+
+- **`velocity`** (the default): the velocity `--speed_reference` selects, projected into the
+  tip-path plane. At hover the velocity is drift, so below 3 kt the nose is the heading, turning
+  into the velocity by 8 kt on a smoothstep.
+- **`ground_velocity`**: the ground velocity, whatever `--speed_reference` says, with the same
+  turn to the heading at hover. Under `--speed_reference ground` it is `velocity`. It lets μ be
+  taken through the air while the nose stays on the ground track: on the windy day of the 2017
+  test (day 284, `profile_plate`, the held-out database) the along-track wind's share of
+  `--speed_reference air`, which moves μ, took the SEL rms from 2.36 to 2.51 dB, and the
+  cross-track share, which mostly turns the nose, took it to 2.25.
+- **`heading`**: the state's compass heading, at every speed. In a crosswind a helicopter flies
+  with its nose turned into the wind by the crab angle, about asin(crosswind / airspeed), while
+  its track runs straight. The rotor's and the airframe's directivity turn with the airframe, not
+  with the track.
+
+**How the heading enters.** The local frame's angle (counterclockwise from +x) of compass heading
+h is *b* − h, *b* being the frame's bearing, since compass bearings turn clockwise from north.
+*b* is `--frame_bearing`, or 90 (east) for a run whose geodetic frame was settled without one.
+The nose is that horizontal direction carrying the velocity's climb, v<sub>z</sub> over the
+horizontal speed, so a heading along the track gives exactly the nose `velocity` does, climbs and
+turns included; below 8 kt the climb fades out on the hover smoothstep. The sphere frame projects
+it into the tip-path plane as it does the velocity. μ, the path angles and C<sub>T</sub> do not
+change: they are the flight condition, and come from the velocity as before.
+
+**The frame has to be known, and it is never inferred.** When a run has no frame, the hover nose
+takes its offset from the track itself: the circular mean of heading against track over the
+states above 20 kt. That fit absorbs the track's mean crab, so heading mode read through it would
+point the nose back along the mean track and undo itself. So:
+
+- **No frame** (an AC track without `--frame_bearing`, and no `--origin`) is refused, with the
+  reason. The shipped AC tracks need `--frame_bearing 210`; each 2017 track needs its own (the
+  validation harness derives it per run, 270 for every day-284 steady run).
+- **No heading column** (a WGS84 track) is refused under `--nose heading`. When only the database
+  implies heading mode (below), the nose falls back to the velocity, as if the aircraft flew
+  with no crab, with a warning: there is nothing the run could be given instead.
+- **A state without a heading** in a track that has the column is refused, naming its time.
+- The log gives the mean crab (heading minus ground track, positive with the nose right of the
+  track) and its rms over the states above 8 kt, and warns if the mean is past 45 degrees, which
+  is a frame turned the wrong way rather than a crosswind.
+
+**The hover nose takes the frame too.** With a frame known, the heading below 8 kt in `velocity`
+and `ground_velocity` modes is turned by it, rather than by the fit; the fit is kept only for a
+run with no frame. On a crabbed approach ending in hover the fit turned the hover nose by the
+approach's mean crab: 2-7 degrees (median 4.6) over the day-286 approaches, had they ended in
+hover. This changes only tracks that both fly
+above 20 kt for 50 states and slow below 8 kt. No shipped track and no 2017 B407 flight track
+goes under 13 kt, and the 2017 hovers have no fast states (they took the frame already), so no
+golden or validation result moved. A static operation with `--origin` and no
+`--frame_bearing` now reads its headings as compass bearings in the east/north frame, where it
+oriented the sphere by its zero velocity before.
+
+**The database can say which it was built along**, in a root text attribute `azimuth_reference`:
+`track` (the velocity, which is how every database so far was built) or `heading`. Absent is
+`track`. NICE-OPS defaults the nose to it: `heading` for `heading`, `velocity` otherwise. An
+explicit `--nose` wins, with a warning when the file records the other; a sphere read along a
+nose it was not built along is turned by the crab. `--export_sphere` carries the attribute on
+when the source records it. A value other than `track` or `heading` is refused.
+
+**What it does, measured.** On the 2017 test's windy day (day 284 steady runs, 16 held-out runs,
+729 microphones, the `min2_no284` database built without them) every run flew west with the wind
+6-10 kt from its right, and crabbed 4 to 19 degrees into it, 12 on average, the most at the
+slowest speeds. With
+`--nose heading` against the same database, which is labeled along the track, and the paper's
+inputs otherwise:
+
+| Configuration | SEL rms, `velocity` | SEL rms, `heading` | Change (95% run bootstrap) | 5–10° elevation |
+| --- | --- | --- | --- | --- |
+| `stratified_plate`, day 284 | 1.69 dB | 1.54 dB | −0.15 [−0.28, −0.02] | 3.02 → 2.26 |
+| `station_plate`, day 284 | 2.35 dB | 2.19 dB | −0.17 [−0.28, −0.03] | 5.76 → 5.22 |
+| `station_plate`, day 286 (calm) | 1.26 dB | 1.24 dB | −0.02 [−0.05, +0.01] | 1.83 → 1.69 |
+
+LAF<sub>max</sub> rms moves by −0.14 dB on day 284 (`stratified_plate`) and −0.01 on day 286.
+Placebo runs, which turned every run's nose by a fixed 13 degrees rather than by its own crab,
+show it is each run's own crab that helps: on day 284 the fixed turn in the crab's direction
+gave −0.03 [−0.22, +0.16] dB, the opposite turn +0.47, and on the calm day it cost +0.29. The option was first emulated by turning
+each track's velocity onto its heading; the option reproduces that to 0.01 dB in rms, and up to
+0.5 dB at a microphone, because turning the velocity also moved the path angle relative to the
+tip-path plane by up to 1.4 degrees in a turn, where the option leaves the flight condition
+alone. The runs are the validation harness's paper cases (`paper/fidelity_study.py`), each
+given `--nose heading` and its own `--frame_bearing`, scored as `paper/results.py` scores them,
+with the bootstrap resampling whole runs.
+
+**How it is checked.** Unit tests pin the crab's sign against a synthetic crosswind whose crab
+is known (and against `CompassToLocal`, which turns the wind, so the two conventions are one),
+the heading-along-track nose against the velocity's sphere frame through a tilted tip-path plane,
+the climb's fade at hover, and the frame's precedence over the fit (and a CTest, two tracks
+ending in the same hover after approaches that differ only in their crab). CTests run the demo track
+with its heading replaced by its own ground track (heading mode reproduces the default to 1e-9),
+and turned 15 degrees (the footprint moves); the database attribute selecting heading mode by
+itself; each refusal by its message; the windowed peak search staying exact under heading noses;
+and `ground_velocity` differing from the air nose in a wind.
 
 ## Propagation
 
@@ -1674,6 +1775,9 @@ these in mind. The largest is the first:
   were meters before `--units` existed ([Units](#units)).
 - **Stratified propagation keeps every arrival** it solves, where it kept 24
   ([Refraction through the profile's layers](#refraction-through-the-profiles-layers)).
+- **The hover nose is turned by the frame** whenever the run knows one, not by a fit to the
+  track that absorbed its mean crab. Only tracks that fly fast and then hover move
+  ([The sphere's nose](#the-spheres-nose)).
 
 ### The 4x EAA multiplier
 

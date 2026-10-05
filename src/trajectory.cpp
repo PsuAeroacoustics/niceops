@@ -1039,19 +1039,62 @@ void Trajectory::watts_trim(double xstart_meters)
     states.swap(sub);
 }
 
-std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing)
+std::optional<NoseSource> parse_nose_source(const std::string& name)
 {
+    if (name == "velocity")
+        return NoseSource::velocity;
+    if (name == "ground_velocity")
+        return NoseSource::ground_velocity;
+    if (name == "heading")
+        return NoseSource::heading;
+    return std::nullopt;
+}
+
+const char* to_string(NoseSource source)
+{
+    switch (source)
+    {
+    case NoseSource::ground_velocity:
+        return "ground_velocity";
+    case NoseSource::heading:
+        return "heading";
+    case NoseSource::velocity:
+        break;
+    }
+    return "velocity";
+}
+
+double nose_velocity_weight(double speed)
+{
+    if (speed <= heading_nose_speed)
+        return 0.0;
+    if (speed >= velocity_nose_speed)
+        return 1.0;
+    const double s = (speed - heading_nose_speed) / (velocity_nose_speed - heading_nose_speed);
+    return s * s * (3.0 - 2.0 * s);
+}
+
+std::optional<double> heading_offset(const std::vector<State>& states, double frame_bearing,
+        bool ground)
+{
+    const bool has_heading = std::any_of(states.begin(), states.end(),
+            [](const State& s) { return !std::isnan(s.heading); });
+    if (!has_heading)
+        return std::nullopt;
+    // A known frame wins.  The fit below absorbs the track's mean crab, which on
+    // a crabbed approach ending in hover turned the hover nose 2-7 degrees off
+    // the heading the file gives.
+    if (!std::isnan(frame_bearing))
+        return frame_bearing * pi / 180.0;
     constexpr double fast = 20.0 * 1852.0 / 3600.0; // m/s
     constexpr std::size_t enough = 50;
     double sum_cos = 0.0, sum_sin = 0.0;
     std::size_t count = 0;
-    bool has_heading = false;
     for (const auto& s : states)
     {
         if (std::isnan(s.heading))
             continue;
-        has_heading = true;
-        const auto v = air_velocity(s);
+        const auto v = ground ? ground_velocity(s) : air_velocity(s);
         if (std::hypot(v[0], v[1]) < fast)
             continue;
         const double offset = std::atan2(v[1], v[0]) + s.heading * pi / 180.0;
@@ -1059,32 +1102,37 @@ std::optional<double> heading_offset(const std::vector<State>& states, double fr
         sum_sin += std::sin(offset);
         count++;
     }
-    if (!has_heading)
-        return std::nullopt;
     if (count >= enough)
         return std::atan2(sum_sin, sum_cos);
-    if (!std::isnan(frame_bearing))
-        return frame_bearing * pi / 180.0;
     return std::nullopt;
 }
 
-std::array<double, 3> nose_direction(const State& state, std::optional<double> offset)
+std::array<double, 3> nose_direction(const State& state, std::optional<double> offset,
+        NoseSource source)
 {
-    const auto v = air_velocity(state);
+    const auto v = source == NoseSource::ground_velocity ? ground_velocity(state)
+                                                         : air_velocity(state);
     if (!offset || std::isnan(state.heading))
         return v;
     const double speed = std::hypot(v[0], v[1]);
+    const double heading_angle = *offset - state.heading * pi / 180.0;
+    if (source == NoseSource::heading)
+    {
+        // The heading's direction with the velocity's climb: parallel to v
+        // itself when the heading is along the track.  The weight takes the
+        // climb out at hover, where vz over a drift speed means nothing.
+        const double w = nose_velocity_weight(speed);
+        return {std::cos(heading_angle), std::sin(heading_angle), w > 0.0 ? w * v[2] / speed : 0.0};
+    }
     if (speed >= velocity_nose_speed)
         return v;
-    const double heading_angle = *offset - state.heading * pi / 180.0;
     if (speed <= heading_nose_speed)
         return {std::cos(heading_angle), std::sin(heading_angle), 0.0};
     // The horizontal angle turns from the heading to the velocity along the
     // short way round, by a smoothstep weight on the speed, so the nose moves
     // continuously through the band.  The vertical part of the velocity is
     // carried by the same weight, scaled to the horizontal unit length.
-    const double s = (speed - heading_nose_speed) / (velocity_nose_speed - heading_nose_speed);
-    const double w = s * s * (3.0 - 2.0 * s);
+    const double w = nose_velocity_weight(speed);
     const double turn = std::remainder(std::atan2(v[1], v[0]) - heading_angle, 2.0 * pi);
     const double angle = heading_angle + w * turn;
     return {std::cos(angle), std::sin(angle), w * v[2] / speed};

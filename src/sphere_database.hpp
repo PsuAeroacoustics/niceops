@@ -47,6 +47,22 @@ enum class SpeedReference
 std::optional<SpeedReference> parse_speed_reference(const std::string& name);
 const char* to_string(SpeedReference reference);
 
+// What a database's sphere azimuth is measured from: the flight track -- the
+// velocity its flight conditions take (see SpeedReference), projected into the
+// tip-path plane -- or the nose's heading, which in a crosswind sits a crab
+// angle off it.  Recorded at the root as the text attribute azimuth_reference;
+// see Database::azimuth_reference().  It sets which nose a run defaults to
+// (--nose).
+enum class AzimuthReference
+{
+    track,
+    heading,
+};
+
+// "track" or "heading"; nullopt for anything else.
+std::optional<AzimuthReference> parse_azimuth_reference(const std::string& name);
+const char* to_string(AzimuthReference reference);
+
 
 // Bilinear interpolation on the sphere grid.  A cell whose knots come in
 // decreasing order wraps the seam of a periodic axis: with `x_period` set, its
@@ -524,6 +540,8 @@ public:
         // conditions' reference (air or ground), and the rotor it was built for.
         // NaN where the source had none.
         SpeedReference speed_reference = SpeedReference::ground;
+        // Unset where the source recorded none, so the export does not claim one.
+        std::optional<AzimuthReference> azimuth_reference;
         double tip_speed = std::numeric_limits<double>::quiet_NaN();
         double rotor_radius = std::numeric_limits<double>::quiet_NaN();
         double vehicle_weight_newtons = std::numeric_limits<double>::quiet_NaN();
@@ -592,6 +610,20 @@ public:
     SpeedReference speed_reference() const
     {
         return speed_reference_;
+    }
+
+    // What the sphere azimuth is measured from, as the root attribute
+    // azimuth_reference records it.  Absent means the track, which is how every
+    // database before the attribute was built; recorded_azimuth_reference()
+    // tells the two apart, so a run can say whether --nose overrides the file or
+    // only a default.
+    AzimuthReference azimuth_reference() const
+    {
+        return azimuth_reference_.value_or(AzimuthReference::track);
+    }
+    const std::optional<AzimuthReference>& recorded_azimuth_reference() const
+    {
+        return azimuth_reference_;
     }
 
     // Whether the database carries per-band spectra alongside the overall level.
@@ -757,6 +789,7 @@ private:
     double rotor_radius_ = std::numeric_limits<double>::quiet_NaN();
     double vehicle_weight_newtons_ = std::numeric_limits<double>::quiet_NaN();
     SpeedReference speed_reference_ = SpeedReference::ground;
+    std::optional<AzimuthReference> azimuth_reference_;
     bool upper_hemisphere_measured_ = false;
     std::optional<BuildAtmosphere> build_atmosphere_;
     std::optional<double> rotor_rpm_;
