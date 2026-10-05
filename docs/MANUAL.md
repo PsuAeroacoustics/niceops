@@ -717,7 +717,9 @@ to the air then takes the ground speed as the airspeed.
 format (z in `--units`, `T_K`, `RH`, `p_kPa`, `u_mps`, `v_mps`, to 17 significant digits). Fed back
 through `--atmosphere`, it reproduces the run, which a CTest case holds to 1e-9. With several
 trajectories each gets its own, `<track>_atmosphere.csv`, since each has its own surface air and
-top.
+top. The one profile that does not replay is completely dry air (`--humidity 0`): `--atmosphere`
+refuses a file whose humidity never exceeds 1 percent, taking it for a fraction, and the run warns
+when it writes one.
 
 **How it was checked.**
 
@@ -727,12 +729,22 @@ top.
   what `--atmosphere` makes of the same wind written as speed and direction; the speed's units;
   no calm level above the ground for any class, roughness or anemometer height; and the written
   profile reads back to the bit (heights to an ULP of the unit conversion).
+- *Through the command line*, a run in feet that sets every shaping option and the three surface
+  overrides writes its profile, and a CTest case compares it with the same profile computed
+  independently from the closed forms (`tests/data/wind_profile_expected.py`): 1e-12 absolute at
+  every level. That is what catches a length left in feet, an override not applied, or
+  `--profile_levels` not passed on, none of which the replay can see.
 - *Discretization.* Refining the levels from 16 to 64 a decade moves the plate microphones of the
   Coyle array under stratified refraction by at most 0.016 dB (0.053 from 8), which a CTest case
   holds to 0.1 dB. On the measured day-284 runs below it moves 729 microphone-runs by 0.006 dB
   rms, 0.105 at most. That last tenth is not the profile: on a point-receiver grid, cells 1500 m
   out downwind move by ±0.2 dB with any change of layering, without settling from 8 levels a
   decade to 100. It is the stratified model's arrival search, whose samples follow the layers.
+  `--profile_levels` does not refine the bottom layer, from the ground to ten roughness lengths,
+  where the profile is linear and the law logarithmic. Filling it with the law (levels at 1.5, 2,
+  3, 5 and 7 z₀, fed through `--atmosphere`) moves the day-284 results by 0.014 dB rms and 0.15 dB
+  at most; dropping every level below 1 m moves them 0.046 dB rms, 0.30 at most. Levels closer to
+  z₀ would carry almost no wind, which is the thin layer the stratified model cannot take.
 - *Against the 2017 measurements* (B407, plate microphones, `--refraction stratified`; SEL rms
   over the paper's usable microphone-runs). Each run's wind is the mean of the ground stations'
   anemometers (SWS 1, 2 and 4) over ±60 s of the run's start, its magnetic direction turned by the

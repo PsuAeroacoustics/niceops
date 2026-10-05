@@ -527,7 +527,15 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
       layers, not the profile. Do not tighten the tolerance onto that floor, or chase it here.
     - **`--write_atmosphere` replays to 1e-9** (`wind_is_its_written_profile`): 17 digits, the
       wind as u/v components rather than speed and direction (no trigonometric round trip), and
-      the pressure written, so the replay does not re-integrate it.
+      the pressure written, so the replay does not re-integrate it. A replay compares the run with
+      itself, so it is blind to the plumbing in `run()` and `wind_profile`: `wind_profile_is_its_law`
+      holds a written profile to an independent closed-form oracle
+      (`tests/data/wind_profile_expected.{py,csv}`, 1e-12) and fails on a length left in feet, a
+      dropped `--temperature`/`--pressure` override, or `--profile_levels` not passed on. Change the
+      generator on purpose and regenerate the CSV from the script, not from the binary.
+    - **The bottom layer, 0 to 10 z0, is linear and `--profile_levels` does not refine it.** Filling
+      it with the log law moves day 284 by 0.15 dB at most (0.014 rms). Do not "fix" that by
+      starting the levels nearer z0: those levels carry almost no wind, the thin layer above.
     - **The stability classes are unvalidated, and warn.** TA Luft's exponents and RG 1.23's
       gradients, as SELENE has them. Class II scored 2.22 dB on day 284, IV 1.57; one day picked
       after the fact chooses nothing. Do not make one a default without measurements of the class.

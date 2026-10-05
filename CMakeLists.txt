@@ -622,6 +622,15 @@ add_test(NAME wind_calm_air COMMAND niceops -d databases/B407_fixed_load_factor.
 set_tests_properties(wind_calm wind_calm_air PROPERTIES FIXTURES_SETUP wind_calm_runs)
 add_test(NAME wind_calm_air_is_ground COMMAND golden_compare integrated/wind_calm_air.csv integrated/wind_calm.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(wind_calm_air_is_ground PROPERTIES FIXTURES_REQUIRED wind_calm_runs)
+# The written profile against its closed forms, through the command line: the log law, the dry
+# lapse, the barometric formula for it and the held water vapor, computed independently
+# (tests/data/wind_profile_expected.py) for a run in feet that sets every shaping option and all
+# three surface overrides.  The replay test above compares the run with itself and cannot see a
+# length left in feet, an override not applied or --profile_levels not passed on; this can.
+add_test(NAME wind_profile_written COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --gridstep 1640 -L warn --wind 12kt,250,6.5 --roughness_length 0.1 --surface_layer_depth 3000 --profile_levels 10 --temperature 288.15 --humidity 40 --pressure 100 --write_atmosphere integrated/wind_profile_law.csv -o integrated/wind_profile_law_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_profile_written PROPERTIES FIXTURES_SETUP wind_law_runs)
+add_test(NAME wind_profile_is_its_law COMMAND golden_compare integrated/wind_profile_law.csv tests/data/wind_profile_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_profile_is_its_law PROPERTIES FIXTURES_REQUIRED wind_law_runs)
 # What --wind refuses, by message: a speed without its unit, a file profile beside it, its shaping
 # options without it, and a surface humidity nobody gave.  The unvalidated classes run, and say so.
 add_test(NAME wind_speed_needs_unit COMMAND niceops --wind 10,270 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

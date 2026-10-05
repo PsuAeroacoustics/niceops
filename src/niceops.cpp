@@ -770,6 +770,17 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
     }
     if (!job.atmosphere_out.empty())
     {
+        // --humidity 0 is completely dry air, which humidity_problem accepts;
+        // read_atmosphere_profile refuses a file whose humidity never exceeds 1
+        // percent, taking it for a fraction.  The run is right, but its file
+        // will not replay, and that should be said now rather than then.
+        if (*std::max_element(profile.relative_humidity.begin(), profile.relative_humidity.end())
+                <= 1.0)
+        {
+            warn("--write_atmosphere: ", job.atmosphere_out, " is completely dry air, and "
+                    "--atmosphere refuses a profile whose relative humidity never exceeds 1 percent "
+                    "(it takes it for a fraction), so it will not replay as written.");
+        }
         write_atmosphere_profile(profile, job.atmosphere_out, unit);
         log("  written to ", job.atmosphere_out, ".");
     }
@@ -1251,7 +1262,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                     : std::string("off"))
                   << "; air " << air.temperature << " K, " << air.pressure << " kPa, "
                   << air.relative_humidity << " % RH (" << humidity_from << ")"
-                  << (profile ? ", layered profile" : "")
+                  << (profile ? (options.surface_wind ? ", layered profile from --wind" : ", layered profile")
+                              : "")
                   << (options.refraction ? "; refraction on" : "") << ".\n";
         // The broadband path carries the EAA factor the database was built
         // with, so the run's air only enters through the spreading and the
