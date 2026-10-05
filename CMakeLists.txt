@@ -180,6 +180,8 @@ add_library(niceops_core STATIC
   src/airy.cpp
   src/exact_solutions.cpp
   src/weighting.cpp
+  src/pnl.cpp
+  src/band_frames.cpp
   src/faddeeva.cpp
   src/ground_effect.cpp
   src/plate_receiver.cpp
@@ -246,6 +248,7 @@ add_executable(niceops_unit_tests
   tests/test_shadow_attenuation.cpp
   tests/test_shadow_transition.cpp
   tests/test_weighting.cpp
+  tests/test_pnl.cpp
   tests/test_ground_effect.cpp
   tests/test_plate_receiver.cpp
   tests/test_spectral_propagation.cpp
@@ -260,6 +263,9 @@ target_link_libraries(niceops_unit_tests niceops_core Catch2::Catch2WithMain)
 
 # Golden output comparison tool (numeric, elementwise)
 add_executable(golden_compare tests/golden_compare.cpp)
+# What --epnl_file and --band_frames wrote, checked against each other and the SEL.
+add_executable(check_band_frames tests/check_band_frames.cpp)
+target_link_libraries(check_band_frames niceops_core)
 # Refraction models against the parabolic equation on one path (tools/pe_compare.cpp):
 # a research tool, not part of a run.
 add_executable(niceops_pe_compare tools/pe_compare.cpp)
@@ -679,6 +685,47 @@ set_tests_properties(band_history_leaves_footprint band_history_refracted_is_str
 # The broadband path carries no bands to write.
 add_test(NAME band_history_needs_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --no-spectral --band_history integrated/band_history/broadband -o integrated/band_history_broadband.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(band_history_needs_spectral PROPERTIES WILL_FAIL TRUE)
+# --epnl_file and --band_frames (src/pnl.hpp, src/band_frames.hpp).  The run writes both over
+# flush plate microphones and pole microphones; check_band_frames recomputes every EPNL from the
+# netCDF frames, checks the files against each other and for plausibility, and holds the frames'
+# A-weighted energy to the --full_history SEL of the same case: every state's energy, in reception
+# time, is in the frames.  The frames force a march, which must leave the footprint equal to the
+# peak search's.  A coarse grid checks the grid layout.
+add_test(NAME epnl_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn --epnl_file integrated/epnl/mixed_EPNL.csv --band_frames integrated/epnl/mixed_frames.nc -o integrated/epnl/mixed_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_full_history COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn --full_history -o integrated/epnl/mixed_full_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_windowed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn -o integrated/epnl/mixed_windowed_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_grid COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1312 -L warn --epnl_file integrated/epnl/grid_EPNL.csv --band_frames integrated/epnl/grid_frames.nc -o integrated/epnl/grid_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The same case's band histories, from which check_band_frames --history rebuilds every frame: the
+# energy check cannot see where in time the energy went, and a state filed at its emission time
+# (or at t - r/c) passed it.  And the case once more with --no-epnl_masking, the tone correction as
+# written: on these microphones inaudible bands give tones (one of the eight PNLTM records, and
+# others inside the durations), so some EPNL must read higher.
+add_test(NAME epnl_band_history COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn --band_history integrated/epnl/history/mixed -o integrated/epnl/mixed_history_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_unmasked COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn --no-epnl_masking --epnl_file integrated/epnl/mixed_unmasked_EPNL.csv --band_frames integrated/epnl/mixed_unmasked_frames.nc -o integrated/epnl/mixed_unmasked_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_run epnl_full_history epnl_windowed epnl_grid epnl_band_history epnl_unmasked PROPERTIES FIXTURES_SETUP epnl_runs)
+add_test(NAME epnl_frames_follow_reception_time COMMAND check_band_frames --history integrated/epnl/history/mixed integrated/epnl/mixed_frames.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_unmasked_is_consistent COMMAND check_band_frames --no-masking integrated/epnl/mixed_unmasked_frames.nc integrated/epnl/mixed_unmasked_EPNL.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_masking_lowers_tones COMMAND check_band_frames --compare integrated/epnl/mixed_EPNL.csv integrated/epnl/mixed_unmasked_EPNL.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_frames_follow_reception_time epnl_unmasked_is_consistent epnl_masking_lowers_tones PROPERTIES FIXTURES_REQUIRED epnl_runs)
+add_test(NAME epnl_frames_are_consistent COMMAND check_band_frames integrated/epnl/mixed_frames.nc integrated/epnl/mixed_EPNL.csv integrated/epnl/mixed_full_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_grid_frames_are_consistent COMMAND check_band_frames integrated/epnl/grid_frames.nc integrated/epnl/grid_EPNL.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_leaves_footprint COMMAND golden_compare integrated/epnl/mixed_LAE.csv integrated/epnl/mixed_windowed_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_frames_are_consistent epnl_grid_frames_are_consistent epnl_leaves_footprint PROPERTIES FIXTURES_REQUIRED epnl_runs)
+# Refused, each with its reason: no bands on the broadband path or in a database without spectra,
+# an ambient with no spectrum, and band limits that leave out a PNL band.
+add_test(NAME epnl_needs_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --no-spectral --epnl_file integrated/epnl/refused.csv -o integrated/epnl/refused_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_needs_spectral PROPERTIES PASS_REGULAR_EXPRESSION "--epnl_file needs the spectral path")
+add_test(NAME band_frames_need_spectra COMMAND niceops -d databases/S-76D_M3.nod -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --band_frames integrated/epnl/refused.nc -o integrated/epnl/refused_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(band_frames_need_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--band_frames needs a database carrying per-band spectra")
+add_test(NAME epnl_refuses_ambient COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn -a 40 --epnl_file integrated/epnl/refused.csv -o integrated/epnl/refused_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "--epnl_file does not combine with -a")
+add_test(NAME epnl_needs_its_bands COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/mixed_flush.csv -L warn --band_limits 100 20000 --epnl_file integrated/epnl/refused.csv -o integrated/epnl/refused_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_needs_its_bands PROPERTIES PASS_REGULAR_EXPRESSION "leaves out the 50 Hz band")
+# Several trajectories and one name: one file per track, named after it.
+add_test(NAME epnl_multi_trajectory_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197405AC.csv -b tests/data/mixed_flush.csv -L warn --epnl_file integrated/epnl_multi/e.csv --band_frames integrated/epnl_multi/f.nc -o integrated/epnl_multi/lae.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME epnl_multi_trajectory_names COMMAND ${CMAKE_COMMAND} "-DFILES=integrated/epnl_multi/197421AC_EPNL.csv;integrated/epnl_multi/197405AC_EPNL.csv;integrated/epnl_multi/197421AC_band_frames.nc;integrated/epnl_multi/197405AC_band_frames.nc" "-DABSENT=integrated/epnl_multi/e.csv;integrated/epnl_multi/f.nc" -P tests/check_files.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(epnl_multi_trajectory_run PROPERTIES FIXTURES_SETUP epnl_multi_runs)
+set_tests_properties(epnl_multi_trajectory_names PROPERTIES FIXTURES_REQUIRED epnl_multi_runs)
 # A point receiver, refracting through uniform air, ends its ray at the
 # microphone as the straight path does: the two agree.
 add_test(NAME refraction_uniform_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --ground_effect --atmosphere atmospheres/B407_uniform.csv --refraction linear --gridstep 492 -L warn -o integrated/refraction_uniform_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

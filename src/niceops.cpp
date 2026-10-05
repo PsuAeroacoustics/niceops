@@ -21,6 +21,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <CLI/CLI.hpp>
@@ -33,6 +34,8 @@
 
 #include "atmosphere.hpp"
 #include "atmosphere_profile.hpp"
+#include "band_frames.hpp"
+#include "pnl.hpp"
 #include "refraction.hpp"
 #include "stratified.hpp"
 #include "ground_effect.hpp"
@@ -224,6 +227,55 @@ void write_band_history_file(const std::vector<BandHistoryRow>& rows,
                 file << band_levels[it * nb + band];
         }
         file << "\n";
+    }
+}
+
+// One observer's EPNL (--epnl_file), from its 0.5 s reception-time frames.
+struct EpnlRow
+{
+    // False when no frame has a finite PNLT -- the observer heard nothing above
+    // the noy floor -- and the metric has no value.
+    bool valid = false;
+    // The result without its per-record histories, which on a grid would be
+    // kept for every observer only to be thrown away.
+    EpnlResult result;
+    // The tone correction PNLTM carries (PNLTM - PNL at its record: the
+    // record's own C, or the five-record mean when the band-sharing check
+    // raised it), and the band its record's C came from, Hz; NaN for none.
+    double tone = 0.0;
+    double tone_band = 0.0;
+    double pnltm_time = 0.0;
+    double first_time = 0.0;
+    double last_time = 0.0;
+};
+
+void write_epnl_file(const std::vector<EpnlRow>& rows, const std::vector<Vec3>& microphones,
+        LengthUnit unit, const std::string& filename)
+{
+    info("Writing EPNL to ", filename);
+    auto file = open_output(filename);
+    file << std::setprecision(10);
+    const std::string u = unit.name;
+    file << "observer,x(" << u << "),y(" << u << "),z(" << u << "),EPNL(EPNdB),PNLTM(TPNdB),"
+         << "duration_correction(dB),tone_correction(dB),tone_band(Hz),bandshare_adjusted,"
+         << "PNLTM_time(s),duration_first(s),duration_last(s),clipped\n";
+    for (std::size_t i = 0; i < rows.size(); i++)
+    {
+        const auto& m = microphones[i];
+        file << i << "," << m.x / unit.to_meters << "," << m.y / unit.to_meters << ","
+             << m.z / unit.to_meters << ",";
+        const auto& row = rows[i];
+        if (!row.valid)
+        {
+            // Written as silence rather than left out, so the rows stay one per
+            // observer, in order.
+            file << "-inf,-inf,nan,nan,nan,0,nan,nan,nan,0\n";
+            continue;
+        }
+        const auto& r = row.result;
+        file << r.epnl << "," << r.pnltm << "," << r.duration_correction << "," << row.tone << ","
+             << row.tone_band << "," << (r.bandshare_adjusted ? 1 : 0) << "," << row.pnltm_time << ","
+             << row.first_time << "," << row.last_time << "," << (r.clipped ? 1 : 0) << "\n";
     }
 }
 
@@ -627,6 +679,9 @@ struct RunOptions
     bool want_csel = false;
     bool want_coverage = false;
     bool full_history = false;
+    // --epnl_file's tone correction: tones in bands below their noy threshold
+    // excluded (pnl.hpp), unless --no-epnl_masking.
+    ToneMasking epnl_masking = ToneMasking::below_noy_floor;
     bool write_time_history = false;
     bool write_state = false;
     std::string time_history_prefix;
@@ -650,6 +705,7 @@ struct RunOptions
 struct PathJob
 {
     std::string trajectory;
+    std::string database;
     std::string vehicle;
     std::string output;
     std::string state;
@@ -657,6 +713,9 @@ struct PathJob
     std::string atmosphere_out;
     // The C-weighted SEL's file (--csel_file); empty for none.
     std::string csel_output;
+    // --epnl_file and --band_frames for this trajectory; empty for none.
+    std::string epnl;
+    std::string band_frames;
     std::size_t count = 1;
 };
 
@@ -1406,6 +1465,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // sorted, so the limits always select a range rather than a scattered set.
     std::size_t first_band = 0;
     std::size_t last_band = 0;
+    // --epnl_file: where each of the 24 PNL bands sits among the database's.
+    std::array<std::size_t, pnl_band_count> pnl_bands {};
     // --propagation_table: where the run's bands sit in it, and, for a table
     // that already includes absorption, the zero coefficients that keep the
     // run from taking it twice.
@@ -1477,6 +1538,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             input_error("--csel_file needs a database carrying per-band spectra, to C-weight; this "
                         "one has none.");
         }
+        if (!job.epnl.empty() || !job.band_frames.empty())
+        {
+            input_error(!job.epnl.empty() ? "--epnl_file" : "--band_frames",
+                    " needs a database carrying per-band spectra; this one has none.");
+        }
         log("Database carries no per-band spectra: propagating the broadband level with its "
             "EAA factor.");
         spectral = false;
@@ -1538,6 +1604,42 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         last_band = bands.size();
         while (last_band > first_band && band_gains[last_band - 1] == 0.0)
             last_band--;
+
+        // EPNL is defined over the 24 one-third-octave bands 50 Hz to 10 kHz
+        // (A36.4), and the noy tables and the tone correction need every one of
+        // them: a missing band is not a quiet band, and leaving it out would
+        // move the tone correction's background and the noy sum alike.  Bands
+        // the database has outside them (10 to 40 Hz) are ignored, as the
+        // regulation ignores them.
+        if (!job.epnl.empty())
+        {
+            std::vector<double> missing;
+            pnl_bands = pnl_band_indices(bands, missing);
+            if (!missing.empty())
+            {
+                std::ostringstream list;
+                for (std::size_t i = 0; i < missing.size(); i++)
+                    list << (i ? ", " : "") << missing[i];
+                input_error("--epnl_file needs the 24 one-third-octave bands from 50 Hz to 10 kHz "
+                            "(14 CFR 36 A36.4); the database (bands ", bands.front(), " to ",
+                        bands.back(), " Hz) lacks ", list.str(), " Hz.");
+            }
+            for (const std::size_t band : pnl_bands)
+            {
+                if (band < first_band || band >= last_band)
+                {
+                    input_error("--epnl_file needs the bands from 50 Hz to 10 kHz evaluated, and "
+                                "--band_limits ", options.band_limits.low, " to ",
+                            options.band_limits.high, " Hz leaves out the ", bands[band],
+                            " Hz band. Widen it to take in at least 50 to 10000 Hz.");
+                }
+            }
+            log(options.epnl_masking == ToneMasking::below_noy_floor
+                            ? "EPNL: tones in bands below their noy threshold are excluded from the tone "
+                              "correction (--no-epnl_masking for the procedure as written)."
+                            : "EPNL: the tone correction as written, every band eligible "
+                              "(--no-epnl_masking).");
+        }
 
         // Where each value came from, so a default is not mistaken for a
         // measurement: the vehicle file usually gives a temperature and a
@@ -1909,9 +2011,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
     const bool any_day_metric = std::any_of(options.want_day_metric.begin(),
             options.want_day_metric.end(), [](bool b) { return b; });
+    // --epnl_file and --band_frames need every state's bands, in reception-time
+    // frames.  The EPNL's window is found on PNLT, which the A-weighted bound
+    // says nothing about, so the windowed search cannot serve them.
+    const bool want_epnl = !job.epnl.empty();
+    const bool want_band_frames = !job.band_frames.empty();
+    const bool want_frames = want_epnl || want_band_frames;
+    if (want_frames && (!spectral || add_ambient))
+    {
+        // run() refuses both up front; this is the backstop.
+        input_error(want_epnl ? "--epnl_file" : "--band_frames",
+                " needs the spectral path and no -a: the ambient is an A-weighted level with no "
+                "spectrum to add to the bands.");
+    }
     const bool needs_full_history = options.write_time_history || any_day_metric
             || options.full_history || options.want_lamax || options.want_nax || options.want_ta
-            || options.want_csel || write_band_history;
+            || options.want_csel || write_band_history || want_frames;
     // The coverage report needs every state's level, so nothing is skipped.
     const bool bounded = !level_is_transformed && !options.want_coverage;
     DirectionBounds direction_bounds;
@@ -2027,6 +2142,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     //   every sample is wanted, not just the window's:
     //     -i / --history writes the whole time history, skipped states included
     //     --band_history the same, per band
+    //     --epnl_file / --band_frames  every state's bands, into frames
     //     -D / --dnlfile the day-night window is found on a penalized history,
     //                    which a window found on the raw one does not cover;
     //                    --lden_file and --cnel_file the same
@@ -2096,6 +2212,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
     // This trajectory's C-weighted SEL per observer (--csel_file).
     std::vector<double> csel_levels(options.want_csel ? observers.size() : 0);
+    // Per observer, each written only by the worker that owns the observer.
+    std::vector<EpnlRow> epnl_rows(want_epnl ? observers.size() : 0);
+    std::vector<ObserverFrames> observer_frames(want_band_frames ? observers.size() : 0);
 
     const auto acoustics_start = std::chrono::steady_clock::now();
 
@@ -2110,13 +2229,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> durations;
         // --csel_file: the C-weighted history.
         std::vector<double> c_levels(options.want_csel ? nt : 0);
-        // --band_history and --csel_file: every state's band levels, and (for
-        // the history) the geometry each was reached along.
-        const std::size_t history_bands = record_bands ? database.band_centers().size() : 0;
+        // --band_history, --csel_file, --epnl_file and --band_frames: every
+        // state's band levels, and (for the history) the geometry each was
+        // reached along.  The EPNL and frame outputs keep the levels for the
+        // frames.
+        const bool keep_bands = record_bands || want_frames;
+        const std::size_t history_bands = keep_bands ? database.band_centers().size() : 0;
         std::vector<double> band_levels(nt * history_bands);
         std::vector<BandHistoryRow> band_rows(write_band_history ? nt : 0);
+        BandFrames frames(want_frames ? last_band - first_band : 0, pnl_record_seconds);
+        std::vector<PnlSpectrum> pnl_history;
         auto record_path = [&](std::size_t it, const RayPath& path) {
-            if (!record_bands)
+            if (!keep_bands)
                 return static_cast<double*>(nullptr);
             if (!write_band_history)
                 return band_levels.data() + it * history_bands;
@@ -2330,7 +2454,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 if (options.propagation_table)
                 {
                     double level = 0.0;
-                    double* table_bands_out = record_bands
+                    double* table_bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
                     if (table_level(it, table_bands_out, level))
@@ -2504,7 +2628,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         culled_here++;
                         continue;
                     }
-                    double* bands_out = record_bands
+                    double* bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
                     double level = spectral ? straight_level(it, bands_out)
@@ -2603,6 +2727,62 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 write_time_history_file(levels, integration_step, observer(0), observer(1),
                         time_history_filename, options.unit);
             }
+            if (want_frames)
+            {
+                // Every state's bands into 0.5 s reception-time frames (see
+                // band_frames.hpp), weighted by its share of reception time as
+                // the SEL integral weights it.  A culled state (level -inf)
+                // carries no energy here either.
+                frames.accumulate(
+                        nt, [&](std::size_t it) { return std::isfinite(levels[it]); },
+                        [&](std::size_t it) { return trajectory.states[it].t + ranges[it] / sound_speed; },
+                        [&](std::size_t it) {
+                            return integration_step
+                                    * reception_factor(it, nt, integration_step, sound_speed,
+                                            [&](std::size_t k) { return ranges[k]; });
+                        },
+                        [&](std::size_t it) { return band_levels.data() + it * history_bands + first_band; });
+                if (want_epnl)
+                {
+                    auto& row = epnl_rows[index];
+                    pnl_history.resize(frames.count());
+                    for (std::size_t k = 0; k < frames.count(); k++)
+                        for (std::size_t b = 0; b < pnl_band_count; b++)
+                            pnl_history[k][b] = frames.level(k, pnl_bands[b] - first_band);
+                    // Every frame below the noy floor (or none at all): no
+                    // finite PNLT, and no EPNL.  Checked here rather than caught,
+                    // since a far observer on a grid is an ordinary case.
+                    row.valid = false;
+                    for (const auto& spectrum : pnl_history)
+                        row.valid = row.valid || std::isfinite(perceived_noise_level(spectrum));
+                    if (row.valid)
+                    {
+                        auto& r = row.result;
+                        r = effective_perceived_noise_level(pnl_history, pnl_record_seconds, true,
+                                options.epnl_masking);
+                        row.tone = r.pnltm - r.pnl[r.peak];
+                        row.tone_band = r.tone[r.peak] > 0.0 ? pnl_band_centers[r.tone_band[r.peak]]
+                                                             : std::numeric_limits<double>::quiet_NaN();
+                        row.pnltm_time = frames.center(r.peak);
+                        row.first_time = frames.center(r.first);
+                        row.last_time = frames.center(r.last);
+                        r.pnlt = {};
+                        r.pnl = {};
+                        r.tone = {};
+                        r.tone_band = {};
+                    }
+                }
+                if (want_band_frames)
+                {
+                    auto& kept = observer_frames[index];
+                    kept.first = frames.first();
+                    kept.count = frames.count();
+                    kept.levels.resize(frames.count() * frames.bands());
+                    for (std::size_t k = 0; k < frames.count(); k++)
+                        for (std::size_t b = 0; b < frames.bands(); b++)
+                            kept.levels[k * frames.bands() + b] = static_cast<float>(frames.level(k, b));
+                }
+            }
             if (write_band_history)
             {
                 for (std::size_t it = 0; it < nt; it++)
@@ -2689,6 +2869,34 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     {
         auto casename = std::filesystem::path(job.trajectory).stem().string();
         append_metrics_file(options.metric_file, casename, integrated_levels);
+    }
+
+    if (want_epnl)
+        write_epnl_file(epnl_rows, microphones, options.unit, job.epnl);
+    if (want_band_frames)
+    {
+        BandFramesFile meta;
+        meta.trajectory = job.trajectory;
+        meta.database = job.database;
+        meta.frame_length = pnl_record_seconds;
+        meta.band_centers.assign(database.band_centers().begin() + static_cast<std::ptrdiff_t>(first_band),
+                database.band_centers().begin() + static_cast<std::ptrdiff_t>(last_band));
+        meta.length_unit = options.unit.name;
+        for (std::size_t i = 0; i < observer_count; i++)
+        {
+            meta.x.push_back(microphones[i].x / options.unit.to_meters);
+            meta.y.push_back(microphones[i].y / options.unit.to_meters);
+            meta.z.push_back(microphones[i].z / options.unit.to_meters);
+            meta.height.push_back(microphone_height[i] / options.unit.to_meters);
+        }
+        if (!options.scattered)
+        {
+            for (const double x : x_obs)
+                meta.grid_x.push_back(x / options.unit.to_meters);
+            for (const double y : y_obs)
+                meta.grid_y.push_back(y / options.unit.to_meters);
+        }
+        write_band_frames(job.band_frames, meta, observer_frames);
     }
 
     if (options.write_state)
@@ -2848,6 +3056,7 @@ int run(int argc, char* argv[])
     std::vector<std::string> csel_files;
     std::string coverage_file = "";
     bool full_history = false;
+    bool epnl_masking = true;
     double utc_offset = 0.0;
     double trim_start = std::numeric_limits<double>::quiet_NaN();
     // Lengths on this command line are in whatever --units selects, feet by
@@ -2885,6 +3094,8 @@ int run(int argc, char* argv[])
     bool write_time_history = false;
     std::string time_history_prefix = "";
     std::string band_history_prefix;
+    std::vector<std::string> epnl_files;
+    std::vector<std::string> band_frames_files;
     std::string metric_file = "";
     bool qsam = true;
     bool self_test = false;
@@ -2973,6 +3184,22 @@ int run(int argc, char* argv[])
             "Per-band time history file prefix: one file per observer, a row per trajectory "
             "state with its emission and reception times, geometry, A-weighted level and each "
             "band's unweighted level at the microphone. Needs the spectral path.");
+    app.add_option("--epnl_file", epnl_files,
+            "Write each observer's EPNL (14 CFR 36 A36.4), PNLTM and duration correction to this "
+            "CSV, from one-third-octave levels in 0.5 s reception-time frames. Once, or once per "
+            "trajectory; with several trajectories and one name, each is named after its track "
+            "(<stem>_EPNL.csv). Needs the spectral path and the 24 bands 50 Hz-10 kHz.");
+    app.add_flag("--epnl_masking,!--no-epnl_masking", epnl_masking,
+            "--epnl_file's tone correction: a band below its noy threshold (Table A36-3's SPL(d)) "
+            "enters the tone correction at that threshold and carries no tone itself, as tones in "
+            "masked bands are excluded from a measured spectrum's (default on; --no-epnl_masking "
+            "takes the procedure as written, which reads absorption's plunge in the top bands as "
+            "tones).");
+    app.add_option("--band_frames", band_frames_files,
+            "Write each observer's band levels in 0.5 s reception-time frames to this netCDF file "
+            "(level by observer, frame and band, with the coordinates). Once, or once per "
+            "trajectory; with several trajectories and one name, each is named after its track "
+            "(<stem>_band_frames.nc). Needs the spectral path.");
     app.add_option("-m,--metricfile", metric_file, "File to append overall noise metrics.");
     app.add_option("-b,--observer", observer_file, "Observer file name.");
     app.add_flag("-q,--qsam,!--no-qsam", qsam, "Extended QSAM (default on; --no-qsam disables)");
@@ -3293,17 +3520,23 @@ int run(int argc, char* argv[])
             state_files.push_back((directory / (stem + "_state.csv")).string());
         }
     }
-    if (csel_files.size() == 1 && path_count > 1)
-    {
-        // As -o: one C-SEL file per track, named after it.
-        const auto directory = std::filesystem::path(csel_files.front()).parent_path();
-        csel_files.clear();
+    // --csel_file, --epnl_file and --band_frames are per operation, as -S is:
+    // one name for several tracks is split into one per track, beside it.
+    auto name_per_track = [&](std::vector<std::string>& names, const char* suffix) {
+        if (names.size() != 1 || path_count <= 1)
+            return;
+        const auto directory = std::filesystem::path(names.front()).parent_path();
+        names.clear();
         for (const auto& path : path_files)
-        {
-            const auto stem = std::filesystem::path(path).stem().string();
-            csel_files.push_back((directory / (stem + "_LCE.csv")).string());
-        }
-    }
+            names.push_back((directory / (std::filesystem::path(path).stem().string() + suffix)).string());
+    };
+    name_per_track(csel_files, "_LCE.csv");
+    name_per_track(epnl_files, "_EPNL.csv");
+    name_per_track(band_frames_files, "_band_frames.nc");
+    if (!epnl_files.empty())
+        expand_per_path(epnl_files, "--epnl_file names");
+    if (!band_frames_files.empty())
+        expand_per_path(band_frames_files, "--band_frames names");
     expand_per_path(database_files, "database files");
     expand_per_path(vehicle_files, "vehicle files");
     expand_per_path(out_files, "output files");
@@ -3340,6 +3573,10 @@ int run(int argc, char* argv[])
             require_distinct(atmosphere_out_files, "--write_atmosphere file (their tracks share a file name)");
         if (!csel_files.empty())
             require_distinct(csel_files, "C-SEL file");
+        if (!epnl_files.empty())
+            require_distinct(epnl_files, "--epnl_file");
+        if (!band_frames_files.empty())
+            require_distinct(band_frames_files, "--band_frames file");
         if (!time_history_prefix.empty() || !band_history_prefix.empty())
         {
             std::vector<std::string> stems;
@@ -3619,6 +3856,22 @@ int run(int argc, char* argv[])
     }
     if (!propagation_table.empty() && !spectral)
         input_error("--propagation_table needs the spectral path.");
+    for (const auto& [names, option] : {std::pair {&epnl_files, "--epnl_file"},
+                 std::pair {&band_frames_files, "--band_frames"}})
+    {
+        if (names->empty())
+            continue;
+        if (!spectral)
+        {
+            input_error(option, " needs the spectral path: the broadband path (--no-spectral) "
+                        "carries no bands.");
+        }
+        if (!std::isnan(ambient_level))
+        {
+            input_error(option, " does not combine with -a: the ambient is an A-weighted level, "
+                        "with no spectrum to add to the bands.");
+        }
+    }
     if (!plate_table.empty() && !ground_effect)
     {
         input_error("--plate_table needs --ground_effect: the plate's level depends on the "
@@ -3799,6 +4052,7 @@ int run(int argc, char* argv[])
     options.want_csel = want_csel;
     options.want_coverage = want_coverage;
     options.full_history = full_history;
+    options.epnl_masking = epnl_masking ? ToneMasking::below_noy_floor : ToneMasking::none;
     options.write_time_history = write_time_history;
     options.write_state = write_state;
     options.time_history_prefix = time_history_prefix;
@@ -3833,6 +4087,9 @@ int run(int argc, char* argv[])
         }
             PathJob job;
             job.trajectory = path_files[path_index];
+            job.database = database_files[path_index];
+            job.epnl = epnl_files.empty() ? std::string() : epnl_files[path_index];
+            job.band_frames = band_frames_files.empty() ? std::string() : band_frames_files[path_index];
             job.vehicle = vehicle_files[path_index];
             job.output = out_files[path_index];
             job.state = state_files.empty() ? std::string() : state_files[path_index];
