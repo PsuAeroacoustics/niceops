@@ -122,17 +122,6 @@ inline double uniform_sample_interval(const std::vector<double>& times, double* 
     return mean;
 }
 
-// Whether a sample falls in the night period.  DNL's night runs 22:00 to 07:00
-// local, so the UTC seconds from the trajectory need the local offset applied
-// before the window is tested.
-inline bool is_night(double utcsec, double utc_offset_hours)
-{
-    double local = std::fmod(utcsec + utc_offset_hours * 3600.0, 86400.0);
-    if (local < 0.0)
-        local += 86400.0;
-    return local < 7.0 * 3600.0 || local >= 22.0 * 3600.0;
-}
-
 // A level with an ambient level mixed in, both in dB, as the sum of their
 // energies: 10 log10(10^(L/10) + 10^(A/10)).  Aircraft and ambient noise are
 // uncorrelated, so it is their mean squares that add, and two equal levels give
@@ -196,21 +185,150 @@ inline double full_sound_exposure_level(const std::vector<double>& levels, doubl
             });
 }
 
-// Day-night level: the sound exposure level with a 10 dB penalty applied to
-// every sample taken at night, as the D original computes it.  The penalty goes
-// on before the window is found, so a night operation's window is located on
-// the penalized history exactly as SEL's is on the raw one.
+// The day-evening-night metrics (-D, --lden_file, --cnel_file).  Each is the
+// energy average over a 24-hour day of every operation's exposure, with a
+// penalty added to the level of every sample heard in a penalized period:
+//
+//   DNL   night 22:00-07:00 +10 dB (14 CFR 150; the D original's metric).
+//   Lden  evening 19:00-23:00 +5 dB, night 23:00-07:00 +10 dB, day 07:00-19:00
+//         (EU Directive 2002/49/EC Annex I, its default periods).
+//   CNEL  evening 19:00-22:00 +10 lg 3 = 4.77 dB (each evening operation weighted
+//         three times), night 22:00-07:00 +10 dB (California Code of
+//         Regulations Title 21, section 5001).
+//
+// Written out, Lden = 10 lg[(12 10^(Ld/10) + 4 10^((Le+5)/10) + 8 10^((Ln+10)/10))
+// / 24] with Ld, Le, Ln the equivalent levels over each period's own length,
+// which is the same number as the penalized energies summed and divided by
+// 86 400 s; DNL and CNEL likewise.  The period boundaries belong to the period
+// they open: 07:00 is day, 19:00 evening, 22:00 (23:00 for Lden) night.
+enum class DayMetric
+{
+    dnl,
+    lden,
+    cnel,
+};
+
+inline constexpr std::size_t day_metric_count = 3;
+
+// A penalized stretch of the local day, hours, [start, end); start > end wraps
+// through midnight.
+struct PenaltyPeriod
+{
+    double start_hour;
+    double end_hour;
+    double penalty_db;
+};
+
+inline std::vector<PenaltyPeriod> penalty_periods(DayMetric metric)
+{
+    // 10 lg 3, spelled so the constant is visibly the weighting by three.
+    const double cnel_evening = 10.0 * std::log10(3.0);
+    switch (metric)
+    {
+    case DayMetric::lden:
+        return {{19.0, 23.0, 5.0}, {23.0, 7.0, 10.0}};
+    case DayMetric::cnel:
+        return {{19.0, 22.0, cnel_evening}, {22.0, 7.0, 10.0}};
+    case DayMetric::dnl:
+        break;
+    }
+    return {{22.0, 7.0, 10.0}};
+}
+
+// The option that asks for a metric, for messages.
+inline const char* day_metric_option(DayMetric metric)
+{
+    switch (metric)
+    {
+    case DayMetric::lden:
+        return "--lden_file";
+    case DayMetric::cnel:
+        return "--cnel_file";
+    case DayMetric::dnl:
+        break;
+    }
+    return "-D";
+}
+
+inline const char* day_metric_name(DayMetric metric)
+{
+    switch (metric)
+    {
+    case DayMetric::lden:
+        return "day-evening-night level (Lden)";
+    case DayMetric::cnel:
+        return "community noise equivalent level (CNEL)";
+    case DayMetric::dnl:
+        break;
+    }
+    return "day-night level (DNL)";
+}
+
+// Seconds since local midnight, in [0, 86400).
+inline double local_seconds_of_day(double utcsec, double utc_offset_hours)
+{
+    double local = std::fmod(utcsec + utc_offset_hours * 3600.0, 86400.0);
+    if (local < 0.0)
+        local += 86400.0;
+    return local;
+}
+
+// Whether a sample falls in DNL's night.  It runs 22:00 to 07:00 local, so the
+// UTC seconds from the trajectory need the local offset applied before the
+// window is tested.
+inline bool is_night(double utcsec, double utc_offset_hours)
+{
+    const double local = local_seconds_of_day(utcsec, utc_offset_hours);
+    return local < 7.0 * 3600.0 || local >= 22.0 * 3600.0;
+}
+
+// The penalty, dB, a sample heard at `utcsec` takes under `metric`.
+inline double schedule_penalty(double utcsec, double utc_offset_hours, DayMetric metric)
+{
+    const double local = local_seconds_of_day(utcsec, utc_offset_hours);
+    for (const auto& period : penalty_periods(metric))
+    {
+        const double start = period.start_hour * 3600.0;
+        const double end = period.end_hour * 3600.0;
+        const bool inside = start < end ? (local >= start && local < end)
+                                        : (local >= start || local < end);
+        if (inside)
+            return period.penalty_db;
+    }
+    return 0.0;
+}
+
+// One operation's penalized exposure: the sound exposure level of the history
+// with `penalty_db[i]` added to sample i.  The penalty goes on before the
+// window is found, so a night operation's window is located on the penalized
+// history exactly as SEL's is on the raw one; `full` integrates the whole
+// history instead (--full_history), as AAM and NORAH2 do.  An unpenalized
+// sample adds exactly 0.0, so a daytime DNL is SEL's own number less the day.
 //
 // `scratch` holds the penalized copy; it is a parameter so a caller looping over
 // observers can reuse one buffer instead of allocating per observer.
-inline double day_night_level(const std::vector<double>& levels, double T,
-        const std::vector<char>& night, std::vector<double>& scratch,
-        const std::vector<double>& ranges = {}, double c = 0.0)
+inline double penalized_exposure_level(const std::vector<double>& levels, double T,
+        const std::vector<double>& penalty_db, std::vector<double>& scratch,
+        const std::vector<double>& ranges = {}, double c = 0.0, bool full = false)
 {
     scratch.resize(levels.size());
     for (std::size_t i = 0; i < levels.size(); i++)
-        scratch[i] = night[i] ? levels[i] + 10.0 : levels[i];
-    return sound_exposure_level(scratch, T, ranges, c);
+        scratch[i] = levels[i] + penalty_db[i];
+    return full ? full_sound_exposure_level(scratch, T, ranges, c)
+                : sound_exposure_level(scratch, T, ranges, c);
+}
+
+// Day-night level of one operation: the sound exposure level with a 10 dB
+// penalty applied to every sample taken at night, as the D original computes it
+// (penalized_exposure_level with DNL's schedule, from night flags).
+inline double day_night_level(const std::vector<double>& levels, double T,
+        const std::vector<char>& night, std::vector<double>& scratch,
+        const std::vector<double>& ranges = {}, double c = 0.0, bool full = false)
+{
+    std::vector<double> penalty(levels.size());
+    for (std::size_t i = 0; i < levels.size(); i++)
+        penalty[i] = night[i] ? 10.0 : 0.0;
+    return penalized_exposure_level(levels, T, penalty, scratch, ranges, c, full);
 }
 
 } // namespace niceops

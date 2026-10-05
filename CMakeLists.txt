@@ -226,6 +226,7 @@ target_link_libraries(niceops niceops_core CLI11::CLI11 Threads::Threads)
 # Unit tests (Catch2)
 add_executable(niceops_unit_tests
   tests/test_peak_range.cpp
+  tests/test_time_weighting.cpp
   tests/test_parallel.cpp
   tests/test_build.cpp
   tests/test_iota.cpp
@@ -378,6 +379,73 @@ add_test(NAME nax_file_is_written COMMAND sh -c "rm -f integrated/nax.csv && $<T
 add_test(NAME nax_needs_a_threshold COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 --nax_file integrated/nax_unset.csv -o integrated/nax_unset_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(nax_needs_a_threshold PROPERTIES WILL_FAIL TRUE)
 add_test(NAME full_history_runs COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 --full_history -o integrated/full_history.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# Output metrics.  The demo track is flown 14:05-14:08 UTC, so --utc_offset puts
+# it by day (0), at 22:30 local (8.4) and at 23:30 (9.4).  By day DNL, Lden and
+# CNEL penalize nothing and agree; at 22:30 CNEL's night has begun (+10, as
+# DNL's) and Lden's evening has not ended (+5); at 23:30 all three are night.
+# Each pair below fails on a schedule whose boundary has moved.
+set(METRICS_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 -L warn)
+add_test(NAME metrics_by_day COMMAND niceops ${METRICS_RUN} -D integrated/metrics_day_dnl.csv --lden_file integrated/metrics_day_lden.csv --cnel_file integrated/metrics_day_cnel.csv -o integrated/metrics_day.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME metrics_at_22h30 COMMAND niceops ${METRICS_RUN} --utc_offset 8.4 -D integrated/metrics_2230_dnl.csv --lden_file integrated/metrics_2230_lden.csv --cnel_file integrated/metrics_2230_cnel.csv -o integrated/metrics_2230.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME metrics_at_23h30 COMMAND niceops ${METRICS_RUN} --utc_offset 9.4 -D integrated/metrics_2330_dnl.csv --lden_file integrated/metrics_2330_lden.csv --cnel_file integrated/metrics_2330_cnel.csv -o integrated/metrics_2330.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# --full_history governs DNL too: each operation's whole history rather than its
+# own 10 dB-down window, so the two must differ.
+add_test(NAME metrics_full_history COMMAND niceops ${METRICS_RUN} --full_history -D integrated/metrics_full_dnl.csv -o integrated/metrics_full.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# C-SEL: limited to the 1 kHz band, where the C and A curves are both 0 dB (to
+# 1.5e-6 dB), it is SEL, which checks the window, the reception weights and the
+# per-state bands; over every band it is not.
+add_test(NAME metrics_csel_1khz COMMAND niceops ${METRICS_RUN} --band_limits 900 1100 --csel_file integrated/metrics_csel_1khz.csv -o integrated/metrics_sel_1khz.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME metrics_csel COMMAND niceops ${METRICS_RUN} --csel_file integrated/metrics_csel.csv -o integrated/metrics_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# LAmax: the fast weighting is not the instantaneous peak.
+add_test(NAME metrics_lamax_fast COMMAND niceops ${METRICS_RUN} --lamax_file integrated/metrics_lafmax.csv --nax_file integrated/metrics_nax.csv --nax_threshold 45 --ta_file integrated/metrics_ta.csv --ta_threshold 40 -o integrated/metrics_lamax_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME metrics_lamax_instantaneous COMMAND niceops ${METRICS_RUN} --lamax_weighting instantaneous --lamax_file integrated/metrics_lamax_peak.csv -o integrated/metrics_lamax_peak_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(metrics_by_day metrics_at_22h30 metrics_at_23h30 metrics_full_history metrics_csel_1khz metrics_csel metrics_lamax_fast metrics_lamax_instantaneous PROPERTIES FIXTURES_SETUP metrics_runs)
+add_test(NAME lden_by_day_is_dnl COMMAND golden_compare integrated/metrics_day_lden.csv integrated/metrics_day_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME cnel_by_day_is_dnl COMMAND golden_compare integrated/metrics_day_cnel.csv integrated/metrics_day_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME cnel_at_22h30_is_dnl COMMAND golden_compare integrated/metrics_2230_cnel.csv integrated/metrics_2230_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME lden_at_23h30_is_dnl COMMAND golden_compare integrated/metrics_2330_lden.csv integrated/metrics_2330_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME csel_at_1khz_is_sel COMMAND golden_compare integrated/metrics_csel_1khz.csv integrated/metrics_sel_1khz.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The "differs" cases pass on golden_compare's mismatch message, not on its exit
+# status, so a missing file cannot satisfy them.
+add_test(NAME lden_at_22h30_is_not_dnl COMMAND golden_compare integrated/metrics_2230_lden.csv integrated/metrics_2230_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME dnl_full_history_is_not_windowed COMMAND golden_compare integrated/metrics_full_dnl.csv integrated/metrics_day_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME csel_is_not_sel COMMAND golden_compare integrated/metrics_csel.csv integrated/metrics_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME lafmax_is_not_the_peak COMMAND golden_compare integrated/metrics_lafmax.csv integrated/metrics_lamax_peak.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lden_by_day_is_dnl cnel_by_day_is_dnl cnel_at_22h30_is_dnl lden_at_23h30_is_dnl csel_at_1khz_is_sel lden_at_22h30_is_not_dnl dnl_full_history_is_not_windowed csel_is_not_sel lafmax_is_not_the_peak PROPERTIES FIXTURES_REQUIRED metrics_runs)
+set_tests_properties(lden_at_22h30_is_not_dnl dnl_full_history_is_not_windowed csel_is_not_sel lafmax_is_not_the_peak PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+# The call site: LAFmax, NA64 and TA70 on the demo case's broadband database (the
+# one regression_golden pins), against goldens checked independently -- a brute-
+# force fast detector on a 5e-5 s reception-time grid built from the -S state and
+# the -i histories agreed to 1e-4 dB, where the same in emission time is 0.018 dB
+# off.  So these fail if the weighting hears emission time, or NAx counts the
+# instantaneous peak (64 dBA sits between the two at three cells).
+add_test(NAME metrics_broadband COMMAND niceops --gridstep 1640 -L warn --lamax_file integrated/metrics_bb_lafmax.csv --nax_file integrated/metrics_bb_na64.csv --nax_threshold 64 --ta_file integrated/metrics_bb_ta70.csv --ta_threshold 70 -o integrated/metrics_bb.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(metrics_broadband PROPERTIES FIXTURES_SETUP metrics_broadband_run)
+add_test(NAME lafmax_golden COMMAND golden_compare integrated/metrics_bb_lafmax.csv golden/metrics_197421_lafmax.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nax_golden COMMAND golden_compare integrated/metrics_bb_na64.csv golden/metrics_197421_na64.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ta_golden COMMAND golden_compare integrated/metrics_bb_ta70.csv golden/metrics_197421_ta70.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lafmax_golden nax_golden ta_golden PROPERTIES FIXTURES_REQUIRED metrics_broadband_run)
+# What the metrics refuse.  A 1 s geodetic track is resampled onto the 0.5 s -s
+# default, too coarse for the fast detector; at -s 0.05 it runs.
+set(METRICS_GEODETIC -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640)
+add_test(NAME lamax_weighting_refuses_a_coarse_history COMMAND niceops ${METRICS_GEODETIC} --lamax_file integrated/coarse_lamax.csv -o integrated/coarse_lamax_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lamax_weighting_refuses_a_coarse_history PROPERTIES PASS_REGULAR_EXPRESSION "needs the level history sampled at least every 0.0625 s")
+add_test(NAME lamax_weighting_runs_on_a_finer_step COMMAND niceops ${METRICS_GEODETIC} -s 0.05 --lamax_file integrated/fine_lamax.csv -o integrated/fine_lamax_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lamax_weighting_runs_on_a_finer_step PROPERTIES FAIL_REGULAR_EXPRESSION "needs the level history")
+add_test(NAME lden_needs_a_clock COMMAND niceops ${METRICS_GEODETIC} --lden_file integrated/noclock_lden.csv -o integrated/noclock_lden_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lden_needs_a_clock PROPERTIES PASS_REGULAR_EXPRESSION "--lden_file needs the time of day")
+add_test(NAME lamax_weighting_needs_an_output COMMAND niceops ${METRICS_RUN} --lamax_weighting slow -o integrated/weighting_alone.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lamax_weighting_needs_an_output PROPERTIES PASS_REGULAR_EXPRESSION "none of them is given")
+add_test(NAME ta_needs_a_threshold COMMAND niceops ${METRICS_RUN} --ta_file integrated/ta_unset.csv -o integrated/ta_unset_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ta_needs_a_threshold PROPERTIES PASS_REGULAR_EXPRESSION "--ta_file needs --ta_threshold")
+add_test(NAME csel_needs_spectra COMMAND niceops --gridstep 1640 --csel_file integrated/csel_broadband.csv -o integrated/csel_broadband_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(csel_needs_spectra PROPERTIES PASS_REGULAR_EXPRESSION "needs a database carrying per-band spectra, to C-weight")
+add_test(NAME csel_refuses_no_spectral COMMAND niceops ${METRICS_RUN} --no-spectral --csel_file integrated/csel_refused.csv -o integrated/csel_refused_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(csel_refuses_no_spectral PROPERTIES PASS_REGULAR_EXPRESSION "--csel_file needs the spectral path")
+add_test(NAME csel_refuses_db_cutoff COMMAND niceops ${METRICS_RUN} --db_cutoff 40 --csel_file integrated/csel_refused.csv -o integrated/csel_refused_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(csel_refuses_db_cutoff PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with --db_cutoff")
+add_test(NAME csel_refuses_ambient COMMAND niceops ${METRICS_RUN} -a 30 --csel_file integrated/csel_refused.csv -o integrated/csel_refused_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(csel_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with -a")
 add_test(NAME load_factor_is_held_at_the_ceiling COMMAND niceops ${B407_RUN} -v databases/B407.json --max_load_factor 1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(load_factor_is_held_at_the_ceiling PROPERTIES PASS_REGULAR_EXPRESSION "exceed 1 g on a fixed_load_factor database")
 set_tests_properties(vehicle_weight_mismatch_warns PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle weight disagrees")
