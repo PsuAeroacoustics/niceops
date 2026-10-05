@@ -10,8 +10,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -339,5 +342,336 @@ TEST_CASE("CompassToLocal turns east/north into the frame whose +x runs along a 
         CHECK(round_trip[1] == Catch::Approx(-4.0).margin(1e-12));
         const double toward = std::atan2(back[0], back[1]) * 180.0 / 3.14159265358979323846;
         CHECK(std::remainder(toward - bearing, 360.0) == Catch::Approx(0.0).margin(1e-9));
+    }
+}
+
+// --wind: the profile built from one surface observation (synthetic_profile).
+
+namespace {
+
+Atmosphere surface_air()
+{
+    Atmosphere air;
+    air.temperature = 290.0;
+    air.pressure = 95.0;
+    air.relative_humidity = 30.0;
+    return air;
+}
+
+SurfaceWind westerly()
+{
+    SurfaceWind wind;
+    wind.speed = 6.0;
+    wind.direction = 270.0;
+    wind.height = 2.0;
+    return wind;
+}
+
+} // namespace
+
+TEST_CASE("the --wind log law passes through the observation and is held above the surface layer",
+        "[atmosphere_profile][wind]")
+{
+    SurfaceWind wind = westerly();
+    wind.roughness_length = 0.03;
+    CHECK(wind.speed_at(wind.height) == wind.speed);
+    CHECK(wind.speed_at(wind.roughness_length) == 0.0);
+    CHECK(wind.speed_at(0.0) == 0.0);
+    CHECK(wind.speed_at(-1.0) == 0.0);
+    // u = u_ref ln(z/z0) / ln(z_ref/z0).
+    CHECK(wind.speed_at(20.0)
+            == Catch::Approx(6.0 * std::log(20.0 / 0.03) / std::log(2.0 / 0.03)).epsilon(1e-14));
+    CHECK(wind.speed_at(500.0) == wind.speed_at(wind.surface_layer_depth));
+    CHECK(wind.speed_at(150.0) < wind.speed_at(wind.surface_layer_depth));
+    CHECK(wind.temperature_gradient() == dry_adiabatic_lapse);
+    CHECK(wind.first_level() == Catch::Approx(0.3));
+}
+
+TEST_CASE("the --stability classes are TA Luft's power laws, named either way",
+        "[atmosphere_profile][wind]")
+{
+    struct Expected
+    {
+        const char* roman;
+        const char* pasquill;
+        double exponent;
+        bool inversion;
+    };
+    // TA Luft (1986): m = 0.42, 0.35, 0.22, 0.20, 0.15, 0.09 for I to V.
+    const Expected classes[] = {{"I", "F", 0.42, true}, {"II", "E", 0.35, true},
+            {"III/1", "D", 0.22, false}, {"III/2", "C", 0.20, false}, {"IV", "B", 0.15, false},
+            {"V", "A", 0.09, false}};
+    for (const auto& expected : classes)
+    {
+        const Stability stability = parse_stability(expected.roman);
+        CHECK(parse_stability(expected.pasquill) == stability);
+        CHECK(parse_stability(std::string(" ") + expected.pasquill) == stability);
+        SurfaceWind wind = westerly();
+        wind.stability = stability;
+        CHECK(wind.speed_at(wind.height) == Catch::Approx(wind.speed).epsilon(1e-15));
+        CHECK(wind.speed_at(4.0 * wind.height) / wind.speed
+                == Catch::Approx(std::pow(4.0, expected.exponent)).epsilon(1e-14));
+        CHECK((wind.temperature_gradient() > 0.0) == expected.inversion);
+        // Superadiabatic for the unstable classes, never past the 1.9 K/100 m
+        // boundary of Pasquill B by more than class A's own range.
+        CHECK(wind.temperature_gradient() >= -0.0201);
+        CHECK(describe(stability).find(expected.roman) != std::string::npos);
+    }
+    CHECK(parse_stability("neutral") == Stability::neutral);
+    CHECK(parse_stability("ii") == Stability::stable);
+    CHECK(parse_stability("f") == Stability::very_stable);
+    CHECK_THROWS_AS(parse_stability("G"), std::runtime_error);
+    CHECK_THROWS_AS(parse_stability("stable"), std::runtime_error);
+    // Every name the option offers parses.
+    for (const auto& name : stability_names())
+        CHECK_NOTHROW(parse_stability(name));
+}
+
+TEST_CASE("parse_surface_wind reads the speed's named unit, the direction and the height in --units",
+        "[atmosphere_profile][wind]")
+{
+    const auto knots = parse_surface_wind("10kt,270,33", feet);
+    CHECK(knots.speed == Catch::Approx(10.0 * 1852.0 / 3600.0).epsilon(1e-15));
+    CHECK(knots.direction == 270.0);
+    CHECK(knots.height == Catch::Approx(33.0 * 0.3048).epsilon(1e-15));
+
+    const auto mps = parse_surface_wind(" 5.5 mps , 90 ", meters);
+    CHECK(mps.speed == 5.5);
+    CHECK(mps.direction == 90.0);
+    CHECK(mps.height == 10.0); // the WMO standard exposure when omitted, whatever --units says
+    CHECK(parse_surface_wind("5.5m/s,90", feet).height == 10.0);
+    CHECK(parse_surface_wind("4KT,0,10", meters).height == 10.0);
+    CHECK(parse_surface_wind("4KT,0,10", meters).speed == Catch::Approx(4.0 * 0.514444).epsilon(1e-5));
+    CHECK(parse_surface_wind("22.369mph,180", meters).speed == Catch::Approx(10.0).epsilon(1e-4));
+
+    // No unit, or one that is not a speed: refused, never taken from --units.
+    CHECK_THROWS_AS(parse_surface_wind("10,270", feet), std::runtime_error);
+    CHECK_THROWS_AS(parse_surface_wind("10fps,270", feet), std::runtime_error);
+    CHECK_THROWS_AS(parse_surface_wind("10kt", feet), std::runtime_error);
+    CHECK_THROWS_AS(parse_surface_wind("10kt,270,33,1", feet), std::runtime_error);
+    CHECK_THROWS_AS(parse_surface_wind("10kt,west", feet), std::runtime_error);
+    CHECK_THROWS_AS(parse_surface_wind("10kt,270deg", feet), std::runtime_error);
+    CHECK_THROWS_AS(parse_surface_wind("10kt,270,33ft", feet), std::runtime_error);
+    CHECK_THROWS_AS(parse_surface_wind("10kt,270,", feet), std::runtime_error);
+    CHECK_THROWS_AS(parse_surface_wind("kt,270", feet), std::runtime_error);
+}
+
+TEST_CASE("surface_wind_problem refuses what the law cannot carry", "[atmosphere_profile][wind]")
+{
+    CHECK(surface_wind_problem(westerly(), feet).empty());
+    auto with = [](auto change) {
+        SurfaceWind wind = westerly();
+        change(wind);
+        return surface_wind_problem(wind, meters);
+    };
+    CHECK_FALSE(with([](SurfaceWind& w) { w.speed = -1.0; }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.speed = 60.0; }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.speed = std::nan(""); }).empty());
+    CHECK(with([](SurfaceWind& w) { w.speed = 0.0; }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.direction = 361.0; }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.direction = -10.0; }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.roughness_length = 0.0; }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.roughness_length = 5.0; }).empty());
+    // The log law is zero at z0: an anemometer at or below it gives nothing to scale.
+    CHECK_FALSE(with([](SurfaceWind& w) { w.roughness_length = 2.0; }).empty());
+    CHECK(with([](SurfaceWind& w) {
+        w.roughness_length = 2.0;
+        w.height = 2.5;
+    }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.height = 0.0; }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.surface_layer_depth = 2.0; }).empty());
+    CHECK_FALSE(with([](SurfaceWind& w) { w.levels_per_decade = 0; }).empty());
+    // An anemometer a hair above z0 carries a plausible surface wind to an
+    // implausible one aloft.
+    CHECK_FALSE(with([](SurfaceWind& w) {
+        w.roughness_length = 1.9;
+        w.speed = 20.0;
+    }).empty());
+}
+
+TEST_CASE("synthetic_profile never puts a calm level above the ground", "[atmosphere_profile][wind]")
+{
+    // --refraction stratified reads 22-28 dB low with a calm level just above
+    // z = 0, so every level above the ground carries wind: every class, every
+    // roughness, anemometers above and below ten roughness lengths.
+    for (const auto& name : stability_names())
+    {
+        for (const double z0 : {0.0002, 0.03, 0.5, 2.0})
+        {
+            for (const double height : {2.0, 10.0, 25.0})
+            {
+                SurfaceWind wind = westerly();
+                wind.stability = parse_stability(name);
+                wind.roughness_length = z0;
+                wind.height = height;
+                if (!surface_wind_problem(wind, meters).empty())
+                    continue;
+                AtmosphereProfile profile;
+                REQUIRE_NOTHROW(profile = synthetic_profile(wind, surface_air(), 450.0));
+                REQUIRE(profile.has_wind());
+                CHECK(profile.height.front() == 0.0);
+                CHECK(profile.wind_east.front() == 0.0);
+                for (std::size_t i = 1; i < profile.height.size(); i++)
+                {
+                    INFO(name << " z0 " << z0 << " at " << profile.height[i] << " m");
+                    CHECK(profile.height[i] > profile.height[i - 1]);
+                    CHECK(std::hypot(profile.wind_east[i], profile.wind_north[i]) > 0.0);
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("synthetic_profile's levels hold the observation and reach past the trajectory",
+        "[atmosphere_profile][wind]")
+{
+    const SurfaceWind wind = westerly();
+    const auto profile = synthetic_profile(wind, surface_air(), 450.0);
+    const auto& z = profile.height;
+    // Ten roughness lengths, then geometric at sixteen a decade.
+    CHECK(z[1] == Catch::Approx(0.3));
+    for (std::size_t i = 2; i < z.size(); i++)
+        CHECK(z[i] / z[i - 1] <= std::pow(10.0, 1.0 / 16.0) * (1.0 + 1e-12));
+    CHECK(z.size() == 1 + 1 + 52); // 0, then 0.3 m and 14 + 32 + 6 steps to 2, 200 and 472.5 m
+    // The anemometer and the top of the surface layer are levels, the first with
+    // the observed wind exactly.
+    const auto at = [&](double height) {
+        return static_cast<std::size_t>(std::find(z.begin(), z.end(), height) - z.begin());
+    };
+    REQUIRE(at(wind.height) < z.size());
+    REQUIRE(at(wind.surface_layer_depth) < z.size());
+    CHECK(profile.wind_east[at(wind.height)] == Catch::Approx(wind.speed).epsilon(1e-15));
+    // The top clears the highest point by 5 percent, and never stops short of
+    // the surface layer.
+    CHECK(profile.top() == Catch::Approx(1.05 * 450.0));
+    CHECK(synthetic_profile(wind, surface_air(), 20.0).top() == wind.surface_layer_depth);
+    // Linear between levels: the interpolant follows the law to within half a
+    // percent at eight levels a decade, and sixteen times closer at 32.
+    for (const int levels : {8, 32})
+    {
+        SurfaceWind fine = wind;
+        fine.levels_per_decade = levels;
+        const auto refined = synthetic_profile(fine, surface_air(), 450.0);
+        double worst = 0.0;
+        for (double height = 0.31; height < 470.0; height *= 1.01)
+        {
+            worst = std::max(worst,
+                    std::fabs(refined.wind_at(height)[0] / fine.speed_at(height) - 1.0));
+        }
+        CHECK(worst < (levels == 8 ? 0.005 : 0.0005));
+    }
+}
+
+TEST_CASE("synthetic_profile's air lapses dry-adiabatically, hydrostatically, keeping its water",
+        "[atmosphere_profile][wind]")
+{
+    const Atmosphere surface = surface_air();
+    const SurfaceWind wind = westerly();
+    const auto profile = synthetic_profile(wind, surface, 1000.0);
+    REQUIRE(profile.has_pressure());
+    CHECK(profile.temperature.front() == surface.temperature);
+    CHECK(profile.pressure.front() == surface.pressure);
+    CHECK(profile.relative_humidity.front() == surface.relative_humidity);
+    const double concentration = surface.molar_concentration_water_vapor();
+    for (std::size_t i = 0; i < profile.height.size(); i++)
+    {
+        const double z = profile.height[i];
+        CHECK(profile.temperature[i] == Catch::Approx(surface.temperature - 0.0098 * z).epsilon(1e-14));
+        // Barometric formula for a linear lapse.
+        const double t = surface.temperature - 0.0098 * z;
+        CHECK(profile.pressure[i]
+                == Catch::Approx(surface.pressure
+                        * std::pow(t / surface.temperature, 9.80665 / (0.0098 * 287.05)))
+                           .epsilon(1e-12));
+        // The molar concentration ISO 9613-1 takes is held; the relative humidity rises.
+        CHECK(profile.at(z).molar_concentration_water_vapor()
+                == Catch::Approx(concentration).epsilon(1e-12));
+        if (i > 0)
+            CHECK(profile.relative_humidity[i] > profile.relative_humidity[i - 1]);
+    }
+
+    // A stable class's inversion stops at the top of the surface layer; above
+    // it every class lapses dry-adiabatically.
+    SurfaceWind stable = wind;
+    stable.stability = Stability::very_stable;
+    const auto inverted = synthetic_profile(stable, surface, 1000.0);
+    CHECK(inverted.at(200.0).temperature == Catch::Approx(surface.temperature + 0.0275 * 200.0));
+    CHECK(inverted.at(1000.0).temperature
+            == Catch::Approx(surface.temperature + 0.0275 * 200.0 - 0.0098 * 800.0));
+
+    // Humid air saturates on its way up and is held at 100 percent.
+    Atmosphere humid = surface;
+    humid.relative_humidity = 95.0;
+    const auto saturated = synthetic_profile(wind, humid, 2000.0);
+    CHECK(saturated.relative_humidity.back() == 100.0);
+    for (const double rh : saturated.relative_humidity)
+        CHECK(rh <= 100.0);
+}
+
+TEST_CASE("the --wind direction is the bearing the wind blows from, as the file's is",
+        "[atmosphere_profile][wind]")
+{
+    // From the west, it blows toward the east; from the north, toward the south.
+    SurfaceWind wind = westerly();
+    auto profile = synthetic_profile(wind, surface_air(), 300.0);
+    CHECK(profile.wind_at(wind.height)[0] == Catch::Approx(wind.speed));
+    CHECK(profile.wind_at(wind.height)[1] == Catch::Approx(0.0).margin(1e-12));
+    wind.direction = 0.0;
+    profile = synthetic_profile(wind, surface_air(), 300.0);
+    CHECK(profile.wind_at(wind.height)[0] == Catch::Approx(0.0).margin(1e-12));
+    CHECK(profile.wind_at(wind.height)[1] == Catch::Approx(-wind.speed));
+
+    // And it is exactly what --atmosphere makes of the same wind written as
+    // speed and direction, at every level.
+    wind.direction = 37.0;
+    profile = synthetic_profile(wind, surface_air(), 300.0);
+    std::ostringstream csv;
+    csv << std::setprecision(17) << "z_m,T_K,RH,wind_speed_mps,wind_direction\n";
+    for (std::size_t i = 0; i < profile.height.size(); i++)
+    {
+        csv << profile.height[i] << ',' << profile.temperature[i] << ','
+            << profile.relative_humidity[i] << ','
+            << std::hypot(profile.wind_east[i], profile.wind_north[i]) << ",37\n";
+    }
+    TempCsv file(csv.str());
+    const auto read = read_atmosphere_profile(file.path, meters, 0.0);
+    REQUIRE(read.height.size() == profile.height.size());
+    for (std::size_t i = 0; i < profile.height.size(); i++)
+    {
+        CHECK(read.wind_east[i] == Catch::Approx(profile.wind_east[i]).epsilon(1e-14).margin(1e-14));
+        CHECK(read.wind_north[i] == Catch::Approx(profile.wind_north[i]).epsilon(1e-14).margin(1e-14));
+    }
+}
+
+TEST_CASE("a calm --wind gives still air, with the lapse", "[atmosphere_profile][wind]")
+{
+    SurfaceWind calm = westerly();
+    calm.speed = 0.0;
+    const auto profile = synthetic_profile(calm, surface_air(), 300.0);
+    CHECK_FALSE(profile.has_wind());
+    CHECK(profile.temperature.back() < profile.temperature.front());
+}
+
+TEST_CASE("write_atmosphere_profile reads back as the profile it wrote", "[atmosphere_profile][wind]")
+{
+    const auto profile = synthetic_profile(westerly(), surface_air(), 600.0);
+    for (const LengthUnit unit : {feet, meters})
+    {
+        TempCsv file("");
+        write_atmosphere_profile(profile, file.path, unit);
+        const auto read = read_atmosphere_profile(file.path, unit, 0.0);
+        REQUIRE(read.height.size() == profile.height.size());
+        REQUIRE(read.has_pressure());
+        REQUIRE(read.has_wind());
+        for (std::size_t i = 0; i < profile.height.size(); i++)
+        {
+            // Heights to an ULP of the unit conversion; everything else to the bit.
+            CHECK(read.height[i] == Catch::Approx(profile.height[i]).epsilon(4e-16));
+            CHECK(read.temperature[i] == profile.temperature[i]);
+            CHECK(read.relative_humidity[i] == profile.relative_humidity[i]);
+            CHECK(read.pressure[i] == profile.pressure[i]);
+            CHECK(read.wind_east[i] == profile.wind_east[i]);
+            CHECK(read.wind_north[i] == profile.wind_north[i]);
+        }
     }
 }

@@ -578,6 +578,11 @@ struct RunOptions
     // in for the rest.  Pressure may be missing, in which case each trajectory
     // fills it hydrostatically from its own surface pressure.
     std::optional<AtmosphereProfile> atmosphere;
+    // --wind: the profile is built per trajectory from one surface observation
+    // instead (synthetic_profile), since its surface air is the trajectory's
+    // vehicle file's and its top has to clear the trajectory.  Never set
+    // together with `atmosphere`.
+    std::optional<SurfaceWind> surface_wind;
     // --refraction linear: curved rays through the profile's equivalent linear
     // effective sound speed, fitted per path (refraction.hpp).  --refraction
     // stratified: through the profile's own layers (stratified.hpp).  Both need
@@ -634,18 +639,22 @@ struct PathJob
     std::string vehicle;
     std::string output;
     std::string state;
+    // --write_atmosphere: where the --wind profile goes; empty for nowhere.
+    std::string atmosphere_out;
     std::size_t count = 1;
 };
 
 // Take the trajectory's flight conditions against the air when its database's
 // were: the database's speed_reference attribute, unless --speed_reference
-// overrides it.  The wind at each state is the --atmosphere profile's at its
-// height, turned into the local frame by --frame_bearing.  A run with no wind
-// profile cannot refer anything to the air, and treating it as calm would
-// quietly mix the two references, so it is refused -- --speed_reference ground
-// says so explicitly.  Returns whether the trajectory is now air-referenced.
+// overrides it.  The wind at each state is the profile's at its height (the
+// --atmosphere file's, or the one --wind built), turned into the local frame by
+// --frame_bearing.  A run with no wind profile cannot refer anything to the
+// air, and treating it as calm would quietly mix the two references, so it is
+// refused -- --speed_reference ground says so explicitly.  A --wind observation
+// of zero is the exception: calm was stated, not assumed, and the air velocity
+// is the ground velocity.  Returns whether the trajectory is now air-referenced.
 bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
-        const RunOptions& options)
+        const RunOptions& options, const AtmosphereProfile* atmosphere)
 {
     const SpeedReference built = database.speed_reference();
     const SpeedReference wanted = options.speed_reference.value_or(built);
@@ -656,15 +665,21 @@ bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
     }
     if (wanted == SpeedReference::ground)
         return false;
-    if (!options.atmosphere || !options.atmosphere->has_wind())
+    if (options.surface_wind && options.surface_wind->speed == 0.0)
+    {
+        log("Flight conditions referred to the air, which --wind says is calm: the air velocity is "
+            "the ground velocity.");
+        return false;
+    }
+    if (!atmosphere || !atmosphere->has_wind())
     {
         input_error(options.speed_reference ? "--speed_reference air"
                                             : "This database is referred to the air, and",
-                " needs the wind at the aircraft: give --atmosphere with wind columns, or "
-                "--speed_reference ground to take the ground velocity as the airspeed.");
+                " needs the wind at the aircraft: give --atmosphere with wind columns, or --wind, "
+                "or --speed_reference ground to take the ground velocity as the airspeed.");
     }
     const CompassToLocal to_local(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
-    const AtmosphereProfile& profile = *options.atmosphere;
+    const AtmosphereProfile& profile = *atmosphere;
     const double strongest = trajectory.relative_to_air(
             [&](double z) { return to_local(profile.wind_at(z)); });
     log("Flight conditions referred to the air: mu, the path angle and the sphere's nose follow "
@@ -686,6 +701,79 @@ bool refer_to_database_speed(Trajectory& trajectory, const Database& database,
             warn(note);
     }
     return true;
+}
+
+// The --wind profile for one trajectory: the surface air is the trajectory's
+// own (its vehicle file's, under --temperature, --humidity and --pressure), and
+// the top clears the highest state and microphone.  Written to
+// job.atmosphere_out when --write_atmosphere asked for it.
+AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
+        const RunOptions& options, const std::vector<Vec3>& observers,
+        const std::vector<double>& microphone_heights)
+{
+    const SurfaceWind& wind = *options.surface_wind;
+    const auto& vehicle = trajectory.vehicle;
+    Atmosphere surface = vehicle.atmosphere;
+    if (!std::isnan(options.temperature_override))
+        surface.temperature = options.temperature_override;
+    if (!std::isnan(options.pressure_override))
+        surface.pressure = options.pressure_override;
+    if (!std::isnan(options.humidity_override))
+        surface.relative_humidity = options.humidity_override;
+    // The same refusal the spectral path makes without a profile: the whole
+    // humidity profile is carried up from this one value.
+    if (std::isnan(options.humidity_override) && !vehicle.humidity_given)
+    {
+        input_error("--wind builds the humidity profile from the surface humidity, and none is set "
+                    "(no --humidity, and ", job.vehicle, " gives none). Give --humidity, or add "
+                    "\"relative humidity\" to the vehicle file or its Atmosphere section.");
+    }
+    if (const auto problem = temperature_problem(surface.temperature); !problem.empty())
+        input_error("--wind: the surface temperature from ", job.vehicle, ": ", problem);
+    if (const auto problem = pressure_problem(surface.pressure); !problem.empty())
+        input_error("--wind: the surface pressure from ", job.vehicle, ": ", problem);
+    if (const auto problem = humidity_problem(surface.relative_humidity); !problem.empty())
+        input_error("--wind: the surface humidity from ", job.vehicle, ": ", problem);
+
+    // Every height a path reaches.  The microphone heights are taken at their
+    // largest, which can only raise the top.
+    double highest = 0.0;
+    for (const auto& state : trajectory.states)
+        highest = std::max(highest, state.z);
+    const double receiver = std::max(options.ground.receiver_height,
+            microphone_heights.empty()
+                    ? 0.0
+                    : *std::max_element(microphone_heights.begin(), microphone_heights.end()));
+    for (const auto& observer : observers)
+        highest = std::max(highest, observer.z + receiver);
+
+    const AtmosphereProfile profile = synthetic_profile(wind, surface, highest);
+    const LengthUnit unit = options.unit;
+    const std::size_t top = profile.height.size() - 1;
+    log("Atmosphere built from --wind: ", wind.speed, " m/s (", wind.speed * 3600.0 / 1852.0,
+            " kt) from ", wind.direction, " degrees at ", wind.height / unit.to_meters, " ",
+            unit.name, ", roughness length ", wind.roughness_length / unit.to_meters, " ", unit.name,
+            ", ", describe(wind.stability), "; ", profile.height.size(), " levels to ",
+            profile.top() / unit.to_meters, " ", unit.name, " (", wind.levels_per_decade,
+            " per factor of ten from ", wind.first_level() / unit.to_meters, " ", unit.name, ").");
+    log("  wind ", wind.speed_at(wind.surface_layer_depth), " m/s at the top of the surface "
+            "layer, ", wind.surface_layer_depth / unit.to_meters, " ", unit.name, ", and held above "
+            "it; ", profile.temperature.front(), " K, ", profile.pressure.front(), " kPa, ",
+            profile.relative_humidity.front(), "% RH at the ground, and ", profile.temperature[top],
+            " K, ", profile.pressure[top], " kPa, ", profile.relative_humidity[top],
+            "% RH at the top (water vapor held).");
+    if (*std::max_element(profile.relative_humidity.begin(), profile.relative_humidity.end())
+            >= 100.0)
+    {
+        warn("--wind: the surface air saturates on its way up to ", profile.top() / unit.to_meters,
+                " ", unit.name, "; the relative humidity is held at 100 percent above that.");
+    }
+    if (!job.atmosphere_out.empty())
+    {
+        write_atmosphere_profile(profile, job.atmosphere_out, unit);
+        log("  written to ", job.atmosphere_out, ".");
+    }
+    return profile;
 }
 
 // Compute one trajectory's footprint and write its outputs, returning the
@@ -775,7 +863,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Refer mu, the path angle and the sphere's nose to the velocity the
     // database's conditions were taken from.  After the trim, which cuts the
     // approach at its slowest point over the ground, not through the air.
-    const bool air_referenced = refer_to_database_speed(trajectory, database, options);
+    const std::optional<AtmosphereProfile> synthesized = options.surface_wind
+            ? std::optional<AtmosphereProfile>(wind_profile(trajectory, job, options, observers,
+                      microphone_heights))
+            : std::nullopt;
+    // The profile this trajectory propagates through, whichever option gave it.
+    const std::optional<AtmosphereProfile>& atmosphere
+            = options.surface_wind ? synthesized : options.atmosphere;
+    const bool air_referenced = refer_to_database_speed(trajectory, database, options,
+            atmosphere ? &*atmosphere : nullptr);
 
     // And time series data
     const std::size_t nt = trajectory.states.size();
@@ -1098,11 +1194,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // of the air at the surface.  A profile without pressure takes the surface
     // pressure the vehicle file (or --pressure) gives, as `air` now holds.
     std::optional<AtmosphereProfile> profile;
-    if (options.atmosphere)
+    if (atmosphere)
     {
-        profile = options.atmosphere->has_pressure()
-                ? *options.atmosphere
-                : options.atmosphere->with_hydrostatic_pressure(air.pressure);
+        profile = atmosphere->has_pressure() ? *atmosphere
+                                             : atmosphere->with_hydrostatic_pressure(air.pressure);
         air = profile->at(0.0);
     }
     const double sound_speed = air.sound_speed();
@@ -1118,19 +1213,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     bool spectral = options.spectral;
     if (spectral && !database.has_spectra())
     {
-        if (options.spectral_explicit || options.ground_effect_given || options.atmosphere
+        if (options.spectral_explicit || options.ground_effect_given || atmosphere
                 || options.propagation_table)
         {
+            const std::string profile_option = options.surface_wind ? "--wind" : "--atmosphere";
             const std::string asked = options.propagation_table ? "--propagation_table"
                     : options.ground_effect_given               ? "--ground_effect"
-                    : options.atmosphere                        ? "--atmosphere"
+                    : atmosphere                                ? profile_option
                                                                 : "--spectral";
             input_error(asked
                     + " needs a database carrying per-band spectra; this one has none. Rebuild "
                       "it with spectra, or propagate the broadband level with --no-spectral"
-                    + (options.ground_effect_given ? " and no ground effect."
-                                    : options.atmosphere ? " and no --atmosphere."
-                                                         : "."));
+                    + (options.ground_effect_given ? std::string(" and no ground effect.")
+                                    : atmosphere ? " and no " + profile_option + "."
+                                                 : std::string(".")));
         }
         if (!options.band_history_prefix.empty())
         {
@@ -1144,7 +1240,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     {
         // What this trajectory is propagated with, on stdout, so a footprint
         // states its own configuration rather than leaving it in the log file.
-        const char* humidity_from = !std::isnan(options.humidity_override) ? "--humidity"
+        const char* humidity_from = options.atmosphere ? "the --atmosphere profile's ground level"
+                : !std::isnan(options.humidity_override) ? "--humidity"
                 : trajectory.vehicle.humidity_given ? "vehicle file" : "default, not given";
         const double receiver = options.ground.receiver_height / options.unit.to_meters;
         std::cout << "Physics: "
@@ -2499,6 +2596,14 @@ int run(int argc, char* argv[])
     double temperature_override = std::numeric_limits<double>::quiet_NaN();
     double pressure_override = std::numeric_limits<double>::quiet_NaN();
     std::string atmosphere_file;
+    // --wind and the options that shape the profile built from it.  The
+    // lengths are meters until the --units seam, like every default.
+    std::string wind_text;
+    double roughness_length = SurfaceWind().roughness_length;
+    double surface_layer_depth = SurfaceWind().surface_layer_depth;
+    std::string stability = "neutral";
+    int profile_levels = SurfaceWind().levels_per_decade;
+    std::string write_atmosphere;
     std::string refraction = "none";
     double shadow_floor = 20.0;
     bool tunneling = false;
@@ -2630,6 +2735,36 @@ int run(int argc, char* argv[])
             "pressure against height (see README). Per-band absorption is integrated through "
             "it, and its ground level replaces the vehicle file's atmosphere. Spectral path "
             "only.");
+    app.add_option("--wind", wind_text,
+            "Build the stratified atmosphere from one surface wind instead of an --atmosphere file: "
+            "SPEED,DIRECTION[,HEIGHT]. SPEED names its unit (12kt, 6.2mps or 14mph); DIRECTION is "
+            "the compass bearing, degrees, the wind blows FROM (as an --atmosphere file's "
+            "wind_direction), turned into the local frame by --frame_bearing; HEIGHT is the "
+            "anemometer's, in --units (default 10 m). The wind follows the neutral log law over "
+            "--roughness_length up to --surface_layer_depth and is held above; the temperature "
+            "lapses dry-adiabatically from the surface air (vehicle file, --temperature, "
+            "--humidity, --pressure), pressure is hydrostatic and the water vapor is held. "
+            "Not with --atmosphere. Spectral path only.");
+    auto* roughness_length_option = app.add_option("--roughness_length", roughness_length,
+            "--wind: aerodynamic roughness length z0 of the ground, in --units (default 0.03 m, "
+            "= 0.0984 ft: open flat terrain, short grass, airfields; Davenport-Wieringa). "
+            "Not --roughness, which is the acoustic ground's RMS height.");
+    auto* surface_layer_option = app.add_option("--surface_layer_depth", surface_layer_depth,
+            "--wind: height, in --units, up to which the wind follows its law; above it the wind "
+            "is held (default 200 m, = 656.2 ft).");
+    auto* stability_option = app.add_option("--stability", stability,
+            "--wind: neutral (default; the log law, the one checked against measurements), or a "
+            "TA Luft class I, II, III/1, III/2, IV, V (Pasquill F to A): a power-law wind and a "
+            "temperature gradient in the surface layer. The classes are unvalidated.")
+            ->check(CLI::IsMember(stability_names(), CLI::ignore_case));
+    auto* profile_levels_option = app.add_option("--profile_levels", profile_levels,
+            "--wind: levels per factor of ten in height in the built profile (default 16). Results "
+            "do not depend on it; raise it to check that they do not.");
+    app.add_option("--write_atmosphere", write_atmosphere,
+            "--wind: write the profile built for each trajectory as an --atmosphere CSV (z, T_K, "
+            "RH, p_kPa, u_mps, v_mps), so the run can be repeated and inspected. With several "
+            "trajectories and one name, each is named after its track "
+            "(<track>_atmosphere.csv).");
     app.add_option("--refraction", refraction,
             "Refraction through the --atmosphere profile: none (default); linear -- curved rays "
             "through its effective sound speed (temperature and wind) fitted to a straight line "
@@ -2777,6 +2912,22 @@ int run(int argc, char* argv[])
             out_files.push_back((directory / (stem + "_LAE.csv")).string());
         }
     }
+    std::vector<std::string> atmosphere_out_files;
+    if (!write_atmosphere.empty())
+    {
+        if (path_count == 1)
+            atmosphere_out_files.push_back(write_atmosphere);
+        else
+        {
+            // As the state file: one name for several tracks would hold only the last profile.
+            const auto directory = std::filesystem::path(write_atmosphere).parent_path();
+            for (const auto& path : path_files)
+            {
+                const auto stem = std::filesystem::path(path).stem().string();
+                atmosphere_out_files.push_back((directory / (stem + "_atmosphere.csv")).string());
+            }
+        }
+    }
     if (state_files.size() == 1 && path_count > 1)
     {
         // The same goes for the state file: one name for several tracks would
@@ -2810,6 +2961,8 @@ int run(int argc, char* argv[])
         require_distinct(out_files, "output file");
         if (!state_files.empty())
             require_distinct(state_files, "state file");
+        if (!atmosphere_out_files.empty())
+            require_distinct(atmosphere_out_files, "--write_atmosphere file (their tracks share a file name)");
         if (!time_history_prefix.empty() || !band_history_prefix.empty())
         {
             std::vector<std::string> stems;
@@ -3012,6 +3165,8 @@ int run(int argc, char* argv[])
     to_meters(path_smoothing_option, path_smoothing);
     to_meters(trim_option, trim_start);
     to_meters(ground_elevation_option, ground_elevation);
+    to_meters(roughness_length_option, roughness_length);
+    to_meters(surface_layer_option, surface_layer_depth);
 
     ObserverSet observer_set = scattered
             ? scattered_observers(observer_file, unit)
@@ -3073,10 +3228,34 @@ int run(int argc, char* argv[])
                     "the broadband path (--no-spectral) carries one level attenuated by the "
                     "database's own EAA factor.");
     }
-    if (refraction != "none" && atmosphere_file.empty())
+    if (!wind_text.empty() && !atmosphere_file.empty())
     {
-        input_error("--refraction ", refraction, " needs --atmosphere: it refracts through the "
-                    "profile's temperature and wind.");
+        input_error("--wind builds the atmosphere that --atmosphere would read; give one or the "
+                    "other. (--write_atmosphere saves the built one in the file format.)");
+    }
+    if (!wind_text.empty() && !spectral)
+    {
+        input_error("--wind needs the spectral path: the profile it builds is integrated per band, "
+                    "and the broadband path (--no-spectral) carries one level attenuated by the "
+                    "database's own EAA factor.");
+    }
+    if (wind_text.empty())
+    {
+        for (const auto& [option, name] : {std::pair {roughness_length_option, "--roughness_length"},
+                     std::pair {surface_layer_option, "--surface_layer_depth"},
+                     std::pair {stability_option, "--stability"},
+                     std::pair {profile_levels_option, "--profile_levels"}})
+        {
+            if (option->count() > 0)
+                input_error(name, " shapes the profile --wind builds, and there is no --wind.");
+        }
+        if (!write_atmosphere.empty())
+            input_error("--write_atmosphere writes the profile --wind builds, and there is no --wind.");
+    }
+    if (refraction != "none" && atmosphere_file.empty() && wind_text.empty())
+    {
+        input_error("--refraction ", refraction, " needs --atmosphere or --wind: it refracts "
+                    "through the profile's temperature and wind.");
     }
     if (!(shadow_floor >= 0.0))
         input_error("--shadow_floor must not be negative, got ", shadow_floor, ".");
@@ -3158,6 +3337,36 @@ int run(int argc, char* argv[])
     options.frame_bearing = frame_bearing;
     if (!speed_reference.empty())
         options.speed_reference = parse_speed_reference(speed_reference);
+    if (!wind_text.empty())
+    {
+        SurfaceWind wind = parse_surface_wind(wind_text, unit);
+        wind.roughness_length = roughness_length;
+        wind.surface_layer_depth = surface_layer_depth;
+        wind.stability = parse_stability(stability);
+        wind.levels_per_decade = profile_levels;
+        if (const auto problem = surface_wind_problem(wind, unit); !problem.empty())
+            input_error("--wind: ", problem);
+        if (wind.stability != Stability::neutral)
+        {
+            warn("--stability ", stability, ": ", describe(wind.stability), ". The stability classes "
+                    "are unvalidated: on the 2017 windy day an assumed stable class was 0.3 dB rms "
+                    "worse than the neutral log law. Prefer neutral unless the class is known.");
+        }
+        if (wind.height < 10.0 * wind.roughness_length)
+        {
+            warn("--wind: the anemometer at ", wind.height / unit.to_meters, " ", unit.name,
+                    " stands within ten roughness lengths of the ground (z0 ",
+                    wind.roughness_length / unit.to_meters, " ", unit.name, "), where the surface "
+                    "layer's law does not yet hold; the profile carried up from it is uncertain.");
+        }
+        if (wind.speed > 0.0 && refraction != "none" && std::isnan(frame_bearing) && !frame)
+        {
+            warn("--wind: the direction is a compass bearing, turned into the local frame taking "
+                 "+x as east. If this run's x/y are rotated -- the shipped AC tracks run +x along "
+                 "210 degrees -- give --frame_bearing.");
+        }
+        options.surface_wind = wind;
+    }
     if (!atmosphere_file.empty())
     {
         options.atmosphere = read_atmosphere_profile(atmosphere_file, unit, ground_elevation);
@@ -3214,6 +3423,8 @@ int run(int argc, char* argv[])
             job.vehicle = vehicle_files[path_index];
             job.output = out_files[path_index];
             job.state = state_files.empty() ? std::string() : state_files[path_index];
+            job.atmosphere_out = atmosphere_out_files.empty() ? std::string()
+                                                              : atmosphere_out_files[path_index];
             job.count = path_count;
             trajectory_holder = process_trajectory(database, job, options, observers,
                     observer_set.microphone_heights, x_obs, y_obs, integrated_levels, dnl_energy,

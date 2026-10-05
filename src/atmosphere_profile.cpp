@@ -1,13 +1,18 @@
 #include "atmosphere_profile.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
 
 #include "util/csv.hpp"
 #include "util/logger.hpp"
+#include "util/paths.hpp"
 
 namespace niceops {
 
@@ -487,6 +492,349 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
     if (ignored.tellp() > 0)
     {
         log("  ignoring columns: ", ignored.str(), ".");
+    }
+    return profile;
+}
+
+void write_atmosphere_profile(const AtmosphereProfile& profile, const std::string& path,
+        LengthUnit unit)
+{
+    ensure_parent_directory(path);
+    std::ofstream out(path);
+    if (!out)
+        input_error("--write_atmosphere: cannot open ", path, " for writing.");
+    const bool metric = unit.to_meters == 1.0;
+    out << (metric ? "z_m" : "z_ft") << ",T_K,RH";
+    if (profile.has_pressure())
+        out << ",p_kPa";
+    if (profile.has_wind())
+        out << ",u_mps,v_mps";
+    out << '\n' << std::setprecision(17);
+    for (std::size_t i = 0; i < profile.height.size(); i++)
+    {
+        out << profile.height[i] / unit.to_meters << ',' << profile.temperature[i] << ','
+            << profile.relative_humidity[i];
+        if (profile.has_pressure())
+            out << ',' << profile.pressure[i];
+        if (profile.has_wind())
+            out << ',' << profile.wind_east[i] << ',' << profile.wind_north[i];
+        out << '\n';
+    }
+    out.close();
+    if (!out)
+        input_error("--write_atmosphere: writing ", path, " failed.");
+}
+
+namespace {
+
+struct StabilityClass
+{
+    Stability stability;
+    const char* klug_manier; // TA Luft's name
+    const char* pasquill;
+    // The TA Luft (1986) wind profile exponent: u ~ z^m.
+    double exponent;
+    // dT/dz, K/m: the middle of the class's range in US NRC Regulatory Guide
+    // 1.23's delta-T classification (Pasquill A, below -1.9 K/100 m, at -2.0).
+    double temperature_gradient;
+    const char* character;
+};
+
+constexpr StabilityClass stability_classes[] = {
+        {Stability::very_stable, "I", "F", 0.42, 0.0275, "very stable"},
+        {Stability::stable, "II", "E", 0.35, 0.005, "stable"},
+        {Stability::neutral_stable, "III/1", "D", 0.22, -0.010, "neutral to stable"},
+        {Stability::neutral_unstable, "III/2", "C", 0.20, -0.016, "neutral to unstable"},
+        {Stability::unstable, "IV", "B", 0.15, -0.018, "unstable"},
+        {Stability::very_unstable, "V", "A", 0.09, -0.020, "very unstable"},
+};
+
+const StabilityClass& class_of(Stability stability)
+{
+    for (const auto& entry : stability_classes)
+    {
+        if (entry.stability == stability)
+            return entry;
+    }
+    throw std::logic_error("no stability class for neutral: it is the log law");
+}
+
+std::string lower(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+std::string trim(const std::string& text)
+{
+    const auto first = text.find_first_not_of(" \t");
+    if (first == std::string::npos)
+        return "";
+    const auto last = text.find_last_not_of(" \t");
+    return text.substr(first, last - first + 1);
+}
+
+// A number at the front of `text`, and whatever follows it, trimmed.  False
+// when there is no number there.
+bool leading_number(const std::string& text, double& value, std::string& rest)
+{
+    const char* begin = text.c_str();
+    char* end = nullptr;
+    value = std::strtod(begin, &end);
+    if (end == begin)
+        return false;
+    rest = trim(std::string(end));
+    return true;
+}
+
+std::string length_text(double meters, LengthUnit unit)
+{
+    std::ostringstream text;
+    text << meters / unit.to_meters << " " << unit.name;
+    return text.str();
+}
+
+} // namespace
+
+const std::vector<std::string>& stability_names()
+{
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> list {"neutral"};
+        for (const auto& entry : stability_classes)
+            list.emplace_back(entry.klug_manier);
+        for (const auto& entry : stability_classes)
+            list.emplace_back(entry.pasquill);
+        return list;
+    }();
+    return names;
+}
+
+Stability parse_stability(const std::string& name)
+{
+    const std::string wanted = lower(trim(name));
+    if (wanted == "neutral")
+        return Stability::neutral;
+    for (const auto& entry : stability_classes)
+    {
+        if (wanted == lower(entry.klug_manier) || wanted == lower(entry.pasquill))
+            return entry.stability;
+    }
+    input_error("--stability takes neutral, a TA Luft class (I, II, III/1, III/2, IV, V) or a "
+                "Pasquill class (A to F), not '", name, "'.");
+}
+
+std::string describe(Stability stability)
+{
+    if (stability == Stability::neutral)
+        return "neutral (log law)";
+    const auto& entry = class_of(stability);
+    std::ostringstream text;
+    text << "TA Luft class " << entry.klug_manier << " (" << entry.character << "; Pasquill "
+         << entry.pasquill << "): power law, exponent " << entry.exponent << ", "
+         << entry.temperature_gradient * 1000.0 << " K/km in the surface layer";
+    return text.str();
+}
+
+double SurfaceWind::speed_at(double z) const
+{
+    if (!(z > 0.0) || speed == 0.0)
+        return 0.0;
+    const double held = std::min(z, surface_layer_depth);
+    if (stability == Stability::neutral)
+    {
+        if (held <= roughness_length)
+            return 0.0;
+        return speed * std::log(held / roughness_length) / std::log(height / roughness_length);
+    }
+    return speed * std::pow(held / height, class_of(stability).exponent);
+}
+
+double SurfaceWind::temperature_gradient() const
+{
+    return stability == Stability::neutral ? dry_adiabatic_lapse
+                                           : class_of(stability).temperature_gradient;
+}
+
+double SurfaceWind::first_level() const
+{
+    return std::min(10.0 * roughness_length, height);
+}
+
+std::string surface_wind_problem(const SurfaceWind& wind, LengthUnit unit)
+{
+    std::ostringstream problem;
+    if (!std::isfinite(wind.speed) || wind.speed < 0.0 || wind.speed > 50.0)
+    {
+        problem << "a surface wind of " << wind.speed << " m/s is not plausible (0 to 50 m/s, "
+                << "97 kt, are accepted).";
+    }
+    else if (!std::isfinite(wind.direction) || wind.direction < 0.0 || wind.direction > 360.0)
+    {
+        problem << "a wind direction of " << wind.direction << " degrees is outside 0 to 360 "
+                << "(the compass bearing the wind blows from).";
+    }
+    else if (!std::isfinite(wind.roughness_length) || !(wind.roughness_length > 0.0)
+            || wind.roughness_length > 3.0)
+    {
+        problem << "a roughness length of " << length_text(wind.roughness_length, unit)
+                << " is not plausible: it runs from 0.0002 m over calm water to about 2 m over "
+                << "city centers (more than 0 and up to 3 m are accepted).";
+    }
+    else if (!std::isfinite(wind.height) || !(wind.height > 0.0))
+    {
+        problem << "the anemometer height has to be above the ground, not "
+                << length_text(wind.height, unit) << ".";
+    }
+    else if (wind.stability == Stability::neutral && !(wind.height > wind.roughness_length))
+    {
+        problem << "the log law is zero at the roughness length, so the anemometer ("
+                << length_text(wind.height, unit) << ") has to stand above it ("
+                << length_text(wind.roughness_length, unit) << ").";
+    }
+    else if (!std::isfinite(wind.surface_layer_depth)
+            || !(wind.surface_layer_depth > wind.height))
+    {
+        problem << "the surface layer (" << length_text(wind.surface_layer_depth, unit)
+                << " deep) has to reach above the anemometer ("
+                << length_text(wind.height, unit) << ").";
+    }
+    else if (wind.levels_per_decade < 1 || wind.levels_per_decade > 100)
+    {
+        problem << "levels per factor of ten in height run from 1 to 100, not "
+                << wind.levels_per_decade << ".";
+    }
+    else if (wind.speed_at(wind.surface_layer_depth) > 150.0)
+    {
+        problem << "the law carries " << wind.speed << " m/s at "
+                << length_text(wind.height, unit) << " to "
+                << wind.speed_at(wind.surface_layer_depth) << " m/s at "
+                << length_text(wind.surface_layer_depth, unit)
+                << ", which is not plausible. Is the anemometer that close to the roughness "
+                << "length?";
+    }
+    return problem.str();
+}
+
+SurfaceWind parse_surface_wind(const std::string& text, LengthUnit unit)
+{
+    std::vector<std::string> fields;
+    std::stringstream stream(text);
+    std::string field;
+    while (std::getline(stream, field, ','))
+        fields.push_back(trim(field));
+    if (!text.empty() && text.back() == ',')
+        fields.emplace_back();
+    const std::string usage = "--wind takes SPEED,DIRECTION[,HEIGHT]: the speed with its unit "
+                              "(12kt, 6.2mps or 14mph), the compass bearing in degrees the wind "
+                              "blows from, and the anemometer's height in ";
+    if (fields.size() < 2 || fields.size() > 3)
+        input_error(usage, unit.name, " (default 10 m). Got '", text, "'.");
+
+    SurfaceWind wind;
+    std::string rest;
+    if (!leading_number(fields[0], wind.speed, rest))
+        input_error(usage, unit.name, " (default 10 m). '", fields[0], "' is not a speed.");
+    const std::string speed_unit = lower(rest);
+    if (speed_unit == "mps" || speed_unit == "m/s" || speed_unit == "ms")
+    {
+    }
+    else if (speed_unit == "kt" || speed_unit == "kts" || speed_unit == "knot"
+            || speed_unit == "knots")
+        wind.speed *= 1852.0 / 3600.0;
+    else if (speed_unit == "mph")
+        wind.speed *= 1609.344 / 3600.0;
+    else if (speed_unit.empty())
+    {
+        input_error("--wind: name the speed's unit, as ", fields[0], "kt, ", fields[0], "mps or ",
+                fields[0], "mph. Nothing about the number tells them apart, and it is not "
+                "taken from --units.");
+    }
+    else
+    {
+        input_error("--wind: '", rest, "' is not a speed unit; give kt, mps or mph.");
+    }
+
+    if (!leading_number(fields[1], wind.direction, rest) || !rest.empty())
+    {
+        input_error("--wind: the direction is the compass bearing, in degrees, that the wind "
+                    "blows from; '", fields[1], "' is not one.");
+    }
+    if (fields.size() == 3)
+    {
+        double height = 0.0;
+        if (!leading_number(fields[2], height, rest) || !rest.empty())
+        {
+            input_error("--wind: the anemometer height is a length in ", unit.name, " (--units), "
+                    "without a unit of its own; '", fields[2], "' is not one.");
+        }
+        wind.height = height * unit.to_meters;
+    }
+    return wind;
+}
+
+AtmosphereProfile synthetic_profile(const SurfaceWind& wind, const Atmosphere& surface,
+        double highest)
+{
+    const double depth = wind.surface_layer_depth;
+    const double top = std::max(depth, 1.05 * highest);
+    // Exact levels: the profile passes through the observation itself, and
+    // the kink where the surface layer ends is a level rather than smeared
+    // over whichever layer straddles it.
+    std::vector<double> anchors {wind.first_level(), wind.height, depth, top};
+    std::sort(anchors.begin(), anchors.end());
+    anchors.erase(std::unique(anchors.begin(), anchors.end(),
+                          [](double a, double b) { return b - a <= 1e-9 * b; }),
+            anchors.end());
+
+    AtmosphereProfile profile;
+    profile.source = "the --wind profile";
+    profile.height.push_back(0.0);
+    profile.height.push_back(anchors.front());
+    for (std::size_t i = 0; i + 1 < anchors.size(); i++)
+    {
+        const double ratio = anchors[i + 1] / anchors[i];
+        const int steps = std::max(1,
+                static_cast<int>(std::ceil(wind.levels_per_decade * std::log10(ratio) - 1e-9)));
+        for (int j = 1; j < steps; j++)
+            profile.height.push_back(anchors[i] * std::pow(ratio, static_cast<double>(j) / steps));
+        profile.height.push_back(anchors[i + 1]);
+    }
+
+    const double gradient = wind.temperature_gradient();
+    const double east = -std::sin(wind.direction * pi / 180.0);
+    const double north = -std::cos(wind.direction * pi / 180.0);
+    const bool calm = wind.speed == 0.0;
+    for (const double z : profile.height)
+    {
+        profile.temperature.push_back(surface.temperature + gradient * std::min(z, depth)
+                + dry_adiabatic_lapse * std::max(z - depth, 0.0));
+        profile.relative_humidity.push_back(surface.relative_humidity);
+        if (calm)
+            continue;
+        const double speed = wind.speed_at(z);
+        // The thin-layer guard: a calm level above the ground is what made
+        // --refraction stratified read 22-28 dB low.  It cannot happen with
+        // first_level() above the roughness length, and this says so.
+        if (z > 0.0 && !(speed > 0.0))
+            throw std::logic_error("synthetic_profile placed a calm level above the ground");
+        profile.wind_east.push_back(speed * east);
+        profile.wind_north.push_back(speed * north);
+    }
+
+    profile = profile.with_hydrostatic_pressure(surface.pressure);
+    // A well-mixed layer keeps its water vapor: the molar concentration, which
+    // is what the absorption takes, is held, and the relative humidity follows
+    // the cooling air and falling pressure.  The ground level keeps the surface
+    // value exactly rather than its round trip.
+    const double concentration = surface.molar_concentration_water_vapor();
+    for (std::size_t i = 1; i < profile.height.size(); i++)
+    {
+        Atmosphere air;
+        air.temperature = profile.temperature[i];
+        air.pressure = profile.pressure[i];
+        profile.relative_humidity[i]
+                = std::min(100.0, concentration * air.pressure / air.saturation_pressure());
     }
     return profile;
 }
