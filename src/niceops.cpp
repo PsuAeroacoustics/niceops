@@ -552,6 +552,11 @@ struct RunOptions
     // A fixed_load_factor database's load-factor law is an extrapolation above
     // the load factors its source supports; it is held at this many g.
     double max_load_factor = 2.0;
+    // --blend, --load_factor_correction and --min_load_factor: how a state's
+    // condition picks its spheres, and whether the load-factor law also runs
+    // below the reference (condition_selection.hpp).  The tip speed is filled
+    // per trajectory from its vehicle.
+    Database::BlendOptions blend;
     // Warn, rather than refuse, a vehicle file that disagrees with the database
     // by more than 2 percent.
     bool accept_vehicle_mismatch = false;
@@ -826,10 +831,37 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         night[it] = is_night(trajectory.states[it].utcsec, options.utc_offset) ? 1 : 0;
     }
 
+    // How each state's condition picks its spheres (--blend), and the
+    // load-factor law's sides (--load_factor_correction).  The tip speed is
+    // this trajectory's vehicle's, for a database that records none of its own.
+    Database::BlendOptions blend_options = options.blend;
+    blend_options.tip_speed = trajectory.vehicle.tip_speed;
+    const bool two_sided = blend_options.load_factor_correction == LoadFactorCorrection::two_sided;
+    if (two_sided && !database.fixed_load_factor())
+    {
+        input_error("--load_factor_correction two_sided applies a fixed_load_factor database's law, and the "
+                "database given for ", job.trajectory, " is not one: its load factors are spheres, "
+                "blended like any other condition.");
+    }
+    if (blend_options.policy != BlendPolicy::barycentric)
+    {
+        log("Sphere selection: --blend ", to_string(blend_options.policy),
+                blend_options.policy == BlendPolicy::nearest
+                        ? " (the nearest stored condition at every state)."
+                        : " (AAM v3.1: bracketing in speed, then flight path angle, within 20 kt and 3/5 deg).");
+        if (blend_options.policy == BlendPolicy::aam && !database.fixed_load_factor())
+            log("--blend aam: AAM has no thrust axis; each state searches the nearest of this "
+                    "database's ", database.aam_layer_count(), " thrust-coefficient layers.");
+    }
+    if (two_sided)
+        log("Load-factor correction is two-sided, held at ", blend_options.min_load_factor, " g and ",
+                options.max_load_factor, " g.");
+
     // The sphere's nose: the air velocity, or at hover the heading (nose_direction).
     const auto offset = heading_offset(trajectory.states, options.frame_bearing);
-    std::size_t by_heading = 0, slow = 0, load_capped = 0;
-    std::size_t mu_clamped = 0, fpa_clamped = 0, ct_clamped = 0, load_scaled = 0;
+    std::size_t by_heading = 0, slow = 0, load_capped = 0, load_floored = 0;
+    std::size_t mu_clamped = 0, fpa_clamped = 0, ct_clamped = 0, load_scaled = 0, load_lowered = 0;
+    std::array<std::size_t, 4> spheres_blended {};
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
     for (const auto& state : trajectory.states)
@@ -844,7 +876,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
         // On a fixed_load_factor database the load-factor law is the analytic
         // correction 20 lg(C_T / C_T,ref), an extrapolation above the load
-        // factors its source supports.  It is held at --max_load_factor.
+        // factors its source supports.  It is held at --max_load_factor, and
+        // two-sided at --min_load_factor below (blend_at() applies that floor).
         double thrust_coefficient = state.CT;
         if (database.fixed_load_factor())
         {
@@ -854,20 +887,46 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 thrust_coefficient = ceiling;
                 load_capped++;
             }
+            if (two_sided && thrust_coefficient
+                    < blend_options.min_load_factor * database.reference_thrust_coefficient())
+                load_floored++;
         }
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
                 Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
-                options.qsam ? state.fpa_e : state.fpa, thrust_coefficient));
+                options.qsam ? state.fpa_e : state.fpa, thrust_coefficient, blend_options));
         const auto& blend = source_states.back().blend;
         mu_clamped += blend.advance_ratio_clamped;
         fpa_clamped += blend.flight_path_angle_clamped;
         ct_clamped += blend.thrust_coefficient_clamped;
         load_scaled += blend.level_correction_db > 0.0;
+        load_lowered += blend.level_correction_db < 0.0;
+        if (blend_options.policy == BlendPolicy::aam)
+        {
+            std::size_t used = 0;
+            for (const double weight : blend.weights)
+                used += weight > 0.0;
+            spheres_blended[std::max<std::size_t>(used, 1) - 1]++;
+        }
+    }
+    if (blend_options.policy == BlendPolicy::aam)
+    {
+        // How often the gates let AAM interpolate at all: a state on one
+        // sphere is either on a stored condition or past every gate.
+        log("--blend aam over ", nt, " states: 4 spheres at ", spheres_blended[3], ", 3 at ",
+                spheres_blended[2], ", 2 at ", spheres_blended[1], ", 1 at ", spheres_blended[0], ".");
     }
     log("Source axis coverage over ", nt, " states: advance ratio clamped ", mu_clamped,
             ", flight-path angle clamped ", fpa_clamped, ", thrust coefficient clamped ", ct_clamped,
-            "; analytic load-factor correction applied ", load_scaled, ".");
+            "; analytic load-factor correction applied ", load_scaled,
+            two_sided ? " (raising), " : ".", two_sided ? std::to_string(load_lowered) : std::string(),
+            two_sided ? " (lowering)." : "");
+    if (load_floored > 0)
+    {
+        warn(load_floored, " of ", nt, " states are below ", blend_options.min_load_factor, " g on a "
+                "fixed_load_factor database; the two-sided load-factor correction is held at ",
+                blend_options.min_load_factor, " g (--min_load_factor).");
+    }
     if (mu_clamped || fpa_clamped || ct_clamped)
         warn("Flight conditions exceed the source database's axis ranges: advance ratio ", mu_clamped,
                 ", flight-path angle ", fpa_clamped, ", thrust coefficient ", ct_clamped,
@@ -2481,6 +2540,9 @@ int run(int argc, char* argv[])
     std::vector<double> band_limits;
     bool ground_effect = true;
     double max_load_factor = 2.0;
+    std::string blend_policy = "barycentric";
+    std::string load_factor_correction = "one_sided";
+    double min_load_factor = 0.5;
     bool accept_vehicle_mismatch = false;
     double flow_resistance = flow_resistance::grassy_field;
     double receiver_height = 1.2; // meters
@@ -2616,6 +2678,37 @@ int run(int argc, char* argv[])
             "Largest load factor, in g, a fixed_load_factor database's load-factor correction "
             "is taken to. Above it the correction is held, and the run says so (default 2).")
             ->check(CLI::PositiveNumber);
+    app.add_option("--blend", blend_policy,
+            "How a state's flight condition picks the database spheres it is evaluated from: "
+            "barycentric (default) -- blended in dB over the Delaunay simplex holding it, "
+            "nearest outside the hull; nearest -- the one stored condition nearest it, at every "
+            "state (the closest a trajectory tool comes to ECAC Doc 32's one hemisphere per "
+            "segment); or aam -- AAM v3.1's search, up to four spheres bracketing it in speed "
+            "and then flight path angle, within 20 kt and 3 deg descending or 5 deg otherwise, "
+            "the nearest sphere where nothing brackets it.")
+            ->check(CLI::IsMember({"barycentric", "nearest", "aam"}));
+    app.add_option("--load_factor_correction", load_factor_correction,
+            "A fixed_load_factor database's load-factor law, 20 lg(CT/CT_ref): one_sided "
+            "(default) applies it only above the reference load factor, as panam does; "
+            "two_sided below it too, down to --min_load_factor.")
+            ->check(CLI::IsMember({"one_sided", "two_sided"}));
+    auto* min_load_factor_option = app.add_option("--min_load_factor", min_load_factor,
+            "--load_factor_correction two_sided: the smallest load factor, in g, the law is "
+            "taken to; below it the correction is held, and the run says so (default 0.5).")
+            ->check(CLI::Validator(
+                    [](std::string& text) -> std::string {
+                        double value = 0.0;
+                        try
+                        {
+                            value = std::stod(text);
+                        }
+                        catch (const std::exception&)
+                        {
+                            return "not a number";
+                        }
+                        return value > 0.0 && value <= 1.0 ? std::string() : std::string("must be in (0, 1]");
+                    },
+                    "in (0, 1]"));
     app.add_flag("--accept_vehicle_mismatch", accept_vehicle_mismatch,
             "Warn, rather than refuse, a vehicle file that disagrees with the database by more "
             "than 2 percent.");
@@ -2738,6 +2831,17 @@ int run(int argc, char* argv[])
     catch (const CLI::ParseError& e)
     {
         return app.exit(e);
+    }
+
+    Database::BlendOptions blend_options;
+    blend_options.policy = *parse_blend_policy(blend_policy);
+    blend_options.load_factor_correction = *parse_load_factor_correction(load_factor_correction);
+    blend_options.min_load_factor = min_load_factor;
+    if (min_load_factor_option->count() > 0
+            && blend_options.load_factor_correction != LoadFactorCorrection::two_sided)
+    {
+        input_error("--min_load_factor is the floor of the two-sided load-factor law; it needs "
+                "--load_factor_correction two_sided.");
     }
 
     if ((!sphere_file.empty() || !aam_file.empty()) && sphere_condition.size() != 3)
@@ -2956,8 +3060,19 @@ int run(int argc, char* argv[])
         }
         // A standalone job: interpolate the database down to one operating
         // condition and write that sphere out.  No trajectory is involved.
+        // --blend and --load_factor_correction apply here as in a run: an
+        // exported sphere is what a state at this condition would hear.
+        auto export_blend = blend_options;
+        if (export_blend.policy == BlendPolicy::aam && std::isnan(database.tip_speed()))
+            export_blend.tip_speed = configure_vehicle(vehicle_files.front()).tip_speed;
+        if (export_blend.load_factor_correction == LoadFactorCorrection::two_sided
+                && !database.fixed_load_factor())
+        {
+            input_error("--load_factor_correction two_sided applies a fixed_load_factor database's "
+                    "law, and ", loaded_database, " is not one: its load factors are spheres.");
+        }
         const auto sphere = database.interpolate_sphere(
-                sphere_condition[0], sphere_condition[1], sphere_condition[2]);
+                sphere_condition[0], sphere_condition[1], sphere_condition[2], export_blend);
         if (!sphere_file.empty())
             write_sphere(sphere, sphere_file);
         if (!aam_file.empty())
@@ -3111,6 +3226,13 @@ int run(int argc, char* argv[])
     options.ground_effect = ground_effect;
     options.ground_effect_given = ground_explicit;
     options.max_load_factor = max_load_factor;
+    options.blend = blend_options;
+    if (blend_options.load_factor_correction == LoadFactorCorrection::two_sided
+            && min_load_factor > max_load_factor)
+    {
+        input_error("--min_load_factor ", min_load_factor, " is above --max_load_factor ",
+                max_load_factor, ".");
+    }
     options.accept_vehicle_mismatch = accept_vehicle_mismatch;
     options.ground.flow_resistance = flow_resistance;
     options.ground.receiver_height = receiver_height;

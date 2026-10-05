@@ -193,6 +193,7 @@ add_library(niceops_core STATIC
   # resolves archives in a single pass and failed on it; ld64 did not, so it
   # only ever broke Linux.
   src/interpolator.cpp
+  src/condition_selection.cpp
   src/trajectory.cpp
   ${NICEOPS_PLOTTING_SOURCE}
   src/smoothing_spline.cpp
@@ -250,6 +251,7 @@ add_executable(niceops_unit_tests
   tests/test_spectral_propagation.cpp
   tests/test_predicates.cpp
   tests/test_delaunay.cpp
+  tests/test_condition_selection.cpp
   tests/test_trajectory.cpp
   tests/test_csv.cpp
   tests/test_legacy_repair.cpp
@@ -491,6 +493,43 @@ add_test(NAME speed_reference_air_calm_is_ground COMMAND golden_compare integrat
 set_tests_properties(speed_reference_air_calm_is_ground PROPERTIES FIXTURES_REQUIRED atmosphere_runs)
 add_test(NAME speed_reference_air_needs_wind COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/B407_uniform.csv --speed_reference air --gridstep 492 -L warn -o integrated/speed_reference_air_needs_wind.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(speed_reference_air_needs_wind PROPERTIES WILL_FAIL TRUE)
+# --blend and --load_factor_correction (condition_selection.hpp).  Barycentric is the default, so
+# naming it, and the default one-sided law, must reproduce the golden; nearest and aam must run and
+# move it (golden_compare's mismatch is the pass), and differ from each other.  The demo database is
+# S-76D_M3, whose thrust axis is spheres, so aam there searches its thrust layers.
+add_test(NAME blend_barycentric COMMAND niceops --no-spectral --no-ground_effect --blend barycentric --load_factor_correction one_sided -L warn -o integrated/blend_barycentric.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest COMMAND niceops --no-spectral --no-ground_effect --blend nearest -L warn -o integrated/blend_nearest.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_aam COMMAND niceops --no-spectral --no-ground_effect --blend aam -L warn -o integrated/blend_aam.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(blend_barycentric blend_nearest blend_aam PROPERTIES FIXTURES_SETUP blend_runs)
+add_test(NAME blend_barycentric_is_golden COMMAND golden_compare integrated/blend_barycentric.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest_moves_footprint COMMAND golden_compare integrated/blend_nearest.csv golden/197421_LAE.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_aam_moves_footprint COMMAND golden_compare integrated/blend_aam.csv golden/197421_LAE.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_aam_is_not_nearest COMMAND golden_compare integrated/blend_aam.csv integrated/blend_nearest.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(blend_nearest_moves_footprint blend_aam_moves_footprint blend_aam_is_not_nearest PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(blend_barycentric_is_golden blend_nearest_moves_footprint blend_aam_moves_footprint blend_aam_is_not_nearest PROPERTIES FIXTURES_REQUIRED blend_runs)
+# The spectral path's windowed peak search bounds every state by its blend's spheres and its
+# load-factor shift, so each policy, and the two-sided law's negative shifts, must leave it exact
+# against a march (-D forces the march) on a fixed_load_factor database.
+add_test(NAME blend_aam_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --blend aam --load_factor_correction two_sided --gridstep 492 -L warn -o integrated/blend_aam_spectral.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_aam_spectral_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --blend aam --load_factor_correction two_sided --gridstep 492 -L warn -D integrated/blend_aam_spectral_dnl.csv -o integrated/blend_aam_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --blend nearest --gridstep 492 -L warn -o integrated/blend_nearest_spectral.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest_spectral_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --blend nearest --gridstep 492 -L warn -D integrated/blend_nearest_spectral_dnl.csv -o integrated/blend_nearest_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(blend_aam_spectral blend_aam_spectral_marched blend_nearest_spectral blend_nearest_spectral_marched PROPERTIES FIXTURES_SETUP blend_spectral_runs)
+add_test(NAME blend_aam_windowed_is_exact COMMAND golden_compare integrated/blend_aam_spectral.csv integrated/blend_aam_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME blend_nearest_windowed_is_exact COMMAND golden_compare integrated/blend_nearest_spectral.csv integrated/blend_nearest_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# ... and the two-sided law does something on this track, whose load factor runs both sides of 1 g:
+# atmosphere_homogeneous is the same run, barycentric and one-sided.
+add_test(NAME load_factor_two_sided COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --load_factor_correction two_sided --min_load_factor 0.5 --gridstep 492 -L warn -o integrated/load_factor_two_sided.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(load_factor_two_sided PROPERTIES FIXTURES_SETUP blend_spectral_runs)
+add_test(NAME load_factor_two_sided_moves_footprint COMMAND golden_compare integrated/load_factor_two_sided.csv integrated/atmosphere_homogeneous.csv 0.001 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(load_factor_two_sided_moves_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(blend_aam_windowed_is_exact blend_nearest_windowed_is_exact load_factor_two_sided_moves_footprint PROPERTIES FIXTURES_REQUIRED "blend_spectral_runs;atmosphere_runs")
+# Refused, on the message: the floor without the two-sided law, and the law on a database whose load
+# factors are spheres.
+add_test(NAME min_load_factor_needs_two_sided COMMAND niceops --min_load_factor 0.3 -L warn -o integrated/min_load_factor_needs_two_sided.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(min_load_factor_needs_two_sided PROPERTIES PASS_REGULAR_EXPRESSION "needs --load_factor_correction two_sided")
+add_test(NAME two_sided_needs_fixed_load_factor COMMAND niceops --no-spectral --no-ground_effect --load_factor_correction two_sided --gridstep 2000 -L warn -o integrated/two_sided_needs_fixed_load_factor.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(two_sided_needs_fixed_load_factor PROPERTIES PASS_REGULAR_EXPRESSION "is not one: its load factors are spheres")
 # The same over arrays/coyle_approach.csv, whose microphones stand at different
 # heights.  A grid's observers share one, so their mean coefficients are formed
 # once per state; these take the per-pair path the grid never reaches.
