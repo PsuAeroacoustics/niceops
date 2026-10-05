@@ -180,7 +180,7 @@ The unit tests are a Catch2 binary, so you can run a single case or tag directly
 ./niceops_unit_tests --list-tests
 ```
 
-CTest defines about ninety tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
+CTest defines about 140 tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
 
 - `regression_default` — runs `niceops -S state/ci_state.csv`; one run feeds both golden comparisons.
 - `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion. It checks the stored dBA **and EAA** at 1e-9 (eval() returns the stored double exactly at a sphere's own condition and a grid node -- 0 difference over 22 million samples; the D original's 1% let a channel filed one grid cell off pass 60-90% of samples), and **`--self_test` now exits when it is done** instead of going on to run the demo case, which rewrote the file `regression_golden` reads under any test running beside it.
@@ -1290,11 +1290,44 @@ touching it:
   the horizontal angle the short way round, so there is no step; the hard switch at 5 kt it
   replaced stepped the level 2.2-4.4 dB for a nose rotated 30-90 degrees. The AC format's column 8
   (`State::heading`, compass, NaN for the geodetic formats) is turned into the local frame by
-  an offset inferred from the track's states over 20 kt -- the circular mean of the velocity's
-  angle plus the heading, which folds in the INS heading's few degrees off the ground track --
-  or, for a track with none (a hover), by `--frame_bearing`. Neither: the drift, with a warning.
+  `--frame_bearing` (or east under a settled geodetic frame) whenever the run knows one, and
+  only otherwise by an offset inferred from the track's states over 20 kt -- the circular mean
+  of the velocity's angle plus the heading, which folds in the INS heading's few degrees off the
+  ground track and the mean crab (see `--nose` below for why the frame now wins). Neither: the
+  drift, with a warning.
   No shipped track goes under 10 kt and no day-286 approach under 13, so neither the goldens
   nor the approaches move; the 2017 hover runs (H1-H12) do.
+- **`--nose velocity|ground_velocity|heading`** (`NoseSource`, `nose_direction`; settled per
+  trajectory in `settle_nose`, niceops.cpp). Where the sphere frame's nose comes from; the
+  default follows the database's root `azimuth_reference` (`track`/`heading`, absent = track,
+  read beside `speed_reference` by `read_root_text`). The things to preserve:
+  - **Heading mode's offset comes from the frame and nowhere else** (`--frame_bearing`, or 90
+    under a settled geodetic frame: `known_frame_bearing`). Never from `heading_offset`'s fit:
+    that is the circular mean of heading against track, so it folds the track's mean crab into
+    the offset, and heading mode read through it puts the nose back on the mean track -- the
+    option would then do nothing on a steady crabbed run, which is exactly the case it was
+    measured on (day 284, 1.69 -> 1.54 dB SEL rms, `stratified_plate`). No frame is refused.
+  - **The frame also beats the fit for the hover nose** (`heading_offset` returns it first). The
+    fit used to win whenever a track had 50 states over 20 kt, so an approach ending in hover had
+    its hover nose turned by the approach's mean crab. Only fast-then-hover tracks move; none in
+    the repo or the 2017 B407 set. `nose_hover_takes_the_frame` runs two synthetic ones that
+    differ only in the approach's crab (the old precedence fails it).
+  - **Heading mode keeps the velocity's climb** (vz over horizontal speed, faded below 8 kt by
+    `nose_velocity_weight`, the same smoothstep the hover blend uses), so a heading along the
+    track is parallel to the velocity and `nose_heading_on_track_is_velocity` holds at 1e-9
+    through turns and descents. A horizontal-only heading would differ wherever the tip-path
+    plane tilts sideways.
+  - **Only the nose moves.** mu, `fpa`, `fpa_e` and CT come from the velocity as before. The
+    experiment that motivated it turned each track's velocity onto its heading instead, which
+    also moved `fpa_e` by up to 1.4 degrees in turns (the load-factor normal tilts sideways);
+    that is why the option and the emulation differ by up to 0.5 dB at a microphone, 0.01 in rms.
+  - **Crab sign:** compass headings turn clockwise from north and the local frame counterclockwise
+    from +x, so the local angle is bearing - heading, as `CompassToLocal` turns the wind. The test
+    `--nose heading points the nose along the heading, crab and all` holds both to one synthetic
+    crosswind.
+  - A track with no heading at all is refused under an explicit `--nose heading` and falls back
+    to the velocity with a warning when only the database implied it; a single missing heading is
+    refused. `--export_sphere` writes `azimuth_reference` only when the source recorded one.
 - **`--speed_reference`** (roadmap step 3, the NICE-OPS half). It takes the flight condition
   against the air, not the ground. The things to preserve:
   - **Scope.** `Trajectory::relative_to_air` sets each state's wind (`State::wx`, `wy`) and
@@ -1311,9 +1344,10 @@ touching it:
   - **One rotation.** `CompassToLocal` (atmosphere_profile.hpp) turns east/north into the
     local frame for this and for both ray models. Before it, refraction.cpp and
     stratified.cpp each spelled the rotation out, with the same expression.
-  - **panam's side is not built yet.** It has to use the same definition, the manual's
-    "Speed reference" section, and write the attribute. Until it does, every database is
-    ground-referenced, and an air run against one mixes the two.
+  - **panam writes the attribute** (eeb040b and since, `build_empirical_database(...,
+    speed_reference=...)`, default `ground`), but its 2017 recipes still build against the
+    ground, so every database so far is ground-referenced and an air run against one mixes the
+    two.
 - `src/plotting.{hpp,cpp}` — `plt::` facade replacing the vendored matplotlib-d binding. Embeds Python via pybind11 and calls matplotlib directly; the interpreter is created lazily on first use, so non-plotting runs never pay the import cost.
 
 ### D standard-library replacements
