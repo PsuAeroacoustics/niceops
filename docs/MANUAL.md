@@ -178,7 +178,7 @@ operations that reach a threshold.
 | `-m`, `--metricfile` | Append overall noise metrics to this file: the case name, the energy mean of the per-observer SELs (10 lg of the mean of 10^(L/10), not a mean of decibels), their maximum, and the share above 65 dB. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
-| `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. |
+| `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. With `--terrain` it is the height of the local z = 0 on the trajectory's datum, and an AC track's own alt − z must match it. |
 | `--path_smoothing` | How far, RMS per axis in `--units`, the path fitted through a WGS84 track may sit from the given positions. Default 10 ft. Zero interpolates exactly, which on measured positions makes the load factor track coordinate rounding. |
 | `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. Required with `-D` when the track has no `utcsec` column (it used to default to midnight, which is night, so the whole footprint took the 10 dB penalty). |
 | `--latlon` | Also write each level file as latitude, longitude, level. |

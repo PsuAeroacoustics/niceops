@@ -2893,7 +2893,8 @@ int run(int argc, char* argv[])
     auto* ground_elevation_option = app.add_option("--ground_elevation", ground_elevation,
             "Elevation of the observer plane above mean sea level, in --units. Subtracted "
             "from a geodetic track's altitude column to give height above the observers "
-            "(default 0).");
+            "(default 0). With --terrain it places the local z = 0 against the terrain's heights; "
+            "an AC track's own alt - z must match it.");
     app.add_option("--start_utc", start_utc,
             "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
             "window (-D). Required with -D when the track has no utcsec column; ignored "
