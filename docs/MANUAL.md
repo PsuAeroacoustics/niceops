@@ -10,6 +10,8 @@ to know before changing the numerics, are in [`CLAUDE.md`](../CLAUDE.md).
 - [How a prediction is made](#how-a-prediction-is-made)
   - [The operating condition](#the-operating-condition)
   - [Blending the database's spheres](#blending-the-databases-spheres)
+  - [Other ways to choose the spheres: `--blend`](#other-ways-to-choose-the-spheres---blend)
+  - [The load-factor law below 1 g](#the-load-factor-law-below-1-g)
   - [Reading the sphere](#reading-the-sphere)
   - [Propagation to the microphone](#propagation-to-the-microphone)
   - [Exposure](#exposure)
@@ -80,9 +82,11 @@ accelerations. For a WGS84 track they are differentiated from a smoothing spline
 The database's operating conditions are normalized into the unit cube and triangulated: a
 Delaunay triangulation on exact predicates (`src/delaunay.cpp`, `src/predicates.cpp`). The
 state's condition falls in one tetrahedron, and the spheres at its four corners are blended
-with barycentric weights, in decibels (`src/interpolator.cpp`). A `fixed_load_factor`
+with barycentric weights, in decibels (`src/interpolator.cpp`). `--blend` chooses another
+way to pick the spheres (below). A `fixed_load_factor`
 database stores 1 g spheres only. It is triangulated over (μ, γ) alone, and a load factor
-above 1 g adds 20 lg(C<sub>T</sub> / C<sub>T,1g</sub>) dB, up to `--max_load_factor`. The
+above 1 g adds 20 lg(C<sub>T</sub> / C<sub>T,1g</sub>) dB, up to `--max_load_factor`
+(`--load_factor_correction two_sided` takes the law below 1 g too). The
 blend depends only on the operating condition, so it is formed once per state and shared by
 every observer.
 
@@ -91,6 +95,142 @@ blending. Each run logs how many states were clamped on each axis, and how many 
 load-factor correction, and warns if any were clamped. The counts are about the axes'
 ranges only: a condition inside every range can still lie outside the convex hull of the
 database's conditions, and neither says which directions on the sphere were measured.
+
+### Other ways to choose the spheres: `--blend`
+
+The blend above is the default, `--blend barycentric`. Two others exist for comparing
+NICE-OPS with other codes and with regulatory practice. Neither predicts better (see the
+scores below); they answer the question of how much of a difference between two models is
+the choice of sphere.
+
+**`--blend nearest`** takes the one stored condition nearest the state, whole, at every
+state. Nearest means in the space the triangulation is built in: the normalized (μ, γ, C<sub>T</sub>),
+or (μ, γ) on a `fixed_load_factor` database, with the state clamped into it first. In raw
+units the path angle, tens of degrees wide, would decide every distance against an advance
+ratio a few tenths wide. A tie goes to the database's earlier sphere. ECAC Doc 32 and
+models built on it assign one hemisphere to each constant segment of a procedure. A
+trajectory tool has no segments, and taking the nearest sphere at every state is the
+closest it can come; on a track that holds one condition it is the same thing.
+
+**`--blend aam`** is the rotorcraft sphere search of AAM v3.1 (*Advanced Acoustic Model
+Technical Reference and User's Guide*, Volpe, May 2021, §2.5.1.1, pp. 31–34):
+
+1. The spheres are sorted into rows of one flight path angle, each angle rounded to the
+   nearest 0.5° first (AAM has done so since RNM 7, p. 31; halves round away from zero, as
+   Fortran's `NINT`). A row's angle is its rounded one; the state's is not rounded.
+2. The rows bracketing the state's path angle are interpolated between, if they are no
+   further apart than 3° on approach (the state descending) or 5° on departure (climbing or
+   level), Table 2-7. A wider pair is not interpolated: the nearer row is taken alone. So is
+   the end row for a state past either end. Path angle may disqualify spheres (Table 2-8).
+3. Within each row, the speeds bracketing the state's are interpolated between if they are
+   no more than 20 kt apart. Otherwise the nearest speed in the row is taken, however far:
+   speed "may NOT disqualify" a sphere. A state exactly halfway takes the faster sphere,
+   "generally a conservative result".
+4. The two rows' speed blends are then blended in path angle: up to four spheres, linearly
+   in dB, speed first and then path angle (Figure 2-20).
+
+A pair exactly as wide as a limit is still interpolated (the limits are maxima, "dFPA deg
+max"). The document leaves three things open, and NICE-OPS settles them this way:
+
+- **Ties in path angle.** Table 2-8 says approaches "(FPA>0.0)" take the higher angle and
+  departures "(FPA<0.0)" the lower, but the same document has positive angles climbing
+  (Table 2-5, Table 4-37). NICE-OPS follows the labels: an approach takes the higher (less
+  steep) angle, a departure the lower, toward level flight in both.
+- **The nearest-sphere fallback.** "For vehicles with sparsely populated acoustic spheres
+  flight conditions, the prior RNM methodology of selecting the closest matching flight
+  condition available sphere without interpolation is utilized" (p. 31). With the rules
+  above that is what a state past every gate gets: the nearest row in path angle, then the
+  nearest speed in it. It is not the sphere nearest in a combined distance: path angle comes
+  first.
+- **Two spheres in one row at one speed** (their angles round alike). AAM stops on two
+  spheres at one profile; NICE-OPS takes the one whose own angle is nearer the state.
+
+Speeds are μ V<sub>tip</sub>, and the 20 kt gate is converted to advance ratio with the
+database's tip speed, the one its spheres' μ were formed with, or the vehicle file's for a
+database that records none. The path angle is the one the run uses, γ relative to the
+tip-path plane under `--qsam` (the default; AAM's Q-SAM options do the same) and to the
+horizontal under `--no-qsam` (AAM without them). AAM has no thrust axis. On a
+`fixed_load_factor` database the load-factor law carries C<sub>T</sub> exactly as it does
+under the barycentric blend. On a database whose load factors are spheres, each state takes
+the thrust layer nearest its own C<sub>T</sub> (a tie takes the higher) and searches it
+alone; the run logs how many layers there are. AAM's FRAME option, with load factor as a
+third searched axis, its "duration adjustment" and its nacelle-angle axis are not
+reproduced. The run logs how many states blended four, three, two and one sphere.
+
+The 2017 databases are a scattered cloud of conditions, not a grid, which is the case the
+bracketing search handles worst. On the day-286 B407 approaches (all 114,720 states of the
+25 runs) AAM interpolated in both axes at 9.4% of states, took three spheres at 35.8%, two
+at 34.3% and one at 20.5%. The barycentric blend does not gate at all: its spheres span a
+median 13.5° of path angle on those approaches, and 76% of states take a sphere further
+than AAM's gates allow (more than 5° or 20 kt away).
+
+How they score against the measurements, paired against the default on the paper's
+held-out cases (run-level bootstrap 95% intervals; SEL and LAFmax error rms over every
+scored microphone):
+
+| Case | Metric | barycentric rms | nearest Δrms | aam Δrms |
+| --- | --- | --- | --- | --- |
+| Day 286 approaches, `station_plate`, B407 shipped (25 runs, 1111 mics) | SEL | 1.26 dB | +0.47 [+0.37, +0.57] | +0.24 [+0.02, +0.48] |
+| | LAFmax | 1.94 dB | +0.45 [+0.32, +0.60] | +0.34 [+0.18, +0.50] |
+| Day 284 steady runs, `stratified_plate`, held-out `min2_no284` (16 runs, 729 mics) | SEL | 1.69 dB | +0.14 [+0.03, +0.23] | +0.42 [+0.17, +0.66] |
+| | LAFmax | 2.99 dB | −0.38 [−0.61, −0.19] | −0.15 [−0.43, +0.13] |
+
+The barycentric blend is the best of the three on SEL on both days, which is why it stays
+the default. Nearest is worse than it on every one of the 25 approaches. The one exception
+is LAFmax on day 284, where the barycentric prediction runs 1.6 dB low at the median and
+nearest takes 0.4 dB rms off: a blend in dB of spheres whose directivity peaks lie in
+different directions flattens the peak, and a single sphere keeps it. The SEL, which
+integrates over the directions, does not show that. Neither alternative changes the
+default's SEL by much on average (nearest +0.6 dB on day 286, aam +0.03), but individual
+microphones move by up to 3 dB (nearest) and 6 dB (aam), most of it below 20° of elevation,
+where the event is long and many conditions are passed through. The runs are the
+validation harness's fidelity-paper cases (`paper/fidelity_study.py`) with `--blend` added;
+the barycentric runs reproduce the paper's pinned results (6bbd6bb) to the printed digit.
+
+Checked by: unit tests of each rule on small synthetic condition sets
+(`tests/test_condition_selection.cpp`: bracketing, both path-angle gates, a pair exactly as
+wide as a gate, ties in path angle and speed, the fallback to the nearest row and then the
+nearest speed, rounding, and duplicates within a row); database-level tests that nearest
+searches the normalized space, that aam converts its gate with the tip speed, refuses a run
+with none and picks the nearest thrust layer, and that the direction bounds hold under every
+policy (`tests/test_sphere_database.cpp`, tag `[blend]`); and CTests that naming the
+default reproduces the golden footprint, that nearest and aam each move it and differ from
+each other, and that the windowed peak search stays exact against a march under each.
+
+### The load-factor law below 1 g
+
+A `fixed_load_factor` database stores only the 1 g condition, and the load factor enters
+through the analytic law 20 lg(C<sub>T</sub> / C<sub>T,1g</sub>) dB. By default the law is
+applied above 1 g only (`--load_factor_correction one_sided`), as panam applies it: a state
+below 1 g, which an approach's flare and pushovers produce, reads the 1 g sphere unscaled.
+`--load_factor_correction two_sided` applies the same law below 1 g too, down to
+`--min_load_factor` (default 0.5 g), below which the correction is held: the law is a
+logarithm, and near zero g (or below it, where C<sub>T</sub> is negative) it would take the
+level tens of dB down or fail. The run warns with the number of states held at either end.
+On a database whose load factors are spheres there is no law to apply, and two-sided is
+refused.
+
+The evidence for the law below 1 g is modest, and mixed:
+
+- Normalizing every sphere to the reference C<sub>T</sub> and predicting each day-286 approach
+  at its own C<sub>T</sub> with the full law took 0.047 dB off the SEL rms, interval
+  [0.012, 0.084] (an experiment on the database's spheres, not this option).
+- Run directly, the option takes 0.028 dB off the SEL rms on day 286, interval
+  [0.007, 0.048], better on 72% of the runs, and 0.018 dB on day 284, interval
+  [−0.017, +0.052]. LAFmax is 0.05 dB worse on day 286 [+0.03, +0.08] and 0.02 dB worse on
+  day 284 [+0.00, +0.04]. The level moves by 0.2 dB rms, at most 1.1 dB.
+- On repeated steady runs of one flight condition (169 pairs of the B407 spheres, whose
+  C<sub>T</sub> differs by weight and air density: 0.55 dB sd in 20 lg C<sub>T</sub>), the
+  level difference follows the C<sub>T</sub> difference with a slope of 0.34 ± 0.17 per dB of
+  the law, fitted together with speed: about a third of the law. The law's full slope is
+  not confirmed run by run.
+
+So it is offered, and the default stays one-sided. Checked by: unit tests that two-sided
+follows the law on both sides of 1 g, holds at the floor through zero and negative load
+factors, reaches an exported sphere, and that one-sided is unchanged
+(`tests/test_sphere_database.cpp`); a CTest that it moves the footprint on the demo track,
+whose load factor crosses 1 g; the windowed-peak-search exactness CTest, run two-sided; and
+the refusals on the message.
 
 ### Reading the sphere
 
@@ -147,7 +287,7 @@ operations that reach a threshold.
 | --- | --- |
 | Command line, the observer loop, metrics | `src/niceops.cpp`, `src/util/sel.hpp` |
 | Trajectories and their parameters | `src/trajectory.cpp`, `src/geodetic.cpp`, `src/smoothing_spline.cpp` |
-| Databases, blending, the sphere lookup | `src/sphere_database.cpp`, `src/interpolator.cpp`, `src/delaunay.cpp` |
+| Databases, blending, the sphere lookup | `src/sphere_database.cpp`, `src/interpolator.cpp`, `src/delaunay.cpp`, `src/condition_selection.cpp` (`--blend nearest`/`aam`) |
 | Absorption and weighting | `src/atmosphere.cpp`, `src/atmosphere_profile.cpp`, `src/weighting.cpp` |
 | Ground and plate microphones | `src/ground_effect.cpp`, `src/faddeeva.cpp`, `src/plate_receiver.cpp` |
 | Refraction | `src/propagation.hpp`, `src/refraction.cpp`, `src/stratified.cpp` |
@@ -211,6 +351,9 @@ operations that reach a threshold.
 | `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
 | `--ground_effect`, `--no-ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. On by default wherever the spectral path runs on a database that carries spectra; `--no-ground_effect` turns it off. Asking for it with `--no-spectral` is an error. |
 | `--max_load_factor` | Largest load factor, in g, that a `fixed_load_factor` database's load-factor correction is taken to (default 2). Above it the correction is held, and the run says how many states it held. |
+| `--load_factor_correction` | `one_sided` (default): a `fixed_load_factor` database's law, 20 lg(C<sub>T</sub>/C<sub>T,1g</sub>), applies above 1 g only, as panam applies it. `two_sided`: below 1 g too, down to `--min_load_factor`. Refused on a database whose load factors are spheres. See [The load-factor law below 1 g](#the-load-factor-law-below-1-g). |
+| `--min_load_factor` | Under `--load_factor_correction two_sided`, the smallest load factor, in g, the law is taken to (default 0.5, at most 1). Below it the correction is held, and the run says how many states it held. Refused without `two_sided`. |
+| `--blend` | How a state's condition picks the spheres it is evaluated from: `barycentric` (default), `nearest` (the nearest stored condition at every state) or `aam` (AAM v3.1's bracketing search). See [Other ways to choose the spheres](#other-ways-to-choose-the-spheres---blend). |
 | `--accept_vehicle_mismatch` | A vehicle file that disagrees with the database by more than 2 percent in tip speed, rotor radius, weight or thrust coefficient at 1 g is refused. Between 1 and 2 percent it is a warning; this flag turns the refusal into a warning. |
 | `--flow_resistance` | Ground flow resistance, kPa·s/m². 30 snow, 225 grass (default), 650 soil, 3000 dirt, 10000 concrete, 50000 asphalt. |
 | `--receiver_height`, `--turbulence` | Point receiver's microphone height (in `--units`, default 1.2 m; an observer file's fifth column overrides it per observer) and turbulence (rad·s/√m, 0–16e-4) for `--ground_effect`; the height also places the microphone for `--propagation_table`. |
@@ -235,7 +378,7 @@ operations that reach a threshold.
 | --- | --- |
 | `--export_sphere` | Interpolate a whole noise sphere and write it as a one-group `.nod` database. |
 | `--export_aam` | The same sphere in AAM/RNM format. Needs a database with spectra. |
-| `--sphere_condition` | The operating condition for it: advance ratio, flight path angle, C<sub>T</sub>. |
+| `--sphere_condition` | The operating condition for it: advance ratio, flight path angle, C<sub>T</sub>. `--blend` and `--load_factor_correction` apply, so the sphere is what a state at that condition would be evaluated from. |
 | `--self_test` | Validate every sphere in the database against its own stored levels. |
 | `-p`, `--plotting` | Plot the footprint with the flight track over it; `--cmin`/`--cmax`/`--cstep` set the contour levels. |
 | `-f`, `--figfile`, `-F`, `--statefigfile` | Save the footprint and trajectory-state figures to files. |
