@@ -386,9 +386,12 @@ bound is taken along each ray's launch direction at its ray tube's range; for a 
 stratified arrivals, the loudest arrival's direction over the harmonic sum of their squared
 ranges, `bound_geometry`). It is skipped, and the loop marches every state, for `-a` (the level
 is transformed after eval), `-i` and `--band_history` (the whole history is written),
-`-D` (the day-night window is found on a penalized history, which a window found on the raw one
-need not cover), `--db_cutoff` (which culls on its own terms), and any database with a negative
-excess-attenuation factor, where dropping that term is not a loss.
+`-D`, `--lden_file` and `--cnel_file` (the window is found on a penalized history, which a
+window found on the raw one need not cover), `--lamax_file`, `--nax_file` and `--ta_file` (the
+time weighting runs over the whole history), `--csel_file` (the C-weighted window is not the
+A-weighted one, and every state's bands are needed to find it), `--full_history`, `--db_cutoff`
+(which culls on its own terms), and any database with a negative excess-attenuation factor,
+where dropping that term is not a loss.
 
 What it saves depends on how dear an evaluation is. Under the outermost-crossing rule it
 evaluates most of what it is shown: on the broadband demo case it evaluated 93.9% of the pairs
@@ -1097,7 +1100,8 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   -1.49e-6 dB; a test asserting exact 0 there will fail. `a_weighting_gains()` folds the
   weighting and the band limit into one per-band multiply, with excluded bands exactly zero.
   `weighted_level()` returns -infinity for silence, not 0 dB, so an excluded spectrum cannot
-  survive an energy sum as a quiet-but-real level.
+  survive an energy sum as a quiet-but-real level. `c_weighting()` / `c_weighting_gains()` are
+  the C curve for `--csel_file`, from the same constants (see "Output metrics" above).
 - `src/faddeeva.{hpp,cpp}` — the Faddeeva function w(z) = exp(-z²)erfc(-iz), Weideman's 32-term
   rational approximation. The series is evaluated as **four interleaved Horner chains over
   t⁴** rather than one over t: 31 dependent complex multiply-adds is a latency chain, not a
@@ -1219,6 +1223,53 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
 - `src/smoothing_spline.{hpp,cpp}` — natural cubic smoothing spline (Reinsch's algorithm; interior second derivatives solve a symmetric pentadiagonal system in O(n)). Two ways to pick how hard to smooth: `with_smoothing(lambda)` takes the penalty weight directly, `within_tolerance(tol)` solves for the lambda whose weighted squared residual just meets `tol`, as MATLAB's `spaps` does -- and returns the weighted least-squares line in closed form when `tol` reaches that line's residual (the search it replaced climbed lambda to 1e200 and, from ~30,000 samples, lost positive definiteness on the way and refused a straight, level leg; the system's condition number goes as n^4, so past ~40,000 points a `tol` just under the line's residual is unreachable and the last solvable lambda is used, with a warning). `within_tolerance_extended` does the same over a track padded along a local quadratic at each end, which is what a dense geodetic track uses (see "Velocity and load factor are derived" above). `trajectory.cpp` uses it directly. Replaced the vendored SPLINTER library, which brought a bundled Eigen 3.2.8 that predates C++17.
 
 Both `extern "C"` seams above are leftovers of the old D FFI boundary, not a current requirement.
+
+### Output metrics: time weighting, the day schedules, C-SEL
+
+`--lamax_weighting`, `--ta_file`, `--lden_file`, `--cnel_file` and `--csel_file`
+(`src/util/time_weighting.hpp`, the schedules in `src/util/sel.hpp`; the manual's "Maximum level,
+time above and C-weighted SEL" has the definitions and the measured comparison). What to keep:
+
+- **The time weighting runs in reception time, on the SEL integral's own weights.**
+  `reception_durations` is T times `reception_factor`, the very weights `sel_over_window`
+  applies, so a maximum, a time above and an exposure from one history hear it on one clock. The
+  samples are a piecewise-constant mean square over those durations and the weightings are
+  evaluated on it **exactly**: the exponential's maximum is at a sample's end (it relaxes
+  monotonically within one), and the running 0.5 s Leq is linear between the instants where
+  *either* edge of its window crosses a sample boundary (`for_each_window_piece` merges both
+  sets). Do not resample onto a grid or block it first, as the harness does to mirror the
+  measured 0.1 s frames: that is what the harness's LAFmax differs by (+0.03 to +0.06 dB median),
+  not the filter. Dropping the trailing-edge breakpoints passes every closed form but one, `the
+  running Leq turns where the window's trailing edge crosses a sample`; using one step for every
+  sample instead of each duration fails `the weighting follows each sample's own duration`.
+- **The tau/2 refusal is on the integration step (the mean), not the longest interval.** The
+  2017 AC tracks are 0.02 s with dropouts up to 0.14 s; testing the longest interval refused
+  every one of them, while the durations the detector actually sees are T times a reception
+  factor and never contain the dropout. A coarser track is refused with the -s advice rather
+  than given an exponential that settles within every sample.
+- **`instantaneous` returns `*max_element(levels)`, not a round trip through the mean square**,
+  so it reproduces the pre-option `--lamax_file` to the bit (checked against `6bbd6bb` on four
+  2017 runs). `fast` is the default since this change; the manual's "Changes that affect results"
+  says so.
+- **The day metrics add a penalty per sample, 0.0 outside its periods**
+  (`penalized_exposure_level`), so `-D` stayed byte-identical to the night-flag form it replaced
+  (`day_night_level`, kept as a wrapper for the tests). The window is found after the penalty;
+  `--full_history` now integrates the whole history for DNL, Lden and CNEL too, where DNL used
+  to ignore it. The CTests `lden_at_22h30_is_not_dnl` and friends pin the period boundaries by
+  which metrics coincide at 22:30 and 23:30 local; the clock refusal names the option asked for
+  (`dnl_needs_a_clock` matches "-D needs the time of day").
+- **C-SEL reuses `--band_history`'s per-band recording** (`record_bands`, `record_path`): every
+  path that writes `bands_out` for the band history -- straight, table, refracted, each extra
+  arrival -- feeds it, so a new propagation branch that forgets `bands_out` breaks both. Bands
+  outside [first_band, last_band) are never written, which is safe only because the C gains are
+  exactly zero there (same `--band_limits`). It is refused with `--db_cutoff` (a state culled on
+  the A-weighted bound has stale bands and may carry C-weighted energy) and with `-a`.
+  `csel_at_1khz_is_sel` checks the wiring (both curves are 0 dB at 1 kHz, to 1.5e-6), and
+  `csel_is_not_sel` that the C gains are what is applied.
+- **`c_weighting` is the A curve's second factor, constant and all** (2.242881e16 =
+  12194.22^4 10^(0.062/10)). The test that A - C equals the inner pole pairs to 1e-12 dB keeps
+  the two from drifting apart.
+
 ### Geodetic trajectory input
 
 A trajectory may be given in WGS84 (latitude, longitude, altitude) instead of the 27-column AC

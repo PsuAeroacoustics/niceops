@@ -88,7 +88,10 @@ with ground effect, by default. That path needs a relative humidity, from the ve
 
 - `-o`: the SEL per observer. Gridded output writes the x and y axes on the first two lines, then
   one row of levels per y.
-- `-D`: the day-night level, summed over every trajectory in the run.
+- `-D`, `--lden_file`, `--cnel_file`: the day-night, day-evening-night and community noise
+  equivalent levels, summed over every trajectory in the run.
+- `--lamax_file`, `--nax_file`, `--ta_file`, `--csel_file`: LAFmax, NAx, time above a
+  threshold and the C-weighted SEL.
 - `-i`, `--band_history`: per-observer level and band time histories.
 - `-S`: the derived trajectory state (position, velocity, load factor, C<sub>T</sub>, μ, flight
   path angles).

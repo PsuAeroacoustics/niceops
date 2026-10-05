@@ -19,6 +19,7 @@ to know before changing the numerics, are in [`CLAUDE.md`](../CLAUDE.md).
   - [Units](#units)
   - [Output files](#output-files)
   - [Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)
+  - [Maximum level, time above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel)
 - [Inputs](#inputs)
   - [Input files](#input-files)
   - [Geodetic coordinates](#geodetic-coordinates)
@@ -135,11 +136,14 @@ window: from the first to the last sample within 10 dB of the peak, dips between
 included, which is the duration the aircraft noise metrics use (14 CFR 36 A36.4.5).
 `--full_history` sums over the whole history instead. Both are in `src/util/sel.hpp`.
 
-Across a run, `-D` sums every trajectory's exposure into the day-night level, with a 10 dB
-penalty on samples flown at night
+Across a run, `-D`, `--lden_file` and `--cnel_file` sum every trajectory's exposure into the
+day-night, day-evening-night and community noise equivalent levels, each with its own penalties
+on samples heard in the evening or at night
 ([Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)).
-`--lamax_file` and `--nax_file` give each observer's maximum level and the number of
-operations that reach a threshold.
+`--lamax_file`, `--nax_file` and `--ta_file` give each observer's time-weighted maximum level
+(LAFmax by default), the number of operations that reach a threshold, and the time spent above
+one; `--csel_file` gives the C-weighted SEL
+([Maximum level, time above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel)).
 
 ### Where the code is
 
@@ -177,7 +181,7 @@ operations that reach a threshold.
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
 | `--ground_elevation` | Elevation of the observer plane above mean sea level, in `--units`. Subtracted from a WGS84 track's altitude column. |
 | `--path_smoothing` | How far, RMS per axis in `--units`, the path fitted through a WGS84 track may sit from the given positions. Default 10 ft. Zero interpolates exactly, which on measured positions makes the load factor track coordinate rounding. |
-| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. Required with `-D` when the track has no `utcsec` column (it used to default to midnight, which is night, so the whole footprint took the 10 dB penalty). |
+| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night window. Required with `-D`, `--lden_file` or `--cnel_file` when the track has no `utcsec` column (it used to default to midnight, which is night, so the whole footprint took the 10 dB penalty). |
 | `--latlon` | Also write each level file as latitude, longitude, level. |
 | `-l`, `--logfile` | Log file (default `log/niceops.log`). |
 | `-L`, `--loglevel` | `trace`, `info`, `warn`, `error` or `fatal` (default `info`). |
@@ -192,12 +196,17 @@ operations that reach a threshold.
 | `--units` | Length unit for the command line and for every file carrying a length: `ft` (default) or `m`. See **Units**. |
 | `--trim` | Crop each trajectory from this x, in `--units`, to its lowest/slowest point. Off by default; it changes which part of the flight is integrated. |
 | `--grid`, `--gridstep` | Observer grid bounds and spacing, in `--units`. Default ±1500 m (±4921.26 ft), step 25 m (82.021 ft) — a fixed extent either way. |
-| `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory: the energy average over a 24-hour day, with the 22:00–07:00 night penalized. A daytime operation reads its SEL less 49.37 dB. |
-| `--lamax_file` | Write each observer's LAmax: the highest A-weighted level over the operation, dB. Forces the whole history, so the peak is exact. |
-| `--nax_file`, `--nax_threshold` | Write each observer's NAx: the number of operations whose own LAmax reaches the threshold, dBA (required with `--nax_file`: there is no default, so the study's threshold is always stated). The count adds across trajectories. EPNL is not implemented. |
+| `-D`, `--dnlfile` | Write the day-night level (DNL), summed over every trajectory: the energy average over a 24-hour day, with the 22:00–07:00 night +10 dB. A daytime operation reads its SEL less 49.37 dB. |
+| `--lden_file` | Write the day-evening-night level (Lden, EU Directive 2002/49/EC): the same 24-hour average with 19:00–23:00 +5 dB and 23:00–07:00 +10 dB. |
+| `--cnel_file` | Write the community noise equivalent level (CNEL, California Title 21): 19:00–22:00 +10 lg 3 = 4.77 dB and 22:00–07:00 +10 dB. |
+| `--lamax_file` | Write each observer's LAmax: the highest A-weighted level over every operation, time-weighted per `--lamax_weighting` (LAFmax by default), dB. Forces the whole history. **Before this option existed it wrote the instantaneous peak**, 0.7–0.9 dB above LAFmax at the median; `--lamax_weighting instantaneous` still gives that, to the bit. |
+| `--lamax_weighting` | The time weighting `--lamax_file`, `--nax_file` and `--ta_file` read the level through, in reception time: `fast` (IEC 61672-1 F, τ = 0.125 s; default), `slow` (S, τ = 1 s), `leq0.5` (the largest running 0.5 s Leq, ECAC Doc 32's LASmax surrogate) or `instantaneous`. A trajectory sampled more coarsely than half the time constant is refused. Refused without one of the three outputs. |
+| `--nax_file`, `--nax_threshold` | Write each observer's NAx: the number of operations whose own LAmax (per `--lamax_weighting`) reaches the threshold, dBA (required with `--nax_file`: there is no default, so the study's threshold is always stated). The count adds across trajectories. EPNL is not implemented. |
+| `--ta_file`, `--ta_threshold` | Write each observer's time above: seconds of reception time the level, time-weighted per `--lamax_weighting`, exceeds the threshold, dBA (required, no default), summed over every trajectory. |
+| `--csel_file` | Write the C-weighted sound exposure level (LCE) per observer, by SEL's window rule. One name, or one per trajectory; one name with several trajectories writes `<track>_LCE.csv` beside it. Spectral path only; refused with `--no-spectral`, a database without spectra, `--db_cutoff` or `-a`. |
 | `--coverage_file` | Write, per observer, the energy-weighted share of its levels that came from cells the database did not measure. Needs a database that records `coverage`, as the 2017 aircraft databases do. With spectra, each cell counts by the share of its A-weighted band energy at the sphere that was measured, so a band the builder's SNR gate dropped counts by what it carries (on B407, 5–10 kHz in about half the measured cells, and 0.4% of the lower hemisphere's energy); channel coverage is all or nothing. On the demo grid B407 reads 1.2% unmeasured at the median, 27% at the 95th percentile. Straight rays only: refused with `--refraction` or `-a`. |
-| `--full_history` | Integrate each SEL over the whole history rather than the event's 10 dB-down window. Slower, since no window is found. |
-| `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
+| `--full_history` | Integrate each exposure over the whole history rather than the event's 10 dB-down window: SEL, C-SEL, and each operation's share of DNL, Lden and CNEL. Slower, since no window is found. |
+| `--utc_offset` | Hours from UTC to local time, for the DNL, Lden and CNEL periods. |
 | `--powerfile` | Write per-state shaft power, when the database has it. |
 | `--spectral`, `--no-spectral` | On by default when the database carries spectra: propagate its per-band spectra to the ground with ISO 9613-1 absorption. `--no-spectral` takes one broadband level with the database's EAA factor instead (databases without spectra always do). |
 | `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
@@ -281,7 +290,11 @@ seconds, levels in dB.
 
 - `-o` — sound exposure level (SEL) per observer. Gridded output writes the x and y axes on the
   first two lines and then one row of levels per y.
-- `-D` — day-night level, summed over every trajectory in the run (see below).
+- `-D`, `--lden_file`, `--cnel_file` — day-night, day-evening-night and community noise
+  equivalent levels, summed over every trajectory in the run (see below).
+- `--lamax_file`, `--nax_file`, `--ta_file` — the time-weighted maximum level, the NAx count and
+  the time above a threshold (seconds), over every trajectory in the run.
+- `--csel_file` — the C-weighted SEL per observer, one file per trajectory.
 - `-i` — per-observer level time histories.
 - `--band_history` — per-observer band time histories, for comparing with measured spectra
   frame by frame. One file per observer, `PREFIX_i<N>.csv`, with a row per trajectory state:
@@ -314,10 +327,142 @@ The sum is normalized to a 24-hour day, as the DNL is defined: a single daytime 
 gives the SEL less 10 lg 86 400 = 49.37 dB. (Before the normalization, `-D` wrote the raw sum,
 which read 49.37 dB high.)
 
+`--lden_file` and `--cnel_file` are the same sum under other schedules. Each penalty is added to
+the level of every sample heard in its period, local time:
+
+| Metric | Option | Evening | Night | Definition |
+| --- | --- | --- | --- | --- |
+| DNL | `-D` | — | 22:00–07:00, +10 dB | 14 CFR Part 150 |
+| Lden | `--lden_file` | 19:00–23:00, +5 dB | 23:00–07:00, +10 dB | EU Directive 2002/49/EC, Annex I |
+| CNEL | `--cnel_file` | 19:00–22:00, +10 lg 3 = 4.77 dB | 22:00–07:00, +10 dB | California Code of Regulations, Title 21, §5001 |
+
+The directive writes Lden = 10 lg[(12·10^(L<sub>day</sub>/10) + 4·10^((L<sub>evening</sub>+5)/10)
++ 8·10^((L<sub>night</sub>+10)/10)) / 24], with each L the equivalent level over its own period;
+that is the same number as the penalized energies summed and divided by 86 400 s, which is how
+it is computed. Title 21 weights each evening operation three times and each night operation ten
+times, which is the same thing again. The periods are the directive's defaults; a member state's
+shifted evening is not offered. A period's opening hour belongs to it: 07:00 is day, 19:00
+evening. A unit test integrates a steady level over a whole day and recovers each metric's period
+weighting, 10 lg((15 + 9·10)/24) for DNL, 10 lg((12 + 4·10^0.5 + 8·10)/24) for Lden and
+10 lg((12 + 3·3 + 9·10)/24) for CNEL, to 1e-9 dB; CTests run the demo track by day, at 22:30 and
+at 23:30 local and check which metrics coincide there.
+
+**Each operation's window.** By default an operation contributes its own penalized 10 dB-down
+window: the window is found on the penalized history, as SEL's is on the raw one, so a night
+operation is integrated over the same samples a day one would be. `--full_history` integrates
+each operation's whole history instead, as AAM and NORAH2 do. The window leaves out what lies
+more than 10 dB down: on the four 2017 sample runs of the validation harness (calm-day
+approaches and windy-day steady flight, band histories at every microphone) the whole history is
++0.29 to +0.56 dB above the window at the median per operation, up to +1.4 dB at a single
+microphone. For a DNL meant to sit beside an AAM or NORAH2 contour, use `--full_history`; for one
+meant to match a measured SEL's convention, leave it off. Before this release `-D` used the
+window whatever `--full_history` said.
+
+The clock is the AC format's `utcsec` column, or `--start_utc` for a WGS84 track; a track without
+one is refused under any of the three, since classing it as day (or, from a zero default, night)
+would be a made-up answer.
+
 Plotting is skipped for multi-trajectory runs, since one figure file cannot hold several paths.
 
 A trajectory that cannot be read is logged and skipped rather than ending the run, so one bad
 file in a batch costs that file alone. The exit status is nonzero if anything was skipped.
+
+### Maximum level, time above and C-weighted SEL
+
+**Time-weighted maximum (`--lamax_file`, `--lamax_weighting`).** A sound level meter does not
+report the instantaneous mean square; it reports it through a time weighting. IEC 61672-1:2013
+defines F (fast) and S (slow) as first-order exponential averages of the squared,
+frequency-weighted pressure,
+
+    y(t) = (1/τ) ∫ p²(s) exp(−(t − s)/τ) ds,   τ = 0.125 s (F) or 1 s (S),
+
+and LAFmax is the largest value of 10 lg y. `--lamax_weighting` picks the weighting:
+
+| Value | Maximum | Coarsest trajectory step |
+| --- | --- | --- |
+| `fast` (default) | LAFmax, IEC 61672-1 F | 0.0625 s |
+| `slow` | LASmax, IEC 61672-1 S | 0.5 s |
+| `leq0.5` | the largest running 0.5 s Leq: ECAC Doc 32's "LASmax", which its footnote calls a surrogate for S, and NORAH2's | 0.25 s |
+| `instantaneous` | the largest sample of the history: no time weighting | any |
+
+The weighting runs in **reception time**. The history is a level per emission time, and each
+sample lasts T (1 + ṙ / c) at the microphone, the same weights the SEL integral uses
+([Exposure](#exposure)). The samples are taken as a piecewise-constant mean square over those
+durations, back to back, and the weighting is evaluated on that signal exactly: across a sample
+the exponential relaxes toward it as exp(−s/τ), so its maximum falls at a sample's end, and the
+running average is linear between the instants where either edge of its window crosses a sample
+boundary. Nothing is resampled or blocked, so the answer depends on neither a grid nor a phase.
+The detector starts settled on the first sample's level. `--nax_file` counts the operations whose
+own weighted maximum reaches `--nax_threshold`, and the maximum over several operations is the
+largest of theirs.
+
+A weighting is refused on a trajectory whose sample interval exceeds half its time constant
+(the table's last column): a fast detector fed a 0.5 s history settles within every sample, and
+its "maximum" is the largest sample again under another name. The check is on the mean interval,
+the step every sample is weighted by; the 2017 AC tracks are 0.02 s with the odd dropout up to
+0.14 s, and pass. A sparse WGS84 track can be refitted onto a finer `-s`.
+
+**What changed.** Before `--lamax_weighting`, `--lamax_file` wrote the instantaneous maximum of
+the 0.02 s history, which is not a meter quantity. Against the validation harness's LAFmax on the
+calm day it sat +0.95 dB high at the median (95th percentile +2.29 dB); on the four sample runs
+below, the instantaneous maximum is +0.72 to +0.93 dB above the in-tool LAFmax at the median (95th
+percentiles +1.1 to +3.8 dB). `--lamax_weighting instantaneous` reproduces the old file to the
+bit (checked against the build before the change on all four runs). On those runs LAFmax is
++0.52 to +0.92 dB above LASmax and +0.09 to +0.16 dB above the running 0.5 s Leq, at the median.
+
+**How it was checked.** Unit tests hold the exponentials to their closed forms: the step
+response, with the time above half power, at three sampling steps; IEC 61672-1's tone-burst
+response 10 lg(1 − e^(−T<sub>b</sub>/τ)), which its Table 4 lists as −1.0 dB (F, 200 ms),
+−18.0 (F, 2 ms), −27.0 (F, 0.25 ms) and −7.4 (S, 200 ms); a burst cut into unequal samples
+reading as the same burst; a source closing at Mach 0.5, whose 0.2 s burst the detector hears as
+0.1 s; and the running Leq's ramps, including a crossing that falls where the window's trailing
+edge, not a sample boundary, turns. On the 2017 records (`station_plate` on calm-day approaches
+286270 and 286277, `stratified_plate` on windy-day runs 284205 and 284211, 188 microphones; the
+harness's own commands with this build):
+
+| In-tool LAFmax minus | Median, per run | 5th to 95th percentile | Largest difference |
+| --- | --- | --- | --- |
+| an independent evaluation of the same definition from `--band_history`'s reception times | — | — | 2e-6 dB (the file's printed digits) |
+| the harness's procedure without its 0.1 s blocks (emission time, 0.02 s) | −0.003 to −0.005 dB | −0.043 to +0.015 dB | 0.075 dB |
+| the harness's LAFmax (energy-averaged into 0.1 s blocks, then F) | +0.03 to +0.06 dB | −0.008 to +0.32 dB | 0.55 dB |
+
+The last row is the harness's 0.1 s blocking, which it applies to put the prediction on the
+measured frames' footing: blocking the same reception-time signal into 0.1 s blocks moves it by
++0.05 to +0.07 at the median, while the clock alone (reception against emission time, both
+blocked) moves it by −0.002 to +0.015. Within 0.05 dB of the harness's LAFmax are 44–74 % of
+microphones per run; within 0.08 dB of its unblocked procedure, all of them. Scoring a
+prediction against the measured 0.1 s frames should keep the harness's blocking; the in-tool
+value is the meter's reading of the continuous prediction.
+
+**Time above (`--ta_file`, `--ta_threshold`).** Seconds of reception time during which the
+level, through the same weighting, exceeds the threshold (strictly), over each operation's own
+history, summed over operations. Within a sample the weighted level is followed exactly, so a
+crossing inside a sample is credited at the instant it happens; under `instantaneous` each sample
+counts whole. On the 2017 sample runs, with instantaneous levels, TA65 is 11–36 s and TA75
+4–10 s at the median microphone.
+There is no default threshold, as with NAx.
+
+**C-weighted SEL (`--csel_file`).** The same exposure integral over the C-weighted level, LCE.
+The C curve is IEC 61672-1:2013 Annex E's, in the pole-zero form the A curve already uses
+(`src/weighting.cpp`): the A curve's outer pole pairs alone, normalized at 1 kHz, and in fact
+exactly the second factor of panam's A-weighting, constant and all. It matches the standard's
+Table 3 within its 0.1 dB rounding from 10 Hz to 20 kHz, and the difference between the A and C
+curves is the A curve's two inner pole pairs to 1e-12 dB. Each state's C-weighted level is formed
+from the per-band levels at the microphone that its A-weighted level is summed from (spreading,
+absorption, ground or plate, refraction, every arrival), over the same `--band_limits`. **The
+window rule is SEL's**: the 10 dB-down window of the C-weighted history itself, which is not the
+A-weighted window, or the whole history under `--full_history`; the reception-time weights are
+SEL's too. It needs band levels, so it is refused on the broadband path (`--no-spectral`, or a
+database without spectra); with `--db_cutoff`, whose bound is proven on the A-weighted level and
+could skip a state with C-weighted energy; and with `-a`, whose ambient is a single A-weighted
+level.
+
+C-SEL is dominated by low frequencies, so **the band limits matter**: on the 2017 sample runs it
+is 8.8 to 9.5 dB above the A-weighted SEL at the median microphone, and on run 286270 40 % of
+the C-weighted energy (median microphone) lies below 50 Hz, so the default 20 Hz lower limit leaves out a database's 10–16 Hz
+bands. CTests check that a run limited to the 1 kHz band gives the A-weighted SEL to 1e-5 dB
+(where both curves are 0 dB), which exercises the window, the reception weights and the per-state
+bands, and that a full-band run does not.
 
 ## Inputs
 
@@ -1465,8 +1610,9 @@ It is exact, not an approximation — the output is byte-identical to evaluating
 is used on the spectral path (`--spectral`, `--ground_effect`, plates, refraction, tables), where
 an evaluation costs 150 ns to a microsecond; a broadband run, where an evaluation costs about 20
 ns and the bound proves only about 6% of the pairs outside the window, marches every state
-instead. It is skipped, with every state evaluated, for `-a`, `-i`, `--band_history`, `-D` and
-`--db_cutoff` as well; see [`CLAUDE.md`](../CLAUDE.md) for why each one cannot use it.
+instead. It is skipped, with every state evaluated, for `-a`, `-i`, `--band_history`, `-D`,
+`--lden_file`, `--cnel_file`, `--lamax_file`, `--nax_file`, `--ta_file`, `--csel_file`,
+`--full_history` and `--db_cutoff` as well; see [`CLAUDE.md`](../CLAUDE.md) for why each one cannot use it.
 
 ### `--db_cutoff`
 
@@ -1570,6 +1716,14 @@ these in mind. The largest is the first:
   ([Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)).
 - **`--start_utc`** is required with `-D` for a WGS84 track without a clock. It used to
   default to midnight, so the whole footprint took the night penalty.
+- **`--lamax_file`** writes LAFmax, the IEC 61672 fast-weighted maximum in reception time, by
+  default. It used to write the instantaneous peak of the history, 0.7–0.9 dB higher at the
+  median; `--lamax_weighting instantaneous` still does, to the bit. `--nax_file` counts against
+  the same weighted maximum
+  ([Maximum level, time above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel)).
+- **`--full_history`** now governs `-D` as well as SEL. It used to leave DNL on each operation's
+  10 dB-down window, 0.3–0.6 dB below the whole history at the median; the default is unchanged
+  ([Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)).
 - **The point receiver's microphone height** sets the evaluation point. Point-receiver SEL
   moved by up to about ±0.8 dB ([Receivers](#receivers)).
 - **Four length options** (`--grid`, `--gridstep`, `--receiver_height`, `--path_smoothing`)
