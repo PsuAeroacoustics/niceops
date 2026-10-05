@@ -59,8 +59,8 @@ inline constexpr double max_focusing_gain_db = 10.0;
 // it within about k h^2.  So a downward ray is not followed past the invariant
 // at which its horizontal travel through the limiting ray's turning region
 // (the heights within one radian of vertical phase of the fastest air) would
-// exceed 2 k h^2, k at this frequency.  In any linear gradient ray theory
-// itself travels 2/3 of that there, so a resolved profile never reaches it;
+// exceed 1.5 k h^2, k at this frequency.  In any linear gradient ray theory
+// itself travels 8/9 of that there, so a resolved profile never reaches it;
 // the highest band gives the largest k, so the limit removes only what no
 // band of the run resolves (resolved_pass in stratified.cpp).
 inline constexpr double default_resolution_frequency = 10000.0; // Hz
