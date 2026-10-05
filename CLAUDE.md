@@ -271,6 +271,10 @@ screen; these now fail, or warn, with the cause named. Know them before adding a
   silent NaN or hang before. Test fixtures with one thrust coefficient carry the flag.
 - **Several trajectories in one run** name `-i` / `--band_history` files for their track and
   derive `-S` names as `-o` does, and two trajectories asked to write one file are refused.
+- **`--terrain` checks the datum and the frame against the track** where the track can say
+  (an AC file's lat/lon and alt beside its x/y/z), refuses states under the ground and grids
+  that miss the scene, and warns when scattered observers' z disagrees with the terrain; see the
+  `src/terrain` entry under Architecture. The grid's heights must be meters.
 - **CTests that test these pass on the message text** (`PASS_REGULAR_EXPRESSION`), which
   replaces the exit-status check, so a usage error or a missing file cannot satisfy them;
   `golden_compare` itself is tested on NaN and infinity.
@@ -1077,8 +1081,8 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     ShadowTransition places a plate. **With `--refraction` the table takes the pairs it
     covers and the ray model the rest** (`table_level` first in `refracted_level`); that
     run evaluates every state, since its bounds were not built for both geometries.
-  - **Not done:** ground elevation (flat ground at z = 0), and a sphere lookup along a
-    refracted launch direction (the table cannot say what it is).
+  - **Not done:** ground elevation (flat ground at z = 0; `--terrain` refuses a table), and a
+    sphere lookup along a refracted launch direction (the table cannot say what it is).
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its
@@ -1091,6 +1095,68 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   The point receiver's direct path ended on the ground until this went in, while its ground
   model put the microphone 1.2 m up. Point-receiver SEL moved by up to ±0.8 dB on the demo
   grid, almost all from the low states; plates and the goldens did not move.
+- `src/terrain.{hpp,cpp}`, `terrain_ray` in `src/propagation.hpp` -- `--terrain`: a bare-earth
+  grid (the harness's `terrain/dem_to_netcdf.py` netCDF; USGS 3DEP), compiled but called by
+  nothing until this. Grid observers stand on it, and each pair's ground geometry is
+  taken over the least-squares mean ground line along its ground projection, observer to the
+  source's footprint (CNOSSOS-EU's mean plane, NORAH2 / ECAC Doc 32's practice over terrain).
+  Spreading, absorption and the sphere lookup keep the true 3-D path. The things to preserve:
+  - **Level terrain is the flat run, byte for byte** (`terrain_flat_*_is_flat`, point, plate
+    and scattered). That rests on three spellings: `Terrain::elevation` and
+    `TerrainRaster::height` interpolate from a corner (`a + f (b - a)`), because the product
+    form's four weights do not sum to exactly 1 and a constant grid came out 1.9e-13 ft off;
+    `plane_geometry` divides by sqrt(1 + b^2) rather than multiplying by its reciprocal, so a
+    level line divides by exactly 1; and the test grid is written as
+    `-((-1250 * 0.3048) - (54.2651 * 0.3048))`, the height `--terrain_offset -1250` and
+    `--ground_elevation 54.2651` take back to zero in the program's own arithmetic.
+  - **The ground's z is H + `--terrain_offset` - `--ground_elevation`**, the same
+    `--ground_elevation` that is a WGS84 track's z = 0. NICE-OPS converts no datums. At Amedee
+    3DEP is NAVD88 and the 2017 tracks and microphones are ellipsoidal: offset -23.6 m, and
+    `--ground_elevation` 3926.7 ft (the AC tracks' alt - z). Leaving out either is a plausible
+    wrong answer, so the run checks what it can: an AC track's own lat/lon against the frame
+    (refused past 30 m rms, warned past 3; `Trajectory::recorded`, kept as read, before any
+    trim), its alt - z against `--ground_elevation` (1 m), any state more than 10 m under the
+    terrain (refused, a datum error; less is warned, 3DEP's own error), and scattered observers'
+    z against the terrain (warned past 1 m; `--observers_on_terrain` takes the terrain's). Every
+    refusal has a CTest on its message.
+  - **A point receiver's height above each line is its own** (`RayPath::receiver_height`,
+    NaN for every other path), so `spectral_level_impl` evaluates the ground model exactly
+    when it differs from the model's -- *before* the `GroundTable` branch, which holds one
+    height. That costs 4x on the demo grid over real terrain (127 against 32 s CPU). Do not
+    read the table at the pole's height instead: a height error of delta moves the path
+    difference by 2 delta sin(grazing), a radian at 1 kHz for 0.3 m at 30 degrees. A plate lies
+    along the line under its microphone and keeps its table (source height h_s - h_r).
+    `a path's own receiver height is the ground model's, past its table` holds the branch.
+  - **Heights below the line are raised to zero**, CNOSSOS-EU's rule: a receiver in a dip, or
+    a source behind rising ground -- which is screening, and not modeled. The log counts them.
+  - **`GroundPlaneCache`, not a fit per pair.** A direct fit is ~300 samples for a 3 km path,
+    a microsecond, 94 million times. The cache keeps running sums of z and k z along 1440 fixed
+    bearings per observer, sampled lazily and only as far as a pair needs, so any whole-step fit
+    is a few flops (`line_from_sums`), and a pair takes the four fits around it interpolated in
+    bearing and length (continuous; exact along a ray at a whole step, to 2e-7 in slope on a
+    plane). A path shorter than one step takes the first step's fit along its bearing, not a
+    one-sample "fit" with zero slope, which was wrong for every nearly overhead state on a
+    slope. Heights are summed relative to the observer's, or a 1000 m site cancels in
+    `sum_kz - n/2 sum_z`. The terrain is resampled once per trajectory onto the local frame
+    (`TerrainRaster`: an inverse projection per node, not per sample), with a margin of two
+    steps plus the diagonal times the bearing step, which is how far a bracketing ray reaches.
+    About 35 ns a pair; the mutation that read one bearing twice fails two cases in
+    `tests/test_terrain.cpp`.
+  - **The bounds need nothing new**: `ground_gain_bounds` and `PlateReceiver::gain_bounds`
+    hold for every geometry and receiver height, and the bound test's geometry is the true
+    3-D path, as the level's spreading is. `terrain_hills_*_windowed_is_exact` holds it. The
+    tables' reach (`reach()` in `process_trajectory`) extends below z = 0 under terrain; node
+    placement does not depend on the reach, so the flat case is unmoved.
+  - **Refused with `--refraction` and `--propagation_table`**: the ray models reflect off and
+    shadow onto z = 0, and the table's heights are over flat ground. A tilted plane per path
+    handed to them would be another model.
+  - **Observers' ground is read from the grid itself in `run()`**, once, not from the raster,
+    which is a resampling of it.
+  - At Amedee, on the paper's plate configuration (two day-286 approaches, two day-284 steady
+    runs), terrain moves SEL by at most 0.026 dB (rms 0.007); 1.2 m poles by up to 0.19 dB,
+    because h_r above each plane carries the grid's decimeter-scale error at the microphone's
+    foot. The evaluation's estimate for a 1-3 degree slope is ~1 dB for plates at 5-10 degrees
+    of peak elevation (manual, "Terrain").
 - `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
   than a table, so it evaluates at whatever band centers a database carries) and band-limited
   energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but
