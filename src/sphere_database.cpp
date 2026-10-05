@@ -167,43 +167,68 @@ bool read_coverage(int group_id, std::vector<int>& coverage)
     return true;
 }
 
-// The root attribute speed_reference, as text.  Absent is the ground.  panam
-// writes it with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is
-// accepted too.
-SpeedReference read_speed_reference(int ncid)
+// A root text attribute, or nullopt when the file has none.  panam writes them
+// with netCDF4-python, whose str attributes are NC_CHAR; NC_STRING is accepted
+// too.  Anything else is refused by name rather than read as absent.
+std::optional<std::string> read_root_text(int ncid, const char* name)
 {
     nc_type type = NC_NAT;
     std::size_t length = 0;
-    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, "speed_reference", &type, &length))
-        return SpeedReference::ground;
+    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, name, &type, &length))
+        return std::nullopt;
     std::string text;
     if (type == NC_CHAR)
     {
         text.resize(length);
-        if (NC_NOERR != nc_get_att_text(ncid, NC_GLOBAL, "speed_reference", text.data()))
-            input_error("Found but could not read the database attribute speed_reference.");
+        if (NC_NOERR != nc_get_att_text(ncid, NC_GLOBAL, name, text.data()))
+            input_error("Found but could not read the database attribute ", name, ".");
     }
     else if (type == NC_STRING && length == 1)
     {
         char* value = nullptr;
-        if (NC_NOERR != nc_get_att_string(ncid, NC_GLOBAL, "speed_reference", &value))
-            input_error("Found but could not read the database attribute speed_reference.");
+        if (NC_NOERR != nc_get_att_string(ncid, NC_GLOBAL, name, &value))
+            input_error("Found but could not read the database attribute ", name, ".");
         text = value == nullptr ? "" : value;
         nc_free_string(1, &value);
     }
     else
     {
-        input_error("The database attribute speed_reference is not text.");
+        input_error("The database attribute ", name, " is not text.");
     }
     // Fixed-width writers pad with NULs or blanks.
     text.erase(text.find_last_not_of(std::string(" \0", 2)) + 1);
-    const auto reference = parse_speed_reference(text);
+    return text;
+}
+
+// The root attribute speed_reference.  Absent is the ground.
+SpeedReference read_speed_reference(int ncid)
+{
+    const auto text = read_root_text(ncid, "speed_reference");
+    if (!text)
+        return SpeedReference::ground;
+    const auto reference = parse_speed_reference(*text);
     if (!reference)
     {
-        input_error("The database attribute speed_reference is '", text,
+        input_error("The database attribute speed_reference is '", *text,
                 "'; expected 'ground' or 'air'.");
     }
     return *reference;
+}
+
+// The root attribute azimuth_reference, nullopt when absent (which the
+// Database reads as the track).
+std::optional<AzimuthReference> read_azimuth_reference(int ncid)
+{
+    const auto text = read_root_text(ncid, "azimuth_reference");
+    if (!text)
+        return std::nullopt;
+    const auto reference = parse_azimuth_reference(*text);
+    if (!reference)
+    {
+        input_error("The database attribute azimuth_reference is '", *text,
+                "'; expected 'track' or 'heading'.");
+    }
+    return reference;
 }
 
 // Read an integer-valued scalar, converting from whatever numeric type the
@@ -322,6 +347,20 @@ std::optional<SpeedReference> parse_speed_reference(const std::string& name)
 const char* to_string(SpeedReference reference)
 {
     return reference == SpeedReference::air ? "air" : "ground";
+}
+
+std::optional<AzimuthReference> parse_azimuth_reference(const std::string& name)
+{
+    if (name == "track")
+        return AzimuthReference::track;
+    if (name == "heading")
+        return AzimuthReference::heading;
+    return std::nullopt;
+}
+
+const char* to_string(AzimuthReference reference)
+{
+    return reference == AzimuthReference::heading ? "heading" : "track";
 }
 
 // Repair the azimuth labels of a sphere written by a pre-versioned builder.
@@ -965,6 +1004,7 @@ Database::Database(const std::string& datafile_path)
     if (NC_NOERR == get_scalar(file_ncid, "vehicle_weight_newtons", &root_value))
         vehicle_weight_newtons_ = root_value;
     speed_reference_ = read_speed_reference(file_ncid);
+    azimuth_reference_ = read_azimuth_reference(file_ncid);
     // The atmosphere the broadband EAA was built in, when the builder recorded
     // all three of its values; the rotor speed the spheres were built at.
     const auto build_temperature = read_double_attribute(file_ncid, "build_temperature_K");
@@ -978,6 +1018,8 @@ Database::Database(const std::string& datafile_path)
                 build_atmosphere_->pressure_kpa, " kPa, ",
                 build_atmosphere_->relative_humidity_percent, " % RH.");
     info("Database flight conditions are referred to the ", to_string(speed_reference_), ".");
+    info("Database sphere azimuth is measured from the ", to_string(azimuth_reference()),
+            azimuth_reference_ ? "." : " (the file does not say; the track is the default).");
 
     auto group_ids = get_group_ids(file_ncid);
     // Every field below is filled from the loop over these groups.  With none,
@@ -2041,6 +2083,7 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.thrust_coefficient = thrust_coefficient;
     sphere.radius = sphere_radius_;
     sphere.speed_reference = speed_reference_;
+    sphere.azimuth_reference = azimuth_reference_;
     sphere.tip_speed = tip_speed_;
     sphere.rotor_radius = rotor_radius_;
     sphere.vehicle_weight_newtons = vehicle_weight_newtons_;
@@ -2661,6 +2704,13 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     const std::string reference = to_string(sphere.speed_reference);
     nc_check(nc_put_att_text(file, NC_GLOBAL, "speed_reference", reference.size(), reference.c_str()),
             "writing speed_reference");
+    if (sphere.azimuth_reference)
+    {
+        const std::string azimuth = to_string(*sphere.azimuth_reference);
+        nc_check(nc_put_att_text(file, NC_GLOBAL, "azimuth_reference", azimuth.size(),
+                         azimuth.c_str()),
+                "writing azimuth_reference");
+    }
 
     int group = 0;
     nc_check(nc_def_grp(file, "sphere0", &group), "defining group sphere0");

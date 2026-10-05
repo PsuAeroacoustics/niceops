@@ -5,6 +5,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -426,6 +427,60 @@ TEST_CASE("speed_reference is read from the database root", "[sphere_database]")
     REQUIRE(parse_speed_reference("air") == SpeedReference::air);
     REQUIRE(!parse_speed_reference("Air").has_value());
     REQUIRE(std::string(to_string(SpeedReference::ground)) == "ground");
+}
+
+TEST_CASE("azimuth_reference is read from the database root and survives export", "[sphere_database]")
+{
+    // Absent is the track, as every database built before the attribute was;
+    // the Database still says that it was absent, so a run can tell an
+    // explicit --nose against the file from one against a default.
+    Database source("databases/S-76D_M3.nod");
+    REQUIRE(source.azimuth_reference() == AzimuthReference::track);
+    REQUIRE_FALSE(source.recorded_azimuth_reference().has_value());
+    auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
+    REQUIRE_FALSE(sphere.azimuth_reference.has_value());
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_azimuth_reference.nod").string();
+
+    const auto with_attribute = [&](const char* value) {
+        write_sphere(sphere, path);
+        int ncid = 0;
+        REQUIRE(nc_open(path.c_str(), NC_WRITE, &ncid) == NC_NOERR);
+        REQUIRE(nc_redef(ncid) == NC_NOERR);
+        REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "azimuth_reference", std::strlen(value), value)
+                == NC_NOERR);
+        REQUIRE(nc_close(ncid) == NC_NOERR);
+    };
+
+    // An export of a database that records nothing records nothing.
+    write_sphere(sphere, path);
+    REQUIRE_FALSE(Database(path).recorded_azimuth_reference().has_value());
+    with_attribute("heading");
+    {
+        const Database reloaded(path);
+        REQUIRE(reloaded.azimuth_reference() == AzimuthReference::heading);
+        REQUIRE(reloaded.recorded_azimuth_reference() == AzimuthReference::heading);
+        // And re-exported, it carries the attribute on.
+        const auto again = reloaded.interpolate_sphere(0.15, -4.0, 0.006);
+        REQUIRE(again.azimuth_reference == AzimuthReference::heading);
+        const auto copy = (std::filesystem::temp_directory_path() / "niceops_azimuth_copy.nod").string();
+        write_sphere(again, copy);
+        REQUIRE(Database(copy).recorded_azimuth_reference() == AzimuthReference::heading);
+        std::filesystem::remove(copy);
+    }
+    with_attribute("track");
+    REQUIRE(Database(path).recorded_azimuth_reference() == AzimuthReference::track);
+    // Anything else is refused rather than guessed at, padding aside.
+    with_attribute("heading  ");
+    REQUIRE(Database(path).azimuth_reference() == AzimuthReference::heading);
+    with_attribute("nose");
+    REQUIRE_THROWS_WITH(Database(path), Catch::Matchers::ContainsSubstring("azimuth_reference is 'nose'"));
+    std::filesystem::remove(path);
+
+    REQUIRE(parse_azimuth_reference("heading") == AzimuthReference::heading);
+    REQUIRE(parse_azimuth_reference("track") == AzimuthReference::track);
+    REQUIRE(!parse_azimuth_reference("Heading").has_value());
+    REQUIRE(std::string(to_string(AzimuthReference::heading)) == "heading");
+    REQUIRE(std::string(to_string(AzimuthReference::track)) == "track");
 }
 
 TEST_CASE("Spectra survive interpolation and re-export", "[sphere_database]")

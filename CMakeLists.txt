@@ -491,6 +491,67 @@ add_test(NAME speed_reference_air_calm_is_ground COMMAND golden_compare integrat
 set_tests_properties(speed_reference_air_calm_is_ground PROPERTIES FIXTURES_REQUIRED atmosphere_runs)
 add_test(NAME speed_reference_air_needs_wind COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/B407_uniform.csv --speed_reference air --gridstep 492 -L warn -o integrated/speed_reference_air_needs_wind.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(speed_reference_air_needs_wind PROPERTIES WILL_FAIL TRUE)
+# --nose.  The hidden Catch case [.heading_tracks] writes two copies of the demo
+# track differing only in the heading column -- the ground track's own compass
+# bearing, and that turned 15 degrees clockwise -- and a one-sphere database whose
+# root says azimuth_reference = heading.  Heading mode along the track has to
+# reproduce the default nose; crabbed, it has to move the footprint; and the
+# database's attribute has to select heading mode by itself.
+add_test(NAME nose_heading_build COMMAND niceops_unit_tests "[.heading_tracks]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_build PROPERTIES FIXTURES_SETUP heading_tracks)
+add_test(NAME nose_default_on_track COMMAND niceops -t integrated/heading_on_track.csv --frame_bearing 210 --gridstep 328 -L warn -o integrated/nose_default_on_track.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_heading_on_track COMMAND niceops -t integrated/heading_on_track.csv --frame_bearing 210 --gridstep 328 --nose heading -L warn -o integrated/nose_heading_on_track.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_heading_crabbed COMMAND niceops -t integrated/heading_crabbed.csv --frame_bearing 210 --gridstep 328 --nose heading -L warn -o integrated/nose_heading_crabbed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_database_heading COMMAND niceops -d integrated/heading_sphere.nod -t integrated/heading_crabbed.csv --frame_bearing 210 --gridstep 328 -L warn -o integrated/nose_database_heading.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_database_heading_explicit COMMAND niceops -d integrated/heading_sphere.nod -t integrated/heading_crabbed.csv --frame_bearing 210 --gridstep 328 --nose heading -L warn -o integrated/nose_database_heading_explicit.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_database_velocity COMMAND niceops -d integrated/heading_sphere.nod -t integrated/heading_crabbed.csv --frame_bearing 210 --gridstep 328 --nose velocity -L warn -o integrated/nose_database_velocity.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_database_velocity PROPERTIES PASS_REGULAR_EXPRESSION "--nose velocity overrides the database, whose sphere azimuth is measured from the heading")
+set_tests_properties(nose_default_on_track nose_heading_on_track nose_heading_crabbed nose_database_heading nose_database_heading_explicit nose_database_velocity PROPERTIES FIXTURES_REQUIRED heading_tracks FIXTURES_SETUP nose_runs)
+add_test(NAME nose_heading_on_track_is_velocity COMMAND golden_compare integrated/nose_heading_on_track.csv integrated/nose_default_on_track.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# A crab of 15 degrees moves the footprint (golden_compare reports a mismatch, which is the pass).
+add_test(NAME nose_heading_crabbed_differs COMMAND golden_compare integrated/nose_heading_crabbed.csv integrated/nose_default_on_track.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_crabbed_differs PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+add_test(NAME nose_database_heading_is_default COMMAND golden_compare integrated/nose_database_heading.csv integrated/nose_database_heading_explicit.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_database_velocity_differs COMMAND golden_compare integrated/nose_database_velocity.csv integrated/nose_database_heading.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_database_velocity_differs PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(nose_heading_on_track_is_velocity nose_heading_crabbed_differs nose_database_heading_is_default nose_database_velocity_differs PROPERTIES FIXTURES_REQUIRED nose_runs)
+# The hover nose: with --frame_bearing given, two tracks whose hovers share a
+# heading and whose approaches differ only in their crab (which the default nose
+# ignores, flying along the velocity) give the same footprint.  The track's own
+# fit, which used to win over the frame, absorbed the crabbed approach's 15
+# degrees and turned that hover's nose by them.
+add_test(NAME nose_hover_crabbed COMMAND niceops -t integrated/heading_hover_crabbed.csv --frame_bearing 210 --gridstep 328 -L warn -o integrated/nose_hover_crabbed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_hover_straight COMMAND niceops -t integrated/heading_hover_straight.csv --frame_bearing 210 --gridstep 328 -L warn -o integrated/nose_hover_straight.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_hover_crabbed nose_hover_straight PROPERTIES FIXTURES_REQUIRED heading_tracks FIXTURES_SETUP nose_hover_runs)
+add_test(NAME nose_hover_takes_the_frame COMMAND golden_compare integrated/nose_hover_crabbed.csv integrated/nose_hover_straight.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_hover_takes_the_frame PROPERTIES FIXTURES_REQUIRED nose_hover_runs)
+# Heading mode is refused with no frame to turn the heading by (the track's own
+# fit would absorb the crab), with a database implying it as with --nose, and on
+# a track with no heading at all.
+add_test(NAME nose_heading_needs_a_frame COMMAND niceops -t integrated/heading_crabbed.csv --nose heading --gridstep 1640 -L warn -o integrated/nose_heading_no_frame.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_needs_a_frame PROPERTIES PASS_REGULAR_EXPRESSION "--nose heading turns each state's compass heading into the local frame, and needs that frame's bearing" FIXTURES_REQUIRED heading_tracks)
+add_test(NAME nose_database_heading_needs_a_frame COMMAND niceops -d integrated/heading_sphere.nod -t integrated/heading_crabbed.csv --gridstep 1640 -L warn -o integrated/nose_database_no_frame.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_database_heading_needs_a_frame PROPERTIES PASS_REGULAR_EXPRESSION "azimuth_reference \\(heading\\) turns each state's compass heading.*or --nose velocity" FIXTURES_REQUIRED heading_tracks)
+add_test(NAME nose_heading_needs_a_heading COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --nose heading -L warn -o integrated/nose_heading_no_heading.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_needs_a_heading PROPERTIES PASS_REGULAR_EXPRESSION "--nose heading needs the nose's compass heading, and tests/data/demo_geodetic_noclock.csv carries none")
+# A database implying heading mode on a track with no heading falls back to the
+# velocity, with a warning, and runs.
+add_test(NAME nose_database_heading_without_heading COMMAND niceops -d integrated/heading_sphere.nod -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -L warn -o integrated/nose_database_no_heading.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_database_heading_without_heading PROPERTIES PASS_REGULAR_EXPRESSION "the nose follows the velocity instead" FIXTURES_REQUIRED heading_tracks)
+# On the spectral path the windowed peak search bounds each state through its
+# sphere frame, so a heading nose has to leave it exact.
+add_test(NAME nose_heading_spectral COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t integrated/heading_crabbed.csv --frame_bearing 210 --nose heading --gridstep 984 -L warn -o integrated/nose_heading_spectral.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_heading_spectral_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t integrated/heading_crabbed.csv --frame_bearing 210 --nose heading --gridstep 984 -L warn -D integrated/nose_heading_spectral_dnl.csv -o integrated/nose_heading_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_spectral nose_heading_spectral_marched PROPERTIES FIXTURES_REQUIRED heading_tracks FIXTURES_SETUP nose_spectral_runs)
+add_test(NAME nose_heading_windowed_is_exact COMMAND golden_compare integrated/nose_heading_spectral.csv integrated/nose_heading_spectral_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_heading_windowed_is_exact PROPERTIES FIXTURES_REQUIRED nose_spectral_runs)
+# --nose ground_velocity keeps the nose on the ground track under --speed_reference
+# air, which otherwise turns it onto the air velocity: in a wind the two differ.
+add_test(NAME nose_air COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --frame_bearing 210 --speed_reference air --gridstep 984 -L warn -o integrated/nose_air.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nose_air_ground_velocity COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --frame_bearing 210 --speed_reference air --nose ground_velocity --gridstep 984 -L warn -o integrated/nose_air_ground_velocity.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_air nose_air_ground_velocity PROPERTIES FIXTURES_SETUP nose_air_runs)
+add_test(NAME nose_ground_velocity_is_not_air COMMAND golden_compare integrated/nose_air_ground_velocity.csv integrated/nose_air.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(nose_ground_velocity_is_not_air PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value" FIXTURES_REQUIRED nose_air_runs)
 # The same over arrays/coyle_approach.csv, whose microphones stand at different
 # heights.  A grid's observers share one, so their mean coefficients are formed
 # once per state; these take the per-pair path the grid never reaches.
