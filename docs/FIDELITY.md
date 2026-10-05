@@ -1,6 +1,6 @@
 # Fidelity status and validation
 
-Updated 2026-10-04. This page distinguishes regression agreement, numerical
+Updated 2026-10-05. This page distinguishes regression agreement, numerical
 accuracy against a reference solver, and accuracy against measurements.
 Passing a golden comparison establishes stable behavior; it does not establish
 physical accuracy. Historical grazing-incidence reports contain successive
@@ -19,6 +19,27 @@ hypotheses and rescoring, so use their latest addenda when interpreting them.
 The shipped databases and propagation defaults have not been replaced. The
 experimental source artifacts are under `fidelity_runs/`, which is ignored by
 git. The tools and their validation checks are tracked.
+
+## Features adopted on 2026-10-05
+
+Chosen from the model review against AAM, NORAH2, SELENE and HELENA (validation harness,
+`paper/model_review.md`) and scored there on held-out 2017 B407 runs: day 286, calm, 25
+approaches with the shipped database; day 284, windy, 16 steady runs with the held-out
+database `min2_no284`. SEL rms over the paper's usable microphone-runs, with a 95% bootstrap
+over whole runs. `docs/MANUAL.md` has each option's theory and checks.
+
+| Feature | Default | Measured effect | Remaining limit |
+| --- | --- | --- | --- |
+| Stratified rays over a calm floor (`resolved_pass`) | always on | A z0 = 0.1 ft log law with calm air below z0: day 284 4.18 -> 1.63 dB, the same as with no floor; measured-profile runs move < 0.001 dB | A profile whose lowest level stands above the ground (a LIDAR gate) keeps a thick constant floor |
+| `--nose heading` | off (database's `azimuth_reference`) | Day 284 `stratified_plate` 1.69 -> 1.54 dB, −0.15 [−0.28, −0.02]; `station_plate` 2.35 -> 2.19; calm day −0.02 [−0.05, +0.01] | No shipped database is heading-filed; WGS84 tracks carry no heading |
+| `--wind` (neutral log law from one station reading) | off | Day 284 1.62 dB against the measured profile's 1.69 (−0.07 [−0.19, +0.05]); calm day 1.25 against 1.35 | Station unit (knots, per the data report) and the 2 m height are read, not measured; stability classes unvalidated |
+| `--lamax_weighting` (LAFmax default) | fast | In-tool LAFmax within +0.033 to +0.046 dB (median) of the harness's blocked LAFmax; scores differ by <= 0.02 dB rms | Old instantaneous peak needs `--lamax_weighting instantaneous` |
+| `--epnl_file`, `--band_frames` | off | Predicted minus measured EPNL, masked, 5 kHz-limited: calm −0.33 / −0.09 dB median, windy −0.22 / −0.88 | Boards give no spectrum above 5 kHz; no pseudo-tone exclusion |
+| `--blend nearest`, `aam` | barycentric | Worse on SEL on both days (+0.13 to +0.52 dB rms); nearest better on day-284 LAFmax (−0.22 to −0.38) | Comparison options only |
+| `--terrain` | off | At Amedee, plates move <= 0.026 dB, 1.2 m poles <= 0.19 dB | Plane fitted over the whole path; no screening |
+
+None of them moved `golden/197421_LAE.csv`, `golden/state_197421.csv` or a
+`stratified_*_golden`.
 
 ## Hover: measured improvement and a rejected extension
 
@@ -213,7 +234,9 @@ the source work above preserves the existing path cap instead.
 
 `ctest --test-dir build-gcc --output-on-failure -j4` passed all 115 tests on
 2026-10-04, including the new midpoint acceptance/rejection check and source
-clamping diagnostics. The original golden outputs still pass.
+clamping diagnostics. With the features adopted on 2026-10-05 the suite is 262
+tests, all passing serially under Apple Clang and GCC 16 and from a fresh clone.
+The original golden outputs still pass.
 
 ```sh
 python -B tests/test_fidelity_tools.py

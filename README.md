@@ -14,7 +14,8 @@ reads off the level in the direction of each observer. It then carries that leve
 ground. A broadband database uses its own attenuation factor. A database with spectra is
 propagated band by band, with ISO 9613-1 absorption, ground reflection and, optionally,
 refraction through a stratified, windy atmosphere. Each observer's level history is integrated
-into a sound exposure level (SEL), and a set of operations into a day-night level (DNL).
+into a sound exposure level (SEL), and a set of operations into a day-night level (DNL);
+Lden, CNEL, LAFmax, time above, C-weighted SEL and EPNL are available on request.
 
 This file covers building NICE-OPS and running a first case. **[The manual](docs/MANUAL.md)**
 covers every option, the theory behind each model, and how each model was checked.

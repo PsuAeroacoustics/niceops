@@ -819,6 +819,11 @@ microphones per run; within 0.08 dB of its unblocked procedure, all of them. Sco
 prediction against the measured 0.1 s frames should keep the harness's blocking; the in-tool
 value is the meter's reading of the continuous prediction.
 
+The harness repeated the comparison over every microphone-run of the paper's cases on this
+build (the in-tool LAFmax against its own 0.1 s-blocked LAFmax, same microphone-runs): median +0.033 to +0.046 dB per case, 5th to 95th percentile −0.018 to
++0.203 dB, 0.71 dB at worst, 53–62 % within 0.05 dB. Scored against the measurements the two
+differ by 0.02 dB rms or less, so the harness keeps its own blocked value for scoring.
+
 **Time above (`--ta_file`, `--ta_threshold`).** Seconds of reception time during which the
 level, through the same weighting, exceeds the threshold (strictly), over each operation's own
 history, summed over operations. Within a sample the weighted level is followed exactly, so a
@@ -934,7 +939,7 @@ another. Tune it down if you know your coordinate resolution; leave it alone oth
 
 **The ends of a dense track are fitted freely.** A natural smoothing spline is pinned to zero
 second derivative at the first and last knot, which is a statement that the aircraft is not
-accelerating there. A track that starts or stops mid-manoeuvre is therefore fitted with a
+accelerating there. A track that starts or stops mid-maneuver is therefore fitted with a
 velocity and a load factor that bend toward a straight line over the last few seconds: on a
 constant-acceleration test path (1.5 m/s²) the natural fit's acceleration is zero at the end,
 0.50 four seconds in and 1.14 eight seconds in, where the freed fit holds it within 11%
@@ -1133,6 +1138,14 @@ oriented the sphere by its zero velocity before.
 explicit `--nose` wins, with a warning when the file records the other; a sphere read along a
 nose it was not built along is turned by the crab. `--export_sphere` carries the attribute on
 when the source records it. A value other than `track` or `heading` is refused.
+
+On the panam side, the builder's integration branch of 2026-10-05 (not yet published) writes the
+attribute on every database: `track` by default, `heading` for spheres built with its
+heading-frame option (`build_sphere(azimuth_reference='heading')`, `--azimuth-reference`), and
+`track` for a NORAH2 import; it refuses to mix the two in one database. Every shipped database
+predates it and records nothing, which reads as `track`. Once a database records `heading`, an
+AC-track run needs `--frame_bearing` (or an explicit `--nose velocity`), and a WGS84 track, which
+has no heading column, falls back to the velocity with a warning.
 
 **What it does, measured.** On the 2017 test's windy day (day 284 steady runs, 16 held-out runs,
 729 microphones, the `min2_no284` database built without them) every run flew west with the wind
@@ -1367,8 +1380,12 @@ when it writes one.
 - *Against the 2017 measurements* (B407, plate microphones, `--refraction stratified`; SEL rms
   over the paper's usable microphone-runs). Each run's wind is the mean of the ground stations'
   anemometers (SWS 1, 2 and 4) over ±60 s of the run's start, its magnetic direction turned by the
-  13.6° declination, taken as 2 m high. Whether the stations log knots or mph is not recorded, so
-  both are given.
+  13.6° declination, taken as 2 m high. The data report (NASA/TM-2019-220264, §8.6.3–8.6.4)
+  gives the station speeds in knots, as it does the LIDAR's, which the validation harness has
+  since confirmed independently for the LIDAR (its `docs/lidar_units.md`: balloon, station cups
+  and the aircraft's own turns); the files themselves carry no unit and the anemometer height is
+  not recorded, so knots and 2 m are the reading, not a measurement. mph is given for the
+  sensitivity.
 
   | | day 284, windy (16 steady runs, held-out database) | day 286, calm (25 approaches) |
   | --- | --- | --- |
@@ -2657,6 +2674,11 @@ these in mind. The largest is the first:
 - **The hover nose is turned by the frame** whenever the run knows one, not by a fit to the
   track that absorbed its mean crab. Only tracks that fly fast and then hover move
   ([The sphere's nose](#the-spheres-nose)).
+- **`--refraction stratified` resolves a calm floor** only as finely as the run's highest band
+  can. A profile with calm, isothermal air at the ground (a log law written below its roughness
+  length) used to put the shadow boundary kilometers out and flush microphones 22–28 dB low;
+  profiles without such a floor move by under 0.001 dB
+  ([Refraction through the profile's layers](#refraction-through-the-profiles-layers)).
 
 ### The 4x EAA multiplier
 
