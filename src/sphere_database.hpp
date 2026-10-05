@@ -29,6 +29,7 @@
 #include "util/constants.hpp"
 #include "vec3.hpp"
 
+#include "condition_selection.hpp"
 #include "interpolator.hpp"
 
 namespace niceops {
@@ -327,14 +328,17 @@ public:
     {
         std::array<double, condition_dims + 1> weights;
         std::array<std::size_t, condition_dims + 1> indices;
-        // Additive dB correction for a query load factor above what the
+        // Additive dB correction for a query load factor away from what the
         // database stores, from panam's own scaling law (dBA, and every band
         // of a spectral database, are exactly linear in 20*log10(load_factor)
         // -- see add_sphere_group in panam's flight_acoustics.py).  Zero for
-        // an ordinary database, and for a query at or below the reference:
-        // the correction only ever adds level, matching panam's own
-        // convention of leaving load factors at or below 1 g unscaled from
-        // the stored reference rather than extrapolating them down.
+        // an ordinary database.  Under the default one-sided correction it is
+        // also zero for a query at or below the reference, and only ever adds
+        // level, matching panam's own convention of leaving load factors at
+        // or below 1 g unscaled from the stored reference; under
+        // LoadFactorCorrection::two_sided it is negative there, down to the
+        // floor BlendOptions::min_load_factor sets.  Either way it is one
+        // uniform shift of every level, which is what keeps the bounds exact.
         double level_correction_db = 0.0;
         // Queries outside the stored axis ranges are clamped before blending.
         // These flags describe axis coverage, not coverage of the convex hull
@@ -354,14 +358,20 @@ public:
         Blend blend;
     };
 
+    // How blend_at() picks and weights its spheres, and how it applies a
+    // fixed_load_factor database's law (condition_selection.hpp).  Declared
+    // there, at namespace scope: a nested struct with member initializers
+    // cannot be a defaulted argument of its enclosing class's members.
+    using BlendOptions = niceops::BlendOptions;
+
     explicit Database(const std::string& datafile_path);
 
     Blend blend_at(double advance_ratio, double flight_path_angle,
-            double thrust_coefficient) const;
+            double thrust_coefficient, const BlendOptions& options = {}) const;
 
     SourceState source_state(const Vec3& source, const Vec3& velocity,
             const Vec3& normal, double advance_ratio, double flight_path_angle,
-            double thrust_coefficient) const;
+            double thrust_coefficient, const BlendOptions& options = {}) const;
 
     double eval(double range, double phi, double theta, const Blend& blend) const;
 
@@ -656,7 +666,26 @@ public:
 
     // Blend the database down to one operating condition over the whole grid.
     Sphere interpolate_sphere(double advance_ratio, double flight_path_angle,
-            double thrust_coefficient) const;
+            double thrust_coefficient, const BlendOptions& options = {}) const;
+
+    // How many thrust-coefficient layers BlendPolicy::aam searches: one on a
+    // fixed_load_factor database (the law carries C_T), otherwise one per
+    // distinct stored C_T, and a state takes the nearest layer.
+    std::size_t aam_layer_count() const
+    {
+        return aam_layers_.size();
+    }
+    // How many of those layers hold a single sphere.  A state nearest such a
+    // layer's C_T takes that sphere whatever its speed and path angle, which
+    // is what a database whose C_T is scattered sphere by sphere, rather than
+    // layered, would give every state; the run warns.
+    std::size_t aam_single_sphere_layers() const
+    {
+        std::size_t count = 0;
+        for (const auto& layer : aam_layers_)
+            count += layer.spheres == 1;
+        return count;
+    }
 
     // Range beyond which a source at this operating condition provably falls
     // below `cutoff` dBA, or infinity when no such bound can be established.
@@ -728,6 +757,9 @@ private:
 
     // Blend the four bracketing operating conditions at one grid cell.
     Sample blend_cell(std::size_t i_phi, std::size_t i_theta, const Blend& blend) const;
+    // BlendPolicy::aam's selection into `blend` (weights and indices only).
+    void blend_aam(double advance_ratio, double flight_path_angle, double thrust_coefficient,
+            const BlendOptions& options, Blend& blend) const;
 
     GridAxis phis;
     GridAxis thetas;
@@ -772,6 +804,19 @@ private:
     // it makes several Databases independent; it used to be a file-scope global,
     // so constructing a second one re-armed the interpolator under the first.
     ConditionInterpolator interpolator_;
+    // The conditions as the triangulation sees them -- normalized, row-major,
+    // active_condition_dims_ to a row -- for BlendPolicy::nearest.
+    std::vector<double> normalized_conditions_;
+    // BlendPolicy::aam's search: one AamSelector per stored thrust coefficient
+    // (one in all on a fixed_load_factor database), over raw advance ratio and
+    // flight path angle.
+    struct AamLayer
+    {
+        double thrust_coefficient;
+        AamSelector selector;
+        std::size_t spheres = 0;
+    };
+    std::vector<AamLayer> aam_layers_;
     double max_level_ = 0.0;
     // Highest dBA on each operating condition's sphere, and the lowest excess
     // attenuation factor anywhere in the database.  Together they bound how
