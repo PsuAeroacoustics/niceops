@@ -30,6 +30,7 @@ to know before changing the numerics, are in [`CLAUDE.md`](../CLAUDE.md).
 - [Propagation](#propagation)
   - [Broadband and spectral paths](#broadband-and-spectral-paths)
   - [Stratified atmosphere](#stratified-atmosphere)
+  - [A profile from the surface wind](#a-profile-from-the-surface-wind)
   - [Ground effect](#ground-effect)
   - [Receivers](#receivers)
   - [Ground-plane microphones](#ground-plane-microphones)
@@ -206,13 +207,19 @@ operations that reach a threshold.
 | `--band_limits` | Frequency range integrated into the metric, Hz: `low high`. Default `20 20000`. |
 | `--humidity`, `--temperature`, `--pressure` | Atmosphere for `--spectral`, overriding the vehicle file. Percent, K, kPa. The spectral path refuses to run without a humidity (no `--humidity`, no vehicle-file value, no `--atmosphere`): absorption depends strongly on it, so there is no silent 20 %. |
 | `--atmosphere` | A stratified atmosphere: a CSV of temperature, humidity, and optionally pressure and wind, against height. Absorption is integrated through it. Spectral path only. See below. |
-| `--refraction` | `none` (default); `linear`, curved rays through the `--atmosphere` profile's effective sound speed fitted to a straight line per path; or `stratified`, through the profile's own layers. Both give shadow zones under upward refraction. See below. |
+| `--wind` | Build the stratified atmosphere from one surface wind instead of reading `--atmosphere`: `SPEED,DIRECTION[,HEIGHT]`. The speed names its unit (`12kt`, `6.2mps`, `14mph`); the direction is the compass bearing, degrees, it blows **from**; the height is the anemometer's, in `--units` (default 10 m). Neutral log law, dry-adiabatic lapse from the run's surface air. Spectral path only; not with `--atmosphere`. See below. |
+| `--roughness_length` | `--wind`: aerodynamic roughness length z₀, in `--units`. Default 0.03 m (0.0984 ft), open flat terrain. Not `--roughness`, the acoustic ground's RMS height. |
+| `--surface_layer_depth` | `--wind`: height, in `--units`, to which the wind follows its law; above it the wind is held. Default 200 m (656.2 ft). |
+| `--stability` | `--wind`: `neutral` (default, the log law), or a TA Luft class `I`, `II`, `III/1`, `III/2`, `IV`, `V` (Pasquill `F` to `A`): a power-law wind and a temperature gradient in the surface layer. Unvalidated; a run that takes one warns. |
+| `--profile_levels` | `--wind`: levels per factor of ten in height (default 16). Results do not depend on it; raising it checks that they do not. |
+| `--write_atmosphere` | `--wind`: write each trajectory's built profile in the `--atmosphere` format, so the run can be repeated and inspected. With several tracks and one name, `<track>_atmosphere.csv` beside it. |
+| `--refraction` | `none` (default); `linear`, curved rays through the `--atmosphere` (or `--wind`) profile's effective sound speed fitted to a straight line per path; or `stratified`, through the profile's own layers. Both give shadow zones under upward refraction. See below. |
 | `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
 | `--tunneling` | `--refraction stratified`: also take the rays turned back from aloft that turn again just above the microphone, which the wave reaches through the layer below them (an Airy tail per band). Off by default; see "Micro-shadows and skip zones" below. |
 | `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail per band. Off by default; see below. |
 | `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γT, instead of `--shadow_floor`. Default 0 (off). Needs `--refraction` and `--ground_effect`. |
 | `--nose` | Where the sphere's nose points: `velocity`, the velocity `--speed_reference` selects; `ground_velocity`, the ground velocity whatever `--speed_reference` says; or `heading`, the track's compass heading at every speed, so a crabbing aircraft's sphere turns with its airframe. `heading` needs a frame (`--frame_bearing` for an AC track) and a heading column. The first two turn to the heading below 8 kt. Default: what the database's `azimuth_reference` records, `velocity` if it records nothing. See below. |
-| `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and, under `--nose velocity`, the sphere's nose): `ground`, or `air`, the ground velocity less the `--atmosphere` profile's wind at the aircraft. Default: what the database records it was built with, ground if it records nothing. See below. |
+| `--speed_reference` | Which velocity sets the flight condition (μ, the path angle and, under `--nose velocity`, the sphere's nose): `ground`, or `air`, the ground velocity less the wind at the aircraft (from `--atmosphere` or `--wind`). Default: what the database records it was built with, ground if it records nothing. See below. |
 | `--ground_effect`, `--no-ground_effect` | Add excess ground attenuation (Chien–Soroka over a Delany–Bazley impedance) to the spectral path. On by default wherever the spectral path runs on a database that carries spectra; `--no-ground_effect` turns it off. Asking for it with `--no-spectral` is an error. |
 | `--max_load_factor` | Largest load factor, in g, that a `fixed_load_factor` database's load-factor correction is taken to (default 2). Above it the correction is held, and the run says how many states it held. |
 | `--accept_vehicle_mismatch` | A vehicle file that disagrees with the database by more than 2 percent in tip speed, rotor radius, weight or thrust coefficient at 1 g is refused. Between 1 and 2 percent it is a warning; this flag turns the refusal into a warning. |
@@ -249,7 +256,9 @@ operations that reach a threshold.
 `--units` selects the length unit for the whole interface: `ft` (the default) or `m`. It covers
 
 - every length on the command line — `--grid`, `--gridstep`, `--trim`, `--ground_elevation`,
-  `--receiver_height`, `--path_smoothing`;
+  `--receiver_height`, `--path_smoothing`, `--roughness_length`, `--surface_layer_depth`, and
+  the anemometer height in `--wind` (whose speed names its own unit, as the wind columns of an
+  `--atmosphere` file do);
 - every file carrying a length — trajectory input, observer lists, level output, time histories;
 - the axis labels on the figures.
 
@@ -534,8 +543,10 @@ the air does.
   the attribute (`build_empirical_database(..., speed_reference=...)`, default `ground`; in
   panam eeb040b and since), and the 2017 databases it builds record `ground`.
   Giving `--speed_reference` against the database is logged as an override.
-- **Air needs a wind.** With no wind columns in `--atmosphere`, an air-referenced run is
-  refused rather than taken as calm. `--speed_reference ground` says so explicitly.
+- **Air needs a wind.** With no wind columns in `--atmosphere`, and no `--wind`, an
+  air-referenced run is refused rather than taken as calm. `--speed_reference ground` says so
+  explicitly. A `--wind` of zero is calm stated rather than assumed, and the airspeed is then
+  the ground speed.
 - **It is after `--trim`,** which cuts an approach at its slowest point over the ground.
 - **Calm air changes nothing**, to the bit, which a CTest case checks.
 
@@ -734,6 +745,146 @@ The rules that keep it from guessing:
 - **Wind columns must name their unit.** Nothing in the values tells m/s from knots. Wind
   matters only to `--refraction` and to `--speed_reference air`; absorption does not depend
   on it. The log names every column it ignored.
+
+### A profile from the surface wind
+
+A measured profile — LIDAR, a balloon, a met tower — is rare. A surface wind is not: an
+airport's METAR, a weather station beside the microphones. `--wind SPEED,DIRECTION[,HEIGHT]`
+builds the profile from that one observation, in memory, in place of an `--atmosphere` file.
+SELENE does the same from a surface wind and a stability class. It is the measured route to
+refraction on a windy day without a sounding.
+
+```sh
+niceops ... --humidity 25 --wind 12kt,270,6.56 --refraction stratified --frame_bearing 210
+```
+
+**The conventions are the `--atmosphere` file's.**
+
+- The speed names its unit, as a wind column has to: `12kt` (or `kts`, `knots`), `6.2mps`
+  (`m/s`), `14mph`. A bare number is refused, since nothing in it tells m/s from knots, and it is
+  not taken from `--units`.
+- The direction is the compass bearing, in degrees from true north, that the wind blows
+  **from** — the meteorological convention, the `wind_direction` column's. A METAR's 27012KT is
+  `12kt,270`. Like every wind it is turned into the local frame by `--frame_bearing`, so the
+  shipped AC tracks need `--frame_bearing 210`.
+- The anemometer height is a length in `--units`, like every other length. Omitted, it is
+  10 m, the WMO standard exposure for surface wind.
+
+**The wind** follows the logarithmic law of the neutral surface layer,
+
+u(z) = u(z_ref) ln(z / z₀) / ln(z_ref / z₀),
+
+through the observation itself, up to `--surface_layer_depth` (default 200 m), and is held at
+its value there above that. The neutral surface layer is about a tenth of a boundary layer one to
+two kilometers deep; above it the wind turns and grows slowly toward the geostrophic wind, which
+a single surface observation says nothing about. The direction is the same at every height: an
+Ekman veer added nothing on the 2017 windy day. z₀ is `--roughness_length`, default 0.03 m: "open
+flat terrain; grass, few isolated obstacles" in the Davenport–Wieringa classification (Wieringa
+1992; WMO Guide to Instruments and Methods of Observation, WMO-No. 8, Annex 5.B), the class of an
+airfield or of short desert grass. Mud flats and snow are 0.005 m, low crops 0.1 m, farmland
+with hedges 0.25 m, suburbs 1 m.
+
+**The air.** The surface temperature, humidity and pressure are the run's own: the vehicle file's,
+or `--temperature`, `--humidity` and `--pressure`, which may be combined with `--wind` (they set
+the surface air) where they may not with `--atmosphere`. As without a profile, a run whose
+humidity nobody gave is refused. Above the ground:
+
+- the temperature lapses at the dry-adiabatic rate, −9.8 K/km, which is what makes the layer
+  neutral;
+- the pressure is integrated hydrostatically through that temperature, as for a file without a
+  pressure column;
+- the water vapor is held: its molar concentration, which is what ISO 9613-1's absorption takes,
+  keeps its surface value, as it does in a well-mixed layer. The relative humidity therefore rises
+  as the air cools, about half a percent of itself per 10 m, and is held at 100 percent if the air
+  saturates (the run warns).
+
+**The levels.** The profile is linear between its levels, so they decide how faithfully it
+follows the law. The ground, z = 0, has no wind: the law's limit. The next level is ten
+roughness lengths up (0.3 m by default; the anemometer, if that is lower), and from there they
+are spaced geometrically, `--profile_levels` (default 16) per factor of ten, to a top 5% above the
+highest state or microphone, and never below the top of the surface layer. The anemometer, the
+top of the surface layer and the top are levels themselves, so the profile passes through the
+observation exactly. Above the top nothing is lost: the wind is held and the air lapses, so the
+effective sound speed falls with height in every direction and no ray turns back from there.
+
+**No level above the ground is ever calm.** That is deliberate. `--refraction stratified` reads a
+calm level just above the ground (rows at 0 and 0.1 ft, both still) as a thin layer that puts the
+levels 22–28 dB low. The law is zero at z₀, so a profile sampled there would hold such a level;
+starting at ten roughness lengths keeps every level above the ground moving. A calm observation
+(`0kt`) gives a profile with no wind at all, the temperature lapse alone, and a database referred
+to the air then takes the ground speed as the airspeed.
+
+**`--write_atmosphere FILE`** writes the profile each trajectory used, in the `--atmosphere`
+format (z in `--units`, `T_K`, `RH`, `p_kPa`, `u_mps`, `v_mps`, to 17 significant digits). Fed back
+through `--atmosphere`, it reproduces the run, which a CTest case holds to 1e-9. With several
+trajectories each gets its own, `<track>_atmosphere.csv`, since each has its own surface air and
+top. The one profile that does not replay is completely dry air (`--humidity 0`): `--atmosphere`
+refuses a file whose humidity never exceeds 1 percent, taking it for a fraction, and the run warns
+when it writes one.
+
+**How it was checked.**
+
+- *The law, the air and the conventions*, in `tests/test_atmosphere_profile.cpp`: the profile
+  passes through the observation and is zero at z₀; the temperature, pressure and molar
+  concentration against their closed forms; a wind from 270° blows toward the east and equals
+  what `--atmosphere` makes of the same wind written as speed and direction; the speed's units;
+  no calm level above the ground for any class, roughness or anemometer height; and the written
+  profile reads back to the bit (heights to an ULP of the unit conversion).
+- *Through the command line*, a run in feet that sets every shaping option and the three surface
+  overrides writes its profile, and a CTest case compares it with the same profile computed
+  independently from the closed forms (`tests/data/wind_profile_expected.py`): 1e-12 absolute at
+  every level. That is what catches a length left in feet, an override not applied, or
+  `--profile_levels` not passed on, none of which the replay can see.
+- *Discretization.* Refining the levels from 16 to 64 a decade moves the plate microphones of the
+  Coyle array under stratified refraction by at most 0.016 dB (0.053 from 8), which a CTest case
+  holds to 0.1 dB. On the measured day-284 runs below it moves 729 microphone-runs by 0.006 dB
+  rms, 0.105 at most. That last tenth is not the profile: on a point-receiver grid, cells 1500 m
+  out downwind move by ±0.2 dB with any change of layering, without settling from 8 levels a
+  decade to 100. It is the stratified model's arrival search, whose samples follow the layers.
+  `--profile_levels` does not refine the bottom layer, from the ground to ten roughness lengths,
+  where the profile is linear and the law logarithmic. Filling it with the law (levels at 1.5, 2,
+  3, 5 and 7 z₀, fed through `--atmosphere`) moves the day-284 results by 0.014 dB rms and 0.15 dB
+  at most; dropping every level below 1 m moves them 0.046 dB rms, 0.30 at most. Levels closer to
+  z₀ would carry almost no wind, which is the thin layer the stratified model cannot take.
+- *Against the 2017 measurements* (B407, plate microphones, `--refraction stratified`; SEL rms
+  over the paper's usable microphone-runs). Each run's wind is the mean of the ground stations'
+  anemometers (SWS 1, 2 and 4) over ±60 s of the run's start, its magnetic direction turned by the
+  13.6° declination, taken as 2 m high. Whether the stations log knots or mph is not recorded, so
+  both are given.
+
+  | | day 284, windy (16 steady runs, held-out database) | day 286, calm (25 approaches) |
+  | --- | --- | --- |
+  | straight rays, station air | 2.35 dB | 1.26 dB |
+  | measured profile (LIDAR and balloon) | 1.69 dB | 1.35 dB |
+  | `--wind`, station speed read as knots | **1.62 dB** | **1.25 dB** |
+  | `--wind`, station speed read as mph | **1.60 dB** | **1.25 dB** |
+  | `--wind`, knots, z₀ = 0.09 m | 1.71 dB | |
+
+  The station winds were 4–9 kt from 264–293° on day 284 and under 1.1 kt on day 286. On the windy
+  day the surface wind alone recovers all of what the measured profile buys over straight rays,
+  and a little more; the gain is in the low-elevation microphones, 5.76 → 2.65 dB rms at 5–10°.
+  On the calm day it does no harm. (The 284 sample is 729 microphone-runs, the 286 one 1111.)
+
+**Stability classes (unvalidated).** `--stability` takes the Klug–Manier dispersion classes of TA
+Luft (1986), or the Pasquill letters that correspond to them, as SELENE does. Each replaces the
+log law with a power law through the observation, u ~ z^m, and the neutral lapse in the surface
+layer with a temperature gradient: the middle of the class's range in US NRC Regulatory Guide
+1.23's ΔT classification. Above the surface layer every class lapses dry-adiabatically.
+
+| `--stability` | Pasquill | character | m (TA Luft) | dT/dz in the surface layer |
+| --- | --- | --- | --- | --- |
+| `I` | `F` | very stable | 0.42 | +2.75 K/100 m |
+| `II` | `E` | stable | 0.35 | +0.5 K/100 m |
+| `III/1` | `D` | neutral to stable | 0.22 | −1.0 K/100 m |
+| `III/2` | `C` | neutral to unstable | 0.20 | −1.6 K/100 m |
+| `IV` | `B` | unstable | 0.15 | −1.8 K/100 m |
+| `V` | `A` | very unstable | 0.09 | −2.0 K/100 m |
+
+None of them has been shown to help, and a run that takes one warns. On day 284, class II scored
+2.22 dB, nearly back to straight rays (its inversion and shear deepen the upwind shadow: −3.3 dB
+median at 5–10°), and IV 1.57; an earlier trial of II's exponent with a +3 K/100 m inversion,
+driven by the LIDAR's 46 ft wind, scored 1.90 where the log law through that wind scored 1.72. One day, scored after the fact, cannot choose a class, and nothing on the day says
+which it was. Use `neutral` unless the class is known from measurements.
 
 ### Ground effect
 

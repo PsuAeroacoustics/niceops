@@ -129,6 +129,114 @@ struct CompassToLocal
 AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit unit,
         double ground_elevation);
 
+// Write a profile in the form read_atmosphere_profile reads: z in `unit`, T_K,
+// RH, p_kPa when it has pressure, and u_mps, v_mps when it has wind, every value
+// to 17 significant digits so that reading it back gives the same doubles (the
+// heights to an ULP of the unit conversion).  --write_atmosphere uses it, so a
+// run made with --wind can be repeated, and inspected, through --atmosphere.
+void write_atmosphere_profile(const AtmosphereProfile& profile, const std::string& path,
+        LengthUnit unit);
+
+// How the --wind profile's speed grows with height.  `neutral` is the
+// logarithmic law of the neutral surface layer, the one measured against the
+// 2017 data.  The others are the Klug-Manier dispersion classes of TA Luft
+// (1986), each a power law u ~ z^m with a temperature gradient: unvalidated
+// here, and a run that takes one says so.
+enum class Stability
+{
+    neutral,
+    very_stable, // I    (Pasquill F)
+    stable, // II        (Pasquill E)
+    neutral_stable, // III/1 (Pasquill D)
+    neutral_unstable, // III/2 (Pasquill C)
+    unstable, // IV      (Pasquill B)
+    very_unstable, // V  (Pasquill A)
+};
+
+// The names --stability takes: neutral, the Klug-Manier classes I, II, III/1,
+// III/2, IV, V, or the Pasquill letters A to F they correspond to.
+const std::vector<std::string>& stability_names();
+// Throws input_error for a name not in stability_names().
+Stability parse_stability(const std::string& name);
+// "neutral (log law)", "II (stable; Pasquill E)", ...
+std::string describe(Stability stability);
+
+// One surface wind observation, and the law that carries it up through the
+// surface layer: the inputs of synthetic_profile().
+struct SurfaceWind
+{
+    // m/s, at `height`.
+    double speed = 0.0;
+    // Degrees, the compass bearing the wind blows FROM (the meteorological
+    // convention, as an --atmosphere file's wind_direction column).
+    double direction = 0.0;
+    // Meters above the observers: the anemometer.  10 m is the WMO standard
+    // exposure for surface wind.
+    double height = 10.0;
+    // Meters.  0.03 m is open flat terrain -- short grass, an airfield --
+    // in the Davenport-Wieringa classification (WMO-No. 8, Annex 5.B).
+    double roughness_length = 0.03;
+    // Meters: the law holds up to here, and the wind is held at its value
+    // there above it.  The neutral surface layer is about a tenth of a
+    // boundary layer one to two kilometers deep.
+    double surface_layer_depth = 200.0;
+    Stability stability = Stability::neutral;
+    // Levels per factor of ten in height.  The profile is linear between its
+    // levels; at 16 the plate run over the Coyle array moves by at most 0.016 dB
+    // when they are refined to 64, at 8 by 0.053.  --profile_levels sets it,
+    // which is how a run checks that nothing depends on it.
+    int levels_per_decade = 16;
+
+    // The law: m/s at height z, meters.  Zero at and below the ground (and,
+    // for the log law, at and below the roughness length, where no level is
+    // ever placed), held above surface_layer_depth.
+    double speed_at(double z) const;
+    // dT/dz in the surface layer, K/m: dry adiabatic (-9.8 K/km) for neutral,
+    // the class's own otherwise.  Above the surface layer every class lapses
+    // dry-adiabatically.
+    double temperature_gradient() const;
+    // The lowest level above the ground: ten roughness lengths, or the
+    // anemometer if that is lower.  Between it and z = 0 the wind is linear.
+    double first_level() const;
+};
+
+// The dry-adiabatic lapse rate, K/m: g / c_p rounded as meteorology quotes it.
+inline constexpr double dry_adiabatic_lapse = -0.0098;
+
+// Why a SurfaceWind cannot be built into a profile, or empty when it can.
+// Lengths in the message are in `unit`.
+std::string surface_wind_problem(const SurfaceWind& wind, LengthUnit unit);
+
+// Parse --wind's SPEED,DIRECTION[,HEIGHT]: the speed with its unit named
+// (12kt, 6.2mps, 14mph; nothing about the number tells them apart, which is
+// why an --atmosphere file's wind columns name theirs too), the direction in
+// degrees it blows from, and the anemometer height in `unit` (10 m when
+// omitted).  Throws input_error.
+SurfaceWind parse_surface_wind(const std::string& text, LengthUnit unit);
+
+// A profile from one surface observation (--wind), in place of a file.
+//
+// Levels: z = 0 with no wind (the law's limit at the ground), then geometric
+// from first_level() to the top at levels_per_decade, with the anemometer
+// height, the top of the surface layer and the top itself as exact levels.
+// The top is max(surface_layer_depth, 1.05 * highest), `highest` being the
+// highest point any path reaches.  Above that the effective sound speed falls
+// with height in every direction (the wind is held and the air lapses), so no
+// ray turns back from air the profile leaves out.
+//
+// No level above the ground is ever calm: --refraction stratified takes a
+// calm level just above z = 0 as a thin layer that put levels 22-28 dB low.
+// A calm observation (speed 0) gives a profile without wind instead.
+//
+// Temperature: surface.temperature at z = 0, then temperature_gradient()
+// through the surface layer and dry adiabatic above.  Pressure: hydrostatic
+// from surface.pressure (with_hydrostatic_pressure).  Humidity: the molar
+// concentration of water vapor -- what ISO 9613-1's absorption takes -- is
+// held at its surface value, as in a well-mixed layer, so the relative
+// humidity rises as the air cools; capped at 100 percent.
+AtmosphereProfile synthetic_profile(const SurfaceWind& wind, const Atmosphere& surface,
+        double highest);
+
 // Per-band absorption integrated through a profile, tabulated in height so the
 // observer loop never evaluates ISO 9613-1.
 //

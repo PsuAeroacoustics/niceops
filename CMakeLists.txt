@@ -686,6 +686,51 @@ add_test(NAME stratified_duct_point_golden COMMAND golden_compare integrated/str
 add_test(NAME stratified_duct_plate_golden COMMAND golden_compare integrated/stratified_duct_plate.csv golden/stratified_duct_plate.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_windy_point_golden PROPERTIES FIXTURES_REQUIRED stratified_runs)
 set_tests_properties(stratified_duct_point_golden stratified_duct_plate_golden PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# --wind builds the profile in memory from one surface wind.  The run has to be exactly the one fed
+# that profile through --atmosphere (--write_atmosphere writes it), and refining its levels from 16
+# a decade to 64 must not move a plate microphone by 0.1 dB (it moves them 0.016).  The plate
+# over the Coyle array under stratified refraction is the configuration measured against the 2017
+# data, and the one whose thin-layer defect a calm level above the ground triggers.
+set(WIND_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv -b arrays/coyle_approach.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc -L warn)
+add_test(NAME wind_built COMMAND niceops ${WIND_RUN} --humidity 30 --wind 10kt,270,33 --write_atmosphere integrated/wind_profile.csv -o integrated/wind_built.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME wind_refined COMMAND niceops ${WIND_RUN} --humidity 30 --wind 10kt,270,33 --profile_levels 64 -o integrated/wind_refined.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_built wind_refined PROPERTIES FIXTURES_SETUP wind_runs)
+add_test(NAME wind_replayed COMMAND niceops ${WIND_RUN} --atmosphere integrated/wind_profile.csv -o integrated/wind_replayed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_replayed PROPERTIES FIXTURES_REQUIRED wind_runs FIXTURES_SETUP wind_replay_runs)
+add_test(NAME wind_is_its_written_profile COMMAND golden_compare integrated/wind_replayed.csv integrated/wind_built.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_is_its_written_profile PROPERTIES FIXTURES_REQUIRED wind_replay_runs)
+add_test(NAME wind_is_discretization_independent COMMAND golden_compare integrated/wind_refined.csv integrated/wind_built.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_is_discretization_independent PROPERTIES FIXTURES_REQUIRED wind_runs)
+# A calm observation is still air, stated rather than assumed, so a database referred to the air
+# takes the ground velocity as the airspeed instead of refusing for want of wind.
+add_test(NAME wind_calm COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 30 -t tracks/S-76D/197421AC.csv --wind 0kt,0 --gridstep 1640 -L warn -o integrated/wind_calm.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME wind_calm_air COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 30 -t tracks/S-76D/197421AC.csv --wind 0kt,0 --speed_reference air --gridstep 1640 -L warn -o integrated/wind_calm_air.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_calm wind_calm_air PROPERTIES FIXTURES_SETUP wind_calm_runs)
+add_test(NAME wind_calm_air_is_ground COMMAND golden_compare integrated/wind_calm_air.csv integrated/wind_calm.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_calm_air_is_ground PROPERTIES FIXTURES_REQUIRED wind_calm_runs)
+# The written profile against its closed forms, through the command line: the log law, the dry
+# lapse, the barometric formula for it and the held water vapor, computed independently
+# (tests/data/wind_profile_expected.py) for a run in feet that sets every shaping option and all
+# three surface overrides.  The replay test above compares the run with itself and cannot see a
+# length left in feet, an override not applied or --profile_levels not passed on; this can.
+add_test(NAME wind_profile_written COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --gridstep 1640 -L warn --wind 12kt,250,6.5 --roughness_length 0.1 --surface_layer_depth 3000 --profile_levels 10 --temperature 288.15 --humidity 40 --pressure 100 --write_atmosphere integrated/wind_profile_law.csv -o integrated/wind_profile_law_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_profile_written PROPERTIES FIXTURES_SETUP wind_law_runs)
+add_test(NAME wind_profile_is_its_law COMMAND golden_compare integrated/wind_profile_law.csv tests/data/wind_profile_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_profile_is_its_law PROPERTIES FIXTURES_REQUIRED wind_law_runs)
+# What --wind refuses, by message: a speed without its unit, a file profile beside it, its shaping
+# options without it, and a surface humidity nobody gave.  The unvalidated classes run, and say so.
+add_test(NAME wind_speed_needs_unit COMMAND niceops --wind 10,270 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_speed_needs_unit PROPERTIES PASS_REGULAR_EXPRESSION "--wind: name the speed's unit")
+add_test(NAME wind_with_atmosphere_refused COMMAND niceops --wind 10kt,270 --atmosphere atmospheres/isa.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_with_atmosphere_refused PROPERTIES PASS_REGULAR_EXPRESSION "give one or the other")
+add_test(NAME wind_options_need_wind COMMAND niceops --roughness_length 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_options_need_wind PROPERTIES PASS_REGULAR_EXPRESSION "--roughness_length shapes the profile --wind builds, and there is no --wind")
+add_test(NAME wind_anemometer_below_roughness_refused COMMAND niceops --wind 10kt,270,0.05 --roughness_length 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_anemometer_below_roughness_refused PROPERTIES PASS_REGULAR_EXPRESSION "the anemometer \\(0.05 ft\\) has to stand above it")
+add_test(NAME wind_needs_humidity COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --wind 10kt,270 --gridstep 1640 -o integrated/wind_needs_humidity.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_needs_humidity PROPERTIES PASS_REGULAR_EXPRESSION "--wind builds the humidity profile from the surface humidity, and none is set")
+add_test(NAME wind_stability_class_warns COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 30 -t tracks/S-76D/197421AC.csv --wind 10kt,270 --stability II --gridstep 1640 -o integrated/wind_stability_class.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(wind_stability_class_warns PROPERTIES PASS_REGULAR_EXPRESSION "The stability classes are unvalidated")
 # --scattering fills shadows with scattered energy, a gain the peak search's bound has to allow: the
 # creeping-wave and scattering caps were the survivors of mutation testing, with no CTest running the option.
 add_test(NAME scattering_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --scattering 3e-6 --gridstep 492 -L warn -o integrated/scattering_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
