@@ -235,7 +235,14 @@ struct EpnlRow
     // False when no frame has a finite PNLT -- the observer heard nothing above
     // the noy floor -- and the metric has no value.
     bool valid = false;
+    // The result without its per-record histories, which on a grid would be
+    // kept for every observer only to be thrown away.
     EpnlResult result;
+    // The tone correction PNLTM carries (PNLTM - PNL at its record: the
+    // record's own C, or the five-record mean when the band-sharing check
+    // raised it), and the band its record's C came from, Hz; NaN for none.
+    double tone = 0.0;
+    double tone_band = 0.0;
     double pnltm_time = 0.0;
     double first_time = 0.0;
     double last_time = 0.0;
@@ -265,15 +272,8 @@ void write_epnl_file(const std::vector<EpnlRow>& rows, const std::vector<Vec3>& 
             continue;
         }
         const auto& r = row.result;
-        // The tone correction PNLTM carries: the record's own, or the five-record
-        // mean when the band-sharing check raised it.
-        const double tone = r.pnltm - r.pnl[r.peak];
-        file << r.epnl << "," << r.pnltm << "," << r.duration_correction << "," << tone << ",";
-        if (r.tone[r.peak] > 0.0)
-            file << pnl_band_centers[r.tone_band[r.peak]];
-        else
-            file << "nan";
-        file << "," << (r.bandshare_adjusted ? 1 : 0) << "," << row.pnltm_time << ","
+        file << r.epnl << "," << r.pnltm << "," << r.duration_correction << "," << row.tone << ","
+             << row.tone_band << "," << (r.bandshare_adjusted ? 1 : 0) << "," << row.pnltm_time << ","
              << row.first_time << "," << row.last_time << "," << (r.clipped ? 1 : 0) << "\n";
     }
 }
@@ -661,6 +661,9 @@ struct RunOptions
     double nax_threshold = std::numeric_limits<double>::quiet_NaN();
     bool want_coverage = false;
     bool full_history = false;
+    // --epnl_file's tone correction: tones in bands below their noy threshold
+    // excluded (pnl.hpp), unless --no-epnl_masking.
+    ToneMasking epnl_masking = ToneMasking::below_noy_floor;
     bool write_time_history = false;
     bool write_state = false;
     std::string time_history_prefix;
@@ -1288,6 +1291,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             " Hz band. Widen it to take in at least 50 to 10000 Hz.");
                 }
             }
+            log(options.epnl_masking == ToneMasking::below_noy_floor
+                            ? "EPNL: tones in bands below their noy threshold are excluded from the tone "
+                              "correction (--no-epnl_masking for the procedure as written)."
+                            : "EPNL: the tone correction as written, every band eligible "
+                              "(--no-epnl_masking).");
         }
 
         // Where each value came from, so a default is not mistaken for a
@@ -2356,10 +2364,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         row.valid = row.valid || std::isfinite(perceived_noise_level(spectrum));
                     if (row.valid)
                     {
-                        row.result = effective_perceived_noise_level(pnl_history, pnl_record_seconds);
-                        row.pnltm_time = frames.center(row.result.peak);
-                        row.first_time = frames.center(row.result.first);
-                        row.last_time = frames.center(row.result.last);
+                        auto& r = row.result;
+                        r = effective_perceived_noise_level(pnl_history, pnl_record_seconds, true,
+                                options.epnl_masking);
+                        row.tone = r.pnltm - r.pnl[r.peak];
+                        row.tone_band = r.tone[r.peak] > 0.0 ? pnl_band_centers[r.tone_band[r.peak]]
+                                                             : std::numeric_limits<double>::quiet_NaN();
+                        row.pnltm_time = frames.center(r.peak);
+                        row.first_time = frames.center(r.first);
+                        row.last_time = frames.center(r.last);
+                        r.pnlt = {};
+                        r.pnl = {};
+                        r.tone = {};
+                        r.tone_band = {};
                     }
                 }
                 if (want_band_frames)
@@ -2629,6 +2646,7 @@ int run(int argc, char* argv[])
     double nax_threshold = std::numeric_limits<double>::quiet_NaN();
     std::string coverage_file = "";
     bool full_history = false;
+    bool epnl_masking = true;
     double utc_offset = 0.0;
     double trim_start = std::numeric_limits<double>::quiet_NaN();
     // Lengths on this command line are in whatever --units selects, feet by
@@ -2751,6 +2769,12 @@ int run(int argc, char* argv[])
             "CSV, from one-third-octave levels in 0.5 s reception-time frames. Once, or once per "
             "trajectory; with several trajectories and one name, each is named after its track "
             "(<stem>_EPNL.csv). Needs the spectral path and the 24 bands 50 Hz-10 kHz.");
+    app.add_flag("--epnl_masking,!--no-epnl_masking", epnl_masking,
+            "--epnl_file's tone correction: a band below its noy threshold (Table A36-3's SPL(d)) "
+            "enters the tone correction at that threshold and carries no tone itself, as tones in "
+            "masked bands are excluded from a measured spectrum's (default on; --no-epnl_masking "
+            "takes the procedure as written, which reads absorption's plunge in the top bands as "
+            "tones).");
     app.add_option("--band_frames", band_frames_files,
             "Write each observer's band levels in 0.5 s reception-time frames to this netCDF file "
             "(level by observer, frame and band, with the coordinates). Once, or once per "
@@ -3419,6 +3443,7 @@ int run(int argc, char* argv[])
     options.nax_threshold = nax_threshold;
     options.want_coverage = want_coverage;
     options.full_history = full_history;
+    options.epnl_masking = epnl_masking ? ToneMasking::below_noy_floor : ToneMasking::none;
     options.write_time_history = write_time_history;
     options.write_state = write_state;
     options.time_history_prefix = time_history_prefix;

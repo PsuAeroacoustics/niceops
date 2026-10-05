@@ -18,9 +18,27 @@
 //     regulation's -13 for dt = 0.5 s is that rounded (0.01 dB);
 //   * the A36.4.4.2 band-sharing check is applied (optional, as in panam).
 // Nothing else of A36.4 is: no correction of the measured spectra to reference
-// conditions (A36.9), no treatment of pseudo-tones from ground reflection, and
-// no special handling of band levels below the noy floor beyond what Table
-// A36-3 itself gives (0 noy).
+// conditions (A36.9) and no treatment of pseudo-tones from ground reflection.
+//
+// One addition, off by default here and on in --epnl_file: ToneMasking::
+// below_noy_floor, the prediction's counterpart of the certification practice
+// of excluding tones in masked bands (FAA AC 36-4, Appendix 2, item 11).  A
+// measured band never falls below the analyzer's noise floor; a predicted one
+// falls as far as absorption takes it -- hundreds of dB below 0 dB at 10 kHz
+// a kilometer out, and -1000 dB where a database band is near silent.  The
+// literal procedure then reads the plunge, or an inaudible band rising out of
+// it, as a tone: on the demo track over a 100 m grid, 615 of 961 observers
+// took their PNLTM tone correction from a band below its noy threshold, up to
+// the full 20/3 dB, and EPNL read a median 1.0 dB (up to 5.4 dB) high.
+// Masked, a band below SPL(d) of Table A36-3 (the level at which it stops
+// contributing noys; NaN and -infinity included) enters steps 1-7 at SPL(d),
+// and carries no tone correction itself.  Both halves are needed: excluding
+// the masked bands' tones alone leaves an audible band before a plunge with
+// its background crashed (a 20/3 dB tone), and the reconstruction alone can
+// make masked bands rising along SPL(d) read as one.  PNL is unchanged: such a
+// band is 0 noy either way.  A spectrum with every band at or above SPL(d) is
+// untouched.  EPNL can still rise a little (0.2 dB at most on that grid): the
+// band-sharing check and the duration may pick other records.
 //
 // Band convention: the 24 one-third-octave bands 50 Hz to 10 kHz, ascending,
 // at their nominal centers (pnl_band_centers).
@@ -53,6 +71,17 @@ PnlSpectrum noys(const PnlSpectrum& band_levels);
 // infinity when every band is below its noy floor.
 double perceived_noise_level(const PnlSpectrum& band_levels);
 
+// Table A36-3's SPL(d), dB: below it a band contributes no noys.
+extern const PnlSpectrum noy_threshold;
+
+// How the tone correction treats a band below its noy threshold (see above):
+// `none` is the regulation's procedure as written, and panam's.
+enum class ToneMasking
+{
+    none,
+    below_noy_floor,
+};
+
 // The spectral-irregularity (tone) correction C, A36.4.3.1 steps 1-10: the
 // largest of the per-band factors and the band (0-23) it came from -- band 0
 // when there is no tone, as numpy's argmax gives.
@@ -61,7 +90,7 @@ struct ToneCorrection
     double factor = 0.0;
     std::size_t band = 0;
 };
-ToneCorrection tone_correction(const PnlSpectrum& band_levels);
+ToneCorrection tone_correction(const PnlSpectrum& band_levels, ToneMasking masking = ToneMasking::none);
 
 // EPNL of a noise event from its band-level history at equal steps `dt`
 // (the regulation's 0.5 s), A36.4.
@@ -89,7 +118,8 @@ struct EpnlResult
 // PNLT (every record below the noy floor), as panam raises ValueError: an EPNL
 // of nothing is not a number.  The caller decides what to report then.
 EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& history,
-        double dt = pnl_record_seconds, bool bandshare_adjustment = true);
+        double dt = pnl_record_seconds, bool bandshare_adjustment = true,
+        ToneMasking masking = ToneMasking::none);
 
 // Where each of the 24 PNL bands sits among a database's band centers: the
 // band whose center is within 5 percent of the nominal one (nominal and exact

@@ -122,4 +122,127 @@ for name, base, env, band, add in histories:
               f'{r["k1"]}, {r["k2"]}, {km}, {str(r["clipped"]).lower()}}},')
     print(f'        {{{", ".join(lit(v) for v in on["pnlt"])}}}}},')
 print('};')
+
+# Masked tone correction (src/pnl.hpp, ToneMasking::below_noy_floor), which panam does not have:
+# a band below its noy threshold SPL(d) enters steps 1-7 at SPL(d) and carries no tone.  The
+# reference is panam's procedure on the reconstructed spectrum with the masked bands' factors
+# zeroed; per_band_factors is panam's tone_correction written out to return every band's factor,
+# and is checked against panam's own on every spectrum above before it is used.
+SPLD = fa._NOY_SPL_D
+
+
+def per_band_factors(spl):
+    spl = np.atleast_2d(np.asarray(spl, float))
+    nt = spl.shape[0]
+    s = np.full((nt, 24), np.nan)
+    s[:, 3:] = spl[:, 3:] - spl[:, 2:-1]
+    big = np.zeros((nt, 24), bool)
+    big[:, 4:] = np.abs(s[:, 4:] - s[:, 3:-1]) > 5.0
+    enc = np.zeros((nt, 24), bool)
+    for i in range(4, 24):
+        enc[:, i] |= big[:, i] & (s[:, i] > 0) & (s[:, i] > s[:, i - 1])
+        enc[:, i - 1] |= big[:, i] & (s[:, i] <= 0) & (s[:, i - 1] > 0)
+    spl1 = spl.copy()
+    for i in range(3, 23):
+        spl1[:, i] = np.where(enc[:, i], 0.5 * (spl[:, i - 1] + spl[:, i + 1]), spl[:, i])
+    spl1[:, 23] = np.where(enc[:, 23], spl[:, 22] + s[:, 22], spl[:, 23])
+    s1 = np.empty((nt, 25))
+    s1[:, 3:24] = spl1[:, 3:] - spl1[:, 2:-1]
+    s1[:, 2] = s1[:, 3]
+    s1[:, 24] = s1[:, 23]
+    sbar = np.empty((nt, 23))
+    sbar[:, 2:] = (s1[:, 2:23] + s1[:, 3:24] + s1[:, 4:25]) / 3.0
+    spl2 = np.empty_like(spl)
+    spl2[:, 2] = spl[:, 2]
+    for i in range(3, 24):
+        spl2[:, i] = spl2[:, i - 1] + sbar[:, i - 1]
+    F = np.zeros_like(spl)
+    F[:, 2:] = spl[:, 2:] - spl2[:, 2:]
+    low = (F_BANDS < 500.0) | (F_BANDS > 5000.0)
+    c_low = np.where(F >= 20.0, 10.0 / 3.0, np.where(F >= 3.0, F / 6.0, np.where(F >= 1.5, F / 3.0 - 0.5, 0.0)))
+    c_mid = np.where(F >= 20.0, 20.0 / 3.0, np.where(F >= 3.0, F / 3.0, np.where(F >= 1.5, 2.0 * F / 3.0 - 1.0, 0.0)))
+    c = np.where(low, c_low, c_mid)
+    c[:, :2] = 0.0
+    return c
+
+
+F_BANDS = F
+
+
+def masked_tone_correction(band_levels):
+    spl = np.atleast_2d(np.asarray(band_levels, float))
+    masked = ~(spl >= SPLD)
+    c = per_band_factors(np.where(masked, SPLD, spl))
+    c[masked] = 0.0
+    if np.ndim(band_levels) == 1:
+        return float(c.max()), int(c.argmax())
+    return c.max(axis=1), c.argmax(axis=1)
+
+
+for name, sp in spectra:
+    with np.errstate(invalid='ignore'):
+        c = per_band_factors(sp)
+    assert (float(c.max()), int(c.argmax())) == fa.tone_correction(sp), name
+
+# Prediction-like spectra: the top bands absorbed below their thresholds.
+masked_spectra = [(n, sp) for n, sp in spectra]
+masked_spectra.append(('absorbed over 1 km, 5 (f / 1 kHz)^1.6 dB: top bands far below SPL(d)',
+                       r1(heli - 10.0 - 5.0 * (F / 1000.0) ** 1.6)))
+sp = np.asarray(r1(heli - 20.0))
+sp[19:] = [-5.0, -20.0, -42.8, -60.0, -15.7]
+masked_spectra.append(('an inaudible 10 kHz band rising out of the plunge', list(sp)))
+sp = np.asarray(r1(heli - 15.0))
+sp[23] = -1064.0
+masked_spectra.append(('-1064 dB at 10 kHz (a near-silent database band)', list(sp)))
+sp = np.asarray(r1(heli + 10.0))
+sp[21:] = [-100.0, -100.0, -100.0]
+masked_spectra.append(('an audible 5 kHz band before a plunge (masking must also reconstruct)', list(sp)))
+sp = np.asarray(r1(heli - 25.0))
+sp[13] += 10.0
+sp[20:] = [-np.inf] * 4
+masked_spectra.append(('top bands -inf, an audible 1 kHz tone kept', list(sp)))
+# Taken at their thresholds, masked 8 and 10 kHz bands rise 17 then 21 dB out of a steep fall, and
+# 10 kHz reads as a tone of 10/3: the case the exclusion of a masked band's own tone is for (the
+# reconstruction alone handles the others).
+sp = np.asarray(r1(heli + 20.0))
+sp[22:] = [5.0, 0.0]
+masked_spectra.append(('masked 8 and 10 kHz bands after a steep fall (masking must also exclude)', list(sp)))
+
+print('const std::vector<MaskedCase> masked_cases = {')
+for name, sp in masked_spectra:
+    with np.errstate(invalid='ignore'):
+        c, band = masked_tone_correction(sp)
+        raw = fa.tone_correction(sp)
+    print(f'    {{"{name}", {{{", ".join(lit(v) for v in sp)}}},')
+    print(f'        {lit(c)}, {band}, {lit(raw[0])}, {raw[1]}}},')
+print('};')
+
+# A pass whose top bands sink below their thresholds away from its peak: masked EPNL, by panam's own
+# EPNL procedure with its tone correction swapped for the masked one.
+k = np.arange(30)
+env30 = r1(-40.0 * np.abs(k - 12.0) / 12.0)
+# Absorption 5 (f / 1 kHz)^1.6 dB a kilometer, over a range that grows away from the closest
+# approach at record 12, in every band but the top; rounded to 0.1 dB record by record.
+hist = np.array([r1(heli + env30[j] - 5.0 * (F / 1000.0) ** 1.6 * (0.6 + abs(k[j] - 12.0) / 6.0))
+                 for j in range(30)])
+# The 10 kHz band, unabsorbed at -10 dB (a database band at its floor), rises out of the plunge:
+# an inaudible tone in every record, which only masking removes.
+hist[:, 23] = r1(-10.0 + np.asarray(env30))
+literal = fa.effective_perceived_noise_level(hist)
+original = fa.tone_correction
+fa.tone_correction = masked_tone_correction
+try:
+    masked = fa.effective_perceived_noise_level(hist)
+finally:
+    fa.tone_correction = original
+# The history is printed record by record (repr round-trips), not rebuilt on the C++ side.
+print('const MaskedHistoryCase masked_history = {')
+print('    {')
+for row in hist:
+    print(f'        {{{", ".join(lit(v) for v in row)}}},')
+print('    },')
+for r in (masked, literal):
+    print(f'    {{{lit(r["epnl"])}, {lit(r["pnltm"])}, {lit(r["duration_correction_db"])}, '
+          f'{r["k1"]}, {r["k2"]}, {int(np.nanargmax(r["pnlt"]))}, {str(r["clipped"]).lower()}}},')
+print('};')
 print('// clang-format on')

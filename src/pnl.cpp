@@ -42,6 +42,8 @@ constexpr std::array<double, nb> m_e = {0.058098, 0.058098, 0.052288, 0.047534, 
 
 namespace niceops {
 
+const PnlSpectrum noy_threshold = spl_d;
+
 PnlSpectrum noys(const PnlSpectrum& band_levels)
 {
     PnlSpectrum n {};
@@ -80,11 +82,25 @@ double perceived_noise_level(const PnlSpectrum& band_levels)
     return 40.0 + (10.0 / std::log10(2.0)) * std::log10(total);
 }
 
-ToneCorrection tone_correction(const PnlSpectrum& spl)
+ToneCorrection tone_correction(const PnlSpectrum& band_levels, ToneMasking masking)
 {
     const double nan = std::numeric_limits<double>::quiet_NaN();
     // Arrays are indexed from 0 (band 1 = 50 Hz); the comments use the
     // regulation's band numbers, one higher.
+
+    // Masking (pnl.hpp): a band below its noy threshold -- NaN and -infinity
+    // included -- is taken at the threshold, and is not eligible for a tone.
+    std::array<bool, nb> masked {};
+    PnlSpectrum spl = band_levels;
+    if (masking == ToneMasking::below_noy_floor)
+    {
+        for (std::size_t i = 0; i < nb; i++)
+        {
+            masked[i] = !(band_levels[i] >= spl_d[i]);
+            if (masked[i])
+                spl[i] = spl_d[i];
+        }
+    }
 
     // Step 1: slopes s(i) = SPL(i) - SPL(i-1) from band 4; band 3 has none, so
     // the comparisons that would need it (step 2 at band 4) are not made.
@@ -143,6 +159,8 @@ ToneCorrection tone_correction(const PnlSpectrum& spl)
     ToneCorrection result;
     for (std::size_t i = 2; i < nb; i++)
     {
+        if (masked[i])
+            continue;
         const double f = spl[i] - background[i];
         const double frequency = pnl_band_centers[i];
         const bool low = frequency < 500.0 || frequency > 5000.0;
@@ -162,7 +180,7 @@ ToneCorrection tone_correction(const PnlSpectrum& spl)
 }
 
 EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& history, double dt,
-        bool bandshare_adjustment)
+        bool bandshare_adjustment, ToneMasking masking)
 {
     if (history.empty())
         throw std::invalid_argument("effective_perceived_noise_level: empty history");
@@ -178,7 +196,7 @@ EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& histo
     for (std::size_t k = 0; k < count; k++)
     {
         r.pnl[k] = perceived_noise_level(history[k]);
-        const ToneCorrection c = tone_correction(history[k]);
+        const ToneCorrection c = tone_correction(history[k], masking);
         r.tone[k] = c.factor;
         r.tone_band[k] = c.band;
         r.pnlt[k] = r.pnl[k] + c.factor;

@@ -181,7 +181,10 @@ background. Bands outside 50 Hz–10 kHz are not part of EPNL and are ignored by
 still in `--band_frames`). The shipped spectral databases (`*_fixed_load_factor.nod`) carry
 10 Hz–10 kHz, so all 24 are there. The levels are the database's spectra at the microphone, with
 spreading, absorption, the ground or plate and any shadow loss applied; no frequency shift is
-applied (the spheres keep the measured, Doppler-shifted spectra).
+applied (the spheres keep the measured, Doppler-shifted spectra). The microphone is whatever
+receiver the run models: a flush microphone on a plate (`--plate_table`) carries the plate's
+pressure doubling, as the 2017 measurements do, where 14 CFR 36 prescribes a microphone 1.2 m up
+(A36.3); the default point receiver of `--ground_effect`, 1.2 m up, is that one.
 
 **The metric**, per record *k* and band *i*, with SPL(*i*, *k*) the frame levels:
 
@@ -195,7 +198,9 @@ applied (the spheres keep the measured, Doppler-shifted spectra).
    with s′(3) = s′(4) and an imaginary 25th band; average three adjacent slopes; build the
    background SPL″ from SPL″(3) = SPL(3); and take the largest Table A36-2 factor of F = SPL − SPL″
    over F ≥ 1.5 dB: F/3 − 1/2, F/6, 10/3 below 500 Hz and above 5 kHz; 2F/3 − 1, F/3, 20/3 from
-   500 Hz to 5 kHz inclusive. Bands 1–3 never carry a tone correction.
+   500 Hz to 5 kHz inclusive. Bands 1–3 never carry a tone correction. With `--epnl_masking`
+   (the default; below), a band below its noy threshold enters these steps at the threshold and
+   carries no tone itself.
 4. PNLT(*k*) = PNL(*k*) + C(*k*), and PNLTM its maximum (A36.4.3, A36.4.4).
 5. The band-sharing check (A36.4.4.2): if C at PNLTM is below the mean of C over the five records
    centered there (fewer at either end of the record), PNLTM is PNL there plus that mean.
@@ -211,14 +216,34 @@ This is panam's `flight_acoustics.py` implementation (`noys`, `perceived_noise_l
 middle range of Table A36-2, the duration is the contiguous interval, and the band-sharing
 check is applied.
 
+**Masked bands (`--epnl_masking`, on by default).** A measured band never falls below the
+analyzer's noise floor, and certification practice excludes tones in bands masked by it (FAA
+AC 36-4, Appendix 2, item 11: the tone-correction description includes "exclusion of tones in
+masked bands"). A predicted band falls as far as absorption takes it. On the demo track over a
+100 m grid (961 observers, B407), the 10 kHz band's median level at PNLTM is −194 dB, and a
+near-silent database band reaches −1000 dB. Taken literally, step 3 reads that plunge — or an
+inaudible band rising out of it, as 10 kHz does over 8 kHz for 81 of those observers — as a tone
+of up to 20/3 dB: 615 of the 961 took their PNLTM tone correction from a band below its noy
+threshold, and EPNL read a median 1.0 dB (up to 5.4 dB) high. So a band whose level is below SPL(d) of Table A36-3 — where
+it stops contributing noys, and which no measurement would resolve — is the prediction's masked
+band: it enters steps 1–7 at SPL(d), and carries no tone correction itself. Both halves are
+needed: without the first, an audible band just before a plunge has its background crashed and
+reads as a 20/3 dB tone; without the second, masked bands taken at their thresholds, which rise
+17 and 21 dB at 8 and 10 kHz, can read as one. PNL is unchanged (a masked band is 0 noy either
+way), and so is any record whose bands are all at or above their thresholds. On the grid above,
+masking moved the PNLTM tone correction's median from 2.25 to 1.20 dB and the count of 3 dB or more
+from 427 to 13, lowered EPNL by a median 1.0 dB, and raised it at one observer, by 0.2 dB (the
+band-sharing check and the duration can pick other records). On the 2017 measured spectra it
+moves EPNL by 0.01 dB rms. `--no-epnl_masking` gives the procedure as written, which is panam's.
+
 **Not included.** Everything A36 does to a *measured* spectrum before step 1: the
 instrumentation and background-noise corrections (A36.3), the adjustment to reference
 conditions (A36.9; a prediction is already at its own atmosphere and flight path), and the
 identification of pseudo-tones from ground reflections, which the regulation lets an applicant
-exclude from the tone correction — NICE-OPS takes every tone the predicted spectrum has,
-ground-effect interference included (the plate and point-receiver models put real ripple into the
-spectrum, as a microphone does). There is no 10 dB-down window check of the record's own
-completeness beyond the `clipped` flag below.
+exclude from the tone correction — NICE-OPS takes every tone the predicted spectrum has in its
+audible bands, ground-effect interference included (the plate and point-receiver models put real
+ripple into the spectrum, as a microphone does). There is no 10 dB-down window check of the
+record's own completeness beyond the `clipped` flag below.
 
 **`--epnl_file`** writes one row per observer, in observer order: `observer` (the index `-i`
 uses), the microphone's `x`, `y`, `z` in `--units`, `EPNL` (EPNdB), `PNLTM` (TPNdB),
@@ -260,40 +285,55 @@ frames until the end, 0.9 GB resident there.
   end), plus panam's own test cases one for one. Mutating the tone correction one line at a time
   (the 500 Hz range, the band-24 extrapolation, step 3(b)'s "zero or negative", the truncated
   five-record mean, the −13 rounding) fails it.
+- *Masking*, which panam does not have, against panam's procedure run on the reconstructed
+  spectrum with the masked bands' factors zeroed (the same script, which first checks its
+  per-band form of panam's tone correction against panam's own on every spectrum): the 27 spectra
+  (unchanged wherever every band is audible), six prediction-like ones — absorbed top bands, an
+  inaudible 10 kHz band rising out of the plunge, a −1064 dB band, `-inf` bands, an audible band
+  before a plunge and masked bands rising along their thresholds — and a pass whose EPNL masking
+  lowers by 1.8 dB. Dropping either half of the masking fails it.
 - *The frames*: unit tests hold their energy to the history's exposure (1e-12) through a
   reception factor below and above one, a state straddling a boundary to its proportional split,
   and negative times to negative frames. Rebuilt independently in Python from a `--band_history`
   run's CSV files, the frames agreed with `--band_frames` to 6e-5 dB (the CSV's ten digits and the
   file's float), and panam's EPNL on them with `--epnl_file` to 5e-8 dB.
 - *End to end* (CTest `epnl_*`): `check_band_frames` recomputes every EPNL and PNLTM from the
-  netCDF frames and compares them with the CSV, checks the files against each other and for
-  plausibility, and holds the frames' A-weighted energy to a `--full_history` run's SEL within
-  1e-4 dB; the SEL output is unchanged by asking for either; the refusals are tested by their
-  messages.
+  netCDF frames and compares them with the CSV, checks that each PNLTM record's tone band is
+  audible, checks the files against each other and for plausibility, and holds the frames'
+  A-weighted energy to a `--full_history` run's SEL within 1e-4 dB. The energy check cannot see
+  where in time the energy went, so the frames are also rebuilt from a `--band_history` run of the
+  same case (each state spread over its own reception-time column's step) and must agree frame by
+  frame: filing states at their emission time, or at t − r/c, fails it. The same case with
+  `--no-epnl_masking` must read some EPNL more than 0.1 dB higher. The SEL output is unchanged by
+  asking for either file, and the refusals are tested by their messages.
 
 **Against the 2017 measurements.** On the four detail sample runs (calm-day approaches 286270
 and 286277 with the shipped B407 database; windy-day steady runs 284205 and 284211 with the
 held-out `min2_no284` database), over the microphones the paper's SEL gate passes, NICE-OPS's
-EPNL was set against panam's EPNL of the measured 0.5 s frames. The measured frames stop at
-5 kHz, so for a like-for-like comparison the predicted frames' 6.3, 8 and 10 kHz bands were
+EPNL was set against EPNL of the measured 0.5 s frames, both with masking. The measured frames stop
+at 5 kHz, so for a like-for-like comparison the predicted frames' 6.3, 8 and 10 kHz bands were
 replaced, as the measured side's must be, by the 5 kHz level less 5, 10 and 15 dB (a roll-off
-that triggers no tone correction); predicted minus measured, dB:
+that triggers no tone correction); predicted minus measured, dB, with the full 24-band
+`--epnl_file` value against the same measured EPNL beside it:
 
-| day, model | mic-runs | EPNL median | EPNL rms | PNLTM median | PNLTM rms |
-| --- | --- | --- | --- | --- | --- |
-| 286 calm, `station_plate` | 88 | −0.25 | 1.23 | −0.86 | 2.05 |
-| 286 calm, `stratified_plate` | 88 | +0.02 | 1.33 | −0.74 | 1.99 |
-| 284 windy, `station_plate` | 87 | −0.22 | 2.85 | −0.85 | 3.12 |
-| 284 windy, `stratified_plate` | 87 | −0.80 | 1.87 | −1.13 | 2.84 |
+| day, model | mic-runs | EPNL median | EPNL rms | PNLTM median | PNLTM rms | `--epnl_file` EPNL median, rms |
+| --- | --- | --- | --- | --- | --- | --- |
+| 286 calm, `station_plate` | 88 | −0.33 | 1.22 | −0.89 | 2.00 | −0.23, 1.21 |
+| 286 calm, `stratified_plate` | 88 | −0.09 | 1.26 | −0.75 | 1.96 | +0.01, 1.28 |
+| 284 windy, `station_plate` | 87 | −0.22 | 2.70 | −0.85 | 3.07 | −0.11, 2.70 |
+| 284 windy, `stratified_plate` | 87 | −0.88 | 1.90 | −1.36 | 2.91 | −0.78, 1.91 |
 
-These reproduce an earlier computation from the harness's per-state band histories, framed
-there by the states' reception times (1.24 and 1.88 dB rms for the calm `station_plate` and windy
-`stratified_plate` rows), so the two framings agree. About half the PNLTM bias is the tone
-correction: the measured spectra carry a median 1.2–1.3 dB of it at PNLTM against 0.8–0.9 dB
-predicted, consistent with the blend of spheres and grid cells smoothing the tones. EPNL, whose
-duration correction integrates every record, is biased less. The standard's full band set (the
-`--epnl_file` value) reads 0.04–0.19 dB (median) above the 5 kHz-limited one; the measured
-spectra's own top bands are unknown.
+Without masking (panam's procedure on both sides) the first four columns read −0.25 / 1.23,
++0.02 / 1.33, −0.22 / 2.85 and −0.80 / 1.87 for EPNL, reproducing an earlier computation from the
+harness's per-state band histories, framed there by the states' reception times (1.24 and 1.88 dB
+rms for the calm `station_plate` and windy `stratified_plate` rows), so the two framings agree.
+Masking leaves the measured EPNL where it was (0.01 dB rms); what it changes is the prediction's
+top bands: unmasked, the full 24-band EPNL read 0.04–0.19 dB (median, 0.24–0.41 rms) above the
+5 kHz-limited one, and masked it reads the same (0.00–0.01 median, 0.11–0.21 rms), so the excess
+was inaudible tones. About half the PNLTM bias is the tone correction: the measured spectra carry
+a median 1.2–1.3 dB of it at PNLTM against 0.8–0.9 dB predicted, consistent with the blend of
+spheres and grid cells smoothing the tones. EPNL, whose duration correction integrates every
+record, is biased less.
 
 ### Where the code is
 
@@ -328,6 +368,7 @@ spectra's own top bands are unknown.
 | `-i`, `--history` | Prefix for per-observer time history files, `<prefix>_i<N>.csv`. With several tracks each file is also named for its track, `<prefix>_<track>_i<N>.csv`, so they do not overwrite one another. |
 | `--band_history` | Prefix for per-observer band time history files (see Outputs), named as `-i` names its files. Needs the spectral path. |
 | `--epnl_file` | Write each observer's EPNL, PNLTM, duration and tone corrections (14 CFR 36 A36.4) to this CSV, from one-third-octave levels in 0.5 s reception-time frames. Once, or once per trajectory; one name for several tracks becomes `<track>_EPNL.csv`. Needs the spectral path and the 24 bands 50 Hz–10 kHz. See [EPNL and reception-time frames](#epnl-and-reception-time-frames). |
+| `--epnl_masking`, `--no-epnl_masking` | `--epnl_file`'s tone correction: a band below its noy threshold (Table A36-3's SPL(d)) enters it at the threshold and carries no tone itself, as tones in masked bands are excluded from a measured spectrum's. Default on; `--no-epnl_masking` is the procedure as written. See [Masked bands](#epnl-and-reception-time-frames). |
 | `--band_frames` | Write each observer's band levels in 0.5 s reception-time frames to this netCDF file, (observer, frame, band). Once, or once per trajectory (`<track>_band_frames.nc`). Needs the spectral path. |
 | `-m`, `--metricfile` | Append overall noise metrics to this file: the case name, the energy mean of the per-observer SELs (10 lg of the mean of 10^(L/10), not a mean of decibels), their maximum, and the share above 65 dB. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
