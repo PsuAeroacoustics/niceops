@@ -1529,7 +1529,7 @@ Database::Database(const std::string& datafile_path)
                 mu.push_back(advance_ratios[i]);
                 gamma.push_back(flight_path_angles[i]);
             }
-            AamLayer layer {layer_ct[l], {}};
+            AamLayer layer {layer_ct[l], {}, members[l].size()};
             layer.selector.build(mu, gamma, members[l]);
             aam_layers_.push_back(std::move(layer));
         }

@@ -850,8 +850,17 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         ? " (the nearest stored condition at every state)."
                         : " (AAM v3.1: bracketing in speed, then flight path angle, within 20 kt and 3/5 deg).");
         if (blend_options.policy == BlendPolicy::aam && !database.fixed_load_factor())
+        {
             log("--blend aam: AAM has no thrust axis; each state searches the nearest of this "
                     "database's ", database.aam_layer_count(), " thrust-coefficient layers.");
+            if (const std::size_t single = database.aam_single_sphere_layers(); single > 0)
+            {
+                warn("--blend aam: ", single, " of the database's ", database.aam_layer_count(),
+                        " thrust-coefficient layers hold a single sphere, which a state nearest that "
+                        "C_T takes whatever its speed and path angle. AAM's search needs the spheres "
+                        "layered in C_T, not scattered.");
+            }
+        }
     }
     if (two_sided)
         log("Load-factor correction is two-sided, held at ", blend_options.min_load_factor, " g and ",
@@ -3230,8 +3239,9 @@ int run(int argc, char* argv[])
     if (blend_options.load_factor_correction == LoadFactorCorrection::two_sided
             && min_load_factor > max_load_factor)
     {
-        input_error("--min_load_factor ", min_load_factor, " is above --max_load_factor ",
-                max_load_factor, ".");
+        input_error("--min_load_factor ", min_load_factor, min_load_factor_option->count() > 0 ? "" : " (the default)",
+                " is above --max_load_factor ", max_load_factor, ": the two-sided law's floor must not "
+                "be above its ceiling.");
     }
     options.accept_vehicle_mismatch = accept_vehicle_mismatch;
     options.ground.flow_resistance = flow_resistance;

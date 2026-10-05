@@ -643,6 +643,17 @@ public:
     {
         return aam_layers_.size();
     }
+    // How many of those layers hold a single sphere.  A state nearest such a
+    // layer's C_T takes that sphere whatever its speed and path angle, which
+    // is what a database whose C_T is scattered sphere by sphere, rather than
+    // layered, would give every state; the run warns.
+    std::size_t aam_single_sphere_layers() const
+    {
+        std::size_t count = 0;
+        for (const auto& layer : aam_layers_)
+            count += layer.spheres == 1;
+        return count;
+    }
 
     // Range beyond which a source at this operating condition provably falls
     // below `cutoff` dBA, or infinity when no such bound can be established.
@@ -771,6 +782,7 @@ private:
     {
         double thrust_coefficient;
         AamSelector selector;
+        std::size_t spheres = 0;
     };
     std::vector<AamLayer> aam_layers_;
     double max_level_ = 0.0;

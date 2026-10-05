@@ -153,9 +153,20 @@ horizontal under `--no-qsam` (AAM without them). AAM has no thrust axis. On a
 `fixed_load_factor` database the load-factor law carries C<sub>T</sub> exactly as it does
 under the barycentric blend. On a database whose load factors are spheres, each state takes
 the thrust layer nearest its own C<sub>T</sub> (a tie takes the higher) and searches it
-alone; the run logs how many layers there are. AAM's FRAME option, with load factor as a
+alone; the run logs how many layers there are, and warns if any holds a single sphere (a
+database whose C<sub>T</sub> is scattered sphere by sphere rather than layered would leave
+the search nothing to bracket). AAM's FRAME option, with load factor as a
 third searched axis, its "duration adjustment" and its nacelle-angle axis are not
 reproduced. The run logs how many states blended four, three, two and one sphere.
+
+Two consequences of the rules are worth knowing. The gate changes at level flight, so a
+state between rows 2° either side of level interpolates while it climbs and takes the nearer
+row alone once it descends: AAM's output steps there, as it steps wherever a pair crosses a
+gate. And the shipped databases pad their envelope with copies of the edge spheres at γ = −24°
+and 35° (in `B407_fixed_load_factor.nod` all 60 are copies), so that the triangulation
+covers steep states. Under `aam` those are ordinary rows, far outside every gate from the
+measured ones: a state more than halfway from the outermost measured row to a padding row
+takes the padding row alone, whose spheres repeat edge spheres.
 
 The 2017 databases are a scattered cloud of conditions, not a grid, which is the case the
 bracketing search handles worst. On the day-286 B407 approaches (all 114,720 states of the

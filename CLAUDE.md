@@ -469,7 +469,10 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     (`aam_layers_`): one `AamSelector` per stored C_T (one in all on a fixed_load_factor database,
     where the law carries C_T), over advance ratio and path angle. Speeds stay in advance ratio;
     the 20 kt gate is converted per query with the database's own tip speed, the vehicle's only
-    when the database records none, and a run with neither is refused.
+    when the database records none, and a run with neither is refused. Layers group C_T equal to
+    1e-9 relative, which every shipped load-factor database (8 values) meets; one whose C_T is
+    scattered per sphere would make every layer one sphere and pin each state to the sphere
+    nearest its C_T, so the run warns on single-sphere layers (`aam_single_sphere_layers`).
   - **The AAM rules, as read** (each has a mutation-guarded test in
     `tests/test_condition_selection.cpp` or `[blend]` in `test_sphere_database.cpp`): sphere
     angles rounded to 0.5 degrees (halves away from zero), the state's not; gates are maxima, a

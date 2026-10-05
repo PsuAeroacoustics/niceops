@@ -1862,6 +1862,7 @@ TEST_CASE("--blend aam searches the nearest thrust layer of a load-factor databa
     const Database db(path);
     REQUIRE_FALSE(db.fixed_load_factor());
     REQUIRE(db.aam_layer_count() == 2);
+    REQUIRE(db.aam_single_sphere_layers() == 0);
     Database::BlendOptions aam;
     aam.policy = BlendPolicy::aam;
     aam.tip_speed = tip_speed_100_kt;
@@ -1872,6 +1873,23 @@ TEST_CASE("--blend aam searches the nearest thrust layer of a load-factor databa
     // Within the layer it is the ordinary search: 60 kt, a row pair 6 degrees
     // apart (past the 3 degree approach gate), so the nearer row, two speeds.
     REQUIRE(surface_level(db, db.blend_at(0.6, -2.0, 0.0079, aam)) == Catch::Approx(115.0));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("--blend aam counts the thrust layers that hold one sphere", "[sphere_database][blend]")
+{
+    // C_T scattered sphere by sphere rather than layered: every layer is one
+    // sphere, and the run warns that AAM's search has nothing to bracket.
+    const std::vector<std::array<double, 4>> conditions = {
+        {0.5, -6.0, 0.0040, 100.0},
+        {0.7, -6.0, 0.0050, 102.0},
+        {0.5, 0.0, 0.0060, 104.0},
+        {0.7, 0.0, 0.0075, 106.0},
+    };
+    const auto path = write_fixed_load_factor_test_database("niceops_blend_aam_scattered.nod", conditions, false);
+    const Database db(path);
+    REQUIRE(db.aam_layer_count() == 4);
+    REQUIRE(db.aam_single_sphere_layers() == 4);
     std::filesystem::remove(path);
 }
 

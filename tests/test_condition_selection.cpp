@@ -187,6 +187,18 @@ TEST_CASE("AAM's path-angle gate is 3 degrees descending and 5 otherwise", "[con
     REQUIRE(steeper.size() == 1);
     REQUIRE(steeper.count(0) == 1);
 
+    // Level flight is a departure: between rows 2 degrees either side of it
+    // (4 apart, past the approach gate) a level state interpolates, and a
+    // state a hair into the descent takes the nearer row alone.
+    const auto straddle = selector_of({{60.0, -2.0}, {60.0, 2.0}});
+    const auto level = picked(straddle, 60.0, 0.0);
+    REQUIRE(level.size() == 2);
+    REQUIRE(level.at(0) == Catch::Approx(0.5));
+    REQUIRE(level.at(1) == Catch::Approx(0.5));
+    const auto just_down = picked(straddle, 60.0, -1e-6);
+    REQUIRE(just_down.size() == 1);
+    REQUIRE(just_down.count(0) == 1);
+
     // The limits are parameters; widened, the descent interpolates too.
     AamLimits wide;
     wide.approach_fpa_deg = 4.0;
