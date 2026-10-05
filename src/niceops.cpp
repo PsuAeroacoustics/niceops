@@ -37,6 +37,7 @@
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
+#include "terrain.hpp"
 #include "weighting.hpp"
 #include "sphere_database.hpp"
 #include "trajectory.hpp"
@@ -567,6 +568,14 @@ struct RunOptions
     // (propagation_table.hpp).
     std::shared_ptr<const PropagationTable> propagation_table;
     std::string propagation_table_path;
+    // --terrain, read once for the run: the ground models take each path's
+    // mean ground line from it (terrain_ray), resampled per trajectory onto the
+    // local frame every terrain_step meters with terrain_offset (m) added.
+    // Grid observers already stand on it (run()).
+    std::shared_ptr<const Terrain> terrain;
+    std::string terrain_path;
+    double terrain_offset = 0.0;
+    double terrain_step = 0.0;
     // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
     // whatever the file said".
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -1025,6 +1034,147 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         log("Receivers: ", summary.str(), "; each level is evaluated at its microphone.");
     }
 
+    // --terrain: the ground under this trajectory's scene, on the run's frame,
+    // and the checks that the track and the terrain mean the same place and the
+    // same heights.  The observers already stand on it (run()).
+    std::optional<TerrainRaster> terrain_raster;
+    if (options.terrain)
+    {
+        const LocalFrame& frame = *options.geodetic.frame;
+        const LengthUnit& unit = options.unit;
+        const auto& recorded = trajectory.recorded;
+        if (!recorded.empty())
+        {
+            // An AC state file records each state's latitude and longitude beside
+            // its x/y, so the run's frame can be checked against the track's own:
+            // with a wrong --origin or --frame_bearing the terrain would be read
+            // under some other place.  The demo track agrees with its own frame
+            // to millimeters, the 2017 Amedee tracks with theirs to a few feet.
+            const std::size_t stride = std::max<std::size_t>(1, recorded.size() / 500);
+            double squares = 0.0;
+            std::size_t count = 0;
+            for (std::size_t k = 0; k < recorded.size(); k += stride)
+            {
+                const Vec3 p = frame.to_local(Geodetic {recorded[k].latitude, recorded[k].longitude, 0.0});
+                squares += (p.x - recorded[k].x) * (p.x - recorded[k].x) + (p.y - recorded[k].y) * (p.y - recorded[k].y);
+                count++;
+            }
+            const double rms = std::sqrt(squares / static_cast<double>(count));
+            constexpr double refused_rms = 30.0; // m
+            constexpr double warned_rms = 3.0;   // m
+            if (rms > refused_rms)
+            {
+                input_error("--terrain: ", job.trajectory, "'s own latitudes and longitudes put its states ",
+                        rms / unit.to_meters, " ", unit.name, " rms from its x/y in this run's frame (--origin ",
+                        frame.reference().latitude, " ", frame.reference().longitude, ", --frame_bearing ",
+                        std::isnan(options.frame_bearing) ? std::string("unset, +x east")
+                                                          : std::to_string(options.frame_bearing),
+                        "), so the terrain would be read under the wrong place. Give the origin and bearing "
+                        "its x/y were made with.");
+            }
+            const std::string frame_note = std::string("  the track's latitudes and longitudes sit ")
+                    + std::to_string(rms / unit.to_meters) + " " + unit.name + " rms from its x/y in this run's frame.";
+            if (rms > warned_rms)
+                warn(frame_note, " Check --origin and --frame_bearing.");
+            else
+                log(frame_note);
+            // And its altitude: z = 0 is, on the track's own datum, at alt - z,
+            // which is what --ground_elevation must be for the terrain's heights
+            // (put on that datum by --terrain_offset) to land at the right z.
+            // Checked only where alt - z is one number along the track.
+            std::vector<double> datum(recorded.size());
+            for (std::size_t k = 0; k < recorded.size(); k++)
+                datum[k] = recorded[k].altitude - recorded[k].z;
+            const auto [low, high] = std::minmax_element(datum.begin(), datum.end());
+            std::nth_element(datum.begin(), datum.begin() + datum.size() / 2, datum.end());
+            const double median = datum[datum.size() / 2];
+            constexpr double datum_tolerance = 1.0; // m
+            if (*high - *low <= datum_tolerance)
+            {
+                if (std::fabs(median - options.geodetic.ground_elevation) > datum_tolerance)
+                {
+                    input_error("--terrain: ", job.trajectory, " puts its z = 0 at altitude ",
+                            median / unit.to_meters, " ", unit.name, " (its alt less its z), but "
+                            "--ground_elevation is ", options.geodetic.ground_elevation / unit.to_meters, " ",
+                            unit.name, ". The terrain's heights would be ",
+                            (median - options.geodetic.ground_elevation) / unit.to_meters, " ", unit.name,
+                            " off against the track. Give --ground_elevation ", median / unit.to_meters, ".");
+                }
+                log("  the track's z = 0 is at altitude ", median / unit.to_meters, " ", unit.name,
+                        " on its own datum, which --ground_elevation matches.");
+            }
+            else
+            {
+                log("  the track's alt less its z varies by ", (*high - *low) / unit.to_meters, " ", unit.name,
+                        ", so --ground_elevation is not checked against it.");
+            }
+        }
+
+        // The raster covers every observer and every state's footprint, with a
+        // margin for the rays GroundPlaneCache samples: a step past the far end
+        // of a path, and a bearing step to either side of it.
+        double x_low = std::numeric_limits<double>::infinity(), x_high = -x_low;
+        double y_low = x_low, y_high = -x_low;
+        for (const auto& o : observers)
+        {
+            x_low = std::min(x_low, o.x); x_high = std::max(x_high, o.x);
+            y_low = std::min(y_low, o.y); y_high = std::max(y_high, o.y);
+        }
+        for (const auto& state : source_states)
+        {
+            x_low = std::min(x_low, state.position.x); x_high = std::max(x_high, state.position.x);
+            y_low = std::min(y_low, state.position.y); y_high = std::max(y_high, state.position.y);
+        }
+        const double step = options.terrain_step;
+        const double margin = 2.0 * step
+                + std::hypot(x_high - x_low, y_high - y_low) * (2.0 * pi / GroundPlaneCache::bearings);
+        const auto raster_start = std::chrono::steady_clock::now();
+        terrain_raster.emplace(*options.terrain, frame, x_low - margin, x_high + margin, y_low - margin,
+                y_high + margin, step, options.terrain_offset - options.geodetic.ground_elevation);
+        log("  terrain sampled onto the local frame: ", terrain_raster->nodes(), " points every ",
+                step / unit.to_meters, " ", unit.name, " in ",
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - raster_start).count(), " s.");
+
+        // A state under the ground is a datum mistake, not a flight: missing
+        // --ground_elevation puts the terrain a whole site elevation above every
+        // state.  A few meters is the terrain's own error (3DEP's is 1-2 m) or a
+        // landing, and is let through: such a state's height above a path's mean
+        // ground is taken as zero where it falls below it (terrain_ray).
+        constexpr double refused_depth = 10.0; // m
+        std::size_t below = 0;
+        double deepest = 0.0;
+        double clearance = std::numeric_limits<double>::infinity();
+        for (const auto& state : source_states)
+        {
+            const double depth = terrain_raster->height(state.position.x, state.position.y) - state.position.z;
+            clearance = std::min(clearance, -depth);
+            if (depth > 0.0)
+            {
+                below++;
+                deepest = std::max(deepest, depth);
+            }
+        }
+        if (deepest > refused_depth)
+        {
+            input_error("--terrain: ", below, " of ", nt, " states of ", job.trajectory, " are below the "
+                    "terrain under them, the deepest by ", deepest / unit.to_meters, " ", unit.name,
+                    ". The trajectory and the terrain are on different vertical datums: the ground's z is "
+                    "the terrain height + --terrain_offset - --ground_elevation, which must be the "
+                    "track's own height of z = 0 on the terrain's datum.");
+        }
+        if (below > 0)
+        {
+            warn(below, " of ", nt, " states of ", job.trajectory, " are up to ", deepest / unit.to_meters, " ",
+                    unit.name, " below the terrain under them, within the terrain's own error; where a "
+                    "source falls below a path's mean ground its height above it is taken as zero.");
+        }
+        else
+        {
+            log("  the trajectory clears the terrain under it by ", clearance / unit.to_meters, " ",
+                    unit.name, " at least.");
+        }
+    }
+
     // With --db_cutoff, skip any (observer, state) pair whose level is provably
     // below the cutoff.  The bound is per state, from the loudest sphere the
     // state blends and spherical spreading alone, so it never discards a sample
@@ -1318,6 +1468,28 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         for (const double cy : {lo_y, hi_y})
                             r_max = std::max(r_max, std::hypot(std::hypot(cx - state.position.x,
                                     cy - state.position.y), state.position.z));
+                if (terrain_raster)
+                {
+                    // Over terrain the geometry is taken over each path's mean
+                    // ground, which can lie below z = 0: reach down to the lowest
+                    // observer, and past it by the observers' relief and the
+                    // tallest microphone, which bound how far below a microphone
+                    // its foot on a mean ground line can be.
+                    double z_low = std::numeric_limits<double>::infinity();
+                    double z_high = -z_low;
+                    for (const auto& o : observers)
+                    {
+                        z_low = std::min(z_low, o.z);
+                        z_high = std::max(z_high, o.z);
+                    }
+                    const double tallest = *std::max_element(microphone_height.begin(), microphone_height.end());
+                    for (const auto& state : source_states)
+                        for (const double cx : {lo_x, hi_x})
+                            for (const double cy : {lo_y, hi_y})
+                                r_max = std::max(r_max, std::hypot(std::hypot(cx - state.position.x,
+                                        cy - state.position.y), state.position.z - z_low)
+                                                + (z_high - z_low) + tallest);
+                }
                 return r_max * 1.01;
             };
             for (const double height : point_heights)
@@ -1733,6 +1905,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::atomic<std::size_t> shadowed_samples {0};
     std::atomic<std::size_t> table_samples {0};
     std::atomic<std::size_t> fallback_samples {0};
+    std::atomic<std::size_t> terrain_samples {0};
+    std::atomic<std::size_t> terrain_raised {0};
     // The table's bearings are compass bearings; the run's x/y are turned from
     // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
     const CompassToLocal compass(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
@@ -1865,6 +2039,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> shadow(effective_sound_speed ? database.band_centers().size() : 0, 0.0);
         std::vector<double> table_loss(options.propagation_table ? database.band_centers().size() : 0, 0.0);
         std::size_t tabled_here = 0, fallback_here = 0;
+        // --terrain: each observer's mean ground lines (GroundPlaneCache), and
+        // how many pairs took one, and how many had a height raised to zero.
+        std::optional<GroundPlaneCache> planes;
+        if (terrain_raster)
+            planes.emplace(*terrain_raster);
+        std::size_t terrain_here = 0, raised_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
         std::size_t shadowed_here = 0;
         // --refraction stratified's other eigenrays: each one's loss from its
@@ -1890,6 +2070,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const double plate_mic_azimuth = flush && options.plate_orientation.outboard
                     ? outboard_azimuth(observer, source_states)
                     : options.plate_orientation.azimuth;
+            // Over terrain the ground model's geometry is taken over each path's
+            // mean ground line, from this observer's foot toward the source's.
+            const bool over_terrain = planes.has_value() && ground_here != nullptr;
+            if (over_terrain)
+                planes->set_observer(observers[index].x, observers[index].y);
             // The straight-ray spectral level: from --propagation_table where
             // it covers the pair, with the table's level in place of the ground
             // model's and spreading and absorption as ever; otherwise the run's
@@ -1942,6 +2127,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 double level = 0.0;
                 if (options.propagation_table && table_level(it, bands_out, level))
                     return level;
+                if (over_terrain)
+                {
+                    const Vec3& source = source_states[it].position;
+                    const double dx = source.x - observer.x;
+                    const double dy = source.y - observer.y;
+                    bool raised = false;
+                    const RayPath path = terrain_ray(source, observer,
+                            planes->line_to(dx, dy, std::sqrt(dx * dx + dy * dy)), flush, &raised);
+                    terrain_here++;
+                    raised_here += raised;
+                    return database.spectral_level_along(path, source_states[it], absorption_for(it, observer),
+                            band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
+                            packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, nullptr, nullptr,
+                            bands_out);
+                }
                 return database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
                         band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, bands_out);
@@ -2225,7 +2425,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         shadowed_samples += shadowed_here;
         table_samples += tabled_here;
         fallback_samples += fallback_here;
+        terrain_samples += terrain_here;
+        terrain_raised += raised_here;
     });
+
+    if (terrain_raster)
+    {
+        if (ground_model == nullptr)
+            log("--terrain: no ground model runs, so the terrain sets only where the observers stand.");
+        else
+            log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane; in ",
+                    terrain_raised.load(), " of them a source or receiver below it was raised onto it (a "
+                    "receiver in a dip, or a source behind rising ground, which is not screened).");
+    }
 
     if (options.propagation_table)
     {
@@ -2493,6 +2705,10 @@ int run(int argc, char* argv[])
     double roughness = 0.0;          // m
     std::string plate_table;
     std::string propagation_table;
+    std::string terrain_file;
+    double terrain_offset = 0.0;  // meters
+    double terrain_step = 0.0;    // meters; 0 follows the terrain's own spacing
+    bool observers_on_terrain = false;
     std::string plate_mic_azimuth = "outboard";
     bool exact_ground = false;
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -2730,6 +2946,25 @@ int run(int argc, char* argv[])
             "height and range, for one stratified atmosphere over uniform ground. It replaces the "
             "ground and ray models wherever it covers a pair; elsewhere --ground_effect (or free "
             "field) applies. Spectral path only; not with --refraction or --plate_table.");
+    app.add_option("--terrain", terrain_file,
+            "A bare-earth elevation grid (netCDF: latitude, longitude, elevation(latitude, "
+            "longitude) in meters, e.g. USGS 3DEP). Grid observers stand on it, and the ground "
+            "model and plate take each path's least-squares mean ground plane (CNOSSOS-EU, "
+            "NORAH2 / ECAC Doc 32) in place of the plane z = 0. Needs the run's frame (--origin, "
+            "and --frame_bearing for rotated x/y, or a geodetic track). No screening or "
+            "diffraction by terrain; not with --refraction or --propagation_table.");
+    auto* terrain_offset_option = app.add_option("--terrain_offset", terrain_offset,
+            "Added to every --terrain height, in --units, to put it on the trajectory's vertical "
+            "datum (default 0). At Amedee 3DEP is NAVD88 and the 2017 tracks are ellipsoidal: "
+            "-23.6 m (-77.4 ft). The ground's local z is then the height plus this, less "
+            "--ground_elevation.");
+    auto* terrain_step_option = app.add_option("--terrain_step", terrain_step,
+            "Spacing, in --units, of the terrain samples each path's mean ground plane is fitted "
+            "to (default: the terrain grid's own spacing, at least 5 m).");
+    app.add_flag("--observers_on_terrain", observers_on_terrain,
+            "With --terrain and -b: take each observer's ground height from the terrain, "
+            "ignoring the file's z. Without it the file's z stands, and a disagreement over 1 m "
+            "is warned about.");
 
     try
     {
@@ -3012,6 +3247,8 @@ int run(int argc, char* argv[])
     to_meters(path_smoothing_option, path_smoothing);
     to_meters(trim_option, trim_start);
     to_meters(ground_elevation_option, ground_elevation);
+    to_meters(terrain_offset_option, terrain_offset);
+    to_meters(terrain_step_option, terrain_step);
 
     ObserverSet observer_set = scattered
             ? scattered_observers(observer_file, unit)
@@ -3094,6 +3331,126 @@ int run(int argc, char* argv[])
                     "and --humidity would contradict it.");
     }
 
+    // --terrain, and what it does to the observers.
+    std::shared_ptr<const Terrain> terrain;
+    if (terrain_file.empty())
+    {
+        if (terrain_offset_option->count() > 0 || terrain_step_option->count() > 0 || observers_on_terrain)
+            input_error("--terrain_offset, --terrain_step and --observers_on_terrain need --terrain.");
+    }
+    else
+    {
+        // Ground-reflected rays, shadow boundaries and the table's receiver
+        // heights are all built over the plane z = 0; handing them a tilted
+        // plane per path would be a different model, not this one.
+        if (refraction != "none")
+        {
+            input_error("--terrain does not combine with --refraction: the ray models reflect off, "
+                        "and cast their shadows onto, the flat ground z = 0. Use --terrain with "
+                        "straight rays, or --refraction over flat ground.");
+        }
+        if (!propagation_table.empty())
+        {
+            input_error("--terrain does not combine with --propagation_table: the table's source "
+                        "and receiver heights are over flat ground.");
+        }
+        if (observers_on_terrain && !scattered)
+            input_error("--observers_on_terrain is for an observer file (-b); grid observers always "
+                        "stand on the terrain.");
+        if (!frame)
+        {
+            input_error("--terrain needs to know where this run's x/y lie on the ground: give "
+                        "--origin <latitude> <longitude> of the x/y origin (and --frame_bearing for "
+                        "rotated axes -- the shipped AC tracks use 210), or use a geodetic "
+                        "trajectory, which carries its own.");
+        }
+        if (terrain_step_option->count() > 0 && !(terrain_step > 0.0 && std::isfinite(terrain_step)))
+            input_error("--terrain_step must be a positive length, not ", terrain_step / unit.to_meters, " ",
+                    unit.name, ".");
+        if (!std::isfinite(terrain_offset))
+            input_error("--terrain_offset must be a number, not ", terrain_offset, ".");
+        terrain = std::make_shared<const Terrain>(terrain_file);
+        if (terrain_step_option->count() == 0)
+            terrain_step = std::max(terrain->spacing_meters(), min_terrain_step);
+        // The local frame's z is height above --ground_elevation on the
+        // trajectory's datum; --terrain_offset puts the grid on that datum.
+        const double height_offset = terrain_offset - ground_elevation;
+        log("Terrain: ", terrain_file, " (vertical datum ", terrain->vertical_datum(), "; latitudes ",
+                terrain->south(), " to ", terrain->north(), ", longitudes ", terrain->west(), " to ",
+                terrain->east(), ", spacing ", terrain->spacing_meters(), " m). Ground z = height + "
+                "--terrain_offset ", terrain_offset / unit.to_meters, " ", unit.name,
+                " - --ground_elevation ", ground_elevation / unit.to_meters, " ", unit.name,
+                "; each path's mean ground plane is fitted to samples every ",
+                terrain_step / unit.to_meters, " ", unit.name, ".");
+        // Each observer's ground, read from the grid itself rather than the
+        // per-trajectory raster, which is a resampling of it.
+        std::vector<double> ground(observers.size());
+        std::size_t uncovered = 0;
+        std::size_t first_uncovered = 0;
+        for (std::size_t i = 0; i < observers.size(); i++)
+        {
+            const Geodetic where = frame->to_geodetic(Vec3(observers[i].x, observers[i].y, 0.0));
+            ground[i] = terrain->elevation(where.latitude, where.longitude) + height_offset;
+            if (!std::isfinite(ground[i]) && uncovered++ == 0)
+                first_uncovered = i;
+        }
+        if (uncovered > 0)
+        {
+            const Geodetic where = frame->to_geodetic(Vec3(observers[first_uncovered].x,
+                    observers[first_uncovered].y, 0.0));
+            input_error("--terrain ", terrain_file, " has no height at ", uncovered, " of the ",
+                    observers.size(), " observers, the first at x ", observers[first_uncovered].x / unit.to_meters,
+                    ", y ", observers[first_uncovered].y / unit.to_meters, " ", unit.name, " (latitude ",
+                    where.latitude, ", longitude ", where.longitude, "): outside the grid, which covers "
+                    "latitudes ", terrain->south(), " to ", terrain->north(), " and longitudes ",
+                    terrain->west(), " to ", terrain->east(), ", or on a missing node. Check --origin "
+                    "and --frame_bearing.");
+        }
+        if (!scattered || observers_on_terrain)
+        {
+            for (std::size_t i = 0; i < observers.size(); i++)
+                observers[i].z = ground[i];
+            const auto [low, high] = std::minmax_element(ground.begin(), ground.end());
+            log("  observers stand on the terrain, from ", *low / unit.to_meters, " to ",
+                    *high / unit.to_meters, " ", unit.name, " in the local frame's z",
+                    scattered ? " (the observer file's z is not used)." : ".");
+        }
+        else
+        {
+            // The file's z stands, but a surveyed microphone and a terrain grid on
+            // one datum agree to the grid's own accuracy -- at Amedee 0.03 m
+            // standard deviation once the 23.6 m datum offset is applied -- so a
+            // larger disagreement is most likely a datum or frame mistake.
+            constexpr double disagreement = 1.0; // m
+            std::size_t off = 0;
+            std::size_t worst = 0;
+            std::vector<double> differences(observers.size());
+            for (std::size_t i = 0; i < observers.size(); i++)
+            {
+                differences[i] = observers[i].z - ground[i];
+                if (std::fabs(differences[i]) > disagreement)
+                    off++;
+                if (std::fabs(differences[i]) > std::fabs(differences[worst]))
+                    worst = i;
+            }
+            std::vector<double> sorted = differences;
+            std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+            const double median = sorted[sorted.size() / 2];
+            log("  observers keep the observer file's z; it sits ", median / unit.to_meters, " ",
+                    unit.name, " from the terrain in the median, ", differences[worst] / unit.to_meters,
+                    " at worst.");
+            if (off > 0)
+            {
+                warn("--terrain and the observer file disagree by more than ", disagreement / unit.to_meters,
+                        " ", unit.name, " at ", off, " of ", observers.size(), " observers (median ",
+                        median / unit.to_meters, ", worst ", differences[worst] / unit.to_meters, " ",
+                        unit.name, " at data row ", worst + 1, "). A uniform offset is a datum mismatch "
+                        "(--terrain_offset, --ground_elevation); give --observers_on_terrain to stand "
+                        "them on the terrain instead.");
+            }
+        }
+    }
+
     // Everything the trajectory loop needs that does not vary between
     // trajectories, named once.  Written as an initializer rather than thirty
     // assignments so a field added to RunOptions and forgotten here reads as
@@ -3122,6 +3479,10 @@ int run(int argc, char* argv[])
     options.ground.gamma_t = gamma_t;
     options.ground.roughness = roughness;
     options.exact_ground = exact_ground;
+    options.terrain = terrain;
+    options.terrain_path = terrain_file;
+    options.terrain_offset = terrain_offset;
+    options.terrain_step = terrain_step;
     if (!propagation_table.empty())
     {
         options.propagation_table = std::make_shared<const PropagationTable>(PropagationTable::load(propagation_table));

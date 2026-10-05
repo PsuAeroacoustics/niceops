@@ -249,6 +249,46 @@ TEST_CASE("band_levels are the bands the weighted level sums", "[spectral]")
     std::filesystem::remove(path);
 }
 
+TEST_CASE("a path's own receiver height is the ground model's, past its table", "[spectral][terrain]")
+{
+    // Over terrain (terrain_ray) a point receiver's height above each path's
+    // mean ground is its own, and a GroundTable holds one height: the level
+    // must be the exact model's at the path's height, whatever table is passed.
+    const auto path = write_flat_spectral_database("niceops_flat_receiver_height.nod");
+    Database db(path);
+    const auto state = db.source_state(Vec3(0.0, 0.0, 150.0), Vec3(60.0, 0.0, 0.0),
+            Vec3(0.0, 0.0, 1.0), 0.15, -4.0, 0.006);
+    const Vec3 observer(600.0, 200.0, 1.2);
+    const std::vector<double> no_absorption(kBands.size(), 0.0);
+    const auto gains = a_weighting_gains(kBands, BandLimits {});
+    GroundModel at_pole;
+    at_pole.receiver_height = 1.2;
+    GroundModel higher = at_pole;
+    higher.receiver_height = 3.0;
+    const auto impedance = ground_impedance(at_pole, kBands);
+    const GroundTable table(at_pole, impedance, 343.2, kBands, 0, kBands.size(), 1.0, 2000.0);
+
+    RayPath ray = straight_ray(state.position, observer);
+    ray.source_height = 150.0;
+    const double tabled = db.spectral_level_along(ray, state, no_absorption.data(), gains, &at_pole,
+            &impedance, 343.2, 0, kBands.size(), nullptr, nullptr, 0.0, &table);
+    ray.receiver_height = 3.0;
+    const double own = db.spectral_level_along(ray, state, no_absorption.data(), gains, &at_pole,
+            &impedance, 343.2, 0, kBands.size(), nullptr, nullptr, 0.0, &table);
+    RayPath plain = ray;
+    plain.receiver_height = std::numeric_limits<double>::quiet_NaN();
+    const double exact = db.spectral_level_along(plain, state, no_absorption.data(), gains, &higher,
+            &impedance, 343.2, 0, kBands.size());
+    REQUIRE(own == exact);
+    REQUIRE(std::fabs(own - tabled) > 0.01);
+    // The model's own height, given explicitly, still reads the table.
+    ray.receiver_height = 1.2;
+    REQUIRE(db.spectral_level_along(ray, state, no_absorption.data(), gains, &at_pole, &impedance, 343.2, 0,
+                    kBands.size(), nullptr, nullptr, 0.0, &table)
+            == tabled);
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("spectral_direction_bounds really bounds the spectral level", "[spectral][bounds]")
 {
     // As "DirectionBounds really bounds the level" does for the broadband

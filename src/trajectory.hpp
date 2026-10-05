@@ -237,6 +237,23 @@ public:
     std::vector<State> states;
     dimensional_data vehicle;
 
+    // Where an AC state file says its states are, besides x/y/z: latitude and
+    // longitude (degrees) and altitude (m, on the file's own vertical datum),
+    // with the state's x, y, z (m) beside them.  Kept as read, before any trim,
+    // so that --terrain can check the run's frame (--origin, --frame_bearing)
+    // and --ground_elevation against the track itself.  Empty for the other
+    // formats; rows whose lat/lon/alt are not numbers are left out.
+    struct RecordedPosition
+    {
+        double latitude;
+        double longitude;
+        double altitude;
+        double x;
+        double y;
+        double z;
+    };
+    std::vector<RecordedPosition> recorded;
+
 private:
     std::optional<LocalFrame> frame_;
 };

@@ -804,6 +804,11 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                     now.nx = data[21] * accel_to_g;
                     now.ny = data[22] * accel_to_g;
                     now.nz = (data[23] * accel_to_g + 1.0);
+                    if (std::isfinite(data[2]) && std::isfinite(data[3]) && std::isfinite(data[4]))
+                    {
+                        recorded.push_back({data[2], data[3], data[4] * unit.to_meters, now.x, now.y,
+                                now.z});
+                    }
                     derive_flight_parameters(now, vehicle);
                     states.push_back(now);
                     trace("Parsed state: ", states.back());
