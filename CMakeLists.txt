@@ -413,6 +413,18 @@ add_test(NAME csel_is_not_sel COMMAND golden_compare integrated/metrics_csel.csv
 add_test(NAME lafmax_is_not_the_peak COMMAND golden_compare integrated/metrics_lafmax.csv integrated/metrics_lamax_peak.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(lden_by_day_is_dnl cnel_by_day_is_dnl cnel_at_22h30_is_dnl lden_at_23h30_is_dnl csel_at_1khz_is_sel lden_at_22h30_is_not_dnl dnl_full_history_is_not_windowed csel_is_not_sel lafmax_is_not_the_peak PROPERTIES FIXTURES_REQUIRED metrics_runs)
 set_tests_properties(lden_at_22h30_is_not_dnl dnl_full_history_is_not_windowed csel_is_not_sel lafmax_is_not_the_peak PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+# The call site: LAFmax, NA64 and TA70 on the demo case's broadband database (the
+# one regression_golden pins), against goldens checked independently -- a brute-
+# force fast detector on a 5e-5 s reception-time grid built from the -S state and
+# the -i histories agreed to 1e-4 dB, where the same in emission time is 0.018 dB
+# off.  So these fail if the weighting hears emission time, or NAx counts the
+# instantaneous peak (64 dBA sits between the two at three cells).
+add_test(NAME metrics_broadband COMMAND niceops --gridstep 1640 -L warn --lamax_file integrated/metrics_bb_lafmax.csv --nax_file integrated/metrics_bb_na64.csv --nax_threshold 64 --ta_file integrated/metrics_bb_ta70.csv --ta_threshold 70 -o integrated/metrics_bb.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(metrics_broadband PROPERTIES FIXTURES_SETUP metrics_broadband_run)
+add_test(NAME lafmax_golden COMMAND golden_compare integrated/metrics_bb_lafmax.csv golden/metrics_197421_lafmax.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME nax_golden COMMAND golden_compare integrated/metrics_bb_na64.csv golden/metrics_197421_na64.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ta_golden COMMAND golden_compare integrated/metrics_bb_ta70.csv golden/metrics_197421_ta70.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(lafmax_golden nax_golden ta_golden PROPERTIES FIXTURES_REQUIRED metrics_broadband_run)
 # What the metrics refuse.  A 1 s geodetic track is resampled onto the 0.5 s -s
 # default, too coarse for the fast detector; at -s 0.05 it runs.
 set(METRICS_GEODETIC -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640)

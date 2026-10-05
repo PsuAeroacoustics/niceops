@@ -850,9 +850,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         input_error("--lamax_weighting ", to_string(options.lamax_weighting), " (", maximum_name(options.lamax_weighting),
                 ", time constant ", weighting_time_constant(options.lamax_weighting), " s) needs the level history "
                 "sampled at least every ", coarsest_weighting_step(options.lamax_weighting), " s, half its time "
-                "constant, and ", job.trajectory, " is sampled every ", integration_step, " s. Give a finer -s "
-                "(a geodetic track is refitted onto it), or another --lamax_weighting: slow needs 0.5 s, leq0.5 "
-                "0.25 s, and instantaneous takes any step.");
+                "constant, and ", job.trajectory, " is sampled every ", integration_step, " s. A WGS84 track "
+                "is refitted onto a finer -s; the 27-column AC format is used as sampled, so it needs a finer "
+                "file. Or choose another --lamax_weighting: slow needs 0.5 s, leq0.5 0.25 s, and instantaneous "
+                "takes any step.");
     }
 
     // The day-evening-night penalties (-D, --lden_file, --cnel_file), per

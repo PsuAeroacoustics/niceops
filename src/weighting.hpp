@@ -24,7 +24,8 @@ double a_weighting(double frequency);
 
 // C-weighting in dB at a frequency (IEC 61672-1:2013, Annex E): the A curve's
 // outer pole pairs alone, f4^2 f^2 / ((f^2 + f1^2)(f^2 + f4^2)) with f1 =
-// 20.598997 Hz and f4 = 12194.217 Hz, normalized by C1000 = -0.062 dB.  It is
+// 20.598997 Hz and f4 = 12194.217 Hz (12194.22 here, as panam has it),
+// normalized by C1000 = -0.062 dB.  It is
 // exactly the second factor of panam's A-weighting, constant and all, so the
 // two curves are built from one set of numbers.  Non-positive frequencies
 // weight to -300 dB, as a_weighting's do.

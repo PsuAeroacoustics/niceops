@@ -36,8 +36,9 @@ double c_weighting(double frequency)
     const double f2 = frequency * frequency;
     const double f4 = f2 * f2;
     // a_weighting's `second`, written the same way.  2.242881e16 is
-    // 12194.22^4 10^(0.062/10): the upper pole's numerator, squared for a
-    // power ratio, and the 1 kHz normalization.
+    // 12194.22^4 10^(0.0619/10): the upper pole's numerator, squared for a
+    // power ratio, and the 1 kHz normalization (IEC's C1000, -0.062 dB to the
+    // standard's three figures; the curve reads -5.5e-7 dB at 1 kHz).
     const double ratio = 2.242881e16 * f4
             / ((f2 + 20.598997 * 20.598997) * (f2 + 20.598997 * 20.598997)
                     * (f2 + 12194.22 * 12194.22) * (f2 + 12194.22 * 12194.22));

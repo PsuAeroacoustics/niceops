@@ -358,9 +358,10 @@ microphone. For a DNL meant to sit beside an AAM or NORAH2 contour, use `--full_
 meant to match a measured SEL's convention, leave it off. Before this release `-D` used the
 window whatever `--full_history` said.
 
-The clock is the AC format's `utcsec` column, or `--start_utc` for a WGS84 track; a track without
-one is refused under any of the three, since classing it as day (or, from a zero default, night)
-would be a made-up answer.
+The clock is the AC format's `utcsec` column, or `--start_utc` for a WGS84 track, and a sample
+takes the penalty of the period it is emitted in (the propagation delay, seconds, is not added);
+a track without one is refused under any of the three, since classing it as day (or, from a
+zero default, night) would be a made-up answer.
 
 Plotting is skipped for multi-trajectory runs, since one figure file cannot hold several paths.
 
@@ -400,7 +401,9 @@ A weighting is refused on a trajectory whose sample interval exceeds half its ti
 (the table's last column): a fast detector fed a 0.5 s history settles within every sample, and
 its "maximum" is the largest sample again under another name. The check is on the mean interval,
 the step every sample is weighted by; the 2017 AC tracks are 0.02 s with the odd dropout up to
-0.14 s, and pass. A sparse WGS84 track can be refitted onto a finer `-s`.
+0.14 s, and pass. A sparse WGS84 track can be refitted onto a finer `-s`; a 27-column AC track is
+used as sampled, so a coarse one needs a finer file. WGS84 waypoints at the default `-s 0.5`
+are refused under `fast`, which they were not before this option existed.
 
 **What changed.** Before `--lamax_weighting`, `--lamax_file` wrote the instantaneous maximum of
 the 0.02 s history, which is not a meter quantity. Against the validation harness's LAFmax on the
@@ -416,9 +419,13 @@ response 10 lg(1 − e^(−T<sub>b</sub>/τ)), which its Table 4 lists as −1.0
 −18.0 (F, 2 ms), −27.0 (F, 0.25 ms) and −7.4 (S, 200 ms); a burst cut into unequal samples
 reading as the same burst; a source closing at Mach 0.5, whose 0.2 s burst the detector hears as
 0.1 s; and the running Leq's ramps, including a crossing that falls where the window's trailing
-edge, not a sample boundary, turns. On the 2017 records (`station_plate` on calm-day approaches
-286270 and 286277, `stratified_plate` on windy-day runs 284205 and 284211, 188 microphones; the
-harness's own commands with this build):
+edge, not a sample boundary, turns. CTests pin the call site on the demo case's broadband database
+(`lafmax_golden`, `nax_golden`, `ta_golden`): the goldens were checked against a brute-force
+detector run on a 5e-5 s reception-time grid built from the run's `-S` state and `-i` histories,
+which agrees with them to 1e-4 dB, where the same detector in emission time is up to 0.018 dB
+off; NA64 there counts three cells fewer than the instantaneous peak would. On the 2017 records
+(`station_plate` on calm-day approaches 286270 and 286277, `stratified_plate` on windy-day runs
+284205 and 284211, 188 microphones; the harness's own commands with this build):
 
 | In-tool LAFmax minus | Median, per run | 5th to 95th percentile | Largest difference |
 | --- | --- | --- | --- |
@@ -1721,6 +1728,9 @@ these in mind. The largest is the first:
   median; `--lamax_weighting instantaneous` still does, to the bit. `--nax_file` counts against
   the same weighted maximum
   ([Maximum level, time above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel)).
+  A trajectory sampled more coarsely than half the weighting's time constant is refused, so
+  WGS84 waypoints at the default `-s 0.5` now need `-s 0.0625` or finer for `--lamax_file` or
+  `--nax_file` (or `--lamax_weighting instantaneous` for the old number).
 - **`--full_history`** now governs `-D` as well as SEL. It used to leave DNL on each operation's
   10 dB-down window, 0.3–0.6 dB below the whole history at the median; the default is unchanged
   ([Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)).

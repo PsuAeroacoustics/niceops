@@ -158,6 +158,12 @@ from the C++ build, the one that carries the change; `golden/state_197421.csv` d
 
 `regression_golden` and `state_golden` both pass.
 
+`golden/metrics_197421_{lafmax,na64,ta70}.csv` (LAFmax, NA64 and TA70 on the demo case at
+`--gridstep 1640`) were made from the C++ build that added `--lamax_weighting`, and checked against
+an independent brute-force evaluation, not against D, which had no time weighting. They share
+`regression_golden`'s database and track, so a change that moves it moves them; see "Output
+metrics" below.
+
 To regenerate them, follow the `regenerate-goldens` skill
 (`.claude/skills/regenerate-goldens/SKILL.md`) — it builds the D original in a scratch
 worktree and covers the three traps (wrong `niceops.d` revision, D's 6-significant-figure
@@ -180,7 +186,7 @@ The unit tests are a Catch2 binary, so you can run a single case or tag directly
 ./niceops_unit_tests --list-tests
 ```
 
-CTest defines about ninety tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
+CTest defines about a hundred and fifty tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
 
 - `regression_default` — runs `niceops -S state/ci_state.csv`; one run feeds both golden comparisons.
 - `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion. It checks the stored dBA **and EAA** at 1e-9 (eval() returns the stored double exactly at a sphere's own condition and a grid node -- 0 difference over 22 million samples; the D original's 1% let a channel filed one grid cell off pass 60-90% of samples), and **`--self_test` now exits when it is done** instead of going on to run the demo case, which rewrote the file `regression_golden` reads under any test running beside it.
@@ -1241,7 +1247,13 @@ time above and C-weighted SEL" has the definitions and the measured comparison).
   measured 0.1 s frames: that is what the harness's LAFmax differs by (+0.03 to +0.06 dB median),
   not the filter. Dropping the trailing-edge breakpoints passes every closed form but one, `the
   running Leq turns where the window's trailing edge crosses a sample`; using one step for every
-  sample instead of each duration fails `the weighting follows each sample's own duration`.
+  sample instead of each duration fails `the weighting follows each sample's own duration`. The
+  call site has its own guard: `lafmax_golden`, `nax_golden` and `ta_golden` (demo case, broadband
+  S-76D, `--gridstep 1640`), checked independently with a brute-force reception-time detector to
+  1e-4 dB. Handing `reception_durations` no ranges (emission time) fails the first and last; NAx
+  counting the instantaneous peak fails `nax_golden` (64 dBA sits between them at three cells).
+  Nothing else in the suite caught either. They move with anything that moves `regression_golden`;
+  regenerate them from the same build, and say so.
 - **The tau/2 refusal is on the integration step (the mean), not the longest interval.** The
   2017 AC tracks are 0.02 s with dropouts up to 0.14 s; testing the longest interval refused
   every one of them, while the durations the detector actually sees are T times a reception
@@ -1267,8 +1279,8 @@ time above and C-weighted SEL" has the definitions and the measured comparison).
   `csel_at_1khz_is_sel` checks the wiring (both curves are 0 dB at 1 kHz, to 1.5e-6), and
   `csel_is_not_sel` that the C gains are what is applied.
 - **`c_weighting` is the A curve's second factor, constant and all** (2.242881e16 =
-  12194.22^4 10^(0.062/10)). The test that A - C equals the inner pole pairs to 1e-12 dB keeps
-  the two from drifting apart.
+  12194.22^4 10^(0.0619/10), C1000 being -0.062 dB to IEC's three figures). The test that A - C
+  equals the inner pole pairs to 1e-12 dB keeps the two from drifting apart.
 
 ### Geodetic trajectory input
 
