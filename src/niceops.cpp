@@ -1049,7 +1049,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // its x/y, so the run's frame can be checked against the track's own:
             // with a wrong --origin or --frame_bearing the terrain would be read
             // under some other place.  The demo track agrees with its own frame
-            // to millimeters, the 2017 Amedee tracks with theirs to a few feet.
+            // to 0.85 ft rms, the 2017 Amedee tracks with theirs to 1-5 ft.
             const std::size_t stride = std::max<std::size_t>(1, recorded.size() / 500);
             double squares = 0.0;
             std::size_t count = 0;

@@ -646,6 +646,13 @@ set_tests_properties(terrain_hills_point terrain_hills_point_marched terrain_hil
 add_test(NAME terrain_hills_point_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_point.csv integrated/terrain_hills_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME terrain_hills_plate_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_plate.csv integrated/terrain_hills_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_hills_point_windowed_is_exact terrain_hills_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_hills_runs)
+# ... and both are pinned, since the windowed/marched pair compares one binary with itself: passing
+# the plate's receiver as a point receiver at its call site (the plate then measures the source from
+# the line, not from its microphone) moved cells by 0.01 dB with every other terrain test green.
+# Made by the build that added them (adopt/terrain); regenerate only with a deliberate change.
+add_test(NAME terrain_hills_point_golden COMMAND golden_compare integrated/terrain_hills_point.csv golden/terrain_hills_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_plate_golden COMMAND golden_compare integrated/terrain_hills_plate.csv golden/terrain_hills_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_point_golden terrain_hills_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_hills_runs)
 # ... and the hills reach the ground model, not only the observers' heights: the same microphones
 # stood on the hills through an observer file, with no --terrain, differ (golden_compare's mismatch
 # is the pass) -- and without a ground model, where the terrain only places the observers, they agree.

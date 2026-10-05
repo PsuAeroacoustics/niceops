@@ -35,6 +35,8 @@
 //                    microphone's orientation -- since a ray in a stratified
 //                    atmosphere keeps its bearing unless a crosswind deflects
 //                    it, and the effective-sound-speed model has no crosswind.
+//                    terrain_ray turns it round where the source's foot on the
+//                    mean ground line lies behind the microphone's.
 //
 // What the path absorbs per band is the caller's to supply: eval_spectrum
 // multiplies a per-band coefficient by the path.  For a homogeneous atmosphere
@@ -57,6 +59,7 @@
 // EAA is itself a straight-line fit.
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "terrain.hpp"
@@ -130,7 +133,18 @@ inline RayPath terrain_ray(const Vec3& source, const Vec3& microphone, const Gro
         path.source_height = std::max(0.0, g.source_height);
         path.receiver_height = std::max(0.0, g.receiver_height);
     }
-    path.ground_distance = std::max(0.0, g.ground_distance);
+    // The distance along the line is negative when the source's foot on it lies
+    // behind the microphone's -- a nearly overhead source over ground falling
+    // toward it.  The image construction depends on its square, so its size is
+    // the distance (zero would shorten the ground model's direct path below the
+    // real range), and the arrival crosses the plate from the other side, so the
+    // bearing the plate reads is turned round.
+    path.ground_distance = std::fabs(g.ground_distance);
+    if (g.ground_distance < 0.0)
+    {
+        path.separation.x = -path.separation.x;
+        path.separation.y = -path.separation.y;
+    }
     if (below != nullptr)
         *below = raised;
     return path;

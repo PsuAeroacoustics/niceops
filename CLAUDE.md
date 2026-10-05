@@ -1129,6 +1129,17 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     `a path's own receiver height is the ground model's, past its table` holds the branch.
   - **Heights below the line are raised to zero**, CNOSSOS-EU's rule: a receiver in a dip, or
     a source behind rising ground -- which is screening, and not modeled. The log counts them.
+  - **A negative distance along the line is taken by its size, not clamped to zero.** A nearly
+    overhead source over ground falling toward it has its foot behind the microphone's; the
+    image construction depends on d^2, so |d| keeps the model's direct path equal to the real
+    range (zero shortened it), and `terrain_ray` turns `separation` round so a plate is crossed
+    from the side the arrival actually comes from. `a source whose foot lies behind the
+    microphone's keeps the real range` holds both.
+  - **`terrain_hills_point_golden` and `terrain_hills_plate_golden` pin the hills runs** at 1e-6
+    (`golden/terrain_hills_*.csv`, made by the build that added them). The windowed/marched
+    pair compares one binary with itself, so a call-site mutation that handed the plate's
+    microphone to `terrain_ray` as a point receiver moved cells by 0.01 dB and passed every other
+    terrain test. Regenerate them only with a deliberate change, and say so.
   - **`GroundPlaneCache`, not a fit per pair.** A direct fit is ~300 samples for a 3 km path,
     a microsecond, 94 million times. The cache keeps running sums of z and k z along 1440 fixed
     bearings per observer, sampled lazily and only as far as a pair needs, so any whole-step fit

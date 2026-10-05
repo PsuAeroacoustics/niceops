@@ -458,6 +458,32 @@ TEST_CASE("plane_geometry is a rotation, and the identity on level ground", "[te
         }
     }
 
+    SECTION("a source whose foot lies behind the microphone's keeps the real range")
+    {
+        // 150 m up, 5 m out, over ground falling 1 in 10 toward it: the source's
+        // foot on the line is 10 m behind the microphone's.  The ground model's
+        // direct path, hypot(d, h_s - h_r), must still be the real range, and the
+        // plate is crossed from the other side.
+        const Vec3 source(5.0, 0.0, 150.0), microphone(0.0, 0.0, 1.2);
+        const GroundLine falling {0.0, -0.1};
+        const PlaneGeometry g = plane_geometry(5.0, source.z, microphone.z, falling);
+        REQUIRE(g.ground_distance < 0.0);
+        bool below = true;
+        const RayPath point = terrain_ray(source, microphone, falling, false, &below);
+        CHECK(!below);
+        CHECK(point.ground_distance == Catch::Approx(-g.ground_distance).epsilon(1e-14));
+        CHECK(std::hypot(point.ground_distance, point.source_height - point.receiver_height)
+                == Catch::Approx(point.range).epsilon(1e-13));
+        const RayPath plate = terrain_ray(source, microphone, falling, true);
+        const RayPath straight = straight_ray(source, microphone);
+        CHECK(plate.separation.x == -straight.separation.x);
+        CHECK(plate.separation.y == -straight.separation.y);
+        CHECK(plate.separation.z == straight.separation.z);
+        // Ahead of the microphone, as usual, it is left alone.
+        const RayPath ahead = terrain_ray(Vec3(500.0, 0.0, 150.0), microphone, falling, true);
+        CHECK(ahead.separation.x == straight_ray(Vec3(500.0, 0.0, 150.0), microphone).separation.x);
+    }
+
     SECTION("heights below the line are raised to it, and say so")
     {
         // A receiver in a dip: its foot 0.5 m under the mean line, 1.2 m pole.
@@ -484,7 +510,7 @@ TEST_CASE("write the terrain files the --terrain CTests read", "[.terrain_files]
     // Not a test: CMakeLists.txt's terrain_files runs it (by its hidden tag) to
     // write integrated/terrain_flat.nc and integrated/terrain_hills.nc around
     // the demo track's frame (origin 39.81043 N 74.42631 W, +x along 210
-    // degrees, which reproduces the track's own x/y to 2 mm; its z = 0 is at
+    // degrees, which reproduces the track's own x/y to 0.85 ft rms; its z = 0 is at
     // altitude 54.2651 ft).  The flat one is level everywhere at the height
     // --terrain_offset -1250 with --ground_elevation 54.2651 (ft) takes back to
     // z = 0, written as the program forms it, so it lands there to the bit.

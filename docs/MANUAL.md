@@ -784,7 +784,10 @@ perpendicular to the line:
 
 This is a rotation of the plane, so the source–microphone distance is unchanged. Ground that
 rises toward the source lowers h<sub>s</sub> and lengthens d, which lowers the grazing angle.
-Ground that falls away does the opposite. What each receiver takes:
+Ground that falls away does the opposite. For a nearly overhead source over ground falling toward
+it, d comes out negative: the source's foot on the line lies behind the microphone's. The ground
+model takes its size, which keeps its direct path equal to the real range, and a plate is crossed
+from the other side. What each receiver takes:
 
 | Receiver | Ground model's geometry |
 | --- | --- |
@@ -907,6 +910,9 @@ pole's and the table is read. Plates keep their table either way. For the 2017 a
   overhead included, for point receivers and plates. The rest of the path record stays the
   straight line's. The plane's own geometry is a rotation, and is hand-checked for rising and
   falling ground (`tests/test_terrain.cpp`).
+- *The hills runs are pinned* (`terrain_hills_point_golden`, `terrain_hills_plate_golden`, at
+  1e-6), because the windowed and marched runs come from one binary: treating the plate as a point
+  receiver at its call site moved cells by 0.01 dB and passed every other terrain test.
 - *The peak search stays exact.* The ground's gain bounds (`ground_gain_bounds`,
   `PlateReceiver::gain_bounds`) hold for any geometry and any receiver height, so the windowed run
   over hills equals the march (`terrain_hills_point_windowed_is_exact`,
