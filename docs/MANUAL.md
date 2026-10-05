@@ -3,7 +3,8 @@
 This manual describes what NICE-OPS computes, the models behind each option, and how each
 model has been checked. To build the code and run a first case, start with the
 [README](../README.md). Developer notes, including the shape of the hot path and the pitfalls
-to know before changing the numerics, are in [`CLAUDE.md`](../CLAUDE.md).
+to know before changing the numerics, are in [`CLAUDE.md`](../CLAUDE.md) and
+[`docs/internals/`](internals/).
 
 ## Contents
 
@@ -2579,7 +2580,7 @@ ns and the bound proves only about 6% of the pairs outside the window, marches e
 instead. It is skipped, with every state evaluated, for `-a`, `-i`, `--band_history`,
 `--epnl_file`, `--band_frames`, `-D`, `--lden_file`, `--cnel_file`, `--lamax_file`,
 `--nax_file`, `--ta_file`, `--csel_file`, `--full_history` and `--db_cutoff` as well; see
-[`CLAUDE.md`](../CLAUDE.md) for why each one cannot use it.
+[`internals/performance.md`](internals/performance.md) for why each one cannot use it.
 
 ### `--db_cutoff`
 
