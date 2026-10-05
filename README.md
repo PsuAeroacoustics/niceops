@@ -127,7 +127,7 @@ feet, must be run without it. The `-S` state file is always metric. See
 | `databases/` | Noise databases and vehicle files. `S-76D_M3.nod` is the demo database. The AS350, B407, Be206L3, EC130, RO-44 and RO-66 `_fixed_load_factor` databases carry spectra, built from the 2017 Noise Abatement flight test. |
 | `tracks/` | Flight tracks in the AC state format, for the S-76D, AW139 and B205. |
 | `arrays/` | `coyle_approach.csv`, a scattered microphone array. |
-| `atmospheres/` | Profiles for `--atmosphere`: the ISA (`isa.csv`), a windy log law (`example_windy.csv`), a morning inversion (`example_inversion.csv`) and B407's own uniform atmosphere. |
+| `atmospheres/` | Profiles for `--atmosphere`: the ISA (`isa.csv`), a windy log law (`example_windy.csv`, and `example_windy_calm_floor.csv` with a 0.1 ft calm floor for a test), a morning inversion (`example_inversion.csv`) and B407's own uniform atmosphere. |
 | `plates/` | Ground-plate microphone tables for `--plate_table`. |
 
 ## Documentation

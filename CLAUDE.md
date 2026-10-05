@@ -185,7 +185,7 @@ CTest defines about ninety tests (`ctest -N`; most are `niceops` runs compared a
 - `regression_default` — runs `niceops -S state/ci_state.csv`; one run feeds both golden comparisons.
 - `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion. It checks the stored dBA **and EAA** at 1e-9 (eval() returns the stored double exactly at a sphere's own condition and a grid node -- 0 difference over 22 million samples; the D original's 1% let a channel filed one grid cell off pass 60-90% of samples), and **`--self_test` now exits when it is done** instead of going on to run the demo case, which rewrote the file `regression_golden` reads under any test running beside it.
 
-**Mutation-guarded behavior.** A review mutated the code one line at a time and wrote tests for what survived; these are the ones to keep when refactoring (each fails on the mutant it was written for): `an exported sphere reloads as the sphere it was, cell for cell` (swapped dBA/EAA, dropped load-factor correction), the AAM readback, `a negative excess-attenuation factor turns the bounds off` (the windowed run's exactness), `unevenly spaced knots give a continuous, natural spline` (every other spline test used `linspace`, where a transposed h[j]/h[j+1] is invisible), `the fit projects the wind onto the path's own direction` and `a short fit span is widened upward` and `a flush microphone sees the direct ray arrive at its own angle` (a flipped northward wind sign, widening downward, sin/cos swapped in the plate branch), `the plate's azimuth is the ray's bearing turned by the microphone's offset` and `outboard puts the microphone away from the track` (`plate_frame_azimuth` and `outboard_azimuth` live in `plate_receiver.hpp`, one definition for both callers), `add_bounce_loss is the plane-wave reflection loss`, the three `stratified_*_golden` CTests (windowed-versus-marched compares two runs of one binary, so dropping the extra arrivals from the sum moved the duct footprint 7.8 dB with every stratified test green; regenerate those goldens with the build that changed the arrivals on purpose), `scattering_windowed_is_exact` (no CTest ran `--scattering`), `propagation_table_bump_*` (an eight-bearing table with +25 dB beyond 1500 m and a cos(bearing) tilt, written by the hidden Catch case `[.bump_table]` from the ground-model table, run with `--frame_bearing 210`: a bound that left the table's gain out differed from the marched run by 0.57 dB in 21 of 23 cells and passed every CTest; the table-with-absorption twin must differ from it) and `CompassToLocal turns east/north ...` (the table's bearing is its `east_north` inverse, swapped atan2 arguments passed everything with only one-bearing tables), `every simplex has an empty circumsphere` (through the public API: whatever simplex a query lands in, no input point is inside its circumsphere) and `in_sphere agrees with an exact integer oracle` (128-bit Bareiss on lattice points, dimensions 1-5, ties included; the oracle needs no sign convention because the simplex's centroid is always inside). **A mutation check that restores a file with `mv` leaves it older than the objects built from the mutant, and make then considers it up to date**: `touch` it, or `cp` it back.
+**Mutation-guarded behavior.** A review mutated the code one line at a time and wrote tests for what survived; these are the ones to keep when refactoring (each fails on the mutant it was written for): `an exported sphere reloads as the sphere it was, cell for cell` (swapped dBA/EAA, dropped load-factor correction), the AAM readback, `a negative excess-attenuation factor turns the bounds off` (the windowed run's exactness), `unevenly spaced knots give a continuous, natural spline` (every other spline test used `linspace`, where a transposed h[j]/h[j+1] is invisible), `the fit projects the wind onto the path's own direction` and `a short fit span is widened upward` and `a flush microphone sees the direct ray arrive at its own angle` (a flipped northward wind sign, widening downward, sin/cos swapped in the plate branch), `the plate's azimuth is the ray's bearing turned by the microphone's offset` and `outboard puts the microphone away from the track` (`plate_frame_azimuth` and `outboard_azimuth` live in `plate_receiver.hpp`, one definition for both callers), `add_bounce_loss is the plane-wave reflection loss`, the three `stratified_*_golden` CTests (windowed-versus-marched compares two runs of one binary, so dropping the extra arrivals from the sum moved the duct footprint 7.8 dB with every stratified test green; regenerate those goldens with the build that changed the arrivals on purpose), `scattering_windowed_is_exact` (no CTest ran `--scattering`), `propagation_table_bump_*` (an eight-bearing table with +25 dB beyond 1500 m and a cos(bearing) tilt, written by the hidden Catch case `[.bump_table]` from the ground-model table, run with `--frame_bearing 210`: a bound that left the table's gain out differed from the marched run by 0.57 dB in 21 of 23 cells and passed every CTest; the table-with-absorption twin must differ from it) and `CompassToLocal turns east/north ...` (the table's bearing is its `east_north` inverse, swapped atan2 arguments passed everything with only one-bearing tables), `every simplex has an empty circumsphere` (through the public API: whatever simplex a query lands in, no input point is inside its circumsphere) and `in_sphere agrees with an exact integer oracle` (128-bit Bareiss on lattice points, dimensions 1-5, ties included; the oracle needs no sign convention because the simplex's centroid is always inside), and `a calm floor thinner than a wavelength leaves the shadow boundary where it was`, `the resolution limit leaves every resolved turning alone`, `a thick flat floor is followed as far as the highest band resolves it`, `a path shorter than the turning region keeps its rays` and `a run's resolution frequency reaches every path's layers`, with the CTests `stratified_calm_floor_plate_is_floorless` and `stratified_calm_floor_plate_200hz_golden` (`resolved_pass` removed, its cap at k h^2 or back at 2 k h^2, its frequency fixed at 10 kHz, the turning region stopped at the path's ends, the horizontal launch capped, the band dropped in `path_layers`, the `LayeredSoundSpeed` constructor or `process_trajectory`). **A mutation check that restores a file with `mv` leaves it older than the objects built from the mutant, and make then considers it up to date**: `touch` it, or `cp` it back.
 
 - `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All cases pass (tens of thousands of assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
 - `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines.
@@ -677,6 +677,68 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     (dx = p(c0+c1)dz/(q0+q1), plus log1p and atan2 forms for time and arc). They were checked
     against a 200,000-point quadrature to 3e-15. At a turning point the sine is pinned to 0:
     computing it as sqrt(1 - p^2 c^2) leaves ~1e-8 of rounding, which is 1e-7 in range.
+  - **Flat air at the fastest height is followed only as far as the highest band resolves it**
+    (`resolved_pass`, called by `families()` on the `pass` end every arrival family shares). The
+    invariant 1/c_rs is horizontal where the air is fastest; with a gradient there the range of
+    the rays approaching it converges, in flat air it does not. A log law calm below z0 and
+    written to three decimals leaves an exactly flat floor at the ground, and on day 284 a 0.1 ft
+    one put the upwind boundary 20 km out (the 1e-12 inset over a 3 cm floor, nothing physical):
+    no hand-over, no transition, and flush microphones 22-28 dB low, SEL rms 1.63 -> 4.18. The
+    turning region is the heights within one radian of vertical phase (k int sin dz, k at
+    `Layers::resolution_frequency`, which a run sets to its highest band) of the fastest air,
+    and the limiting ray's travel across it is capped at 1.5 k h^2: a wave confined to h leaves
+    it within ~k h^2. Things to keep:
+    - **The 1.5 is set by what it must leave alone and what it may add.** Ray theory travels
+      (4/3) k h^2 across a linear gradient's region (sqrt(2 R h) against k^2 h^3 = 9R/8), less
+      on exact arcs, so a cap above that never binds there and `pass` comes back bit for bit; at
+      k h^2 it binds on every linear profile (`the resolution limit leaves every resolved turning
+      alone` fails). What a floor can still add is the cap's slack over (4/3) k h^2, and it grows
+      as k^(-1/3): at 2 k h^2, the implementer's first choice, the 0.1 ft floor moved the demo
+      plates 0.26 dB, and 0.67 dB with the top band at 200 Hz; at 1.5, 0.12 and 0.19. Day 284's
+      measured-profile runs move under 0.0007 dB either way. Do not raise it for margin.
+    - **The highest band, not a typical one**: the geometry is one for all bands and the
+      largest k removes only what no band resolves. ShadowTransition moves each band's
+      boundary toward the fit's as before. A consequence worth knowing: `--band_limits` moves
+      a floored profile's boundary.
+    - **Do not replace it with merging thin layers.** Any thickness threshold leaves a cliff
+      just above it, since a flat floor of any thickness diverges; the cap is continuous in the
+      floor's thickness (0.1 ft: 186 -> 187 m; 1 m: 544 m at 10 kHz, 707 km uncapped), and the
+      region, a set of heights, does not depend on how many levels describe the same air.
+    - **The shortcut is exact, not a heuristic**: a single fastest height whose radian is gathered
+      within the segment on each side is a linear turning, and q's trapezoid floors the phase
+      (q is concave on a layer). Only past that does it integrate (closed form, `vertical_phase`)
+      and solve for the edges (safeguarded Newton). Cost: nothing measurable on
+      `example_windy.csv`, ~3% on `example_inversion.csv`.
+    - **The region belongs to the air, not to the path** (`beyond`). Where the path ends before
+      the radian, the walk carries on up through the profile and down to the ground, as far as
+      the limiting ray could go (not into air faster than 1/pass), and only the travel inside the
+      path is held to the cap. The first version stopped at the path's ends, which proves
+      nothing: a source within a radian of the fastest height had a region as short as the path,
+      and the cap bound on smooth gradients -- a 1.5 m source over a 1.2 m microphone under a
+      plain lapse had its boundary brought in from 789 m to 34 m at 10 kHz, and at a 200 Hz top
+      band it bound for sources to 10 m in any light wind. With the next item, 274 of 728 cases
+      of a sweep of log laws differed from plain ray theory; with both fixed, none by more than
+      1e-7 dB (interior maxima under a light tailwind). The ground is a hard stop.
+    - **Not at the horizontal launch** (`launch_junction` in `families()`). Where c_rs is the
+      source's own speed and the air above is faster, pass is where the downward family meets
+      the families launched up to turn aloft, not an end of the rays. Capping it opened a gap
+      between them inside the lit zone, receivers with no ray under any downward refraction.
+      That, not the flat 180-190 ft of `example_inversion.csv` (a source there has faster air
+      above it), is what moved the duct goldens by 9.2e-4 dB in the first version; with the
+      junction left alone they are back to the bit. A flat stretch at the source's own height
+      under such a profile is left to plain ray theory, as before.
+    - **The goldens did not move**, but for five cells of `stratified_windy_point` by up to
+      4e-6 dB: near crosswind the lowest layer of `example_windy.csv` is within 1e-4 m/s of
+      flat, and its rays ran 1-40 km before the cap. The paper's measured-profile runs move under
+      0.0006 dB (day 284) and 0.0002 dB (day 286).
+    - Point receivers above a floor were never affected (the dipping family turns at the floor's
+      top, in its gradient). A profile whose lowest level is above the ground has a floor of
+      that height, constant below it; the cap follows a thick one for kilometers.
+    - `stratified_calm_floor_plate_is_floorless` holds the floor to 0.3 dB of the profile
+      without it (0.12 measured; 39 dB unfixed). `stratified_calm_floor_plate_200hz_golden` is
+      the only run at a top band other than 10 kHz, so it is what fails if `process_trajectory`
+      stops handing `LayeredSoundSpeed` its band (`a run's resolution frequency reaches every
+      path's layers` covers `path_layers`).
   - **The RK4 trace in `tests/test_stratified.cpp` is fussy, for reasons worth knowing.** A
     finite-difference gradient rounds to 1e-8 /s, which is 1e-4 m over a km of ray. A step that
     straddles a level integrates across the gradient's jump and drops to first order. Even a

@@ -1031,6 +1031,104 @@ SNR ≥ 10 dB, records that miss the flyover left out), median / rms in dB:
 
 The calm day 286 barely moves (overall 1.46 → 1.45 dB rms): its winds cast few shadows.
 
+**A calm floor at the ground, and flat air at the fastest height.** A log law written with no
+wind below its roughness length leaves the lowest few centimeters calm, and a profile written to
+three decimals leaves them isothermal too: a floor exactly as fast as the ground. On the 2017
+test's windy day, a station-wind log law with z0 = 0.1 ft (levels at 0, 0.01, 0.03, 0.1, 0.3 and
+1 ft, the first four calm) predicted 22–28 dB low at 2–5 low-elevation upwind flush microphones a
+run: run 284202's microphone 3, at a 12° peak elevation, measured 78.3 dB and was predicted near
+50, against 78.6 without the floor. It took day 284's SEL rms from 1.63 to 4.18 dB. A floor only
+0.1 ft thick did it (levels 0, 0.1, 1 ft: −28.2 dB), where a level at 0.3 ft carrying some wind
+moved the footprint by −0.15 dB. `--tunneling` and `--skip_fill` did not help.
+
+*Cause.* A ray whose Snell invariant is 1/c, c the fastest air between microphone and source, is
+horizontal where the air is that fast. With any gradient there it turns, and the range of the
+rays approaching it converges. In flat air it runs along it without limit. The downward family's
+last ray, 1e-12 short of that invariant, crossed a 3 cm floor at 1.4 microradians, and the
+shadow boundary went 20 km out — a figure set by the inset alone. With the boundary gone there
+was no hand-over to the linear fit and no shadow transition, and the pairs short of 20 km took
+near-grazing rays whose tubes were tens of times their range. A microphone 1.2 m up was never
+affected: its limiting ray dips and turns at the floor's top, in the gradient above it.
+
+*Fix.* No wave can be steered along a stretch thinner than its own vertical wavelength at that
+angle: one confined to a height h diffracts out of it within about k h². So the rays see the
+air at the fastest height only as finely as the highest band the run evaluates resolves it. The
+limiting ray's turning region is taken as the heights within one radian of vertical phase of the
+fastest air, k ∫ sin θ dz = 1, and its horizontal travel across that region, of height h, is
+capped at 1.5 k h². In a linear gradient ray theory travels (4/3) k h² there (√(2Rh) against an
+Airy height h with k²h³ = 9R/8), 8/9 of the cap, so the cap never binds on a resolved turning,
+and such profiles give the same rays bit for bit. Flat or nearly flat air gathers no phase and
+is capped. Where it binds, the downward rays stop at the invariant whose travel across the
+region is the cap, whose ray still crosses the region at a small but finite angle. The boundary
+is where that ray lands, and past it the shadow, the hand-over and the transition run as they do
+without the floor.
+
+The cap's margin over (4/3) k h² is what a floor can still add, so it is kept small. With a cap
+of 2 k h² the 0.1 ft floor moved the demo grid's flush microphones by up to 0.26 dB, and by
+0.67 dB when the run's top band was 200 Hz (`--band_limits 20 224`), a floor a fiftieth of that
+band's wavelength; at 1.5 k h² it is 0.12 and 0.19 dB. The margin scales as k^(−1/3) (h goes as
+k^(−2/3)), so it is a run with a low top band that feels it most.
+
+The region belongs to the air, not to the path. Where the path ends before the radian is
+gathered — a source within a radian of the fastest height — the phase is integrated on past
+the source through the profile, and past the microphone down to the ground, for as far as the
+limiting ray could go, and only the ray's travel inside the path is held to the cap. Cut off at
+the path's ends instead, a smooth gradient bound: under a plain lapse a 1.5 m source over a
+1.2 m microphone had its boundary brought in from 789 m to 34 m at 10 kHz, and at a 200 Hz top
+band sources below about 10 m had theirs moved in any light wind.
+
+Nor is the cap applied where the fastest air is the source's own and there is faster air above
+it, as under any downward refraction. There the downward family's last ray is the horizontal
+launch, where the rays launched up to turn aloft take over: it is no end of the rays, and
+capping it opened a gap between the two families inside the lit zone that no ray reached.
+
+The highest band is used because the ray geometry is one for all bands, and the highest band's
+k is the largest, so the cap removes only what no band of the run resolves. The shadow
+transition then moves each band's boundary toward the linear fit's, as it does for any profile.
+With `--band_limits` the top band changes, and a floored profile's boundary can move slightly
+with it, by the margin above. The region is a set of heights, found by integrating the phase, so
+the same air written with more levels gives the same boundary.
+
+For a 30 m source upwind on a 7 kt log law at 10 kHz, the boundary moves as follows:
+
+| calm floor | none | 1 mm | 0.1 ft | 1 ft | 1 m |
+| --- | --- | --- | --- | --- | --- |
+| plain ray theory | 186 m | 893 m | 21.8 km | 216 km | 707 km |
+| now | 186 m | 186 m | 187 m | 233 m | 544 m |
+
+A thick floor is followed as far as the highest band resolves it: a meter of calm air is ten
+wavelengths thick at 10 kHz and a third of one at 100 Hz, where the same source's boundary is
+215 m (198 m under a 1 mm floor, which only the margin moves). The limit cannot reach a profile
+whose lowest level stands above the ground. The speed is held constant below the lowest level,
+so a profile starting at a 46 ft LIDAR gate has a 14 m floor, which the cap follows for
+kilometers. Give a profile a level at the ground.
+
+Checks:
+- **Day 284.** The z0 = 0.1 ft log law's SEL rms goes from 4.18 back to 1.63 dB (729 mic-runs,
+  held-out spheres), the same as z0 = 0.003 ft, which has no floor. A z0 = 1 ft log law, calm
+  to 1 ft, goes from 3.95 to 1.90.
+- **Run 284202.** With the floor, the worst microphone is now 0.07 dB from its floorless level
+  (it was −28.16), with `--tunneling` and `--skip_fill` too. Every set of levels below 1 ft that
+  was tried, the full z0 = 0.1 ft set included, lands within 0.15 dB of the floorless run, as a
+  single level at 0.3 ft carrying wind always did.
+- **Unchanged runs.** The paper's measured-profile `stratified` runs move by at most 0.0006 dB
+  on day 284 and 0.0002 dB on day 286, and their scores are unchanged. Over a sweep of log laws
+  without a floor (headwinds of −1 to 3.6 m/s against the lapse, sources from 1.5 to 100 m, top
+  bands from 200 Hz to 10 kHz) the rays are those of plain ray theory but for a few interior
+  speed maxima under a light tailwind, which move by under 1e-7 dB.
+- **CTests.** `stratified_calm_floor_plate_is_floorless` runs `example_windy.csv` with a 0.1 ft
+  calm floor (`atmospheres/example_windy_calm_floor.csv`) against the profile without it on the
+  demo grid. The flush microphones differ by 0.12 dB at most, against up to 39 dB before. The
+  1.2 m microphones differ by 0.05 dB. Both are held to 0.3 dB.
+  `stratified_calm_floor_plate_200hz_golden` pins the same floored run with the top band at
+  200 Hz, which is what says the run's own top band reaches the solve.
+- **The goldens did not move.** `example_inversion.csv` is exactly isothermal and calm from 180
+  to 190 ft, but a source there has faster air above it, where the cap does not apply. Five cells
+  of `stratified_windy_point` move by up to 4e-6 dB: near crosswind the lowest layer of
+  `example_windy.csv` is within 1e-4 m/s of flat, and the rays along it are capped as they
+  should be.
+- **Cost.** None measurable on `example_windy.csv`, about 3% on `example_inversion.csv`.
+
 Costs, with a point receiver: the demo grid's acoustic loop took 12.0 s when `stratified` went
 in (3.3 s linear, 2.1 s without refraction). A 96-microphone scattered array like
 `arrays/coyle_approach.csv` takes 35 ms. Searching for every arrival costs about half as much
