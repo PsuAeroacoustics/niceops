@@ -186,7 +186,7 @@ The unit tests are a Catch2 binary, so you can run a single case or tag directly
 ./niceops_unit_tests --list-tests
 ```
 
-CTest defines about a hundred and fifty tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
+CTest defines about two hundred and sixty tests (`ctest -N`; most are `niceops` runs compared against another run), all with the **source root** as their working directory (the demo case's relative paths resolve there). The main ones:
 
 - `regression_default` — runs `niceops -S state/ci_state.csv`; one run feeds both golden comparisons.
 - `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion. It checks the stored dBA **and EAA** at 1e-9 (eval() returns the stored double exactly at a sphere's own condition and a grid node -- 0 difference over 22 million samples; the D original's 1% let a channel filed one grid cell off pass 60-90% of samples), and **`--self_test` now exits when it is done** instead of going on to run the demo case, which rewrote the file `regression_golden` reads under any test running beside it.
