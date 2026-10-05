@@ -90,6 +90,8 @@ with ground effect, by default. That path needs a relative humidity, from the ve
   one row of levels per y.
 - `-D`: the day-night level, summed over every trajectory in the run.
 - `-i`, `--band_history`: per-observer level and band time histories.
+- `--epnl_file`, `--band_frames`: per-observer EPNL (14 CFR 36 A36.4), and the band levels in
+  0.5 s reception-time frames it is computed from, as netCDF.
 - `-S`: the derived trajectory state (position, velocity, load factor, C<sub>T</sub>, μ, flight
   path angles).
 - `--latlon`: a latitude, longitude, level companion to every level file.

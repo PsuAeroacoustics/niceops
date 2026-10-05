@@ -13,6 +13,7 @@ to know before changing the numerics, are in [`CLAUDE.md`](../CLAUDE.md).
   - [Reading the sphere](#reading-the-sphere)
   - [Propagation to the microphone](#propagation-to-the-microphone)
   - [Exposure](#exposure)
+  - [EPNL and reception-time frames](#epnl-and-reception-time-frames)
   - [Where the code is](#where-the-code-is)
 - [Running NICE-OPS](#running-nice-ops)
   - [Command-line options](#command-line-options)
@@ -139,13 +140,167 @@ Across a run, `-D` sums every trajectory's exposure into the day-night level, wi
 penalty on samples flown at night
 ([Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)).
 `--lamax_file` and `--nax_file` give each observer's maximum level and the number of
-operations that reach a threshold.
+operations that reach a threshold. `--epnl_file` gives each observer's effective perceived noise
+level, from one-third-octave levels in 0.5 s reception-time frames, and `--band_frames` writes
+those frames themselves (next section).
+
+### EPNL and reception-time frames
+
+`--epnl_file FILE` writes each observer's EPNL, the certification metric of 14 CFR 36
+Appendix A, section A36.4 (identical to ICAO Annex 16 Vol. I, Appendix 2), and `--band_frames
+FILE` the one-third-octave band levels it is computed from, for every observer at once.
+Both need the spectral path. EPNL is a per-operation metric, so with several trajectories each
+gets its own file: one name given for several tracks becomes `<track>_EPNL.csv` and
+`<track>_band_frames.nc` beside it, as `-S` does.
+
+**The records.** The regulation computes EPNL from one-third-octave spectra averaged linearly
+over 0.5 s records (A36.3). NICE-OPS evaluates one spectrum per trajectory state, in emission
+time, every 0.02 s on the shipped tracks. The state emitted at *t* is heard at *t* + *r*/*c*,
+and its emission step T arrives spread over T (1 + ṙ / c) of reception time — the same weight the
+SEL integral gives it ([Exposure](#exposure)). Each state's band energy is spread evenly over
+that stretch, split between the frames it overlaps in proportion, and summed; a frame's level is
+the energy over the frame's 0.5 s:
+
+    L_frame = 10 lg( Σ_i 10^(L_i/10) × overlap_i / 0.5 s )
+
+So the frames are linear-average records in reception time, and together they hold exactly the
+whole history's exposure in every band: A-weighted and summed, they give the `--full_history`
+SEL. Frame *k* covers [0.5 *k*, 0.5 (*k* + 1)) s on the trajectory's own clock, so every
+observer's frames share one time axis. The first and last frames an observer hears are partly
+silent and are averaged over the whole 0.5 s regardless, as a record of them would be. *r* is
+the straight-line range, or, under `--refraction`, *c* times the ray's travel time. A state
+culled by `--db_cutoff` carries no energy, as in the SEL. `-a` is refused: the ambient is an
+A-weighted level with no spectrum to add to the bands.
+
+**The bands.** EPNL is defined over the 24 bands from 50 Hz to 10 kHz. Each is matched to the
+database band whose center is within 5 percent of the nominal one (nominal and exact centers
+differ by at most 1.6 percent; neighboring bands are 26 percent apart). A database lacking any of
+the 24, or `--band_limits` leaving any out, is refused with the bands named: a missing band is
+not a quiet one, and filling it would move both the noy sum and the tone correction's
+background. Bands outside 50 Hz–10 kHz are not part of EPNL and are ignored by it (they are
+still in `--band_frames`). The shipped spectral databases (`*_fixed_load_factor.nod`) carry
+10 Hz–10 kHz, so all 24 are there. The levels are the database's spectra at the microphone, with
+spreading, absorption, the ground or plate and any shadow loss applied; no frequency shift is
+applied (the spheres keep the measured, Doppler-shifted spectra).
+
+**The metric**, per record *k* and band *i*, with SPL(*i*, *k*) the frame levels:
+
+1. Noys *n*(*i*, *k*) from Table A36-3's formulas (A36.4.7.3): four regions bounded by SPL(a),
+   SPL(b), SPL(e) and SPL(d), and 0 noy below SPL(d).
+2. PNL(*k*) = 40 + (10 / lg 2) lg *N*, *N* = 0.85 *n*<sub>max</sub> + 0.15 Σ *n* (A36.4.2).
+3. The tone correction C(*k*), the ten steps of A36.4.3.1: slopes from band 4 (80 Hz has none);
+   encircle a slope that changes by more than 5 dB, and with it SPL(*i*) when the slope is
+   positive and rising, SPL(*i* − 1) when it has turned from positive to zero or negative; replace
+   an encircled level by its neighbors' mean (band 24 by SPL(23) + s(23)); recompute the slopes
+   with s′(3) = s′(4) and an imaginary 25th band; average three adjacent slopes; build the
+   background SPL″ from SPL″(3) = SPL(3); and take the largest Table A36-2 factor of F = SPL − SPL″
+   over F ≥ 1.5 dB: F/3 − 1/2, F/6, 10/3 below 500 Hz and above 5 kHz; 2F/3 − 1, F/3, 20/3 from
+   500 Hz to 5 kHz inclusive. Bands 1–3 never carry a tone correction.
+4. PNLT(*k*) = PNL(*k*) + C(*k*), and PNLTM its maximum (A36.4.3, A36.4.4).
+5. The band-sharing check (A36.4.4.2): if C at PNLTM is below the mean of C over the five records
+   centered there (fewer at either end of the record), PNLTM is PNL there plus that mean.
+6. The duration correction D = 10 lg[(1/T) Σ 10^(PNLT(*k*)/10) Δt] − PNLTM, T = 10 s,
+   Δt = 0.5 s, summed from the first to the last record at or above PNLTM − 10, dips between them
+   included (A36.4.5). The regulation's −13 for 10 lg(0.5/10) is that number rounded (0.01 dB);
+   NICE-OPS uses it unrounded.
+7. EPNL = PNLTM + D (A36.4.1).
+
+This is panam's `flight_acoustics.py` implementation (`noys`, `perceived_noise_level`,
+`tone_correction`, `effective_perceived_noise_level`), ported term for term
+(`src/pnl.cpp`), including its reading of the regulation where readings differ: 500 Hz is in the
+middle range of Table A36-2, the duration is the contiguous interval, and the band-sharing
+check is applied.
+
+**Not included.** Everything A36 does to a *measured* spectrum before step 1: the
+instrumentation and background-noise corrections (A36.3), the adjustment to reference
+conditions (A36.9; a prediction is already at its own atmosphere and flight path), and the
+identification of pseudo-tones from ground reflections, which the regulation lets an applicant
+exclude from the tone correction — NICE-OPS takes every tone the predicted spectrum has,
+ground-effect interference included (the plate and point-receiver models put real ripple into the
+spectrum, as a microphone does). There is no 10 dB-down window check of the record's own
+completeness beyond the `clipped` flag below.
+
+**`--epnl_file`** writes one row per observer, in observer order: `observer` (the index `-i`
+uses), the microphone's `x`, `y`, `z` in `--units`, `EPNL` (EPNdB), `PNLTM` (TPNdB),
+`duration_correction` (D, dB), `tone_correction` (PNLTM − PNL at its record: the record's own C,
+or the five-record mean when the band-sharing check raised it), `tone_band` (Hz, the band C came
+from; `nan` when the record has none), `bandshare_adjusted` (1 when step 5 raised PNLTM),
+`PNLTM_time`, `duration_first`, `duration_last` (the centers of the PNLTM record and of the
+duration's first and last records, s, on the trajectory's clock, in reception time) and `clipped`
+(1 when the duration reaches the first or last record the observer heard, so the event may not be
+whole). An observer with no finite PNLT — every frame below the noy floor — is written as
+`-inf,-inf,nan,...`.
+
+**`--band_frames`** writes a netCDF-4 file: `level(observer, frame, band)`, float, dB re 20 µPa,
+each band's unweighted linear-average level over the frame; `time(frame)`, the frame centers (s,
+on the trajectory's clock); `band_center(band)` (Hz, the bands inside `--band_limits`); the
+microphones' `x`, `y`, `z` and `microphone_height` in `--units`; and, for a grid, `grid_x` and
+`grid_y` (observer = *iy* × size(`grid_x`) + *ix*). Levels are NaN outside the frames an observer
+received and −inf in a band that received nothing. Global attributes record the trajectory, the
+database, `frame_length_seconds` (0.5) and `band_frames_version` (1). Each observer's record is
+one chunk, shuffled and deflated. It is the file for whole-grid post-processing — EPNL variants,
+C-weighted exposure, comparison with measured frames — that `--band_history`'s file per observer
+and row per state cannot serve on a grid: on the demo grid (14,400 observers, 273 frames, 28
+bands) it is 318 MB, where `--band_history` would write 14,400 files of 6,551 rows.
+
+**Cost.** Both force every state to be evaluated (the windowed search bounds the A-weighted
+level, which says nothing about where PNLT peaks), and hold every band of every state of an
+observer while its frames are formed. On the demo grid with B407 (spectral, ground effect,
+14 threads) the run takes 4.2 s without them, 5.6 s with `--epnl_file`, and 10.1 s with
+`--band_frames` too, of which 2.2 s is the compression; `--band_frames` holds every observer's
+frames until the end, 0.9 GB resident there.
+
+**How it was checked.**
+
+- *Against panam*, at 1e-6 dB: `tests/test_pnl.cpp` embeds values generated by running panam's
+  own functions (`tools/pnl_reference.py`) on 27 spectra — every noy region, tones at every
+  special band (80 Hz, 100 Hz, 500 Hz, 5 and 6.3 kHz, a band-24 tone on a slope, a slope turning
+  to exactly zero), F above 20 and between 1.5 and 3, silence, random spectra — and 7 histories,
+  each with the band-sharing check on and off (it fires in three, one of them at the record's
+  end), plus panam's own test cases one for one. Mutating the tone correction one line at a time
+  (the 500 Hz range, the band-24 extrapolation, step 3(b)'s "zero or negative", the truncated
+  five-record mean, the −13 rounding) fails it.
+- *The frames*: unit tests hold their energy to the history's exposure (1e-12) through a
+  reception factor below and above one, a state straddling a boundary to its proportional split,
+  and negative times to negative frames. Rebuilt independently in Python from a `--band_history`
+  run's CSV files, the frames agreed with `--band_frames` to 6e-5 dB (the CSV's ten digits and the
+  file's float), and panam's EPNL on them with `--epnl_file` to 5e-8 dB.
+- *End to end* (CTest `epnl_*`): `check_band_frames` recomputes every EPNL and PNLTM from the
+  netCDF frames and compares them with the CSV, checks the files against each other and for
+  plausibility, and holds the frames' A-weighted energy to a `--full_history` run's SEL within
+  1e-4 dB; the SEL output is unchanged by asking for either; the refusals are tested by their
+  messages.
+
+**Against the 2017 measurements.** On the four detail sample runs (calm-day approaches 286270
+and 286277 with the shipped B407 database; windy-day steady runs 284205 and 284211 with the
+held-out `min2_no284` database), over the microphones the paper's SEL gate passes, NICE-OPS's
+EPNL was set against panam's EPNL of the measured 0.5 s frames. The measured frames stop at
+5 kHz, so for a like-for-like comparison the predicted frames' 6.3, 8 and 10 kHz bands were
+replaced, as the measured side's must be, by the 5 kHz level less 5, 10 and 15 dB (a roll-off
+that triggers no tone correction); predicted minus measured, dB:
+
+| day, model | mic-runs | EPNL median | EPNL rms | PNLTM median | PNLTM rms |
+| --- | --- | --- | --- | --- | --- |
+| 286 calm, `station_plate` | 88 | −0.25 | 1.23 | −0.86 | 2.05 |
+| 286 calm, `stratified_plate` | 88 | +0.02 | 1.33 | −0.74 | 1.99 |
+| 284 windy, `station_plate` | 87 | −0.22 | 2.85 | −0.85 | 3.12 |
+| 284 windy, `stratified_plate` | 87 | −0.80 | 1.87 | −1.13 | 2.84 |
+
+These reproduce an earlier computation from the harness's per-state band histories, framed
+there by the states' reception times (1.24 and 1.88 dB rms for the calm `station_plate` and windy
+`stratified_plate` rows), so the two framings agree. About half the PNLTM bias is the tone
+correction: the measured spectra carry a median 1.2–1.3 dB of it at PNLTM against 0.8–0.9 dB
+predicted, consistent with the blend of spheres and grid cells smoothing the tones. EPNL, whose
+duration correction integrates every record, is biased less. The standard's full band set (the
+`--epnl_file` value) reads 0.04–0.19 dB (median) above the 5 kHz-limited one; the measured
+spectra's own top bands are unknown.
 
 ### Where the code is
 
 | Step | Source |
 | --- | --- |
 | Command line, the observer loop, metrics | `src/niceops.cpp`, `src/util/sel.hpp` |
+| EPNL and reception-time frames | `src/pnl.cpp`, `src/band_frames.hpp`, `src/band_frames.cpp` |
 | Trajectories and their parameters | `src/trajectory.cpp`, `src/geodetic.cpp`, `src/smoothing_spline.cpp` |
 | Databases, blending, the sphere lookup | `src/sphere_database.cpp`, `src/interpolator.cpp`, `src/delaunay.cpp` |
 | Absorption and weighting | `src/atmosphere.cpp`, `src/atmosphere_profile.cpp`, `src/weighting.cpp` |
@@ -172,6 +327,8 @@ operations that reach a threshold.
 | `-S`, `--state` | Save the derived trajectory state. With several tracks and one name, each is saved as `<track>_state.csv` beside it. |
 | `-i`, `--history` | Prefix for per-observer time history files, `<prefix>_i<N>.csv`. With several tracks each file is also named for its track, `<prefix>_<track>_i<N>.csv`, so they do not overwrite one another. |
 | `--band_history` | Prefix for per-observer band time history files (see Outputs), named as `-i` names its files. Needs the spectral path. |
+| `--epnl_file` | Write each observer's EPNL, PNLTM, duration and tone corrections (14 CFR 36 A36.4) to this CSV, from one-third-octave levels in 0.5 s reception-time frames. Once, or once per trajectory; one name for several tracks becomes `<track>_EPNL.csv`. Needs the spectral path and the 24 bands 50 Hz–10 kHz. See [EPNL and reception-time frames](#epnl-and-reception-time-frames). |
+| `--band_frames` | Write each observer's band levels in 0.5 s reception-time frames to this netCDF file, (observer, frame, band). Once, or once per trajectory (`<track>_band_frames.nc`). Needs the spectral path. |
 | `-m`, `--metricfile` | Append overall noise metrics to this file: the case name, the energy mean of the per-observer SELs (10 lg of the mean of 10^(L/10), not a mean of decibels), their maximum, and the share above 65 dB. |
 | `--origin` | WGS84 reference for the local frame: latitude longitude, degrees. Defaults to the first position of the first geodetic track. |
 | `--frame_bearing` | Compass bearing of the local +x axis. Default: x east, y north. The shipped AC tracks use 210. |
@@ -194,7 +351,7 @@ operations that reach a threshold.
 | `--grid`, `--gridstep` | Observer grid bounds and spacing, in `--units`. Default ±1500 m (±4921.26 ft), step 25 m (82.021 ft) — a fixed extent either way. |
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory: the energy average over a 24-hour day, with the 22:00–07:00 night penalized. A daytime operation reads its SEL less 49.37 dB. |
 | `--lamax_file` | Write each observer's LAmax: the highest A-weighted level over the operation, dB. Forces the whole history, so the peak is exact. |
-| `--nax_file`, `--nax_threshold` | Write each observer's NAx: the number of operations whose own LAmax reaches the threshold, dBA (required with `--nax_file`: there is no default, so the study's threshold is always stated). The count adds across trajectories. EPNL is not implemented. |
+| `--nax_file`, `--nax_threshold` | Write each observer's NAx: the number of operations whose own LAmax reaches the threshold, dBA (required with `--nax_file`: there is no default, so the study's threshold is always stated). The count adds across trajectories. |
 | `--coverage_file` | Write, per observer, the energy-weighted share of its levels that came from cells the database did not measure. Needs a database that records `coverage`, as the 2017 aircraft databases do. With spectra, each cell counts by the share of its A-weighted band energy at the sphere that was measured, so a band the builder's SNR gate dropped counts by what it carries (on B407, 5–10 kHz in about half the measured cells, and 0.4% of the lower hemisphere's energy); channel coverage is all or nothing. On the demo grid B407 reads 1.2% unmeasured at the median, 27% at the 95th percentile. Straight rays only: refused with `--refraction` or `-a`. |
 | `--full_history` | Integrate each SEL over the whole history rather than the event's 10 dB-down window. Slower, since no window is found. |
 | `--utc_offset` | Hours from UTC to local time, for the DNL night window. |
@@ -292,6 +449,10 @@ seconds, levels in dB.
   plate and any shadow loss applied. A-weighted and summed in energy the bands give
   `level_dBA`. Bands outside `--band_limits` and culled states are left empty; `-a`'s ambient
   goes into `level_dBA` only. Needs the spectral path.
+- `--epnl_file` — per-observer EPNL, PNLTM, duration and tone corrections, and the times of the
+  PNLTM record and the duration, one row per observer; `--band_frames` — every observer's band
+  levels in 0.5 s reception-time frames, as netCDF. Both are described under
+  [EPNL and reception-time frames](#epnl-and-reception-time-frames).
 - `-m` — appends the energy-mean SEL, maximum and above-threshold counts for the case.
 - `-S` — the derived trajectory state (t, position, velocity, load factor, C<sub>T</sub>, μ, flight path angles).
 - `--powerfile` — per-state shaft power, if the database carries any.
@@ -300,8 +461,9 @@ seconds, levels in dB.
 
 ### Several trajectories, and the day-night level
 
-`-t` may be repeated. `-d`, `-v`, `-o` and `-S` then take either one value, shared by every
-trajectory, or one per trajectory.
+`-t` may be repeated. `-d`, `-v`, `-o`, `-S`, `--epnl_file` and `--band_frames` then take
+either one value, shared by every trajectory (the output names are then derived per track), or
+one per trajectory.
 
 ```sh
 ./build/niceops -t morning.csv -t evening.csv -t night.csv -D integrated/dnl.csv
@@ -1465,8 +1627,8 @@ It is exact, not an approximation — the output is byte-identical to evaluating
 is used on the spectral path (`--spectral`, `--ground_effect`, plates, refraction, tables), where
 an evaluation costs 150 ns to a microsecond; a broadband run, where an evaluation costs about 20
 ns and the bound proves only about 6% of the pairs outside the window, marches every state
-instead. It is skipped, with every state evaluated, for `-a`, `-i`, `--band_history`, `-D` and
-`--db_cutoff` as well; see [`CLAUDE.md`](../CLAUDE.md) for why each one cannot use it.
+instead. It is skipped, with every state evaluated, for `-a`, `-i`, `--band_history`,
+`--epnl_file`, `--band_frames`, `-D` and `--db_cutoff` as well; see [`CLAUDE.md`](../CLAUDE.md) for why each one cannot use it.
 
 ### `--db_cutoff`
 

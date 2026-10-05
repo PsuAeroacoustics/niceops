@@ -55,13 +55,22 @@ public:
     {
         double begin = std::numeric_limits<double>::infinity();
         double end = -std::numeric_limits<double>::infinity();
+        // A stretch that is not a finite, positive interval (a NaN range, a
+        // one-state track's zero step) carries nothing and must not size the
+        // frames.
+        auto stretch = [&](std::size_t it, double& lo, double& hi) {
+            const double half = 0.5 * duration(it);
+            lo = reception(it) - half;
+            hi = reception(it) + half;
+            return std::isfinite(lo) && std::isfinite(hi) && hi > lo;
+        };
         for (std::size_t it = 0; it < count; it++)
         {
-            if (!usable(it))
+            double lo = 0.0, hi = 0.0;
+            if (!usable(it) || !stretch(it, lo, hi))
                 continue;
-            const double half = 0.5 * duration(it);
-            begin = std::min(begin, reception(it) - half);
-            end = std::max(end, reception(it) + half);
+            begin = std::min(begin, lo);
+            end = std::max(end, hi);
         }
         energy_.clear();
         frame_count_ = 0;
@@ -80,12 +89,8 @@ public:
         constexpr double ln10_over_10 = 0.23025850929940456840;
         for (std::size_t it = 0; it < count; it++)
         {
-            if (!usable(it))
-                continue;
-            const double half = 0.5 * duration(it);
-            const double lo = reception(it) - half;
-            const double hi = reception(it) + half;
-            if (!(hi > lo))
+            double lo = 0.0, hi = 0.0;
+            if (!usable(it) || !stretch(it, lo, hi))
                 continue;
             const double* levels = bands_of(it);
             std::int64_t k = std::max(first_, static_cast<std::int64_t>(std::floor(lo / frame_length_)));

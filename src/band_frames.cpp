@@ -4,7 +4,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <string>
+#include <vector>
 
 #include "util/logger.hpp"
 #include "util/paths.hpp"

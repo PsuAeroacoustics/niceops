@@ -12,9 +12,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -524,4 +526,23 @@ TEST_CASE("negative reception times file into negative frames", "[pnl][band_fram
     REQUIRE(frames.first() == -1);
     REQUIRE(frames.count() == 1);
     REQUIRE(close(frames.center(0), -0.25, 1e-12));
+}
+
+TEST_CASE("a state with no finite stretch of reception time is left out", "[pnl][band_frames]")
+{
+    // A NaN reception time (a range that failed) or a zero duration must neither
+    // carry energy nor stretch the frame axis.
+    const double levels[3] = {60.0, 90.0, 60.0};
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    BandFrames frames(1, 0.5);
+    frames.accumulate(
+            3, [](std::size_t) { return true; }, [&](std::size_t i) { return i == 1 ? nan : 0.25 + 0.5 * static_cast<double>(i); },
+            [](std::size_t) { return 0.5; }, [&](std::size_t i) { return &levels[i]; });
+    REQUIRE(frames.first() == 0);
+    REQUIRE(frames.count() == 3);
+    REQUIRE(frames.energy(1, 0) == 0.0);
+    frames.accumulate(
+            1, [](std::size_t) { return true; }, [](std::size_t) { return 4.0; }, [](std::size_t) { return 0.0; },
+            [&](std::size_t i) { return &levels[i]; });
+    REQUIRE(frames.count() == 0);
 }

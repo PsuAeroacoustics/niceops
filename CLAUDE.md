@@ -185,7 +185,7 @@ CTest defines about ninety tests (`ctest -N`; most are `niceops` runs compared a
 - `regression_default` — runs `niceops -S state/ci_state.csv`; one run feeds both golden comparisons.
 - `self_test` — runs `niceops --self_test`, validating every sphere in the database against its own stored levels (1,844,672 samples). **Passes.** It was `broken_self_test`, excluded from CI, while legacy hover directivity made it fail on 7,788 samples; that is fixed (see below), so it is now a real test and CI runs the full suite with no `-E` exclusion. It checks the stored dBA **and EAA** at 1e-9 (eval() returns the stored double exactly at a sphere's own condition and a grid node -- 0 difference over 22 million samples; the D original's 1% let a channel filed one grid cell off pass 60-90% of samples), and **`--self_test` now exits when it is done** instead of going on to run the demo case, which rewrote the file `regression_golden` reads under any test running beside it.
 
-**Mutation-guarded behavior.** A review mutated the code one line at a time and wrote tests for what survived; these are the ones to keep when refactoring (each fails on the mutant it was written for): `an exported sphere reloads as the sphere it was, cell for cell` (swapped dBA/EAA, dropped load-factor correction), the AAM readback, `a negative excess-attenuation factor turns the bounds off` (the windowed run's exactness), `unevenly spaced knots give a continuous, natural spline` (every other spline test used `linspace`, where a transposed h[j]/h[j+1] is invisible), `the fit projects the wind onto the path's own direction` and `a short fit span is widened upward` and `a flush microphone sees the direct ray arrive at its own angle` (a flipped northward wind sign, widening downward, sin/cos swapped in the plate branch), `the plate's azimuth is the ray's bearing turned by the microphone's offset` and `outboard puts the microphone away from the track` (`plate_frame_azimuth` and `outboard_azimuth` live in `plate_receiver.hpp`, one definition for both callers), `add_bounce_loss is the plane-wave reflection loss`, the three `stratified_*_golden` CTests (windowed-versus-marched compares two runs of one binary, so dropping the extra arrivals from the sum moved the duct footprint 7.8 dB with every stratified test green; regenerate those goldens with the build that changed the arrivals on purpose), `scattering_windowed_is_exact` (no CTest ran `--scattering`), `propagation_table_bump_*` (an eight-bearing table with +25 dB beyond 1500 m and a cos(bearing) tilt, written by the hidden Catch case `[.bump_table]` from the ground-model table, run with `--frame_bearing 210`: a bound that left the table's gain out differed from the marched run by 0.57 dB in 21 of 23 cells and passed every CTest; the table-with-absorption twin must differ from it) and `CompassToLocal turns east/north ...` (the table's bearing is its `east_north` inverse, swapped atan2 arguments passed everything with only one-bearing tables), `every simplex has an empty circumsphere` (through the public API: whatever simplex a query lands in, no input point is inside its circumsphere) and `in_sphere agrees with an exact integer oracle` (128-bit Bareiss on lattice points, dimensions 1-5, ties included; the oracle needs no sign convention because the simplex's centroid is always inside). **A mutation check that restores a file with `mv` leaves it older than the objects built from the mutant, and make then considers it up to date**: `touch` it, or `cp` it back.
+**Mutation-guarded behavior.** A review mutated the code one line at a time and wrote tests for what survived; these are the ones to keep when refactoring (each fails on the mutant it was written for): `an exported sphere reloads as the sphere it was, cell for cell` (swapped dBA/EAA, dropped load-factor correction), the AAM readback, `a negative excess-attenuation factor turns the bounds off` (the windowed run's exactness), `unevenly spaced knots give a continuous, natural spline` (every other spline test used `linspace`, where a transposed h[j]/h[j+1] is invisible), `the fit projects the wind onto the path's own direction` and `a short fit span is widened upward` and `a flush microphone sees the direct ray arrive at its own angle` (a flipped northward wind sign, widening downward, sin/cos swapped in the plate branch), `the plate's azimuth is the ray's bearing turned by the microphone's offset` and `outboard puts the microphone away from the track` (`plate_frame_azimuth` and `outboard_azimuth` live in `plate_receiver.hpp`, one definition for both callers), `add_bounce_loss is the plane-wave reflection loss`, the three `stratified_*_golden` CTests (windowed-versus-marched compares two runs of one binary, so dropping the extra arrivals from the sum moved the duct footprint 7.8 dB with every stratified test green; regenerate those goldens with the build that changed the arrivals on purpose), `scattering_windowed_is_exact` (no CTest ran `--scattering`), `propagation_table_bump_*` (an eight-bearing table with +25 dB beyond 1500 m and a cos(bearing) tilt, written by the hidden Catch case `[.bump_table]` from the ground-model table, run with `--frame_bearing 210`: a bound that left the table's gain out differed from the marched run by 0.57 dB in 21 of 23 cells and passed every CTest; the table-with-absorption twin must differ from it) and `CompassToLocal turns east/north ...` (the table's bearing is its `east_north` inverse, swapped atan2 arguments passed everything with only one-bearing tables), `every simplex has an empty circumsphere` (through the public API: whatever simplex a query lands in, no input point is inside its circumsphere) and `in_sphere agrees with an exact integer oracle` (128-bit Bareiss on lattice points, dimensions 1-5, ties included; the oracle needs no sign convention because the simplex's centroid is always inside). For EPNL: the generated table in `tests/test_pnl.cpp` (the band-24 extrapolation on a slope, step 3(b) at a zero slope, the band-sharing mean truncated at the record's end, the unrounded duration constant) and `epnl_frames_are_consistent` (the reception factor in the frames' weights, the frames' band offset). **A mutation check that restores a file with `mv` leaves it older than the objects built from the mutant, and make then considers it up to date**: `touch` it, or `cp` it back.
 
 - `unit_test` — Catch2 cases in `tests/`, ported from the D `unittest` blocks. All cases pass (tens of thousands of assertions). Note Catch2 rejects `&&` and chained comparisons inside `REQUIRE` unless the whole expression is wrapped in a second pair of parens: `REQUIRE((a && b));`.
 - `regression_golden`, `state_golden` — `golden_compare` diffs the run's CSV output against a golden file elementwise at 1e-9 relative tolerance, skipping non-numeric header lines.
@@ -270,7 +270,8 @@ screen; these now fail, or warn, with the cause named. Know them before adding a
   and CT unless `fixed_load_factor`) and may not hold two spheres at one condition; both were
   silent NaN or hang before. Test fixtures with one thrust coefficient carry the flag.
 - **Several trajectories in one run** name `-i` / `--band_history` files for their track and
-  derive `-S` names as `-o` does, and two trajectories asked to write one file are refused.
+  derive `-S`, `--epnl_file` and `--band_frames` names as `-o` does (`<track>_EPNL.csv`,
+  `<track>_band_frames.nc`), and two trajectories asked to write one file are refused.
 - **CTests that test these pass on the message text** (`PASS_REGULAR_EXPRESSION`), which
   replaces the exit-status check, so a usage error or a missing file cannot satisfy them;
   `golden_compare` itself is tested on NaN and infinity.
@@ -386,6 +387,8 @@ bound is taken along each ray's launch direction at its ray tube's range; for a 
 stratified arrivals, the loudest arrival's direction over the harmonic sum of their squared
 ranges, `bound_geometry`). It is skipped, and the loop marches every state, for `-a` (the level
 is transformed after eval), `-i` and `--band_history` (the whole history is written),
+`--epnl_file` and `--band_frames` (every state's bands go into the frames, and the EPNL's window
+is found on PNLT, which the A-weighted bound says nothing about),
 `-D` (the day-night window is found on a penalized history, which a window found on the raw one
 need not cover), `--db_cutoff` (which culls on its own terms), and any database with a negative
 excess-attenuation factor, where dropping that term is not a loss.
@@ -1091,6 +1094,47 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
   The point receiver's direct path ended on the ground until this went in, while its ground
   model put the microphone 1.2 m up. Point-receiver SEL moved by up to ±0.8 dB on the demo
   grid, almost all from the low states; plates and the goldens did not move.
+- `src/pnl.{hpp,cpp}`, `src/band_frames.{hpp,cpp}` — `--epnl_file` and `--band_frames`: EPNL
+  (14 CFR 36 A36.4) from one-third-octave levels in 0.5 s reception-time frames, and the frames
+  themselves as an (observer, frame, band) netCDF file. The things to preserve:
+  - **`pnl.cpp` is panam's `flight_acoustics.py` (eeb040b), term for term**, including panam's
+    reading of the regulation where readings differ: 500 Hz is in Table A36-2's *middle* range,
+    the duration is the contiguous PNLTM - 10 interval with its dips, D uses 10 lg(dt/10 s)
+    unrounded (not the regulation's -13), and the A36.4.4.2 band-sharing check is applied, with
+    the five-record mean truncated at the record's ends. panam's comments say the MATLAB
+    `EPNLcalc.m` differs on the first three on purpose; do not "fix" the port toward it. A change
+    here is a change to panam first.
+  - **The reference values in `tests/test_pnl.cpp` are generated, not typed**:
+    `PANAM=... python tools/pnl_reference.py` prints the block between the `clang-format off/on`
+    lines. Regenerate rather than edit. Two spectra exist only for mutants that every other case
+    let through: a 10 kHz tone *on a slope* (on a flat spectrum s(23) = 0, so dropping it from
+    SPL'(24) = SPL(23) + s(23) is invisible) and a rise that levels off to a slope of exactly 0
+    (the only place step 3(b)'s "zero or negative" differs from "negative"; a plateau after a
+    sharp rise is encircled by 3(a) anyway). The inputs are 0.1 dB literals and the histories
+    `base + envelope (+ add)`, so both sides parse and add the same doubles.
+  - **A frame is an energy integral, not a mean of the states in it.** Each state's band energy
+    is spread over [t_r - w/2, t_r + w/2], t_r = t + r/c and w = T x `reception_factor` -- the
+    SEL integral's own weight -- and split between frames by overlap. That is what makes the
+    frames sum to the whole-history exposure exactly, and `check_band_frames` holds the
+    frames' A-weighted energy to a `--full_history` run's SEL at 1e-4 dB (float storage): drop
+    the reception factor, or file states whole under their center's frame, and it fails. Frames
+    sit at multiples of 0.5 s on the trajectory's clock so a grid's observers share one axis.
+  - **A missing PNL band is refused, never filled.** The databases' bands are matched to the
+    nominal centers within 5 percent (`pnl_band_indices`); a database without one, or
+    `--band_limits` leaving one out, stops the trajectory with the bands named. Filling (the
+    harness's 5 kHz - 5/10/15 dB for measured frames) belongs to the comparison, not the tool.
+  - **Without `--band_history`, `record_path` returns the band buffer and skips the geometry**
+    (`lookup_angles`, an asin): it runs per state per observer. The accumulation uses
+    exp(L ln10/10), as `weighted_level` does.
+  - **`--band_frames` holds every observer's frames, as float, until the write** (about 450 MB on
+    the demo grid, 0.9 GB resident). Each observer's record is one chunk, shuffled and deflated at
+    level 1: +2.2 s and 28 percent smaller there. `nc_close`'s status is checked, as the sphere
+    writers check it.
+  - Against the 2017 data (four detail runs, `docs/MANUAL.md`): predicted minus measured EPNL
+    (both limited to 5 kHz, where the measured frames stop) -0.25 / +0.02 dB median, 1.23 /
+    1.33 rms on the calm approaches (`station_plate` / `stratified_plate`), -0.22 / -0.80 and
+    2.85 / 1.87 on the windy steady runs. PNLTM reads 0.7-1.1 dB low, about half of it a tone
+    correction 0.35-0.43 dB smaller than measured.
 - `src/weighting.{hpp,cpp}` — A-weighting (panam's `dBAw`, the IEC 61672 pole-zero form rather
   than a table, so it evaluates at whatever band centers a database carries) and band-limited
   energy integration. Note the curve is **not** identically 0 dB at 1 kHz in this form but
