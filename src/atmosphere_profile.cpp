@@ -818,8 +818,10 @@ AtmosphereProfile synthetic_profile(const SurfaceWind& wind, const Atmosphere& s
         // first_level() above the roughness length, and this says so.
         if (z > 0.0 && !(speed > 0.0))
             throw std::logic_error("synthetic_profile placed a calm level above the ground");
-        profile.wind_east.push_back(speed * east);
-        profile.wind_north.push_back(speed * north);
+        // + 0.0 turns the ground level's -0 into 0 in a written profile; it
+        // leaves every other value as it is.
+        profile.wind_east.push_back(speed * east + 0.0);
+        profile.wind_north.push_back(speed * north + 0.0);
     }
 
     profile = profile.with_hydrostatic_pressure(surface.pressure);
