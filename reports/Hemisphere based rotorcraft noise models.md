@@ -1,5 +1,13 @@
 # NICE-OPS leads on propagation, lags on sources
 
+> **Status.** This is a snapshot of NICE-OPS `stratified-ducts` at `e472b6f`, written on 2026-10-03. Most of the ranked shortcomings below have since been addressed:
+>
+> - PR #8 made ground effect the default, refused a missing humidity, normalized DNL to 24 hours and refused vehicle mismatches.
+> - PR #9 started reading the upper hemisphere, made the seam periodic, read the Doppler flag, and added static operations, NAx and coverage.
+> - PR #15 added `--terrain`, EPNL, time-weighted LAmax, Lden/CNEL, `--blend` policies, `--nose` and `--wind`.
+>
+> Still open: a single compact source, no Doppler shift applied, and no ambient-pressure scaling. `docs/MANUAL.md` describes the current behavior. The validation harness's `paper/model_review.md` (2026-10-05) supersedes the tool comparison here. It covers the build side as well, and corrects the SELENE and HELENA entries: SELENE does not floor its shadow zones, and HELENA blends four (V, γ) hemispheres by inverse distance.
+
 Every research-grade rotorcraft footprint tool reviewed here does the same core thing NICE-OPS does. That covers AAM v3.1, NORAH2, RNM and its FRAME-QS descendant, DLR SELENE, HELENA, Airbus CAROT/MOTUS, ANOPP2/AMAT and the 2023–26 eVTOL work. Each tool stores a fixed-radius sphere or hemisphere of band levels for each steady operating condition, picks or blends spheres along the trajectory, rotates them into the flight frame, and propagates along rays. The tools differ in four things: which state variables index the spheres, the domain they blend in, how much of the sphere they trust, and how much propagation physics sits downstream. AEDT/HNM is the exception, using noise-distance curves at three lateral angles.
 
 On the first and last of those four, NICE-OPS is at or beyond the published state of the art. Its (μ, γ_e, C_T) Delaunay blend is the indexing the maneuver literature recommends. No footprint tool found combines its spectral ground model, layered-eigenray refraction, residue-series shadow transitions and a benchmarked PE. The closest is the TU Delft ray model used by Gennaretti et al. (IJA 2017): layered arcs, ray-tube spreading, and Arntzen's shadow-zone model with ground-wave, diffraction and turbulence-scattering terms. Its internal harness result, 1.26 dB rms SEL over 1,112 held-out microphone-runs of B407 approaches, is a multi-run error distribution of a kind no sphere tool has published. It is not yet published itself.
