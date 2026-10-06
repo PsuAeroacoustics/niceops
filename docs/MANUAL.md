@@ -581,6 +581,9 @@ record, is biased less.
 | `--write_atmosphere` | `--wind`: write each trajectory's built profile in the `--atmosphere` format, so the run can be repeated and inspected. With several tracks and one name, `<track>_atmosphere.csv` beside it. |
 | `--refraction` | `none` (default); `linear`, curved rays through the `--atmosphere` (or `--wind`) profile's effective sound speed fitted to a straight line per path; or `stratified`, through the profile's own layers. Both give shadow zones under upward refraction. See below. |
 | `--shadow_floor` | Most a refractive shadow zone attenuates, dB. Default 20. |
+| `--shadow_model` | `--refraction stratified` with `--ground_effect`: how each band's shadow boundary is set. `legacy` (default): interpolated between the layered rays' boundary and the path's linear fit's. `resolved`: from the profile each band resolves (its tangent below the height where the band gathers `--shadow_phase` of vertical phase), with a cramped band's field from `--cramped_ground`. Opt-in; see "Low sources near grazing" below. |
+| `--shadow_phase` | `--shadow_model resolved`: the vertical phase, radians, a band must gather to resolve the near-ground profile. Default 1, fixed a priori (the radian the layered rays' flat-floor limit takes); 0.5 and 2 are reported as sensitivities only. |
+| `--cramped_ground` | `--shadow_model resolved`: a band whose boundary is within two diffraction lengths of the source takes the residue series at the source's own height (`series`, default); or, on its lit side, the ground model along the straight path (`straight`) or on the ray's equivalent geometry (`ray`). |
 | `--tunneling` | `--refraction stratified`: also take the rays turned back from aloft that turn again just above the microphone, which the wave reaches through the layer below them (an Airy tail per band). Off by default; see "Micro-shadows and skip zones" below. |
 | `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail per band. Off by default; see below. |
 | `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γT, instead of `--shadow_floor`. Default 0 (off). Needs `--refraction` and `--ground_effect`. |
@@ -2150,6 +2153,142 @@ from 23.6 to 37 s on `example_windy.csv` and from 57.5 to 86 s on `example_inver
 search is skipped past the hand-over to the linear fit, unless a duct gives bounced rays to
 look for. Focusing at a caustic is capped at +10 dB.
 
+### Low sources near grazing: the resolved shadow (`--shadow_model resolved`)
+
+`--shadow_model resolved` is an opt-in change to how `--refraction stratified` places and fills a
+ground-grazing shadow. The default, `legacy`, is the transition described above, unchanged bit for
+bit (the goldens and every existing CTest; the paper's flight runs reproduce to 0 dB). It was
+written for low sources under light wind, the R44's landings at Eglin, where the layered ray
+model's shadow was 5-11 dB deeper than a parabolic equation's at 1000-1500 ft. Three things
+caused that (2026-10-05 code audit):
+
+- **M2. A layer the wave does not resolve sets the boundary.** Ray theory fixes a ground-grazing
+  boundary by c(z_s)/c(0) alone. On run 229355 the log law extrapolated below the lidar's 46 ft
+  gate takes 0.25 m/s off in the lowest foot. That sets the layered boundary r_s at 446 ft,
+  where the fit's r_l is 1306 ft and the PE's onset follows r_l. Below 4 kHz the layer gathers
+  less than a radian of vertical phase.
+- **M1. The lit side's ground term collapses.** The equivalent straight geometry
+  h' = L sin(grazing) - h_r goes to 0 approaching the boundary, so the ground model sits in its
+  grazing null, 8-20 dB under the true field. A band whose boundary is within two diffraction
+  lengths of the source (cramped) keeps that ray model up to the boundary.
+- **M3. The decay is tied to the boundary.** a = c0 root^2 / r_b^2. With the fit casting no
+  shadow, the fallback r_b = 1.6 r_s gave 0.07-0.11 /s (day 284, run 200, 200 ft source:
+  -27 dB at 2500 ft and 1 kHz, where the PE gives -5.6).
+
+What the option does:
+
+1. **Each band sees only the profile it resolves.** For band f it finds h_f, where
+   k_f int_0^h sqrt(2 max(c(0) - c(z), 0) / c(0)) dz = `--shadow_phase` (1 rad, fixed before
+   any scoring; it is the radian the flat-floor limit `resolved_pass` uses). Below h_f the
+   effective sound speed is replaced by its tangent there, the slope of the layer containing
+   h_f. That band's layered boundary r_s(f), and its linear-fit boundary r_l(f), come from that
+   profile. r_l(f) is the path's fit corrected by the least-squares line through the tangent's
+   change. Both go through the same `band_boundary` law as before. On a linear profile
+   h_f = (3 phase / (2 k sqrt(2|a|/c0)))^(2/3), which is 1.31 creeping-wave layers at one radian.
+   There the resolved profile is the profile itself, so nothing moves.
+2. **The decay keeps the boundary's curvature.** The task asked for the decay to be taken from
+   the resolved profile's gradient over the creeping-wave layer (the tangent below h_f). That
+   was built and scored, and is kept in `niceops_pe_compare --tangent_decay`. It is worse on
+   every upwind class of the synthetic set (log-law upwind 3.93 -> 5.35 dB rms against the PE,
+   log law plus shear aloft 4.50 -> 5.64, with the ray's cramped ground term). The decay rate,
+   s and the diffraction length therefore stay c0 root^2 / r_b(f)^2, each band at its own
+   boundary.
+3. **A cramped band takes the exact field.** For k^2 linear in height the residue series is the
+   field. Where a band is cramped (r_b/F < 2, which means sqrt(y_s) + sqrt(y_r) < 2 in Airy
+   lengths), it takes the series at the source's own height, with the curvature whose boundary
+   is the band's. It is tabulated per band over (xi, s, sqrt(y_s)), with sqrt(y_s) in 0-2 every
+   0.4 and xi every 0.2 (`ShadowTransition::cramped_level`). The modes and H0(kappa r) are
+   shared across heights (`upward_pressure_heights`). Near the source, where the series is not
+   trusted (NaN), the band falls back to the ray model. The choice among `series`, `straight`
+   (the ground model along the straight path through the lit side and the blend) and `ray`
+   (as legacy) was made on the synthetic set alone (below). `straight` and `ray` remain as
+   `--cramped_ground` values.
+
+The per-band boundaries depend only on bearing, source height and receiver. A run tabulates
+them once per trajectory (`ResolvedShadowTable`: 2 degrees of bearing by nodes even in
+sqrt(z_s), interpolated in 1/r_b). Every band whose h_f lies in one layer shares one profile,
+so it costs one boundary solve per layer touched; the table builds in about 0.01 s on
+`example_windy.csv`. The cramped series table costs about 2-3 s of CPU per band per receiver
+height, so 24 bands take 5-8 s on 14 threads and about a minute at `-j 1`. A pair pays one
+table lookup per band. The bound stays exact: the series and V are held to the transition's
+largest power ratio, and the straight ground term is within the ground's own bound.
+`stratified_resolved_{point,plate,straight_point,duct_point}_windowed_is_exact` check it, and
+the `[resolved][bounds]` Catch2 case sweeps it. One approximation: the table indexes receivers
+by their height above the ground (the run's point heights and the plate), so scattered
+observers whose surveyed z is not 0 are looked up at that height.
+
+**Validation against the PE.** `niceops_pe_compare --shadow_model resolved` writes a
+`resolved_<f>` column. The score is code-audit's: the rms of (model - PE) over ranges of
+300 ft and beyond where the PE is within 20 dB of straight rays, per case and band, pooled.
+Bands 125-4000 Hz, ranges to 4000 ft, variable porosity 200, flush (3 mm) and 1.2 m point
+receivers. The synthetic set was generated and frozen (sha256 manifest) before any variant was
+scored: linear lapses of -0.01 to -0.06 /s; neutral log laws through a 46 ft value of 2-12 kt,
+extrapolated as the harness does; the same plus +6 kt of shear from 46 to 200 ft; upwind,
+downwind and crosswind; sources of 5-200 ft. 308 cases. The measured set is held out:
+R44 229354/355/363/369/372 toward 140 (sources 5-80 ft); all 16 day-284 profiles toward their
+46 ft upwind bearing (20-200 ft); and the calibration cases (`example_windy.csv` and three
+synthetic log laws, 30 and 100 m). 194 cases.
+
+| class (case-bands) | legacy | resolved (series) | resolved (straight) |
+| --- | --- | --- | --- |
+| linear lapse (336) | 3.38 / -0.06 | 1.39 / +0.30 | 2.97 / +1.23 |
+| log law, upwind (322) | 4.77 / -1.75 | 3.70 / +0.74 | 4.13 / +1.03 |
+| log law + shear, upwind (167) | 6.73 / -2.71 | 4.25 / -0.20 | 4.82 / +0.16 |
+| log law, crosswind (= adiabatic lapse) (336) | 4.01 / -0.89 | 0.73 / +0.04 | 2.66 / +1.18 |
+| downwind (504) | unchanged | unchanged | unchanged |
+| **synthetic, pooled (1833)** | **5.30 / -0.74** | **4.24 / +0.25** | 4.70 / +0.82 |
+| R44 day 229 (300) | 6.58 / -2.81 | 5.19 / -0.47 | 5.70 / +0.28 |
+| B407 day 284 (748) | 5.67 / -2.42 | 5.16 / +0.03 | 5.18 / +0.10 |
+| calibration cases (96) | 4.28 / -1.93 | 3.02 / -0.18 | 3.02 / -0.17 |
+| **measured, pooled (1144)** | **5.82 / -2.48** | **5.03 / -0.12** | 5.18 / +0.12 |
+
+(rms / mean of model - PE, dB.) Resampling whole profiles, the change in pooled rms is -1.06 dB
+[-1.71, -0.61] on the synthetic set and -0.79 [-1.16, -0.41] on the measured one. On R44
+229355, 20 ft source, flush receiver, at 1000/1250/1500 ft and 1 kHz the PE gives
+-13.6/-17.3/-20.1 dB; legacy gives -18.6/-28.2/-28.9 and resolved -14.2/-18.0/-21.7. On a
+linear -0.02 /s lapse, 20 ft source, flush, resolved is within 0.3 dB of the PE from 800 to
+2000 ft at 500 Hz and 1 kHz. Legacy is up to 17 dB low there. That case is pinned in
+`tests/test_resolved_shadow.cpp`.
+
+**Where it is worse.** 58 of the 194 measured cases and 10 of the 308 synthetic ones worsen by
+more than 0.5 dB rms. Almost all are strong winds with a 1.2 m receiver: day 284's 20 ft
+sources go 1.6-2.1 -> 3.7-5.3 dB, and the 12 kt log laws worsen by up to 2.5 dB. On strong
+log laws the PE resolves the lowest layers better than one radian implies. The resolved
+boundary, which then still goes through `band_boundary`'s interpolation toward r_l, lands too
+far out, by 1-2 diffraction lengths. Above 4000 ft, on two day-284 profiles with 300 and 500 ft
+sources (8000 ft, flush), the effect splits by profile. Where the fit casts no shadow (run 200)
+the PE stays near straight rays and resolved is much closer (rms 19.5 -> 13.8 and
+14.0 -> 7.9). In a true upwind shadow (run 205) resolved is 1.6 dB loud on average
+(rms 2.0 -> 3.9 and 2.7 -> 4.1). Deep in shadows (PE more than 20 dB under straight) neither
+model is right: the floor holds both 25-35 dB above a still-air PE.
+`--shadow_phase` 0.5 (sensitivity): measured 5.05 dB, day 284 5.13. `--shadow_phase` 2: 5.28.
+
+**Flight data** (harness `fidelity_study` gates and common samples, plate receivers, profile
+atmospheres; paired with `stratified_plate`; 95% intervals from resampling runs):
+
+| set | mic-runs | stratified_plate rms | resolved rms | Δ rms [95% CI] |
+| --- | --- | --- | --- | --- |
+| R44 approaches, all | 585 | 1.84 | 1.53 | -0.31 [-0.42, -0.19] |
+| R44 approaches, 0-5° | 45 | 4.74 (mean -3.89) | 3.55 (mean -2.88) | -1.19 [-1.55, -0.73] |
+| R44 approaches, 5-10° | 118 | 2.09 | 1.70 | -0.38 [-0.63, -0.12] |
+| B407 day 284, all | 729 | 1.69 | 1.78 | +0.09 [+0.02, +0.16] |
+| B407 day 284, < 10° | 73 | 2.98 (mean +1.00) | 3.42 (mean +2.32) | +0.44 [+0.03, +0.75] |
+| B407 day 286, all | 1111 | 1.35 | 1.36 | +0.00 [-0.00, +0.01] |
+| B407 day 286, < 10° | 62 | 1.91 | 1.94 | +0.03 [-0.06, +0.11] |
+| R66 approaches, all | 874 | 1.37 | 1.41 | +0.04 [+0.02, +0.05] |
+| R66 approaches, < 10° | 99 | 1.99 | 2.13 | +0.15 [+0.10, +0.20] |
+| R44 turns (held out), all | 4992 | 1.55 | 1.56 | +0.00 [+0.00, +0.00] |
+| R44 turns, < 10° | 11 | 0.94 | 0.90 | -0.04 [-0.07, +0.00] |
+
+On the R44 this matches the per-run PE tables, 1.47 overall and 3.51 at 0-5°, with no table. It
+fails the windy day's do-no-harm gate (day 284 < 10°: rms <= 3.15, mean +1.00 ± 0.3, Δ upper
+bound <= +0.15; all <= 1.75). That is the strong-wind over-reach seen against the PE, and it is
+why the option stays opt-in. Removing per-microphone offsets, the R44 rms goes 1.13 -> 1.02
+(0-5° 1.82 -> 1.33). The approaches' mic 1/2/4 group offset is not propagation and does not move.
+`--cramped_ground straight` scores the same on day 284 (3.44 at < 10°). `--shadow_phase` 0.5, as a
+sensitivity only, gives 3.24 there (mean +2.00) and 1.58 on the R44 approaches (3.79 at 0-5°). The boundary placement,
+not the cramped field, is what moves it.
+
 ### Micro-shadows and skip zones
 
 Under day 286's last profile (run 286288) the air toward 270 is fastest at the ground, because
@@ -2375,7 +2514,11 @@ is itself checked against exact solutions and the standard benchmark cases for o
 relative to free field: straight rays, `linear`, `stratified`, and a wide-angle parabolic
 equation. The last is a full-wave solution, with the ground's impedance written into the
 grid. Absorption and turbulence are left out of all four, unless `--gamma_t` puts turbulence
-in the PE (below).
+in the PE (below).  With `--shadow_model resolved` it writes a fifth column per band,
+`resolved_<f>`: `stratified`'s rays with the transition `niceops --shadow_model resolved` takes,
+with `--shadow_phase` and `--cramped_ground` as there, and `--tangent_decay`,
+`--fit_linear_boundary` and `--no_boundary_law` as sensitivities (see "Low sources near grazing").
+Its per-band h_f, r_s(f), r_l(f) and r_b go to stderr.
 
 The PE is marched in range by a split-step Padé method (Collins, JASA 93, 1736 (1993)): one
 range step applies the one-way equation's exact propagator, replaced by a rational function

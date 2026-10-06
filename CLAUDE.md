@@ -935,6 +935,40 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     shadow levels are trusted.
   - Costs: 12 s on the demo grid with a point receiver (linear 3.3 s), 35 ms over a
     96-microphone array.
+- **`--shadow_model resolved`** (opt-in; `legacy`, the default, is byte-identical, flight runs
+  included). It works in `ShadowTransition::apply_resolved`, `resolved_shadow_bands`,
+  `ResolvedShadowTable` and the cramped table in `set_cramped_ground`. It is for low sources
+  under light wind, where the layered shadow ran 5-11 dB too deep against the PE (R44, day 229).
+  Things to keep:
+  - **Each band's boundary comes from the profile it resolves.** Below h_f, where
+    k_f int sqrt(2 max(c(0)-c(z),0)/c0) dz = `--shadow_phase`, the profile is replaced by its
+    tangent there. Its layered r_s(f) and its fit-corrected r_l(f) go through the unchanged
+    `band_boundary`. The phase is **1 rad, fixed a priori** (resolved_pass's radian). 0.5 and 2
+    are sensitivities only: do not select one on flight data. Every h_f in one layer gives the
+    same profile, so the boundaries are cached per layer (output identical).
+  - **The decay stays c0 root^2 / r_b^2.** Taking it from the tangent gradient, as first
+    specified, was worse on every upwind synthetic class (log-law upwind 3.9 -> 5.4 dB rms).
+    It survives as `niceops_pe_compare --tangent_decay`. `--no_boundary_law` (r_b = r_s(f)) was
+    far worse (-8 dB bias), so the law stays.
+  - **Cramped bands (sqrt(y_s) + sqrt(y_r) < 2) take the residue series at the source's own
+    height**, from a (xi, s, sqrt(y_s)) table per band (`cramped_level`). The table's nodes
+    include heights at and below the receiver; skipping them NaN'd every lookup between the
+    first two nodes, which fell back to the ray and cost 1 dB rms on linear profiles.
+    `upward_pressure_heights` shares modes and H0 across heights. Cost: about 2-3 s CPU per band
+    per receiver. Series, straight and ray were chosen between on the frozen synthetic set only
+    (4.24 / 4.70 / 4.95 dB pooled, legacy 5.30).
+  - **Bounds:** the series and V are capped at `max_power_ratio`, the straight ground term is
+    within `ground_gain_bounds` and the plate's. The four `stratified_resolved_*_windowed_is_exact`
+    CTests and `[resolved][bounds]` hold this.
+  - **The table looks receivers up by height above the ground** (point heights, then the plate),
+    so a scattered observer with z != 0 is looked up at its nominal height.
+  - **Results (PE, held out):** measured profiles 5.82 -> 5.03 dB rms (CI -1.16 to -0.41).
+    Flight: R44 approaches 1.84 -> 1.53 (0-5 deg 4.74 -> 3.55), about the PE tables' 1.47.
+    **It fails day 284's gate** (< 10 deg: 2.98 -> 3.42, mean +1.00 -> +2.32). On strong log
+    laws the PE resolves the lowest layer better than a radian says, and resolved boundaries
+    land 1-2 diffraction lengths too far out (1.2 m receivers worst). That is why it is opt-in.
+    The study, its frozen sets and the scripts are in
+    `/Volumes/Greenwood/NICEOPS_data/propimprove_2026-10-05/shadow-fix/`.
 - `src/pe.{hpp,cpp}`, `tools/pe_compare.cpp` — roadmap step 7a: a wide-angle parabolic
   equation as the full-wave reference, and `niceops_pe_compare`, which runs one path through
   straight, linear, stratified and PE. Load-bearing:

@@ -12,6 +12,9 @@
 //   linear       --refraction linear's rays and the same ground model
 //   stratified   --refraction stratified's rays and the same ground model
 //   pe           the wide-angle parabolic equation (pe.hpp), band-averaged;
+//   resolved     with --shadow_model resolved only: stratified's rays with
+//                the shadow transition niceops --shadow_model resolved takes
+//                (ShadowTransition::apply_resolved), after the pe column;
 //                NaN where the path from the source is steeper than
 //                --max_angle, which the split-step march does not carry
 // Absorption is left out of all four, as is turbulence: the PE has neither, so
@@ -66,6 +69,12 @@ int main(int argc, char** argv)
     double outer_scale = 10.0;
     unsigned seed = 1;
     WaveOptions waves;
+    std::string shadow_model = "legacy";
+    double shadow_phase = default_resolved_phase;
+    std::string cramped_ground = "series";
+    bool fit_linear_boundary = false;
+    bool tangent_decay = false;
+    bool no_boundary_law = false;
     app.add_option("--atmosphere", atmosphere_file, "Atmosphere profile, as for niceops.")->required();
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("--toward", toward, "Compass bearing the sound travels along, degrees.")->required();
@@ -108,7 +117,27 @@ int main(int argc, char** argv)
     app.add_option("--seed", seed, "First realization's seed (default 1).");
     app.add_flag("--tunneling", waves.tunneling, "stratified: as niceops --tunneling.");
     app.add_flag("--skip_fill", waves.skip_fill, "stratified: as niceops --skip_fill.");
+    app.add_option("--shadow_model", shadow_model,
+            "legacy (default): the four columns; resolved: a fifth per band, resolved_<f>, as niceops "
+            "--shadow_model resolved.")->check(CLI::IsMember({"legacy", "resolved"}));
+    app.add_option("--shadow_phase", shadow_phase,
+            "resolved: the vertical phase, rad, a band must gather to resolve the near-ground profile "
+            "(default 1).")->check(CLI::PositiveNumber);
+    app.add_option("--cramped_ground", cramped_ground,
+            "resolved: a cramped band takes the residue series at the source's own height (series, "
+            "the default, as niceops), or on its lit side the straight path's ground geometry "
+            "(straight) or the ray's (ray).")->check(CLI::IsMember({"ray", "straight", "series"}));
+    app.add_flag("--fit_linear_boundary", fit_linear_boundary,
+            "resolved: every band takes the path's own fit's boundary r_l rather than the resolved "
+            "profile's (a sensitivity).");
+    app.add_flag("--tangent_decay", tangent_decay,
+            "resolved: the decay takes each band's resolved gradient (its tangent below h_f) rather "
+            "than the curvature that makes its boundary (a sensitivity).");
+    app.add_flag("--no_boundary_law", no_boundary_law,
+            "resolved: each band's boundary is its resolved profile's layered boundary itself, not "
+            "band_boundary's interpolation toward the fit's (a sensitivity).");
     CLI11_PARSE(app, argc, argv);
+    const bool resolved = shadow_model == "resolved";
 
     Logger::instance().set_file("log/pe_compare.log");
     const LengthUnit unit = units == "m" ? meters : feet;
@@ -142,7 +171,13 @@ int main(int argc, char** argv)
     const ShadowAttenuation attenuation(bands, admittance, 0, bands.size());
     // The receiver is a point receiver: near the boundary its level comes from
     // the transition's field, as in niceops.
-    const ShadowTransition transition(bands, admittance, z_r, sound_speed, 0, bands.size());
+    ShadowTransition transition(bands, admittance, z_r, sound_speed, 0, bands.size());
+    if (resolved)
+        transition.set_cramped_ground(cramped_ground == "ray" ? CrampedGround::ray
+                        : cramped_ground == "series"            ? CrampedGround::series
+                                                                : CrampedGround::straight,
+                &ground);
+    transition.set_tangent_decay(tangent_decay);
 
     std::vector<PeResult> pe(bands.size());
     for (std::size_t b = 0; b < bands.size() && no_pe; b++)
@@ -185,7 +220,11 @@ int main(int argc, char** argv)
 
     std::cout << "range_" << unit.name;
     for (const double f : bands)
+    {
         std::cout << ",straight_" << f << ",linear_" << f << ",stratified_" << f << ",pe_" << f;
+        if (resolved)
+            std::cout << ",resolved_" << f;
+    }
     std::cout << "\n" << std::setprecision(6);
 
     const Vec3 source(0.0, 0.0, z_s);
@@ -193,6 +232,26 @@ int main(int argc, char** argv)
     const auto at_receiver = linear.moments(z_r);
     std::vector<double> scratch;
     std::vector<double> loss(bands.size()), weight(bands.size());
+    // --shadow_model resolved: the path's bands (one bearing, one source and
+    // receiver height).
+    std::vector<ResolvedBand> resolved_bands(bands.size());
+    if (resolved && z_s > z_r)
+    {
+        std::vector<double> c_along(layered.levels());
+        layered.along(hx, hy, c_along.data());
+        const Layers path {layered.heights().data(), c_along.data(), layered.levels(), layered.resolution_frequency()};
+        const auto fit = linear.fit(z_s, at_source, z_r, at_receiver, hx, hy);
+        resolved_shadow_bands(path, fit, z_s, z_r, bands, 0, bands.size(), shadow_phase,
+                z_r < ShadowTransition::flush_height, resolved_bands.data(), !fit_linear_boundary,
+                !no_boundary_law);
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            const ResolvedBand& rb = resolved_bands[b];
+            std::cerr << "# band " << bands[b] << " h_f " << rb.height << " m r_s(f) " << rb.layered_boundary
+                      << " r_l(f) " << rb.linear_boundary << " r_b " << rb.boundary << " gradient " << rb.gradient
+                      << "\n";
+        }
+    }
     for (std::size_t q = 0; q < pe[0].range.size(); q++)
     {
         const double r = pe[0].range[q];
@@ -234,6 +293,36 @@ int main(int argc, char** argv)
             }
             return 10.0 * std::log10(energy);
         };
+        // The same with the resolved transition.
+        auto resolved_relative = [&](const RefractedRay& ray, std::size_t b) {
+            std::vector<double> rw(bands.size()), rl(bands.size());
+            double primary;
+            if (transition.apply_resolved(ray, resolved_bands.data(), attenuation, 20.0, 0, bands.size(),
+                        rw.data(), rl.data()))
+            {
+                const double ground_db = excess_ground_attenuation(ground, ray.path.source_height,
+                        ray.path.ground_distance, sound_speed, {bands[b]})[0];
+                primary = 20.0 * std::log10(slant / ray.path.range) + (rw[b] > 0.0 ? rw[b] * ground_db : 0.0)
+                        - rl[b];
+            }
+            else
+                primary = relative(ray, b);
+            std::fill(bounce.begin(), bounce.end(), 0.0);
+            add_bounce_loss(ray.ground_grazing, ray.bounces, admittance, 0, bands.size(), bounce.data());
+            double energy = std::pow(10.0, 0.1 * (primary - bounce[b]));
+            for (const Arrival& a : ray.extra)
+            {
+                std::fill(bounce.begin(), bounce.end(), 0.0);
+                add_bounce_loss(a.grazing, a.bounces, admittance, 0, bands.size(), bounce.data());
+                add_wave_loss(a.wave, slant, a.path.range, bands, 0, bands.size(), bounce.data());
+                const double ground_db = a.grazing > 0.0 && !(a.wave.evanescent > 0.0)
+                        ? excess_ground_attenuation(ground, a.path.source_height, a.path.ground_distance,
+                                  sound_speed, {bands[b]})[0]
+                        : 0.0;
+                energy += std::pow(10.0, 0.1 * (20.0 * std::log10(slant / a.path.range) + ground_db - bounce[b]));
+            }
+            return 10.0 * std::log10(energy);
+        };
         RefractedRay straight;
         straight.path = straight_ray(source, receiver);
         RefractedRay by_linear = direct_ray(linear, source, at_source, receiver, at_receiver);
@@ -247,6 +336,8 @@ int main(int argc, char** argv)
         {
             std::cout << "," << relative(straight, b) << "," << relative(by_linear, b) << ","
                       << layered_relative(by_layers, b) << "," << pe[b].relative_level[0][q];
+            if (resolved)
+                std::cout << "," << resolved_relative(by_layers, b);
         }
         std::cout << "\n";
     }

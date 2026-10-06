@@ -45,6 +45,13 @@ std::complex<double> homogeneous_pressure(const ExactProblem& problem, double ra
 // mode limit leaves unconverged.
 std::vector<std::complex<double>> upward_pressure(const ExactProblem& problem, double radius,
         const std::vector<double>& ranges);
+// upward_pressure for several source heights at once (problem.source_height
+// ignored): [height][range].  The modes are taken until every height's series
+// has converged at the nearest range, so a height's values can differ from
+// upward_pressure's own by the extra terms' contribution (below 1e-17 of the
+// largest), and are NaN by the same tests.
+std::vector<std::vector<std::complex<double>>> upward_pressure_heights(const ExactProblem& problem,
+        double radius, const std::vector<double>& source_heights, const std::vector<double>& ranges);
 std::vector<std::complex<double>> downward_pressure(const ExactProblem& problem, double radius,
         const std::vector<double>& ranges, double max_elevation = 90.0);
 
