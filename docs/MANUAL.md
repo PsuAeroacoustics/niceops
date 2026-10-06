@@ -2292,6 +2292,78 @@ reference is a PE on twice the grid density, with `--validation_samples` frequen
 (default 21). Midpoints do not bound every interpolation error, and a PE reference is not a
 measurement; [FIDELITY.md](FIDELITY.md) has the error budgets measured so far.
 
+**Reciprocity: one march per receiver height.** A PE march puts one source in the field and
+reads every height from it, so the table can be filled from either end. `--march source`
+marches once per bearing and source height and reads the receivers, as the tool always did.
+`--march receiver`, the default, marches once per bearing and receiver height with the source
+put at the receiver's height, and reads every source height. In the effective-sound-speed
+model the field from a source at z_s to a receiver at z_r along a bearing equals the field from
+z_r to z_s along the reverse bearing with the wind reversed, and that path's effective profile
+c + w·h is the same, so it is the same march with the heights exchanged. A table has a couple
+of receiver heights and many source heights, so it is several times fewer marches.
+
+On the grid this holds only if a source near the ground is placed as the adjoint of the
+receivers' read, and it was not. The fourth-order ground row is a half cell whose weights differ
+from Numerov's rows above it, so a source within three grid points of the ground came out
+wrong: one at the first node 1.34 dB high and one at the second 0.37 dB low against the exact
+two-ray field, and a source on the ground (a flush microphone, in a reciprocal march) had no
+self-starter at all. The source vector now divides each of those nodes by its exact weight, a
+function of the mode's vertical wavenumber and of the ground's admittance applied as an
+operator (`place_ground_source` in `src/pe.cpp` has the derivation). A source at 0 to 3.5
+grid spacings then agrees with the receiver read at the same height to 0.003 dB at grazing and
+within 0.1 dB at 45°, and with the exact field over rigid ground and grass alike
+(`tests/test_pe.cpp`). Sources from four spacings up are placed exactly as before. In tables
+built before this, the 5 ft row's 50-100 Hz bands were up to 0.39 dB off past the first range
+(0.12 dB mean); nothing else moved by more than 0.0002 dB.
+
+Rebuilt both ways from the frozen recipe of the 2017 table study (9 source heights 5-700 ft,
+flush and 1.2 m receivers, 8 bearings, 50 Hz-4 kHz, ranges to 4000 ft every 50 ft), on 14 cores:
+
+| run | `--march source` | `--march receiver` | receiver - source, by elevation (cells above -40 dB, max \|Δ\|) |
+| --- | --- | --- | --- |
+| 229355 (R44, stable morning) | 220-234 s | 91-106 s | 0.013 dB below 5°, 0.001 at 5-10°, 0.003 at 10-20°, 0.025 at 20-35°, 0.11 at 35-50° |
+| 229369 (R44, unstable) | 231 s | 91 s | 0.008, 0.001, 0.003, 0.023, 0.10 |
+| 284200 (B407, day 284) | 249 s | 96 s | 0.013, 0.003, 0.005, 0.026, 0.11 |
+
+rms over all covered cells is 0.003-0.010 dB. The 35-50° differences are the 1.2 m microphone
+at 63-80 Hz, where it sits on the second grid node, and the flush one's steep-angle residual
+(0.035 dB); the source-marched value is the closer to the exact field there. Two other places
+differ more and neither matters for a footprint. The first range (one step from the source, a
+single self-starter step that still carries modes past `--max_angle`) differs by up to 0.29 dB
+at 50 Hz for the 5 ft source; against the exact field there the receiver march is the closer
+(6.1 dB, source march 6.5, exact 5.9). And still-air deep shadows below -40 dB re free field,
+2-10% of the cells (2-4 kHz past 1 km), differ by up to 0.55 dB: the absorbing layer's floor
+follows each march's domain, which reaches 250 m past the highest height the march reads, and
+that domain is also why the speed-up is 2.2-2.6x rather than the 4.5x the march count promises.
+Per-band numbers are in the study's `compare_v2.txt`.
+
+**Turbulence in a table** (report only; nothing defaults to it). `--gamma_t`, `--outer_scale`,
+`--seed` and `--realizations` march each frequency sample through phase screens, as the PE does
+in [Turbulence, and the energy it scatters into shadows](#turbulence-and-the-energy-it-scatters-into-shadows),
+`--realizations` times with distinct seeds, and each cell is the energy mean over the band's
+samples and the realizations; every march has its own seeds. `--gamma_profile FILE` (CSV of z
+in `--units` and γ in m^-2/3, linear between, held outside) gives a strength that varies with
+height: the screens are drawn at `--gamma_t` (default the profile's largest value) and each row's
+phase scaled by sqrt(γ(z)/γT), so each height has its own variance. That is an approximation to
+a field whose statistics change with height: the vertical spectrum and the outer scale stay a
+homogeneous field's, where near the ground the eddies shrink with height. A turbulent table is
+reciprocal only in its ensemble mean, not realization by realization, so the two marches agree
+to sampling noise. `--gamma_t 0` gives the still table bit for bit whatever the other options
+say. `tests/test_pe_table.cpp` checks the screens' variance per height, that a profile scales
+the march's screens by its square root (mean-field decay), that three times the strength puts
+4.77 dB more into a deep shadow, and that the realizations average as stated.
+
+```sh
+# The frozen recipe of the 2017 table study (the harness's propagation/pe_table_study.py)
+niceops_propagation_table --method pe --atmosphere RUN_atmosphere.csv \
+    --database databases/RO-44_fixed_load_factor.nod \
+    --source_heights 5 10 20 35 50 100 200 350 700 --receiver_heights 0 3.937 \
+    --max_range 4000 --step 50 --bearings 8 --band_limits 50 4000 \
+    --impedance_model variable_porosity --flow_resistance 200 -o tables/RUN.nc
+# The same, turbulent: 3e-6 (HARMONOISE "moderate"), 4 realizations a frequency
+    ... --gamma_t 3e-6 --realizations 4 -o tables/RUN_turbulent.nc
+```
+
 ## Reference solutions
 
 The ray models are checked against a full-wave solution, a wide-angle parabolic equation, and the parabolic equation

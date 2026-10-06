@@ -19,6 +19,14 @@
 //                 refraction, so it takes one bearing.
 // Neither includes atmospheric absorption; niceops applies its own.  Lengths
 // on the command line are in --units (feet by default); the file is SI.
+//
+// --march receiver (the default) builds the PE table by reciprocity, one march
+// per bearing and receiver height with the source at the receiver's height,
+// and reads every source height from the field; --march source marches once
+// per source height, as the tool always did (pe_table.hpp has why they agree).
+// --gamma_t, --outer_scale, --realizations, --seed and --gamma_profile add
+// turbulence by phase screens (pe.hpp): a report-only reference, off by
+// default.
 
 #include <CLI/CLI.hpp>
 
@@ -39,10 +47,12 @@
 #include "atmosphere_profile.hpp"
 #include "ground_effect.hpp"
 #include "pe.hpp"
+#include "pe_table.hpp"
 #include "propagation_table.hpp"
 #include "sphere_database.hpp"
 #include "stratified.hpp"
 #include "util/constants.hpp"
+#include "util/csv.hpp"
 #include "util/logger.hpp"
 #include "util/parallel.hpp"
 #include "util/paths.hpp"
@@ -84,6 +94,12 @@ int main(int argc, char** argv)
     double max_angle = 50.0;
     double points_per_wavelength = 0.0;
     double sound_speed_override = 0.0;
+    std::string march = "receiver";
+    double gamma_t = 0.0;
+    double outer_scale = 10.0;
+    int realizations = 1;
+    unsigned seed = 1;
+    std::string gamma_profile;
     std::string validation_csv;
     int validation_samples = 21;
     double validation_max_error = 1.0;
@@ -120,6 +136,24 @@ int main(int argc, char** argv)
             ->check(CLI::NonNegativeNumber);
     app.add_option("--max_angle", max_angle, "pe: angle limit, degrees (default 50).")->check(CLI::Range(0.1, 60.0));
     app.add_option("--ppw", points_per_wavelength, "pe: grid points per wavelength in height (default: the PE's).")->check(CLI::NonNegativeNumber);
+    app.add_option("--march", march,
+            "pe: receiver (default) marches once per receiver height and reads the source heights by "
+            "reciprocity; source marches once per source height.")
+            ->check(CLI::IsMember({"receiver", "source"}));
+    app.add_option("--gamma_t", gamma_t,
+            "pe: turbulence strength (HARMONOISE gamma_t, m^-2/3) for phase screens; 0 (default) is still air.  "
+            "With --gamma_profile, the reference the screens are drawn at (default: the profile's largest).")
+            ->check(CLI::NonNegativeNumber);
+    app.add_option("--outer_scale", outer_scale, "pe: turbulence outer scale, m (default 10).")
+            ->check(CLI::PositiveNumber);
+    app.add_option("--realizations", realizations,
+            "pe: realizations per frequency sample under turbulence, energy-averaged (default 1).")
+            ->check(CLI::PositiveNumber);
+    app.add_option("--seed", seed, "pe: first seed of the turbulence (default 1).");
+    app.add_option("--gamma_profile", gamma_profile,
+            "pe: CSV of z (in --units) and gamma (m^-2/3) for a strength that varies with height: each screen "
+            "row scaled by sqrt(gamma(z) / gamma_t), an approximation to a field whose statistics change with "
+            "height.");
     app.add_option("-o,--output", output, "The table to write (netCDF).")->required();
     CLI11_PARSE(app, argc, argv);
 
@@ -135,6 +169,31 @@ int main(int argc, char** argv)
                 throw std::runtime_error("--validation_csv must differ from the table output");
         }
         const LengthUnit unit = units == "m" ? meters : feet;
+        std::vector<double> turbulence_z, turbulence_gamma;
+        if (!gamma_profile.empty())
+        {
+            for (const auto& row : read_numeric_csv(gamma_profile, false))
+            {
+                if (row.size() < 2)
+                    throw std::runtime_error(gamma_profile + ": each row needs z and gamma");
+                turbulence_z.push_back(row[0] * unit.to_meters);
+                turbulence_gamma.push_back(row[1]);
+            }
+            if (turbulence_z.empty())
+                throw std::runtime_error(gamma_profile + " holds no rows");
+            for (std::size_t k = 0; k < turbulence_z.size(); k++)
+                if (!std::isfinite(turbulence_gamma[k]) || turbulence_gamma[k] < 0.0
+                        || (k > 0 && !(turbulence_z[k] > turbulence_z[k - 1])))
+                    throw std::runtime_error(gamma_profile + ": heights must increase and gamma be finite and >= 0");
+            if (gamma_t == 0.0)
+                gamma_t = *std::max_element(turbulence_gamma.begin(), turbulence_gamma.end());
+            if (!(gamma_t > 0.0))
+                throw std::runtime_error(gamma_profile + " is zero everywhere");
+        }
+        if (method != "pe" && (gamma_t > 0.0 || march != "receiver"))
+            throw std::runtime_error("--march and turbulence apply to --method pe only");
+        if (gamma_t > 0.0 && !validation_csv.empty())
+            throw std::runtime_error("--validation_csv checks a still table; leave out --gamma_t");
         for (double& h : source_heights)
             h *= unit.to_meters;
         for (double& h : receiver_heights)
@@ -246,41 +305,55 @@ int main(int argc, char** argv)
             std::ostringstream text;
             text << "wide-angle parabolic equation (pe.hpp), split-step Pade, self-starter, fourth order in "
                     "height; "
-                 << samples << " frequencies a band; max_angle " << max_angle << " degrees";
+                 << samples << " frequencies a band; max_angle " << max_angle << " degrees; "
+                 << (march == "receiver" ? "one march per receiver height, source heights by reciprocity"
+                                         : "one march per source height");
+            if (gamma_t > 0.0)
+                text << "; turbulence by phase screens, gamma_t " << gamma_t << " m^-2/3"
+                     << (turbulence_z.empty() ? "" : " (reference; strength varies with height)") << ", outer scale "
+                     << outer_scale << " m, " << realizations << " realizations a frequency, energy mean";
             description = text.str();
             const LayeredSoundSpeed layered(*profile, 90.0);
-            std::vector<double> c(layered.levels());
+            PeTableRequest request;
+            request.bearings = axes.bearings;
+            request.z = layered.heights();
             for (std::size_t b = 0; b < axes.bearings.size(); b++)
             {
                 const double bearing = axes.bearings[b] * pi / 180.0;
+                std::vector<double> c(layered.levels());
                 layered.along(std::sin(bearing), std::cos(bearing), c.data());
-                for (std::size_t s = 0; s < ns; s++)
-                {
-                    std::vector<PeSetup> setups(nb);
-                    for (std::size_t band = 0; band < nb; band++)
-                    {
-                        PeSetup& setup = setups[band];
-                        setup.source_height = source_heights[s];
-                        setup.receiver_heights = receiver_heights;
-                        setup.max_range = r_max;
-                        setup.output_step = dr;
-                        setup.admittance = admittance[band];
-                        setup.z = layered.heights();
-                        setup.c = c;
-                        setup.max_angle = max_angle;
-                        setup.points_per_wavelength = points_per_wavelength;
-                    }
-                    const auto results = solve_pe_bands(setups, bands, samples);
-                    for (std::size_t band = 0; band < nb; band++)
-                        for (std::size_t h = 0; h < nh; h++)
-                            for (std::size_t r = 0; r < nr; r++)
-                                at(b, s, h, r, band) = r < results[band].range.size()
-                                        ? results[band].relative_level[h][r]
-                                        : std::numeric_limits<double>::quiet_NaN();
-                    std::cerr << "bearing " << axes.bearings[b] << ", source " << source_heights[s] << " m: "
-                              << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
-                              << " s" << std::endl;
-                }
+                request.c_by_bearing.push_back(std::move(c));
+            }
+            request.source_heights = source_heights;
+            request.receiver_heights = receiver_heights;
+            request.max_range = r_max;
+            request.step = dr;
+            request.bands = bands;
+            request.admittance = admittance;
+            request.samples = samples;
+            request.max_angle = max_angle;
+            request.points_per_wavelength = points_per_wavelength;
+            request.march = march == "receiver" ? PeTableMarch::receiver : PeTableMarch::source;
+            request.gamma_t = gamma_t;
+            request.outer_scale = outer_scale;
+            request.realizations = realizations;
+            request.seed = seed;
+            request.turbulence_z = turbulence_z;
+            request.turbulence_gamma = turbulence_gamma;
+            values = build_pe_table(request, [&](const std::string& what) {
+                std::cerr << what << ": "
+                          << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << " s"
+                          << std::endl;
+            });
+            provenance["march"] = march;
+            if (gamma_t > 0.0)
+            {
+                provenance["gamma_t"] = std::to_string(gamma_t);
+                provenance["outer_scale_m"] = std::to_string(outer_scale);
+                provenance["realizations"] = std::to_string(realizations);
+                provenance["seed"] = std::to_string(seed);
+                if (!gamma_profile.empty())
+                    provenance["gamma_profile"] = gamma_profile;
             }
         }
         provenance["bands_hz"] = join(bands);

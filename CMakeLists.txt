@@ -177,6 +177,7 @@ add_library(niceops_core STATIC
   src/pade_propagator.cpp
   src/pe.cpp
   src/propagation_table.cpp
+  src/pe_table.cpp
   src/airy.cpp
   src/exact_solutions.cpp
   src/weighting.cpp
@@ -245,6 +246,7 @@ add_executable(niceops_unit_tests
   tests/test_pe.cpp
   tests/test_pe_shadow.cpp
   tests/test_pe_turbulence.cpp
+  tests/test_pe_table.cpp
   tests/test_benchmark.cpp
   tests/test_shadow_attenuation.cpp
   tests/test_shadow_transition.cpp
@@ -291,6 +293,11 @@ add_test(NAME propagation_table_midpoint_validation COMMAND ${CMAKE_COMMAND}
   -DTOOL=$<TARGET_FILE:niceops_propagation_table>
   -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_validation
   -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_table_validation.cmake
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME propagation_table_reciprocity_and_turbulence COMMAND ${CMAKE_COMMAND}
+  -DTOOL=$<TARGET_FILE:niceops_propagation_table>
+  -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_turbulence
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_table_turbulence.cmake
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 # One default run feeds both the LAE and state golden comparisons
 add_test(NAME regression_default COMMAND niceops -S state/ci_state.csv --no-spectral --no-ground_effect WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
