@@ -616,8 +616,14 @@ ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
         const std::vector<std::complex<double>>& admittance, double receiver_height,
         double sound_speed, std::size_t first_band, std::size_t last_band,
         const PlateReceiver* plate, const GroundModel* ground, unsigned threads)
-    : frequencies_(frequencies), receiver_height_(receiver_height)
+    : frequencies_(frequencies), receiver_height_(receiver_height), admittance_(admittance),
+      plate_(plate), sound_speed_(sound_speed)
 {
+    if (plate != nullptr && ground != nullptr)
+    {
+        ground_ = std::make_shared<GroundModel>(*ground);
+        ground_->receiver_height = receiver_height;
+    }
     if (plate != nullptr && ground == nullptr)
         throw std::invalid_argument("ShadowTransition: a plate needs its ground model");
     if (admittance.size() != frequencies.size())
@@ -951,6 +957,275 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
             // A cramped band blends from the ray model at its boundary, where
             // the creeping-wave loss, valid only deep in the shadow, has no
             // place yet.
+            loss[band] = (1.0 - t) * (cramped ? 0.0 : creeping) - t * v;
+        }
+    }
+    return true;
+}
+
+void ShadowTransition::set_cramped_ground(CrampedGround mode, const GroundModel* ground, unsigned threads)
+{
+    cramped_ground_ = mode;
+    if (ground != nullptr && plate_ == nullptr)
+    {
+        ground_ = std::make_shared<GroundModel>(*ground);
+        ground_->receiver_height = receiver_height_;
+    }
+    if (mode == CrampedGround::straight && ground_ == nullptr)
+        throw std::invalid_argument("ShadowTransition: a straight cramped ground term needs the ground model");
+    if (mode != CrampedGround::series || !cramped_table_.empty() || empty())
+        return;
+    // The residue series at the source's own height, sqrt(y_s) on its nodes,
+    // over the same (xi, s) grid as V: k^2 linear in height with the
+    // curvature whose model boundary is the band's.  One series per (band,
+    // s, y_s), each a few milliseconds.
+    cramped_table_.assign(frequencies_.size(), {});
+    std::vector<std::size_t> work;
+    for (std::size_t band = 0; band < frequencies_.size(); band++)
+        if (!table_[band].empty())
+            work.push_back(band);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::size_t per_band = s_nodes_ * cramped_root_nodes;
+    cramped_xi_nodes_ = static_cast<std::size_t>(std::lround((xi_max - xi_ray) / cramped_xi_step)) + 1;
+    const std::size_t xi_nodes = cramped_xi_nodes_;
+    std::vector<std::vector<float>> tables(frequencies_.size());
+    for (const std::size_t band : work)
+        tables[band].assign(per_band * xi_nodes, static_cast<float>(nan));
+    parallel_chunks(work.size() * s_nodes_, threads > 0 ? threads : default_thread_count(),
+            [&](std::size_t lo, std::size_t hi) {
+        for (std::size_t item = lo; item < hi; item++)
+        {
+            const std::size_t band = work[item / s_nodes_];
+            const std::size_t j = item % s_nodes_;
+            const double f = frequencies_[band];
+            const double k0 = 2.0 * pi * f / sound_speed_;
+            const double s = s_min * std::pow(10.0, static_cast<double>(j) / s_per_decade);
+            const double a = pi * f / (s * s * s);
+            const double l = s / k0;
+            const double diffraction = 2.0 * s * s / k0;
+            const LinearProfile profile {sound_speed_, -a};
+            // Every height's ranges in one list: the modes and H0 are shared.
+            std::vector<double> heights, ranges;
+            std::vector<std::size_t> node_of, height_of, xi_of;
+            for (int k = 0; k < cramped_root_nodes; k++)
+            {
+                const double root = cramped_root_max * static_cast<double>(k) / (cramped_root_nodes - 1);
+                // Below the receiver too: the series is reciprocal, and the
+                // nodes bracket every source above it.
+                const double z_s = root * root * l;
+                const double model_boundary = shadow_boundary(profile, z_s, receiver_height_);
+                for (std::size_t i = 0; i < xi_nodes; i++)
+                {
+                    const double r = model_boundary + (xi_ray + i * cramped_xi_step) * diffraction;
+                    if (r > 0.0)
+                    {
+                        ranges.push_back(r);
+                        height_of.push_back(heights.size());
+                        node_of.push_back(static_cast<std::size_t>(k));
+                        xi_of.push_back(i);
+                    }
+                }
+                heights.push_back(z_s);
+            }
+            if (ranges.empty())
+                continue;
+            ExactProblem problem;
+            problem.frequency = f;
+            problem.sound_speed = sound_speed_;
+            problem.admittance = admittance_[band];
+            problem.receiver_height = receiver_height_;
+            std::vector<std::vector<std::complex<double>>> field;
+            try
+            {
+                field = upward_pressure_heights(problem, sound_speed_ / a, heights, ranges);
+            }
+            catch (const std::exception&)
+            {
+                continue;
+            }
+            for (std::size_t q = 0; q < ranges.size(); q++)
+            {
+                const double z_s = heights[height_of[q]];
+                const double db = 20.0 * std::log10(std::abs(field[height_of[q]][q])
+                        * std::hypot(ranges[q], z_s - receiver_height_));
+                if (std::isfinite(db))
+                    tables[band][(j * cramped_root_nodes + node_of[q]) * xi_nodes + xi_of[q]] = static_cast<float>(db);
+            }
+        }
+    });
+    cramped_table_ = std::move(tables);
+}
+
+double ShadowTransition::cramped_level(std::size_t band, double xi, double s, double y_s) const
+{
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    if (band >= cramped_table_.size() || cramped_table_[band].empty() || !(y_s >= 0.0))
+        return nan;
+    const double y = std::sqrt(y_s) / cramped_root_max * (cramped_root_nodes - 1);
+    if (y > cramped_root_nodes - 1)
+        return nan;
+    const std::size_t k = std::min(static_cast<std::size_t>(y), static_cast<std::size_t>(cramped_root_nodes - 2));
+    const double ty = y - static_cast<double>(k);
+    const double x = std::clamp(std::log10(s / s_min) * s_per_decade, 0.0, static_cast<double>(s_nodes_ - 1));
+    const std::size_t j = std::min(static_cast<std::size_t>(x), s_nodes_ - 2);
+    const double tx = x - static_cast<double>(j);
+    const double u = (xi - xi_ray) / cramped_xi_step;
+    if (u < 0.0)
+        return nan;
+    const std::size_t last = cramped_xi_nodes_ - 1;
+    auto column = [&](std::size_t jj, std::size_t kk) {
+        const float* v = cramped_table_[band].data() + (jj * cramped_root_nodes + kk) * cramped_xi_nodes_;
+        if (u >= static_cast<double>(last))
+            return v[last] + (u - static_cast<double>(last)) * (static_cast<double>(v[last]) - v[last - 1]);
+        const std::size_t i = static_cast<std::size_t>(u);
+        return v[i] + (u - static_cast<double>(i)) * (static_cast<double>(v[i + 1]) - v[i]);
+    };
+    const double c00 = column(j, k), c01 = column(j, k + 1), c10 = column(j + 1, k), c11 = column(j + 1, k + 1);
+    // A corner with no value (NaN) makes the whole lookup NaN: the caller falls back.
+    return (1.0 - tx) * ((1.0 - ty) * c00 + ty * c01) + tx * ((1.0 - ty) * c10 + ty * c11);
+}
+
+bool ShadowTransition::apply_resolved(const RefractedRay& ray, const ResolvedBand* bands,
+        const ShadowAttenuation& attenuation, double floor, std::size_t first_band, std::size_t last_band,
+        double* ground_weight, double* loss, double plate_azimuth, const double* cramped_field) const
+{
+    if (empty() || !ray.curved || !(ray.direct.boundary_gradient < 0.0)
+            || !std::isfinite(ray.direct.boundary) || first_band >= last_band)
+        return false;
+    const double c0 = ray.profile.sound_speed;
+    const double r = ray.horizontal;
+    const double root = std::sqrt(2.0 * std::max(ray.source_z, 0.0))
+            + std::sqrt(2.0 * std::max(ray.receiver_z, 0.0));
+    const double slant = std::hypot(r, ray.source_z - ray.receiver_z);
+    const double spreading_db = 20.0 * std::log10(slant / ray.path.range);
+    // The ray's equivalent geometry has collapsed when it is the limiting ray
+    // carried into a shadow (the layered one past r_s, or the fit's past r_l).
+    const bool degenerate = !ray.direct.lit
+            || (ray.from_linear_fit && !(r <= ray.direct.linear_boundary));
+    // The straight path's ground term, dB, computed once if any band asks.
+    thread_local std::vector<double> straight_db;
+    bool have_straight = false;
+    auto straight = [&](std::size_t band) {
+        if (!have_straight)
+        {
+            straight_db.assign(frequencies_.size(), 0.0);
+            if (plate_ != nullptr)
+                plate_->level(ray.source_z, r, plate_azimuth, straight_db.data(), first_band, last_band);
+            else
+                excess_ground_attenuation(*ground_, admittance_, ray.source_z, r, sound_speed_, frequencies_,
+                        straight_db.data(), first_band, last_band, false);
+            have_straight = true;
+        }
+        return std::max(straight_db[band], -200.0);
+    };
+    const bool use_straight = cramped_ground_ == CrampedGround::straight && ground_ != nullptr;
+    for (std::size_t band = first_band; band < last_band; band++)
+    {
+        const double f = frequencies_[band];
+        ground_weight[band] = 1.0;
+        loss[band] = 0.0;
+        const double boundary = bands[band].boundary;
+        if (!std::isfinite(boundary) || !(boundary > 0.0))
+        {
+            // No shadow in this band: lit, at the ray's own level -- unless the
+            // ray is a shadow ray, whose ground geometry is the grazing one.
+            if (degenerate && use_straight)
+            {
+                ground_weight[band] = 0.0;
+                loss[band] = -straight(band);
+            }
+            continue;
+        }
+        const double a = tangent_decay_ && bands[band].gradient > 0.0 ? bands[band].gradient
+                                                                      : c0 * root * root / (boundary * boundary);
+        const double depth = std::max(r - boundary, 0.0);
+        const double creeping = depth > 0.0
+                ? std::min(attenuation.rate(band, LinearProfile {c0, -a}) * depth, floor)
+                : 0.0;
+        loss[band] = creeping;
+        const double s = std::cbrt(pi * f / a);
+        const double diffraction = s * s * c0 / (pi * f); // F = 2 s^2 / k0
+        const double xi = (r - boundary) / diffraction;
+        const bool cramped = boundary / diffraction < -xi_ray;
+        // The table's level at the boundary, for the floor.
+        auto at_zero = [&]() {
+            const double x = std::clamp(std::log10(s / s_min) * s_per_decade, 0.0, static_cast<double>(s_nodes_ - 1));
+            const std::size_t j = std::min(static_cast<std::size_t>(x), s_nodes_ - 2);
+            return at_boundary_[band][j] + (x - static_cast<double>(j)) * (at_boundary_[band][j + 1] - at_boundary_[band][j]);
+        };
+        const double field = !(cramped && cramped_ground_ == CrampedGround::series && s >= s_min)
+                ? std::numeric_limits<double>::quiet_NaN()
+                : cramped_field != nullptr ? cramped_field[band]
+                                           : cramped_level(band, xi, s, ray.source_z * pi * f / (s * c0 / 2.0));
+        if (std::isfinite(field))
+        {
+            // The field itself, re the ray's spreading, held at worst to the
+            // floor below the table's boundary level and at best to the
+            // table's largest, which the peak search's bound allows for.
+            double v = field + spreading_db;
+            const double v_zero = at_zero();
+            if (std::isfinite(v_zero) && !scattering_.on())
+                v = std::max(v, v_zero - floor);
+            v += plate_offset(band, plate_azimuth);
+            if (scattering_.on())
+            {
+                const double scattered = scattering_.level(f, slant, ray.source_z)
+                        + plate_offset(band, plate_azimuth) - spreading_db;
+                v = 10.0 * std::log10(std::pow(10.0, 0.1 * v) + std::pow(10.0, 0.1 * scattered));
+            }
+            ground_weight[band] = 0.0;
+            loss[band] = -std::min(v, 10.0 * std::log10(max_power_ratio_[band]));
+            continue;
+        }
+        if (s < s_min || xi <= xi_ray)
+        {
+            if (degenerate && use_straight && xi <= 0.0)
+            {
+                ground_weight[band] = 0.0;
+                loss[band] = -straight(band);
+            }
+            continue;
+        }
+        if (cramped && xi <= 0.0)
+        {
+            if (use_straight)
+            {
+                ground_weight[band] = 0.0;
+                loss[band] = -straight(band);
+            }
+            continue;
+        }
+        const double blend_from = cramped ? 0.0 : xi_ray;
+        const double blend_to = cramped ? 1.0 : xi_modal;
+        double v = level(band, xi, s);
+        if (std::isnan(v))
+            continue;
+        const double v_zero = at_zero();
+        if (std::isfinite(v_zero) && !scattering_.on())
+            v = std::max(v, v_zero - floor);
+        v += plate_offset(band, plate_azimuth);
+        if (scattering_.on())
+        {
+            const double scattered = scattering_.level(f, slant, ray.source_z) + plate_offset(band, plate_azimuth)
+                    - spreading_db;
+            v = std::min(10.0 * std::log10(std::pow(10.0, 0.1 * v) + std::pow(10.0, 0.1 * scattered)),
+                    10.0 * std::log10(max_power_ratio_[band]));
+        }
+        if (xi >= blend_to)
+        {
+            ground_weight[band] = 0.0;
+            loss[band] = -v;
+            continue;
+        }
+        const double t = (xi - blend_from) / (blend_to - blend_from);
+        if (cramped && use_straight)
+        {
+            ground_weight[band] = 0.0;
+            loss[band] = -(1.0 - t) * straight(band) - t * v;
+        }
+        else
+        {
+            ground_weight[band] = 1.0 - t;
             loss[band] = (1.0 - t) * (cramped ? 0.0 : creeping) - t * v;
         }
     }

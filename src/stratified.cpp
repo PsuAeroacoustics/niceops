@@ -8,6 +8,7 @@
 
 #include "airy.hpp"
 #include "util/constants.hpp"
+#include "util/parallel.hpp"
 
 namespace niceops {
 
@@ -1925,6 +1926,296 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
     else
     {
         finish_ground(ray, ground, microphone_height);
+    }
+}
+
+} // namespace niceops
+
+namespace niceops {
+
+double resolved_height(const Layers& layers, double frequency, double phase)
+{
+    const double c_ground = layers.at(0.0);
+    const double k = 2.0 * pi * frequency / c_ground;
+    // Per unit wavenumber, the phase still to gather.
+    double remaining = phase / k;
+    // int sqrt(2 (c(0) - c(z)) / c(0)) dz with the shortfall d(z) = c(0) - c(z)
+    // linear across each piece: sqrt(2 / c0) int sqrt(d) dz, and over a piece
+    // from d0 to d1 (clamped at 0) that is (2/3) (d1^1.5 - d0^1.5) dz / (d1 - d0).
+    const double scale = std::sqrt(2.0 / c_ground);
+    auto piece = [&](double z0, double c0, double z1, double c1, double& out) {
+        // Where along [z0, z1] the remaining phase is gathered; false if not.
+        const double dz = z1 - z0;
+        if (!(dz > 0.0))
+            return false;
+        const double d0 = c_ground - c0, d1 = c_ground - c1;
+        // The part of the piece where d > 0.
+        double a = z0, b = z1, da = d0, db = d1;
+        if (d0 <= 0.0 && d1 <= 0.0)
+            return false;
+        if (d0 < 0.0)
+        {
+            a = z0 + dz * (-d0) / (d1 - d0);
+            da = 0.0;
+        }
+        if (d1 < 0.0)
+        {
+            b = z0 + dz * d0 / (d0 - d1);
+            db = 0.0;
+        }
+        const double len = b - a;
+        const double slope = (db - da) / len;
+        // Integral from a to a + x of scale sqrt(da + slope u) du.
+        auto gathered = [&](double x) {
+            if (std::fabs(slope) * len <= 1e-12 * std::max(da, db))
+                return scale * std::sqrt(da) * x;
+            const double e = std::max(da + slope * x, 0.0);
+            return scale * 2.0 / 3.0 * (e * std::sqrt(e) - da * std::sqrt(da)) / slope;
+        };
+        const double total = gathered(len);
+        if (total < remaining)
+        {
+            remaining -= total;
+            return false;
+        }
+        if (std::fabs(slope) * len <= 1e-12 * std::max(da, db))
+        {
+            out = a + remaining / (scale * std::sqrt(da));
+            return true;
+        }
+        // (da + slope x)^1.5 = da^1.5 + 1.5 slope remaining / scale.
+        const double target = da * std::sqrt(da) + 1.5 * slope * remaining / scale;
+        const double e = std::cbrt(std::max(target, 0.0) * std::max(target, 0.0));
+        out = std::clamp(a + (e - da) / slope, a, b);
+        return true;
+    };
+    double z0 = 0.0, c0 = c_ground, out = 0.0;
+    for (std::size_t k_level = 0; k_level < layers.levels; k_level++)
+    {
+        const double z1 = layers.z[k_level];
+        if (!(z1 > z0))
+            continue;
+        const double c1 = layers.c[k_level];
+        if (piece(z0, c0, z1, c1, out))
+            return out;
+        z0 = z1;
+        c0 = c1;
+    }
+    // Above the top the air is constant.
+    const double d = c_ground - c0;
+    if (d > 0.0)
+        return z0 + remaining / (scale * std::sqrt(d));
+    return std::numeric_limits<double>::infinity();
+}
+
+Layers tangent_below(const Layers& layers, double height, std::vector<double>& z, std::vector<double>& c,
+        double& gradient)
+{
+    z.clear();
+    c.clear();
+    gradient = 0.0;
+    if (layers.levels > 1 && height >= layers.z[0] && height < layers.z[layers.levels - 1])
+    {
+        const double* upper = std::upper_bound(layers.z, layers.z + layers.levels, height);
+        const std::size_t i = static_cast<std::size_t>(upper - layers.z) - 1;
+        gradient = (layers.c[i + 1] - layers.c[i]) / (layers.z[i + 1] - layers.z[i]);
+    }
+    const double c_h = layers.at(height);
+    if (height > 0.0)
+    {
+        z.push_back(0.0);
+        c.push_back(c_h - gradient * height);
+    }
+    z.push_back(height);
+    c.push_back(c_h);
+    for (std::size_t k = 0; k < layers.levels; k++)
+    {
+        if (layers.z[k] > height)
+        {
+            z.push_back(layers.z[k]);
+            c.push_back(layers.c[k]);
+        }
+    }
+    return Layers {z.data(), c.data(), z.size(), layers.resolution_frequency};
+}
+
+double layered_shadow_boundary(const Layers& layers, double z_s, double z_r)
+{
+    const double inf = std::numeric_limits<double>::infinity();
+    if (!(z_s > z_r) || layers.uniform())
+        return inf;
+    const Path path {layers};
+    const auto fams = families(path, z_s, z_r, false);
+    // As layered_direct_eigenray: the fastest air below the source is at the ground.
+    if (!(fams.count > 0) || path.fastest(0.0, z_s) > layers.at(0.0))
+        return inf;
+    const Family& limit = fams.list[fams.limiting];
+    const double boundary = trace_p<false>(path, z_s, z_r, fams.limiting_p, limit.arm, false).dx;
+    return boundary > 0.0 && std::isfinite(boundary) ? boundary : inf;
+}
+
+void resolved_shadow_bands(const Layers& layers, const LinearProfile& fit, double z_s, double z_r,
+        const std::vector<double>& frequencies, std::size_t first_band, std::size_t last_band,
+        double phase, bool flush, ResolvedBand* out, bool resolve_linear, bool boundary_law)
+{
+    const double inf = std::numeric_limits<double>::infinity();
+    // The fit's span, as EffectiveSoundSpeed::fit takes it.
+    const double z1 = std::min(z_s, z_r);
+    const double z2 = std::max(std::max(z_s, z_r), z1 + EffectiveSoundSpeed::min_fit_span);
+    const double span = z2 - z1;
+    const double z_mid = 0.5 * (z1 + z2);
+    std::vector<double> z, c;
+    // Every h_f within one layer gives the same resolved profile -- the
+    // layer's own line, carried down to the ground -- so its two boundaries
+    // are worked out once per layer and shared by the bands in it.
+    long cached_layer = -2;
+    double cached_layered = inf, cached_linear = inf, cached_gradient = 0.0;
+    for (std::size_t band = first_band; band < std::min(last_band, frequencies.size()); band++)
+    {
+        ResolvedBand& b = out[band];
+        b = ResolvedBand {};
+        const double f = frequencies[band];
+        b.height = resolved_height(layers, f, phase);
+        if (!std::isfinite(b.height))
+            continue;
+        const long layer = layers.levels > 1 && b.height >= layers.z[0] && b.height < layers.z[layers.levels - 1]
+                ? static_cast<long>(std::upper_bound(layers.z, layers.z + layers.levels, b.height) - layers.z) - 1
+                : b.height < layers.z[0] ? -1 : static_cast<long>(layers.levels);
+        if (layer == cached_layer && layer >= 0 && layer < static_cast<long>(layers.levels))
+        {
+            b.layered_boundary = cached_layered;
+            b.linear_boundary = cached_linear;
+            b.boundary = std::isfinite(b.layered_boundary) && !boundary_law ? b.layered_boundary
+                    : std::isfinite(b.layered_boundary)
+                    ? ShadowTransition::band_boundary(b.layered_boundary, b.linear_boundary, z_s, z_r, f,
+                              fit.sound_speed, flush)
+                    : inf;
+            b.gradient = cached_gradient;
+            continue;
+        }
+        double gradient = 0.0;
+        const Layers tangent = tangent_below(layers, b.height, z, c, gradient);
+        b.layered_boundary = layered_shadow_boundary(tangent, z_s, z_r);
+        // The fit's change: the least-squares line through the tangent's change
+        // to the profile, d(z) = tangent - c(z) below h_f, over the fit's span.
+        double integral = 0.0, moment = 0.0;
+        const double top = std::min(z2, b.height);
+        if (top > z1)
+        {
+            std::vector<double> cuts {z1};
+            for (std::size_t k = 0; k < layers.levels; k++)
+                if (layers.z[k] > z1 && layers.z[k] < top)
+                    cuts.push_back(layers.z[k]);
+            cuts.push_back(top);
+            const double c_h = layers.at(b.height);
+            auto change = [&](double height) { return c_h + gradient * (height - b.height) - layers.at(height); };
+            for (std::size_t i = 0; i + 1 < cuts.size(); i++)
+            {
+                const double a0 = cuts[i], dz = cuts[i + 1] - cuts[i];
+                const double d0 = change(a0), d1 = change(cuts[i + 1]);
+                integral += 0.5 * dz * (d0 + d1);
+                moment += dz * (0.5 * a0 * (d0 + d1) + dz * (d0 / 6.0 + d1 / 3.0));
+            }
+        }
+        const double slope = 12.0 * (moment - z_mid * integral) / (span * span * span);
+        const double mean = integral / span;
+        const LinearProfile resolved_fit {fit.sound_speed + mean - slope * z_mid, fit.gradient + slope};
+        b.linear_boundary = shadow_boundary(resolve_linear ? resolved_fit : fit, z_s, z_r);
+        b.boundary = std::isfinite(b.layered_boundary) && !boundary_law ? b.layered_boundary
+                : std::isfinite(b.layered_boundary)
+                ? ShadowTransition::band_boundary(b.layered_boundary, b.linear_boundary, z_s, z_r, f,
+                          fit.sound_speed, flush)
+                : inf;
+        b.gradient = gradient < 0.0 ? -gradient : 0.0;
+        cached_layer = layer;
+        cached_layered = b.layered_boundary;
+        cached_linear = b.linear_boundary;
+        cached_gradient = b.gradient;
+    }
+}
+
+ResolvedShadowTable::ResolvedShadowTable(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
+        const std::vector<double>& frequencies, std::size_t first_band, std::size_t last_band, double phase,
+        double z_low, double z_high, const std::vector<double>& receiver_heights, const std::vector<bool>& flush,
+        unsigned threads)
+{
+    last_band = std::min(last_band, frequencies.size());
+    if (first_band >= last_band || receiver_heights.empty())
+        return;
+    first_band_ = first_band;
+    bands_ = last_band - first_band;
+    bearings_ = static_cast<std::size_t>(std::lround(360.0 / bearing_step));
+    root_low_ = std::floor(std::sqrt(std::max(z_low, 0.0)) * height_nodes_per_meter_root)
+            / height_nodes_per_meter_root;
+    root_step_ = 1.0 / height_nodes_per_meter_root;
+    const double root_high = std::sqrt(std::max(z_high, z_low));
+    heights_ = static_cast<std::size_t>(std::ceil((root_high - root_low_) / root_step_)) + 2;
+    inverse_boundary_.assign(receiver_heights.size(), std::vector<float>(bearings_ * heights_ * bands_, 0.0f));
+    gradient_.assign(receiver_heights.size(), std::vector<float>(bearings_ * heights_ * bands_, 0.0f));
+    parallel_chunks(bearings_, threads > 0 ? threads : default_thread_count(), [&](std::size_t lo, std::size_t hi) {
+        std::vector<double> scratch;
+        std::vector<ResolvedBand> bands(frequencies.size());
+        for (std::size_t i = lo; i < hi; i++)
+        {
+            const double bearing = static_cast<double>(i) * bearing_step * pi / 180.0;
+            // Compass bearing in the local frame of `air` and `linear` is the
+            // caller's: (hx, hy) here are the local-frame direction's x and y.
+            const double hx = std::cos(bearing), hy = std::sin(bearing);
+            scratch.resize(air.levels());
+            air.along(hx, hy, scratch.data());
+            const Layers layers {air.heights().data(), scratch.data(), air.levels(), air.resolution_frequency()};
+            for (std::size_t j = 0; j < heights_; j++)
+            {
+                const double root = root_low_ + static_cast<double>(j) * root_step_;
+                const double z_s = root * root;
+                for (std::size_t q = 0; q < receiver_heights.size(); q++)
+                {
+                    const double z_r = std::max(receiver_heights[q], 0.0);
+                    const std::size_t base = (i * heights_ + j) * bands_;
+                    if (!(z_s > z_r))
+                        continue;
+                    const auto fit = linear.fit(z_s, linear.moments(z_s), z_r, linear.moments(z_r), hx, hy);
+                    resolved_shadow_bands(layers, fit, z_s, z_r, frequencies, first_band, last_band, phase,
+                            flush[q], bands.data());
+                    for (std::size_t b = 0; b < bands_; b++)
+                    {
+                        const ResolvedBand& rb = bands[first_band + b];
+                        inverse_boundary_[q][base + b] = std::isfinite(rb.boundary)
+                                ? static_cast<float>(1.0 / rb.boundary)
+                                : 0.0f;
+                        gradient_[q][base + b] = static_cast<float>(rb.gradient);
+                    }
+                }
+            }
+        }
+    });
+}
+
+void ResolvedShadowTable::lookup(double hx, double hy, double z_s, std::size_t receiver, ResolvedBand* out) const
+{
+    double angle = std::atan2(hy, hx) * 180.0 / pi;
+    if (angle < 0.0)
+        angle += 360.0;
+    const double x = angle / bearing_step;
+    std::size_t i0 = static_cast<std::size_t>(x);
+    const double tx = x - static_cast<double>(i0);
+    i0 %= bearings_;
+    const std::size_t i1 = (i0 + 1) % bearings_;
+    const double y = std::clamp((std::sqrt(std::max(z_s, 0.0)) - root_low_) / root_step_, 0.0,
+            static_cast<double>(heights_ - 1));
+    const std::size_t j0 = std::min(static_cast<std::size_t>(y), heights_ - 2);
+    const double ty = y - static_cast<double>(j0);
+    const double w00 = (1.0 - tx) * (1.0 - ty), w01 = (1.0 - tx) * ty, w10 = tx * (1.0 - ty), w11 = tx * ty;
+    const float* ib = inverse_boundary_[receiver].data();
+    const float* g = gradient_[receiver].data();
+    const std::size_t c00 = (i0 * heights_ + j0) * bands_, c01 = c00 + bands_;
+    const std::size_t c10 = (i1 * heights_ + j0) * bands_, c11 = c10 + bands_;
+    for (std::size_t b = 0; b < bands_; b++)
+    {
+        ResolvedBand& r = out[first_band_ + b];
+        const double inverse = w00 * ib[c00 + b] + w01 * ib[c01 + b] + w10 * ib[c10 + b] + w11 * ib[c11 + b];
+        r.boundary = inverse > 0.0 ? 1.0 / inverse : std::numeric_limits<double>::infinity();
+        r.gradient = w00 * g[c00 + b] + w01 * g[c01 + b] + w10 * g[c10 + b] + w11 * g[c11 + b];
     }
 }
 

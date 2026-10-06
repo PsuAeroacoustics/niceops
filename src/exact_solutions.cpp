@@ -332,6 +332,95 @@ std::vector<complex> modal_sum(complex q, const std::function<Mode(complex)>& mo
     return field;
 }
 
+// modal_sum for several weight sets sharing the modes' wavenumbers -- one
+// source height each -- so the zeros and H0(kappa r) are formed once.  Modes
+// are taken until every set's terms at the nearest range have died away.
+std::vector<std::vector<complex>> modal_sum_heights(complex q,
+        const std::function<complex(complex, std::vector<complex>&)>& mode, std::size_t sets,
+        const std::vector<double>& ranges)
+{
+    std::vector<std::vector<complex>> field(sets, std::vector<complex>(ranges.size()));
+    if (ranges.empty() || sets == 0)
+        return field;
+    const double nearest = *std::min_element(ranges.begin(), ranges.end());
+    if (!(nearest > 0.0))
+        throw std::invalid_argument("modal_sum: ranges must be positive");
+    constexpr std::size_t max_modes = 12000;
+    int ordinary = 0;
+    std::vector<complex> kappas;
+    std::vector<std::vector<complex>> weights;
+    std::vector<double> largest(sets, 0.0);
+    std::vector<int> quiet(sets, 0);
+    std::vector<complex> w(sets);
+    auto all_quiet = [&]() {
+        for (const int qq : quiet)
+            if (qq < 16)
+                return false;
+        return true;
+    };
+    auto add = [&](complex t) {
+        const complex kappa = mode(t, w);
+        kappas.push_back(kappa);
+        weights.push_back(w);
+        const double h = std::abs(hankel1_0(kappa * nearest));
+        for (std::size_t m = 0; m < sets; m++)
+        {
+            const double size = std::abs(w[m]) * h;
+            largest[m] = std::max(largest[m], size);
+            quiet[m] = size < 1e-17 * largest[m] ? quiet[m] + 1 : 0;
+        }
+    };
+    if (std::abs(q) <= 6.0)
+    {
+        for (const complex t : checked_zeros(q, ordinary))
+            add(t);
+        for (int n = ordinary + 1; (!all_quiet() || kappas.size() < 20) && kappas.size() < max_modes; n++)
+            add(ordinary_zero(q, n));
+    }
+    else
+    {
+        check_reach(q);
+        complex previous = 0.0;
+        for (int n = 1; (!all_quiet() || kappas.size() < 20) && kappas.size() < max_modes; n++)
+        {
+            const complex t = seeded_zero(q, n);
+            if (n > 1)
+                check_step(previous, t, n);
+            add(t);
+            previous = t;
+        }
+    }
+    const std::size_t tail_from = kappas.size() > 16 ? kappas.size() - 16 : 0;
+    std::vector<complex> sum(sets);
+    std::vector<double> biggest(sets), tail(sets);
+    for (std::size_t k = 0; k < ranges.size(); k++)
+    {
+        std::fill(sum.begin(), sum.end(), complex(0.0));
+        std::fill(biggest.begin(), biggest.end(), 0.0);
+        std::fill(tail.begin(), tail.end(), 0.0);
+        for (std::size_t n = 0; n < kappas.size(); n++)
+        {
+            const complex h = hankel1_0(kappas[n] * ranges[k]);
+            for (std::size_t m = 0; m < sets; m++)
+            {
+                const complex term = weights[n][m] * h;
+                sum[m] += term;
+                const double size = std::abs(term);
+                biggest[m] = std::max(biggest[m], size);
+                if (n >= tail_from)
+                    tail[m] = std::max(tail[m], size);
+            }
+        }
+        for (std::size_t m = 0; m < sets; m++)
+        {
+            const double size = std::abs(sum[m]);
+            const bool trusted = biggest[m] <= 1e9 * size && tail[m] <= 1e-9 * size;
+            field[m][k] = trusted ? sum[m] : complex(std::numeric_limits<double>::quiet_NaN(), 0.0);
+        }
+    }
+    return field;
+}
+
 complex wavenumber(const ExactProblem& p)
 {
     return {2.0 * pi * p.frequency / p.sound_speed, p.absorption};
@@ -488,6 +577,28 @@ std::vector<complex> upward_pressure(const ExactProblem& p, double radius,
         return Mode {upper(k0 * k0 + b / (w_rot * ell * ell)), pi * I * us * ur / norm};
     };
     return modal_sum(q, mode, ranges);
+}
+
+std::vector<std::vector<complex>> upward_pressure_heights(const ExactProblem& p, double radius,
+        const std::vector<double>& source_heights, const std::vector<double>& ranges)
+{
+    const complex k0 = wavenumber(p);
+    const complex ell = std::pow(radius / (2.0 * k0 * k0), 1.0 / 3.0);
+    const complex q = -I * k0 * ell * p.admittance * w_rot * w_rot;
+    auto mode = [&](complex b, std::vector<complex>& weights) {
+        complex a0, d0, us, ur, unused;
+        airy(b, a0, d0);
+        airy(b - w_rot * p.receiver_height / ell, ur, unused);
+        const complex norm = ell / w_rot * (b * a0 * a0 - d0 * d0);
+        const complex common = pi * I * ur / norm;
+        for (std::size_t m = 0; m < source_heights.size(); m++)
+        {
+            airy(b - w_rot * source_heights[m] / ell, us, unused);
+            weights[m] = common * us;
+        }
+        return upper(k0 * k0 + b / (w_rot * ell * ell));
+    };
+    return modal_sum_heights(q, mode, source_heights.size(), ranges);
 }
 
 std::vector<complex> downward_pressure(const ExactProblem& p, double radius,
