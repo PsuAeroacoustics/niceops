@@ -1029,9 +1029,11 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
       100 m source in the benchmark's upward column (against the residue series), 0.10 dB
       on `example_windy.csv`. Every PE level from before the self-starter carries that,
       so do not take a 0.1 dB offset against a stored run for a regression. The
-      self-starter is within 0.04 dB. A source within a grid point of the ground, or a
-      starter fit that is refused, falls back to the Gaussian; `PeResult::self_started`
-      says which ran.
+      self-starter is within 0.04 dB. A starter fit that is refused, or a source within a
+      grid point of the ground on a grid that is not fourth order at the ground, falls back
+      to the Gaussian; `PeResult::self_started` says which ran. On the default grid a source
+      at any height, z = 0 included, is self-started (`place_ground_source`, see the
+      propagation_table entry).
     - **Compare a turbulent run with a still one marched the same way.** Turbulence caps
       the step at the screen spacing, and the field at a point whose reflected ray is
       steeper than `max_angle` depends on the step. `pe_turbulent_mean_field_decays`
@@ -1244,6 +1246,52 @@ which is exactly how panam writes and consumes it. Ground effect: see `--ground_
     run evaluates every state, since its bounds were not built for both geometries.
   - **Not done:** ground elevation (flat ground at z = 0; `--terrain` refuses a table), and a
     sphere lookup along a refracted launch direction (the table cannot say what it is).
+  - **PE tables are built by reciprocity** (`--march receiver`, the default; `src/pe_table.{hpp,cpp}`,
+    `build_pe_table`, which the tool calls). One march per bearing and *receiver* height with
+    the source at the receiver's height, every source height read from the field, instead of
+    one per source height (`--march source`, kept). The effective profile c + w.h is the same
+    for the reversed path with the wind reversed, so it is the same march with the heights
+    exchanged. On the frozen recipe (9 sources, 2 receivers, 8 bearings) that is 16 marches
+    against 72, but every reciprocal march is as tall as the tallest source march (the domain
+    covers the highest height read, plus 250 m), so the build is 2.2-2.6x faster, not 4.5x:
+    92-106 s against 220-249 s on 14 cores. All marches' tasks go into one `solve_pe_bands`
+    pool (same bits as a march at a time; no faster in wall time, the big grids being memory-
+    bound, but no slower). The two marches agree to 0.013 dB below 10 degrees of elevation,
+    0.026 at 20-35 and 0.11 at 35-50 (cells above -40 dB re free field, first range excluded);
+    in still-air deep shadows below -40 dB (2-10% of cells, 2-4 kHz past 1 km) they differ by
+    up to 0.55 dB, the absorbing layer's floor following each march's domain. Things to keep:
+    - **It rests on the ground source** (`place_ground_source` in pe.cpp). A flush microphone
+      is a source at z = 0, which the self-starter could not place before (it fell back to the
+      narrow-angle Gaussian), and the lowest three nodes' quadrature is not one: the
+      fourth-order ground row (7, 6, -1)/24 under Numerov's (1, 10, 1)/12 makes a mode's
+      amplitude from a delta at node j (M^T chi)_j, and the old placement put a source at node 1
+      1.34 dB high and at node 2 0.37 dB low (any source below 4 dz: in the stored tables the
+      5 ft row at 50-100 Hz, which moves by up to 0.39 dB past the first range, +0.12 mean;
+      the 10 ft row is within 0.0002 dB and the rows above it reproduce 1e6070d bit for bit). The
+      fix divides each node by its exact ratio, a rational function of mu = (k_z dz)^2 and of the
+      ground's g = dz psi'/psi (derived symbolically; the closed forms are in pe.cpp), applied
+      as an operator, mu ~ -M^{-1} L near the ground, to second order in mu mu_c/(mu_c + mu) with
+      mu_c = 1 fixed a priori. In mu itself the quadratic amplified the grid's steepest modes
+      and the starter's single step left them in the first output range (12 dB at 15 m where
+      the exact field is 6). `a source near or on the ground is where it is...` (test_pe.cpp)
+      holds a source at 0-3.5 dz to the receiver read at the same height and to the exact field.
+      Sources from 4 dz up are placed bit for bit as before.
+    - **The first output range is the starter's single step**, and carries modes past max_angle
+      the propagator has not yet absorbed: for a 5 ft source at 50 Hz, 15 m out, 6.5 dB (source
+      march) and 6.1 (receiver march) against an exact 5.9. That is where the two marches differ
+      most in a real table; from the second range on they agree to thousandths.
+    - **The domain's top follows the highest height in the march**, which is the one thing that
+      differs between the marches otherwise.
+    - **Turbulence in tables** (`--gamma_t`, `--outer_scale`, `--realizations`, `--seed`,
+      `--gamma_profile`): report-only, no defaults change. Each cell is the energy mean over
+      samples x realizations (`solve_pe_bands(..., realizations)`, seeds seed + sample +
+      samples x realization, so one realization is the old run bit for bit), every march with
+      disjoint seeds. `--gamma_profile` scales each screen row by sqrt(gamma(z)/gamma_t)
+      (`PeSetup::turbulence_z/_gamma`, `turbulence_row_scale`): the right variance per height,
+      but a homogeneous field's spectrum and outer scale, so an approximation to a field whose
+      statistics change with height. gamma_t 0 gives the still table byte for byte whatever the
+      other options (`a still table does not depend on the turbulence options`). The ensemble
+      mean is reciprocal; one realization is not.
 - **Receivers** (`process_trajectory`). Every level is evaluated at the microphone: the
   observer's point raised by its height above the ground. A flush microphone (height 0) with
   `--plate_table` is on a plate; any other, with `--ground_effect`, is a point receiver at its

@@ -110,6 +110,67 @@ TEST_CASE("the PE is Weyl-van der Pol over impedance ground in still air", "[pe]
     }
 }
 
+TEST_CASE("a source near or on the ground is where it is, as a receiver there is", "[pe]")
+{
+    // Within three grid points of the ground the self-starter's delta function
+    // is the receivers' read turned around through the ground rows' own
+    // quadrature (pe.cpp, place_ground_source).  Taking those rows' weights as
+    // one put a source at node 1 1.34 dB high and one at node 2 0.37 dB low,
+    // and a source at z = 0 -- a reciprocal table's flush microphone -- had no
+    // self-starter at all.  Against the exact field, at grazing (200-1000 m)
+    // and at 17-45 degrees (60-200 m) from a 60 m receiver, over rigid ground
+    // and grass, the source agrees with the receiver read at the same height
+    // (reciprocity) within 0.003 dB at grazing and 0.1 at the steep angles,
+    // and with the exact field (Weyl-van der Pol over grass) within 0.02 and
+    // 0.1.  The steep worst, 0.06-0.08 dB, is a source at 2-2.5 dz seen at
+    // 45 degrees: node 2's weight, a second-order series in a bounded
+    // variable (pe.cpp).  At node 0, the flush microphone, it is 0.03.
+    for (const bool rigid : {true, false})
+        for (const double f : {125.0, 500.0})
+        {
+            GroundModel ground;
+            ground.flow_resistance = 200.0;
+            const auto admittance = rigid ? std::complex<double>(0.0) : ground_impedance(ground, {f}, 340.0)[0];
+            const double dz = 340.0 / f / 10.0; // the default grid
+            for (const double u : {0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.5})
+                for (const bool steep : {false, true})
+                {
+                    const double low = u * dz, high = steep ? 60.0 : 10.0;
+                    PeSetup setup;
+                    setup.frequency = f;
+                    setup.source_height = low;
+                    setup.receiver_heights = {high};
+                    setup.max_range = steep ? 200.0 : 1000.0;
+                    setup.output_step = 10.0;
+                    setup.z = {0.0};
+                    setup.c = {340.0};
+                    setup.admittance = admittance;
+                    const auto result = solve_pe(setup);
+                    CHECK(result.self_started);
+                    PeSetup swapped = setup;
+                    swapped.source_height = high;
+                    swapped.receiver_heights = {low};
+                    const auto reciprocal = solve_pe(swapped);
+                    int compared = 0;
+                    for (std::size_t q = 0; q < result.range.size(); q++)
+                    {
+                        const double r = result.range[q];
+                        if (r < (steep ? 60.0 : 200.0) || std::isnan(result.relative_level[0][q]))
+                            continue;
+                        const double exact = two_ray(r, low, high, f, 340.0, admittance, rigid);
+                        if (exact < -10.0)
+                            continue;
+                        INFO((rigid ? "rigid" : "grass") << ", " << f << " Hz, source " << u << " dz, r " << r);
+                        CHECK(result.relative_level[0][q] == Catch::Approx(reciprocal.relative_level[0][q])
+                                        .margin(steep ? 0.1 : 0.003));
+                        CHECK(result.relative_level[0][q] == Catch::Approx(exact).margin(steep ? 0.1 : 0.02));
+                        compared++;
+                    }
+                    CHECK(compared > 5);
+                }
+        }
+}
+
 TEST_CASE("the PE fills an upward-refraction shadow only by diffraction", "[pe]")
 {
     // c falling 0.05 /s with height: the geometric shadow for a 10 m source
