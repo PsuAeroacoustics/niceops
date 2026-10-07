@@ -1043,19 +1043,29 @@ the hover was synthesized from a sphere outside the build, and `DOPPLER_SHIFT_RE
   - Nothing measures 3–17 degrees or the region under the aircraft, so treat the hover there
     as an interpolation.
   - The low ring is the noisier of the two (5 dB held-out rms against 2.8).
-- **Be206L3, EC130, RO-44 and RO-66** (rebuilt 2026-10-04) take the B407's flight recipe and
-  its de-Dopplerized hover source, but no hover correction: only the B407's hovers have been
-  measured. Their hover is the slowest level pass averaged fore to aft (Be206L3 run 277103,
-  EC130 298295, RO-44 229395, RO-66 234520). No approach card is in any of them. Against each
-  aircraft's approaches, which are the validation set (NICE-OPS minus the measured 10 dB-down
-  SEL, station atmosphere, median / rms in dB):
+- **AS350, Be206L3, EC130, RO-44 and RO-66** (rebuilt 2026-10-04, the AS350 2026-10-05) take
+  the B407's flight recipe and its de-Dopplerized hover source, but no hover correction. Only
+  the B407's hovers are tracked: the AS350 flew the same hover cards on day 292, but the
+  dataset has no tracking file for them. Their hover is the slowest level pass averaged fore to
+  aft (AS350 run 289151, Be206L3 277103, EC130 298295, RO-44 229395, RO-66 234520). No approach
+  card is in any of them. Against each aircraft's approaches, which are the validation set
+  (NICE-OPS minus the measured 10 dB-down SEL, station atmosphere, median / rms in dB):
 
   | Database | Spheres, September → now | Approaches | September | Now |
   | --- | --- | --- | --- | --- |
+  | AS350 | — → 96 | day 291, 1328 mic-runs | +0.76 / 1.76 | +0.70 / 1.49 |
   | Be206L3 | 110 → 110 | day 279, 906 mic-runs | +0.28 / 1.48 | +0.24 / 1.50 |
   | EC130 | 38 → 112 | day 298, 1025 mic-runs | +0.19 / 3.17 | +0.70 / 2.70 |
   | RO-44 | 50 → 83 | day 229, 585 mic-runs | +0.31 / 1.55 | +0.12 / 1.27 |
   | RO-66 | 87 → 88 | day 236, 876 mic-runs | +0.28 / 1.06 | +0.86 / 1.57 |
+
+  - **AS350's gain is at low elevation.** At 5–10 degrees its over-prediction falls from
+    +2.73 / 3.46 to +1.59 / 2.29; above 20 degrees nothing moves, and a +0.6 dB bias overhead
+    remains in both files. The September file had 441 near-silent cells and 1,305 empty ones;
+    the rebuild has 0 and 10. 96 of its 107 steady runs built: six had no steady segment of
+    8 s, three no valid samples, one a window longer than its recording, and the track check
+    refused 291260, which passes 1.2 ft from a board. Like RO-44's, its approaches were flown
+    on a day that also gave spheres (291).
 
   - **RO-66 reads worse, and the September file was right for the wrong reason.** All four
     September files carried near-silent cells: finite levels far below the aircraft (as low as
@@ -1072,8 +1082,6 @@ the hover was synthesized from a sphere outside the build, and `DOPPLER_SHIFT_RE
     their measured SEL carries the background and has no SNR to filter on: read EC130's rms,
     not its median.
   - RO-44's September spheres lacked day 227, which holds 32 of its steady runs.
-- **AS350** keeps the September recipe and spheres: straight rays, a 10-degree floor and a
-  25-degree grid.
 
 A database written before panam c53588f (2026-09-26) may have its last group unwritten. Every
 entry is then the netCDF fill value (9.97e36), which the loader reads as a finite 1e37 dB
