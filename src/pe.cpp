@@ -1120,11 +1120,19 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
     // so every frequency lands on one grid: psi interpolated between the two
     // range steps either side.  The split-step march lands on them, and the
     // interpolation then takes the later step whole.
-    std::vector<complex> previous_value(s.receiver_heights.size());
-    for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
-        previous_value[k] = at_receiver(k);
     std::size_t next_output = 1;
+    std::vector<complex> previous_value(s.receiver_heights.size());
     std::vector<complex> value(s.receiver_heights.size());
+    // A receiver sample is needed only at an output endpoint or one step before
+    // it. Keep the original range-step interpolation, while avoiding receiver
+    // stencils and copies on the intervening PE steps.
+    const auto output_in_or_next_step = [&](double r) {
+        return next_output * s.output_step <= r + dr + 1e-9
+                && next_output * s.output_step <= s.max_range + 1e-9;
+    };
+    if (output_in_or_next_step(0.0))
+        for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
+            previous_value[k] = at_receiver(k);
     for (std::size_t step = 1; step <= steps; step++)
     {
         if (step == 1 && first_step)
@@ -1154,8 +1162,10 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
             }
             next_screen += spacing;
         }
-        for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
-            value[k] = at_receiver(k);
+        const bool sample_receivers = output_in_or_next_step(r);
+        if (sample_receivers)
+            for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
+                value[k] = at_receiver(k);
         while (next_output * s.output_step <= r + 1e-9 && next_output * s.output_step <= s.max_range + 1e-9)
         {
             const double target = next_output * s.output_step;
@@ -1178,7 +1188,8 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
             }
             next_output++;
         }
-        previous_value = value;
+        if (sample_receivers)
+            previous_value = value;
     }
     return result;
 }
