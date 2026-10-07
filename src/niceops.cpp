@@ -661,6 +661,14 @@ struct RunOptions
     // out, with their Airy tails per band (layered_wave_arrivals).
     WaveOptions waves;
     double shadow_floor = 20.0;
+    // --shadow_model resolved (stratified only): each band's shadow boundary
+    // from the near-ground profile it resolves at shadow_phase radians of
+    // vertical phase (resolved_shadow_bands), and a cramped band's field from
+    // cramped_ground (ShadowTransition::apply_resolved).  Off: the legacy
+    // transition, byte for byte.
+    bool resolved_shadow = false;
+    double shadow_phase = default_resolved_phase;
+    CrampedGround cramped_ground = CrampedGround::series;
     // --scattering: the HARMONOISE turbulence strength whose scattered energy
     // fills the shadows (ShadowScattering); 0 keeps shadow_floor instead.
     double scattering = 0.0;
@@ -2135,6 +2143,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // flush plate microphones, one more.
     std::vector<ShadowTransition> shadow_transitions;
     std::optional<ShadowTransition> plate_transition;
+    // --shadow_model resolved: per receiver (the point heights, then the plate).
+    std::optional<ResolvedShadowTable> resolved_table;
     // --refraction stratified: the profile's layers, with the linear model kept
     // alongside for its warm start and for what the layered solve leaves to it.
     std::optional<LayeredSoundSpeed> layered_sound_speed;
@@ -2184,6 +2194,46 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
                         " s.");
             }
+        }
+        // --shadow_model resolved: the cramped bands' field on each transition,
+        // and every band's boundary per bearing, source height and receiver.
+        if (options.resolved_shadow && ground_model != nullptr && layered_sound_speed)
+        {
+            const auto start = std::chrono::steady_clock::now();
+            std::vector<double> receivers;
+            std::vector<bool> flush_receivers;
+            for (std::size_t k = 0; k < shadow_transitions.size(); k++)
+            {
+                shadow_transitions[k].set_cramped_ground(options.cramped_ground, &point_models[k],
+                        options.thread_count);
+                receivers.push_back(point_heights[k]);
+                flush_receivers.push_back(point_heights[k] < ShadowTransition::flush_height);
+            }
+            if (plate_transition)
+            {
+                plate_transition->set_cramped_ground(options.cramped_ground, nullptr, options.thread_count);
+                receivers.push_back(plate->thickness());
+                flush_receivers.push_back(true);
+            }
+            const double cramped_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            double state_low = std::numeric_limits<double>::infinity(), state_high = 0.0;
+            for (const auto& state : source_states)
+            {
+                state_low = std::min(state_low, state.position.z);
+                state_high = std::max(state_high, state.position.z);
+            }
+            resolved_table.emplace(*layered_sound_speed, *effective_sound_speed, database.band_centers(),
+                    first_band, last_band, options.shadow_phase, std::max(state_low, 0.0), state_high,
+                    receivers, flush_receivers, options.thread_count);
+            log("  --shadow_model resolved: each band's shadow boundary from the profile it resolves at ",
+                    options.shadow_phase, " rad of vertical phase, tabulated over bearing and source "
+                    "height", options.cramped_ground == CrampedGround::series
+                            ? ", and the residue series at the source's own height for cramped bands,"
+                            : options.cramped_ground == CrampedGround::straight
+                            ? ", with cramped bands' lit side on the straight path's ground geometry,"
+                            : ",",
+                    " in ", std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
+                    " s (", cramped_seconds, " s of it the cramped bands' tables).");
         }
         std::string surface_bands;
         for (std::size_t band = first_band; band < last_band; band++)
@@ -2604,6 +2654,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             planes.emplace(*terrain_raster);
         std::size_t terrain_here = 0, raised_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
+        std::vector<ResolvedBand> resolved_bands(resolved_table ? database.band_centers().size() : 0);
         std::size_t shadowed_here = 0;
         // --refraction stratified's other eigenrays: each one's loss from its
         // earlier bounces, its band levels, and a ground weight of zero for one
@@ -2734,10 +2785,25 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 const double* ground_weight = nullptr;
                 // The plate's frame, as Database::spectral_level_along takes it.
                 const double plate_azimuth = flush ? plate_frame_azimuth(ray.path.separation, plate_mic_azimuth) : 0.0;
+                // --shadow_model resolved: this pair's bands from the table, for
+                // a ray that carries a boundary (which apply_resolved needs).
+                const bool resolved_here = resolved_table && transition_here != nullptr && ray.curved
+                        && ray.direct.boundary_gradient < 0.0 && std::isfinite(ray.direct.boundary);
+                if (resolved_here)
+                {
+                    const double hx = ray.path.separation.x / ray.horizontal;
+                    const double hy = ray.path.separation.y / ray.horizontal;
+                    resolved_table->lookup(hx, hy, source_states[it].position.z,
+                            flush ? shadow_transitions.size() : point_of[index], resolved_bands.data());
+                }
                 if (transition_here != nullptr
-                        && transition_here->apply(ray, shadow_attenuation, options.shadow_floor,
-                                first_band, last_band, shadow_weight.data(), shadow.data(),
-                                plate_azimuth))
+                        && (resolved_here
+                                        ? transition_here->apply_resolved(ray, resolved_bands.data(),
+                                                  shadow_attenuation, options.shadow_floor, first_band,
+                                                  last_band, shadow_weight.data(), shadow.data(), plate_azimuth)
+                                        : transition_here->apply(ray, shadow_attenuation, options.shadow_floor,
+                                                  first_band, last_band, shadow_weight.data(), shadow.data(),
+                                                  plate_azimuth)))
                 {
                     // Near the boundary the transition's field replaces the
                     // ground term and the creeping-wave loss.
@@ -3420,6 +3486,9 @@ int run(int argc, char* argv[])
     std::string write_atmosphere;
     std::string refraction = "none";
     double shadow_floor = 20.0;
+    std::string shadow_model = "legacy";
+    double shadow_phase = default_resolved_phase;
+    std::string cramped_ground = "series";
     bool tunneling = false;
     bool skip_fill = false;
     double scattering = 0.0;
@@ -3671,6 +3740,23 @@ int run(int argc, char* argv[])
     app.add_option("--shadow_floor", shadow_floor,
             "Most a refractive shadow zone attenuates, dB (default 20). Deeper in, energy "
             "scattered by turbulence dominates.");
+    app.add_option("--shadow_model", shadow_model,
+            "--refraction stratified, with --ground_effect: how a shadow boundary's field is set per "
+            "band. legacy (default): each band's boundary interpolated between the layered rays' and "
+            "the path's linear fit's. resolved: each band's boundary from the profile it resolves -- "
+            "below the height where it gathers --shadow_phase of vertical phase, the profile's tangent "
+            "there -- and a band whose boundary is within two diffraction lengths of the source takes "
+            "--cramped_ground.")
+            ->check(CLI::IsMember({"legacy", "resolved"}));
+    auto* shadow_phase_option = app.add_option("--shadow_phase", shadow_phase,
+            "--shadow_model resolved: the vertical phase, radians, a band must gather to resolve the "
+            "profile near the ground (default 1, the radian the layered rays' flat-floor limit takes).")
+            ->check(CLI::PositiveNumber);
+    auto* cramped_ground_option = app.add_option("--cramped_ground", cramped_ground,
+            "--shadow_model resolved: a cramped band takes the residue series at the source's own "
+            "height (series, default); or its lit side the ground model on the straight path "
+            "(straight), or on the ray's equivalent geometry (ray).")
+            ->check(CLI::IsMember({"series", "straight", "ray"}));
     app.add_option("--scattering", scattering,
             "Fill refraction shadows with the energy turbulence scatters into them instead of "
             "--shadow_floor: the HARMONOISE strength gamma_T = C_T^2/T0^2 + 22 C_v^2/(3 c0^2) "
@@ -4283,6 +4369,13 @@ int run(int argc, char* argv[])
         input_error("--shadow_floor must not be negative, got ", shadow_floor, ".");
     if (!(scattering >= 0.0))
         input_error("--scattering must not be negative, got ", scattering, ".");
+    if (shadow_model == "resolved" && (refraction != "stratified" || !ground_effect))
+    {
+        input_error("--shadow_model resolved sets the shadow boundaries --refraction stratified casts, "
+                    "through the shadow-boundary field --ground_effect's ground model sets up; give both.");
+    }
+    if (shadow_model != "resolved" && (shadow_phase_option->count() > 0 || cramped_ground_option->count() > 0))
+        input_error("--shadow_phase and --cramped_ground shape --shadow_model resolved, which is not given.");
     if (scattering > 0.0 && (refraction == "none" || !ground_effect))
     {
         input_error("--scattering fills the shadows --refraction casts, through the shadow-boundary "
@@ -4487,6 +4580,11 @@ int run(int argc, char* argv[])
     options.waves.tunneling = tunneling;
     options.waves.skip_fill = skip_fill;
     options.shadow_floor = shadow_floor;
+    options.resolved_shadow = shadow_model == "resolved";
+    options.shadow_phase = shadow_phase;
+    options.cramped_ground = cramped_ground == "ray" ? CrampedGround::ray
+            : cramped_ground == "straight"           ? CrampedGround::straight
+                                                     : CrampedGround::series;
     options.scattering = scattering;
     options.frame_bearing = frame_bearing;
     if (!speed_reference.empty())

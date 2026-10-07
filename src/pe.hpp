@@ -175,6 +175,17 @@ struct PeSetup
     double outer_scale = 10.0; // m
     double screen_spacing = 0.0; // m
     unsigned seed = 1;
+    // A strength that varies with height, gamma(z) at heights turbulence_z
+    // (linear between, held outside), or empty for gamma_t at every height.
+    // The screens are drawn at gamma_t, which is then the reference, and each
+    // row's phase is scaled by sqrt(gamma(z) / gamma_t), so a row's variance
+    // is gamma(z)'s.  An approximation to a field whose statistics change with
+    // height: the vertical spectrum and coherence stay those of a homogeneous
+    // field at the outer scale, where near the ground the eddies, and the
+    // outer scale with them, shrink with height.  gamma_t must be positive
+    // when it is given.
+    std::vector<double> turbulence_z;
+    std::vector<double> turbulence_gamma;
     // Threads solve_pe_band spreads its frequencies over (0: one per hardware
     // thread).  The result does not depend on it.
     unsigned threads = 0;
@@ -195,7 +206,9 @@ struct PeResult
     double range_step = 0.0;
     int pade_terms = 0;
     // Whether the self-starter was used.  It is not for Crank-Nicolson, for a
-    // source within a grid point of the ground, or if its fit was refused.
+    // source within a grid point of the ground unless the ground is fourth
+    // order (the default grid starts a source at any height, z = 0 included),
+    // or if its fit was refused.
     bool self_started = false;
 };
 
@@ -212,7 +225,11 @@ PeResult solve_pe(const PeSetup& setup);
 // average is over the band and the ensemble at once.  The frequencies are
 // independent marches and run in parallel (PeSetup::threads); they are summed
 // in order afterwards, so the result is the same on any thread count.
-PeResult solve_pe_band(PeSetup setup, double center, int samples = 5);
+//
+// `realizations` > 1 (turbulence only) marches every frequency that many times
+// with distinct seeds, seed + sample + samples * realization, and takes the
+// energy mean over all of them; realization 0 is the single-realization run.
+PeResult solve_pe_band(PeSetup setup, double center, int samples = 5, int realizations = 1);
 
 // solve_pe_band for several bands at once, band b from setups[b] at centers[b]:
 // every (band, frequency) march is one task in a single pool, the highest
@@ -220,7 +237,12 @@ PeResult solve_pe_band(PeSetup setup, double center, int samples = 5);
 // first.  The same result as a band at a time, sooner.  Threads from
 // setups[0].threads.
 std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const std::vector<double>& centers,
-        int samples = 5);
+        int samples = 5, int realizations = 1);
+
+// sqrt(gamma(z_j) / gamma_t) at z_j = j dz, j = 0 .. count - 1: what each row of
+// a screen is scaled by under turbulence_z / turbulence_gamma (all ones when
+// they are empty).
+std::vector<double> turbulence_row_scale(const PeSetup& setup, double dz, std::size_t count);
 
 // The PE's phase screen: phi(z_j) at z_j = j dz, j = 0 .. count - 1, for a slab
 // `thickness` meters deep at wavenumber k.  Its variance is

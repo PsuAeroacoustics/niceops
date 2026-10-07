@@ -31,6 +31,7 @@
 #include <complex>
 #include <cstddef>
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include "atmosphere_profile.hpp"
@@ -450,6 +451,37 @@ struct ShadowScattering
     static ShadowScattering for_receiver(double gamma_t, double receiver_height, bool plate);
 };
 
+// One band's shadow under --shadow_model resolved (resolved_shadow_bands in
+// stratified.hpp): its boundary r_b (through
+// ShadowTransition::band_boundary, from the resolved profile's layered and
+// linear-fit boundaries), and the gradient, 1/s and positive, of the resolved
+// profile over the band's creeping-wave layer -- its tangent below h_f -- that
+// the shadow's decay and the transition's table take.  0 where the tangent is
+// not upward refracting: the transition then takes the curvature that makes r_b.
+struct ResolvedBand
+{
+    double boundary = std::numeric_limits<double>::infinity();
+    double gradient = 0.0;
+    double height = std::numeric_limits<double>::infinity(); // h_f, m
+    double layered_boundary = std::numeric_limits<double>::infinity(); // r_s(f)
+    double linear_boundary = std::numeric_limits<double>::infinity(); // r_l(f)
+};
+
+// --shadow_model resolved: what the ground model sees on the lit side of a
+// cramped band (a boundary within two diffraction lengths of the source),
+// where the ray's equivalent straight geometry collapses toward grazing
+// (h' = L sin(grazing) - h_r -> 0) and drives the ground model into its
+// grazing null.  `ray` keeps it; `straight` takes the ground term along the
+// straight path (the source's real height and the horizontal distance);
+// `series` takes the band's field from a caller-supplied level (the residue
+// series at the source's own height, in the comparison tool).
+enum class CrampedGround
+{
+    ray,
+    straight,
+    series,
+};
+
 class ShadowTransition
 {
 public:
@@ -490,6 +522,46 @@ public:
     bool apply(const RefractedRay& ray, const ShadowAttenuation& attenuation, double floor,
             std::size_t first_band, std::size_t last_band, double* ground_weight,
             double* loss, double plate_azimuth = 0.0) const;
+
+    // --shadow_model resolved: apply() with each band's boundary and decay
+    // gradient given (`bands`, from resolved_shadow_bands or its table) rather
+    // than interpolated between the ray's r_s and r_l.  The gradient sets s,
+    // the diffraction length and the creeping-wave rate; the boundary only
+    // where xi = 0 sits.  A band with no boundary is lit: weight 1, no loss --
+    // including past the ray's own r_s, where apply() would take the
+    // creeping-wave loss.  On a cramped band's lit side the ground term is
+    // what cramped_ground() says.  `cramped_field`, per band (NaN where
+    // missing), is the level re free field at the slant range that `series`
+    // takes.  True whenever the ray carries a boundary.
+    bool apply_resolved(const RefractedRay& ray, const ResolvedBand* bands,
+            const ShadowAttenuation& attenuation, double floor, std::size_t first_band,
+            std::size_t last_band, double* ground_weight, double* loss,
+            double plate_azimuth = 0.0, const double* cramped_field = nullptr) const;
+    // What apply_resolved() gives a cramped band's lit side; `straight` needs
+    // the ground model (a point receiver's at this receiver height; a plate's
+    // ground is the plate the constructor took).  `series` builds the cramped
+    // table below, on `threads` threads, which apply_resolved() then reads
+    // when it is given no cramped_field of its own.
+    void set_cramped_ground(CrampedGround mode, const GroundModel* ground = nullptr,
+            unsigned threads = 0);
+    // The cramped table: per band, the residue series' level re free field at
+    // the slant range, for a source y_s = z_s / l up, at xi and s (as level()),
+    // the receiver this transition's.  NaN where the series is not trusted
+    // (near the source) or y_s is past cramped_root_max^2 (tests).
+    double cramped_level(std::size_t band, double xi, double s, double y_s) const;
+    // sqrt(y_s) nodes: 0 to cramped_root_max.  A band is cramped when
+    // sqrt(y_s) + sqrt(y_r) < -xi_ray, so y_s < 4.
+    static constexpr int cramped_root_nodes = 6;
+    static constexpr double cramped_root_max = 2.0;
+    // Its xi nodes: xi_ray to xi_max (past it, the last slope).
+    static constexpr double cramped_xi_step = 0.2;
+    CrampedGround cramped_ground() const { return cramped_ground_; }
+    // apply_resolved() takes each band's decay -- s, the diffraction length and
+    // the creeping-wave rate -- from the curvature that makes its boundary,
+    // c0 root^2 / r_b^2, as apply() does.  With this, from the band's resolved
+    // gradient instead (ResolvedBand::gradient), where it is upward: a
+    // sensitivity, worse against the PE on every upwind class tried.
+    void set_tangent_decay(bool on) { tangent_decay_ = on; }
 
     // K, dB, in `band` at `azimuth` (radians, the plate's frame); 0 for a point
     // receiver (tests).
@@ -548,6 +620,16 @@ private:
     std::vector<std::vector<double>> plate_offset_;
     static constexpr int plate_azimuths = 36;
     ShadowScattering scattering_;
+    // --shadow_model resolved.
+    CrampedGround cramped_ground_ = CrampedGround::ray;
+    bool tangent_decay_ = false;
+    std::vector<std::complex<double>> admittance_;
+    std::shared_ptr<GroundModel> ground_;
+    const PlateReceiver* plate_ = nullptr;
+    double sound_speed_ = 0.0;
+    // [band][(j * cramped_root_nodes + k) * cramped_xi_nodes_ + i]: the cramped table.
+    std::vector<std::vector<float>> cramped_table_;
+    std::size_t cramped_xi_nodes_ = 0;
 };
 
 } // namespace niceops
