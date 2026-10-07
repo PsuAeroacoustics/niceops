@@ -35,6 +35,7 @@
 // rays stay in the vertical plane of the bearing.
 
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include "atmosphere_profile.hpp"
@@ -198,6 +199,83 @@ struct WaveOptions
 
 std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, double z_r, double r,
         const WaveOptions& options);
+
+// --shadow_model resolved: what each band's shadow boundary is set by.
+//
+// Ray theory sets a ground-grazing shadow boundary by c(z_s) / c(0) alone, so
+// the log law's lowest foot -- 0.25 m/s on the R44's light-wind mornings,
+// extrapolated below the lidar's first gate -- casts it.  A wave does not
+// resolve a layer that gathers less than about a radian of vertical phase, so
+// the band at frequency f sees, below the height h_f where
+//   k_f int_0^h sqrt(2 max(c(0) - c(z), 0) / c(0)) dz = phase,
+// only the profile's tangent at h_f (resolved_height, tangent_below).  The
+// radian is the one resolved_pass already takes for flat floors; on a linear
+// profile h_f = (3 phase / (2 k sqrt(2 |a| / c0)))^(2/3), which at one radian
+// is 1.31 l, l = (c0 / (2 |a| k^2))^(1/3) the creeping-wave layer thickness.
+inline constexpr double default_resolved_phase = 1.0; // rad
+
+// h_f for a band at `frequency` on these layers (above), meters.  Infinite
+// where the integral never reaches `phase`: the band resolves no upward
+// refraction near the ground.
+double resolved_height(const Layers& layers, double frequency, double phase);
+
+// The layers with the effective sound speed below `height` replaced by its
+// tangent there -- the slope of the layer containing it -- written into z and
+// c (levels 0, height, then the levels above).  `gradient` gets that slope.
+Layers tangent_below(const Layers& layers, double height, std::vector<double>& z,
+        std::vector<double>& c, double& gradient);
+
+// The ground-grazing shadow boundary layered_direct_eigenray sets on these
+// layers for a source z_s above a receiver z_r: infinite where it sets none.
+double layered_shadow_boundary(const Layers& layers, double z_s, double z_r);
+
+// One band's shadow under --shadow_model resolved: ResolvedBand (refraction.hpp).
+
+
+// Every band in [first_band, last_band) for one path: `layers` its effective
+// sound speed, `fit` its linear fit over [min(z_s, z_r), max(z_s, z_r)]
+// widened to EffectiveSoundSpeed::min_fit_span (as EffectiveSoundSpeed::fit),
+// whose boundary is corrected by the tangent's change to the profile for each
+// band's r_l(f) (or, without `resolve_linear`, the fit's own boundary for
+// every band: a sensitivity).  `flush` as for band_boundary.  Writes out[band].
+void resolved_shadow_bands(const Layers& layers, const LinearProfile& fit, double z_s, double z_r,
+        const std::vector<double>& frequencies, std::size_t first_band, std::size_t last_band,
+        double phase, bool flush, ResolvedBand* out, bool resolve_linear = true, bool boundary_law = true);
+
+// resolved_shadow_bands over a run: per receiver height, a table over bearing
+// (every bearing_step degrees of the local frame's
+// direction, counterclockwise from +x) and source height (nodes even in
+// sqrt(z)), interpolated bilinearly in 1/r_b (so a band with no boundary is 0)
+// and in the gradient.  Built once per trajectory; a pair's lookup is a few
+// dozen multiplies per band.
+class ResolvedShadowTable
+{
+public:
+    ResolvedShadowTable() = default;
+    // `air`/`linear` as layered_direct_ray takes them; source heights over
+    // [z_low, z_high]; receivers at `receiver_heights` (flush below
+    // ShadowTransition::flush_height, or every one with `plate`).
+    ResolvedShadowTable(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
+            const std::vector<double>& frequencies, std::size_t first_band, std::size_t last_band,
+            double phase, double z_low, double z_high, const std::vector<double>& receiver_heights,
+            const std::vector<bool>& flush, unsigned threads = 0);
+
+    bool empty() const { return bands_ == 0; }
+    // The bands for a path along local-frame direction (hx, hy) from a source
+    // z_s up to receiver `receiver` (an index into the constructor's heights).
+    void lookup(double hx, double hy, double z_s, std::size_t receiver, ResolvedBand* out) const;
+
+    static constexpr double bearing_step = 2.0; // degrees
+    static constexpr int height_nodes_per_meter_root = 4; // nodes per unit of sqrt(z / 1 m)
+
+private:
+    std::size_t first_band_ = 0, bands_ = 0;
+    std::size_t bearings_ = 0, heights_ = 0;
+    double root_low_ = 0.0, root_step_ = 1.0;
+    // [receiver][(bearing * heights_ + height) * bands_ + band]: 1 / r_b and the gradient.
+    std::vector<std::vector<float>> inverse_boundary_;
+    std::vector<std::vector<float>> gradient_;
+};
 
 // --refraction stratified's counterparts of direct_ray() and finish_ground().
 // `linear` supplies the warm start; `scratch` holds the path's effective sound

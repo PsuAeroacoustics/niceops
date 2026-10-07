@@ -126,6 +126,39 @@ std::vector<double> phase_screen(double k, double gamma_t, double outer_scale, d
     return source.next();
 }
 
+std::vector<double> turbulence_row_scale(const PeSetup& s, double dz, std::size_t count)
+{
+    std::vector<double> scale(count, 1.0);
+    if (s.turbulence_z.empty())
+        return scale;
+    if (s.turbulence_z.size() != s.turbulence_gamma.size())
+        throw std::invalid_argument("solve_pe: turbulence_z and turbulence_gamma differ in length");
+    if (!(s.gamma_t > 0.0))
+        throw std::invalid_argument("solve_pe: a turbulence profile needs a positive reference gamma_t");
+    for (std::size_t i = 0; i < s.turbulence_z.size(); i++)
+        if (!(s.turbulence_gamma[i] >= 0.0) || !std::isfinite(s.turbulence_gamma[i])
+                || (i > 0 && !(s.turbulence_z[i] > s.turbulence_z[i - 1])))
+            throw std::invalid_argument("solve_pe: the turbulence profile needs increasing heights and gamma >= 0");
+    for (std::size_t j = 0; j < count; j++)
+    {
+        const double z = static_cast<double>(j) * dz;
+        double gamma;
+        if (s.turbulence_z.size() == 1 || z <= s.turbulence_z.front())
+            gamma = s.turbulence_gamma.front();
+        else if (z >= s.turbulence_z.back())
+            gamma = s.turbulence_gamma.back();
+        else
+        {
+            const auto upper = std::upper_bound(s.turbulence_z.begin(), s.turbulence_z.end(), z);
+            const std::size_t i = static_cast<std::size_t>(upper - s.turbulence_z.begin()) - 1;
+            gamma = s.turbulence_gamma[i] + (z - s.turbulence_z[i]) / (s.turbulence_z[i + 1] - s.turbulence_z[i])
+                    * (s.turbulence_gamma[i + 1] - s.turbulence_gamma[i]);
+        }
+        scale[j] = std::sqrt(gamma / s.gamma_t);
+    }
+    return scale;
+}
+
 namespace {
 
 // One range step, psi(r) -> psi(r + dr), on rows psi_1 .. psi_{n-1}.
@@ -630,6 +663,139 @@ March pade_march(const VerticalOperator& op, const PadePropagator& propagator, b
     return [factors, step](std::vector<complex>& psi) { step(*factors, psi); };
 }
 
+// A source near the ground, on the fourth-order grid (pe.hpp, pade_march).
+// Everywhere else the self-starter's delta function is the receivers' cubic
+// read turned around, share_k / dz on four nodes, and that puts it where it
+// is: by reciprocity a source placed to fourth order is a receiver read to
+// fourth order.  The lowest three nodes are different, because there the
+// scheme is not symmetric.  The ground row's right side is (7, 6, -1)/24
+// against Numerov's (1, 10, 1)/12 above, so a mode's amplitude from a delta at
+// node j is not its value there but (M^T chi)_j, chi the left eigenvector: in
+// still air over rigid ground a source at node 1 came out 1.34 dB high, one at
+// node 2 0.37 dB low, and one at node 0 could not be placed at all.  For a
+// mode whose vertical wavenumber at the ground is k_z, with mu = (k_z dz)^2,
+// and g = dz psi'(0) / psi(0) from the ground's admittance (the same for
+// every mode), the ratio to the interior's is exactly
+//   node 0  (9 + 2g)(12 + mu)^2 / (96 (36 + 9 mu + 2 mu^2)),
+//   node 1  (21 + 18g - 5 mu) / (6 (3 + 3g - mu)),
+//   node 2  (3312 + 6912g - 6072 mu - 2880 g mu + 767 mu^2)
+//           / (96 (36 + 72g - 63 mu - 30 g mu + 8 mu^2)),
+//   node 3 and above  1
+// (from the left and right recursions of the uniform grid; derived
+// symbolically).  Dividing by it mode by mode is an operator: mu is
+// (epsilon_0 - Q) / a on chi^T M, exactly, and on a vector that lives near the
+// ground (epsilon_0 - Q)/a is -M^{-1} L, M and L the scheme's mass and
+// second-difference matrices with the ground row.  The reciprocals are taken
+// to second order: their poles fall inside the grid's spectrum (mu runs to
+// 6).  The node-0 source is what a reciprocal table (pe_table.hpp) puts at a
+// flush microphone.
+constexpr std::size_t ground_source_nodes = 48; // 0.1^48: M^{-1}'s decay over the support
+
+void place_ground_source(std::vector<complex>& psi, std::size_t m, std::size_t first, const double share[4],
+        complex weight, complex g)
+{
+    const std::size_t n = ground_source_nodes;
+    // Second-order series of 1 / ratio for nodes 0, 1, 2, in powers of mu.
+    const complex a0 = 9.0 + 2.0 * g, a1 = 7.0 + 6.0 * g, a2 = 23.0 + 48.0 * g;
+    complex series[3][3] = {
+            {24.0 / a0, 2.0 / a0, 5.0 / (6.0 * a0)},
+            {6.0 * (1.0 + g) / a1, -2.0 * (2.0 + g) / (a1 * a1), -10.0 * (2.0 + g) / (3.0 * a1 * a1 * a1)},
+            {24.0 * (1.0 + 2.0 * g) / a2, 2.0 * (23.0 + 14.0 * g) / (a2 * a2),
+                    (10925.0 + 11162.0 * g + 3456.0 * g * g) / (6.0 * a2 * a2 * a2)},
+    };
+    std::vector<complex> s0(n, 0.0), s1(n, 0.0), s2(n, 0.0);
+    for (std::size_t k = 0; k < 4; k++)
+    {
+        const std::size_t node = first + k;
+        if (node < 3)
+        {
+            s0[node] += share[k] * series[node][0];
+            s1[node] += share[k] * series[node][1];
+            s2[node] += share[k] * series[node][2];
+        }
+        else
+            s0[node] += share[k];
+    }
+    // The series is in s = mu mu_c / (mu_c + mu), not mu: the same to first
+    // order, its second-order term adjusted to keep it the same to second, and
+    // bounded where mu is not.  In mu itself the quadratic multiplied the
+    // grid's steepest modes, mu up to 6, sevenfold at node 2; the propagator
+    // absorbs them, but the self-starter's single step does not, and the
+    // first output range carried them: 12.2 dB re free field where the exact
+    // field is 5.9 (a 5 ft source over grass at 46 Hz, 15 m out).  With
+    // mu_c = 1, about the edge of the propagating spectrum (mu = (k dz)^2 =
+    // 0.39 at ten points a wavelength), that first range reads 6.5 and the
+    // steep angles stay within 0.03 dB (node 0) and 0.06 (node 2) of the
+    // exact field; mu_c = 0.5 and 2 give 6.4 and 6.7 there and 0.09 and 0.05
+    // at the steep angles.  mu_c is fixed a priori, not fitted.
+    //
+    // S x = mu_c (mu_c + mu)^{-1} mu x = mu_c (mu_c M - L)^{-1} (-L x) on the
+    // lowest n nodes, zero above: banded, so a dense solve of this size is
+    // nothing beside a march.
+    constexpr double mu_c = 1.0;
+    for (int node = 0; node < 3; node++)
+        series[node][2] += series[node][1] / mu_c;
+    std::vector<complex> matrix(n * n);
+    auto apply_mu = [&](const std::vector<complex>& x) {
+        std::vector<complex> b(n);
+        for (std::size_t i = 0; i < n; i++)
+        {
+            const complex below = i > 0 ? x[i - 1] : complex(0.0), above = i + 1 < n ? x[i + 1] : complex(0.0);
+            b[i] = -mu_c * (i == 0 ? -(1.0 + g) * x[0] + above : below - 2.0 * x[i] + above);
+        }
+        std::fill(matrix.begin(), matrix.end(), complex(0.0));
+        matrix[0] = mu_c * 7.0 / 24.0 + (1.0 + g);
+        matrix[1] = mu_c * 6.0 / 24.0 - 1.0;
+        matrix[2] = mu_c * -1.0 / 24.0;
+        for (std::size_t i = 1; i < n; i++)
+        {
+            matrix[i * n + i - 1] = mu_c / 12.0 - 1.0;
+            matrix[i * n + i] = mu_c * 10.0 / 12.0 + 2.0;
+            if (i + 1 < n)
+                matrix[i * n + i + 1] = mu_c / 12.0 - 1.0;
+        }
+        // Gaussian elimination; M is diagonally dominant but for row 0.
+        for (std::size_t col = 0; col < n; col++)
+        {
+            std::size_t pivot = col;
+            for (std::size_t row = col + 1; row < std::min(n, col + 3); row++)
+                if (std::abs(matrix[row * n + col]) > std::abs(matrix[pivot * n + col]))
+                    pivot = row;
+            if (pivot != col)
+            {
+                for (std::size_t c = 0; c < n; c++)
+                    std::swap(matrix[col * n + c], matrix[pivot * n + c]);
+                std::swap(b[col], b[pivot]);
+            }
+            for (std::size_t row = col + 1; row < std::min(n, col + 3); row++)
+            {
+                const complex factor = matrix[row * n + col] / matrix[col * n + col];
+                if (factor == complex(0.0))
+                    continue;
+                for (std::size_t c = col; c < std::min(n, col + 4); c++)
+                    matrix[row * n + c] -= factor * matrix[col * n + c];
+                b[row] -= factor * b[col];
+            }
+        }
+        for (std::size_t row = n; row-- > 0;)
+        {
+            complex sum = b[row];
+            for (std::size_t c = row + 1; c < std::min(n, row + 4); c++)
+                sum -= matrix[row * n + c] * b[c];
+            b[row] = sum / matrix[row * n + row];
+        }
+        return b;
+    };
+    // v = s0 + mu (s1 + mu s2).
+    std::vector<complex> v = apply_mu(s2);
+    for (std::size_t i = 0; i < n; i++)
+        v[i] += s1[i];
+    v = apply_mu(v);
+    for (std::size_t i = 0; i < n; i++)
+        psi[i > 0 ? i - 1 : m] = weight * (s0[i] + v[i]);
+}
+
+
 // Band averages need levels only; single-frequency callers also keep the field.
 PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
 {
@@ -801,8 +967,9 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
         march = pade_march(op, propagator, fourth_order);
         // The self-starter: the same step with the source's modal amplitudes
         // folded in.  A source within a grid point of the ground has no node
-        // below it to share the delta with, and takes the Gaussian.
-        if (s.starter == PeStarter::self && s.source_height >= dz)
+        // below it to share the delta with unless psi_0 is carried (the
+        // fourth-order ground), and otherwise takes the Gaussian.
+        if (s.starter == PeStarter::self && (s.source_height >= dz || op.fourth_ground))
         {
             // Its fit is harder than the propagator's -- the amplitude factor
             // rises toward the branch point -- and at a long step it can be
@@ -875,7 +1042,9 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
         std::size_t first;
         double share[4];
         cubic_weights(u, first, share);
-        if (cubic && (first > 0 || op.fourth_ground) && first + 3 <= m)
+        if (op.fourth_ground && first < 3 && first + ground_source_nodes <= m)
+            place_ground_source(psi, m, first, share, weight, op.ground_slope);
+        else if (cubic && (first > 0 || op.fourth_ground) && first + 3 <= m)
         {
             // Four nodes, so that the source sits where it is to fourth order
             // and not second; node 0 is psi[m].
@@ -892,9 +1061,13 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
     // Turbulence: a screen every `spacing` meters, below the absorbing layer.
     const std::size_t screened = std::min(m, static_cast<std::size_t>(physical_top / dz));
     std::unique_ptr<ScreenSource> screens;
+    std::vector<double> row_scale;
+    const bool profiled = turbulent && !s.turbulence_z.empty();
     if (turbulent)
         screens = std::make_unique<ScreenSource>(k_a, s.gamma_t, s.outer_scale, spacing, dz, screened + 1,
                 s.seed);
+    if (profiled)
+        row_scale = turbulence_row_scale(s, dz, screened + 1);
     double next_screen = 0.5 * spacing;
 
     result.relative_level.assign(s.receiver_heights.size(), {});
@@ -967,9 +1140,18 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
         while (turbulent && r >= next_screen)
         {
             const auto& phi = screens->next();
-            for (std::size_t row = 0; row < screened; row++)
-                psi[row] *= std::polar(1.0, phi[row + 1]);
-            psi[m] *= std::polar(1.0, phi[0]);
+            if (profiled)
+            {
+                for (std::size_t row = 0; row < screened; row++)
+                    psi[row] *= std::polar(1.0, row_scale[row + 1] * phi[row + 1]);
+                psi[m] *= std::polar(1.0, row_scale[0] * phi[0]);
+            }
+            else
+            {
+                for (std::size_t row = 0; row < screened; row++)
+                    psi[row] *= std::polar(1.0, phi[row + 1]);
+                psi[m] *= std::polar(1.0, phi[0]);
+            }
             next_screen += spacing;
         }
         for (std::size_t k = 0; k < s.receiver_heights.size(); k++)
@@ -1008,14 +1190,16 @@ PeResult solve_pe(const PeSetup& setup)
     return solve_pe_impl(setup, true);
 }
 
-PeResult solve_pe_band(PeSetup setup, double center, int samples)
+PeResult solve_pe_band(PeSetup setup, double center, int samples, int realizations)
 {
-    return solve_pe_bands({setup}, {center}, samples)[0];
+    return solve_pe_bands({setup}, {center}, samples, realizations)[0];
 }
 
 std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const std::vector<double>& centers,
-        int samples)
+        int samples, int realizations)
 {
+    if (realizations < 1)
+        throw std::invalid_argument("solve_pe_bands: realizations must be positive");
     if (setups.size() != centers.size())
         throw std::invalid_argument("solve_pe_bands: one setup per band");
     if (samples < 1)
@@ -1026,9 +1210,10 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
     // frequency reports on the same range grid (solve_pe), so the energies add
     // point by point.
     const std::size_t per_band = static_cast<std::size_t>(samples);
+    const std::size_t per_sample = static_cast<std::size_t>(realizations);
     struct Task
     {
-        std::size_t band, sample;
+        std::size_t band, sample, realization;
         double frequency;
     };
     std::vector<Task> tasks;
@@ -1042,20 +1227,24 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
             // (bias +0.1 to +0.35 dB) and 0.4 to 1.5 upwind, against 0.015 to 0.04
             // and 0.1 to 1 with the midpoints.  One sample is the center.
             const double offset = ((static_cast<double>(k) + 0.5) / static_cast<double>(per_band) - 0.5) / 3.0;
-            tasks.push_back({b, k, centers[b] * std::pow(2.0, offset)});
+            for (std::size_t q = 0; q < per_sample; q++)
+                tasks.push_back({b, k, q, centers[b] * std::pow(2.0, offset)});
         }
     std::stable_sort(tasks.begin(), tasks.end(),
             [](const Task& x, const Task& y) { return x.frequency > y.frequency; });
-    std::vector<std::vector<PeResult>> each(centers.size(), std::vector<PeResult>(per_band));
+    // [band][sample * realizations + realization]
+    std::vector<std::vector<PeResult>> each(centers.size(), std::vector<PeResult>(per_band * per_sample));
     const unsigned threads = setups[0].threads > 0 ? setups[0].threads : default_thread_count();
     parallel_chunks(tasks.size(), threads, [&](std::size_t lo, std::size_t hi) {
         for (std::size_t t = lo; t < hi; t++)
         {
             PeSetup one = setups[tasks[t].band];
             one.frequency = tasks[t].frequency;
-            // With turbulence each frequency is also its own realization.
-            one.seed = setups[tasks[t].band].seed + static_cast<unsigned>(tasks[t].sample);
-            each[tasks[t].band][tasks[t].sample] = solve_pe_impl(one, false);
+            // With turbulence each frequency is also its own realization, and
+            // each further realization has seeds of its own.
+            one.seed = setups[tasks[t].band].seed + static_cast<unsigned>(tasks[t].sample)
+                    + static_cast<unsigned>(per_band * tasks[t].realization);
+            each[tasks[t].band][tasks[t].sample * per_sample + tasks[t].realization] = solve_pe_impl(one, false);
         }
     });
     // Summed in frequency order whatever order they ran in, so the result is
@@ -1064,6 +1253,8 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
     for (std::size_t b = 0; b < centers.size(); b++)
     {
         PeResult& sum = out[b];
+        // samples * realizations, which is samples, the same double, for one.
+        const int divisor = samples * realizations;
         sum.range = each[b][0].range;
         sum.relative_level.assign(each[b][0].relative_level.size(), std::vector<double>(sum.range.size(), 0.0));
         for (const PeResult& one : each[b])
@@ -1071,7 +1262,7 @@ std::vector<PeResult> solve_pe_bands(const std::vector<PeSetup>& setups, const s
             for (std::size_t rcv = 0; rcv < sum.relative_level.size(); rcv++)
             {
                 for (std::size_t q = 0; q < std::min(sum.range.size(), one.range.size()); q++)
-                    sum.relative_level[rcv][q] += std::pow(10.0, 0.1 * one.relative_level[rcv][q]) / samples;
+                    sum.relative_level[rcv][q] += std::pow(10.0, 0.1 * one.relative_level[rcv][q]) / divisor;
             }
         }
         // Release this band before reducing the next, keeping sample order intact.

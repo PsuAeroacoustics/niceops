@@ -26,8 +26,11 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdlib>
 #include <exception>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -39,6 +42,38 @@ inline unsigned default_thread_count()
 {
     const unsigned hardware = std::thread::hardware_concurrency();
     return hardware > 0 ? hardware : 1u;
+}
+
+// The PE tools' thread count (niceops_propagation_table, niceops_pe_compare):
+// `requested` (their --threads) when it is positive, else the environment's
+// NICEOPS_THREADS when that is set and not empty, else default_thread_count().
+// A NICEOPS_THREADS that is not a positive integer is refused, not ignored, so a
+// typo cannot quietly take every core of a shared machine.  The PE's results do
+// not depend on the count (see parallel_chunks), only its wall time does.
+inline unsigned tool_thread_count(int requested)
+{
+    if (requested > 0)
+        return static_cast<unsigned>(requested);
+    if (requested < 0)
+        throw std::runtime_error("--threads must be 0 (the default) or a positive count");
+    const char* text = std::getenv("NICEOPS_THREADS");
+    if (text == nullptr || *text == '\0')
+        return default_thread_count();
+    const std::string value(text);
+    std::size_t used = 0;
+    unsigned long count = 0;
+    try
+    {
+        count = std::stoul(value, &used);
+    }
+    catch (const std::exception&)
+    {
+        used = 0;
+    }
+    if (used != value.size() || value.find_first_not_of("0123456789") != std::string::npos || count == 0
+            || count > 65536)
+        throw std::runtime_error("NICEOPS_THREADS='" + value + "' is not a positive thread count");
+    return static_cast<unsigned>(count);
 }
 
 // How many chunks to cut per worker.  Enough that a slow core holds up only its
