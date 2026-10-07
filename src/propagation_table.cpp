@@ -320,7 +320,34 @@ bool PropagationTable::lookup(double bearing_degrees, double source_height, doub
                         continue;
                     corners[used++] = {index(bearing_index[b], s0 + s, h0 + h, r0 + r) * nbands, weight};
                 }
-    for (std::size_t band = bands.first; band < bands.last; band++)
+    // Accumulate four bands together, reusing each corner's address and weight.
+    // Each band's additions retain their original order; independent sums let
+    // the compiler overlap/vectorize them without reassociating the reduction.
+    std::size_t band = bands.first;
+    for (; band < bands.last && bands.last - band >= 4; band += 4)
+    {
+        const std::size_t c0 = bands.column[band], c1 = bands.column[band + 1];
+        const std::size_t c2 = bands.column[band + 2], c3 = bands.column[band + 3];
+        double s0 = 0.0, s1 = 0.0, s2 = 0.0, s3 = 0.0;
+        for (int c = 0; c < used; c++)
+        {
+            const double* row = values_.data() + corners[c].offset;
+            const double weight = corners[c].weight;
+            s0 += weight * row[c0];
+            s1 += weight * row[c1];
+            s2 += weight * row[c2];
+            s3 += weight * row[c3];
+        }
+        // Keep the same write/failure order as the scalar path.
+        const double sums[4] = {s0, s1, s2, s3};
+        for (std::size_t k = 0; k < 4; k++)
+        {
+            if (!std::isfinite(sums[k]))
+                return false;
+            out[band + k] = sums[k];
+        }
+    }
+    for (; band < bands.last; band++)
     {
         const std::size_t column = bands.column[band];
         double sum = 0.0;

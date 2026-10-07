@@ -6,26 +6,38 @@ using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the 
 
 namespace {
 
-// The body of the standard's absorption expression, with the relaxation
-// frequencies passed in rather than recomputed.  Both entry points below go
-// through this, so there is one copy of the formula to check against the
-// Python.
-double attenuation(double pressure, double temperature, double relaxation_nitrogen,
-        double relaxation_oxygen, double frequency)
+// Frequency-independent terms of the standard's expression. A profile builds
+// a spectrum at every height, so compute these once for the whole band array.
+struct AbsorptionTerms
 {
-    const double t_ratio = temperature / reference_temperature;
-    const double f2 = frequency * frequency;
+    double relaxation_nitrogen, relaxation_oxygen;
+    double classical, oxygen_scale, nitrogen_scale, temperature_scale;
 
-    // Classical and rotational losses, then the vibrational relaxation of
-    // oxygen and of nitrogen.
-    const double classical = 1.84e-11 * (reference_pressure / pressure) * std::sqrt(t_ratio);
-    const double oxygen = 0.01275 * std::exp(-2239.1 / temperature)
-            / (relaxation_oxygen + f2 / relaxation_oxygen);
-    const double nitrogen = 0.1068 * std::exp(-3352.0 / temperature)
-            / (relaxation_nitrogen + f2 / relaxation_nitrogen);
+    explicit AbsorptionTerms(const Atmosphere& atmosphere)
+        : relaxation_nitrogen(atmosphere.relaxation_frequency_nitrogen()),
+          relaxation_oxygen(atmosphere.relaxation_frequency_oxygen())
+    {
+        const double t_ratio = atmosphere.temperature / reference_temperature;
+        classical = 1.84e-11 * (reference_pressure / atmosphere.pressure) * std::sqrt(t_ratio);
+        oxygen_scale = 0.01275 * std::exp(-2239.1 / atmosphere.temperature);
+        nitrogen_scale = 0.1068 * std::exp(-3352.0 / atmosphere.temperature);
+        temperature_scale = std::pow(t_ratio, -2.5);
+    }
 
-    return 8.686 * f2 * (classical + std::pow(t_ratio, -2.5) * (oxygen + nitrogen));
-}
+    // Keep scalar and batch evaluation on the same compiled expression. GCC
+    // otherwise contracts them differently after inlining into their callers,
+    // breaking the exact scalar/batch agreement even though only ULPs differ.
+#if defined(__GNUC__) || defined(__clang__)
+    [[gnu::noinline]]
+#endif
+    double attenuation(double frequency) const
+    {
+        const double f2 = frequency * frequency;
+        const double oxygen = oxygen_scale / (relaxation_oxygen + f2 / relaxation_oxygen);
+        const double nitrogen = nitrogen_scale / (relaxation_nitrogen + f2 / relaxation_nitrogen);
+        return 8.686 * f2 * (classical + temperature_scale * (oxygen + nitrogen));
+    }
+};
 
 } // namespace
 
@@ -64,24 +76,19 @@ double Atmosphere::relaxation_frequency_nitrogen() const
 
 double Atmosphere::attenuation_coefficient(double frequency) const
 {
-    return attenuation(pressure, temperature, relaxation_frequency_nitrogen(),
-            relaxation_frequency_oxygen(), frequency);
+    return AbsorptionTerms(*this).attenuation(frequency);
 }
 
 std::vector<double> absorption_coefficients(const Atmosphere& atmosphere,
         const std::vector<double>& frequencies)
 {
-    // Hoisted: these cost a pow() and an exp() each and do not vary with
-    // frequency.
-    const double relaxation_nitrogen = atmosphere.relaxation_frequency_nitrogen();
-    const double relaxation_oxygen = atmosphere.relaxation_frequency_oxygen();
+    const AbsorptionTerms terms(atmosphere);
 
     std::vector<double> coefficients;
     coefficients.reserve(frequencies.size());
     for (const double frequency : frequencies)
     {
-        coefficients.push_back(attenuation(atmosphere.pressure, atmosphere.temperature,
-                relaxation_nitrogen, relaxation_oxygen, frequency));
+        coefficients.push_back(terms.attenuation(frequency));
     }
     return coefficients;
 }

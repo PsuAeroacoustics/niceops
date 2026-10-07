@@ -198,3 +198,71 @@ Two suggested optimizations were deliberately **not** taken:
 The reason the intuition fails is worth keeping: observers sweep a 120×120 ground grid, so consecutive evaluations land on neighboring (phi, θ) cells and the gather is already cache-resident. It was never miss-bound. Measuring the ceiling first — point `eval` at a fixed L1-resident slab and time it — costs ten minutes and would have shown this before any restructuring.
 
 **The SEL integral takes its time step from the trajectory, not from `-s`.** `sound_exposure_level` weights every sample by a time step, and `-s` is only the resampling step for `adapt()` — the two coincide *only* when `adapt()` actually resamples onto that grid, and it is commented out in `main`. Every shipped track is sampled at 0.02 s, so using the 0.5 s default as the weight overstated every level by exactly `10*log10(0.5/0.02) = 13.98 dB`. `main` now derives the step via `uniform_sample_interval()` and logs it, warning if the sampling is not uniform. If you re-enable `adapt()`, it resamples to `-s` and the derived step follows automatically.
+
+## Absorption setup and multi-band table lookup (2026-10-07)
+
+Two further optimizations retain the formulas and per-band summation order:
+
+- `AbsorptionTerms` computes the classical loss, two exponential numerators, and
+  temperature power once per spectrum, alongside the existing relaxation frequencies.
+  This reduces repeated transcendental work when building layered absorption profiles.
+  Its evaluation method stays out of line so GCC uses the same compiled expression for
+  scalar and batch calls; otherwise inlining contracts them differently and breaks their
+  exact-equality test.
+- `PropagationTable::lookup` accumulates four bands together, sharing each corner's
+  address and weight. The scalar tail handles remaining bands. Each sum still starts
+  at zero and visits corners in the original order. No approximation, reduced precision,
+  changed table resolution, or change to which states are evaluated is involved.
+
+A local Apple Clang `-O3 -std=c++17` microbenchmark, without LTO, measured the following
+medians over seven alternating before/after runs:
+
+| Work | Before | After | Time reduction |
+| --- | ---: | ---: | ---: |
+| 2 million 24-band table lookups | 0.454 s | 0.216 s | 52% |
+| 200,000 24-band absorption spectra | 0.0881 s | 0.0225 s | 74% |
+
+The synthetic table had four bearings, three source heights, three receiver heights,
+four ranges, and sinusoidal cell values; queries varied bearing and range through the
+interior. Absorption used temperatures from 280 to 299.9 K and bands from 50 Hz in
+third-octave steps. These are routine timings, not whole-run speedups; database I/O and
+other propagation work remain unchanged.
+
+A separate before/after comparison covered 10,000 table queries (240,000 band values)
+and 64 atmospheres (1,536 coefficients). Clang matched bit for bit throughout. GCC 16
+matched table values bit for bit; absorption differed by at most 5.6e-17 dB/m due to
+compiler rounding. Tests retain exact scalar/batch agreement and check the original
+absorption formula across temperature, pressure, and humidity ranges. Table tests sweep
+even/uneven grids, reordered columns, partial band ranges, and NaN gaps.
+
+## Atmospheric profile setup and queries (2026-10-07, second pass)
+
+`AtmosphereProfile::with_hydrostatic_pressure` previously integrated from the bottom
+again for every output level, making N levels cost O(N²) segment evaluations. A running
+integral now makes it O(N), with the same addition order and the same ground reference.
+The original endpoint interpolation is preserved separately from the complete-segment
+prefix so that even its rounding stays the same.
+
+`AtmosphereProfile::at` now locates the common height cell once for temperature, humidity,
+and pressure instead of three times. `wind_at` likewise shares one search between its
+two components. Neither interpolation nor endpoint holding changes.
+
+Seven alternating Apple Clang `-O3 -std=c++17` microbenchmarks on a synthetic 2,000-level
+profile (uneven temperatures, heights 2.5 m apart) gave these medians:
+
+| Work | Before | After |
+| --- | ---: | ---: |
+| 20 complete hydrostatic pressure reconstructions | 95.69 ms | 0.390 ms |
+| 2 million paired atmosphere/wind queries | 142.34 ms | 78.32 ms |
+
+The approximately 245x pressure speedup applies to a large profile; small profiles have
+much less work to save. Field queries took 45% less time. These are setup/query timings,
+not end-to-end acoustic speedups. Exact-equality tests against the original pressure
+walk and interpolation formulas pass under both GCC 16 and Apple Clang, including
+singleton profiles, uneven layers, nearly isothermal layers, and surface-reference offsets.
+
+A source/receiver-height cache for propagation tables was rejected in this pass. Five
+alternating GCC runs on B407/S-76D trajectory 197421AC with `tables/ground_model_test.nc`,
+`--gridstep 328 -j 1 --humidity 20`, gave 2.953 versus 2.952 s median acoustic time
+(6,208,943 evaluations); output was byte-identical, but the additional cache and public
+API did not earn their complexity.

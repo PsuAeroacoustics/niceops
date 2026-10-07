@@ -37,18 +37,29 @@ enum class Unit
     inferred, // the header did not, and the values did
 };
 
-// Linear interpolation of `values` against ascending `heights`, held at the
-// end values outside them.
-double interpolate(const std::vector<double>& heights, const std::vector<double>& values, double z)
+// All fields share a height axis. Locate it once per query, preserving the
+// endpoint holds (which must not read the neighboring field value).
+struct ProfileCell
+{
+    std::size_t lo, hi;
+    double fraction;
+
+    double interpolate(const std::vector<double>& values) const
+    {
+        return lo == hi ? values[lo] : values[lo] + fraction * (values[hi] - values[lo]);
+    }
+};
+
+ProfileCell locate_profile(const std::vector<double>& heights, double z)
 {
     if (heights.size() == 1 || z <= heights.front())
-        return values.front();
+        return {0, 0, 0.0};
     if (z >= heights.back())
-        return values.back();
+        return {heights.size() - 1, heights.size() - 1, 0.0};
     const auto upper = std::upper_bound(heights.begin(), heights.end(), z);
     const std::size_t i = static_cast<std::size_t>(upper - heights.begin()) - 1;
     const double t = (z - heights[i]) / (heights[i + 1] - heights[i]);
-    return values[i] + t * (values[i + 1] - values[i]);
+    return {i, i + 1, t};
 }
 
 } // namespace
@@ -56,23 +67,11 @@ double interpolate(const std::vector<double>& heights, const std::vector<double>
 Atmosphere AtmosphereProfile::at(double z) const
 {
     Atmosphere air;
-    air.temperature = interpolate(height, temperature, z);
-    air.relative_humidity = interpolate(height, relative_humidity, z);
-    if (height.size() == 1 || z <= height.front())
-    {
-        air.pressure = pressure.front();
-    }
-    else if (z >= height.back())
-    {
-        air.pressure = pressure.back();
-    }
-    else
-    {
-        const auto upper = std::upper_bound(height.begin(), height.end(), z);
-        const std::size_t i = static_cast<std::size_t>(upper - height.begin()) - 1;
-        const double t = (z - height[i]) / (height[i + 1] - height[i]);
-        air.pressure = pressure[i] * std::pow(pressure[i + 1] / pressure[i], t);
-    }
+    const auto cell = locate_profile(height, z);
+    air.temperature = cell.interpolate(temperature);
+    air.relative_humidity = cell.interpolate(relative_humidity);
+    air.pressure = cell.lo == cell.hi ? pressure[cell.lo]
+            : pressure[cell.lo] * std::pow(pressure[cell.hi] / pressure[cell.lo], cell.fraction);
     return air;
 }
 
@@ -80,7 +79,8 @@ std::array<double, 2> AtmosphereProfile::wind_at(double z) const
 {
     if (!has_wind())
         return {0.0, 0.0};
-    return {interpolate(height, wind_east, z), interpolate(height, wind_north, z)};
+    const auto cell = locate_profile(height, z);
+    return {cell.interpolate(wind_east), cell.interpolate(wind_north)};
 }
 
 AtmosphereProfile AtmosphereProfile::with_hydrostatic_pressure(double surface_pressure) const
@@ -117,8 +117,24 @@ AtmosphereProfile AtmosphereProfile::with_hydrostatic_pressure(double surface_pr
     filled.pressure.resize(height.size());
     const double at_ground = from_bottom(0.0);
     const double scale = standard_gravity / dry_air_gas_constant;
-    for (std::size_t i = 0; i < height.size(); i++)
-        filled.pressure[i] = surface_pressure * std::exp(-scale * (from_bottom(height[i]) - at_ground));
+    filled.pressure[0] = surface_pressure * std::exp(-scale * (0.0 - at_ground));
+    // Every successive knot shares the integral through the earlier complete
+    // segments. Retain the original left-to-right additions, rather than walk
+    // back from the bottom for each knot (quadratic in the number of levels).
+    double prefix = 0.0;
+    for (std::size_t i = 1; i < height.size(); i++)
+    {
+        const double dz = height[i] - height[i - 1];
+        // The old walk interpolated the final segment's endpoint, even at a
+        // knot. Keep that rounding separately from the complete segment used
+        // in the next knot's prefix.
+        const double t_z = temperature[i - 1]
+                + (height[i] - height[i - 1]) / (height[i] - height[i - 1])
+                        * (temperature[i] - temperature[i - 1]);
+        const double at_height = prefix + segment(dz, temperature[i - 1], t_z);
+        filled.pressure[i] = surface_pressure * std::exp(-scale * (at_height - at_ground));
+        prefix += segment(dz, temperature[i - 1], temperature[i]);
+    }
     return filled;
 }
 

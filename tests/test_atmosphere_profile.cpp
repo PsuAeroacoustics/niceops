@@ -675,3 +675,73 @@ TEST_CASE("write_atmosphere_profile reads back as the profile it wrote", "[atmos
         }
     }
 }
+
+TEST_CASE("hydrostatic prefix agrees with independent walks from the bottom", "[atmosphere_profile]")
+{
+    // Nonuniform layers, near-isothermal segments, and ground below, inside,
+    // or above the profile exercise both integrals and the surface reference.
+    for (std::size_t count : {std::size_t(1), std::size_t(64)})
+        for (double offset : {-1000.0, -100.0, 0.0, 123.0})
+        {
+            AtmosphereProfile p;
+            for (std::size_t i = 0; i < count; i++)
+            {
+                p.height.push_back(offset + 7.0 * i + 0.05 * i * i);
+                p.temperature.push_back(i % 4 == 0 ? 280.0 : i % 4 == 1 ? 280.0 + 1e-8
+                                                                                      : 275.0 + 0.1 * i);
+                p.relative_humidity.push_back(50.0);
+            }
+            auto segment = [](double dz, double a, double b) {
+                return std::abs(b - a) < 1e-9 * a ? dz / a : dz * std::log(b / a) / (b - a);
+            };
+            auto walk = [&](double z) {
+                if (z <= p.height.front())
+                    return (z - p.height.front()) / p.temperature.front();
+                double sum = 0.0;
+                for (std::size_t i = 0; i + 1 < count; i++)
+                {
+                    if (z <= p.height[i + 1])
+                    {
+                        const double t = p.temperature[i] + (z - p.height[i])
+                                / (p.height[i + 1] - p.height[i]) * (p.temperature[i + 1] - p.temperature[i]);
+                        return sum + segment(z - p.height[i], p.temperature[i], t);
+                    }
+                    sum += segment(p.height[i + 1] - p.height[i], p.temperature[i], p.temperature[i + 1]);
+                }
+                return sum + (z - p.height.back()) / p.temperature.back();
+            };
+            const auto filled = p.with_hydrostatic_pressure(101.325);
+            const double ground = walk(0.0);
+            for (std::size_t i = 0; i < count; i++)
+                REQUIRE(filled.pressure[i] == 101.325 * std::exp(-(9.80665 / 287.05)
+                        * (walk(p.height[i]) - ground)));
+        }
+}
+
+TEST_CASE("profile fields share a cell without changing knots or endpoint holds", "[atmosphere_profile]")
+{
+    auto p = lapsing_profile();
+    p.wind_east = p.relative_humidity;
+    p.wind_north = p.temperature;
+    auto reference = [&](const std::vector<double>& values, double z, bool logarithmic) {
+        if (p.height.size() == 1 || z <= p.height.front())
+            return values.front();
+        if (z >= p.height.back())
+            return values.back();
+        const auto hi = std::upper_bound(p.height.begin(), p.height.end(), z);
+        const std::size_t i = static_cast<std::size_t>(hi - p.height.begin()) - 1;
+        const double f = (z - p.height[i]) / (p.height[i + 1] - p.height[i]);
+        return logarithmic ? values[i] * std::pow(values[i + 1] / values[i], f)
+                           : values[i] + f * (values[i + 1] - values[i]);
+    };
+    for (double z : {-10.0, 0.0, 0.01, 123.0, 250.0, 250.00001, 2999.99, 3000.0, 3100.0})
+    {
+        const auto air = p.at(z);
+        const auto wind = p.wind_at(z);
+        CHECK(air.temperature == reference(p.temperature, z, false));
+        CHECK(air.relative_humidity == reference(p.relative_humidity, z, false));
+        CHECK(air.pressure == reference(p.pressure, z, true));
+        CHECK(wind[0] == reference(p.wind_east, z, false));
+        CHECK(wind[1] == reference(p.wind_north, z, false));
+    }
+}

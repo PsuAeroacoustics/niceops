@@ -205,16 +205,18 @@ TEST_CASE("lookup finds the same cell on even and uneven axes, at the knots and 
         }
         for (int k = 0; k < 40; k++)
             axes.ranges.push_back(even ? 50.0 + 12.5 * k : 50.0 * std::pow(1.07, k));
-        axes.bands = {100.0, 200.0};
+        axes.bands = {100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0};
         std::vector<double> values;
         for (std::size_t b = 0; b < axes.bearings.size(); b++)
             for (std::size_t s = 0; s < axes.source_heights.size(); s++)
                 for (std::size_t h = 0; h < axes.receiver_heights.size(); h++)
                     for (std::size_t r = 0; r < axes.ranges.size(); r++)
-                        for (std::size_t f = 0; f < 2; f++)
+                        for (std::size_t f = 0; f < axes.bands.size(); f++)
                             values.push_back(std::sin(0.7 * static_cast<double>(b + 3 * s + 5 * h + 7 * r + f)));
         const PropagationTable table(axes, values, "test", false);
-        const auto bands = table.match_bands({100.0, 200.0}, 0, 2);
+        // Reordered columns, a nonzero first band, and five active bands cover
+        // the four-band path and its scalar tail against the independent sum.
+        const auto bands = table.match_bands({80.0, 400.0, 125.0, 250.0, 100.0, 200.0, 800.0}, 1, 6);
         auto at_cell = [&](std::size_t b, std::size_t s, std::size_t h, std::size_t r, std::size_t f) {
             return table.at(b % axes.bearings.size(), s, h, r, f);
         };
@@ -255,8 +257,8 @@ TEST_CASE("lookup finds the same cell on even and uneven axes, at the knots and 
                         u /= 30.0;
                         const std::size_t b0 = std::min(static_cast<std::size_t>(u), std::size_t(11));
                         const double fb = u - static_cast<double>(b0);
-                        double expected[2] = {0.0, 0.0};
-                        for (std::size_t f = 0; f < 2; f++)
+                        double expected[7] = {};
+                        for (std::size_t f = bands.first; f < bands.last; f++)
                             for (int cb = 0; cb < 2; cb++)
                                 for (int cs = 0; cs < 2; cs++)
                                     for (int ch = 0; ch < 2; ch++)
@@ -265,14 +267,14 @@ TEST_CASE("lookup finds the same cell on even and uneven axes, at the knots and 
                                             const double weight = (cb ? fb : 1.0 - fb) * (cs ? fs : 1.0 - fs)
                                                     * (ch ? fh : 1.0 - fh) * (cr ? fr : 1.0 - fr);
                                             if (weight != 0.0)
-                                                expected[f] += weight * at_cell(b0 + cb, s0 + cs, h0 + ch, r0 + cr, f);
+                                                expected[f] += weight * at_cell(b0 + cb, s0 + cs, h0 + ch, r0 + cr, bands.column[f]);
                                         }
-                        double out[2] = {};
+                        double out[7] = {};
                         INFO("even " << even << " bearing " << bearing << " source " << sources[i] << " receiver "
                                      << receivers[j] << " range " << ranges[k]);
                         REQUIRE(table.lookup(bearing, sources[i], receivers[j], ranges[k], bands, out));
-                        REQUIRE(out[0] == Catch::Approx(expected[0]).margin(1e-12));
-                        REQUIRE(out[1] == Catch::Approx(expected[1]).margin(1e-12));
+                        for (std::size_t f = 0; f < 7; f++)
+                            REQUIRE(out[f] == Catch::Approx(expected[f]).margin(1e-12));
                         checked++;
                     }
                 }
@@ -312,4 +314,26 @@ TEST_CASE("write a bump table for the windowed-versus-marched CTests", "[.bump_t
     PropagationTable(axes, values, "bump", false, {{"note", "bump_test"}}).save("tables/bump_test.nc");
     // The same values again, saying the table carries absorption: the run then adds none of its own.
     PropagationTable(axes, values, "bump", true, {{"note", "bump_test"}}).save("tables/bump_absorbed_test.nc");
+}
+
+TEST_CASE("multi-band table lookup preserves gaps and inactive bands", "[propagation_table]")
+{
+    PropagationTable::Axes axes {{0.0}, {10.0, 20.0}, {0.0}, {10.0},
+            {100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0}};
+    for (std::size_t gap = 0; gap < axes.bands.size(); gap++)
+    {
+        std::vector<double> values(14, 3.0);
+        values[7 + gap] = std::numeric_limits<double>::quiet_NaN();
+        const PropagationTable table(axes, values, "gaps", false);
+        for (std::size_t count = 0; count <= axes.bands.size(); count++)
+        {
+            const auto bands = table.match_bands(axes.bands, 0, count);
+            double out[7] = {-1, -1, -1, -1, -1, -1, -1};
+            // The neighboring NaN has zero weight exactly on the lower knot.
+            REQUIRE(table.lookup(0, 10, 0, 10, bands, out));
+            for (std::size_t b = 0; b < 7; b++)
+                CHECK(out[b] == (b < count ? 3.0 : -1.0));
+            CHECK(table.lookup(0, 15, 0, 10, bands, out) == (gap >= count));
+        }
+    }
 }

@@ -118,7 +118,7 @@ TEST_CASE("ISO 9613-1 absorption coefficients match panam", "[atmosphere]")
 
 TEST_CASE("absorption_coefficients matches the per-frequency call", "[atmosphere]")
 {
-    // The batch form hoists the relaxation frequencies out of the loop; that is
+    // The batch form hoists the atmospheric terms out of the loop; that is
     // the only difference, and it must not be a numerical one.
     Atmosphere atmosphere;
     atmosphere.temperature = 288.15;
@@ -134,8 +134,8 @@ TEST_CASE("absorption_coefficients matches the per-frequency call", "[atmosphere
     REQUIRE(batch.size() == bands.size());
     for (std::size_t i = 0; i < bands.size(); i++)
     {
-        // Bit-exact: same expression, same order, only the relaxation
-        // frequencies computed once instead of per call.
+        // Bit-exact: same expression, same order, with the atmospheric terms
+        // computed once instead of per call.
         REQUIRE(batch[i] == atmosphere.attenuation_coefficient(bands[i]));
     }
 
@@ -177,4 +177,31 @@ TEST_CASE("implausible air is named, with the likely unit slip", "[atmosphere][v
     REQUIRE_FALSE(humidity_problem(-5.0).empty());
     REQUIRE_FALSE(humidity_problem(250.0).empty());
     REQUIRE_FALSE(humidity_problem(std::nan("")).empty());
+}
+
+TEST_CASE("batched absorption preserves the original formula across atmospheres", "[atmosphere]")
+{
+    const std::vector<double> bands = {0.0, 16.0, 50.0, 125.0, 1000.0, 4000.0, 10000.0, 20000.0};
+    for (double temperature : {150.0, 250.0, 293.15, 350.0})
+        for (double pressure : {20.0, 86.0, 101.325, 120.0})
+            for (double humidity : {0.0, 20.0, 55.0, 100.0})
+            {
+                Atmosphere a;
+                a.temperature = temperature;
+                a.pressure = pressure;
+                a.relative_humidity = humidity;
+                const auto batch = absorption_coefficients(a, bands);
+                const double rn = a.relaxation_frequency_nitrogen();
+                const double ro = a.relaxation_frequency_oxygen();
+                for (std::size_t i = 0; i < bands.size(); i++)
+                {
+                    const double f2 = bands[i] * bands[i];
+                    const double tr = temperature / reference_temperature;
+                    const double classical = 1.84e-11 * (reference_pressure / pressure) * std::sqrt(tr);
+                    const double oxygen = 0.01275 * std::exp(-2239.1 / temperature) / (ro + f2 / ro);
+                    const double nitrogen = 0.1068 * std::exp(-3352.0 / temperature) / (rn + f2 / rn);
+                    const double expected = 8.686 * f2 * (classical + std::pow(tr, -2.5) * (oxygen + nitrogen));
+                    REQUIRE(batch[i] == expected);
+                }
+            }
 }
