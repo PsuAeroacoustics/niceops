@@ -136,10 +136,25 @@ int main(int argc, char** argv)
     app.add_flag("--no_boundary_law", no_boundary_law,
             "resolved: each band's boundary is its resolved profile's layered boundary itself, not "
             "band_boundary's interpolation toward the fit's (a sensitivity).");
+    int threads = 0;
+    app.add_option("-j,--threads", threads,
+            "Worker threads for the PE's bands (default 0: NICEOPS_THREADS when it is set, else one per "
+            "hardware thread).  The output does not depend on it.")
+            ->check(CLI::NonNegativeNumber);
     CLI11_PARSE(app, argc, argv);
     const bool resolved = shadow_model == "resolved";
 
     Logger::instance().set_file("log/pe_compare.log");
+    unsigned workers = 1;
+    try
+    {
+        workers = tool_thread_count(threads);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "niceops_pe_compare: " << e.what() << std::endl;
+        return 1;
+    }
     const LengthUnit unit = units == "m" ? meters : feet;
     const double z_s = source_height * unit.to_meters;
     const double z_r = receiver_height * unit.to_meters;
@@ -176,7 +191,7 @@ int main(int argc, char** argv)
         transition.set_cramped_ground(cramped_ground == "ray" ? CrampedGround::ray
                         : cramped_ground == "series"            ? CrampedGround::series
                                                                 : CrampedGround::straight,
-                &ground);
+                &ground, workers);
     transition.set_tangent_decay(tangent_decay);
 
     std::vector<PeResult> pe(bands.size());
@@ -210,11 +225,12 @@ int main(int argc, char** argv)
         setup.gamma_t = gamma_t;
         setup.outer_scale = outer_scale;
         setup.seed = seed + 1000u * static_cast<unsigned>(b);
+        setup.threads = workers;
     }
     if (!no_pe)
     {
         std::cerr << "PE: " << bands.size() << " bands x " << samples << " frequencies on "
-                  << default_thread_count() << " threads..." << std::endl;
+ << workers << (workers == 1 ? " thread..." : " threads...") << std::endl;
         pe = solve_pe_bands(setups, bands, samples);
     }
 

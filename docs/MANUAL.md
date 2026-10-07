@@ -2414,6 +2414,16 @@ rest were steeper than the PE's 50 degrees and took the ground model. Against th
 footprint it reads -0.32 dB mean (-0.9 to 0 dB, 5th to 95th percentile; -2.8 dB at worst), the
 standard lapse rate's mild upward refraction thinning the field at long range.
 
+**Threads.** `-j`/`--threads N` sets how many worker threads the table's marches (and the
+ground model's pairs, and `--validation_csv`'s reference solves) run on. The default, 0, takes
+the environment variable `NICEOPS_THREADS` when it is set and otherwise one thread per hardware
+thread, as before; `--threads` wins over the variable. A `NICEOPS_THREADS` that is not a
+positive whole number is refused rather than ignored. On a shared machine, `export
+NICEOPS_THREADS=6` keeps every table build to six cores without editing scripts. The table is
+the same bits at any count, turbulent tables included (each march's seeds are fixed before the
+work is dealt out); CTest checks that (`pe_tools_thread_count_is_invisible`).
+`niceops_pe_compare` takes the same option and variable for its bands.
+
 Interpolating between source heights in dB is where the table's error is. Over the ground model it
 shrinks fourfold as the spacing halves, but the PE's band-averaged field is only as smooth as
 its band. Build tables a few wavelengths apart at the highest band, or densely at the lowest
@@ -2518,7 +2528,9 @@ in the PE (below).  With `--shadow_model resolved` it writes a fifth column per 
 `resolved_<f>`: `stratified`'s rays with the transition `niceops --shadow_model resolved` takes,
 with `--shadow_phase` and `--cramped_ground` as there, and `--tangent_decay`,
 `--fit_linear_boundary` and `--no_boundary_law` as sensitivities (see "Low sources near grazing").
-Its per-band h_f, r_s(f), r_l(f) and r_b go to stderr.
+Its per-band h_f, r_s(f), r_l(f) and r_b go to stderr. `-j`/`--threads` (default: the
+environment's `NICEOPS_THREADS`, else one per hardware thread) sets the threads the PE's bands
+run on, as for `niceops_propagation_table`; the output does not depend on it.
 
 The PE is marched in range by a split-step Padé method (Collins, JASA 93, 1736 (1993)): one
 range step applies the one-way equation's exact propagator, replaced by a rational function

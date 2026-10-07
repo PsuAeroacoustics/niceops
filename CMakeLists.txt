@@ -295,6 +295,15 @@ add_test(NAME propagation_table_midpoint_validation COMMAND ${CMAKE_COMMAND}
   -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_validation
   -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_table_validation.cmake
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(check_tables_identical tests/check_tables_identical.cpp)
+target_link_libraries(check_tables_identical niceops_core)
+add_test(NAME pe_tools_thread_count_is_invisible COMMAND ${CMAKE_COMMAND}
+  -DTOOL=$<TARGET_FILE:niceops_propagation_table>
+  -DCOMPARE_TOOL=$<TARGET_FILE:niceops_pe_compare>
+  -DCOMPARE=$<TARGET_FILE:check_tables_identical>
+  -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_threads
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_table_threads.cmake
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME propagation_table_reciprocity_and_turbulence COMMAND ${CMAKE_COMMAND}
   -DTOOL=$<TARGET_FILE:niceops_propagation_table>
   -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_turbulence

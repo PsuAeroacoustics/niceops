@@ -27,6 +27,9 @@
 // --gamma_t, --outer_scale, --realizations, --seed and --gamma_profile add
 // turbulence by phase screens (pe.hpp): a report-only reference, off by
 // default.
+//
+// -j/--threads sets the worker threads (default: NICEOPS_THREADS when it is set,
+// else one per hardware thread); the table is the same bits at any count.
 
 #include <CLI/CLI.hpp>
 
@@ -102,6 +105,7 @@ int main(int argc, char** argv)
     std::string gamma_profile;
     std::string validation_csv;
     int validation_samples = 21;
+    int threads = 0;
     double validation_max_error = 1.0;
     app.add_option("--method", method, "pe (default) or ground_model.")->check(CLI::IsMember({"pe", "ground_model"}));
     app.add_option("--atmosphere", atmosphere_file,
@@ -154,6 +158,10 @@ int main(int argc, char** argv)
             "pe: CSV of z (in --units) and gamma (m^-2/3) for a strength that varies with height: each screen "
             "row scaled by sqrt(gamma(z) / gamma_t), an approximation to a field whose statistics change with "
             "height.");
+    app.add_option("-j,--threads", threads,
+            "Worker threads (default 0: NICEOPS_THREADS when it is set, else one per hardware thread).  "
+            "The table does not depend on it.")
+            ->check(CLI::NonNegativeNumber);
     app.add_option("-o,--output", output, "The table to write (netCDF).")->required();
     CLI11_PARSE(app, argc, argv);
 
@@ -168,6 +176,7 @@ int main(int argc, char** argv)
                     == std::filesystem::weakly_canonical(output))
                 throw std::runtime_error("--validation_csv must differ from the table output");
         }
+        const unsigned workers = tool_thread_count(threads);
         const LengthUnit unit = units == "m" ? meters : feet;
         std::vector<double> turbulence_z, turbulence_gamma;
         if (!gamma_profile.empty())
@@ -284,7 +293,7 @@ int main(int argc, char** argv)
         if (method == "ground_model")
         {
             description = "straight rays and the spherical-wave ground model (ground_effect.hpp)";
-            parallel_chunks(ns * nh, default_thread_count(), [&](std::size_t lo, std::size_t hi) {
+            parallel_chunks(ns * nh, workers, [&](std::size_t lo, std::size_t hi) {
                 for (std::size_t job = lo; job < hi; job++)
                 {
                     const std::size_t s = job / nh, h = job % nh;
@@ -340,8 +349,9 @@ int main(int argc, char** argv)
             request.seed = seed;
             request.turbulence_z = turbulence_z;
             request.turbulence_gamma = turbulence_gamma;
+            request.threads = workers;
             values = build_pe_table(request, [&](const std::string& what) {
-                std::cerr << what << ": "
+                std::cerr << what << " on " << workers << (workers == 1 ? " thread" : " threads") << ": "
                           << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << " s"
                           << std::endl;
             });
@@ -413,6 +423,7 @@ int main(int argc, char** argv)
                             setup.c = c;
                             setup.max_angle = max_angle;
                             setup.points_per_wavelength = points_per_wavelength > 0.0 ? 2.0 * points_per_wavelength : 20.0;
+                            setup.threads = workers;
                         }
                         reference = solve_pe_bands(setups, bands, validation_samples);
                     }
