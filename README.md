@@ -22,7 +22,8 @@ implemented in C++17. [docs/HISTORY.md](docs/HISTORY.md) covers the port and the
 moved results.
 
 This file covers building NICE-OPS and running a first case. **[The manual](docs/MANUAL.md)**
-covers every option, the theory behind each model, and how each model was checked.
+covers every option, the reasoning behind each model, and how each model was checked.
+**[The theory](docs/THEORY.md)** gives the equations and the references they come from.
 
 ## Building
 
@@ -178,6 +179,8 @@ how well each one validates.
 
 - [`docs/MANUAL.md`](docs/MANUAL.md): how a prediction is made, the full option reference, the
   propagation models, their checks against exact and full-wave solutions, and performance.
+- [`docs/THEORY.md`](docs/THEORY.md): the models as equations, from the source spheres through
+  propagation to the metrics, with references.
 - [`docs/FIDELITY.md`](docs/FIDELITY.md): fidelity status and validation against measurement,
   experimental source improvements, and propagation-table error checks.
 - [`docs/HISTORY.md`](docs/HISTORY.md): the D original, the C++ port, the departures from D,

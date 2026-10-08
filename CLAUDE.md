@@ -26,7 +26,8 @@ removed once the port was verified complete. They remain in history at `c74bab3`
   user manual: every option, the theory behind each model, and how each was checked.
   User-facing detail goes there, not in the README. Developer detail goes in `docs/internals/`.
   Project history (the D original, the port, changes that moved results) goes in
-  `docs/HISTORY.md`.
+  `docs/HISTORY.md`. The models' equations and references go in `docs/THEORY.md`; a change
+  to a model's equations updates it.
 
 ## Build
 

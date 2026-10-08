@@ -63,7 +63,8 @@ NICE-OPS is a source–path–receiver model. The source is a database of noise 
 the aircraft, one per operating condition. The path carries the level from the aircraft to
 each microphone. The receiver integrates the level history it sees into an exposure metric.
 The steps below run for every trajectory state and every observer: on the demo case, 6,551
-states by 14,400 observers.
+states by 14,400 observers. [THEORY.md](THEORY.md) states every model as equations, with its
+references.
 
 ### The operating condition
 
