@@ -6,7 +6,7 @@
 // Port of trajectory.d.  Parses the 27-column NASA/FAA AC state CSV into
 // metric State records, computing non-dimensional flight parameters:
 // CT = LF*W/(rho*V_tip^2*pi*R^2), mu = v/V_tip, and flight path angles fpa
-// (vertical) vs fpa_e (relative to the TPP normal).  adapt() spline-smooths
+// (to the horizontal) vs fpa_e (to the tip-path plane, asin(v . n/|v|)).  adapt() spline-smooths
 // the trajectory on a uniform dt grid; watts_trim() crops it to the region
 // of interest.
 //

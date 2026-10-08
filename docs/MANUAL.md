@@ -266,7 +266,10 @@ direction from the source to the observer gives two angles (`lookup_angles` in
 
 The level in that direction is interpolated bilinearly between the sphere's grid nodes,
 periodically in φ. Unless every sphere in the database stores its upper half, a direction
-above the tip-path plane reads its mirror image below.
+above the tip-path plane reads its mirror image below. θ is not periodic: in a database whose
+θ nodes stop short of 0° or 180°, a direction past the last node falls in the cell that joins
+the last node to the first, and is read by a slight linear extrapolation from them. That is
+the D original's `periodic_bilinear_interp`, kept for port fidelity.
 
 ### Propagation to the microphone
 
@@ -554,7 +557,7 @@ record, is biased less.
 | Option | Meaning |
 | --- | --- |
 | `-a`, `--ambient` | Ambient level in dB, added to every sample's level in energy (two equal levels give +3 dB). Off unless given. It used to be added as pressure amplitude, as the D original did, which read up to 3 dB high. |
-| `-q`, `--qsam` / `--no-qsam` | Use the flight path angle relative to the tip-path-plane normal rather than the vertical. On by default. |
+| `-q`, `--qsam` / `--no-qsam` | Take the flight path angle as the velocity's angle to the tip-path plane (Q-SAM) rather than to the horizontal. On by default. |
 | `-s`, `--step` | Resampling step for trajectory adaptation. **Not** the SEL integration step, which comes from the trajectory's own sampling. |
 | `--units` | Length unit for the command line and for every file carrying a length: `ft` (default) or `m`. See **Units**. |
 | `--trim` | Crop each trajectory from this x, in `--units`, to its lowest/slowest point. Off by default; it changes which part of the flight is integrated. |
@@ -1096,7 +1099,7 @@ reached the fastest +35-degree condition gave an infinite SEL.
 ### Speed reference
 
 A database's flight conditions come from some velocity: μ = |v| / V_tip, the path angle
-asin(v_z / |v|), and, unless `--nose` says otherwise, the sphere's azimuth reference, which is v
+(asin(v · n̂ / |v|) under `--qsam`, the default, or asin(v_z / |v|) under `--no-qsam`), and, unless `--nose` says otherwise, the sphere's azimuth reference, which is v
 projected into the tip-path plane. Every database so far took v over the ground. `--speed_reference air` takes it
 through the air instead: the ground velocity less the profile's wind at each state's height,
 turned into the local frame by `--frame_bearing`. The load factor, and so CT, stays inertial,
@@ -1264,7 +1267,9 @@ The atmosphere comes from the vehicle JSON's `Atmosphere` section:
 Only `density` is required, as before. Pressure defaults to the one implied by that file's
 own density and temperature rather than to a standard day — `S-76D.json` pairs 1.225 kg/m³
 with 300.71 K, which is not an ISA point, so assuming 101.325 kPa would contradict its own
-numbers. `--humidity`, `--temperature` and `--pressure` override all of it.
+numbers. `--humidity`, `--temperature` and `--pressure` override all of it for propagation:
+absorption and the speed of sound. The thrust coefficient C<sub>T</sub> always takes the vehicle
+file's `density`, whatever they say.
 
 ### Stratified atmosphere
 
@@ -1272,7 +1277,11 @@ numbers. `--humidity`, `--temperature` and `--pressure` override all of it.
 band's absorption through it. Along a straight path, what a band loses is the ISO 9613-1
 coefficient's mean over the heights the path spans, times the path length. That is the
 fine-layered form of what certification does with 30 m layers (14 CFR 36 Appendix A), and a
-unit test checks the two agree.
+unit test checks the two agree. Two approximations come with it. The mean is taken over the
+whole height span, including the part inside the sphere radius that the path length excludes.
+And under `--refraction` the mean is still taken over the straight span between source and
+microphone, not the heights the curved ray visits; the ray's own arc length is what it
+multiplies.
 
 On the demo track with the B407 database, `atmospheres/isa.csv` moves 90% of the footprint by
 -0.10 to -0.005 dB (mean -0.04 dB, extremes -0.57 and +1.11 dB), against a homogeneous run at
@@ -1465,10 +1474,13 @@ which it was. Use `neutral` unless the class is known from measurements.
 
 ### Ground effect
 
-`--ground_effect` adds the interference between the direct ray and the one reflected off the
-ground — Chien–Soroka over a Delany–Bazley impedance, with Chessell's boundary-loss correction
-and band averaging, ported from panam's `ega()` and pinned against it in
-`tests/test_ground_effect.cpp`.
+The ground effect is the interference between the direct ray and the one reflected off the
+ground. It is **on by default** wherever the spectral path runs, and `--no-ground_effect` turns
+it off. The model is Chien–Soroka's spherical-wave reflection coefficient with Chessell's band
+averaging, ported from panam's `ega()` and pinned against it in
+`tests/test_ground_effect.cpp`. The impedance is Delany–Bazley by default; `--impedance_model`
+selects Miki, variable porosity or a hard-backed Delany–Bazley layer instead (below). The
+equations are in [THEORY.md](THEORY.md#5-ground-effect).
 
 **It is a gain, not a loss**, despite the name: over rigid ground with the receiver on the
 surface it tends to +6 dB, the pressure doubling of a perfect reflector. It goes sharply
@@ -1937,8 +1949,9 @@ reception time, the shadow's decay and floor, and the peak search.
 What the layers change is near the ground. A log-law wind is zero at the ground, so for
 propagation upwind the fastest air is at the surface. Snell's law then fixes the limiting
 ray's launch angle from the speeds at the source and at the ground alone, whatever lies
-between. For a source at 100 m in `atmospheres/example_windy.csv`, the layered model's
-upwind shadow begins 535 m out, where a fitted line puts it past 1.6 km.
+between. For a source at 100 m in `atmospheres/example_windy.csv` and a microphone 1.2 m up,
+the layered model's upwind shadow begins 535 m out, where a fitted line puts it past 1.6 km
+(516 m and 1.4 km for a microphone on the ground).
 
 **The wave does not take that boundary at face value.** Rays follow the thin near-ground
 shear layer, but the wave resolves it only once its diffraction length is short against the

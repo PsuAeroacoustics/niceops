@@ -133,7 +133,9 @@ ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, d
 // Every ray that reaches the receiver from above, but the primary: the direct
 // rays of the families after the one layered_direct_eigenray takes (`primary`
 // is its result, which counts only if lit), and, in a surface duct, the rays
-// that bounce off the ground first.  With `bounced_only`, only those.
+// that bounce off the ground first.  With `bounced_only`, the dipping family's
+// direct rays are dropped (the linear fit stands for them); the bounced rays
+// and those turned back from aloft are kept.
 //
 // A duct is air above the source faster than all of it below, so that a ray
 // that reaches the ground turns aloft and comes back down.  A ray of

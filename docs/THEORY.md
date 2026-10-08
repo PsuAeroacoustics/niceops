@@ -151,7 +151,9 @@ This form of $\phi$ holds below the tip-path plane. $\theta$ is 0° ahead and 18
 $\phi$ is 0° straight down along $-\hat{\mathbf{n}}$, +90° to starboard, −90° to port and,
 above the plane, ±180° straight up. A direction above the tip-path plane reads its mirror
 image below unless every sphere stores its upper half. The level in a direction is interpolated
-bilinearly between grid nodes, periodically in $\phi$. The blend in §2.3 is applied at each of
+bilinearly between grid nodes, periodically in $\phi$. $\theta$ has no period: past the last
+$\theta$ node the cell joining the last and first nodes extrapolates slightly, a quirk kept
+from the D original. The blend in §2.3 is applied at each of
 the four grid corners first.
 
 ## 3. Trajectories

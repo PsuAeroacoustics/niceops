@@ -62,8 +62,9 @@
       frequency; the run logs the bands.
     - `tests/test_shadow_attenuation.cpp` holds the rate to the exact residue series' slope
       deep in the shadow, 0.02-0.3% on the benchmark grounds. Keep it.
-  - **`ShadowTransition`: the level near a shadow boundary** (`--refraction linear`, point
-    receivers only). Ray theory fails within a couple of diffraction lengths F = 2 k0 l^2 of
+  - **`ShadowTransition`: the level near a shadow boundary** (`--refraction linear` and
+    `stratified`, with `--ground_effect`; point receivers and plates, which get their own
+    table, below). Ray theory fails within a couple of diffraction lengths F = 2 k0 l^2 of
     the boundary; its ground term at the grazing geometry was 10-25 dB low over grass and
     ~5 dB high over rigid ground there. Per band and microphone height, a table V(xi, s) of
     the residue series relative to the ray's own spreading, xi = (r - r_b)/F. Things to keep:
@@ -331,9 +332,10 @@
       on `example_windy.csv`, 57.5 -> 86 s on `example_inversion.csv`). It was +107% and +76%
       before the jumps, the shared samples and the hand-over skip.
   - **The log-law finding.** With zero wind at the ground, the upwind limiting ray is fixed by
-    c(z_s)/c(0) alone. On `example_windy.csv` a 100 m source's upwind shadow starts at 520 m,
-    where the linear fit puts it past 1.2 km; a test pins that. Ray theory probably overstates
-    that shadow at low frequencies, so GFPE (step 7) should adjudicate before either model's
-    shadow levels are trusted.
+    c(z_s)/c(0) alone. On `example_windy.csv` a 100 m source's upwind shadow starts at 516 m
+    for a receiver on the ground (535 m at 1.2 m), where the linear fit puts it at 1.40 km
+    (1.62 km); a test pins the first. Ray theory overstates that shadow at low frequencies:
+    the PE (step 7) confirmed it, and each band's boundary now lies between the two
+    (`ShadowTransition`, above).
   - Costs: 12 s on the demo grid with a point receiver (linear 3.3 s), 35 ms over a
     96-microphone array.

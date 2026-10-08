@@ -410,7 +410,7 @@ void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, 
 // scaled by the curvature that makes r_b.  Fitted on twelve log laws (u* 0.2 -
 // 0.6 m/s, z0 0.01 - 0.1 m, sources 30 and 100 m, 125 Hz - 2 kHz) and held out
 // on atmospheres/example_windy.csv: shadow-edge error against the PE 18.9 dB rms
-// with r_b = r_s, 6.7 dB with the law.  With r_s = r_l, a linear profile, it is
+// with r_b = r_s, 6.8 dB with the law.  With r_s = r_l, a linear profile, it is
 // the one boundary.
 //
 // A flush plate microphone gets the field at the plate's top, receiver_height
