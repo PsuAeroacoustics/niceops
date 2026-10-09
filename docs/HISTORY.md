@@ -54,7 +54,8 @@ multiplier, it covers the DNL normalization, the LAFmax time weighting, the micr
 
 The AS350, B407, Be206L3, EC130, RO-44 and RO-66 databases were built by panam from the 2017
 Noise Abatement flight test. They have been rebuilt several times, most recently on
-2026-10-04 (the AS350 on 2026-10-05). The manual's
+2026-10-04 (the AS350 on 2026-10-05, and RO-44 and RO-66 on 2026-10-08, after their Eglin
+wind profiles had been turned 130° in the sphere build's rays). The manual's
 [Where the 2017 databases come from](MANUAL.md#where-the-2017-databases-come-from) records the
 current recipe, what each rebuild fixed, and the approach-validation statistics before and
 after. The AW139, B205 and S-76D `_fixed_load_factor` files were converted from those aircraft's

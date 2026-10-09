@@ -1051,7 +1051,8 @@ the hover was synthesized from a sphere outside the build, and `DOPPLER_SHIFT_RE
   - Nothing measures 3–17 degrees or the region under the aircraft, so treat the hover there
     as an interpolation.
   - The low ring is the noisier of the two (5 dB held-out rms against 2.8).
-- **AS350, Be206L3, EC130, RO-44 and RO-66** (rebuilt 2026-10-04, the AS350 2026-10-05) take
+- **AS350, Be206L3, EC130, RO-44 and RO-66** (rebuilt 2026-10-04, the AS350 2026-10-05, RO-44
+  and RO-66 again 2026-10-08) take
   the B407's flight recipe and its de-Dopplerized hover source, but no hover correction. Only
   the B407's hovers are tracked: the AS350 flew the same hover cards on day 292, but the
   dataset has no tracking file for them. Their hover is the slowest level pass averaged fore to
@@ -1064,8 +1065,18 @@ the hover was synthesized from a sphere outside the build, and `DOPPLER_SHIFT_RE
   | AS350 | — → 96 | day 291, 1328 mic-runs | +0.76 / 1.76 | +0.70 / 1.49 |
   | Be206L3 | 110 → 110 | day 279, 906 mic-runs | +0.28 / 1.48 | +0.24 / 1.50 |
   | EC130 | 38 → 112 | day 298, 1025 mic-runs | +0.19 / 3.17 | +0.70 / 2.70 |
-  | RO-44 | 50 → 83 | day 229, 585 mic-runs | +0.31 / 1.55 | +0.12 / 1.27 |
-  | RO-66 | 87 → 88 | day 236, 876 mic-runs | +0.28 / 1.06 | +0.86 / 1.57 |
+  | RO-44 | 50 → 83 | day 229, 585 mic-runs | +0.31 / 1.55 | +0.04 / 1.16 |
+  | RO-66 | 87 → 88 | day 236, 876 mic-runs | +0.28 / 1.06 | +0.87 / 1.56 |
+
+  - **RO-44 and RO-66 were rebuilt again on 2026-10-08** for a frame-bearing error in the
+    harness's sphere build. Its stratified rays took the track frame's +x bearing as 270° for
+    every aircraft, but the Eglin layout these two flew runs along 140°, so the LIDAR winds
+    were rotated by 130° in 55 of RO-44's 86 runs and 82 of RO-66's 98. Nothing else changed:
+    the recipe, panam eeb040b and NICE-OPS e13577e's ray tool are the 2026-10-04 build's, and
+    every straight-ray sphere came out bit-identical. Before the fix RO-44 scored
+    +0.12 / 1.27 and RO-66 +0.86 / 1.57. RO-44's gain is below 20 degrees (0–5 degrees, rms
+    2.36 → 1.94; 5–10 degrees, 1.41 → 1.23); RO-66 is unchanged. Predictions were never
+    affected: they fit each track's own bearing.
 
   - **AS350's gain is at low elevation.** At 5–10 degrees its over-prediction falls from
     +2.73 / 3.46 to +1.59 / 2.29; above 20 degrees nothing moves, and a +0.6 dB bias overhead
