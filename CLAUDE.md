@@ -14,8 +14,10 @@ scattered observer set) from a flight trajectory and a rotor-noise "sphere" data
 built by panam).
 
 The implementation is C++17 and lives in `src/`. It began as a port of a D original, which is
-why several comments reference D semantics. Those comments are load-bearing: the port reproduces
-the D reference bit-for-bit on the demo case, and the goldens come from it. The D sources were
+why several comments reference D semantics. Those comments are load-bearing: the port reproduced
+the D reference on the demo case to 1e-9 (a few ULPs), and the state golden still comes from it.
+The SEL golden has since departed from D on purpose (the 4x EAA multiplier, the spreading cap;
+see `docs/HISTORY.md`). The D sources were
 removed once the port was verified complete. They remain in history at `c74bab3` (on
 `origin/no-stk`), which is what to check out if you need the oracle again.
 

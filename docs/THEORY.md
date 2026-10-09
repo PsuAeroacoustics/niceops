@@ -284,6 +284,13 @@ $\rho_0 = 1.2$ kg/m³. For the layer, $Z_c = 1 + 9.08X^{-0.754} + 11.9iX^{-0.732
 $k_c = k\,(1 + 10.8X^{-0.70} + 10.3iX^{-0.595})$. The models use $\beta = 1/Z$, and a ground with
 $\mathrm{Re}\,\beta \le 0$ is refused as non-passive.
 
+**The convention for $\alpha_e$.** The variable-porosity term $c\,\alpha_e/(8\pi\gamma f)$ is what a
+first-order (WKB) solution gives for porosity $\Omega_0 e^{-\alpha z}$ with isothermal compressibility,
+taking $\alpha_e = \alpha/\Omega_0$. The form usually quoted, $0.436(1+i)\sqrt{\sigma_e/f} + 19.48\,i\alpha_e/f$,
+has twice the coefficient, so its $\alpha_e$ is defined differently: halve an $\alpha_e$ fitted in that
+form before passing it to `--porosity_rate`. The printed eq. (10) of [22] has not been checked. The
+2017 site ground uses $\alpha_e = 0$.
+
 ### 5.2 The spherical-wave reflection coefficient
 
 For a source at height $h_s$ and receiver at $h_r$, a horizontal distance $d$ apart, the direct

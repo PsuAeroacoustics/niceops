@@ -14,9 +14,13 @@ using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the 
 
 namespace {
 
-// Chessell's coefficients for the broadband (third-octave averaged) form.
-constexpr double spherical_spreading_coefficient = 0.727477;
-constexpr double ground_reflection_coefficient = 6.325159;
+// Chessell's band-average constants for the broadband (third-octave averaged) form:
+// averaging cos(2 pi f' tau + arg Q) over [f 2^-1/6, f 2^1/6] gives
+// cos(center f tau + arg Q) sin(width f tau)/(width f tau), with
+// center = pi (2^1/6 + 2^-1/6) and width = pi (2^1/6 - 2^-1/6).  (panam's ega()
+// called them a "ground reflection" and a "spherical spreading" coefficient.)
+constexpr double band_width_constant = 0.727477;
+constexpr double band_center_constant = 6.325159;
 
 // |w| up to which reflection_coefficient_bounds() samples Q; beyond it the
 // bound is analytic.  panam once cut the boundary-loss term to zero here,
@@ -278,7 +282,7 @@ void excess_ground_attenuation(const GroundModel& ground,
         // Re(Q)cos p - Im(Q)sin p -- the same number without the arg() (an
         // atan2) or the abs() (a hypot) that reach it the long way.
         const double image_norm = image_r * image_r + image_i * image_i;
-        const double ground_phase = ground_reflection_coefficient * frequency_delay;
+        const double ground_phase = band_center_constant * frequency_delay;
         const double coherent
                 = image_r * std::cos(ground_phase) - image_i * std::sin(ground_phase);
 
@@ -293,7 +297,7 @@ void excess_ground_attenuation(const GroundModel& ground,
             // sin(x)/x, the band-averaging factor. It is the reason the delay
             // has to be strictly positive: at zero delay the two paths are the
             // same path and the ratio is 0/0.
-            const double spherical_phase = spherical_spreading_coefficient * frequency_delay;
+            const double spherical_phase = band_width_constant * frequency_delay;
             cross *= std::sin(spherical_phase) / spherical_phase;
         }
 

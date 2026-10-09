@@ -59,6 +59,8 @@ inline constexpr double water = 1.0e6;
 //   miki                 one parameter, sigma: Z = 1 + 5.50 X^-0.632 + i 8.43 X^-0.632
 //   variable_porosity    sigma_e and alpha_e (1/m): their eq. (10),
 //                        Z = (1+i) sqrt(1000 sigma_e/(pi gamma rho0 f)) + i c0 alpha_e/(8 pi gamma f)
+//                        (alpha_e = alpha/Omega0, the WKB form; the often-quoted 19.48 i alpha_e/f
+//                        has twice the coefficient, so halve an alpha_e fitted in that form)
 //   delany_bazley_layer  sigma and a depth d (m): a hard-backed layer, eq. (5),
 //                        Z = Z_c coth(-i k d), Delany-Bazley's Z_c and k (eqs. 4a, 4b)
 // Delany-Bazley is poor for grassland (their Table 2); on the 2017 Amedee data
