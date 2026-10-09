@@ -4,8 +4,10 @@
   equation as the full-wave reference, and `niceops_pe_compare`, which runs one path through
   straight, linear, stratified and PE. Load-bearing:
   - **A finite-difference PE, not the GFPE the roadmap named.** The impedance condition
-    dpsi/dz = -i k beta psi goes straight into the grid (psi_0 eliminated by a one-sided
-    difference), so no surface-wave pole has to be handled by hand. The convention is
+    dpsi/dz = -i k beta psi goes straight into the grid, so no surface-wave pole has to be
+    handled by hand. The default fourth-order ground row carries psi_0 as an unknown (below);
+    only the second-order row (`boundary_order` 2, and Crank–Nicolson) eliminates it by a
+    one-sided difference. The convention is
     exp(-i omega t), as in `ground_effect.cpp`, whose admittance it takes. When speed became
     the question the answer was again not GFPE, which would have brought that pole back and
     splits refraction from diffraction (a step limit exactly where the gradient is strong),
@@ -79,7 +81,10 @@
         psi_2), so the forward sweep takes row 0 a term at a time before the paired loop.
       - *Cubic interpolation at both ends of the path.* The receivers read four nodes,
         and the self-starter's delta function is spread over four with the same weights:
-        by reciprocity a source placed to second order is a receiver read to second order.
+        by reciprocity a source placed to fourth order is a receiver read to fourth order.
+        Within three nodes of the ground the scheme is not symmetric, and
+        `place_ground_source` (pe.cpp) divides out each mode's exact ratio there instead, so
+        a source at any height, node 0 included, self-starts.
     - **`points_per_wavelength` 0 means 10 where all of that holds and 20 where anything
       is second order** (Crank–Nicolson, `vertical_order` 2, `boundary_order` 2). Do not
       run a second-order configuration at 10: it is 0.06-0.19 dB rms and 0.6 at worst.
@@ -94,9 +99,10 @@
       100 m source in the benchmark's upward column (against the residue series), 0.10 dB
       on `example_windy.csv`. Every PE level from before the self-starter carries that,
       so do not take a 0.1 dB offset against a stored run for a regression. The
-      self-starter is within 0.04 dB. A source within a grid point of the ground, or a
-      starter fit that is refused, falls back to the Gaussian; `PeResult::self_started`
-      says which ran.
+      self-starter is within 0.04 dB. The Gaussian runs only for a source within a grid point
+      of the ground on the second-order ground row (which has no psi_0 to share the delta
+      with), or when the starter's fit is refused even at a quarter of the step;
+      `PeResult::self_started` says which ran.
     - **Compare a turbulent run with a still one marched the same way.** Turbulence caps
       the step at the screen spacing, and the field at a point whose reflected ray is
       steeper than `max_angle` depends on the step. `pe_turbulent_mean_field_decays`

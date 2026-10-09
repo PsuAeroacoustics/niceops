@@ -10,7 +10,8 @@
 //   r(x) = c_0 + sum_j c_j / (x - p_j),
 // so a step is one tridiagonal solve per term, (Q - p_j) y_j = psi, whatever
 // its length.  Crank-Nicolson is the one-term case, good for a tenth of a
-// wavelength; seven terms are good for eight wavelengths.
+// wavelength; at the default eight-wavelength step the fit takes about ten
+// terms (twelve under a 0.2 1/s gradient).
 //
 // The coefficients are not Collins' Taylor-series Pade approximant about
 // x = 0.  That one is exact at zero and degrades outward, and here the modes

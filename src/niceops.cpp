@@ -3558,7 +3558,8 @@ int run(int argc, char* argv[])
             "(<stem>_band_frames.nc). Needs the spectral path.");
     app.add_option("-m,--metricfile", metric_file, "File to append overall noise metrics.");
     app.add_option("-b,--observer", observer_file, "Observer file name.");
-    app.add_flag("-q,--qsam,!--no-qsam", qsam, "Extended QSAM (default on; --no-qsam disables)");
+    app.add_flag("-q,--qsam,!--no-qsam", qsam, "Q-SAM flight path angle: the velocity's angle to the tip-path plane, not to the "
+            "horizontal (default on; --no-qsam disables)");
     app.add_option("-S,--state", state_files,
             "Filename to save state data, once per trajectory. With several trajectories and one "
             "name, each is named after its track (<stem>_state.csv).");
