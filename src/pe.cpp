@@ -703,6 +703,11 @@ void place_ground_source(std::vector<complex>& psi, std::size_t m, std::size_t f
             {24.0 * (1.0 + 2.0 * g) / a2, 2.0 * (23.0 + 14.0 * g) / (a2 * a2),
                     (10925.0 + 11162.0 * g + 3456.0 * g * g) / (6.0 * a2 * a2 * a2)},
     };
+    // The series is taken in s, not mu (below); its quadratic term is adjusted
+    // here, before the source vectors are filled from it.
+    constexpr double mu_c = 1.0;
+    for (int node = 0; node < 3; node++)
+        series[node][2] += series[node][1] / mu_c;
     std::vector<complex> s0(n, 0.0), s1(n, 0.0), s2(n, 0.0);
     for (std::size_t k = 0; k < 4; k++)
     {
@@ -724,17 +729,16 @@ void place_ground_source(std::vector<complex>& psi, std::size_t m, std::size_t f
     // first output range carried them: 12.2 dB re free field where the exact
     // field is 5.9 (a 5 ft source over grass at 46 Hz, 15 m out).  With
     // mu_c = 1, about the edge of the propagating spectrum (mu = (k dz)^2 =
-    // 0.39 at ten points a wavelength), that first range reads 6.5 and the
-    // steep angles stay within 0.03 dB (node 0) and 0.06 (node 2) of the
-    // exact field; mu_c = 0.5 and 2 give 6.4 and 6.7 there and 0.09 and 0.05
-    // at the steep angles.  mu_c is fixed a priori, not fitted.
+    // 0.39 at ten points a wavelength), that first range reads 6.6 and the
+    // steep angles stay within 0.01 dB (node 0) and 0.05 (node 2) of the
+    // exact field; mu_c = 0.5 and 2 give 6.5 and 6.8 there and 0.07 and 0.04
+    // at the steep angles.  mu_c is fixed a priori, not fitted.  The
+    // adjustment has to reach s2: applied after s2 was filled (until
+    // 2026-10), it did nothing, and the steep angles were 0.03 and 0.08 off.
     //
     // S x = mu_c (mu_c + mu)^{-1} mu x = mu_c (mu_c M - L)^{-1} (-L x) on the
     // lowest n nodes, zero above: banded, so a dense solve of this size is
     // nothing beside a march.
-    constexpr double mu_c = 1.0;
-    for (int node = 0; node < 3; node++)
-        series[node][2] += series[node][1] / mu_c;
     std::vector<complex> matrix(n * n);
     auto apply_mu = [&](const std::vector<complex>& x) {
         std::vector<complex> b(n);

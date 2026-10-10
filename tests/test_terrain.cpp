@@ -281,6 +281,30 @@ TEST_CASE("The terrain reader honors fill values, units and packing", "[terrain]
     }
 }
 
+TEST_CASE("The terrain reader refuses a coordinate axis that is not 1-D", "[terrain]")
+{
+    // A 2-D latitude used to have its two dimension ids written into one int,
+    // and all its values read into a buffer sized by the first dimension.
+    const auto path = (std::filesystem::temp_directory_path() / "niceops_terrain_2d_axis.nc").string();
+    int ncid = 0;
+    REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &ncid) == NC_NOERR);
+    int dims[2] = {};
+    REQUIRE(nc_def_dim(ncid, "latitude", 2, &dims[0]) == NC_NOERR);
+    REQUIRE(nc_def_dim(ncid, "longitude", 50, &dims[1]) == NC_NOERR);
+    int lat = 0, lon = 0, elevation = 0;
+    REQUIRE(nc_def_var(ncid, "latitude", NC_DOUBLE, 2, dims, &lat) == NC_NOERR);
+    REQUIRE(nc_def_var(ncid, "longitude", NC_DOUBLE, 1, &dims[1], &lon) == NC_NOERR);
+    REQUIRE(nc_def_var(ncid, "elevation", NC_DOUBLE, 2, dims, &elevation) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    const std::vector<double> values(100, 0.0);
+    REQUIRE(nc_put_var_double(ncid, lat, values.data()) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, lon, values.data()) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, elevation, values.data()) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    CHECK_THROWS_WITH(Terrain(path), Catch::Matchers::ContainsSubstring("latitude must be 1-D, not 2-D"));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("The raster resamples the terrain onto the local frame", "[terrain]")
 {
     // Heights defined as a plane in the local frame and written at the grid's

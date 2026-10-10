@@ -18,6 +18,7 @@
 #include "propagation.hpp"
 #include "util/logger.hpp"
 #include "weighting.hpp"
+#include "util/netcdf.hpp"
 #include "util/paths.hpp"
 #include "util/constants.hpp"
 #include "util/rootfind.hpp"
@@ -131,9 +132,10 @@ std::optional<double> read_double_attribute(int ncid, const char* name)
     std::size_t length = 0;
     if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, name, &type, &length))
         return std::nullopt;
+    // One value: nc_get_att_double writes all the attribute holds.
     double value = 0.0;
-    if (NC_NOERR != nc_get_att_double(ncid, NC_GLOBAL, name, &value))
-        input_error("Found but could not read the database attribute ", name, ".");
+    if (length != 1 || NC_NOERR != nc_get_att_double(ncid, NC_GLOBAL, name, &value))
+        input_error("Found but could not read the database attribute ", name, " as one number.");
     return value;
 }
 
@@ -244,8 +246,11 @@ int get_int_scalar(int ncid, const std::string& variable_name, int fallback)
     {
         return fallback;
     }
+    // Element 0 only, as get_scalar reads: nc_get_var_int would write every
+    // value the variable holds.
     int value = fallback;
-    if (NC_NOERR != nc_get_var_int(ncid, varid, &value))
+    const std::size_t first[NC_MAX_VAR_DIMS] = {};
+    if (NC_NOERR != nc_get_var1_int(ncid, varid, first, &value))
     {
         input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
     }
@@ -272,6 +277,10 @@ int get_array(int ncid, const std::string& variable_name, std::size_t countp, st
     }
     else
     {
+        // A 1-D variable: nc_get_vara reads one start and count per dimension.
+        int ndims = 0;
+        if (NC_NOERR != nc_inq_varndims(ncid, varid, &ndims) || ndims != 1)
+            input_error("Variable ", variable_name, " in ncid ", ncid, " must be 1-D.");
         std::size_t startp = 0;
         values.resize(countp);
         static_assert(std::is_same_v<T, double>, "arrays are read as double");
@@ -1288,6 +1297,11 @@ Database::Database(const std::string& datafile_path)
             // pass over the sphere at load time and saves a cache miss per
             // condition per band on every one of ~94M evaluations.
             std::vector<double> sphere_amplitudes(phis.size() * thetas.size() * n_bands);
+            // nc_get_var reads every value the variable holds, so it must hold
+            // exactly this many.
+            if (netcdf::element_count(group_id, amplitude_id) != sphere_amplitudes.size())
+                input_error("Database error: amplitude for sphere ", i, " does not hold ", phis.size(), " x ",
+                        thetas.size(), " x ", n_bands, " values (phi, theta, frequency).");
             if (NC_NOERR
                     != nc_get_var_double(group_id, amplitude_id, sphere_amplitudes.data()))
                 input_error("Database error: could not read amplitude for sphere ", i, ".");

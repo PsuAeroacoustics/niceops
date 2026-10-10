@@ -2494,7 +2494,7 @@ self-starter at all. The source vector now divides each of those nodes by its ex
 function of the mode's vertical wavenumber and of the ground's admittance applied as an
 operator (`place_ground_source` in `src/pe.cpp` has the derivation). A source at 0 to 3.5
 grid spacings then agrees with the receiver read at the same height to 0.003 dB at grazing and
-within 0.1 dB at 45°, and with the exact field over rigid ground and grass alike
+within 0.06 dB at 45°, and with the exact field over rigid ground and grass alike
 (`tests/test_pe.cpp`). Sources from four spacings up are placed exactly as before. In tables
 built before this, the 5 ft row's 50-100 Hz bands were up to 0.39 dB off past the first range
 (0.12 dB mean); nothing else moved by more than 0.0002 dB.
@@ -2969,6 +2969,12 @@ these in mind. The largest is the first:
   length) used to put the shadow boundary kilometers out and flush microphones 22–28 dB low;
   profiles without such a floor move by under 0.001 dB
   ([Refraction through the profile's layers](#refraction-through-the-profiles-layers)).
+- **The PE self-starter's ground source** now applies the second-order correction its
+  derivation calls for (October 2026); it had been computed and then discarded. It only affects
+  sources within three grid spacings of the ground, mostly a PE table's flush-microphone rows
+  in a reciprocal march. Against the exact field at 17–45° those rows moved from 0.03–0.08 dB
+  off to 0.01–0.05; at grazing nothing moved by more than 0.001 dB
+  ([Propagation loss tables](#propagation-loss-tables)).
 
 ### The 4x EAA multiplier
 

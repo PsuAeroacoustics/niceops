@@ -148,8 +148,18 @@ void parallel_chunks(std::size_t count, unsigned threads, Body body)
 
     std::vector<std::thread> pool;
     pool.reserve(workers - 1);
-    for (std::size_t w = 0; w + 1 < workers; w++)
-        pool.emplace_back(pull);
+    // A thread that cannot be started (std::system_error, when the process is
+    // out of threads) leaves the work to those that were: the chunks are the
+    // same whoever pulls them.  Letting it propagate would destroy the
+    // started, joinable threads, which terminates the process.
+    try
+    {
+        for (std::size_t w = 0; w + 1 < workers; w++)
+            pool.emplace_back(pull);
+    }
+    catch (...)
+    {
+    }
     pull();
     for (auto& worker : pool)
         worker.join();

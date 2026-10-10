@@ -8,6 +8,7 @@
 #include <netcdf.h>
 
 #include "util/logger.hpp"
+#include "util/netcdf.hpp"
 #include "util/paths.hpp"
 
 namespace niceops {
@@ -163,10 +164,15 @@ PropagationTable PropagationTable::load(const std::string& path)
         }
     } closer {ncid};
 
+    // Every read below is shape-checked first: netCDF writes all the values a
+    // variable or attribute holds, whatever buffer it is handed (util/netcdf.hpp).
     int version = 0;
-    if (nc_get_att_int(ncid, NC_GLOBAL, "propagation_table_version", &version) != NC_NOERR)
+    const auto version_length = netcdf::attribute_length(ncid, NC_GLOBAL, "propagation_table_version");
+    if (!version_length)
         input_error("Propagation table ", path, " has no propagation_table_version attribute: it is not "
                                                 "one, or it predates the format.");
+    if (*version_length != 1 || nc_get_att_int(ncid, NC_GLOBAL, "propagation_table_version", &version) != NC_NOERR)
+        input_error("Propagation table ", path, ": propagation_table_version must be one integer.");
     if (version != format_version)
         input_error("Propagation table ", path, " is format version ", version, "; this build reads ",
                 format_version, ".");
@@ -182,25 +188,21 @@ PropagationTable PropagationTable::load(const std::string& path)
         if (nc_inq_dimid(ncid, axis_names[k], &dim) != NC_NOERR || nc_inq_dimlen(ncid, dim, &length) != NC_NOERR
                 || nc_inq_varid(ncid, axis_names[k], &var) != NC_NOERR)
             input_error("Propagation table ", path, " has no '", axis_names[k], "' axis.");
+        const auto shape = netcdf::dimension_names(ncid, var);
+        if (!shape || *shape != std::vector<std::string> {axis_names[k]})
+            input_error("Propagation table ", path, ": the '", axis_names[k], "' axis must run along its own "
+                                                    "dimension, and only that.");
+        const auto product = netcdf::checked_product(count, length);
+        if (!product)
+            input_error("Propagation table ", path, ": its axes are too long to hold.");
         targets[k]->resize(length);
         nc_check(nc_get_var_double(ncid, var, targets[k]->data()), std::string("reading ") + axis_names[k], path);
-        count *= length;
+        count = *product;
     }
     int level = 0;
     if (nc_inq_varid(ncid, "relative_level", &level) != NC_NOERR)
         input_error("Propagation table ", path, " has no 'relative_level' variable.");
-    int ndims = 0;
-    int dims[NC_MAX_VAR_DIMS] = {};
-    nc_inq_varndims(ncid, level, &ndims);
-    nc_inq_vardimid(ncid, level, dims);
-    for (int k = 0; k < 5 && ndims == 5; k++)
-    {
-        char name[NC_MAX_NAME + 1] = {};
-        nc_inq_dimname(ncid, dims[k], name);
-        if (std::string(name) != axis_names[k])
-            ndims = -1;
-    }
-    if (ndims != 5)
+    if (netcdf::dimension_names(ncid, level) != std::vector<std::string>(axis_names, axis_names + 5))
         input_error("Propagation table ", path, ": relative_level must be dimensioned (bearing, source_height, "
                                                 "receiver_height, range, band).");
     std::vector<double> values(count);
@@ -215,7 +217,11 @@ PropagationTable PropagationTable::load(const std::string& path)
         return value;
     };
     int absorption = 0;
-    nc_get_att_int(ncid, NC_GLOBAL, "includes_absorption", &absorption);
+    if (const auto length = netcdf::attribute_length(ncid, NC_GLOBAL, "includes_absorption"))
+    {
+        if (*length != 1 || nc_get_att_int(ncid, NC_GLOBAL, "includes_absorption", &absorption) != NC_NOERR)
+            input_error("Propagation table ", path, ": includes_absorption must be one integer.");
+    }
     std::map<std::string, std::string> provenance;
     int attributes = 0;
     nc_inq_natts(ncid, &attributes);

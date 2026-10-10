@@ -120,11 +120,13 @@ TEST_CASE("a source near or on the ground is where it is, as a receiver there is
     // self-starter at all.  Against the exact field, at grazing (200-1000 m)
     // and at 17-45 degrees (60-200 m) from a 60 m receiver, over rigid ground
     // and grass, the source agrees with the receiver read at the same height
-    // (reciprocity) within 0.003 dB at grazing and 0.1 at the steep angles,
+    // (reciprocity) within 0.003 dB at grazing and 0.07 at the steep angles,
     // and with the exact field (Weyl-van der Pol over grass) within 0.02 and
-    // 0.1.  The steep worst, 0.06-0.08 dB, is a source at 2-2.5 dz seen at
+    // 0.07.  The steep worst, 0.04-0.06 dB, is a source at 2-2.5 dz seen at
     // 45 degrees: node 2's weight, a second-order series in a bounded
-    // variable (pe.cpp).  At node 0, the flush microphone, it is 0.03.
+    // variable (pe.cpp).  At node 0, the flush microphone, it is 0.01.  The
+    // steep margin is 0.07 so that the series' second-order adjustment has to
+    // take effect: without it the worst was 0.08.
     for (const bool rigid : {true, false})
         for (const double f : {125.0, 500.0})
         {
@@ -162,8 +164,8 @@ TEST_CASE("a source near or on the ground is where it is, as a receiver there is
                             continue;
                         INFO((rigid ? "rigid" : "grass") << ", " << f << " Hz, source " << u << " dz, r " << r);
                         CHECK(result.relative_level[0][q] == Catch::Approx(reciprocal.relative_level[0][q])
-                                        .margin(steep ? 0.1 : 0.003));
-                        CHECK(result.relative_level[0][q] == Catch::Approx(exact).margin(steep ? 0.1 : 0.02));
+                                        .margin(steep ? 0.07 : 0.003));
+                        CHECK(result.relative_level[0][q] == Catch::Approx(exact).margin(steep ? 0.07 : 0.02));
                         compared++;
                     }
                     CHECK(compared > 5);
