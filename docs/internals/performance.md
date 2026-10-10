@@ -266,3 +266,27 @@ alternating GCC runs on B407/S-76D trajectory 197421AC with `tables/ground_model
 `--gridstep 328 -j 1 --humidity 20`, gave 2.953 versus 2.952 s median acoustic time
 (6,208,943 evaluations); output was byte-identical, but the additional cache and public
 API did not earn their complexity.
+
+**The 2026-10-09 review's three performance candidates were measured before any was built**
+(clang Release with LTO, `-j 1`, five alternating runs, medians; 2026-10-10).
+
+- **LAmax (or NAx) with TA: one pass, taken.** `weighted_maximum` and `time_above` each
+  converted every sample to a mean square and ran the detector (or built the running energy and
+  walked the window pieces) over the same history. On the demo case, adding `--ta_file` to
+  `--lamax_file` cost 0.35 s on 3.56 (fast) and 1.04 s on 4.26 (`leq0.5`).
+  `weighted_maximum_and_time_above` (`util/time_weighting.hpp`) does both in one pass with the
+  same arithmetic: 3.86 → 3.54 s fast and 5.23 → 4.28 s `leq0.5`, back to what LAmax alone
+  cost, with every output byte-identical under all four weightings. The single-output paths are
+  unchanged and are the fused pass's reference in `tests/test_time_weighting.cpp`.
+- **Sharing PE setup across turbulence realizations: rejected.** A realization repeats the
+  vertical operator, the Padé fit, the factorizations and the receiver stencils. Timed as a
+  15 m march against a 1.2 km one (a receiver march at the harness's settings, gamma_T 3e-5,
+  L0 10 m), setup is 23% of a march at 50 Hz but 4-5% above 1 kHz, where a table's time is
+  spent: 6.0% over the 50 Hz-4 kHz third-octave bands. That share also includes the starter,
+  one step and the per-realization screen source, which cannot be shared, so it is a ceiling.
+  Not worth separating march closures that carry mutable scratch.
+- **Reusing the straight-path range in the full-history loop: rejected.** The reception-time
+  range and `level_at_observer` each form `observer - position` and its norm. Replacing the
+  loop's range with a constant, which saves more than sharing it could, saved 0.05 s of 3.14
+  (1.6%) on the broadband demo and nothing measurable on a spectral `--full_history` run: LTO
+  already merges most of it.

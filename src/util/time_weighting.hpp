@@ -361,4 +361,86 @@ inline double time_above(const std::vector<double>& levels, const std::vector<do
     return total;
 }
 
+struct WeightedMaximumAndTimeAbove
+{
+    double maximum; // weighted_maximum's dB
+    double time_above; // time_above's seconds
+};
+
+// weighted_maximum and time_above in one pass, to the bit: a run that asks for
+// LAmax (or NAx) and TA together paid for every mean square, exponential and
+// window piece twice, 10% of the demo case's run under fast weighting and 20%
+// under leq0.5.  The two functions above stay, as the single-output paths and
+// as this one's reference (tests/test_time_weighting.cpp).
+inline WeightedMaximumAndTimeAbove weighted_maximum_and_time_above(const std::vector<double>& levels,
+        const std::vector<double>& durations, LevelWeighting weighting, double threshold_db)
+{
+    if (levels.empty())
+        return {-std::numeric_limits<double>::infinity(), 0.0};
+    const double threshold = detail::mean_square(threshold_db);
+    double total = 0.0;
+    switch (weighting)
+    {
+    case LevelWeighting::instantaneous:
+    {
+        double best = levels.front();
+        for (std::size_t i = 0; i < levels.size(); i++)
+        {
+            best = std::max(best, levels[i]);
+            if (levels[i] > threshold_db)
+                total += durations[i];
+        }
+        return {best, total};
+    }
+    case LevelWeighting::fast:
+    case LevelWeighting::slow:
+    {
+        const double tau = weighting_time_constant(weighting);
+        double y0 = detail::mean_square(levels.front());
+        double best = y0;
+        for (std::size_t i = 0; i < levels.size(); i++)
+        {
+            const double p = detail::mean_square(levels[i]);
+            const double d = durations[i];
+            const double decay = std::exp(-d / tau);
+            const double y1 = p + (y0 - p) * decay;
+            best = std::max(best, y1);
+            const bool above0 = y0 > threshold;
+            const bool above1 = y1 > threshold;
+            if (above0 && above1)
+                total += d;
+            else if (above0)
+                total += std::clamp(tau * std::log((y0 - p) / (threshold - p)), 0.0, d);
+            else if (above1)
+                total += d - std::clamp(tau * std::log((p - y0) / (p - threshold)), 0.0, d);
+            y0 = y1;
+        }
+        return {detail::level_of(best), total};
+    }
+    case LevelWeighting::leq_half_second:
+    {
+        const double window = weighting_time_constant(weighting);
+        const detail::RunningEnergy energy(levels, durations);
+        const double limit = threshold * window;
+        double best = 0.0;
+        detail::for_each_window_piece(energy, window, [&](double t_a, double w_a, double t_b, double w_b) {
+            best = std::max(best, std::max(w_a, w_b));
+            const bool above_a = w_a > limit;
+            const bool above_b = w_b > limit;
+            if (above_a && above_b)
+                total += t_b - t_a;
+            else if (above_a != above_b)
+            {
+                const double f = (limit - w_a) / (w_b - w_a);
+                total += above_a ? f * (t_b - t_a) : (1.0 - f) * (t_b - t_a);
+            }
+        });
+        if (energy.end() <= 0.0)
+            best = energy.power.empty() ? 0.0 : energy.power[0] * window;
+        return {detail::level_of(best / window), total};
+    }
+    }
+    return {-std::numeric_limits<double>::infinity(), total};
+}
+
 } // namespace niceops

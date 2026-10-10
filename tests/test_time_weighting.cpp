@@ -228,6 +228,40 @@ TEST_CASE("slower weightings never read higher", "[time_weighting]")
     }
 }
 
+TEST_CASE("the one-pass maximum and time above are the two functions', to the bit", "[time_weighting]")
+{
+    // Histories with culled stretches, single samples, an empty one, and
+    // thresholds below, through and above the levels, for every weighting.
+    std::mt19937 random(20261010);
+    std::uniform_real_distribution<double> level(40.0, 95.0);
+    std::uniform_real_distribution<double> step(0.005, 0.06);
+    std::uniform_int_distribution<int> length(0, 400);
+    std::bernoulli_distribution culled(0.15);
+    int compared = 0;
+    for (int trial = 0; trial < 60; trial++)
+    {
+        const std::size_t n = trial < 2 ? static_cast<std::size_t>(trial) : static_cast<std::size_t>(length(random));
+        std::vector<double> levels(n);
+        std::vector<double> durations(n);
+        for (std::size_t i = 0; i < n; i++)
+        {
+            levels[i] = trial % 7 == 3 || culled(random) ? silence : level(random);
+            durations[i] = step(random);
+        }
+        for (const auto w : {LevelWeighting::instantaneous, LevelWeighting::fast, LevelWeighting::slow,
+                     LevelWeighting::leq_half_second})
+            for (const double threshold : {30.0, 60.0, 70.0, 80.0, 90.0, 120.0})
+            {
+                const auto both = weighted_maximum_and_time_above(levels, durations, w, threshold);
+                INFO("trial " << trial << ", n " << n << ", " << to_string(w) << ", threshold " << threshold);
+                REQUIRE(both.maximum == weighted_maximum(levels, durations, w));
+                REQUIRE(both.time_above == time_above(levels, durations, w, threshold));
+                compared++;
+            }
+    }
+    REQUIRE(compared == 60 * 4 * 6);
+}
+
 TEST_CASE("a weighting is refused on a history coarser than half its time constant", "[time_weighting]")
 {
     REQUIRE(coarsest_weighting_step(LevelWeighting::fast) == 0.0625);
