@@ -7,6 +7,7 @@
 
 #include "util/constants.hpp"
 #include "util/logger.hpp"
+#include "util/netcdf.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
 
@@ -21,20 +22,39 @@ std::size_t dimension(int ncid, const char* name, const std::string& path)
     return length;
 }
 
-std::vector<double> variable(int ncid, const char* name, std::size_t size, const std::string& path)
+// The variable, which must run along `dimensions`: its length is then their
+// lengths' product.
+std::vector<double> variable(int ncid, const char* name, const std::vector<std::string>& dimensions,
+        const std::string& path)
 {
     int id = 0;
-    std::vector<double> values(size);
-    if (nc_inq_varid(ncid, name, &id) != NC_NOERR || nc_get_var_double(ncid, id, values.data()) != NC_NOERR)
+    if (nc_inq_varid(ncid, name, &id) != NC_NOERR)
         input_error("Plate table ", path, " has no readable '", name, "' variable.");
-    return values;
+    if (netcdf::dimension_names(ncid, id) != dimensions)
+    {
+        std::string expected;
+        for (const auto& dimension : dimensions)
+            expected += (expected.empty() ? "" : ", ") + dimension;
+        input_error("Plate table ", path, ": '", name, "' must be dimensioned (", expected, ").");
+    }
+    auto values = netcdf::read_doubles(ncid, id);
+    if (!values)
+        input_error("Plate table ", path, " has no readable '", name, "' variable.");
+    return std::move(*values);
 }
 
 double attribute(int ncid, const char* name, const std::string& path)
 {
     double value = 0.0;
-    if (nc_get_att_double(ncid, NC_GLOBAL, name, &value) != NC_NOERR)
+    switch (netcdf::single_value(ncid, NC_GLOBAL, name, value))
+    {
+    case netcdf::Single::missing:
         input_error("Plate table ", path, " has no '", name, "' attribute.");
+    case netcdf::Single::not_one_number:
+        input_error("Plate table ", path, ": '", name, "' must be one number.");
+    case netcdf::Single::ok:
+        break;
+    }
     return value;
 }
 
@@ -69,10 +89,10 @@ PlateReceiver PlateReceiver::load(const std::string& path)
     plate.n_sub_ = dimension(ncid, "sub", path);
     const std::size_t n_elevations = dimension(ncid, "elevation", path);
     plate.n_azimuths_ = dimension(ncid, "azimuth", path);
-    plate.centers_ = variable(ncid, "band_center", plate.n_bands_, path);
-    plate.frequencies_ = variable(ncid, "frequency", plate.n_bands_ * plate.n_sub_, path);
-    plate.elevations_ = variable(ncid, "elevation", n_elevations, path);
-    const auto azimuths = variable(ncid, "azimuth", plate.n_azimuths_, path);
+    plate.centers_ = variable(ncid, "band_center", {"band"}, path);
+    plate.frequencies_ = variable(ncid, "frequency", {"band", "sub"}, path);
+    plate.elevations_ = variable(ncid, "elevation", {"elevation"}, path);
+    const auto azimuths = variable(ncid, "azimuth", {"azimuth"}, path);
 
     if (n_elevations < 2 || !std::is_sorted(plate.elevations_.begin(), plate.elevations_.end()))
         input_error("Plate table ", path, " elevations must ascend.");
@@ -99,7 +119,7 @@ PlateReceiver PlateReceiver::load(const std::string& path)
     auto values = std::make_shared<std::vector<double>>(nodes * spectrum * 4, 0.0);
     for (std::size_t part = 0; part < 4; part++)
     {
-        const auto data = variable(ncid, parts[part], spectrum * nodes, path);
+        const auto data = variable(ncid, parts[part], {"band", "sub", "elevation", "azimuth"}, path);
         for (std::size_t s = 0; s < spectrum; s++)
             for (std::size_t node = 0; node < nodes; node++)
                 (*values)[(node * spectrum + s) * 4 + part] = data[s * nodes + node];

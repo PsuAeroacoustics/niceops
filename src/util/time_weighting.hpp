@@ -240,20 +240,43 @@ inline void reception_durations(std::size_t count, double T, const std::vector<d
     }
 }
 
-// The largest time-weighted level of a history, dB.  `durations[i]` is how
-// long sample i lasts in reception time (the same length as `levels`).
-// Returns -infinity for an empty or silent history.
-inline double weighted_maximum(const std::vector<double>& levels,
-        const std::vector<double>& durations, LevelWeighting weighting)
+struct WeightedMaximumAndTimeAbove
+{
+    double maximum; // dB
+    double time_above; // s
+};
+
+// The largest time-weighted level of a history, dB, and the seconds of
+// reception time during which that level exceeds `threshold_db` (strictly): the
+// LAmax and TA metrics, in one pass.  `durations[i]` is how long sample i lasts
+// in reception time (the same length as `levels`).  Each weighting is followed
+// exactly between samples, so a level that crosses the threshold inside a
+// sample is credited to the instant it crosses.  An empty or silent history's
+// maximum is -infinity.  A threshold of +infinity is never exceeded and costs
+// nothing; computing the two apart cost 10% of the demo case's run under fast
+// weighting and 20% under leq0.5 when both were wanted.
+inline WeightedMaximumAndTimeAbove weighted_maximum_and_time_above(const std::vector<double>& levels,
+        const std::vector<double>& durations, LevelWeighting weighting, double threshold_db)
 {
     if (levels.empty())
-        return -std::numeric_limits<double>::infinity();
+        return {-std::numeric_limits<double>::infinity(), 0.0};
+    const double threshold = detail::mean_square(threshold_db);
+    double total = 0.0;
     switch (weighting)
     {
     case LevelWeighting::instantaneous:
+    {
         // The level itself rather than a round trip through the mean square,
-        // so this is the number --lamax_file wrote before, to the bit.
-        return *std::max_element(levels.begin(), levels.end());
+        // so the maximum is the number --lamax_file wrote before, to the bit.
+        double best = levels.front();
+        for (std::size_t i = 0; i < levels.size(); i++)
+        {
+            best = std::max(best, levels[i]);
+            if (levels[i] > threshold_db)
+                total += durations[i];
+        }
+        return {best, total};
+    }
     case LevelWeighting::fast:
     case LevelWeighting::slow:
     {
@@ -261,64 +284,15 @@ inline double weighted_maximum(const std::vector<double>& levels,
         // relaxes from y toward p_i as exp(-s / tau), monotonically, so its
         // largest value is at a sample's end (or the settled start).
         const double tau = weighting_time_constant(weighting);
-        double y = detail::mean_square(levels.front());
-        double best = y;
-        for (std::size_t i = 0; i < levels.size(); i++)
-        {
-            const double p = detail::mean_square(levels[i]);
-            const double decay = std::exp(-durations[i] / tau);
-            y = p + (y - p) * decay;
-            best = std::max(best, y);
-        }
-        return detail::level_of(best);
-    }
-    case LevelWeighting::leq_half_second:
-    {
-        const double window = weighting_time_constant(weighting);
-        const detail::RunningEnergy energy(levels, durations);
-        double best = 0.0;
-        // A linear piece peaks at one of its ends.
-        detail::for_each_window_piece(energy, window, [&](double, double w_a, double, double w_b) {
-            best = std::max(best, std::max(w_a, w_b));
-        });
-        if (energy.end() <= 0.0)
-            best = energy.power.empty() ? 0.0 : energy.power[0] * window;
-        return detail::level_of(best / window);
-    }
-    }
-    return -std::numeric_limits<double>::infinity();
-}
-
-// Seconds of reception time during which the time-weighted level exceeds
-// `threshold_db` (strictly), over the history's own span: the TA metric.  Each
-// weighting is followed exactly between samples, so a level that crosses the
-// threshold inside a sample is credited to the instant it crosses.
-inline double time_above(const std::vector<double>& levels, const std::vector<double>& durations,
-        LevelWeighting weighting, double threshold_db)
-{
-    if (levels.empty())
-        return 0.0;
-    const double threshold = detail::mean_square(threshold_db);
-    double total = 0.0;
-    switch (weighting)
-    {
-    case LevelWeighting::instantaneous:
-        for (std::size_t i = 0; i < levels.size(); i++)
-        {
-            if (levels[i] > threshold_db)
-                total += durations[i];
-        }
-        return total;
-    case LevelWeighting::fast:
-    case LevelWeighting::slow:
-    {
-        const double tau = weighting_time_constant(weighting);
         double y0 = detail::mean_square(levels.front());
+        double best = y0;
         for (std::size_t i = 0; i < levels.size(); i++)
         {
             const double p = detail::mean_square(levels[i]);
             const double d = durations[i];
-            const double y1 = p + (y0 - p) * std::exp(-d / tau);
+            const double decay = std::exp(-d / tau);
+            const double y1 = p + (y0 - p) * decay;
+            best = std::max(best, y1);
             const bool above0 = y0 > threshold;
             const bool above1 = y1 > threshold;
             if (above0 && above1)
@@ -336,14 +310,17 @@ inline double time_above(const std::vector<double>& levels, const std::vector<do
             }
             y0 = y1;
         }
-        return total;
+        return {detail::level_of(best), total};
     }
     case LevelWeighting::leq_half_second:
     {
         const double window = weighting_time_constant(weighting);
         const detail::RunningEnergy energy(levels, durations);
         const double limit = threshold * window;
+        double best = 0.0;
         detail::for_each_window_piece(energy, window, [&](double t_a, double w_a, double t_b, double w_b) {
+            // A linear piece peaks at one of its ends.
+            best = std::max(best, std::max(w_a, w_b));
             const bool above_a = w_a > limit;
             const bool above_b = w_b > limit;
             if (above_a && above_b)
@@ -355,10 +332,29 @@ inline double time_above(const std::vector<double>& levels, const std::vector<do
                 total += above_a ? f * (t_b - t_a) : (1.0 - f) * (t_b - t_a);
             }
         });
-        return total;
+        if (energy.end() <= 0.0)
+            best = energy.power.empty() ? 0.0 : energy.power[0] * window;
+        return {detail::level_of(best / window), total};
     }
     }
-    return total;
+    return {-std::numeric_limits<double>::infinity(), total};
+}
+
+// The largest time-weighted level alone (LAmax): -infinity for an empty or
+// silent history.
+inline double weighted_maximum(const std::vector<double>& levels,
+        const std::vector<double>& durations, LevelWeighting weighting)
+{
+    return weighted_maximum_and_time_above(levels, durations, weighting,
+            std::numeric_limits<double>::infinity())
+            .maximum;
+}
+
+// The time above alone (TA), s.
+inline double time_above(const std::vector<double>& levels, const std::vector<double>& durations,
+        LevelWeighting weighting, double threshold_db)
+{
+    return weighted_maximum_and_time_above(levels, durations, weighting, threshold_db).time_above;
 }
 
 } // namespace niceops

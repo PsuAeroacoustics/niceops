@@ -228,6 +228,42 @@ TEST_CASE("slower weightings never read higher", "[time_weighting]")
     }
 }
 
+TEST_CASE("the one-pass maximum does not depend on the time-above threshold", "[time_weighting]")
+{
+    // One pass computes both metrics; the maximum must be the same, to the
+    // bit, whatever threshold rides along (+infinity is the LAmax-only call),
+    // and +infinity is never exceeded.  Histories with culled stretches, single
+    // samples and an empty one, for every weighting.
+    std::mt19937 random(20261010);
+    std::uniform_real_distribution<double> level(40.0, 95.0);
+    std::uniform_real_distribution<double> step(0.005, 0.06);
+    std::uniform_int_distribution<int> length(0, 400);
+    std::bernoulli_distribution culled(0.15);
+    const double never = std::numeric_limits<double>::infinity();
+    for (int trial = 0; trial < 60; trial++)
+    {
+        const std::size_t n = trial < 2 ? static_cast<std::size_t>(trial) : static_cast<std::size_t>(length(random));
+        std::vector<double> levels(n);
+        std::vector<double> durations(n);
+        for (std::size_t i = 0; i < n; i++)
+        {
+            levels[i] = trial % 7 == 3 || culled(random) ? silence : level(random);
+            durations[i] = step(random);
+        }
+        for (const auto w : {LevelWeighting::instantaneous, LevelWeighting::fast, LevelWeighting::slow,
+                     LevelWeighting::leq_half_second})
+        {
+            const auto alone = weighted_maximum_and_time_above(levels, durations, w, never);
+            REQUIRE(alone.time_above == 0.0);
+            for (const double threshold : {30.0, 60.0, 70.0, 80.0, 90.0, 120.0})
+            {
+                INFO("trial " << trial << ", n " << n << ", " << to_string(w) << ", threshold " << threshold);
+                REQUIRE(weighted_maximum_and_time_above(levels, durations, w, threshold).maximum == alone.maximum);
+            }
+        }
+    }
+}
+
 TEST_CASE("a weighting is refused on a history coarser than half its time constant", "[time_weighting]")
 {
     REQUIRE(coarsest_weighting_step(LevelWeighting::fast) == 0.0625);

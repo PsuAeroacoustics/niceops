@@ -3,11 +3,14 @@
 - `src/pnl.{hpp,cpp}`, `src/band_frames.{hpp,cpp}` — `--epnl_file` and `--band_frames`: EPNL
   (14 CFR 36 A36.4) from one-third-octave levels in 0.5 s reception-time frames, and the frames
   themselves as an (observer, frame, band) netCDF file. The things to preserve:
-  - **`pnl.cpp` is panam's `flight_acoustics.py` (eeb040b), term for term**, including panam's
-    reading of the regulation where readings differ: 500 Hz is in Table A36-2's *middle* range,
-    the duration is the contiguous PNLTM - 10 interval with its dips, D uses 10 lg(dt/10 s)
-    unrounded (not the regulation's -13), and the A36.4.4.2 band-sharing check is applied, with
-    the five-record mean truncated at the record's ends. panam's comments say the MATLAB
+  - **`pnl.cpp` is panam's `flight_acoustics.py` (eeb040b with F005, F014 and F026), term for
+    term**, including panam's reading of the regulation where readings differ: 500 Hz is in Table
+    A36-2's *middle* range; the duration's limits are the records closest to PNLTM - 10
+    (A36.4.5.5), dips inside included; D takes A36.4.5.4's -13 for 0.5 s records and 10 lg(dt/10 s)
+    for any other step; the A36.4.4.2 band-sharing check is applied, with the five-record mean
+    truncated at the record's ends, its Delta_B added to EPNL as a term of its own (PNLTM, the
+    limits and D stay the unadjusted history's); and a -inf band enters the tone correction at
+    SPL(d) with no tone of its own, a NaN band propagates (and is refused in an EPNL history). panam's comments say the MATLAB
     `EPNLcalc.m` differs on the first three on purpose; do not "fix" the port toward it. A change
     here is a change to panam first.
   - **The reference values in `tests/test_pnl.cpp` are generated, not typed**:
@@ -18,7 +21,7 @@
     (the only place step 3(b)'s "zero or negative" differs from "negative"; a plateau after a
     sharp rise is encircled by 3(a) anyway). The inputs are 0.1 dB literals and the histories
     `base + envelope (+ add)`, so both sides parse and add the same doubles.
-  - **`--epnl_masking` (default on) is not panam's and not optional for a prediction.** A band
+  - **`--epnl_masking` (default on) is not optional for a prediction** (panam's `masked=True`). A band
     below its noy threshold SPL(d) enters the tone correction's steps 1-7 at SPL(d) and carries no
     tone itself (`ToneMasking::below_noy_floor`; the library's default stays `none`, panam's). The
     literal procedure reads absorption's plunge in the top bands (10 kHz at a median -194 dB at
@@ -29,9 +32,7 @@
     exclusion alone leaves an audible band before a plunge with a crashed background (20/3 dB),
     and reconstruction alone lets masked 8 and 10 kHz bands, rising 17 and 21 dB along SPL(d),
     read as a tone; the reference table has a spectrum for each, and dropping either half fails
-    it. The references come from panam's procedure on the reconstructed spectrum with the masked
-    factors zeroed (`per_band_factors` in `tools/pnl_reference.py`, checked against panam's own
-    tone correction first). Masking can raise an EPNL a little (0.2 dB once on that grid: the
+    it. The references are panam's `masked=True` (F005, which adopted this definition). Masking can raise an EPNL a little (0.2 dB once on that grid: the
     band-sharing check and the duration pick other records), so `epnl_masking_lowers_tones`
     asserts only that some EPNL falls, never that none rises. On the 2017 measured spectra it moves
     EPNL 0.01 dB rms; on the predictions it is what made the 24-band EPNL agree with the 5 kHz-

@@ -3001,20 +3001,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // weighting runs over the whole operation, in reception time:
                 // each sample lasts what it lasts in the SEL integral.
                 reception_durations(nt, integration_step, ranges, sound_speed, durations);
-                if (options.want_lamax || options.want_nax)
-                {
-                    const double peak = weighted_maximum(levels, durations, options.lamax_weighting);
-                    if (options.want_lamax)
-                        lamax[index] = std::max(lamax[index], peak);
-                    // NAx: operations whose own peak reaches the threshold.  Each
-                    // trajectory is one operation, so the count adds per trajectory.
-                    if (options.want_nax && peak >= options.nax_threshold)
-                        nax[index] += 1.0;
-                }
+                // One pass gives both; a threshold of +infinity costs nothing.
+                const auto weighted = weighted_maximum_and_time_above(levels, durations, options.lamax_weighting,
+                        options.want_ta ? options.ta_threshold : std::numeric_limits<double>::infinity());
+                if (options.want_lamax)
+                    lamax[index] = std::max(lamax[index], weighted.maximum);
+                // NAx: operations whose own peak reaches the threshold.  Each
+                // trajectory is one operation, so the count adds per trajectory.
+                if (options.want_nax && weighted.maximum >= options.nax_threshold)
+                    nax[index] += 1.0;
                 // Time above: seconds, adding across operations.
                 if (options.want_ta)
-                    totals.time_above[index] += time_above(levels, durations, options.lamax_weighting,
-                            options.ta_threshold);
+                    totals.time_above[index] += weighted.time_above;
             }
             if (options.want_coverage)
             {

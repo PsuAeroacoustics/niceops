@@ -5,12 +5,16 @@
 // checked over random geometries.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <random>
 #include <string>
 #include <vector>
+
+#include <netcdf.h>
 
 #include "plate_receiver.hpp"
 #include "util/constants.hpp"
@@ -273,4 +277,69 @@ TEST_CASE("outboard puts the microphone away from the track", "[plate_receiver]"
     CHECK(outboard_azimuth(Vec3(30.0, 0.0, 0.0), track) == Catch::Approx(-0.5 * pi).margin(1e-12));
     std::reverse(track.begin(), track.end());
     CHECK(outboard_azimuth(Vec3(30.0, 0.0, 0.0), track) == Catch::Approx(0.5 * pi).margin(1e-12));
+}
+
+namespace {
+
+// A one-band, one-node plate table, malformed as asked: band_center along a
+// 100-long dimension, or radius_m holding two numbers.  netCDF reads every
+// value either holds, whatever the buffer, so both used to overrun it.
+std::string write_malformed_plate(const std::string& name, bool long_center, int radius_values)
+{
+    const auto path = (std::filesystem::temp_directory_path() / name).string();
+    int ncid = 0;
+    REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &ncid) == NC_NOERR);
+    int band = 0, sub = 0, elevation = 0, azimuth = 0, other = 0;
+    REQUIRE(nc_def_dim(ncid, "band", 1, &band) == NC_NOERR);
+    REQUIRE(nc_def_dim(ncid, "sub", 1, &sub) == NC_NOERR);
+    REQUIRE(nc_def_dim(ncid, "elevation", 2, &elevation) == NC_NOERR);
+    REQUIRE(nc_def_dim(ncid, "azimuth", 1, &azimuth) == NC_NOERR);
+    REQUIRE(nc_def_dim(ncid, "other", 100, &other) == NC_NOERR);
+    int center = 0, frequency = 0, elevations = 0, azimuths = 0, parts[4] = {};
+    REQUIRE(nc_def_var(ncid, "band_center", NC_DOUBLE, 1, long_center ? &other : &band, &center) == NC_NOERR);
+    const int spectrum[2] = {band, sub};
+    REQUIRE(nc_def_var(ncid, "frequency", NC_DOUBLE, 2, spectrum, &frequency) == NC_NOERR);
+    REQUIRE(nc_def_var(ncid, "elevation", NC_DOUBLE, 1, &elevation, &elevations) == NC_NOERR);
+    REQUIRE(nc_def_var(ncid, "azimuth", NC_DOUBLE, 1, &azimuth, &azimuths) == NC_NOERR);
+    const int field[4] = {band, sub, elevation, azimuth};
+    const char* part_names[4] = {"P_d_real", "P_d_imag", "P_r_real", "P_r_imag"};
+    for (int k = 0; k < 4; k++)
+        REQUIRE(nc_def_var(ncid, part_names[k], NC_DOUBLE, 4, field, &parts[k]) == NC_NOERR);
+    const std::string ground = "delany_bazley";
+    REQUIRE(nc_put_att_text(ncid, NC_GLOBAL, "ground_model", ground.size(), ground.c_str()) == NC_NOERR);
+    const double numbers[2] = {0.2, 0.2};
+    for (const char* attribute : {"flow_resistance", "porosity_rate", "layer_depth_m", "thickness_m", "mic_x_m",
+                 "mic_y_m"})
+        REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, attribute, NC_DOUBLE, 1, numbers) == NC_NOERR);
+    REQUIRE(nc_put_att_double(ncid, NC_GLOBAL, "radius_m", NC_DOUBLE, radius_values, numbers) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    const std::vector<double> centers(long_center ? 100 : 1, 1000.0);
+    const double one = 1000.0, heights[2] = {0.0, 10.0}, zero = 0.0, values[2] = {1.0, 1.0};
+    REQUIRE(nc_put_var_double(ncid, center, centers.data()) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, frequency, &one) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, elevations, heights) == NC_NOERR);
+    REQUIRE(nc_put_var_double(ncid, azimuths, &zero) == NC_NOERR);
+    for (int k = 0; k < 4; k++)
+        REQUIRE(nc_put_var_double(ncid, parts[k], values) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    return path;
+}
+
+} // namespace
+
+TEST_CASE("a plate table file is shape-checked before it is read", "[plate_receiver]")
+{
+    using Catch::Matchers::ContainsSubstring;
+    const auto good = write_malformed_plate("niceops_plate_well_formed.nc", false, 1);
+    CHECK_NOTHROW(PlateReceiver::load(good));
+    std::filesystem::remove(good);
+
+    const auto long_center = write_malformed_plate("niceops_plate_long_center.nc", true, 1);
+    CHECK_THROWS_WITH(PlateReceiver::load(long_center),
+            ContainsSubstring("'band_center' must be dimensioned (band)"));
+    std::filesystem::remove(long_center);
+
+    const auto long_radius = write_malformed_plate("niceops_plate_long_radius.nc", false, 2);
+    CHECK_THROWS_WITH(PlateReceiver::load(long_radius), ContainsSubstring("'radius_m' must be one number"));
+    std::filesystem::remove(long_radius);
 }

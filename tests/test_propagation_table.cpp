@@ -4,12 +4,15 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cmath>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <vector>
+
+#include <netcdf.h>
 
 #include "propagation_table.hpp"
 
@@ -336,4 +339,68 @@ TEST_CASE("multi-band table lookup preserves gaps and inactive bands", "[propaga
             CHECK(table.lookup(0, 15, 0, 10, bands, out) == (gap >= count));
         }
     }
+}
+
+namespace {
+
+// A one-cell table file, malformed as asked.  netCDF reads every value a
+// variable or attribute holds, whatever buffer it is handed, so each of these
+// used to overrun the reader's buffer (an oversized bearing variable corrupted
+// the heap under AddressSanitizer) before anything could refuse it.
+std::string write_malformed_table(const std::string& name, bool long_bearing, int version_values,
+        int absorption_values)
+{
+    const auto path = (std::filesystem::temp_directory_path() / name).string();
+    int ncid = 0;
+    REQUIRE(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &ncid) == NC_NOERR);
+    const char* names[5] = {"bearing", "source_height", "receiver_height", "range", "band"};
+    const double values[5] = {0.0, 10.0, 1.2, 100.0, 100.0};
+    int dims[5] = {};
+    int vars[5] = {};
+    for (int k = 0; k < 5; k++)
+        REQUIRE(nc_def_dim(ncid, names[k], 1, &dims[k]) == NC_NOERR);
+    int other = 0;
+    REQUIRE(nc_def_dim(ncid, "other", 100, &other) == NC_NOERR);
+    for (int k = 0; k < 5; k++)
+        REQUIRE(nc_def_var(ncid, names[k], NC_DOUBLE, 1, k == 0 && long_bearing ? &other : &dims[k], &vars[k])
+                == NC_NOERR);
+    int level = 0;
+    REQUIRE(nc_def_var(ncid, "relative_level", NC_DOUBLE, 5, dims, &level) == NC_NOERR);
+    const int ones[3] = {1, 1, 1};
+    REQUIRE(nc_put_att_int(ncid, NC_GLOBAL, "propagation_table_version", NC_INT, version_values, ones) == NC_NOERR);
+    REQUIRE(nc_put_att_int(ncid, NC_GLOBAL, "includes_absorption", NC_INT, absorption_values, ones) == NC_NOERR);
+    REQUIRE(nc_enddef(ncid) == NC_NOERR);
+    const std::vector<double> long_axis(100, 0.0);
+    for (int k = 0; k < 5; k++)
+        REQUIRE(nc_put_var_double(ncid, vars[k], k == 0 && long_bearing ? long_axis.data() : &values[k])
+                == NC_NOERR);
+    const double cell = 0.0;
+    REQUIRE(nc_put_var_double(ncid, level, &cell) == NC_NOERR);
+    REQUIRE(nc_close(ncid) == NC_NOERR);
+    return path;
+}
+
+} // namespace
+
+TEST_CASE("a propagation table file is shape-checked before it is read", "[propagation_table]")
+{
+    using Catch::Matchers::ContainsSubstring;
+    const auto good = write_malformed_table("niceops_table_well_formed.nc", false, 1, 1);
+    CHECK(PropagationTable::load(good).includes_absorption());
+    std::filesystem::remove(good);
+
+    const auto long_bearing = write_malformed_table("niceops_table_long_bearing.nc", true, 1, 1);
+    CHECK_THROWS_WITH(PropagationTable::load(long_bearing),
+            ContainsSubstring("'bearing' axis must run along its own dimension"));
+    std::filesystem::remove(long_bearing);
+
+    const auto long_version = write_malformed_table("niceops_table_long_version.nc", false, 3, 1);
+    CHECK_THROWS_WITH(PropagationTable::load(long_version),
+            ContainsSubstring("propagation_table_version must be one integer"));
+    std::filesystem::remove(long_version);
+
+    const auto long_absorption = write_malformed_table("niceops_table_long_absorption.nc", false, 1, 3);
+    CHECK_THROWS_WITH(PropagationTable::load(long_absorption),
+            ContainsSubstring("includes_absorption must be one integer"));
+    std::filesystem::remove(long_absorption);
 }

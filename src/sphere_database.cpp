@@ -18,6 +18,7 @@
 #include "propagation.hpp"
 #include "util/logger.hpp"
 #include "weighting.hpp"
+#include "util/netcdf.hpp"
 #include "util/paths.hpp"
 #include "util/constants.hpp"
 #include "util/rootfind.hpp"
@@ -127,13 +128,16 @@ int get_scalar(int ncid, const std::string& variable_name, T* value, bool option
 // build atmosphere and rotor speed this way; older databases carry neither.
 std::optional<double> read_double_attribute(int ncid, const char* name)
 {
-    int type = 0;
-    std::size_t length = 0;
-    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, name, &type, &length))
-        return std::nullopt;
     double value = 0.0;
-    if (NC_NOERR != nc_get_att_double(ncid, NC_GLOBAL, name, &value))
-        input_error("Found but could not read the database attribute ", name, ".");
+    switch (netcdf::single_value(ncid, NC_GLOBAL, name, value))
+    {
+    case netcdf::Single::missing:
+        return std::nullopt;
+    case netcdf::Single::not_one_number:
+        input_error("Found but could not read the database attribute ", name, " as one number.");
+    case netcdf::Single::ok:
+        break;
+    }
     return value;
 }
 
@@ -147,21 +151,10 @@ bool read_coverage(int group_id, std::vector<int>& coverage)
     int varid = 0;
     if (NC_NOERR != nc_inq_varid(group_id, "coverage", &varid))
         return false;
-    int ndims = 0;
-    if (NC_NOERR != nc_inq_varndims(group_id, varid, &ndims))
+    const auto total = netcdf::element_count(group_id, varid);
+    if (!total)
         input_error("Found but could not read the dimensions of the variable coverage.");
-    std::vector<int> dimids(ndims);
-    if (ndims > 0 && NC_NOERR != nc_inq_vardimid(group_id, varid, dimids.data()))
-        input_error("Found but could not read the dimensions of the variable coverage.");
-    std::size_t total = 1;
-    for (const int dimid : dimids)
-    {
-        std::size_t length = 0;
-        if (NC_NOERR != nc_inq_dimlen(group_id, dimid, &length))
-            input_error("Found but could not read the dimensions of the variable coverage.");
-        total *= length;
-    }
-    coverage.resize(total);
+    coverage.resize(*total);
     if (NC_NOERR != nc_get_var_int(group_id, varid, coverage.data()))
         input_error("Found but could not read the variable coverage.");
     return true;
@@ -244,8 +237,11 @@ int get_int_scalar(int ncid, const std::string& variable_name, int fallback)
     {
         return fallback;
     }
+    // Element 0 only, as get_scalar reads: nc_get_var_int would write every
+    // value the variable holds.
     int value = fallback;
-    if (NC_NOERR != nc_get_var_int(ncid, varid, &value))
+    const std::size_t first[NC_MAX_VAR_DIMS] = {};
+    if (NC_NOERR != nc_get_var1_int(ncid, varid, first, &value))
     {
         input_error("Found but could not read variable ", variable_name, " in ncid ", ncid, ".");
     }
@@ -272,6 +268,10 @@ int get_array(int ncid, const std::string& variable_name, std::size_t countp, st
     }
     else
     {
+        // A 1-D variable: nc_get_vara reads one start and count per dimension.
+        int ndims = 0;
+        if (NC_NOERR != nc_inq_varndims(ncid, varid, &ndims) || ndims != 1)
+            input_error("Variable ", variable_name, " in ncid ", ncid, " must be 1-D.");
         std::size_t startp = 0;
         values.resize(countp);
         static_assert(std::is_same_v<T, double>, "arrays are read as double");
@@ -1288,6 +1288,11 @@ Database::Database(const std::string& datafile_path)
             // pass over the sphere at load time and saves a cache miss per
             // condition per band on every one of ~94M evaluations.
             std::vector<double> sphere_amplitudes(phis.size() * thetas.size() * n_bands);
+            // nc_get_var reads every value the variable holds, so it must hold
+            // exactly this many.
+            if (netcdf::element_count(group_id, amplitude_id) != sphere_amplitudes.size())
+                input_error("Database error: amplitude for sphere ", i, " does not hold ", phis.size(), " x ",
+                        thetas.size(), " x ", n_bands, " values (phi, theta, frequency).");
             if (NC_NOERR
                     != nc_get_var_double(group_id, amplitude_id, sphere_amplitudes.data()))
                 input_error("Database error: could not read amplitude for sphere ", i, ".");
