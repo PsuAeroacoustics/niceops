@@ -630,7 +630,7 @@ height span (at least 10 m) with a straight line $c(z) = c_0 + a z$ by least squ
 equivalent-linear approach of HARMONOISE and Nord2000 [41, 42]. The rays are
 then arcs of circles of radius $\mathcal{L} = c_0/\lvert a\rvert$ centered at height
 $-c_0/a$. For the direct ray, with $\kappa(z) = z(2\mathcal{L} + \sigma z)$ and
-$\sigma = \operatorname{sign} a$, the arc's center lies a horizontal distance
+$\sigma = \mathrm{sign}\,a$, the arc's center lies a horizontal distance
 $x_c = [r^2 + \sigma(\kappa_r - \kappa_s)]/(2r)$ from the source. The ray-tube spreading range
 is
 
@@ -640,7 +640,7 @@ R_\mathrm{eq}^2 = r \left\lvert \frac{\partial r}{\partial \theta_s} \right\rver
 $$
 
 and the travel time is
-$t = \operatorname{artanh}\left(r\rho_c/(h_c^2 + x_c r)\right)/\lvert a\rvert$, with
+$t = \mathrm{artanh}\left(r\rho_c/(h_c^2 + x_c r)\right)/\lvert a\rvert$, with
 $h_c = \mathcal{L} + \sigma z_s$ and $\rho_c = \sqrt{x_c^2 + h_c^2}$.
 The level is read from the sphere at the ray's launch direction, and absorbed over the arc
 length (§4.3). The reflected ray is found by iteration on its launch angle, and a point
