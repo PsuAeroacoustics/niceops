@@ -678,18 +678,25 @@ record $k$:
 1. Noy values $n(i,k)$ from the formulas of Table A36-3.
 2. $\mathrm{PNL}(k) = 40 + \dfrac{10}{\lg 2}\lg\left(0.85\, n_\max + 0.15 \sum_i n(i,k)\right)$.
 3. The tone correction $C(k)$ of §A36.4.3.1, from the 10-step slope procedure and Table A36-2.
-4. $\mathrm{PNLT}(k) = \mathrm{PNL}(k) + C(k)$, its maximum PNLTM, and the band-sharing check of §A36.4.4.2.
-5. The duration correction $D$, summed over the records within 10 dB of PNLTM, with
+4. $\mathrm{PNLT}(k) = \mathrm{PNL}(k) + C(k)$ and its maximum PNLTM.
+5. The band-sharing check of §A36.4.4.2: when $C$ at PNLTM is below its mean $\bar C$ over the
+   five records centered there, $\Delta_B = \mathrm{PNL}(k_M) + \bar C - \mathrm{PNLTM}$, added
+   to EPNL as a separate term as ICAO Annex 16 [55] carries it; otherwise $\Delta_B = 0$.
+6. The duration correction $D$, from the unadjusted PNLTM, over the records $k_1 \ldots k_2$
+   whose limits are the PNLT values closest to $\mathrm{PNLTM} - 10$ (§A36.4.5.5), with
    $T_0 = 10$ s and $\Delta t = 0.5$ s, and EPNL:
 
 $$
-D = 10\lg\left[\frac{1}{T_0}\sum_k 10^{\mathrm{PNLT}(k)/10}\,\Delta t\right] - \mathrm{PNLTM}, \qquad
-\mathrm{EPNL} = \mathrm{PNLTM} + D .
+D = 10\lg\sum_{k=k_1}^{k_2} 10^{\mathrm{PNLT}(k)/10} + 10\lg\frac{\Delta t}{T_0} - \mathrm{PNLTM}, \qquad
+\mathrm{EPNL} = \mathrm{PNLTM} + D + \Delta_B ,
 $$
 
-**Departures.** $D$ is computed unrounded, where the regulation writes $10\lg(0.5/10)$ as −13.
-By default, a band below its noy threshold is masked: it enters the procedure at that threshold
-and carries no tone correction, following the exclusion of tones in masked bands in
+where $10\lg(\Delta t/T_0)$ is the regulation's −13 for $\Delta t = 0.5$ s (§A36.4.5.4).
+
+**Departures.** A band of $-\infty$ (zero energy), for which the tone correction is undefined,
+enters it at its noy threshold SPL(d) and carries no tone, as in PANAM. By default, every band
+below its noy threshold is masked: it enters the procedure at that threshold and carries no
+tone correction, following the exclusion of tones in masked bands in
 FAA AC 36-4 [56]. Without masking, deeply absorbed high bands would read as tones. The
 corrections the regulation applies to a measured spectrum (instrumentation, background noise,
 reference conditions) are not applied to a prediction.

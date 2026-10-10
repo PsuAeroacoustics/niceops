@@ -365,23 +365,30 @@ pressure doubling, as the 2017 measurements do, where 14 CFR 36 prescribes a mic
    with s′(3) = s′(4) and an imaginary 25th band; average three adjacent slopes; build the
    background SPL″ from SPL″(3) = SPL(3); and take the largest Table A36-2 factor of F = SPL − SPL″
    over F ≥ 1.5 dB: F/3 − 1/2, F/6, 10/3 below 500 Hz and above 5 kHz; 2F/3 − 1, F/3, 20/3 from
-   500 Hz to 5 kHz inclusive. Bands 1–3 never carry a tone correction. With `--epnl_masking`
-   (the default; below), a band below its noy threshold enters these steps at the threshold and
-   carries no tone itself.
+   500 Hz to 5 kHz inclusive. Bands 1–3 never carry a tone correction. A band of −∞ (zero
+   energy), for which the steps are undefined, enters them at its noy threshold SPL(d) and
+   carries no tone itself; taken literally it made its neighbor a full tone, or, as band 3, the
+   background's anchor, lost every tone. With `--epnl_masking` (the default; below), every band
+   below its noy threshold is treated so. A NaN band makes PNL and C NaN, and an EPNL history
+   holding one is refused.
 4. PNLT(*k*) = PNL(*k*) + C(*k*), and PNLTM its maximum (A36.4.3, A36.4.4).
 5. The band-sharing check (A36.4.4.2): if C at PNLTM is below the mean of C over the five records
-   centered there (fewer at either end of the record), PNLTM is PNL there plus that mean.
-6. The duration correction D = 10 lg[(1/T) Σ 10^(PNLT(*k*)/10) Δt] − PNLTM, T = 10 s,
-   Δt = 0.5 s, summed from the first to the last record at or above PNLTM − 10, dips between them
-   included (A36.4.5). The regulation's −13 for 10 lg(0.5/10) is that number rounded (0.01 dB);
-   NICE-OPS uses it unrounded.
-7. EPNL = PNLTM + D (A36.4.1).
+   centered there (fewer at either end of the record), the adjustment Δ<sub>B</sub> = PNL there
+   plus that mean, minus PNLTM, is added to EPNL as a term of its own, as ICAO Annex 16 Vol. I,
+   Appendix 2, and FAA AC 36-4 carry it. (Read literally, 14 CFR 36 raises PNLTM and takes D
+   from it, and the two cancel in EPNL = PNLTM + D, so the adjustment never raised EPNL; it could
+   only lower it, through a narrower duration.)
+6. The duration correction D = 10 lg[Σ 10^(PNLT(*k*)/10)] + 10 lg(Δt/T) − PNLTM, T = 10 s, from
+   the unadjusted PNLTM. Its limits are the records closest to PNLTM − 10 and, with several
+   peaks, those giving the longest duration (A36.4.5.5): from the first and last records at or
+   above PNLTM − 10, each limit moves one record outward when that one is strictly closer; dips
+   between them are included. 10 lg(Δt/T) is A36.4.5.4's −13 for the 0.5 s records.
+7. EPNL = PNLTM + D + Δ<sub>B</sub> (A36.4.1).
 
 This is panam's `flight_acoustics.py` implementation (`noys`, `perceived_noise_level`,
 `tone_correction`, `effective_perceived_noise_level`), ported term for term
 (`src/pnl.cpp`), including its reading of the regulation where readings differ: 500 Hz is in the
-middle range of Table A36-2, the duration is the contiguous interval, and the band-sharing
-check is applied.
+middle range of Table A36-2, and the band-sharing check is applied, as Δ<sub>B</sub>.
 
 **Masked bands (`--epnl_masking`, on by default).** A measured band never falls below the
 analyzer's noise floor, and certification practice excludes tones in bands masked by it (FAA
@@ -401,7 +408,8 @@ way), and so is any record whose bands are all at or above their thresholds. On 
 masking moved the PNLTM tone correction's median from 2.25 to 1.20 dB and the count of 3 dB or more
 from 427 to 13, lowered EPNL by a median 1.0 dB, and raised it at one observer, by 0.2 dB (the
 band-sharing check and the duration can pick other records). On the 2017 measured spectra it
-moves EPNL by 0.01 dB rms. `--no-epnl_masking` gives the procedure as written, which is panam's.
+moves EPNL by 0.01 dB rms. `--no-epnl_masking` gives the procedure as written (with −∞ bands
+taken at SPL(d)), which is panam's default; masking is panam's `masked=True`.
 
 **Not included.** Everything A36 does to a *measured* spectrum before step 1: the
 instrumentation and background-noise corrections (A36.3), the adjustment to reference
@@ -414,9 +422,10 @@ record's own completeness beyond the `clipped` flag below.
 
 **`--epnl_file`** writes one row per observer, in observer order: `observer` (the index `-i`
 uses), the microphone's `x`, `y`, `z` in `--units`, `EPNL` (EPNdB), `PNLTM` (TPNdB),
-`duration_correction` (D, dB), `tone_correction` (PNLTM − PNL at its record: the record's own C,
-or the five-record mean when the band-sharing check raised it), `tone_band` (Hz, the band C came
-from; `nan` when the record has none), `bandshare_adjusted` (1 when step 5 raised PNLTM),
+`duration_correction` (D, dB, so EPNL = PNLTM + D), `tone_correction` (PNLTM − PNL at its
+record: the record's own C, or the five-record mean when the band-sharing check applied
+Δ<sub>B</sub>, PNLTM then including Δ<sub>B</sub>), `tone_band` (Hz, the band C came
+from; `nan` when the record has none), `bandshare_adjusted` (1 when step 5 applied Δ<sub>B</sub>),
 `PNLTM_time`, `duration_first`, `duration_last` (the centers of the PNLTM record and of the
 duration's first and last records, s, on the trajectory's clock, in reception time) and `clipped`
 (1 when the duration reaches the first or last record the observer heard, so the event may not be
@@ -445,16 +454,14 @@ frames until the end, 0.9 GB resident there.
 **How it was checked.**
 
 - *Against panam*, at 1e-6 dB: `tests/test_pnl.cpp` embeds values generated by running panam's
-  own functions (`tools/pnl_reference.py`) on 27 spectra — every noy region, tones at every
+  own functions (`tools/pnl_reference.py`) on 29 spectra — every noy region, tones at every
   special band (80 Hz, 100 Hz, 500 Hz, 5 and 6.3 kHz, a band-24 tone on a slope, a slope turning
-  to exactly zero), F above 20 and between 1.5 and 3, silence, random spectra — and 7 histories,
+  to exactly zero), F above 20 and between 1.5 and 3, silence, −∞ bands, random spectra — and 7 histories,
   each with the band-sharing check on and off (it fires in three, one of them at the record's
   end), plus panam's own test cases one for one. Mutating the tone correction one line at a time
   (the 500 Hz range, the band-24 extrapolation, step 3(b)'s "zero or negative", the truncated
-  five-record mean, the −13 rounding) fails it.
-- *Masking*, which panam does not have, against panam's procedure run on the reconstructed
-  spectrum with the masked bands' factors zeroed (the same script, which first checks its
-  per-band form of panam's tone correction against panam's own on every spectrum): the 27 spectra
+  five-record mean, the −13 constant taken at every step or at none) fails it.
+- *Masking*, against panam's `masked=True` (the same script): the 29 spectra
   (unchanged wherever every band is audible), six prediction-like ones — absorbed top bands, an
   inaudible 10 kHz band rising out of the plunge, a −1064 dB band, `-inf` bands, an audible band
   before a plunge and masked bands rising along their thresholds — and a pass whose EPNL masking
@@ -2975,6 +2982,13 @@ these in mind. The largest is the first:
   in a reciprocal march. Against the exact field at 17–45° those rows moved from 0.03–0.08 dB
   off to 0.01–0.05; at grazing nothing moved by more than 0.001 dB
   ([Propagation loss tables](#propagation-loss-tables)).
+- **`--epnl_file`** follows panam's corrected EPNL (October 2026): the duration's limits are the
+  records closest to PNLTM − 10, D takes the regulation's −13 for the 0.5 s records, and the
+  band-sharing adjustment is added to EPNL rather than to a PNLTM that cancelled it. Every EPNL
+  rises, by 0.0103 dB from the constant alone; over the demo grid at 100 m with B407 (961
+  observers) the mean rise was 0.031 dB (0.040 with `--no-epnl_masking`) and the largest
+  0.41 dB (0.62). Without masking, a −∞ band no longer reads as a tone in its neighbor
+  ([EPNL and reception-time frames](#epnl-and-reception-time-frames)).
 
 ### The 4x EAA multiplier
 

@@ -50,9 +50,11 @@ PnlSpectrum noys(const PnlSpectrum& band_levels)
     for (std::size_t i = 0; i < nb; i++)
     {
         const double spl = band_levels[i];
-        // The four regions in panam's order of precedence; every comparison is
-        // false for NaN, which therefore gets 0 noy, as in numpy.
-        if (spl >= spl_a[i])
+        // The four regions in panam's order of precedence.  A NaN band is NaN
+        // noy (panam F005), not 0: a missing level must not read as silence.
+        if (std::isnan(spl))
+            n[i] = std::numeric_limits<double>::quiet_NaN();
+        else if (spl >= spl_a[i])
             n[i] = std::pow(10.0, m_c[i] * (spl - spl_c[i]));
         else if (spl >= spl_b[i])
             n[i] = std::pow(10.0, m_b[i] * (spl - spl_b[i]));
@@ -77,6 +79,8 @@ double perceived_noise_level(const PnlSpectrum& band_levels)
         sum += n[i];
     }
     const double total = 0.85 * largest + 0.15 * sum;
+    if (std::isnan(total))
+        return total; // a NaN band (the sum carries it; std::max may not)
     if (!(total > 0.0))
         return -inf;
     return 40.0 + (10.0 / std::log10(2.0)) * std::log10(total);
@@ -88,18 +92,22 @@ ToneCorrection tone_correction(const PnlSpectrum& band_levels, ToneMasking maski
     // Arrays are indexed from 0 (band 1 = 50 Hz); the comments use the
     // regulation's band numbers, one higher.
 
-    // Masking (pnl.hpp): a band below its noy threshold -- NaN and -infinity
-    // included -- is taken at the threshold, and is not eligible for a tone.
+    // As panam (F005): +infinity is refused, and a NaN band makes the factor
+    // NaN.  A -infinity band (zero energy) has no slope, and taken literally
+    // makes the background infinite or NaN, so it is taken at its noy
+    // threshold and is not eligible for a tone, masked or not.  Masking
+    // (pnl.hpp) treats every band below its threshold so.
     std::array<bool, nb> masked {};
     PnlSpectrum spl = band_levels;
-    if (masking == ToneMasking::below_noy_floor)
+    for (std::size_t i = 0; i < nb; i++)
     {
-        for (std::size_t i = 0; i < nb; i++)
-        {
-            masked[i] = !(band_levels[i] >= spl_d[i]);
-            if (masked[i])
-                spl[i] = spl_d[i];
-        }
+        if (std::isnan(band_levels[i]))
+            return {nan, nb};
+        if (band_levels[i] == inf)
+            throw std::invalid_argument("tone_correction: a band level is +infinity");
+        masked[i] = masking == ToneMasking::below_noy_floor ? band_levels[i] < spl_d[i] : band_levels[i] == -inf;
+        if (masked[i])
+            spl[i] = spl_d[i];
     }
 
     // Step 1: slopes s(i) = SPL(i) - SPL(i-1) from band 4; band 3 has none, so
@@ -186,6 +194,10 @@ EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& histo
         throw std::invalid_argument("effective_perceived_noise_level: empty history");
     if (!(dt > 0.0))
         throw std::invalid_argument("effective_perceived_noise_level: the step must be positive");
+    for (const auto& spectrum : history)
+        for (const double level : spectrum)
+            if (std::isnan(level))
+                throw std::invalid_argument("effective_perceived_noise_level: NaN band levels in the history");
     const std::size_t count = history.size();
     EpnlResult r;
     r.pnlt.resize(count);
@@ -215,13 +227,16 @@ EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& histo
             peak = k;
     }
     r.peak = peak;
-    r.pnltm = r.pnlt[peak];
+    r.pnltm_unadjusted = r.pnlt[peak];
     if (bandshare_adjustment)
     {
         // A36.4.4.2: a tone correction at PNLTM below the mean of the five
-        // records centered there suggests the tone was split between bands;
-        // PNLTM is then PNL there plus that mean.  Near either end of the
-        // history the mean is over the records there are.
+        // records centered there suggests the tone was split between bands.
+        // The difference is the adjustment Delta_B, added to EPNL as a term of
+        // its own (ICAO Annex 16 Vol. I, Appendix 2; FAA AC 36-4; panam F014):
+        // read literally, 14 CFR 36 raises PNLTM and takes D from it, and the
+        // two cancel in EPNL = PNLTM + D.  Near either end of the history the
+        // mean is over the records there are.
         const std::size_t lo = peak >= 2 ? peak - 2 : 0;
         const std::size_t hi = std::min(count, peak + 3);
         double sum = 0.0;
@@ -230,14 +245,19 @@ EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& histo
         const double mean = sum / static_cast<double>(hi - lo);
         if (r.tone[peak] < mean)
         {
-            r.pnltm = r.pnl[peak] + mean;
+            r.delta_b = r.pnl[peak] + mean - r.pnltm_unadjusted;
             r.bandshare_adjusted = true;
         }
     }
+    r.pnltm = r.pnltm_unadjusted + r.delta_b;
 
-    // The duration: from the first to the last record at or above PNLTM - 10,
-    // dips inside it included (A36.4.5).
-    const double threshold = r.pnltm - 10.0;
+    // The duration, A36.4.5.5: the PNLT records closest to PNLTM - 10 and,
+    // with several peaks, those giving the longest duration (panam F026).
+    // From the outermost records at or above PNLTM - 10, each limit moves one
+    // record outward when that one is strictly closer; every record between
+    // is summed, dips included.  PNLTM, the limits and D are the unadjusted
+    // history's.
+    const double threshold = r.pnltm_unadjusted - 10.0;
     std::size_t first = count;
     std::size_t last = 0;
     for (std::size_t k = 0; k < count; k++)
@@ -249,13 +269,20 @@ EpnlResult effective_perceived_noise_level(const std::vector<PnlSpectrum>& histo
             last = k;
         }
     }
+    if (first > 0 && std::fabs(r.pnlt[first - 1] - threshold) < std::fabs(r.pnlt[first] - threshold))
+        first--;
+    if (last + 1 < count && std::fabs(r.pnlt[last + 1] - threshold) < std::fabs(r.pnlt[last] - threshold))
+        last++;
     r.first = first;
     r.last = last;
     double sum = 0.0;
     for (std::size_t k = first; k <= last; k++)
         sum += std::pow(10.0, r.pnlt[k] / 10.0);
-    r.duration_correction = 10.0 * std::log10(sum * dt / 10.0) - r.pnltm;
-    r.epnl = r.pnltm + r.duration_correction;
+    // 10 lg(dt / T), T = 10 s, is the constant -13 A36.4.5.4 states for the
+    // regulation's 0.5 s step (not -13.0103), and exact for any other.
+    const double normalization = dt == 0.5 ? -13.0 : 10.0 * std::log10(dt / 10.0);
+    r.duration_correction = 10.0 * std::log10(sum) + normalization - r.pnltm_unadjusted;
+    r.epnl = r.pnltm_unadjusted + r.duration_correction + r.delta_b;
     r.clipped = first == 0 || last == count - 1;
     return r;
 }
