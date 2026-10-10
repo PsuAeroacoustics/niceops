@@ -1,24 +1,27 @@
 ---
 name: regenerate-goldens
-description: Rebuild golden/197421_LAE.csv and golden/state_197421.csv from the D reference implementation. Use when the goldens must be regenerated because a deliberate numerics change broke regression_golden or state_golden, or when the D oracle is needed to adjudicate a C++/D discrepancy.
+description: Rebuild golden/state_197421.csv from the D reference implementation, or build the D oracle to adjudicate a C++/D discrepancy. golden/197421_LAE.csv and the other goldens come from the C++ build.
 ---
 
-# Regenerating the golden reference files
+# Regenerating the D-derived golden
 
-> **`golden/197421_LAE.csv` no longer comes from D.** Removing the spurious 4x EAA multiplier
-> deliberately departed from the D original, so a D build now reproduces the bug rather than the
-> reference. Regenerate that file by running the current `niceops` on the demo case and copying
-> `integrated/197421_LAE.csv` over it. Everything below still applies to
-> `golden/state_197421.csv`, which is trajectory state and untouched by propagation, and to using
-> D to adjudicate a discrepancy in any path other than the EAA attenuation.
-
-`golden/state_197421.csv` comes from the **D reference
-implementation**, which was removed from the tree once the port was verified. The
-C++ port matches them to **1e-9** (actual max relative difference ~1e-14, a few ULPs
+`golden/state_197421.csv` (trajectory state, checked by `state_golden`) is the only golden that
+comes from the **D reference implementation**, which was removed from the tree once the port was
+verified. The C++ port matches it to **1e-9** (actual max relative difference ~1e-14, a few ULPs
 of LDC-vs-clang round-off).
 
-Only regenerate them when a numerics change was deliberate — port fidelity outranks
-correctness here, so a golden mismatch usually means the port is wrong, not the golden.
+`golden/197421_LAE.csv` and every other golden come from the C++ build: regenerate one by running
+the current `niceops` on its case and copying the output over it (the table is in
+`docs/internals/testing.md#golden-files`). A D build would reproduce what the C++ deliberately
+departed from.
+
+D can adjudicate any path except the deliberate departures: the EAA multiplier, the energy
+ambient mix, and the spreading cap at the sphere surface (see
+docs/HISTORY.md#departures-from-d).
+
+Only regenerate the state golden when a numerics change was deliberate, and say so in the
+commit. Port fidelity outranks correctness here, so a golden mismatch usually means the port is
+wrong, not the golden.
 
 ## Build the D original in a scratch worktree
 
