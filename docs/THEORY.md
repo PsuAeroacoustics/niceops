@@ -1,10 +1,11 @@
 # NICE-OPS theory
 
 This document states the models NICE-OPS implements, as equations, with the references they
-come from. It describes the code as it is: where NICE-OPS departs from a cited reference, the
-departure is stated. [The manual](MANUAL.md) covers the options that select each model, the
-evidence for the defaults, and how each model was checked. [`internals/`](internals/) covers
-the implementation.
+come from. It describes the code as it runs: where NICE-OPS departs from a cited reference, the
+departure is stated. [The manual](MANUAL.md) covers the options that select each model and when
+to use them. [FIDELITY.md](FIDELITY.md) holds the evidence: how each model was checked, and how
+well it agrees with exact solutions and with measurements. The
+[developer guide](internals/README.md) covers the implementation.
 
 References are numbered in order of first citation and listed at the end.
 
@@ -26,11 +27,12 @@ References are numbered in order of first citation and listed at the end.
 ## 1. Overview and notation
 
 NICE-OPS is a source–path–receiver model. For each state of a flight trajectory it forms a
-source directivity from a database of measured noise "spheres" [1].
-For each observer it carries the level along a path through the atmosphere to the ground. It then
-integrates each observer's level history into exposure metrics. The approach follows the
-maneuvering-flight noise model of Greenwood and Rau [2]. Every observer is evaluated
-against every state. The demo case has 6,551 states and 14,400 observers.
+source directivity from a database of measured noise "spheres" [1]. For each observer it
+carries the level along a path through the atmosphere to the ground. It then integrates each
+observer's level history into exposure metrics. The approach follows the maneuvering-flight
+noise model of Greenwood and Rau [2]. Every observer is paired with every state; by default a pair is skipped only where a
+bound proves it below the observer's 10 dB-down window, which leaves the result unchanged. The demo
+case has 6,551 states and 14,400 observers.
 
 | Symbol | Meaning |
 | --- | --- |
@@ -52,18 +54,17 @@ units are used throughout. The `--units` option changes only the interface.
 ### 2.1 The operating condition
 
 Each trajectory state is reduced to three non-dimensional parameters, following the
-quasi-static acoustic mapping (Q-SAM) of Schmitz, Greenwood and co-workers
-[3, 1, 4]. The load-factor vector $\mathbf{n}$ is the aircraft's
-acceleration less gravity, in units of $g = 9.80665$ m/s²:
+quasi-static acoustic mapping (Q-SAM) of Schmitz, Greenwood and co-workers [3, 1, 4]. The
+load-factor vector $\mathbf{n}$ is the aircraft's acceleration less gravity, in units of
+$g = 9.80665$ m/s²:
 
 $$
 \mathbf{n} = \frac{\mathbf{a}}{g} + \hat{\mathbf{z}}, \qquad n = \lvert\mathbf{n}\rvert, \qquad \hat{\mathbf{n}} = \mathbf{n}/n .
 $$
 
 $\hat{\mathbf{n}}$ stands in for the main rotor's tip-path-plane normal. With the velocity
-$\mathbf{u}$ (over the ground by default, through the air under `--speed_reference air`), the
-tip speed $V_\mathrm{tip}$, rotor radius $R$, weight $W$ and air density $\rho$ from the vehicle
-file:
+$\mathbf{u}$, the tip speed $V_\mathrm{tip}$, rotor radius $R$, weight $W$ and air density $\rho$
+from the vehicle file:
 
 $$
 \mu = \frac{\lvert\mathbf{u}\rvert}{V_\mathrm{tip}}, \qquad
@@ -74,8 +75,17 @@ $$
 
 The Q-SAM path angle is the velocity's angle to the tip-path plane. It is the angle at which a
 steady flight condition presents the same rotor inflow, which is what lets steady-flight spheres
-represent a maneuvering state. $\rho$ is the vehicle file's density in every case, including
-when `--temperature` or `--pressure` sets the propagation atmosphere.
+represent a maneuvering state. At $\lvert\mathbf{u}\rvert = 0$ both path angles are taken as zero
+(§3). $\rho$ is the vehicle file's density in every case, including when `--temperature` or
+`--pressure` sets the propagation atmosphere.
+
+**The speed reference.** $\mathbf{u}$ is taken in the reference the database records it was
+built with, over the ground if it records none; `--speed_reference` overrides it, and an
+air-referenced run needs a wind profile. Through the air, $\mathbf{u}$ is the ground velocity
+less the profile's wind at the state's height, turned into the local frame by the compass
+rotation of §3. The same velocity sets the sphere's nose (§2.4). The load factor, and so $C_T$,
+stays inertial: the rotor's thrust balances the aircraft's acceleration over the ground whatever
+the air does.
 
 ### 2.2 The sphere database
 
@@ -92,9 +102,11 @@ shift (§11).
 
 The conditions are normalized into the unit cube,
 $\tilde{x} = (x - x_\min)/(x_\max - x_\min)$ for each of $\mu$, $\gamma$ and $C_T$, and
-triangulated by an incremental Delaunay triangulation [7, 8]. The
-triangulation is built on exact orientation and in-sphere predicates [9], with the
-error-free sum of [10]. A state's normalized condition $\mathbf{q}$, clamped to the
+triangulated by an incremental Delaunay triangulation [7, 8]. The triangulation is built on
+exact orientation and in-sphere predicates [9], with the error-free sum of [10]. Before
+triangulating, every condition on a face of the unit cube is duplicated, with each coordinate
+at 0 or 1 moved to −0.1 or 1.1. The copy carries the same sphere, so the clamped edge of the
+envelope falls inside the hull. A state's normalized condition $\mathbf{q}$, clamped to the
 cube, lies in one simplex with vertices $\mathbf{P}_v$. Its barycentric weights are
 
 $$
@@ -109,18 +121,61 @@ L(\phi,\theta) = \sum_v w_v\, L_v(\phi,\theta), \qquad
 \mathrm{EAA}(\phi,\theta) = \sum_v w_v\, \mathrm{EAA}_v(\phi,\theta).
 $$
 
-A sphere that has no data in a direction (stored at or below −999 dB) is dropped from that
-direction's blend, and the remaining weights are renormalized. A query outside the convex hull
-takes the nearest condition.
+A raw weight of 1 or more on a vertex takes that sphere whole. A sphere that has no data in a
+direction (stored at or below −999 dB) is dropped from that direction's blend, and the remaining
+weights are renormalized. A query still outside the hull takes the nearest (extended) vertex.
+The blend depends only on the operating condition, so it is formed once per state.
 
-Two alternatives exist for comparison with other models. `--blend nearest` takes the nearest
-condition in the normalized space, as the one-hemisphere-per-segment practice of ECAC Doc 32
-[11] would at every state. `--blend aam` is the bracketing search of the Advanced Acoustic
-Model, v3.1 [12, §2.5.1.1]. It groups the spheres into rows of one flight path angle,
-rounded to 0.5°. It interpolates between the bracketing rows only if they are at most 3° apart
-on approach or 5° apart on departure. Within a row, it interpolates between bracketing speeds at
-most 20 kt apart. Otherwise it takes the nearest row or speed. The result is up to four spheres,
-blended linearly in dB, speed first.
+**Alternatives.** Two other ways to choose the spheres exist for comparison with other models.
+`--blend nearest` takes the stored condition nearest the state, whole, at every state. Nearest
+is measured in the normalized space the triangulation is built in, with the state clamped into
+it first, and a tie goes to the database's earlier sphere. This is the closest a trajectory
+model can come to the one-hemisphere-per-segment practice of ECAC Doc 32 [11].
+
+`--blend aam` is the rotorcraft sphere search of the Advanced Acoustic Model, v3.1
+[12, §2.5.1.1, pp. 31–34]. AAM has no thrust axis. On a database whose load factors are
+spheres, each state searches only the layer of spheres whose $C_T$ is nearest its own (a tie
+takes the higher). A `fixed_load_factor` database has one layer, and the load-factor law below
+carries $C_T$ as it does under the barycentric blend. Within the layer:
+
+1. The spheres are sorted into rows of one flight path angle, each angle rounded to the nearest
+   0.5° first (halves away from zero). A row's angle is its rounded one; the state's is not
+   rounded.
+2. The rows bracketing the state's path angle are interpolated between if they are at most 3°
+   apart on approach ($\gamma < 0$) or 5° apart on departure ($\gamma \ge 0$) [12, Table 2-7].
+   A wider pair is not interpolated: the nearer row is taken alone, as is the end row for a
+   state past either end. A pair exactly as wide as a limit is still interpolated.
+3. Within each row, the speeds $\mu V_\mathrm{tip}$ bracketing the state's are interpolated
+   between if they are at most 20 kt apart. Otherwise the nearest speed in the row is taken,
+   however far: speed does not disqualify a sphere. A state exactly halfway takes the faster
+   sphere.
+4. The two rows' speed blends are blended in path angle: up to four spheres, linearly in dB,
+   speed first and then path angle [12, Fig. 2-20].
+
+The 20 kt gate is converted to advance ratio with the database's tip speed, or the vehicle
+file's for a database that records none. The path angle is the one the run uses (§2.1). The
+reference leaves three cases open, and NICE-OPS settles them so:
+
+- **Ties in path angle** go toward level flight: an approach takes the higher (less steep)
+  angle, a departure the lower. This follows the labels of [12, Table 2-8], whose signs
+  contradict the same document's convention that positive angles climb.
+- **A state past every gate** takes the nearest row in path angle, then the nearest speed in
+  it, which is the "closest matching flight condition" fallback of [12, p. 31]. Path angle
+  comes first; it is not the sphere nearest in a combined distance.
+- **Two spheres in one row at one speed** (their angles round alike): the one whose own angle
+  is nearer the state's.
+
+Two consequences of these rules follow. The path-angle gate changes at level flight, so a state
+between rows 2° either side of level is interpolated while it climbs (5° gate) and takes the
+nearer row alone once it descends (3° gate): the output steps there, as it does wherever a
+bracketing pair crosses a gate. And the shipped databases pad their envelope with copies of
+edge spheres at $\gamma = -24°$ and $35°$, so that the triangulation covers steep states. To
+the AAM search those copies are ordinary rows, wider than either gate from the outermost
+measured row, so a state more than halfway from that row to a padding row takes the padding
+row alone, which repeats edge spheres.
+
+AAM's FRAME option (load factor as a searched axis), its duration adjustment and its
+nacelle-angle axis are not reproduced.
 
 **Load factor.** A `fixed_load_factor` database stores only the 1 g spheres and is triangulated
 over $(\mu, \gamma)$. The load factor enters through the thrust law
@@ -130,17 +185,44 @@ $$
 $$
 
 added to every level and band. $C_T$ is capped at `--max_load_factor` (default 2) times
-$C_{T,\mathrm{ref}}$. Below 1 g the law is not applied by default. `--load_factor_correction
-two_sided` applies it down to `--min_load_factor` (default 0.5).
+$C_{T,\mathrm{ref}}$. Below 1 g the law is not applied by default, as PANAM applies it.
+`--load_factor_correction two_sided` applies it below 1 g too, down to `--min_load_factor`
+(default 0.5), below which the correction is held: near zero load factor, or below it where
+$C_T$ is negative, the logarithm would fail.
 
 ### 2.4 Reading the sphere
 
 Each sphere is fixed to the rotor. Its axes are $\hat{\mathbf{n}}$, the nose $\hat{\mathbf{e}}$
-(the velocity projected into the tip-path plane) and starboard
-$\hat{\mathbf{s}} = \hat{\mathbf{e}} \times \hat{\mathbf{n}}$. Below 8 kt the nose turns toward
-the aircraft's heading, with a smoothstep weight
-$w = s^2(3 - 2s)$, $s = (\lvert u_h\rvert - 3\ \mathrm{kt})/(5\ \mathrm{kt})$. For the unit vector
-$\hat{\mathbf{d}}$ from source to observer:
+(a horizontal direction $\mathbf{v}$, below, projected into the tip-path plane) and starboard
+$\hat{\mathbf{s}} = \hat{\mathbf{e}} \times \hat{\mathbf{n}}$. When the projection vanishes (no
+velocity, or a velocity along $\hat{\mathbf{n}}$), the nose falls back to $+x$ (or $+y$, if
+$\hat{\mathbf{n}}$ lies along $x$) projected into the tip-path plane.
+
+**The nose.** By default the database's `azimuth_reference` decides: a database built on the
+heading takes `--nose heading` (below), and any other takes the velocity of §2.1
+(`--nose velocity`). `--nose ground_velocity` takes the ground velocity whatever the speed
+reference. Near hover the
+velocity is drift, so when the track carries a heading and the run knows its frame, the nose
+turns toward the heading at low speed. With $b$ the frame's bearing (`--frame_bearing`, or 90°
+for a geodetic frame settled without one), compass heading $h$ points at the local angle
+$\psi_h = b - h$, since compass bearings turn clockwise. With the horizontal speed
+$\lvert u_h\rvert$ and the smoothstep weight
+
+$$
+w = s^2(3 - 2s), \qquad s = \frac{\lvert u_h\rvert - 3\ \mathrm{kt}}{5\ \mathrm{kt}}\ \text{clamped to}\ [0, 1],
+$$
+
+the horizontal angle of $\mathbf{v}$ turns from $\psi_h$ toward the velocity's own by the
+fraction $w$, the short way round, and its vertical part is $w\,u_z/\lvert u_h\rvert$. Below 3 kt
+the nose is the heading alone, and from 8 kt up it is the velocity. Under `--nose heading` the
+horizontal direction is $\psi_h$ at every speed, with the same climb $w\,u_z/\lvert u_h\rvert$, so
+a heading along the track gives the velocity's nose; in a crosswind it is turned by the crab
+angle. When the run has no frame, the low-speed turn uses instead the circular mean of heading
+against track over the states above 20 kt (at least 50 of them), and `--nose heading` is
+refused. Without a heading, or without either offset, the nose is the velocity at every speed.
+$\mu$, $\gamma$ and $C_T$ do not depend on the nose.
+
+**The angles.** For the unit vector $\hat{\mathbf{d}}$ from source to observer:
 
 $$
 \theta = \arccos(\hat{\mathbf{e}} \cdot \hat{\mathbf{d}}), \qquad
@@ -153,36 +235,56 @@ above the plane, ±180° straight up. A direction above the tip-path plane reads
 image below unless every sphere stores its upper half. The level in a direction is interpolated
 bilinearly between grid nodes, periodically in $\phi$. $\theta$ has no period: past the last
 $\theta$ node the cell joining the last and first nodes extrapolates slightly, a quirk kept
-from the D original. The blend in §2.3 is applied at each of
-the four grid corners first.
+from the D original. The blend in §2.3 is applied at each of the four grid corners first. A
+corner with no data after the blend is dropped from the bilinear interpolation in the same way,
+and the other corners' weights are renormalized.
 
 ## 3. Trajectories
 
 **AC state tracks** (the 27-column NASA/FAA format) carry positions, velocities and
-accelerations, and are used as sampled.
+accelerations, and are used as sampled. The format does not agree with itself about the sign of
+the vertical speed, so it is decided from the track: with $\dot z_i$ the central difference of
+the heights, if both $v_z$ and $\dot z$ have an rms of at least 0.15 m/s and the uncentered
+cosine $\sum v_{z,i}\dot z_i / \sqrt{\sum v_{z,i}^2 \sum \dot z_i^2}$ is −0.5 or less, $v_z$ is
+negated and the path angles are recomputed. $\mu$ and the load factor do not depend on the sign.
 
-**WGS84 tracks** carry positions only. Velocities and accelerations come from a cubic smoothing
-spline [13] that minimizes
+**Static operations** are holds at one point, each for a given duration with the nose on a
+compass heading. They are sampled every 0.02 s at 1 g with zero velocity, so $\mu = 0$. At
+zero velocity (true hover, flown or static) both path angles are zero: the arcsine of §2.1 is
+undefined there, and a stationary aircraft neither climbs nor descends.
+
+**WGS84 tracks** carry positions, and optionally east, north and up velocities. Without
+velocities, velocities and accelerations come from a cubic smoothing spline [13] that
+minimizes
 
 $$
 \sum_i \left(y_i - f(t_i)\right)^2 + \lambda \int f''(t)^2\, dt
 $$
 
-per axis. $\lambda$ is chosen so that the residual equals a tolerance: `--path_smoothing`
-(default 10 ft rms per axis) times the number of points. Dense tracks are padded at each end with
-10 s of points on a quadratic fitted to the last 3 s, so the spline's natural end conditions do
-not bend the ends of the track.
+per axis. $\lambda$ is chosen so that $\sum_i (y_i - f(t_i))^2 = N\sigma^2$, with $\sigma$ =
+`--path_smoothing` (default 10 ft rms per axis, in `--units`) and $N$ the number of points;
+$\sigma = 0$ interpolates. The velocity is the spline's first derivative, and the load factor
+of §2.1 comes from its second. A dense track (mean spacing 0.5 s or less, $\sigma > 0$) is
+padded at each end with 10 s of points on a quadratic fitted to the last 3 s, so the spline's
+natural end conditions, which pin the acceleration to zero, do not bend the ends of the track;
+the sum and $N$ then include the padded points. If the file gives the velocities, they are
+rotated into the frame, interpolated exactly, and differentiated once for the acceleration.
+States are resampled at min(`-s`, the file's mean step); a track is never coarsened, and a
+uniform track already at or finer than `-s` keeps its own samples.
 
 **Coordinates.** Latitude and longitude are mapped to a local plane by the American polyconic
 projection about a reference point [14] on the WGS84 ellipsoid [15]
-($a = 6\,378\,137$ m, $f = 1/298.257223563$). Altitude passes straight through. The plane is
-then rotated so that $+x$ points along `--frame_bearing` $b$:
+($a = 6\,378\,137$ m, $f = 1/298.257223563$). $z$ is the altitude less `--ground_elevation`
+(the observer plane's elevation), otherwise untransformed. The plane is then rotated so that
+$+x$ points along `--frame_bearing` $b$:
 
 $$
 x = E \sin b + N \cos b, \qquad y = -E \cos b + N \sin b .
 $$
 
-The same rotation turns compass bearings (wind directions, headings) into the local frame.
+The same rotation, without the translation, turns velocities and compass bearings (wind
+directions, headings) into the local frame. Without `--frame_bearing` the axes are east and
+north ($b = 90°$).
 
 ## 4. Spreading and atmospheric absorption
 
@@ -251,11 +353,13 @@ $$
 $$
 
 times its length. This is the fine-layer limit of the 30 m layers of 14 CFR 36, Appendix A
-[17], and the approach of the sonAIR model [18]. On a curved ray the mean is still
-taken over the straight span $[z_o, z_s]$, a first-order approximation. Pressure in the profile,
-when not given, is hydrostatic for dry air:
+[17], and the approach of the sonAIR model [18]. Two approximations come with it. The mean is
+taken over the whole height span, including the part inside the sphere radius that the path
+length excludes. And on a curved ray the mean is still taken over the straight span
+$[z_o, z_s]$, a first-order approximation; the ray's own arc length is what it multiplies.
+Pressure in the profile, when not given, is hydrostatic for dry air:
 $p(z) = p(0) \exp\!\left(-\frac{g}{R_d}\int_0^z \frac{dz'}{T}\right)$, with
-$R_d = 287.05$ J/(kg K).
+$R_d = 287.05$ J/(kg K), from the surface pressure of the vehicle file or `--pressure`.
 
 ## 5. Ground effect
 
@@ -278,18 +382,20 @@ default 225, grass):
 | Variable porosity [22] | $Z = (1+i)\sqrt{\dfrac{\sigma_e}{\pi \gamma \rho_0 f}} + \dfrac{i c\, \alpha_e}{8 \pi \gamma f}$ |
 | Hard-backed layer of depth $d_l$ [22] | $Z = Z_c \coth(-i k_c d_l)$ |
 
-In the variable-porosity model $\sigma_e$ is the effective flow resistivity in Pa·s/m²,
-$\alpha_e$ the rate of change of porosity with depth, $\gamma = 1.4$ and
-$\rho_0 = 1.2$ kg/m³. For the layer, $Z_c = 1 + 9.08X^{-0.754} + 11.9iX^{-0.732}$ and
+In the variable-porosity model $\sigma_e$ is the effective flow resistivity in Pa·s/m², 1000
+times `--flow_resistance`, which is given in kPa·s/m² for every model. $\alpha_e$ is the rate of
+change of porosity with depth (`--porosity_rate`), $\gamma = 1.4$ and $\rho_0 = 1.2$ kg/m³. For
+the layer, $Z_c = 1 + 9.08X^{-0.754} + 11.9iX^{-0.732}$ and
 $k_c = k\,(1 + 10.8X^{-0.70} + 10.3iX^{-0.595})$. The models use $\beta = 1/Z$, and a ground with
 $\mathrm{Re}\,\beta \le 0$ is refused as non-passive.
 
 **The convention for $\alpha_e$.** The variable-porosity term $c\,\alpha_e/(8\pi\gamma f)$ is what a
-first-order (WKB) solution gives for porosity $\Omega_0 e^{-\alpha z}$ with isothermal compressibility,
-taking $\alpha_e = \alpha/\Omega_0$. The form usually quoted, $0.436(1+i)\sqrt{\sigma_e/f} + 19.48\,i\alpha_e/f$,
-has twice the coefficient, so its $\alpha_e$ is defined differently: halve an $\alpha_e$ fitted in that
-form before passing it to `--porosity_rate`. The printed eq. (10) of [22] has not been checked. The
-2017 site ground uses $\alpha_e = 0$.
+first-order (WKB) solution gives for porosity $\Omega_0 e^{-\alpha z}$ with isothermal
+compressibility, taking $\alpha_e = \alpha/\Omega_0$. The form usually quoted,
+$0.436(1+i)\sqrt{\sigma_e/f} + 19.48\,i\alpha_e/f$, has twice the coefficient, so its $\alpha_e$
+is defined differently: halve an $\alpha_e$ fitted in that form before passing it to
+`--porosity_rate`. The printed eq. (10) of [22] has not been checked. The 2017 site ground uses
+$\alpha_e = 0$.
 
 ### 5.2 The spherical-wave reflection coefficient
 
@@ -314,6 +420,10 @@ through $\mathrm{w}(p_w)$, rather than $e^{-w}\mathrm{erfc}(-i\sqrt{w})$, keeps 
 any $\lvert w\rvert$. It also keeps the branch of $p_w$ itself, so a mass-like ground
 ($\mathrm{Im}\,\beta > 0$) does not acquire a spurious growing surface wave.
 
+$\lvert Q\rvert$ is not bounded by 1. Toward grazing incidence the surface wave carried by
+$F$ takes it to about 2.02 for an ordinary soil, a gain of up to $(1 + \lvert Q\rvert)^2$,
++9.6 dB, rather than the +6 dB of pressure doubling.
+
 **The Faddeeva function** is computed by Weideman's rational series with $N = 32$ terms
 [25]:
 
@@ -324,9 +434,11 @@ $$
 
 with $P$ a polynomial of degree 31. The lower half-plane uses
 $\mathrm{w}(z) = 2e^{-z^2} - \mathrm{w}(-z)$. For speed, the hot path uses the asymptotic series
-for $\lvert z\rvert \ge 6$ and a sixth-order Taylor expansion about tabulated nodes elsewhere.
-Both agree with the series to about $10^{-11}$, and the series agrees with SciPy's `wofz` to
-$3\times10^{-13}$.
+for $\lvert z\rvert \ge 6$ in the upper half-plane or where $x^2 - y^2 \ge 36$ ($z = x + iy$), a
+sixth-order Taylor expansion about nodes 0.05 apart for $\lvert z\rvert < 6$ with
+$\mathrm{Re}\,z \ge 0$ and $-0.25 \le \mathrm{Im}\,z \le 6$, and Weideman's series for every
+other argument. Both fast paths agree with the series to about $10^{-11}$, and the series agrees
+with SciPy's `wofz` to $3\times10^{-13}$.
 
 **Roughness.** An rms roughness height $\sigma_r$ (`--roughness`, default 0) reduces the
 coherent reflection by the Kirchhoff (Ament) factor [26]:
@@ -335,8 +447,8 @@ $Q \leftarrow Q\, e^{-2(k\sigma_r\cos\vartheta)^2}$.
 ### 5.3 Band averaging and turbulence
 
 A one-third-octave band is not a pure tone. NICE-OPS uses Chessell's band-averaged form
-[27], with the corrections noted by Daigle, Embleton and Piercy [28], with the path delay $\tau = (R_2 - R_1)/c$ and range ratio
-$\varrho = R_2/R_1$:
+[27], with the corrections noted by Daigle, Embleton and Piercy [28], with the path delay
+$\tau = (R_2 - R_1)/c$ and range ratio $\varrho = R_2/R_1$:
 
 $$
 G = 1 + \frac{\lvert Q\rvert^2}{\varrho^2} +
@@ -346,7 +458,9 @@ $$
 
 with $\Omega = \pi(2^{1/6} + 2^{-1/6}) = 6.325159$ and $\Delta = \pi(2^{1/6} - 2^{-1/6}) = 0.727477$.
 These are the interference evaluated at the band's arithmetic center, averaged over its width.
-Over a rigid surface with the receiver on the ground, $G \to 4$ (+6 dB).
+Over a rigid surface with the receiver on the ground, and with no turbulence ($C = 0$, the
+default) or under HARMONOISE, $G \to 4$ (+6 dB). Chessell's factor depends on range alone, so
+it decorrelates even coincident paths.
 
 $T(f)$ is the coherence of the direct and reflected waves, reduced by atmospheric turbulence.
 It uses the direct range $R_1$ in both models:
@@ -364,6 +478,18 @@ $$
 \gamma_T = \frac{C_T^2}{T_0^2} + \frac{22}{3}\frac{C_v^2}{c_0^2}\quad (\mathrm{m}^{-2/3}).
 $$
 
+### 5.4 Tabulated ground gain
+
+The point-receiver gain of §5.2–§5.3 depends on the geometry only through the source height
+and the horizontal distance, the receiver height being fixed for a table. By default it is not
+evaluated for every pair. Per trajectory it is computed exactly at the nodes of a grid in
+$s = \sqrt{h_s/r}$, $r = \sqrt{h_s^2 + d^2}$, and $\ln r$ (641 values of $s$, 40 nodes per
+decade of range), and interpolated bilinearly between them as a power ratio. $s$ resolves
+grazing incidence, where the model changes fastest. Ranges outside the table are clamped to its
+edge. The interpolant is a convex combination of exact values, so it never leaves the model's
+bounds. `--exact_ground` evaluates the model directly. The accuracy of the table is in
+[FIDELITY](FIDELITY.md#ground-and-plate-tables).
+
 ## 6. Receivers and terrain
 
 ### 6.1 The point receiver
@@ -378,23 +504,38 @@ with $h_r$ set to that height.
 GR1425 plate, 0.2 m in radius, with the microphone 3/4 of the radius from the center, as in
 SAE ARP 4055 [31]. The plate's response is tabulated by PANAM's axisymmetric boundary
 element method as complex transfer functions of the direct and image waves, $P_d$ and $P_r$,
-over frequency, elevation and azimuth. The band gain averages five sub-frequencies $f_j$ across
-the band:
+over frequency, elevation and azimuth. The band gain averages the table's $N_\mathrm{sub}$
+sub-frequencies $f_j$ across the band (five in the GR1425 tables):
 
 $$
-G_b = \frac15 \sum_{j=1}^{5} \left\lvert P_d(f_j) + Q(f_j)\, P_r(f_j) \right\rvert^2 ,
+G_b = \frac{1}{N_\mathrm{sub}} \sum_{j=1}^{N_\mathrm{sub}} \left\lvert P_d(f_j) + Q(f_j)\, P_r(f_j) \right\rvert^2 ,
 $$
 
-with $Q$ the reflection coefficient of §5.2 evaluated at the plate's top surface. The table
-records the ground it was computed over, and a run with a different ground is refused.
+with $Q$ the spherical-wave coefficient of §5.2 *without* the roughness factor, evaluated at
+the plate's top surface. Neither turbulence model (§5.3) applies, because the plate's image
+path is millimeters longer than the direct path. This is the reference form. A run takes $Q$
+at each band's edges and center and interpolates it quadratically in $\lg f$ to the $f_j$
+(by default from a per-trajectory table of $Q$ over the grazing cosine and the image path's
+length). That is within 0.07 dB of the reference above −15 dB re free field, and up to about
+1.5 dB off in deep near-grazing nulls. `--exact_ground` evaluates those values of $Q$ directly
+instead of from the table.
+
+$P_d$ and $P_r$ are interpolated bilinearly, real and imaginary parts, in elevation and
+azimuth. They are held below the table's lowest elevation and above its highest, and periodic
+in azimuth. The azimuth is that of the horizontal propagation direction, source to microphone,
+in the plate's frame, whose $+y$ is the microphone's offset from the plate's center. The offset
+points along a fixed azimuth or, by default, outboard: away from the flight track, along the
+horizontal line from the track's nearest state to the observer, or to the track's right for an
+observer directly under it. The table records the ground it was computed over, and a run with
+a different ground is refused.
 
 ### 6.3 Terrain
 
 With `--terrain`, each source–observer pair takes its own mean ground plane: a least-squares
-line $z = a + b s$ fitted to the terrain heights sampled along the pair's horizontal path. This
-is the mean-plane construction of CNOSSOS-EU [32, 33], also used over
-terrain in NORAH2 [34] and ECAC Doc 32 [11]. The ground model then runs in the rotated frame of
-that plane:
+line $z = a + b s$ fitted to the terrain heights along the pair's horizontal path, with $s$ the
+horizontal distance from the observer. This is the mean-plane construction of CNOSSOS-EU
+[32, 33], also used over terrain in NORAH2 [34] and ECAC Doc 32 [11]. The ground model then runs
+in the rotated frame of that plane:
 
 $$
 h_s' = \frac{z_s - (a + bD)}{\sqrt{1 + b^2}}, \qquad
@@ -402,9 +543,22 @@ h_r' = \frac{z_m - a}{\sqrt{1 + b^2}}, \qquad
 d' = \frac{D + b(z_s - z_m)}{\sqrt{1 + b^2}},
 $$
 
-with $D$ the horizontal distance and $z_m$ the microphone's height. A negative equivalent height
-is raised to zero, as in CNOSSOS-EU. Spreading, absorption and the sphere direction still use
-the true straight line. Terrain screening and diffraction are not modeled.
+with $D$ the horizontal distance and $z_m$ the microphone's height. This is a rotation of the
+plane, so the source–microphone distance is unchanged. A negative equivalent height is raised
+to zero, as in CNOSSOS-EU. For a flush plate microphone the plate lies along the line under the
+microphone: the ground model takes the source height $h_s' - h_r'$ (raised to zero if negative),
+and the receiver keeps its plate. A negative $d'$ (a nearly overhead source over ground falling
+toward it) is used by its magnitude, which keeps the ground model's direct path equal to the
+true range, and the arrival azimuth the plate reads is reversed.
+
+The per-pair line is not fitted pair by pair. It is interpolated linearly in bearing and in
+length from per-observer fits along 1440 bearing rays (0.25°), each sampled one raster step
+apart, which is exact on a uniformly sloping plane. For an elevated source the specular
+reflection point lies near the receiver, at $d'h_r'/(h_s' + h_r')$, so a line fitted over the
+whole path also weighs terrain the reflection never sees; that is the standard practice, and on
+smooth ground the two agree. Spreading, absorption and the sphere
+direction still use the true straight line. On level terrain at $z = 0$ every quantity reduces
+to the flat-ground geometry. Terrain screening and diffraction are not modeled (§11).
 
 ## 7. The stratified, moving atmosphere
 
@@ -422,20 +576,50 @@ wind. The approximation overstates the wind's effect on steep paths by a factor
 $1/\cos(\text{elevation})$, which matters little because steep paths refract little.
 
 **A profile from one surface wind** (`--wind`). The wind follows the neutral logarithmic law
-[36]
+[36] through the observation $u_\mathrm{ref}$ at height $z_\mathrm{ref}$,
 
 $$
 u(z) = u_\mathrm{ref}\,\frac{\ln(z/z_0)}{\ln(z_\mathrm{ref}/z_0)}, \qquad z_0 < z \le \delta,
 $$
 
-held constant above the surface-layer depth $\delta$ (default 200 m) and zero at or below $z_0$.
-The roughness length $z_0$ defaults to 0.03 m, the Davenport–Wieringa class "open flat terrain"
-[37, 38]. The anemometer height $z_\mathrm{ref}$ defaults to the standard 10 m. The
-temperature lapse is dry adiabatic (−0.0098 K/m), and water vapor holds its surface molar
-concentration. `--stability` replaces these with a power law $u = u_\mathrm{ref}(z/z_\mathrm{ref})^m$ and a
-class temperature gradient. The exponents are the Klug–Manier classes of TA Luft [39], and
-the gradients are mid-range values of the $\Delta T$ classes of U.S. NRC Regulatory Guide 1.23
-[40]. The stability scheme has not been validated.
+held constant above the surface-layer depth $\delta$ (`--surface_layer_depth`, default 200 m)
+and zero at or below $z_0$. Its direction is the same at every height. The log law describes
+only the neutral surface layer, about a tenth of a boundary layer one to two kilometers deep.
+Above it the wind turns and grows slowly toward the geostrophic wind, which a single surface
+observation says nothing about, so the profile holds the surface layer's top value rather than
+extrapolate the law or model the turning. The roughness length
+$z_0$ (`--roughness_length`) defaults to 0.03 m, the Davenport–Wieringa class "open flat terrain" [37, 38]. The
+anemometer height $z_\mathrm{ref}$ defaults to the standard 10 m.
+
+As run, the law is sampled at levels. The ground, $z = 0$, is calm. The first level above it is
+at $\min(10 z_0, z_\mathrm{ref})$, and from there levels are spaced geometrically,
+`--profile_levels` (default 16) per decade, to a top at the larger of $\delta$ and 5% above the
+highest state or microphone; $z_\mathrm{ref}$, $\delta$ and the top are levels themselves. The
+profile is linear between levels and from zero at the ground to the first level, so no level
+above the ground is calm.
+
+The temperature lapse is dry adiabatic (−0.0098 K/m), which makes the layer neutral. Water
+vapor holds its surface molar concentration, so the relative humidity follows the cooling air,
+capped at 100%. Pressure is hydrostatic (§4.3). The surface temperature, humidity and pressure
+are the run's own: the vehicle file's, or `--temperature`, `--humidity` and `--pressure`.
+
+**Stability classes** (`--stability`, unvalidated). Each class replaces the log law with a power
+law $u = u_\mathrm{ref}(z/z_\mathrm{ref})^m$, held above $\delta$ as the log law is, and the lapse
+with a class temperature gradient. The class gradient holds up to $\delta$, and every class
+lapses dry-adiabatically above it. The exponents are the Klug–Manier classes of TA Luft [39],
+and the gradients are mid-range values of the $\Delta T$ classes of U.S. NRC Regulatory
+Guide 1.23 [40]:
+
+| Class (TA Luft) | Pasquill | Character | $m$ | $dT/dz$ below $\delta$ |
+| --- | --- | --- | --- | --- |
+| I | F | very stable | 0.42 | +2.75 K/100 m |
+| II | E | stable | 0.35 | +0.5 K/100 m |
+| III/1 | D | neutral to stable | 0.22 | −1.0 K/100 m |
+| III/2 | C | neutral to unstable | 0.20 | −1.6 K/100 m |
+| IV | B | unstable | 0.15 | −1.8 K/100 m |
+| V | A | very unstable | 0.09 | −2.0 K/100 m |
+
+How the scheme scores is in [FIDELITY](FIDELITY.md#wind-profile-and-stability).
 
 ## 8. Refraction
 
@@ -459,8 +643,11 @@ and the travel time is
 $t = \operatorname{artanh}\left(r\rho_c/(h_c^2 + x_c r)\right)/\lvert a\rvert$, with
 $h_c = \mathcal{L} + \sigma z_s$ and $\rho_c = \sqrt{x_c^2 + h_c^2}$.
 The level is read from the sphere at the ray's launch direction, and absorbed over the arc
-length. The reflected ray is found by iteration on its launch angle, and the ground model is
-evaluated at the equivalent straight geometry with the ray's grazing angle $\psi$ and path length.
+length (§4.3). The reflected ray is found by iteration on its launch angle, and a point
+receiver's ground model is evaluated at the equivalent straight geometry with the ray's grazing
+angle $\psi$ and path length; a plate microphone takes the direct ray's arrival angle. Compass
+wind directions are turned into the frame by `--frame_bearing` (default 90°, $+x$ east). In
+uniform air the rays are the straight lines of §4.
 
 **Shadow zone.** In an upward-refracting atmosphere ($a < 0$) no ray reaches beyond
 
@@ -468,9 +655,11 @@ $$
 r_b = t(z_s) + t(z_r), \qquad t(z) = \sqrt{z(2\mathcal{L} - z)} \approx \sqrt{2\mathcal{L} z}.
 $$
 
-Beyond it, sound arrives as a creeping wave diffracted along the ground. It decays at the
-rate of the first mode [43, §9-5; 44]. Over rigid ground, with $\tau_1 = 1.01879$ the
-first zero of $\mathrm{Ai}'(-x)$:
+Beyond it, sound arrives as a creeping wave diffracted along the ground. The level starts from
+the limiting ray's: its spreading range is continued in proportion to range,
+$R_\mathrm{eq} = r\mathcal{L}/h_c$ ($h_c = \mathcal{L} - z_s$), and its travel time at $c_0$. It decays at the rate of the
+first mode [43, §9-5; 44]. Over rigid ground, with $\tau_1 = 1.01879$ the first zero of
+$\mathrm{Ai}'(-x)$:
 
 $$
 \alpha_\mathrm{sh} = \frac{20}{\ln 10}\,\tau_1 \sin 60^\circ\, \frac{(\pi f)^{1/3} \lvert a\rvert^{2/3}}{c_0}\ \ \mathrm{dB/m}.
@@ -478,61 +667,199 @@ $$
 
 Over an impedance ground, the root $b_1$ of $\mathrm{Ai}'(b) + q\,\mathrm{Ai}(b) = 0$, with
 $q = -i s\, e^{4\pi i/3} \beta$ and $s = (\pi f/\lvert a\rvert)^{1/3}$, replaces it:
-$\alpha_\mathrm{sh} = 8.686\, \mathrm{Im}(b_1 e^{-2\pi i/3})\, \pi f/(c_0 s^2)$. The loss
-$\min(\alpha_\mathrm{sh}(r - r_b), L_\mathrm{floor})$, with `--shadow_floor` default 20 dB,
-is subtracted.
+$\alpha_\mathrm{sh} = 8.686\, \mathrm{Im}(b_1 e^{-2\pi i/3})\, \pi f/(c_0 s^2)$. Bands whose
+admittance admits a surface wave ($\arg\beta < -60°$) cannot follow that root and take the
+rigid-ground rate. Real ground is not always the deeper shadow. To first order the impedance
+rate is up to 12% below the rigid one at low frequency and weak gradients, and up to 2.3 times
+it once the ground is soft on the wave's scale: at 1 kHz in the benchmark's case 3 (§9.2, $c$
+falling 0.1 /s) it is 146 dB/km against rigid ground's 70. The loss $\min(\alpha_\mathrm{sh}(r - r_b), L_\mathrm{floor})$, with
+`--shadow_floor` $L_\mathrm{floor}$ (default 20 dB), is subtracted. The floor stands for the
+energy turbulence scatters into the shadow.
 
 **The shadow transition.** The ray picture is wrong near the boundary, where the field
-diffracts smoothly from lit to shadow. Near the ground the equivalent-linear method can depart
-from a PE by up to 10 dB [45]. NICE-OPS tabulates the difference between the exact
-field of a linear profile over an impedance plane (§9.2) and the ray model, as a function of the
-Fock-scaled distance past the boundary $\xi = (r - r_b)/F$, with $F = 2s^2/k_0$, and of
-$s = k_0 \ell$, $\ell = (c_0/(2\lvert a\rvert k_0^2))^{1/3}$. Near the boundary it blends the ray
-model into that correction. Where a stratified profile places each band's boundary is a fit to
-the parabolic equation particular to NICE-OPS (see the manual's
-[Refraction](MANUAL.md#refraction)).
+diffracts smoothly from lit to shadow. Its ground term, taken at the grazing ray's straight
+equivalent geometry, sinks toward the grazing ground wave over soft ground and doubles over
+rigid ground, where the exact field does neither, and near the ground the equivalent-linear
+method can depart from a PE by up to 10 dB [45]. When a ground model is on, NICE-OPS replaces
+the ray model there by a tabulated field.
+
+For each band, and each microphone height, it tabulates $V(\xi, s)$: the level of the
+residue-series field of a profile with $k^2$ linear in height over the impedance plane (§9.2),
+relative to the ray's spreading alone. Its arguments are the Fock-scaled distance past the
+boundary $\xi = (r - r_b)/F$, with the diffraction length $F = 2s^2/k_0$, and
+$s = k_0 \ell$, $\ell = (c_0/(2\lvert a\rvert k_0^2))^{1/3}$. Relative to the ray's spreading it
+hardly depends on the source's height, which is Fock's result [44], so one table serves every
+path. The table is built with the source at $\min(20, 0.1 s^2)\,\ell$, over
+$-2 \le \xi \le 6$ in steps of 0.1 and $5 \le s \le 3000$ at 8 nodes per decade. $V$ is capped at
+$20\lg 2$, the most two coherent rays give, held at $V(0) - L_\mathrm{floor}$ deep in the
+shadow, and extrapolated at its last slope past $\xi = 6$.
+
+The level is the ray model's, ground term included, up to $\xi = -2$, and the ray's spreading
+plus $V$ from $\xi = -1$ on, where $V$ replaces both the ground term and the creeping-wave
+loss. Between them the two are blended linearly in $\xi$. A cramped band, one whose boundary
+lies within two diffraction lengths of the source ($r_b < 2F$), keeps the ray model up to its
+boundary and blends over $0 \le \xi \le 1$ instead: the table has no lit zone to hand over from.
+Bands with $s < 5$ keep the ray model and the creeping-wave loss. A flush plate microphone takes
+the field for a receiver at the plate's top, plus a tabulated offset $K$(band, azimuth): the
+plate's level over bare ground near grazing (computed at 2° elevation, where it barely depends
+on elevation), every 10° of azimuth and interpolated linearly to the pair's own. Without a
+ground model there is no transition, and the creeping-wave loss above applies.
+
+**Each band's boundary.** Through layers (§8.2) a pair has two boundaries, the layered rays'
+$r_s$ and the linear fit's $r_l$. A wave resolves the thin fast layer near the ground that sets
+$r_s$ only once its diffraction length is short against the gap between them, so each band takes
+
+$$
+r_b = r_s + w\,(r_l - r_s), \qquad w = \frac{x}{x + C}, \qquad x = \frac{F_l}{r_l - r_s},
+$$
+
+with $F_l$ the band's diffraction length at the fit's curvature, $C = 0.363$ for a raised
+receiver and $C = 0.75$ for a flush one (below 5 cm, or a plate). Where the fit casts no shadow
+($r_l$ infinite, as over a strong inversion), $r_b = m\,(f/1\ \mathrm{kHz})^{-0.08}\, r_s$, with
+$m = 1.60$ flush and $1.90$ otherwise. The band is then treated as a linear profile whose
+boundary is $r_b$, gradient $\lvert a\rvert = c_0(\sqrt{2z_s} + \sqrt{2z_r})^2/r_b^2$, for
+$s$, $\xi$ and the creeping-wave rate. With $r_s = r_l$, a linear profile, it is the one
+boundary. The law and its constants are a fit to the parabolic equation particular to NICE-OPS;
+the calibration is in [FIDELITY](FIDELITY.md#shadow-transition-calibration).
 
 **Turbulent scattering** (`--scattering`, off by default). Turbulence scatters energy into the
-shadow. With `--scattering` $\gamma_T$, the shadow loss is limited by a scattered level
+shadow. With `--scattering` $\gamma_T$, the scattered level
 
 $$
 S = \min\!\left(0,\ a_0 + 10\lg\gamma_T + b_0 \lg\frac{f}{1\ \mathrm{kHz}} +
   c_0' \lg\frac{R}{100\ \mathrm{m}} + d_0 \lg\frac{z_s}{100\ \mathrm{m}}\right)
 $$
 
-relative to free field, added in energy to the coherent field. The coefficients are NICE-OPS's
-own regression on parabolic-equation runs with von Kármán phase screens (§9.1), not a published
-formula. For a flush receiver they are $(a_0, b_0, c_0', d_0) = (39.18, -1.55, 2.10, 5.30)$, and
-for one 1.2 m up $(36.67, 5.61, 5.13, 5.30)$.
+relative to free field, with $R$ the slant range, is added in energy to the coherent field $V$,
+and replaces the `--shadow_floor` hold. $R$ is clamped to [100, 10 000] m and $z_s$ to
+[10, 300] m, and the energy sum is capped at the table's maximum. A plate adds $K$ to $S$ as it
+does to $V$. The coefficients are NICE-OPS's own regression on parabolic-equation runs with
+von Kármán phase screens (§9.1) through measured upwind profiles, not a published formula. The
+flush coefficients, $(a_0, b_0, c_0', d_0) = (39.18, -1.55, 2.10, 5.30)$, apply below 5 cm or
+on a plate, and $(36.67, 5.61, 5.13, 5.30)$, fitted for a receiver 1.2 m up, to every other
+receiver. Scattering acts through the shadow transition, so it needs a ground model. How
+strong a $\gamma_T$ the measurements support is in
+[FIDELITY](FIDELITY.md#turbulent-scattering-strength).
 
 ### 8.2 Stratified profile: ray tracing through layers
 
 `--refraction stratified` traces rays through $c_\mathrm{eff}(z)$, taken as piecewise linear
-between the profile's levels. Snell's law fixes the ray parameter $p = \cos\theta/c$. Across a
-layer of gradient $g$ from $c_0$ to $c_1$, with $q = \sqrt{1 - p^2c^2}$, the ray advances
+between the profile's levels and constant below the lowest and above the highest. Snell's law
+fixes the ray parameter $p = \cos\theta/c$. Across a layer of gradient $g$ from $c_0$ to $c_1$,
+with $q = \sqrt{1 - p^2c^2}$, the ray advances
 
 $$
 \Delta x = \frac{p\,(c_0 + c_1)\,\Delta z}{q_0 + q_1}, \qquad
 \Delta t = \frac{1}{g} \ln\frac{c_1 (1 + q_0)}{c_0 (1 + q_1)} .
 $$
 
-The eigenrays are the roots of $X(p) = r$ over four families: launched up or down, with or without
-a ground bounce. Each is solved by the Illinois variant of regula falsi. The spreading of each
-arrival comes from the ray tube, $R_\mathrm{eq}^2 = r\lvert dX/d\theta_s\rvert\sin\lvert\theta_r\rvert/\cos\theta_s$,
-with any focusing gain capped at 10 dB. In a duct, rays that bounce $m$ times arrive at
-$X_m = X_0 + m L_\mathrm{hop}$. Each intermediate bounce costs the plane-wave loss
-$-10\lg\lvert R_p(\psi)\rvert^2$, and the last bounce takes the ground model.
+The layered solve applies when the source is above the receiver ($z_s > z_r$) and the
+horizontal distance is at least 1 mm; otherwise the pair takes the linear model's ray.
 
-Multiple arrivals are summed **incoherently**, $L = 10\lg\sum_i 10^{L_i/10}$. Near caustics and
-for rays that tunnel through a turning point (`--tunneling`), the band level is the band average
-of the Airy-function intensity [43]. Far into the shadow, a stratified pair hands over to
-the equivalent linear model of §8.1, and its creeping wave and transition.
+**Eigenrays.** The eigenrays are the roots of $X(p) = r$ over four direct families: launched up
+or down, arriving on the first crossing of $z_r$, or on the second after dipping below $z_r$ and
+turning back up without touching the ground. The primary arrival is the downward family's
+root, found from the linear model's answer, and each root is solved by the Illinois variant of
+regula falsi. Range need not be monotonic in $p$ along a family, so the other families are
+sampled in launch angle, 32 times plus 8 for each bounce the path can hold (at most 512), and
+every crossing of $r$ is solved for. The reflected eigenray has its own two families (launched
+down or up). Rays launched up reach the receiver from aloft only if the air aloft outruns all
+the air between source and receiver, and only past their skip distance; short of it the
+ground-grazing boundary stands.
+
+The spreading of each arrival comes from the ray tube,
+$R_\mathrm{eq}^2 = r\lvert dX/d\theta_s\rvert\sin\lvert\theta_r\rvert/\cos\theta_s$, with any
+focusing gain capped at 10 dB per ray. In the shadow the limiting ray's tube is carried out in
+proportion to range and its travel time continued at $c(0)$, as in §8.1.
+
+**Ducts.** When the air above the source outruns all of the air below it, a ray that reaches
+the ground turns aloft and comes back down. Rays that bounce $m$ times arrive at
+$X_m = X_0 + m L_\mathrm{hop}$, with $L_\mathrm{hop}$ one hop from the ground to the turning
+height and back, and are found from the same samples. Each intermediate bounce costs the
+plane-wave loss $-10\lg\lvert R_p(\psi)\rvert^2$, and the last bounce takes the ground model.
+Past the reach of every direct ray, the strongest bounced arrival becomes the primary. Every
+solved arrival is kept, each through its own launch direction on the sphere and its own ray
+tube, and they are summed **incoherently**, $L = 10\lg\sum_i 10^{L_i/10}$.
+
+**The resolution limit.** A ray whose invariant is $1/c_\mathrm{max}$, with $c_\mathrm{max}$ the
+fastest air on the path, runs horizontally where the air is that fast. In flat or nearly flat
+air (a calm floor at the ground, for instance) ray theory then sends it, and the shadow
+boundary with it, out without limit. A wave confined to a height $h$ diffracts out of it within
+about $k h^2$. So the limiting ray's turning region is taken as the heights within one radian of
+vertical phase of the fastest air, $k\int\sin\theta\,dz = 1$, and the ray's horizontal travel
+across that region, of height $h$, is capped at $1.5\,k h^2$, with $k$ at the run's highest band.
+In a linear gradient ray theory travels $\tfrac43 k h^2$ there, so the cap never binds on a
+resolved turning. The cap is not applied where the fastest air is the source's own and there is
+faster air above it (downward refraction). The phase is integrated beyond the path's ends,
+through the profile, when the path ends before the radian is gathered.
+
+**The hand-over and the shadow.** When a shadow transition serves the receiver (a ground model
+is on) and the linear fit's boundary $r_l$ lies beyond the layered boundary $r_s$, the pair takes
+the linear fit's ray from $0.9\,r_s$ onward, lit or in the fit's shadow, carrying both
+boundaries for §8.1's per-band boundary. Near its boundary the layered ray focuses into a
+caustic the wave does not show. Without a transition there is no hand-over, and the layered
+shadow ray takes the creeping-wave loss at the fit's gradient. A boundary set by faster air
+aloft is withdrawn where a ray from aloft or along a duct does arrive.
+
+**Wave corrections.** By default a caustic's focusing gain is capped at 10 dB. Two opt-in
+Airy corrections exist. `--tunneling` adds rays that turn back at a height $z_t$ just above the
+receiver, which the wave reaches as the evanescent tail $\mathrm{Ai}^2(x)$,
+$x = (\tfrac32\omega I)^{2/3}$, $I = \int_{z_r}^{z_t}\sqrt{p^2 - 1/c^2}\,dz$; near the family's
+caustic the pair of rays is replaced by the caustic's band-averaged Airy field. `--skip_fill` adds
+a caustic's tail on the dark side of an interior extremum of a family's range,
+$I = C\,\mathrm{Ai}^2\!\left(\omega^{2/3} d\,(2/X'')^{1/3}\right)$, with $d$ the distance short of
+the caustic and $C$ matched to the two rays' energy on the lit side. Each is averaged over 7
+sub-frequencies of the third octave and normalized to the ray tube at the 10 kHz reference
+frequency, so it is never a gain over the tube [43].
+
+### 8.3 The resolved shadow
+
+`--shadow_model resolved`, with `--refraction stratified` and a ground model, changes how each
+band's shadow boundary is set; the default, `legacy`, is §8.1–§8.2. Ray theory fixes a
+ground-grazing boundary from $c(z_s)/c(0)$ alone, so a layer near the ground thinner than any
+band resolves can set it. Under this option each band sees only the profile it resolves. For
+the band at $f$ it finds the height $h_f$ where
+
+$$
+k_f \int_0^{h_f} \sqrt{\frac{2\max\left(c(0) - c(z), 0\right)}{c(0)}}\, dz = \Phi ,
+$$
+
+with $\Phi$ = `--shadow_phase` (default 1 rad, the radian of the resolution limit in §8.2).
+Below $h_f$ the effective sound speed is replaced by its tangent there, the slope of the layer
+containing $h_f$. The band's layered boundary $r_s(f)$ comes from that profile, and its
+linear-fit boundary $r_l(f)$ is the path's fit corrected by the least-squares line through the
+tangent's change to the profile. Both go through the boundary law of §8.1. A band whose
+integral never reaches $\Phi$ resolves no upward refraction near the ground. On a linear
+profile
+
+$$
+h_f = \left(\frac{3\Phi}{2k\sqrt{2\lvert a\rvert/c_0}}\right)^{2/3},
+$$
+
+1.31 creeping-wave layer thicknesses $\ell$ at one radian, the resolved profile is the profile
+itself, and nothing changes. The decay keeps the boundary's curvature: the creeping-wave rate,
+$s$ and the diffraction length are those of the linear profile whose boundary is $r_b(f)$.
+
+A cramped band ($r_b < 2F$, which is $\sqrt{y_s} + \sqrt{y_r} < 2$ in Airy lengths) takes, under
+`--cramped_ground series` (the default), the residue series of §9.2 at the source's own height,
+with the curvature whose boundary is the band's. It is tabulated per band over $\xi$, $s$ and
+$\sqrt{y_s}$ ($0$ to $2$ every 0.4; $\xi$ every 0.2). Near the source, where the series is not
+used, the band falls back to the ray model. `--cramped_ground straight` takes the ground model
+along the straight path through the lit side and the blend instead, and `ray` the ray model as
+`legacy` does.
+
+The per-band boundaries depend only on bearing, source height and receiver height, so a run
+tabulates them once per trajectory, every 2° of bearing and at nodes even in $\sqrt{z_s}$, and
+interpolates in $1/r_b$. Scattered observers are looked up at their receiver height above the
+ground. The comparison with the PE and with flight data is in
+[FIDELITY](FIDELITY.md#resolved-shadow-against-the-pe).
 
 ## 9. The parabolic equation and reference solutions
 
-The parabolic equation (PE) and the analytic solutions do not run inside a footprint. They check
-the refraction models (the `niceops_pe_compare` and `niceops_benchmark` tools), and they build
-propagation-loss tables (§9.3).
+The parabolic equation (PE) never runs inside a footprint. It checks the refraction models
+(`niceops_pe_compare`, `niceops_benchmark`) and builds propagation-loss tables (§9.3). The
+analytic residue series of §9.2 does run in a footprint, at setup: it tabulates the
+shadow-transition field of §8.1 and the cramped bands of §8.3.
 
 ### 9.1 The wide-angle parabolic equation
 
@@ -547,32 +874,63 @@ $$
 with $k(z) = \omega/c_\mathrm{eff}(z) + i\alpha$ and the impedance condition
 $\partial\psi/\partial z = -ik\beta\psi$ at the ground. It is marched in range by the split-step
 Padé method of Collins [46]: $\exp[i k_a \Delta r(\sqrt{1+\mathcal{Q}} - 1)]$ is replaced
-by a rational function $r_0 + \sum_j c_j/(\mathcal{Q} - p_j)$. **Departure:** the coefficients are not the
-Taylor–Padé coefficients. They come from a rational interpolant fitted at run time on Chebyshev
-nodes over the propagation angles needed (up to 50°), with Collins's stability constraints, and
-the fewest terms that meet a $10^{-7}$ tolerance. The depth operator is discretized to fourth
-order (Numerov), at 10 points per wavelength, including an original fourth-order impedance row. A
-Crank–Nicolson scheme, the Padé(1,1) case [35, App. F], is available. The field starts
-from Collins's self-starter [47], or from the Gaussian starter of [35]. An
-artificial absorbing layer 100 wavelengths thick closes the top of the domain.
+by a rational function $r_0 + \sum_j c_j/(\mathcal{Q} - p_j)$, so a step costs one tridiagonal
+solve per term. **Departure:** the coefficients are not the Taylor–Padé coefficients. They come
+from a rational interpolant fitted at run time on Chebyshev nodes over the propagation angles
+needed (`--max_angle`, default 50°, up to 60°), with the fewest terms that meet a $10^{-7}$
+tolerance. Collins's stability constraint enters as two further nodes among the evanescent
+modes, at $\mathcal{Q} = -1.5$ and $-6$, where the interpolant is pinned to zero, so modes
+steeper than the accurate interval decay within a few steps instead of lingering. Waves steeper
+than `--max_angle` are therefore absorbed rather than carried, and a level on a path steeper
+than that from the source is reported as NaN. The default range step is eight wavelengths.
 
-**Turbulence** enters as random phase screens [48; 35, App. I], one every
-outer scale $L_0 = 10$ m. Each screen's phase spectrum is that of a von Kármán spectrum with
-structure parameter $\gamma_T/4$:
+The depth operator is discretized to fourth order (Numerov), with a fourth-order impedance row
+at the ground and fourth-order interpolation that places the source on the grid and reads the
+receivers off it. The grid is 10 points per wavelength (20 with a second-order option or
+Crank–Nicolson). A Crank–Nicolson scheme, the Padé(1,1) case [35, App. F], is available as an
+independent check. The field starts from Collins's self-starter [47], the first range step
+applied to a delta function at the source, or from the Gaussian starter of [35]. An artificial
+absorbing layer 100 wavelengths thick closes the top of the domain.
+
+**Turbulence** enters as random phase screens [48; 35, App. I], one every outer scale
+$L_0$ (default 10 m) of range. Each screen's phase spectrum is that of a von Kármán spectrum
+with structure parameter $\gamma_T/4$, the value for which Ostashev's coherence and HARMONOISE's
+reduce to one form [22]:
 
 $$
 S_\varphi(\kappa_z) = 2\pi k_a^2\, \Delta x\; 0.033\, \frac{\gamma_T}{4}\;
- \frac{\sqrt{\pi}\,\Gamma(4/3)}{\Gamma(11/6)}\;\left(\kappa_z^2 + L_0^{-2}\right)^{-4/3} .
+ \frac{\sqrt{\pi}\,\Gamma(4/3)}{\Gamma(11/6)}\;\left(\kappa_z^2 + L_0^{-2}\right)^{-4/3} ,
 $$
 
+the 3-D spectrum integrated across the plane, so the vertical coherence is the 3-D medium's.
+The screen's phase variance is $0.782\,k^2\Delta x\,(\gamma_T/4)\,L_0^{5/3}$. A height-dependent
+strength $\gamma(z)$ scales each row's phase by $\sqrt{\gamma(z)/\gamma_T}$, keeping the vertical
+spectrum of a homogeneous field.
+
 The relative level is $\Delta L = 20\lg(\lvert\psi\rvert R/\sqrt{r})$ relative to free field.
-Band levels are energy means over five sub-frequencies and over the turbulence realizations.
+Band levels are energy means over sub-frequencies (five by default) at the midpoints of equal
+slices of the band in log frequency. With turbulence each sub-frequency is its own realization,
+and further realizations can be averaged in, so a band level averages over the band and the
+ensemble at once.
+
+**The scattering fit.** The coefficients of $S$ in §8.1 were fitted to the turbulent PE's level
+deep in the shadow, at points where it is 10 dB clear of the still-air field.
 
 ### 9.2 Analytic reference solutions
 
-These are the benchmark cases of Attenborough et al. [49]. In homogeneous air
-the field is $p = e^{ikR_1}/R_1 + Q\,e^{ikR_2}/R_2$ (§5.2). In a linear profile,
-$k^2(z) = k_0^2(1 \mp 2z/\mathcal{R})$, the field is a sum of normal modes,
+These are the benchmark cases of Attenborough et al. [49]: a source at 5 m, a receiver at 1 m,
+10, 100 and 1000 Hz, a locally reacting ground with the paper's four-parameter impedances, and
+absorption entered as $\mathrm{Im}\,k_0$ from the values the paper quotes:
+
+| Case | Profile | Exact solution |
+| --- | --- | --- |
+| 1 | uniform | direct and image rays with the spherical-wave reflection coefficient |
+| 2 | $c$ rising 0.1 /s (downward refraction) | normal-mode series |
+| 3 | $c$ falling 0.1 /s (upward refraction) | residue series of creeping waves |
+| 4 | rising 0.1 /s to 100 m, falling to 300 m, uniform above (a duct) | none |
+
+In homogeneous air the field is $p = e^{ikR_1}/R_1 + Q\,e^{ikR_2}/R_2$ (§5.2). In a linear
+profile, $k^2(z) = k_0^2(1 \mp 2z/\mathcal{R})$, the field is a sum of normal modes,
 
 $$
 p = \pi i \sum_n \frac{u_n(z)\,u_n(z_s)}{N_n}\, H_0^{(1)}(\kappa_n r), \qquad N_n = \int_0^\infty u_n^2\, dz,
@@ -585,18 +943,45 @@ with $\ell = (\mathcal{R}/(2k_0^2))^{1/3}$ and $\mathrm{w}_3 = e^{2\pi i/3}$:
 - **Upward refraction:** $u_n = \mathrm{Ai}(b_n - \mathrm{w}_3 z/\ell)$, with
   $\mathrm{Ai}'(b_n) - i k_0 \ell \beta\, \mathrm{w}_3^2\, \mathrm{Ai}(b_n) = 0$.
 
-**Departure:** the upward-refraction mode condition printed in [49, Eq. 11],
+The Airy and Hankel functions follow the DLMF [50].
+
+**Departure: the upward mode condition.** The condition printed in [49, Eq. 11],
 $\mathrm{Ai}'(b) + i k_0 \ell \beta\,\mathrm{w}_3\,\mathrm{Ai}(b) = 0$, differs from the one derived
 here by a factor $e^{i\pi/3}$ on the admittance term. The two agree over rigid ground. Over
-impedance ground the printed form departs from the PE by 1.5–12 dB at 100 Hz, and the derived
-form agrees with it to 0.02 dB. The Airy and Hankel functions follow the DLMF [50].
+impedance ground the printed form departs from the PE and the derived form agrees with it
+([FIDELITY](FIDELITY.md#the-attenborough-et-al-benchmark)). Eq. (10) of [49] is right up to an
+overall sign.
+
+**Case 2's exact profile.** The normal-mode solution's profile, $c_0/\sqrt{1 - 2z/\mathcal{R}}$,
+reaches infinite sound speed at $z = \mathcal{R}/2$, so every ray turns below that height,
+near-vertical ones included. Those fall back within $\mathcal{R}$ of the source, at
+$\mathcal{R}\sin(2 \times \text{elevation})$, and put structure into the mode sum that no PE,
+and no linear profile, carries. The unit test's comparison with the PE leaves out modes steeper
+than 75° (tapered over the last 5°); `niceops_benchmark` keeps them all. At long range
+case 2 also depends on where the profile is cut off, as the paper says.
 
 ### 9.3 Propagation-loss tables
 
 A `--propagation_table` stores $\Delta L(\text{bearing}, z_s, z_r, r, f)$ relative to free field
-at the straight-line distance, computed by the PE through one profile. A run interpolates it
-multilinearly in dB and applies it in place of the ground and refraction models:
-$L_b = L_{\mathrm{sph},b} - 20\lg(r/R_s) - \alpha_b(r - R_s) + \Delta L$.
+at the straight-line distance, over one stratified atmosphere and flat, uniform ground. It is
+computed through one profile either by the PE (by default marched by reciprocity, one march per
+receiver height) or by straight rays with the spherical-wave ground model
+(`--method ground_model`). Reciprocity holds because, in the effective-sound-speed model, the
+field from $z_s$ to $z_r$ along a bearing equals the field from $z_r$ to $z_s$ along the reverse
+bearing with the wind reversed, which has the same effective profile; a source near the ground
+is placed as the adjoint of the receivers' read.
+
+A run interpolates the table multilinearly in dB and applies it in place of the ground and
+refraction models, with the straight-line direction and range:
+
+$$
+L_b = L_{\mathrm{sph},b} - 20\lg\frac{\max(r, R_s)}{R_s} - \alpha_b \max(r - R_s, 0) + \Delta L_n + \Delta L .
+$$
+
+A table that declares `includes_absorption` drops the $\alpha_b$ term. A pair the table does
+not cover (outside an axis, or a NaN cell) falls back to the run's own ground and refraction
+model. Plate microphones read the lowest receiver height plus the plate offset $K$ at the pair's
+azimuth (§8.1).
 
 ## 10. Noise metrics
 
@@ -620,20 +1005,21 @@ $$
 
 ### 10.2 Sound exposure level
 
-The level history is sampled at emission times $t_i$, a constant step $T$ apart, but exposure
-accumulates in reception time $t_i + r_i/c$. Each sample therefore lasts
-$T(1 + \dot r_i/c)$, compressed while the aircraft approaches and stretched while it recedes:
+The level history is sampled at emission times $t_i$, a constant step $T$ apart (the
+trajectory's own interval), but exposure accumulates in reception time $t_i + r_i/c$. Each
+sample therefore lasts $T(1 + \dot r_i/c)$, compressed while the aircraft approaches and
+stretched while it recedes:
 
 $$
 \mathrm{SEL} = 10\lg\left( \frac{T}{t_\mathrm{ref}} \sum_{i=i_1}^{i_2} \left(1 + \frac{\dot r_i}{c}\right) 10^{L_i/10} \right),
 \qquad t_\mathrm{ref} = 1\ \mathrm{s},
 $$
 
-with $\dot r_i$ a central difference. The sum runs over the 10 dB-down window, from the first to the
-last sample within 10 dB of the peak, as in 14 CFR 36 [17, A36.4.5]. `--full_history` sums
-every sample. Under refraction $r_i$ is $c$ times the ray's travel time. An ambient level
-$L_\mathrm{amb}$ (`-a`) is added in energy, $10\lg(10^{L/10} + 10^{L_\mathrm{amb}/10})$, before
-the window is found.
+with $\dot r_i$ a central difference. The sum runs over the 10 dB-down window, from the first to
+the last sample within 10 dB of the peak, dips between them included, as in 14 CFR 36
+[17, A36.4.5]. `--full_history` sums every sample, here and in the day metrics (§10.4). Under
+refraction $r_i$ is $c$ times the ray's travel time. An ambient level $L_\mathrm{amb}$ (`-a`) is
+added in energy, $10\lg(10^{L/10} + 10^{L_\mathrm{amb}/10})$, before the window is found.
 
 ### 10.3 Maximum level, time above and number above
 
@@ -643,19 +1029,28 @@ by default) is applied exactly for that input:
 
 $$
 y_i = P_i + (y_{i-1} - P_i)\, e^{-T(1 + \dot r_i/c)/\tau}, \qquad
-L_{AF\mathrm{max}} = 10\lg\max_i y_i .
+L_{AF\mathrm{max}} = 10\lg\max_i y_i ,
 $$
 
-Slow weighting ($\tau = 1$ s) and a 0.5 s running $L_\mathrm{eq}$, the maximum used by ECAC Doc 32
-[11], are also available. A track sampled more coarsely than $\tau/2$ is refused. Time above a
-threshold (TA) solves for the crossings of $y$ analytically within each sample. The number of
-events above (NAx) counts the operations whose maximum reaches the threshold.
+starting settled on the first sample. Across a sample the weighted level relaxes
+monotonically, so its maximum falls at a sample's end. Slow weighting ($\tau = 1$ s) and a 0.5 s
+running $L_\mathrm{eq}$, the maximum used by ECAC Doc 32 [11], are also available; the running
+average is linear between the instants where either edge of its window crosses a sample
+boundary. So is `instantaneous`, the largest sample with no time weighting. It is not a meter
+quantity. A track whose mean step exceeds $\tau/2$ is refused under each time weighting
+(0.25 s for the running $L_\mathrm{eq}$); `instantaneous` takes any step.
+
+Time above a threshold (TA) is the reception time during which the weighted level strictly
+exceeds it, solved for analytically within each sample (each sample counts whole under
+`instantaneous`). The number of events above (NAx) counts the operations whose maximum reaches
+the threshold. Over several operations, the maximum level is the largest of theirs and TA adds.
 
 ### 10.4 Day–night metrics
 
 Each operation's exposure is computed with a penalty $P$ added to every sample heard in a
-penalized period, by local time at emission. The operations are then summed and normalized to a
-24-hour day:
+penalized period, by local time at emission (the propagation delay is not added). The 10 dB-down
+window is found on the penalized history, or the whole history is summed under
+`--full_history`. The operations are then summed and normalized to a 24-hour day:
 
 $$
 L_\mathrm{dn} = 10\lg\left(\frac{1}{86\,400\ \mathrm{s}} \sum_\mathrm{ops} t_\mathrm{ref}\, 10^{\mathrm{SEL}_P/10}\right).
@@ -667,50 +1062,113 @@ $$
 | Lden | 19:00–23:00, +5 dB | 23:00–07:00, +10 dB | Directive 2002/49/EC [53] |
 | CNEL | 19:00–22:00, +10 lg 3 dB | 22:00–07:00, +10 dB | Cal. Code Regs. tit. 21, §5001 [54] |
 
+A period's opening hour belongs to it. The directive's form,
+
+$$
+L_\mathrm{den} = 10\lg\left[\frac{12\cdot10^{L_d/10} + 4\cdot10^{(L_e+5)/10} + 8\cdot10^{(L_n+10)/10}}{24}\right],
+$$
+
+with each $L$ the equivalent level over its own period, is the same number as the penalized
+energies summed over 86 400 s. Title 21's weighting of each evening operation three times and
+each night operation ten times is the same again.
+
 ### 10.5 Effective perceived noise level
 
 EPNL follows 14 CFR 36, Appendix A, §A36.4 [17], which is identical to ICAO Annex 16
-[55]. It is ported term for term from PANAM. The one-third-octave spectra are formed as
-linear averages over 0.5 s records in reception time (§A36.3). Each state's band energy is
-spread over its reception-time duration and split among the records it overlaps. For each
-record $k$:
+[55]. It is ported term for term from PANAM.
 
-1. Noy values $n(i,k)$ from the formulas of Table A36-3.
+**The records.** The one-third-octave spectra are formed as linear averages over 0.5 s records
+in reception time (§A36.3). Each state's band energy is spread evenly over its reception-time
+duration $T(1 + \dot r_i/c)$ and split among the records it overlaps in proportion:
+
+$$
+L_k = 10\lg\left(\sum_i 10^{L_i/10}\, \frac{\text{overlap}_{i,k}}{0.5\ \mathrm{s}}\right).
+$$
+
+Record $k$ covers $[0.5k, 0.5(k+1))$ s on the trajectory's clock, so together the records hold
+the whole history's exposure in every band. The first and last records are averaged over the
+whole 0.5 s. All 24 bands from 50 Hz to 10 kHz are required, each matched to the database band
+whose center is within 5 percent of the nominal one; bands outside that range do not enter
+EPNL. For each record $k$ and band $i$:
+
+1. Noy values $n(i,k)$ from the formulas of Table A36-3 (§A36.4.7.3): four regions bounded by
+   SPL(a), SPL(b), SPL(e) and SPL(d), and 0 noy below SPL(d).
 2. $\mathrm{PNL}(k) = 40 + \dfrac{10}{\lg 2}\lg\left(0.85\, n_\max + 0.15 \sum_i n(i,k)\right)$.
-3. The tone correction $C(k)$ of §A36.4.3.1, from the 10-step slope procedure and Table A36-2.
+3. The tone correction $C(k)$ of §A36.4.3.1, from the ten-step slope procedure: slopes from
+   band 4 (80 Hz has none); a slope that changes by more than 5 dB is encircled, and with it
+   SPL($i$) when the slope is positive and rising, or SPL($i-1$) when it has turned from
+   positive to zero or negative; encircled levels are replaced by their neighbors' mean (band
+   24 by SPL(23) + s(23)); the slopes are recomputed with $s'(3) = s'(4)$ and an imaginary 25th
+   band; three adjacent slopes are averaged; the background SPL″ is built from
+   SPL″(3) = SPL(3); and $C$ is the largest Table A36-2 factor of
+   $F = \mathrm{SPL} - \mathrm{SPL}''$ over $F \ge 1.5$ dB: $F/3 - 1/2$, $F/6$ and $10/3$ below
+   500 Hz and above 5 kHz, and $2F/3 - 1$, $F/3$ and $20/3$ from 500 Hz to 5 kHz inclusive.
+   Bands 1–3 never carry a tone correction. A NaN band makes PNL and $C$ NaN, and an EPNL
+   history holding one is refused.
 4. $\mathrm{PNLT}(k) = \mathrm{PNL}(k) + C(k)$ and its maximum PNLTM.
 5. The band-sharing check of §A36.4.4.2: when $C$ at PNLTM is below its mean $\bar C$ over the
-   five records centered there, $\Delta_B = \mathrm{PNL}(k_M) + \bar C - \mathrm{PNLTM}$, added
-   to EPNL as a separate term as ICAO Annex 16 [55] carries it; otherwise $\Delta_B = 0$.
+   five records centered there (over the records that exist, at either end of the history),
+   $\Delta_B = \mathrm{PNL}(k_M) + \bar C - \mathrm{PNLTM}$, added to EPNL as a separate term
+   as ICAO Annex 16 [55] and FAA AC 36-4 [56] carry it; otherwise $\Delta_B = 0$. It is kept
+   separate because, read literally, 14 CFR 36 raises PNLTM by $\Delta_B$ and takes $D$ from the
+   raised PNLTM, so the two cancel in $\mathrm{PNLTM} + D$: the adjustment could never raise
+   EPNL, only lower it through a narrower duration.
 6. The duration correction $D$, from the unadjusted PNLTM, over the records $k_1 \ldots k_2$
-   whose limits are the PNLT values closest to $\mathrm{PNLTM} - 10$ (§A36.4.5.5), with
-   $T_0 = 10$ s and $\Delta t = 0.5$ s, and EPNL:
+   found as follows. $k_1$ and $k_2$ start at the first and last records with
+   $\mathrm{PNLT} \ge \mathrm{PNLTM} - 10$ (the longest duration when there are several peaks),
+   and each moves one record outward when that record is strictly closer to
+   $\mathrm{PNLTM} - 10$. Every record between them is summed, dips included (§A36.4.5.5, as
+   PANAM's F026 reads it). With $T_0 = 10$ s and $\Delta t = 0.5$ s:
 
 $$
 D = 10\lg\sum_{k=k_1}^{k_2} 10^{\mathrm{PNLT}(k)/10} + 10\lg\frac{\Delta t}{T_0} - \mathrm{PNLTM}, \qquad
 \mathrm{EPNL} = \mathrm{PNLTM} + D + \Delta_B ,
 $$
 
-where $10\lg(\Delta t/T_0)$ is the regulation's −13 for $\Delta t = 0.5$ s (§A36.4.5.4).
+where $10\lg(\Delta t/T_0)$ is taken as exactly −13 for $\Delta t = 0.5$ s, the constant
+§A36.4.5.4 states, rather than −13.0103.
+Nothing checks that the history holds the whole 10 dB-down event beyond flagging a duration
+that reaches the first or last record (the `clipped` column of `--epnl_file`), whose event
+may have been cut off.
 
 **Departures.** A band of $-\infty$ (zero energy), for which the tone correction is undefined,
-enters it at its noy threshold SPL(d) and carries no tone, as in PANAM. By default, every band
-below its noy threshold is masked: it enters the procedure at that threshold and carries no
-tone correction, following the exclusion of tones in masked bands in
-FAA AC 36-4 [56]. Without masking, deeply absorbed high bands would read as tones. The
-corrections the regulation applies to a measured spectrum (instrumentation, background noise,
-reference conditions) are not applied to a prediction.
+enters it at its noy threshold SPL(d) and carries no tone, as in PANAM. By default
+(`--epnl_masking`), every band below its noy threshold is masked: it enters the procedure at
+that threshold and carries no tone correction itself, following the exclusion of tones in
+masked bands in FAA AC 36-4 [56]. Without masking, deeply absorbed high bands would read as
+tones. PNL is unchanged by masking, since a masked band is 0 noy either way. The corrections the
+regulation applies to a measured spectrum (instrumentation, background noise, reference
+conditions, pseudo-tones from ground reflections) are not applied to a prediction, so every
+tone in the predicted audible spectrum counts, ground-effect ripple included.
+
+### 10.6 C-weighted sound exposure level
+
+C-SEL is the exposure integral of §10.2 over the C-weighted level, formed from the same band
+levels at the microphone as the A-weighted level, over the same `--band_limits`, with the same
+reception-time weights. Its 10 dB-down window is found on the C-weighted history itself, so it
+is not the A-weighted window; `--full_history` sums every sample. The ambient of `-a` is an
+A-weighted level with no spectrum, so it does not enter, and a run combining the two is refused.
+C-weighting gives the low bands their full weight, so `--band_limits` matters more for C-SEL
+than for SEL.
 
 ## 11. What is not modeled
 
 - **Doppler frequency shift.** The spheres carry the measured, Doppler-shifted spectra, and
   NICE-OPS applies no shift. A database whose spheres have had the shift removed is refused. The
   source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
-- **Diffraction by terrain or buildings**, and screening (§6.3).
+- **Diffraction and screening** by terrain or buildings (§6.3). Terrain enters only through
+  each path's mean ground plane.
+- **Refraction or propagation tables over terrain.** The ray models and the tables assume flat
+  ground, so `--terrain` is refused with `--refraction` and with `--propagation_table`.
 - **Ground reflection on the broadband path.** The broadband path has only spreading and
   EAA (§4.1).
 - **Coherent summation of refracted arrivals.** Arrivals are summed in energy (§8.2).
-- **Coupling between wind and the source condition** beyond `--speed_reference air` (§2.1).
+- **Wave effects inside a footprint run** beyond the tabulated shadow transition (§8.1, §8.3),
+  the opt-in Airy corrections (§8.2) and a propagation table (§9.3). The PE itself never runs
+  in a footprint.
+- **Turbulence and roughness at a ground-plane microphone** (§6.2), and turbulent scattering into
+  a shadow unless `--scattering` is given (§8.1).
+- **Coupling between wind and the source condition** beyond the speed reference (§2.1).
 
 ## References
 

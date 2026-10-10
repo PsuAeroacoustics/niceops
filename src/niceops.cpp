@@ -1030,10 +1030,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Weight and rotor radius set CT and mu in the same way and the database
     // records them too, but only the tip speed was ever compared: a vehicle file
     // 10 percent heavy moved the footprint 0.75 dB median with nothing said, and
-    // a tip speed 4.6 percent off moved it 1.1 dB.  All three are warnings, on
-    // stderr.  The weight is compared at 1 percent: panam builds with g = 9.82
-    // and this program uses 9.80665, a 0.14 percent difference that is not a
-    // disagreement.
+    // a tip speed 4.6 percent off moved it 1.1 dB.  All three are checked,
+    // on stderr.  The weight is compared at 1 percent: panam builds with
+    // g = 9.82 and this program uses 9.80665, a 0.14 percent difference that is
+    // not a disagreement.
     // Past 2 percent the run is refused, since the footprint would be wrong by
     // more than the grid's own error; between 1 and 2 it warns.  The refusal
     // names the same check as the warning, and --accept_vehicle_mismatch turns
@@ -3529,8 +3529,10 @@ int run(int argc, char* argv[])
     app.add_option("--cmin", contour_min, "Minimum contour level, dB.");
     app.add_option("--cmax", contour_max, "Maximum contour level, dB.");
     app.add_option("--cstep", contour_step, "Contour level step, dB.");
-    app.add_option("-s,--step", dt, "Resampling time step for --adapt, in seconds. "
-            "The sound exposure level integral uses the trajectory's own sample interval.");
+    app.add_option("-s,--step", dt, "Resampling step, in seconds, for WGS84 tracks that are "
+            "uneven or coarser than this; never coarsens a track, and an AC track is used as "
+            "sampled. The sound exposure level integral uses the trajectory's own sample "
+            "interval.");
     app.add_option("-a,--ambient", ambient_level,
             "Ambient noise level, dB, added to every sample's level in energy.");
     app.add_option("-i,--history", time_history_prefix, "Time history file prefix.");
@@ -3542,7 +3544,8 @@ int run(int argc, char* argv[])
             "Write each observer's EPNL (14 CFR 36 A36.4), PNLTM and duration correction to this "
             "CSV, from one-third-octave levels in 0.5 s reception-time frames. Once, or once per "
             "trajectory; with several trajectories and one name, each is named after its track "
-            "(<stem>_EPNL.csv). Needs the spectral path and the 24 bands 50 Hz-10 kHz.");
+            "(<stem>_EPNL.csv). Needs the spectral path and the 24 bands 50 Hz-10 kHz; refused "
+            "with -a.");
     app.add_flag("--epnl_masking,!--no-epnl_masking", epnl_masking,
             "--epnl_file's tone correction: a band below its noy threshold (Table A36-3's SPL(d)) "
             "enters the tone correction at that threshold and carries no tone itself, as tones in "
@@ -3553,8 +3556,10 @@ int run(int argc, char* argv[])
             "Write each observer's band levels in 0.5 s reception-time frames to this netCDF file "
             "(level by observer, frame and band, with the coordinates). Once, or once per "
             "trajectory; with several trajectories and one name, each is named after its track "
-            "(<stem>_band_frames.nc). Needs the spectral path.");
-    app.add_option("-m,--metricfile", metric_file, "File to append overall noise metrics.");
+            "(<stem>_band_frames.nc). Needs the spectral path; refused with -a.");
+    app.add_option("-m,--metricfile", metric_file,
+            "File to append overall noise metrics: the case name, the energy mean and maximum "
+            "level, and the fraction of observers at or above 65 dB.");
     app.add_option("-b,--observer", observer_file, "Observer file name.");
     app.add_flag("-q,--qsam,!--no-qsam", qsam, "Q-SAM flight path angle: the velocity's angle to the tip-path plane, not to the "
             "horizontal (default on; --no-qsam disables)");
@@ -3614,7 +3619,8 @@ int run(int argc, char* argv[])
     app.add_option("--csel_file", csel_files,
             "Write the C-weighted sound exposure level (LCE) per observer, by SEL's window rule, "
             "to this file: one name, or one per trajectory (with one name and several "
-            "trajectories, each writes <track>_LCE.csv beside it). Spectral path only.");
+            "trajectories, each writes <track>_LCE.csv beside it). Spectral path only; refused "
+            "with -a or --db_cutoff.");
     app.add_option("--coverage_file", coverage_file,
             "Write, per observer, the energy-weighted share of its levels that came from cells "
             "the database did not measure (straight rays only; needs a database with coverage).");
@@ -3638,7 +3644,9 @@ int run(int argc, char* argv[])
     auto* spectral_option = app.add_flag("--spectral,!--no-spectral", spectral,
             "Propagate the database's per-band spectra to the ground with ISO 9613-1 "
             "absorption (default on; falls back to broadband when the database carries no "
-            "spectra). --no-spectral propagates one broadband level with the database's EAA "
+            "spectra, except that asking for --spectral, or for an option that needs bands, "
+            "with such a database is an error). --no-spectral propagates one broadband level "
+            "with the database's EAA "
             "factor instead.");
     app.add_option("--band_limits", band_limits,
             "Frequency range integrated into the metric, Hz: low high. Default 20 20000.")
@@ -3682,14 +3690,17 @@ int run(int argc, char* argv[])
             "Warn, rather than refuse, a vehicle file that disagrees with the database by more "
             "than 2 percent.");
     app.add_option("--humidity", humidity_override,
-            "Relative humidity in percent, overriding the vehicle file.");
+            "Relative humidity in percent, overriding the vehicle file. Not with --atmosphere.");
     app.add_option("--temperature", temperature_override,
-            "Temperature in K, overriding the vehicle file.");
+            "Temperature in K, overriding the vehicle file. Not with --atmosphere.");
     app.add_option("--pressure", pressure_override,
-            "Ambient pressure in kPa, overriding the vehicle file.");
+            "Ambient pressure in kPa, overriding the vehicle file. With --atmosphere, only when "
+            "the file has no pressure column; it is then the surface pressure.");
     app.add_option("--atmosphere", atmosphere_file,
             "A stratified atmosphere: CSV of temperature, relative humidity and optionally "
-            "pressure against height (see README). Per-band absorption is integrated through "
+            "pressure against height (see the manual's Stratified atmosphere), with optional wind "
+            "columns (wind_speed_mps or wind_speed_kt with wind_direction, or u_mps and v_mps). "
+            "Per-band absorption is integrated through "
             "it, and its ground level replaces the vehicle file's atmosphere. Spectral path "
             "only.");
     app.add_option("--wind", wind_text,
@@ -3848,7 +3859,7 @@ int run(int argc, char* argv[])
             "parabolic equation): each band's level re free field by bearing, source and receiver "
             "height and range, for one stratified atmosphere over uniform ground. It replaces the "
             "ground and ray models wherever it covers a pair; elsewhere --ground_effect (or free "
-            "field) applies. Spectral path only; not with --refraction or --plate_table.");
+            "field) applies. Spectral path only.");
     app.add_option("--terrain", terrain_file,
             "A bare-earth elevation grid (netCDF: latitude, longitude, elevation(latitude, "
             "longitude) in meters, e.g. USGS 3DEP). Grid observers stand on it, and the ground "
@@ -4277,7 +4288,7 @@ int run(int argc, char* argv[])
     if (ground_explicit && !spectral)
     {
         input_error("--ground_effect needs the spectral path: the ground effect is a function "
-                    "of frequency, and the broadband path (--no-spectral or --db_cutoff) has no "
+                    "of frequency, and the broadband path (--no-spectral) has no "
                     "spectrum to apply it to.");
     }
     if (want_csel && !spectral)
@@ -4298,8 +4309,8 @@ int run(int argc, char* argv[])
     }
     if (!band_history_prefix.empty() && !spectral)
     {
-        input_error("--band_history needs the spectral path: the broadband path (--no-spectral "
-                    "or --db_cutoff) carries no bands.");
+        input_error("--band_history needs the spectral path: the broadband path (--no-spectral) "
+                    "carries no bands.");
     }
     if (!propagation_table.empty() && !spectral)
         input_error("--propagation_table needs the spectral path.");
