@@ -697,17 +697,33 @@ void place_ground_source(std::vector<complex>& psi, std::size_t m, std::size_t f
     const std::size_t n = ground_source_nodes;
     // Second-order series of 1 / ratio for nodes 0, 1, 2, in powers of mu.
     const complex a0 = 9.0 + 2.0 * g, a1 = 7.0 + 6.0 * g, a2 = 23.0 + 48.0 * g;
-    complex series[3][3] = {
+    const complex in_mu[3][3] = {
             {24.0 / a0, 2.0 / a0, 5.0 / (6.0 * a0)},
             {6.0 * (1.0 + g) / a1, -2.0 * (2.0 + g) / (a1 * a1), -10.0 * (2.0 + g) / (3.0 * a1 * a1 * a1)},
             {24.0 * (1.0 + 2.0 * g) / a2, 2.0 * (23.0 + 14.0 * g) / (a2 * a2),
                     (10925.0 + 11162.0 * g + 3456.0 * g * g) / (6.0 * a2 * a2 * a2)},
     };
-    // The series is taken in s, not mu (below); its quadratic term is adjusted
-    // here, before the source vectors are filled from it.
+    // The series is in s = mu mu_c / (mu_c + mu), not mu: the same to first
+    // order, its second-order term adjusted to keep it the same to second, and
+    // bounded where mu is not.  In mu itself the quadratic multiplied the
+    // grid's steepest modes, mu up to 6, sevenfold at node 2; the propagator
+    // absorbs them, but the self-starter's single step does not, and the
+    // first output range carried them: 12.2 dB re free field where the exact
+    // field is 5.9 (a 5 ft source over grass at 46 Hz, 15 m out).  With
+    // mu_c = 1, about the edge of the propagating spectrum (mu = (k dz)^2 =
+    // 0.39 at ten points a wavelength), that first range reads 6.6 and the
+    // steep angles stay within 0.01 dB (node 0) and 0.05 (node 2) of the
+    // exact field; mu_c = 0.5 and 2 give 6.5 and 6.8 there and 0.07 and 0.04
+    // at the steep angles.  mu_c is fixed a priori, not fitted.  The
+    // table is built already adjusted: the adjustment used to be applied
+    // after s2 was filled from it (until 2026-10), so it did nothing, and the
+    // steep angles were 0.03 and 0.08 off.
     constexpr double mu_c = 1.0;
-    for (int node = 0; node < 3; node++)
-        series[node][2] += series[node][1] / mu_c;
+    const complex series[3][3] = {
+            {in_mu[0][0], in_mu[0][1], in_mu[0][2] + in_mu[0][1] / mu_c},
+            {in_mu[1][0], in_mu[1][1], in_mu[1][2] + in_mu[1][1] / mu_c},
+            {in_mu[2][0], in_mu[2][1], in_mu[2][2] + in_mu[2][1] / mu_c},
+    };
     std::vector<complex> s0(n, 0.0), s1(n, 0.0), s2(n, 0.0);
     for (std::size_t k = 0; k < 4; k++)
     {
@@ -721,21 +737,6 @@ void place_ground_source(std::vector<complex>& psi, std::size_t m, std::size_t f
         else
             s0[node] += share[k];
     }
-    // The series is in s = mu mu_c / (mu_c + mu), not mu: the same to first
-    // order, its second-order term adjusted to keep it the same to second, and
-    // bounded where mu is not.  In mu itself the quadratic multiplied the
-    // grid's steepest modes, mu up to 6, sevenfold at node 2; the propagator
-    // absorbs them, but the self-starter's single step does not, and the
-    // first output range carried them: 12.2 dB re free field where the exact
-    // field is 5.9 (a 5 ft source over grass at 46 Hz, 15 m out).  With
-    // mu_c = 1, about the edge of the propagating spectrum (mu = (k dz)^2 =
-    // 0.39 at ten points a wavelength), that first range reads 6.6 and the
-    // steep angles stay within 0.01 dB (node 0) and 0.05 (node 2) of the
-    // exact field; mu_c = 0.5 and 2 give 6.5 and 6.8 there and 0.07 and 0.04
-    // at the steep angles.  mu_c is fixed a priori, not fitted.  The
-    // adjustment has to reach s2: applied after s2 was filled (until
-    // 2026-10), it did nothing, and the steep angles were 0.03 and 0.08 off.
-    //
     // S x = mu_c (mu_c + mu)^{-1} mu x = mu_c (mu_c M - L)^{-1} (-L x) on the
     // lowest n nodes, zero above: banded, so a dense solve of this size is
     // nothing beside a march.

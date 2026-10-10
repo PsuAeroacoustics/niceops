@@ -128,14 +128,16 @@ int get_scalar(int ncid, const std::string& variable_name, T* value, bool option
 // build atmosphere and rotor speed this way; older databases carry neither.
 std::optional<double> read_double_attribute(int ncid, const char* name)
 {
-    int type = 0;
-    std::size_t length = 0;
-    if (NC_NOERR != nc_inq_att(ncid, NC_GLOBAL, name, &type, &length))
-        return std::nullopt;
-    // One value: nc_get_att_double writes all the attribute holds.
     double value = 0.0;
-    if (length != 1 || NC_NOERR != nc_get_att_double(ncid, NC_GLOBAL, name, &value))
+    switch (netcdf::single_value(ncid, NC_GLOBAL, name, value))
+    {
+    case netcdf::Single::missing:
+        return std::nullopt;
+    case netcdf::Single::not_one_number:
         input_error("Found but could not read the database attribute ", name, " as one number.");
+    case netcdf::Single::ok:
+        break;
+    }
     return value;
 }
 
@@ -149,21 +151,10 @@ bool read_coverage(int group_id, std::vector<int>& coverage)
     int varid = 0;
     if (NC_NOERR != nc_inq_varid(group_id, "coverage", &varid))
         return false;
-    int ndims = 0;
-    if (NC_NOERR != nc_inq_varndims(group_id, varid, &ndims))
+    const auto total = netcdf::element_count(group_id, varid);
+    if (!total)
         input_error("Found but could not read the dimensions of the variable coverage.");
-    std::vector<int> dimids(ndims);
-    if (ndims > 0 && NC_NOERR != nc_inq_vardimid(group_id, varid, dimids.data()))
-        input_error("Found but could not read the dimensions of the variable coverage.");
-    std::size_t total = 1;
-    for (const int dimid : dimids)
-    {
-        std::size_t length = 0;
-        if (NC_NOERR != nc_inq_dimlen(group_id, dimid, &length))
-            input_error("Found but could not read the dimensions of the variable coverage.");
-        total *= length;
-    }
-    coverage.resize(total);
+    coverage.resize(*total);
     if (NC_NOERR != nc_get_var_int(group_id, varid, coverage.data()))
         input_error("Found but could not read the variable coverage.");
     return true;

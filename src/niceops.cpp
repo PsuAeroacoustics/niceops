@@ -3001,30 +3001,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // weighting runs over the whole operation, in reception time:
                 // each sample lasts what it lasts in the SEL integral.
                 reception_durations(nt, integration_step, ranges, sound_speed, durations);
-                const bool want_peak = options.want_lamax || options.want_nax;
-                // Both from one pass when both are wanted (time_weighting.hpp).
-                double peak = 0.0;
-                double above = 0.0;
-                if (want_peak && options.want_ta)
-                {
-                    const auto both = weighted_maximum_and_time_above(levels, durations, options.lamax_weighting,
-                            options.ta_threshold);
-                    peak = both.maximum;
-                    above = both.time_above;
-                }
-                else if (want_peak)
-                    peak = weighted_maximum(levels, durations, options.lamax_weighting);
-                else if (options.want_ta)
-                    above = time_above(levels, durations, options.lamax_weighting, options.ta_threshold);
+                // One pass gives both; a threshold of +infinity costs nothing.
+                const auto weighted = weighted_maximum_and_time_above(levels, durations, options.lamax_weighting,
+                        options.want_ta ? options.ta_threshold : std::numeric_limits<double>::infinity());
                 if (options.want_lamax)
-                    lamax[index] = std::max(lamax[index], peak);
+                    lamax[index] = std::max(lamax[index], weighted.maximum);
                 // NAx: operations whose own peak reaches the threshold.  Each
                 // trajectory is one operation, so the count adds per trajectory.
-                if (options.want_nax && peak >= options.nax_threshold)
+                if (options.want_nax && weighted.maximum >= options.nax_threshold)
                     nax[index] += 1.0;
                 // Time above: seconds, adding across operations.
                 if (options.want_ta)
-                    totals.time_above[index] += above;
+                    totals.time_above[index] += weighted.time_above;
             }
             if (options.want_coverage)
             {

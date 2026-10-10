@@ -228,16 +228,18 @@ TEST_CASE("slower weightings never read higher", "[time_weighting]")
     }
 }
 
-TEST_CASE("the one-pass maximum and time above are the two functions', to the bit", "[time_weighting]")
+TEST_CASE("the one-pass maximum does not depend on the time-above threshold", "[time_weighting]")
 {
-    // Histories with culled stretches, single samples, an empty one, and
-    // thresholds below, through and above the levels, for every weighting.
+    // One pass computes both metrics; the maximum must be the same, to the
+    // bit, whatever threshold rides along (+infinity is the LAmax-only call),
+    // and +infinity is never exceeded.  Histories with culled stretches, single
+    // samples and an empty one, for every weighting.
     std::mt19937 random(20261010);
     std::uniform_real_distribution<double> level(40.0, 95.0);
     std::uniform_real_distribution<double> step(0.005, 0.06);
     std::uniform_int_distribution<int> length(0, 400);
     std::bernoulli_distribution culled(0.15);
-    int compared = 0;
+    const double never = std::numeric_limits<double>::infinity();
     for (int trial = 0; trial < 60; trial++)
     {
         const std::size_t n = trial < 2 ? static_cast<std::size_t>(trial) : static_cast<std::size_t>(length(random));
@@ -250,16 +252,16 @@ TEST_CASE("the one-pass maximum and time above are the two functions', to the bi
         }
         for (const auto w : {LevelWeighting::instantaneous, LevelWeighting::fast, LevelWeighting::slow,
                      LevelWeighting::leq_half_second})
+        {
+            const auto alone = weighted_maximum_and_time_above(levels, durations, w, never);
+            REQUIRE(alone.time_above == 0.0);
             for (const double threshold : {30.0, 60.0, 70.0, 80.0, 90.0, 120.0})
             {
-                const auto both = weighted_maximum_and_time_above(levels, durations, w, threshold);
                 INFO("trial " << trial << ", n " << n << ", " << to_string(w) << ", threshold " << threshold);
-                REQUIRE(both.maximum == weighted_maximum(levels, durations, w));
-                REQUIRE(both.time_above == time_above(levels, durations, w, threshold));
-                compared++;
+                REQUIRE(weighted_maximum_and_time_above(levels, durations, w, threshold).maximum == alone.maximum);
             }
+        }
     }
-    REQUIRE(compared == 60 * 4 * 6);
 }
 
 TEST_CASE("a weighting is refused on a history coarser than half its time constant", "[time_weighting]")

@@ -276,8 +276,10 @@ API did not earn their complexity.
   `--lamax_file` cost 0.35 s on 3.56 (fast) and 1.04 s on 4.26 (`leq0.5`).
   `weighted_maximum_and_time_above` (`util/time_weighting.hpp`) does both in one pass with the
   same arithmetic: 3.86 → 3.54 s fast and 5.23 → 4.28 s `leq0.5`, back to what LAmax alone
-  cost, with every output byte-identical under all four weightings. The single-output paths are
-  unchanged and are the fused pass's reference in `tests/test_time_weighting.cpp`.
+  cost, with every output byte-identical under all four weightings. It is the only
+  implementation: `weighted_maximum` and `time_above` call it (a threshold of +infinity is
+  never exceeded, so LAmax alone costs what it did, within 0.5%), which keeps each detector and
+  crossing formula in one place.
 - **Sharing PE setup across turbulence realizations: rejected.** A realization repeats the
   vertical operator, the Padé fit, the factorizations and the receiver stencils. Timed as a
   15 m march against a 1.2 km one (a receiver march at the harness's settings, gamma_T 3e-5,

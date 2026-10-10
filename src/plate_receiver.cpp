@@ -22,10 +22,10 @@ std::size_t dimension(int ncid, const char* name, const std::string& path)
     return length;
 }
 
-// The variable, which must run along `dimensions` (whose lengths give `size`):
-// netCDF reads every value it holds, whatever the buffer.
+// The variable, which must run along `dimensions`: its length is then their
+// lengths' product.
 std::vector<double> variable(int ncid, const char* name, const std::vector<std::string>& dimensions,
-        std::size_t size, const std::string& path)
+        const std::string& path)
 {
     int id = 0;
     if (nc_inq_varid(ncid, name, &id) != NC_NOERR)
@@ -37,20 +37,24 @@ std::vector<double> variable(int ncid, const char* name, const std::vector<std::
             expected += (expected.empty() ? "" : ", ") + dimension;
         input_error("Plate table ", path, ": '", name, "' must be dimensioned (", expected, ").");
     }
-    std::vector<double> values(size);
-    if (nc_get_var_double(ncid, id, values.data()) != NC_NOERR)
+    auto values = netcdf::read_doubles(ncid, id);
+    if (!values)
         input_error("Plate table ", path, " has no readable '", name, "' variable.");
-    return values;
+    return std::move(*values);
 }
 
 double attribute(int ncid, const char* name, const std::string& path)
 {
-    const auto length = netcdf::attribute_length(ncid, NC_GLOBAL, name);
-    if (!length)
-        input_error("Plate table ", path, " has no '", name, "' attribute.");
     double value = 0.0;
-    if (*length != 1 || nc_get_att_double(ncid, NC_GLOBAL, name, &value) != NC_NOERR)
+    switch (netcdf::single_value(ncid, NC_GLOBAL, name, value))
+    {
+    case netcdf::Single::missing:
+        input_error("Plate table ", path, " has no '", name, "' attribute.");
+    case netcdf::Single::not_one_number:
         input_error("Plate table ", path, ": '", name, "' must be one number.");
+    case netcdf::Single::ok:
+        break;
+    }
     return value;
 }
 
@@ -85,15 +89,10 @@ PlateReceiver PlateReceiver::load(const std::string& path)
     plate.n_sub_ = dimension(ncid, "sub", path);
     const std::size_t n_elevations = dimension(ncid, "elevation", path);
     plate.n_azimuths_ = dimension(ncid, "azimuth", path);
-    const auto spectrum_size = netcdf::checked_product(plate.n_bands_, plate.n_sub_);
-    const auto nodes_size = netcdf::checked_product(n_elevations, plate.n_azimuths_);
-    if (!spectrum_size || !nodes_size || !netcdf::checked_product(*spectrum_size, *nodes_size)
-            || !netcdf::checked_product(*spectrum_size * *nodes_size, 4))
-        input_error("Plate table ", path, ": its dimensions are too long to hold.");
-    plate.centers_ = variable(ncid, "band_center", {"band"}, plate.n_bands_, path);
-    plate.frequencies_ = variable(ncid, "frequency", {"band", "sub"}, *spectrum_size, path);
-    plate.elevations_ = variable(ncid, "elevation", {"elevation"}, n_elevations, path);
-    const auto azimuths = variable(ncid, "azimuth", {"azimuth"}, plate.n_azimuths_, path);
+    plate.centers_ = variable(ncid, "band_center", {"band"}, path);
+    plate.frequencies_ = variable(ncid, "frequency", {"band", "sub"}, path);
+    plate.elevations_ = variable(ncid, "elevation", {"elevation"}, path);
+    const auto azimuths = variable(ncid, "azimuth", {"azimuth"}, path);
 
     if (n_elevations < 2 || !std::is_sorted(plate.elevations_.begin(), plate.elevations_.end()))
         input_error("Plate table ", path, " elevations must ascend.");
@@ -120,7 +119,7 @@ PlateReceiver PlateReceiver::load(const std::string& path)
     auto values = std::make_shared<std::vector<double>>(nodes * spectrum * 4, 0.0);
     for (std::size_t part = 0; part < 4; part++)
     {
-        const auto data = variable(ncid, parts[part], {"band", "sub", "elevation", "azimuth"}, spectrum * nodes, path);
+        const auto data = variable(ncid, parts[part], {"band", "sub", "elevation", "azimuth"}, path);
         for (std::size_t s = 0; s < spectrum; s++)
             for (std::size_t node = 0; node < nodes; node++)
                 (*values)[(node * spectrum + s) * 4 + part] = data[s * nodes + node];

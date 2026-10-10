@@ -9,6 +9,7 @@
 #include <netcdf.h>
 
 #include "util/logger.hpp"
+#include "util/netcdf.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
 
@@ -38,19 +39,14 @@ void read_axis(int ncid, const char* name, std::vector<double>& values)
 {
     int varid = 0;
     check(nc_inq_varid(ncid, name, &varid), std::string("no coordinate variable ") + name);
-    // One dimension only: nc_inq_vardimid writes one id per dimension, and
-    // nc_get_var_double every value the variable holds.
     int dimension_count = 0;
     check(nc_inq_varndims(ncid, varid, &dimension_count), std::string("reading the rank of ") + name);
     if (dimension_count != 1)
         input_error("Terrain file: ", name, " must be 1-D, not ", dimension_count, "-D.");
-    int dimid = 0;
-    std::size_t length = 0;
-    check(nc_inq_vardimid(ncid, varid, &dimid), std::string("reading the dimension of ") + name);
-    check(nc_inq_dimlen(ncid, dimid, &length), std::string("reading the length of ") + name);
-    values.resize(length);
-    if (length > 0)
-        check(nc_get_var_double(ncid, varid, values.data()), std::string("reading ") + name);
+    auto read = netcdf::read_doubles(ncid, varid);
+    if (!read)
+        input_error("Terrain file: cannot read ", name, ".");
+    values = std::move(*read);
 }
 
 // A numeric attribute of a variable, if it has one.
