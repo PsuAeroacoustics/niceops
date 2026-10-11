@@ -127,6 +127,7 @@ CTests are defined in `CMakeLists.txt`.
 | `an exported sphere reloads as the sphere it was, cell for cell` | `test_sphere_database.cpp` | dBA and EAA swapped in the export; the load-factor correction dropped |
 | `an AAM export lays out its axes and amplitudes as the format says` | `test_sphere_database.cpp` | the AAM export's readback (written with the test above) |
 | `a dBA cell far from the rest of its sphere is reported, and dropped when asked` | `test_sphere_database.cpp` | `--mask_suspect_cells` leaving `sphere_max_` at the masked spike (its `cull_range` check) |
+| `an island standing in a hole is its own polygon, and the hole stays with its outer ring` | `test_contour.cpp` | placing a hole by its vertex mean |
 | `a negative excess-attenuation factor turns the bounds off` | `test_sphere_database.cpp` | bounds kept under a negative factor, which breaks the windowed run's exactness |
 | `unevenly spaced knots give a continuous, natural spline` | `test_smoothing_spline.cpp` | `h[j]` and `h[j+1]` transposed (every other spline test used `linspace`, where it is invisible) |
 | `the fit projects the wind onto the path's own direction, both components` | `test_refraction.cpp` | the northward wind's sign flipped |

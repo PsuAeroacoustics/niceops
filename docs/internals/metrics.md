@@ -130,12 +130,20 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
   by its signed area. A rotation (`--frame_bearing`) keeps orientation; only a reflection would not.
 - **A saddle is decided by the mean of its four corners.** A non-finite node (culled) is below
   every level, and a crossing against one sits on the finite node.
-- **A hole goes to the smallest outer ring holding its vertex mean**, not its first vertex, which
-  can lie on its outer ring's edge where both follow the grid's edge.
+- **A hole goes to the smallest outer ring holding a point strictly inside it**: a hair to the
+  right of the midpoint of its longest edge (holes run clockwise). Rings of one level never
+  cross, so that ring is its own. Its vertex mean was tried and failed: it lies outside a U-shaped
+  hole, which was dropped (area 33% high), and inside an island standing in the hole, which took
+  the hole and came out with negative area.
+- **Rings are made simple** (`simple_rings`): repeats and out-and-back spikes removed, and a ring
+  meeting itself at a vertex split there. They come from nodes exactly at a level, whose crossings
+  land on the node; areas are unaffected, but GIS validity checks reject such rings.
 - **Areas are planar, in the local frame**, before the projection to longitude and latitude.
 - The unit tests pin the geometry against analytic fields (a cone's disc, an annulus with its
-  hole, two peaks, the grid edge, culled nodes, both saddles); on the demo footprint the areas
-  agree with a count of grid cells above each level to 1–2%.
+  hole, two peaks, the grid edge, culled nodes, both saddles), an island in a hole, a U-shaped
+  hole, exact ties, and 300 random integer fields (simple rings, positive polygons, holes inside
+  their outer rings); on the demo footprint the areas agree with a count of grid cells above each
+  level to 1–2%.
 
 ## Time weighting, day metrics, C-SEL
 

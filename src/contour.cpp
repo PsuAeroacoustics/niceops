@@ -56,6 +56,69 @@ Padded pad(const std::vector<double>& x, const std::vector<double>& y, const std
     return p;
 }
 
+// A traced ring made simple: consecutive repeats dropped (points along the
+// padded edge, where a pad cell has no width), out-and-back spikes removed
+// (a, b, a), and a ring that touches itself at a vertex split there into
+// two.  Those arise where a node's value equals the level exactly, so that
+// crossings land on the node; they leave the area alone but make a ring no
+// GIS accepts.  Pieces of under three points carry no area and are dropped.
+std::vector<Ring> simple_rings(Ring ring)
+{
+    std::vector<Ring> done;
+    std::vector<Ring> pending {std::move(ring)};
+    while (!pending.empty())
+    {
+        Ring r = std::move(pending.back());
+        pending.pop_back();
+        bool changed = true;
+        while (changed && r.size() >= 3)
+        {
+            changed = false;
+            for (std::size_t i = 0; i < r.size() && r.size() >= 3; i++)
+            {
+                const std::size_t next = (i + 1) % r.size();
+                const std::size_t after = (i + 2) % r.size();
+                if (r[i] == r[next])
+                {
+                    r.erase(r.begin() + static_cast<std::ptrdiff_t>(next));
+                    changed = true;
+                }
+                else if (r[i] == r[after])
+                {
+                    // a, b, a: drop b and one a.
+                    const std::size_t first = std::min(next, after), second = std::max(next, after);
+                    r.erase(r.begin() + static_cast<std::ptrdiff_t>(second));
+                    r.erase(r.begin() + static_cast<std::ptrdiff_t>(first));
+                    changed = true;
+                }
+            }
+        }
+        if (r.size() < 3)
+            continue;
+        // A vertex met twice: split into the loop between the two meetings
+        // and the rest.
+        bool split = false;
+        for (std::size_t i = 0; i < r.size() && !split; i++)
+        {
+            for (std::size_t j = i + 1; j < r.size() && !split; j++)
+            {
+                if (r[i] == r[j])
+                {
+                    Ring loop(r.begin() + static_cast<std::ptrdiff_t>(i), r.begin() + static_cast<std::ptrdiff_t>(j));
+                    Ring rest(r.begin(), r.begin() + static_cast<std::ptrdiff_t>(i));
+                    rest.insert(rest.end(), r.begin() + static_cast<std::ptrdiff_t>(j), r.end());
+                    pending.push_back(std::move(loop));
+                    pending.push_back(std::move(rest));
+                    split = true;
+                }
+            }
+        }
+        if (!split)
+            done.push_back(std::move(r));
+    }
+    return done;
+}
+
 } // namespace
 
 std::vector<ContourPolygon> niceops::contour_polygons(const std::vector<double>& x,
@@ -162,17 +225,14 @@ std::vector<ContourPolygon> niceops::contour_polygons(const std::vector<double>&
             if (at == first)
                 break;
         }
-        // Points along the padded edge repeat where a pad cell has no width.
-        ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
-        while (ring.size() > 1 && ring.front() == ring.back())
-            ring.pop_back();
-        if (ring.size() < 3)
-            continue;
-        const double area = ring_area(ring);
-        if (area > 0.0)
-            outers.push_back(std::move(ring));
-        else if (area < 0.0)
-            holes.push_back(std::move(ring));
+        for (auto& piece : simple_rings(std::move(ring)))
+        {
+            const double area = ring_area(piece);
+            if (area > 0.0)
+                outers.push_back(std::move(piece));
+            else if (area < 0.0)
+                holes.push_back(std::move(piece));
+        }
     }
 
     // Each hole into the smallest outer ring holding it.
@@ -193,16 +253,30 @@ std::vector<ContourPolygon> niceops::contour_polygons(const std::vector<double>&
         polygons[k].outer = std::move(outers[k]);
     for (auto& hole : holes)
     {
-        // A vertex of a hole can lie on its outer ring's edge (both follow the
-        // grid's edge there), so the hole is placed by its centroid-ish mean.
-        std::array<double, 2> q {0.0, 0.0};
-        for (const auto& point : hole)
+        // Placed by a point strictly inside the hole: a hair to the right of
+        // the midpoint of its longest edge, a hole running clockwise.  Rings
+        // from one level never cross, so the outer rings holding that point
+        // are the hole's own and those around it, and the smallest is its
+        // own.  The mean of its vertices was not inside a U-shaped hole, and
+        // fell inside an island standing in the hole.
+        std::size_t longest = 0;
+        double longest_length = -1.0;
+        for (std::size_t i = 0; i < hole.size(); i++)
         {
-            q[0] += point[0];
-            q[1] += point[1];
+            const auto& a = hole[i];
+            const auto& b = hole[(i + 1) % hole.size()];
+            const double length = std::hypot(b[0] - a[0], b[1] - a[1]);
+            if (length > longest_length)
+            {
+                longest = i;
+                longest_length = length;
+            }
         }
-        q[0] /= static_cast<double>(hole.size());
-        q[1] /= static_cast<double>(hole.size());
+        const auto& a = hole[longest];
+        const auto& b = hole[(longest + 1) % hole.size()];
+        const double step = 1e-6;
+        const std::array<double, 2> q {0.5 * (a[0] + b[0]) + step * (b[1] - a[1]),
+                0.5 * (a[1] + b[1]) - step * (b[0] - a[0])};
         std::size_t best = polygons.size();
         double best_area = 0.0;
         for (std::size_t k = 0; k < polygons.size(); k++)
@@ -214,6 +288,9 @@ std::vector<ContourPolygon> niceops::contour_polygons(const std::vector<double>&
                 best_area = area;
             }
         }
+        // Every hole lies inside some high ground; one that found none would
+        // be a defect, and dropping it would overstate the area.
+        assert(best < polygons.size());
         if (best < polygons.size())
             polygons[best].holes.push_back(std::move(hole));
     }

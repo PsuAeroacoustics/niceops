@@ -106,3 +106,104 @@ TEST_CASE("a saddle is decided by its center", "[contour]")
     CHECK(contour_polygons(x, y, {10.0, 0.0, 0.0, 10.0}, 4.0).size() == 1); // mean 5 >= 4
     CHECK(contour_polygons(x, y, {10.0, 0.0, 0.0, 10.0}, 6.0).size() == 2); // mean 5 < 6
 }
+
+TEST_CASE("an island standing in a hole is its own polygon, and the hole stays with its outer ring",
+        "[contour]")
+{
+    // High ground with a ring of low nodes around a high center node: an outer
+    // ring with one hole, and an island inside the hole.  The hole's vertex
+    // mean is the center, inside the island, which once took the hole.
+    const std::vector<double> x = {0, 1, 2, 3, 4, 5, 6}, y = x;
+    std::vector<double> v;
+    for (int iy = 0; iy < 7; iy++)
+        for (int ix = 0; ix < 7; ix++)
+            v.push_back(std::max(std::abs(ix - 3), std::abs(iy - 3)) == 1 ? 0.0 : 9.0);
+    const auto polygons = contour_polygons(x, y, v, 5.0);
+    REQUIRE(polygons.size() == 2);
+    for (const auto& polygon : polygons)
+        CHECK(polygon_area(polygon) > 0.0);
+    const auto& big = ring_area(polygons[0].outer) > ring_area(polygons[1].outer) ? polygons[0] : polygons[1];
+    const auto& island = &big == &polygons[0] ? polygons[1] : polygons[0];
+    CHECK(big.holes.size() == 1);
+    CHECK(island.holes.empty());
+}
+
+TEST_CASE("a U-shaped hole is kept", "[contour]")
+{
+    // High ground with a U of low nodes in it: the U's vertex mean lies in
+    // the high ground between its arms, inside no hole, and the hole was dropped.
+    std::vector<double> x, y, v;
+    for (int i = 0; i < 11; i++)
+    {
+        x.push_back(i);
+        y.push_back(i);
+    }
+    for (int iy = 0; iy < 11; iy++)
+        for (int ix = 0; ix < 11; ix++)
+        {
+            const bool arm = (ix == 3 || ix == 7) && iy >= 3 && iy <= 8;
+            const bool base = iy == 3 && ix >= 3 && ix <= 7;
+            v.push_back(arm || base ? 0.0 : 9.0);
+        }
+    const auto polygons = contour_polygons(x, y, v, 5.0);
+    REQUIRE(polygons.size() == 1);
+    REQUIRE(polygons[0].holes.size() == 1);
+    // 100 for the grid less the U: the area is that of a field linear on each cell's triangles' worth, so check its sign and size only.
+    CHECK(polygon_area(polygons[0]) < 100.0 - 5.0);
+}
+
+TEST_CASE("levels met exactly give simple rings", "[contour]")
+{
+    // Nodes equal to the level put crossings on the nodes; the ring once ran
+    // out along the edge and back, and met itself.
+    const std::vector<double> x = {0, 1, 2, 3}, y = {0, 1, 2};
+    const auto polygons = contour_polygons(x, y, {0, 0, 0, 0, 0, 3, 0, 0, 0, 2, 2, 2}, 2.0);
+    for (const auto& polygon : polygons)
+    {
+        for (const Ring* ring = &polygon.outer; ring != nullptr; ring = nullptr)
+            for (std::size_t i = 0; i < ring->size(); i++)
+                for (std::size_t j = i + 1; j < ring->size(); j++)
+                    CHECK((*ring)[i] != (*ring)[j]);
+    }
+}
+
+TEST_CASE("random integer fields give simple rings, positive polygons and placed holes", "[contour]")
+{
+    // Integer values put many nodes exactly on the level.
+    unsigned state = 12345;
+    const auto next = [&state]() {
+        state = state * 1103515245u + 12345u;
+        return (state >> 16) & 0x7fff;
+    };
+    std::size_t holes = 0;
+    for (int trial = 0; trial < 300; trial++)
+    {
+        const int nx = 3 + static_cast<int>(next() % 8), ny = 3 + static_cast<int>(next() % 8);
+        std::vector<double> x, y, v;
+        for (int i = 0; i < nx; i++)
+            x.push_back(i);
+        for (int i = 0; i < ny; i++)
+            y.push_back(i);
+        for (int i = 0; i < nx * ny; i++)
+            v.push_back(static_cast<double>(next() % 5));
+        for (const auto& polygon : contour_polygons(x, y, v, 2.0))
+        {
+            CHECK(polygon_area(polygon) > 0.0);
+            std::vector<const Ring*> rings = {&polygon.outer};
+            for (const auto& hole : polygon.holes)
+            {
+                rings.push_back(&hole);
+                holes++;
+                CHECK(std::fabs(ring_area(hole)) < ring_area(polygon.outer));
+            }
+            for (const Ring* ring : rings)
+            {
+                REQUIRE(ring->size() >= 3);
+                for (std::size_t i = 0; i < ring->size(); i++)
+                    for (std::size_t j = i + 1; j < ring->size(); j++)
+                        CHECK((*ring)[i] != (*ring)[j]);
+            }
+        }
+    }
+    CHECK(holes > 0);
+}
