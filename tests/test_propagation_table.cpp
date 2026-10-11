@@ -9,7 +9,9 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <netcdf.h>
@@ -403,4 +405,33 @@ TEST_CASE("a propagation table file is shape-checked before it is read", "[propa
     CHECK_THROWS_WITH(PropagationTable::load(long_absorption),
             ContainsSubstring("includes_absorption must be one integer"));
     std::filesystem::remove(long_absorption);
+}
+
+TEST_CASE("a table's turbulence and roughness are read back from its provenance", "[propagation_table]")
+{
+    // Nothing recorded: still air, as every table built before the record.
+    CHECK(table_coherence({}).model == "none");
+    CHECK(table_coherence({{"method", "pe"}}).roughness == 0.0);
+
+    // A ground-model table's record round-trips to the bit.
+    std::map<std::string, std::string> provenance;
+    record_coherence(provenance, {"chessell", 4e-4 / 3.0, 0.3 * 0.3048});
+    auto read = table_coherence(provenance);
+    CHECK(read.model == "chessell");
+    CHECK(read.value == 4e-4 / 3.0);
+    CHECK(read.roughness == 0.3 * 0.3048);
+    provenance.clear();
+    record_coherence(provenance, {"harmonoise", 3.7e-7, 0.0});
+    read = table_coherence(provenance);
+    CHECK(read.model == "harmonoise");
+    CHECK(read.value == 3.7e-7);
+    CHECK(provenance.count("roughness_m") == 0);
+
+    // A turbulent PE table records gamma_t alone: phase screens.
+    read = table_coherence({{"gamma_t", "1.0000000000000001e-05"}, {"march", "receiver"}});
+    CHECK(read.model == "phase_screens");
+    CHECK(read.value == 1e-5);
+
+    // A model named with no strength is still air.
+    CHECK(table_coherence({{"turbulence_model", "chessell"}}).model == "none");
 }

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 
@@ -378,6 +380,46 @@ std::vector<double> PropagationTable::max_power_ratio(const BandMap& bands) cons
         ratio[band] = std::max(1.0, std::pow(10.0, 0.1 * largest));
     }
     return ratio;
+}
+
+TableCoherence table_coherence(const std::map<std::string, std::string>& provenance)
+{
+    auto number = [&](const char* key) {
+        const auto found = provenance.find(key);
+        return found == provenance.end() ? 0.0 : std::strtod(found->second.c_str(), nullptr);
+    };
+    TableCoherence coherence;
+    coherence.roughness = number("roughness_m");
+    const auto model = provenance.find("turbulence_model");
+    if (model != provenance.end())
+    {
+        coherence.model = model->second;
+        coherence.value = number(model->second == "chessell" ? "turbulence" : "gamma_t");
+    }
+    else if (provenance.count("gamma_t") != 0)
+    {
+        coherence.model = "phase_screens";
+        coherence.value = number("gamma_t");
+    }
+    if (coherence.model != "none" && !(coherence.value > 0.0))
+        coherence = TableCoherence {"none", 0.0, coherence.roughness};
+    return coherence;
+}
+
+void record_coherence(std::map<std::string, std::string>& provenance, const TableCoherence& coherence)
+{
+    auto exact = [](double value) {
+        char text[32];
+        std::snprintf(text, sizeof text, "%.17g", value);
+        return std::string(text);
+    };
+    if (coherence.model == "chessell" || coherence.model == "harmonoise")
+    {
+        provenance["turbulence_model"] = coherence.model;
+        provenance[coherence.model == "chessell" ? "turbulence" : "gamma_t"] = exact(coherence.value);
+    }
+    if (coherence.roughness > 0.0)
+        provenance["roughness_m"] = exact(coherence.roughness);
 }
 
 } // namespace niceops

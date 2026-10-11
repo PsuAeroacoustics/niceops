@@ -374,6 +374,17 @@ model; the format is the specification, so other methods can write it. The compo
     warning above replaces that. **With `--refraction` the table takes the pairs it covers and
   the ray model the rest** (`table_level` first in `refracted_level`); that run evaluates every
   state, since its bounds were not built for both geometries.
+- **Turbulence and roughness are baked into the table, not applied on it.** A ground-model table
+  takes `--turbulence`, `--gamma_t` (HARMONOISE) and `--roughness` into the ground model it
+  tabulates, and records them (`record_coherence`: `turbulence_model`, `turbulence` or `gamma_t`,
+  `roughness_m`, at full precision); a turbulent PE table records `gamma_t`. The run reads them
+  back (`table_coherence`) and warns when its own settings differ, since table pairs ignore them.
+  Applying the run's coherence on top of a table would need the direct and reflected fields
+  apart (a still PE table holds only their sum, a turbulent one has it already), which is a new
+  file format; building the table with the run's settings needs none, and a ground-model table
+  so built reproduces `--ground_effect` with them (`propagation_table_carries_turbulence`,
+  `propagation_table_carries_harmonoise`). A table that records nothing is still air, which every
+  table built before the record was unless it says `gamma_t`.
 - **Thread count is invisible.** `-j` (or `NICEOPS_THREADS`, which only the PE tools read) gives
   the same bits at any count, turbulent tables included, because each march's seeds are fixed
   before the work is dealt out (`pe_tools_thread_count_is_invisible`).
@@ -438,6 +449,6 @@ specification; `PropagationTable::load` refuses a file that does not match it.
 | `includes_absorption` | global, one integer | nonzero when the values already include atmospheric absorption |
 | `method` | global text | how it was built (`pe`, `ground_model`, or another writer's name) |
 | `bearing_convention` | global text | written for readers; not read |
-| `provenance_*` | global text | free-form build record, read back with the table |
+| `provenance_*` | global text | free-form build record, read back with the table; `provenance_turbulence_model`, `provenance_turbulence`, `provenance_gamma_t` and `provenance_roughness_m` are read as the table's turbulence and roughness (`table_coherence`) |
 
 Values are interpolated linearly in dB along each axis.

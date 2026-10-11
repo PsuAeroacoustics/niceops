@@ -981,7 +981,12 @@ $$
 A table that declares `includes_absorption` drops the $\alpha_b$ term. A pair the table does
 not cover (outside an axis, or a NaN cell) falls back to the run's own ground and refraction
 model. Plate microphones read the lowest receiver height plus the plate offset $K$ at the pair's
-azimuth (§8.1).
+azimuth and elevation (§8.1).
+
+Turbulence and ground roughness are the table's own. A ground-model table built with
+Chessell's $C$ or HARMONOISE's $\gamma_T$ carries the coherence $T(f)$ of §5, and one built with
+a roughness the Kirchhoff factor; a PE table's turbulence is its phase screens (§9.1). The run's
+`--turbulence`, `--gamma_t` and `--roughness` reach only the pairs that fall back.
 
 ## 10. Noise metrics
 

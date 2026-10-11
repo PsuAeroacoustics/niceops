@@ -26,7 +26,11 @@
 // per source height, as the tool always did (pe_table.hpp has why they agree).
 // --gamma_t, --outer_scale, --realizations, --seed and --gamma_profile add
 // turbulence by phase screens (pe.hpp): a report-only reference, off by
-// default.
+// default.  Under ground_model, --turbulence (Chessell) or --gamma_t
+// (HARMONOISE) gives the ground model's coherence of the direct and reflected
+// paths, and --roughness its rough-ground reflection, as niceops applies them:
+// a table pair takes its turbulence from the table (TableCoherence), so a run
+// with turbulence needs a table built with the same.
 //
 // -j/--threads sets the worker threads (default: NICEOPS_THREADS when it is set,
 // else one per hardware thread); the table is the same bits at any count.
@@ -35,6 +39,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <limits>
 #include <optional>
 #include <cmath>
@@ -107,6 +112,8 @@ int main(int argc, char** argv)
     int validation_samples = 21;
     int threads = 0;
     double validation_max_error = 1.0;
+    double turbulence = 0.0;
+    double roughness = 0.0;
     app.add_option("--method", method, "pe (default) or ground_model.")->check(CLI::IsMember({"pe", "ground_model"}));
     app.add_option("--atmosphere", atmosphere_file,
             "Atmosphere profile, as for niceops; required for pe, and for ground_model gives the sound speed.");
@@ -145,8 +152,16 @@ int main(int argc, char** argv)
             "reciprocity; source marches once per source height.")
             ->check(CLI::IsMember({"receiver", "source"}));
     app.add_option("--gamma_t", gamma_t,
-            "pe: turbulence strength (HARMONOISE gamma_t, m^-2/3) for phase screens; 0 (default) is still air.  "
-            "With --gamma_profile, the reference the screens are drawn at (default: the profile's largest).")
+            "Turbulence strength (HARMONOISE gamma_t, m^-2/3); 0 (default) is still air.  pe: for phase screens; "
+            "with --gamma_profile, the reference the screens are drawn at (default: the profile's largest).  "
+            "ground_model: the HARMONOISE coherence of the direct and reflected paths, as niceops "
+            "--turbulence_model harmonoise --gamma_t.")
+            ->check(CLI::NonNegativeNumber);
+    app.add_option("--turbulence", turbulence,
+            "ground_model: Chessell's turbulence parameter, rad s/sqrt(m), as niceops --turbulence (default 0).")
+            ->check(CLI::NonNegativeNumber);
+    app.add_option("--roughness", roughness,
+            "ground_model: RMS roughness height of the ground, in --units, as niceops --roughness (default 0).")
             ->check(CLI::NonNegativeNumber);
     app.add_option("--outer_scale", outer_scale, "pe: turbulence outer scale, m (default 10).")
             ->check(CLI::PositiveNumber);
@@ -199,9 +214,15 @@ int main(int argc, char** argv)
             if (!(gamma_t > 0.0))
                 throw std::runtime_error(gamma_profile + " is zero everywhere");
         }
-        if (method != "pe" && (gamma_t > 0.0 || march != "receiver"))
-            throw std::runtime_error("--march and turbulence apply to --method pe only");
-        if (gamma_t > 0.0 && !validation_csv.empty())
+        if (method != "pe" && (march != "receiver" || !gamma_profile.empty() || realizations != 1))
+            throw std::runtime_error("--march, --gamma_profile and --realizations apply to --method pe only");
+        if (method == "pe" && (turbulence > 0.0 || roughness > 0.0))
+            throw std::runtime_error("--turbulence and --roughness apply to --method ground_model only; the PE's "
+                                     "turbulence is --gamma_t's phase screens");
+        if (turbulence > 0.0 && gamma_t > 0.0)
+            throw std::runtime_error("give the ground model one coherence: --turbulence (Chessell) or --gamma_t "
+                                     "(HARMONOISE)");
+        if (method == "pe" && gamma_t > 0.0 && !validation_csv.empty())
             throw std::runtime_error("--validation_csv checks a still table; leave out --gamma_t");
         for (double& h : source_heights)
             h *= unit.to_meters;
@@ -258,6 +279,16 @@ int main(int argc, char** argv)
         ground.impedance_model = parse_impedance_model(impedance_model);
         ground.porosity_rate = porosity_rate;
         ground.layer_depth = layer_depth;
+        TableCoherence coherence;
+        if (method == "ground_model")
+        {
+            ground.turbulence = turbulence;
+            ground.gamma_t = gamma_t;
+            ground.turbulence_model = gamma_t > 0.0 ? TurbulenceModel::harmonoise : TurbulenceModel::chessell;
+            ground.roughness = roughness * unit.to_meters;
+            coherence = {gamma_t > 0.0 ? "harmonoise" : turbulence > 0.0 ? "chessell" : "none",
+                    gamma_t > 0.0 ? gamma_t : turbulence, ground.roughness};
+        }
         const auto admittance = ground_impedance(ground, bands, sound_speed);
 
         PropagationTable::Axes axes;
@@ -293,6 +324,7 @@ int main(int argc, char** argv)
         if (method == "ground_model")
         {
             description = "straight rays and the spherical-wave ground model (ground_effect.hpp)";
+            record_coherence(provenance, coherence);
             parallel_chunks(ns * nh, workers, [&](std::size_t lo, std::size_t hi) {
                 for (std::size_t job = lo; job < hi; job++)
                 {
@@ -358,7 +390,9 @@ int main(int argc, char** argv)
             provenance["march"] = march;
             if (gamma_t > 0.0)
             {
-                provenance["gamma_t"] = std::to_string(gamma_t);
+                char text[32];
+                std::snprintf(text, sizeof text, "%.17g", gamma_t);
+                provenance["gamma_t"] = text;
                 provenance["outer_scale_m"] = std::to_string(outer_scale);
                 provenance["realizations"] = std::to_string(realizations);
                 provenance["seed"] = std::to_string(seed);

@@ -476,6 +476,12 @@ None moves the SEL: the exposure within 10 dB of each microphone's measured peak
   The raised rows' error does not shrink with a twelve times finer elevation grid for K. With K
   taken at 2° for every pair, the flush row was −0.014 dB mean (−0.34 to +0.08 dB).
 
+- **Turbulence and roughness built into a ground-model table** reproduce `--ground_effect
+  --exact_ground` with the same settings on the plumbing check's grid: Chessell's 4e-4 rad·s/√m
+  with a 0.3 ft roughness to 0.0001 dB mean and 0.021 dB at worst, HARMONOISE's γ<sub>T</sub>
+  3e-5 to −0.001 dB mean and 0.077 dB at worst. Against the still ground model they move cells
+  by −1.5 to +5.9 dB and −0.2 to +3.1 dB, filling the interference nulls.
+
 A table checked with `--validation_csv` is compared with direct solves at cell midpoints. That
 comparison includes both interpolation error and differences in resolution and band quadrature;
 it does not bound the error everywhere, and its reference is not a measurement.

@@ -145,4 +145,25 @@ private:
     std::map<std::string, std::string> provenance_;
 };
 
+// The turbulence and ground roughness a table's levels already carry, as its
+// builder recorded them in its provenance.  A table pair takes them from the
+// table, not from the run's --turbulence, --gamma_t or --roughness, which
+// reach only the pairs the table does not cover; the run compares the two.
+//   model "none"           still air (and every table that records nothing)
+//   model "chessell"       the ground model's coherence, value = C, rad s/sqrt(m)
+//   model "harmonoise"     the ground model's coherence, value = gamma_t, m^-2/3
+//   model "phase_screens"  a turbulent PE table, value = gamma_t, m^-2/3
+struct TableCoherence
+{
+    std::string model = "none";
+    double value = 0.0;
+    double roughness = 0.0; // m, the ground model's Kirchhoff roughness
+};
+
+TableCoherence table_coherence(const std::map<std::string, std::string>& provenance);
+
+// Writes a ground-model table's coherence into its provenance (keys
+// turbulence_model, turbulence or gamma_t, roughness_m) at full precision.
+void record_coherence(std::map<std::string, std::string>& provenance, const TableCoherence& coherence);
+
 } // namespace niceops

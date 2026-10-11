@@ -4982,6 +4982,46 @@ int run(int argc, char* argv[])
     {
         options.propagation_table = std::make_shared<const PropagationTable>(PropagationTable::load(propagation_table));
         options.propagation_table_path = propagation_table;
+        // A table pair takes its turbulence and roughness from the table; the
+        // run's reach only the pairs the table does not cover.  A run that
+        // asks for coherence or roughness the table was not built with would
+        // otherwise drop them from most of its pairs without a word.
+        const TableCoherence table_has = table_coherence(options.propagation_table->provenance());
+        TableCoherence run_has;
+        if (options.ground.turbulence_model == TurbulenceModel::chessell && options.ground.turbulence > 0.0)
+            run_has = {"chessell", options.ground.turbulence, 0.0};
+        else if (options.ground.turbulence_model == TurbulenceModel::harmonoise && options.ground.gamma_t > 0.0)
+            run_has = {"harmonoise", options.ground.gamma_t, 0.0};
+        run_has.roughness = options.ground.roughness;
+        auto same = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::max(std::abs(a), std::abs(b)); };
+        const bool same_turbulence = run_has.model == "none"
+                || ((run_has.model == table_has.model
+                            || (run_has.model == "harmonoise" && table_has.model == "phase_screens"))
+                        && same(run_has.value, table_has.value));
+        const bool same_roughness = !(run_has.roughness > 0.0) || same(run_has.roughness, table_has.roughness);
+        auto describe = [](const TableCoherence& c) {
+            std::ostringstream text;
+            if (c.model == "none")
+                text << "still air";
+            else if (c.model == "chessell")
+                text << "Chessell turbulence " << c.value << " rad s/sqrt(m)";
+            else
+                text << (c.model == "harmonoise" ? "HARMONOISE turbulence" : "PE phase screens") << ", gamma_t "
+                     << c.value << " m^-2/3";
+            text << ", roughness " << c.roughness << " m";
+            return text.str();
+        };
+        if (!same_turbulence || !same_roughness)
+        {
+            warn("--propagation_table ", propagation_table, " was built with ", describe(table_has),
+                    ", and its pairs take that; the run's ", describe(run_has),
+                    " reaches only the pairs it does not cover. Build the table with the run's "
+                    "(niceops_propagation_table --turbulence, --gamma_t, --roughness).");
+        }
+        else if (table_has.model != "none" || table_has.roughness > 0.0)
+        {
+            log("--propagation_table carries ", describe(table_has), ".");
+        }
     }
     if (!plate_table.empty())
     {

@@ -893,6 +893,10 @@ one value means every direction), `source_height` and `receiver_height` (above t
   the pair's azimuth and elevation. For plates, give the table a receiver row at 0: over a raised
   row the bare-ground term is a comb in elevation, which the plate's offset has to follow.
 - **Bearings are compass bearings**, so a rotated frame needs `--frame_bearing`.
+- **Turbulence and roughness come from the table.** A covered pair carries what the table was
+  built with, and the run's `--turbulence`, `--gamma_t` and `--roughness` reach only the pairs
+  that fall back. Build the table with the run's (`niceops_propagation_table --turbulence`,
+  `--gamma_t`, `--roughness`); a run whose settings differ from what the table records is warned.
 - **With `--refraction` too**, every state is evaluated rather than windowed from the peak.
 - **The file** is netCDF, SI: `relative_level(bearing, source_height, receiver_height, range,
   band)`, a coordinate variable per axis, and the attributes `propagation_table_version` (1),
@@ -1220,7 +1224,8 @@ niceops_propagation_table --method pe --atmosphere atmospheres/example_windy.csv
 | `--flow_resistance`, `--impedance_model`, `--porosity_rate`, `--layer_depth` | The ground, as for `niceops`, except that `--layer_depth` is in meters whatever `--units` says. |
 | `--ppw` | `pe`: grid points per wavelength in height. Default the PE's own. |
 | `--march` | `pe`: `receiver` (default) marches once per receiver height and reads every source height by reciprocity, 2–3 times faster; `source` marches once per source height. They agree to about 0.01 dB. |
-| `--gamma_t`, `--outer_scale`, `--realizations`, `--seed`, `--gamma_profile` | `pe`: turbulence by phase screens, for reference only. Defaults still air, 10 m, 1 realization, seed 1. `--gamma_profile` is a CSV of z (in `--units`) and γ. |
+| `--gamma_t`, `--outer_scale`, `--realizations`, `--seed`, `--gamma_profile` | `pe`: turbulence by phase screens, for reference only. Defaults still air, 10 m, 1 realization, seed 1. `--gamma_profile` is a CSV of z (in `--units`) and γ. `ground_model`: `--gamma_t` alone, the HARMONOISE coherence of the direct and reflected paths, as `niceops --turbulence_model harmonoise --gamma_t`. |
+| `--turbulence`, `--roughness` | `ground_model`: Chessell's coherence (rad·s/√m) and the ground's RMS roughness (in `--units`), as for `niceops`. Default 0. Not with `--gamma_t`, and not for `pe`. |
 | `--validation_csv`, `--validation_samples`, `--validation_max_error` | Check the table between its nodes (below). Defaults 21 samples and 1 dB. |
 | `-j`, `--threads` | Worker threads. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. The table is the same bits at any count. A `NICEOPS_THREADS` that is not a positive whole number is refused. |
 | `--units`, `-o` | `ft` (default) or `m`; the table to write (SI). |

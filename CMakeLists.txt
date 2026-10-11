@@ -798,6 +798,36 @@ set_tests_properties(propagation_table_bump_windowed_is_exact PROPERTIES FIXTURE
 set_tests_properties(propagation_table_absorption_is_not_added_twice PROPERTIES FIXTURES_REQUIRED propagation_table_bump_runs PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME propagation_table_is_the_ground_model COMMAND golden_compare integrated/propagation_table.csv integrated/propagation_table_reference.csv 0.25 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_is_the_ground_model PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
+# A table pair takes its turbulence and roughness from the table.  A ground-model table built with
+# them reproduces --ground_effect with the same (0.1 dB at worst here, where turbulence and roughness
+# move cells by over 1 dB), Chessell and HARMONOISE alike, without the mismatch warning; a run asking
+# for turbulence its table lacks is warned that only the uncovered pairs get it.
+add_test(NAME propagation_table_turbulent_build COMMAND niceops_propagation_table --method ground_model
+    --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --flow_resistance 225
+    --source_heights 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040 1050 1060 1070 1080 1090 1100 1110 1120 1130
+    --receiver_heights 3.93701 --max_range 15000 --step 10 --turbulence 4e-4 --roughness 0.3 -o tables/ground_model_turbulent_test.nc
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_harmonoise_build COMMAND niceops_propagation_table --method ground_model
+    --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --flow_resistance 225
+    --source_heights 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040 1050 1060 1070 1080 1090 1100 1110 1120 1130
+    --receiver_heights 3.93701 --max_range 15000 --step 10 --gamma_t 3e-5 -o tables/ground_model_harmonoise_test.nc
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_turbulent_build propagation_table_harmonoise_build PROPERTIES FIXTURES_SETUP propagation_table_turbulent_files)
+add_test(NAME propagation_table_turbulent_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --propagation_table tables/ground_model_turbulent_test.nc --turbulence 4e-4 --roughness 0.3 --gridstep 492 -L warn -o integrated/propagation_table_turbulent.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_turbulent_reference COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --ground_effect --exact_ground --turbulence 4e-4 --roughness 0.3 --gridstep 492 -L warn -o integrated/propagation_table_turbulent_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_harmonoise_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --propagation_table tables/ground_model_harmonoise_test.nc --turbulence_model harmonoise --gamma_t 3e-5 --gridstep 492 -L warn -o integrated/propagation_table_harmonoise.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_harmonoise_reference COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --ground_effect --exact_ground --turbulence_model harmonoise --gamma_t 3e-5 --gridstep 492 -L warn -o integrated/propagation_table_harmonoise_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_turbulent_run propagation_table_harmonoise_run PROPERTIES FIXTURES_REQUIRED propagation_table_turbulent_files FAIL_REGULAR_EXPRESSION "was built with")
+set_tests_properties(propagation_table_turbulent_run propagation_table_turbulent_reference propagation_table_harmonoise_run propagation_table_harmonoise_reference PROPERTIES FIXTURES_SETUP propagation_table_turbulent_runs)
+add_test(NAME propagation_table_carries_turbulence COMMAND golden_compare integrated/propagation_table_turbulent.csv integrated/propagation_table_turbulent_reference.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_carries_harmonoise COMMAND golden_compare integrated/propagation_table_harmonoise.csv integrated/propagation_table_harmonoise_reference.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_turbulence_matters COMMAND golden_compare integrated/propagation_table_turbulent_reference.csv integrated/propagation_table_reference.csv 0.5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_carries_turbulence propagation_table_carries_harmonoise propagation_table_turbulence_matters PROPERTIES FIXTURES_REQUIRED "propagation_table_turbulent_runs;propagation_table_runs")
+set_tests_properties(propagation_table_turbulence_matters PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+add_test(NAME propagation_table_warns_turbulence_mismatch COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --propagation_table tables/ground_model_test.nc --turbulence 4e-4 --gridstep 4000 -L warn -o integrated/propagation_table_mismatch.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_warns_turbulence_mismatch PROPERTIES FIXTURES_REQUIRED propagation_table_file PASS_REGULAR_EXPRESSION "was built with still air, roughness 0 m, and its pairs take that; the run's Chessell turbulence 0\\.0004 rad s/sqrt\\(m\\), roughness 0 m reaches only the pairs it does not cover")
+add_test(NAME propagation_table_turbulence_refusals COMMAND niceops_propagation_table --method ground_model --bands 100 --source_heights 100 --receiver_heights 4 --max_range 1000 --step 100 --turbulence 4e-4 --gamma_t 1e-5 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_turbulence_refusals PROPERTIES PASS_REGULAR_EXPRESSION "give the ground model one coherence")
 # Plate microphones read the table at its lowest receiver height plus K, the plate over bare ground
 # there at the pair's elevation and azimuth.  Through the ground-model table that must be the plate
 # run (0.13 dB at worst on this grid, through its 1.2 m row; K taken at 2 degrees for every pair

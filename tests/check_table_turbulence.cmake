@@ -24,8 +24,11 @@ macro(expect_refusal pattern)
     message(FATAL_ERROR "expected a refusal matching '${pattern}', got ${status}: ${summary}")
   endif()
 endmacro()
+# Under ground_model, --gamma_t is the HARMONOISE coherence; the phase screens' own options are PE's,
+# and Chessell's --turbulence and --roughness are the ground model's.
 expect_refusal("apply to --method pe only" --method ground_model --units m --bands 250 --source_heights 2 20
-  --receiver_heights 1.2 --max_range 100 --step 50 --gamma_t 1e-6 -o "${OUT}/refused.nc")
+  --receiver_heights 1.2 --max_range 100 --step 50 --gamma_t 1e-6 --realizations 2 -o "${OUT}/refused.nc")
+expect_refusal("apply to --method ground_model only" ${common} --turbulence 4e-4 -o "${OUT}/refused.nc")
 expect_refusal("checks a still table" ${common} --gamma_t 1e-6 --validation_csv "${OUT}/v.csv" -o "${OUT}/refused.nc")
 file(WRITE "${OUT}/zero.csv" "z_m,gamma\n0,0\n50,0\n")
 expect_refusal("zero everywhere" ${common} --gamma_profile "${OUT}/zero.csv" -o "${OUT}/refused.nc")
