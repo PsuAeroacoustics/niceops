@@ -1,7 +1,7 @@
 // Checks what --raster_file wrote, for the CTest cases that run it
 // (CMakeLists.txt, raster_*):
 //
-//   check_raster RASTER.nc UNIT_TO_METERS [--latlon LATLON.csv | --no-latlon] VAR=GRID.csv ...
+//   check_raster RASTER.nc UNIT_TO_METERS [--latlon LATLON.csv | --no-latlon] [--absent VAR] VAR=GRID.csv ...
 //
 //   * the file is CF-1.8, with x and y in meters that are the grid file's axes
 //     (written in the run's units, UNIT_TO_METERS converting);
@@ -9,7 +9,9 @@
 //     (an observer that heard nothing) as the fill value, NaN;
 //   * with --latlon, the latitude and longitude are the --latlon companion's,
 //     observer by observer, and every VAR names them as its coordinates;
-//     with --no-latlon (a run without a frame), there are none.
+//     with --no-latlon (a run without a frame), there are none;
+//   * each --absent VAR is not in the file (a field with no grid file behind
+//     it, such as the SEL of a skipped trajectory).
 //
 // Exits nonzero with the first failure on stderr.
 
@@ -113,7 +115,7 @@ bool close(double a, double b, double tolerance)
 int main(int argc, char** argv)
 {
     if (argc < 4)
-        fail("usage: check_raster RASTER.nc UNIT_TO_METERS [--latlon LATLON.csv | --no-latlon] VAR=GRID.csv ...");
+        fail("usage: check_raster RASTER.nc UNIT_TO_METERS [--latlon LATLON.csv | --no-latlon] [--absent VAR] VAR=GRID.csv ...");
     const std::string path = argv[1];
     const double to_meters = std::strtod(argv[2], nullptr);
     int ncid = -1;
@@ -128,10 +130,23 @@ int main(int argc, char** argv)
     check(nc_inq_dimlen(ncid, y_dim, &ny), "y's length");
     const auto x = variable(ncid, "x", nx);
     const auto y = variable(ncid, "y", ny);
+    // Each variable on the dimensions it must be, (y, x) for a field: a
+    // transposed field reads back as the same flat array.
+    auto require_dimensions = [&](const std::string& name, std::vector<int> expected) {
+        int var = -1, ndims = 0;
+        check(nc_inq_varid(ncid, name.c_str(), &var), "no variable " + name);
+        check(nc_inq_varndims(ncid, var, &ndims), name);
+        std::vector<int> dims(static_cast<std::size_t>(ndims));
+        check(nc_inq_vardimid(ncid, var, dims.data()), name);
+        if (dims != expected)
+            fail(name + " is not on the dimensions " + (expected.size() == 2 ? "(y, x)" : "of its own axis"));
+    };
+    require_dimensions("x", {x_dim});
+    require_dimensions("y", {y_dim});
 
     std::string latlon;
     bool no_latlon = false;
-    int checked = 0;
+    int checked = 0, absent = 0;
     for (int k = 3; k < argc; k++)
     {
         const std::string arg = argv[k];
@@ -143,6 +158,15 @@ int main(int argc, char** argv)
         if (arg == "--no-latlon")
         {
             no_latlon = true;
+            continue;
+        }
+        if (arg == "--absent" && k + 1 < argc)
+        {
+            int var = -1;
+            const std::string name = argv[++k];
+            if (nc_inq_varid(ncid, name.c_str(), &var) == NC_NOERR)
+                fail(path + " has " + name + ", which should not be there");
+            absent++;
             continue;
         }
         const auto equals = arg.find('=');
@@ -159,6 +183,7 @@ int main(int argc, char** argv)
         for (std::size_t i = 0; i < ny; i++)
             if (!close(y[i], grid.y[i] * to_meters, 1e-12))
                 fail("y[" + std::to_string(i) + "] is not the grid file's");
+        require_dimensions(name, {y_dim, x_dim});
         const auto values = variable(ncid, name, nx * ny);
         for (std::size_t i = 0; i < values.size(); i++)
         {
@@ -177,11 +202,13 @@ int main(int argc, char** argv)
             fail(name + " does not name latitude and longitude as its coordinates");
         checked++;
     }
-    if (checked == 0)
-        fail("no VAR=GRID.csv to check");
+    if (checked == 0 && absent == 0)
+        fail("nothing to check");
 
     if (!latlon.empty())
     {
+        require_dimensions("latitude", {y_dim, x_dim});
+        require_dimensions("longitude", {y_dim, x_dim});
         const auto latitude = variable(ncid, "latitude", nx * ny);
         const auto longitude = variable(ncid, "longitude", nx * ny);
         std::ifstream file(latlon);

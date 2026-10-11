@@ -5327,7 +5327,12 @@ int run(int argc, char* argv[])
             write_geodetic_levels(x_obs, y_obs, share, *frame, latlon_companion(coverage_file), scattered);
     }
 
-    if (!contour_file.empty())
+    if (!contour_file.empty() && contour_metric == "sel" && failed_paths > 0)
+    {
+        warn("--contour_file ", contour_file, " is not written: its trajectory was skipped, so there is no "
+                "SEL to contour.");
+    }
+    else if (!contour_file.empty())
     {
         static const std::map<std::string, DayMetric> day_names = {{"dnl", DayMetric::dnl},
                 {"lden", DayMetric::lden}, {"cnel", DayMetric::cnel}, {"lday", DayMetric::lday},
@@ -5348,9 +5353,10 @@ int run(int argc, char* argv[])
 
     if (!raster_file.empty())
     {
-        // Each field as the run writes it to its own file.
+        // Each field as the run writes it to its own file.  A skipped
+        // trajectory writes no -o, and its SEL vector holds only zeros.
         std::vector<RasterField> fields;
-        if (path_count == 1)
+        if (path_count == 1 && failed_paths == 0)
             fields.push_back({"sel", "sound exposure level (SEL), A-weighted", "dB", &integrated_levels});
         static const char* const day_keys[] = {"dnl", "lden", "cnel", "lday", "levening", "lnight", "laeq"};
         static_assert(sizeof(day_keys) / sizeof(day_keys[0]) == day_metric_count);
