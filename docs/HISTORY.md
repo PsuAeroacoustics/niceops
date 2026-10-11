@@ -184,6 +184,8 @@ old and new results only with them in mind.
   track goes under 12 kt (the slowest, AW139 `192217AC.csv`, reaches 12.5 kt), no 2017 B407
   flight track other than the day-283 hovers goes under 13 kt, and the hovers have no fast
   states, so no golden or validation result moved ([The sphere's nose](MANUAL.md#the-spheres-nose)).
+- **`--export_aam` writes SPEED with the exact knot** (October 2026). It converted m/s to knots
+  with 1.94384, which wrote every sphere's speed 2.3e-6 (relative) low; no footprint moved.
 - **A static operation with `--origin` and no `--frame_bearing`** reads its headings as compass
   bearings in the east/north frame. It used to orient the sphere by its zero velocity.
 - **The `azimuth_reference` attribute.** panam's builder writes it on every database: `track`

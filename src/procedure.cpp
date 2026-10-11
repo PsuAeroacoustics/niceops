@@ -17,9 +17,6 @@ using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code 
 
 namespace {
 
-constexpr double gravity = 9.80665; // m/s^2
-constexpr double knot = 1852.0 / 3600.0; // m/s
-
 // A key with its unit: `name_ft` or `name_m` for a length, `name_kt`, `name_mps`
 // or `name_fps` for a speed, `name_deg` for an angle, `name_s` for a time.
 // Exactly one spelling may be given; none returns NaN when optional.
@@ -251,7 +248,7 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
     // One internal step toward the targets.
     const auto advance = [&](double target_gamma, double target_bank, double target_speed, double acceleration) {
         // The path angle turns at the limited pull: d gamma / dt = g n / V.
-        const double gamma_rate = speed > 1.0 ? gravity * p.pull / speed : 2.0 * deg_to_rad;
+        const double gamma_rate = speed > 1.0 ? standard_gravity * p.pull / speed : 2.0 * deg_to_rad;
         gamma = approach(gamma, target_gamma, gamma_rate);
         bank = approach(bank, target_bank, p.roll_rate);
         speed = approach(speed, target_speed, acceleration);
@@ -262,7 +259,7 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
             bank = 0.0;
         }
         if (speed > 1.0)
-            course += gravity * std::tan(bank) / speed * h;
+            course += standard_gravity * std::tan(bank) / speed * h;
         east += speed * std::cos(gamma) * std::sin(course) * h;
         north += speed * std::cos(gamma) * std::cos(course) * h;
         z += speed * std::sin(gamma) * h;
@@ -274,7 +271,7 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
     // V: the integral of g tan(phi) / V as phi falls linearly to zero, which
     // is (g / (V p)) (-ln cos phi).
     const auto roll_out_turn = [&](double phi) {
-        return speed > 1.0 ? gravity / (speed * p.roll_rate) * -std::log(std::cos(std::fabs(phi))) : 0.0;
+        return speed > 1.0 ? standard_gravity / (speed * p.roll_rate) * -std::log(std::cos(std::fabs(phi))) : 0.0;
     };
     write();
     std::size_t index = 0;

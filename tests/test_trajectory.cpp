@@ -760,7 +760,7 @@ TEST_CASE("at hover the sphere's nose is the heading, turned into the local fram
     double previous_angle = std::numeric_limits<double>::quiet_NaN();
     for (int i = 0; i <= 500; i++)
     {
-        const double speed = (2.0 + 0.012 * i) * 1852.0 / 3600.0; // 2 kt to 8 kt
+        const double speed = (2.0 + 0.012 * i) * knot; // 2 kt to 8 kt
         const State s = state(speed * std::cos(1.0), speed * std::sin(1.0), 274.0);
         const auto n = unit_nose(nose_direction(s, inferred));
         const double angle = std::atan2(n[1], n[0]);
@@ -916,8 +916,8 @@ TEST_CASE("--nose heading takes the climb out at hover, continuously", "[traject
     for (int i = 0; i <= 1000; i++)
     {
         State s {};
-        s.vx = 0.01 * i * 1852.0 / 3600.0 * std::cos(0.7); // 0 to 10 kt
-        s.vy = 0.01 * i * 1852.0 / 3600.0 * std::sin(0.7);
+        s.vx = 0.01 * i * knot * std::cos(0.7); // 0 to 10 kt
+        s.vy = 0.01 * i * knot * std::sin(0.7);
         s.vz = -0.8;
         const double speed = std::hypot(s.vx, s.vy);
         s.heading = 300.0;

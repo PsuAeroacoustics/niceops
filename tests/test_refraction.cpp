@@ -409,8 +409,8 @@ TEST_CASE("read_atmosphere_profile reads wind", "[refraction]")
 
     TempCsv knots("z, T_K, RH, u_kt, v_kt\n0, 288, 50, 10, -5\n");
     const auto b = read_atmosphere_profile(knots.path, meters, 0.0);
-    CHECK(b.wind_east[0] == Catch::Approx(10.0 * 1852.0 / 3600.0));
-    CHECK(b.wind_north[0] == Catch::Approx(-5.0 * 1852.0 / 3600.0));
+    CHECK(b.wind_east[0] == Catch::Approx(10.0 * knot));
+    CHECK(b.wind_north[0] == Catch::Approx(-5.0 * knot));
 
     TempCsv bare("z, T_K, RH, wind_speed, wind_direction\n0, 288, 50, 10, 270\n");
     CHECK_THROWS_AS(read_atmosphere_profile(bare.path, meters, 0.0), std::runtime_error);

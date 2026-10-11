@@ -1049,7 +1049,7 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
     const AtmosphereProfile profile = synthetic_profile(wind, surface, highest);
     const LengthUnit unit = options.unit;
     const std::size_t top = profile.height.size() - 1;
-    log("Atmosphere built from --wind: ", wind.speed, " m/s (", wind.speed * 3600.0 / 1852.0,
+    log("Atmosphere built from --wind: ", wind.speed, " m/s (", wind.speed / knot,
             " kt) from ", wind.direction, " degrees at ", wind.height / unit.to_meters, " ",
             unit.name, ", roughness length ", wind.roughness_length / unit.to_meters, " ", unit.name,
             ", ", describe(wind.stability), "; ", profile.height.size(), " levels to ",

@@ -14,8 +14,6 @@ using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code 
 
 namespace {
 
-constexpr double knot = 1852.0 / 3600.0;
-
 std::string write_text(const std::string& name, const std::string& text)
 {
     const auto path = (std::filesystem::temp_directory_path() / name).string();

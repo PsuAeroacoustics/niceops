@@ -658,7 +658,7 @@ namespace {
 struct Upwind
 {
     std::vector<double> z, c;
-    Upwind(double floor = 0.0, int extra = 0, double headwind = 7.0 * 0.514444)
+    Upwind(double floor = 0.0, int extra = 0, double headwind = 7.0 * knot)
     {
         const double ft[] = {0, 1, 3, 6.6, 10, 20, 33, 46, 80, 120, 200, 300, 400, 500, 650, 1000};
         auto speed = [&](double height) {

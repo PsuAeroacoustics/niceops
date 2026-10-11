@@ -18,9 +18,8 @@ namespace niceops {
 
 namespace {
 
-// Standard gravity and the dry-air gas constant.  The latter is the value
-// trajectory.cpp takes pressure from density with, so the two agree.
-constexpr double standard_gravity = 9.80665; // m/s^2
+// The dry-air gas constant: the value trajectory.cpp takes pressure from
+// density with, so the two agree.
 constexpr double dry_air_gas_constant = 287.05; // J/(kg K)
 
 // Plausible ranges, in the stored units, for telling a unit from the values
@@ -260,7 +259,6 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
     // Wind, as speed and the direction it blows from, or as east and north
     // components.  Its unit has to be named: m/s and knots cover the same
     // values, so unlike temperature nothing in the numbers can tell them apart.
-    constexpr double knot = 1852.0 / 3600.0; // m/s
     constexpr std::size_t npos = LabeledCsv::npos;
     double speed_to_mps = 1.0;
     std::size_t speed_column = csv.column({"wind speed mps", "wind speed ms", "wspd mps",
@@ -757,7 +755,7 @@ SurfaceWind parse_surface_wind(const std::string& text, LengthUnit unit)
     }
     else if (speed_unit == "kt" || speed_unit == "kts" || speed_unit == "knot"
             || speed_unit == "knots")
-        wind.speed *= 1852.0 / 3600.0;
+        wind.speed *= knot;
     else if (speed_unit == "mph")
         wind.speed *= 1609.344 / 3600.0;
     else if (speed_unit.empty())

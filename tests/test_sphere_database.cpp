@@ -1727,7 +1727,7 @@ TEST_CASE("an AAM export lays out its axes and amplitudes as the format says", "
                 REQUIRE(amplitude[(m * theta.size() + n) * bands + f]
                         == static_cast<float>(sphere.amplitudes[(m * theta.size() + n) * bands + f]));
     CHECK(read_floats("RADIUS", 1)[0] == Catch::Approx(sphere.radius / 0.3048).epsilon(1e-6));
-    CHECK(read_floats("SPEED", 1)[0] == Catch::Approx(0.15 * tip_speed * 1.94384).epsilon(1e-6));
+    CHECK(read_floats("SPEED", 1)[0] == Catch::Approx(0.15 * tip_speed / knot).epsilon(1e-6));
     CHECK(read_floats("FLIGHT_PATH_ANGLE", 1)[0] == Catch::Approx(-4.0).margin(1e-6));
     REQUIRE(nc_close(ncid) == NC_NOERR);
     std::filesystem::remove(path);
@@ -1990,7 +1990,7 @@ double surface_level(const Database& db, const Database::Blend& blend)
 }
 
 // A tip speed of 100 kt, so an advance ratio is knots / 100.
-constexpr double tip_speed_100_kt = 100.0 * 1852.0 / 3600.0;
+constexpr double tip_speed_100_kt = 100.0 * knot;
 
 } // namespace
 

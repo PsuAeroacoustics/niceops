@@ -531,7 +531,7 @@ dimensional_data configure_vehicle(const std::string& filename)
     dimensional_data vehicle;
     vehicle.radius = json_to_double(config["Main Rotor"]["radius"]);
     vehicle.tip_speed = json_to_double(config["Main Rotor"]["tip speed"]);
-    vehicle.weight = json_to_double(config["Vehicle"]["weight"]) * g; // Actually a mass (kg), so convert to Newtons
+    vehicle.weight = json_to_double(config["Vehicle"]["weight"]) * standard_gravity; // Actually a mass (kg), so convert to Newtons
     vehicle.rho = json_to_double(config["Atmosphere"]["density"]);
 
     // Atmospheric state, for the optional spectral path.  Only density is
@@ -1148,7 +1148,7 @@ std::optional<double> heading_offset(const std::vector<State>& states, double fr
     // the heading the file gives.
     if (!std::isnan(frame_bearing))
         return frame_bearing * pi / 180.0;
-    constexpr double fast = 20.0 * 1852.0 / 3600.0; // m/s
+    constexpr double fast = 20.0 * knot; // m/s
     constexpr std::size_t enough = 50;
     double sum_cos = 0.0, sum_sin = 0.0;
     std::size_t count = 0;

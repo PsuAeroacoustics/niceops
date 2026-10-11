@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "condition_selection.hpp"
+#include "util/constants.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace)
 
@@ -242,7 +243,7 @@ TEST_CASE("AAM's speed never disqualifies: the nearest speed, ties to the faster
     // The gate is in the caller's unit: as advance ratio for a 200 m/s tip
     // speed, 20 kt is 0.0514 -- a pair 0.06 apart is past it.
     const auto mu = selector_of({{0.20, 0.0}, {0.26, 0.0}});
-    const double gate = 20.0 * 1852.0 / 3600.0 / 200.0;
+    const double gate = 20.0 * knot / 200.0;
     REQUIRE(picked(mu, 0.22, 0.0, gate).size() == 1);
     REQUIRE(picked(mu, 0.22, 0.0, 0.07).size() == 2);
 }

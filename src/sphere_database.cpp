@@ -1784,7 +1784,6 @@ void Database::blend_aam(double advance_ratio, double flight_path_angle, double 
         input_error("--blend aam needs the rotor tip speed to turn its 20 kt speed gate into advance "
                 "ratio, and neither the database nor the vehicle gives one.");
     }
-    constexpr double knot = 1852.0 / 3600.0; // m/s
     const double speed_gate = options.aam_limits.speed_kt * knot / tip_speed;
 
     // The thrust layer nearest the state (the only one on a fixed_load_factor
@@ -3202,8 +3201,8 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     }
     ensure_parent_directory(path);
 
-    const double m2ft = 1.0 / 0.3048;
-    const double mps2kt = 1.94384;
+    const double m2ft = 1.0 / ft2m;
+    const double mps2kt = 1.0 / knot;
 
     int file = 0;
     nc_check(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file), "creating " + path);
