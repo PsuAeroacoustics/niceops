@@ -386,6 +386,16 @@ public:
     // (internals/database.md).
     static constexpr double suspect_cell_margin_db = 40.0;
     static constexpr double suspect_band_margin_db = 45.0;
+    // A sphere's stored operating condition: advance ratio, flight path angle
+    // (deg) and thrust coefficient, as the file holds them.
+    const std::array<double, 3>& condition(std::size_t sphere) const
+    {
+        return conditions_[sphere];
+    }
+    std::size_t condition_count() const
+    {
+        return conditions_.size();
+    }
     // Entries the screen found: dBA cells, then spectral bands.
     std::size_t suspect_cells() const
     {
@@ -852,6 +862,7 @@ private:
     // attenuation factor anywhere in the database.  Together they bound how
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
+    std::vector<std::array<double, 3>> conditions_;
     std::size_t suspect_cells_ = 0;
     std::size_t suspect_bands_ = 0;
     // The constructor's last pass over the grid and spectra: see the definition.

@@ -95,6 +95,23 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
 [table](testing.md#mutation-guarded-tests). The one-off independent rebuild of the frames is in
 [FIDELITY](../FIDELITY.md#lamax-ta-and-epnl-against-the-2017-measurements).
 
+## Source provenance
+
+`--provenance_file` (`write_provenance` and the observer loop's provenance block in
+`niceops.cpp`). Things to keep:
+
+- **Energy is attributed by blend weight.** The blend is linear in dB, so a sphere's weight is not
+  its share of the energy exactly; it is the natural attribution, and it shares out all of the
+  energy (the writer asserts the sums agree to 1e-9).
+- **Per-state flags are taken where the run decides them**: the axis clamps from the blend, the
+  load-factor holds where the run applies `--max_load_factor` and `--min_load_factor`.
+- **Per-sphere sums are dense per thread and sparse per observer.** A dense observer-by-sphere
+  table is 150 MB on the demo grid with a 1312-sphere database; the sparse list holds the few
+  dozen spheres an observer hears. Only touched entries are reset.
+- **It marches** (bounding off), since every state's energy is needed; the SEL is the windowed
+  run's (`provenance_leaves_sel_alone`).
+- **One database per run**: a sphere index means nothing across two.
+
 ## Time weighting, day metrics, C-SEL
 
 `--lamax_weighting`, `--nax_file`, `--ta_file`, `--lden_file`, `--cnel_file` and `--csel_file`

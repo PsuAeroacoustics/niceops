@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -716,6 +717,7 @@ struct RunOptions
     // --csel_file: the C-weighted SEL, from the band levels.
     bool want_csel = false;
     bool want_coverage = false;
+    bool want_provenance = false;
     bool full_history = false;
     // --epnl_file's tone correction: tones in bands below their noy threshold
     // excluded (pnl.hpp), unless --no-epnl_masking.
@@ -768,7 +770,55 @@ struct RunTotals
     std::vector<double> nax;
     std::vector<double> time_above;
     std::vector<std::array<double, 2>> coverage;
+    // --provenance_file, per observer: the SEL energy, and the shares of it
+    // from states clamped on each axis or with the load-factor law held
+    // (provenance_axes), and the energy each sphere supplied, sorted by
+    // sphere, through the states' blend weights.
+    std::vector<std::array<double, 6>> provenance;
+    std::vector<std::vector<std::pair<std::uint32_t, double>>> sphere_energy;
 };
+
+// --provenance_file: one row per observer, grid or scattered, of where its
+// SEL energy came from over every operation.  The shares are of the energy
+// the SEL integrated; the top sphere is the one the blend weights gave the
+// most of it, with that share and its stored condition.  An observer that
+// heard nothing has no shares, and is written as NaN.
+void write_provenance(const std::vector<double>& x_obs, const std::vector<double>& y_obs,
+        const RunTotals& totals, const Database& database, const std::string& out_file,
+        bool scattered, LengthUnit unit)
+{
+    auto file = open_output(out_file);
+    file << "x(" << unit.name << "),y(" << unit.name << "),share_mu_clamped,share_gamma_clamped,"
+         << "share_ct_clamped,share_load_factor_held_max,share_load_factor_held_min,top_sphere,"
+         << "top_sphere_share,top_sphere_mu,top_sphere_gamma,top_sphere_ct\n";
+    file << std::setprecision(10);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (std::size_t i = 0; i < totals.provenance.size(); i++)
+    {
+        const double x = scattered ? x_obs[i] : x_obs[i % x_obs.size()];
+        const double y = scattered ? y_obs[i] : y_obs[i / x_obs.size()];
+        file << x / unit.to_meters << "," << y / unit.to_meters;
+        const auto& p = totals.provenance[i];
+        for (int axis = 1; axis < 6; axis++)
+            file << "," << (p[0] > 0.0 ? p[axis] / p[0] : nan);
+        const auto& list = totals.sphere_energy[i];
+        // The blend weights sum to one, so the spheres share out all of it.
+        assert(std::abs(std::accumulate(list.begin(), list.end(), 0.0,
+                               [](double sum, const auto& entry) { return sum + entry.second; })
+                       - p[0])
+                <= 1e-9 * p[0]);
+        const auto top = std::max_element(list.begin(), list.end(),
+                [](const auto& a, const auto& b) { return a.second < b.second; });
+        if (top == list.end() || !(p[0] > 0.0))
+        {
+            file << ",,nan,nan,nan,nan\n";
+            continue;
+        }
+        const auto& condition = database.condition(top->first);
+        file << "," << top->first << "," << top->second / p[0] << "," << condition[0] << ","
+             << condition[1] << "," << condition[2] << "\n";
+    }
+}
 
 // Take the trajectory's flight conditions against the air when its database's
 // were: the database's speed_reference attribute, unless --speed_reference
@@ -1248,6 +1298,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::array<std::size_t, 4> spheres_blended {};
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
+    // Per state, for --provenance_file: bit k set when provenance_axes[k]
+    // applies (1 mu clamped, 2 gamma clamped, 4 C_T clamped, 8 load factor
+    // held at --max_load_factor, 16 held at --min_load_factor).
+    std::vector<unsigned char> state_provenance(nt, 0);
     for (const auto& state : trajectory.states)
     {
         const auto velocity = nose_source == NoseSource::ground_velocity ? ground_velocity(state)
@@ -1284,16 +1338,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 thrust_coefficient = ceiling;
                 load_capped++;
+                state_provenance[source_states.size()] |= 8;
             }
             if (two_sided && thrust_coefficient
                     < blend_options.min_load_factor * database.reference_thrust_coefficient())
+            {
                 load_floored++;
+                state_provenance[source_states.size()] |= 16;
+            }
         }
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
                 Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), state.mu,
                 options.qsam ? state.fpa_e : state.fpa, thrust_coefficient, blend_options));
         const auto& blend = source_states.back().blend;
+        state_provenance[source_states.size() - 1] |= (blend.advance_ratio_clamped ? 1 : 0)
+                | (blend.flight_path_angle_clamped ? 2 : 0) | (blend.thrust_coefficient_clamped ? 4 : 0);
         mu_clamped += blend.advance_ratio_clamped;
         fpa_clamped += blend.flight_path_angle_clamped;
         ct_clamped += blend.thrust_coefficient_clamped;
@@ -2360,7 +2420,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             || options.full_history || options.want_lamax || options.want_nax || options.want_ta
             || options.want_csel || write_band_history || want_frames;
     // The coverage report needs every state's level, so nothing is skipped.
-    const bool bounded = !level_is_transformed && !options.want_coverage;
+    if (options.want_provenance && level_is_transformed)
+        input_error("--provenance_file attributes the aircraft's energy to the states and spheres "
+                "it came from: it does not combine with -a, whose energy came from neither.");
+    const bool bounded = !level_is_transformed && !options.want_coverage && !options.want_provenance;
     DirectionBounds direction_bounds;
     // Only the spectral path has a bound worth building.  A broadband evaluation
     // costs about 20 ns, and the bound test costs more than the evaluations it
@@ -3107,6 +3170,55 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 coverage[index][0] += unmeasured_energy;
                 coverage[index][1] += energy;
             }
+            if (options.want_provenance)
+            {
+                // Each state's energy, to the axes it was clamped on and, by
+                // its blend weights, to the spheres it was blended from.  The
+                // per-sphere sums are dense per thread, and only the spheres
+                // touched are reset and merged into the observer's sparse list.
+                thread_local std::vector<double> by_sphere;
+                thread_local std::vector<std::uint32_t> touched;
+                by_sphere.resize(database.condition_count(), 0.0);
+                auto& totals_here = totals.provenance[index];
+                for (std::size_t it = 0; it < nt; it++)
+                {
+                    if (!std::isfinite(levels[it]))
+                        continue;
+                    const double weight = std::pow(10.0, 0.1 * levels[it]);
+                    totals_here[0] += weight;
+                    for (int axis = 0; axis < 5; axis++)
+                        if (state_provenance[it] & (1u << axis))
+                            totals_here[1 + axis] += weight;
+                    const auto& blend = source_states[it].blend;
+                    for (std::size_t k = 0; k < blend.weights.size(); k++)
+                    {
+                        if (!(blend.weights[k] > 0.0))
+                            continue;
+                        const auto sphere = static_cast<std::uint32_t>(blend.indices[k]);
+                        if (by_sphere[sphere] == 0.0)
+                            touched.push_back(sphere);
+                        by_sphere[sphere] += weight * blend.weights[k];
+                    }
+                }
+                std::sort(touched.begin(), touched.end());
+                auto& list = totals.sphere_energy[index];
+                std::vector<std::pair<std::uint32_t, double>> merged;
+                merged.reserve(list.size() + touched.size());
+                std::size_t a = 0;
+                for (const std::uint32_t sphere : touched)
+                {
+                    while (a < list.size() && list[a].first < sphere)
+                        merged.push_back(list[a++]);
+                    double energy = by_sphere[sphere];
+                    if (a < list.size() && list[a].first == sphere)
+                        energy += list[a++].second;
+                    merged.emplace_back(sphere, energy);
+                    by_sphere[sphere] = 0.0;
+                }
+                merged.insert(merged.end(), list.begin() + static_cast<std::ptrdiff_t>(a), list.end());
+                list.swap(merged);
+                touched.clear();
+            }
             for (std::size_t m = 0; m < day_metric_count; m++)
             {
                 if (!options.want_day_metric[m])
@@ -3469,6 +3581,7 @@ int run(int argc, char* argv[])
     double ta_threshold = std::numeric_limits<double>::quiet_NaN();
     std::vector<std::string> csel_files;
     std::string coverage_file = "";
+    std::string provenance_file;
     bool full_history = false;
     bool epnl_masking = true;
     double utc_offset = 0.0;
@@ -3692,6 +3805,9 @@ int run(int argc, char* argv[])
             "to this file: one name, or one per trajectory (with one name and several "
             "trajectories, each writes <track>_LCE.csv beside it). Spectral path only; refused "
             "with -a or --db_cutoff.");
+    app.add_option("--provenance_file", provenance_file,
+            "Write, per observer, the shares of its SEL energy from states the database clamped "
+            "on each axis or held at a load-factor limit, and the sphere that supplied the most.");
     app.add_option("--coverage_file", coverage_file,
             "Write, per observer, the energy-weighted share of its levels that came from cells "
             "the database did not measure (straight rays only; needs a database with coverage).");
@@ -4109,6 +4225,11 @@ int run(int argc, char* argv[])
     if (!band_frames_files.empty())
         expand_per_path(band_frames_files, "--band_frames names");
     expand_per_path(database_files, "database files");
+    // The provenance names spheres by their index in one database.
+    if (!provenance_file.empty()
+            && std::any_of(database_files.begin(), database_files.end(),
+                    [&](const std::string& f) { return f != database_files.front(); }))
+        input_error("--provenance_file names spheres of one database: run it once per database.");
     // Each database load writes the screen afresh, so a second database would
     // overwrite the first one's list.
     if (!database_load.screen_file.empty()
@@ -4410,6 +4531,9 @@ int run(int argc, char* argv[])
     totals.time_above.assign(want_ta ? observers.size() : 0, 0.0);
     const bool want_coverage = !coverage_file.empty();
     totals.coverage.assign(want_coverage ? observers.size() : 0, std::array<double, 2> {0.0, 0.0});
+    const bool want_provenance = !provenance_file.empty();
+    totals.provenance.assign(want_provenance ? observers.size() : 0, std::array<double, 6> {});
+    totals.sphere_energy.assign(want_provenance ? observers.size() : 0, {});
     const bool want_csel = !csel_files.empty();
     if (want_nax && !std::isfinite(nax_threshold))
         input_error("--nax_file needs --nax_threshold, the LAmax in dBA that counts an operation. "
@@ -4798,6 +4922,7 @@ int run(int argc, char* argv[])
     options.lamax_weighting = level_weighting;
     options.want_csel = want_csel;
     options.want_coverage = want_coverage;
+    options.want_provenance = want_provenance;
     options.full_history = full_history;
     options.epnl_masking = epnl_masking ? ToneMasking::below_noy_floor : ToneMasking::none;
     options.write_time_history = write_time_history;
@@ -4906,6 +5031,13 @@ int run(int argc, char* argv[])
         write_levels(x_obs, y_obs, totals.time_above, ta_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, totals.time_above, *frame, latlon_companion(ta_file), scattered);
+    }
+
+    if (want_provenance)
+    {
+        log("Writing where each observer's energy came from, over ", path_count,
+                path_count == 1 ? " operation, to " : " operations, to ", provenance_file);
+        write_provenance(x_obs, y_obs, totals, database, provenance_file, scattered, unit);
     }
 
     if (want_coverage)

@@ -1524,6 +1524,9 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     min_excess_factor_ = eaa_min;
     screen_suspect_cells(datafile_path, load, advance_ratios, flight_path_angles, thrust_coefficients,
             reached_cells);
+    conditions_.resize(advance_ratios.size());
+    for (std::size_t i = 0; i < conditions_.size(); i++)
+        conditions_[i] = {advance_ratios[i], flight_path_angles[i], thrust_coefficients[i]};
     info("Max level found in database is: ", max_level_);
     info("Lowest excess attenuation factor is: ", min_excess_factor_);
     // Set sphere_radius to dimensional_radius

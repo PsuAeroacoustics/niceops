@@ -202,6 +202,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--epnl_masking` / `--no-epnl_masking` | Exclude tones in bands below their noy threshold from the tone correction. On by default; `--no-epnl_masking` is the procedure as written. |
 | `--band_frames` | Write every observer's band levels in 0.5 s reception-time frames, as netCDF. Once, or once per trajectory (`<track>_band_frames.nc`). Needs the spectral path. Refused with `-a`. |
 | `--coverage_file` | Write, per observer, the energy-weighted share of its level that came from sphere cells the database did not measure. Needs a database that records `coverage`. Straight rays only: refused with `--refraction` or `-a`. |
+| `--provenance_file` | Write, per observer, where its SEL energy came from: the shares from states clamped on each database axis or held at a load-factor limit, and the sphere that supplied the most ([Output files](#output-files)). One database per run; refused with `-a`. |
 
 #### Threads, culling and diagnostics
 
@@ -275,6 +276,7 @@ The main ones:
 | `--spectral`, or any option that needs bands, on a database without spectra | There are no bands to carry. |
 | `--ground_effect`, `--atmosphere`, `--wind`, `--propagation_table`, `--band_history`, `--csel_file`, `--epnl_file`, `--band_frames` with `--no-spectral` | The broadband path carries one A-weighted level. |
 | `--csel_file`, `--epnl_file`, `--band_frames`, `--coverage_file` with `-a` | The ambient is an A-weighted level with no spectrum. |
+| `--provenance_file` with `-a` | The ambient's energy came from no state or sphere. |
 | `--csel_file` with `--db_cutoff` | The cutoff is proven on the A-weighted level. |
 | `--refraction` without `--atmosphere` or `--wind`; `--atmosphere` with `--wind` | One profile, stated once. |
 | `--shadow_model resolved` without `--refraction stratified` and the ground effect; `--scattering` without `--refraction` and the ground effect | They act through the shadow transition, which needs a ground model. |
@@ -286,7 +288,7 @@ The main ones:
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
 | `--speed_reference air` without a wind | Calm air is not assumed. |
 | Two trajectories writing one file; a list of `-d`, `-v`, `-o` that is neither one nor one per track | Outputs would overwrite one another. |
-| `--mask_suspect_cells` with `--self_test`; `--screen_database` with more than one database; `--screen_database` or `--manifest` naming an input | The self test checks the file as written; one list would overwrite the other; the input would be overwritten. |
+| `--mask_suspect_cells` with `--self_test`; `--screen_database` or `--provenance_file` with more than one database; `--screen_database` or `--manifest` naming an input | The self test checks the file as written; one list would overwrite the other, and a sphere index names a sphere of one database; the input would be overwritten. |
 | `-p`, `-f`, `-F` in a build without plotting | Rather than silently doing nothing. |
 
 ## Inputs
@@ -915,6 +917,13 @@ others:
   `--band_limits` and culled states are empty; the `-a` ambient goes into `level_dBA` only.
 - `-S`: the derived state (time, position, velocity, load factor, C<sub>T</sub>, μ, path
   angles), metric whatever `--units` says.
+- `--provenance_file`: one row per observer, grid or scattered: `x`, `y`, then the shares of
+  its SEL energy, over every operation, from states whose advance ratio, path angle or C<sub>T</sub>
+  lay outside the database and were clamped to its edge, and from states whose load factor was
+  held at `--max_load_factor` or `--min_load_factor`; then the sphere that supplied the most energy
+  (its index in the database), its share, and its stored μ, γ and C<sub>T</sub>. A state's energy
+  is shared among its spheres by their blend weights. The run evaluates every state, as
+  `--coverage_file` does. An observer that heard nothing is written as NaN.
 - `--latlon`: a `_latlon` companion beside every level file (`out.csv` → `out_latlon.csv`), one
   row per observer of latitude, longitude and level, always scattered.
 - `--epnl_file`, `--band_frames` ([EPNL](#epnl-and-reception-time-frames)); `--write_atmosphere`
