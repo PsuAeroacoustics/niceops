@@ -111,6 +111,8 @@ old and new results only with them in mind.
   `-s 0.5`, which were accepted before `--lamax_weighting` existed, are refused under `fast`.
   They need `-s 0.0625` or finer for `--lamax_file` or `--nax_file`, or
   `--lamax_weighting instantaneous` for the old number.
+- **`-m` has a fifth column**, the area at or above 65 dB (October 2026). A script that read
+  the line as four fields must take the fifth or ignore it; the first four are unchanged.
 - **`--epnl_file` follows panam's corrected EPNL** (October 2026). The duration's limits are the
   records closest to PNLTM − 10; D, the duration constant, takes the regulation's −13 for the
   0.5 s records; and the band-sharing adjustment is added to EPNL rather than to a PNLTM that
@@ -136,6 +138,12 @@ old and new results only with them in mind.
   means moved by about 1e-4 dB. The near-grazing three-term series that stood in past the cut
   was removed, since the exact term is what it approximated.
 
+- **`--coverage_file` shares out the energy the SEL integrated** (October 2026): its 10 dB-down
+  window, each sample weighted by the step and its share of reception time. It summed every
+  sample of the history alike, which counted states the SEL leaves out and, across operations,
+  weighted each by its sample count. On the B407 demo grid the median observer's unmeasured
+  share moved from 1.2% to 0.94%, the 95th percentile from 27% to 31%.
+
 ### Refraction and the parabolic equation
 
 - **Stratified propagation keeps every arrival it solves.** It used to keep only the 24 arrivals
@@ -153,6 +161,11 @@ old and new results only with them in mind.
   march) had no self-starter at all. In propagation tables built before this, the 5 ft row's
   50–100 Hz bands were up to 0.39 dB off past the first range (0.12 dB mean); nothing else moved
   by more than 0.0002 dB.
+- **Plate microphones under `--propagation_table` take the plate's offset at each pair's
+  elevation** (October 2026). It was taken at 2° for every pair, which against the plate run the
+  table should reproduce put footprints read through a flush receiver row up to 0.34 dB low
+  ([FIDELITY](FIDELITY.md#propagation-tables)). Plate runs with a table that had no row at 0
+  were refused, naming 0 ft as an uncovered height; they now run, with a warning.
 - **The PE self-starter's ground source applies the second-order correction its derivation
   calls for** (October 2026). It had been computed and then discarded. It only affects sources
   within three grid spacings of the ground, mostly a PE table's flush-microphone rows in a
@@ -171,6 +184,8 @@ old and new results only with them in mind.
   track goes under 12 kt (the slowest, AW139 `192217AC.csv`, reaches 12.5 kt), no 2017 B407
   flight track other than the day-283 hovers goes under 13 kt, and the hovers have no fast
   states, so no golden or validation result moved ([The sphere's nose](MANUAL.md#the-spheres-nose)).
+- **`--export_aam` writes SPEED with the exact knot** (October 2026). It converted m/s to knots
+  with 1.94384, which wrote every sphere's speed 2.3e-6 (relative) low; no footprint moved.
 - **A static operation with `--origin` and no `--frame_bearing`** reads its headings as compass
   bearings in the east/north frame. It used to orient the sphere by its zero velocity.
 - **The `azimuth_reference` attribute.** panam's builder writes it on every database: `track`

@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -308,6 +309,19 @@ inline int DirectionBounds::bin(double along, double up, double across, double s
             + (across >= 0.0 ? half_azimuth + sector : half_azimuth - 1 - sector);
 }
 
+// What the loader does with the cells its screen finds suspect (see
+// Database::screen_suspect_cells).  At namespace scope for the reason
+// BlendOptions is: a nested struct with member initializers cannot be a
+// defaulted argument of its enclosing class's constructor.
+struct DatabaseLoadOptions
+{
+    // Write every suspect entry to this CSV (empty: none).
+    std::string screen_file;
+    // Drop the suspect entries, as gating drops a direction, instead of only
+    // warning about them.
+    bool mask_suspect_cells = false;
+};
+
 class Database
 {
 public:
@@ -364,7 +378,39 @@ public:
     // cannot be a defaulted argument of its enclosing class's members.
     using BlendOptions = niceops::BlendOptions;
 
-    explicit Database(const std::string& datafile_path);
+    explicit Database(const std::string& datafile_path, const DatabaseLoadOptions& load = {});
+
+    // The load-time screen's margins.  On the shipped databases without such
+    // defects, no cell sits more than 29 dB from the median of its sphere, and
+    // no band more than 36 dB above the median of its own cell's spectrum; the
+    // defects the screen exists for sit 46-1360 dB and 45-100 dB out
+    // (internals/database.md).
+    static constexpr double suspect_cell_margin_db = 40.0;
+    static constexpr double suspect_band_margin_db = 45.0;
+    // A sphere's stored operating condition: advance ratio, flight path angle
+    // (deg) and thrust coefficient, as the file holds them.
+    const std::array<double, 3>& condition(std::size_t sphere) const
+    {
+        return conditions_[sphere];
+    }
+    std::size_t condition_count() const
+    {
+        return conditions_.size();
+    }
+    // The file's root attributes and scalar variables, as text, for --manifest.
+    const std::map<std::string, std::string>& root_attributes() const
+    {
+        return root_attributes_;
+    }
+    // Entries the screen found: dBA cells, then spectral bands.
+    std::size_t suspect_cells() const
+    {
+        return suspect_cells_;
+    }
+    std::size_t suspect_bands() const
+    {
+        return suspect_bands_;
+    }
 
     Blend blend_at(double advance_ratio, double flight_path_angle,
             double thrust_coefficient, const BlendOptions& options = {}) const;
@@ -822,6 +868,13 @@ private:
     // attenuation factor anywhere in the database.  Together they bound how
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
+    std::vector<std::array<double, 3>> conditions_;
+    std::map<std::string, std::string> root_attributes_;
+    std::size_t suspect_cells_ = 0;
+    std::size_t suspect_bands_ = 0;
+    // The constructor's last pass over the grid and spectra: see the definition.
+    void screen_suspect_cells(const std::string& datafile_path, const DatabaseLoadOptions& load,
+            const std::vector<char>& reached);
     // Band centers shared by every sphere, and the per-band levels laid out as
     // spectra_[(cell * frequencies_.size() + band) * n_conditions + condition].
     //

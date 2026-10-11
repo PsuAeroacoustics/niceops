@@ -37,6 +37,34 @@ scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor.
   drops channels that match no angle of sphere 0's axes, is warned about once per distinct
   layout, the first three in full. None of the 21 shipped databases trips it; `B407_M3`'s 934
   zero channels are written zeros, not unreached cells.
+- **The netCDF fill value is refused** in dBA, EAA and amplitude (`refuse_fill_values`). A group
+  panam never finished writing holds 9.97e36 everywhere; it is finite, so the non-finite floor
+  passed it, and it read as a 1e37 dB level (the September 2026 files, HISTORY).
+- **The suspect-cell screen** (`screen_suspect_cells`) runs once the grid and spectra are filled.
+  It warns by default and changes nothing, so the default path is untouched; `--mask_suspect_cells`
+  floors the entries to `no_energy_floor_db`. Each condition is screened on its own, spread over up
+  to eight threads and joined in condition order, which the warning and the CSV list them in; on
+  one thread the band medians took 15% of a spectral database's load. Things to keep:
+  - **The rules and margins were measured** ([FIDELITY](../FIDELITY.md#database-screen)): a dBA
+    cell against the median of its sphere's reached cells (40 dB), a band against the median of
+    its own cell's bands (45 dB, excess only). The sound files reach 29.1 and 35.9 dB.
+  - **Unreached cells are left out.** They hold the grid's initial {0, 0}, which the layout
+    warning reports; taken as measured they would be flagged as zeros. `reached_cells` records
+    which entries a channel filled.
+  - **Rejected: the median of the eight grid neighbors.** It flagged sound cells beside a strip of
+    zeros (half their neighbors zeros), and a second pass without the flagged neighbors still
+    left a grid edge cut off behind a strip. A strip wider than half a neighborhood is its own
+    median, which hid most of the S-76D columns.
+  - **Rejected: the same band in neighboring cells.** Gating makes sound spectra jump 100 dB and
+    more between cells, so no margin separates good files from NASA's 8–10 kHz cells.
+  - **A masked dBA cell drops its bands too.** The spectral path reads only `spectra_`, and a
+    spectrum raised or lowered as a whole has no band out of line with its own cell.
+  - **Masking recomputes `sphere_max_` and `max_level_`** from the masked grid. `cull_range` and
+    the bounds rest on them, and a kept 1450 dBA maximum keeps every observer in range. The
+    bounds themselves are built from the grid on demand, so they follow the mask. The
+    `cull_range` check in "a dBA cell far from the rest of its sphere is reported, and dropped when asked"
+    is a mutation guard: without the recompute the rest of the suite passed.
+  - `--self_test` re-reads the file, so it refuses `--mask_suspect_cells`.
 - **`sphere_frame` with no velocity, or velocity along the thrust axis,** takes +x's projection
   for its nose, instead of a zero frame that looks every observer up at (φ 0, θ 90).
 - **The sphere writers check `nc_close`'s status**, which is where HDF5's buffering reports a

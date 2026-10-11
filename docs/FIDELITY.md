@@ -462,6 +462,25 @@ None moves the SEL: the exposure within 10 dB of each microphone's measured peak
   past 1 km) differ by up to 0.55 dB, because the absorbing layer follows each march's domain.
 - **Turbulent tables** agree between the two marches only in the ensemble mean, to sampling
   noise.
+- **Plate microphones through the ground-model table** against the plate run under
+  `--ground_effect --exact_ground` (`gr1425_db225`, demo grid at 492 ft), by the table's lowest
+  receiver row:
+
+  | lowest row | mean | worst |
+  | --- | --- | --- |
+  | 0 (flush) | −0.001 dB | −0.012 dB |
+  | 1.2 m | −0.003 | −0.13 / +0.11 |
+  | 5 m | +0.008 | −0.46 / +0.60 |
+  | 30 m | −0.024 | −1.28 / +0.55 |
+
+  The raised rows' error does not shrink with a twelve times finer elevation grid for K. With K
+  taken at 2° for every pair, the flush row was −0.014 dB mean (−0.34 to +0.08 dB).
+
+- **Turbulence and roughness built into a ground-model table** reproduce `--ground_effect
+  --exact_ground` with the same settings on the plumbing check's grid: Chessell's 4e-4 rad·s/√m
+  with a 0.3 ft roughness to 0.0001 dB mean and 0.021 dB at worst, HARMONOISE's γ<sub>T</sub>
+  3e-5 to −0.001 dB mean and 0.077 dB at worst. Against the still ground model they move cells
+  by −1.5 to +5.9 dB and −0.2 to +3.1 dB, filling the interference nulls.
 
 A table checked with `--validation_csv` is compared with direct solves at cell midpoints. That
 comparison includes both interpolation error and differences in resolution and band quadrature;
@@ -565,12 +584,42 @@ with the shipped database:
   [Source options](#source-options-blend-and-load-factor-law). Its hover's two measured rings
   score 2.8 dB held-out rms (18–25° below the horizon) and 5 dB (0.5–3°, in
   ground effect). Nothing measures 3–17° or the region under the aircraft.
-- **Coverage.** On the demo grid, the B407 database's levels come 1.2% from unmeasured cells at
-  the median observer and 27% at the 95th percentile. The builder's SNR gate drops the
+- **Coverage.** On the demo grid, the B407 database's levels come 0.94% from unmeasured cells at
+  the median observer and 31% at the 95th percentile. The builder's SNR gate drops the
   5–10 kHz bands in about half the measured cells, 0.4% of the lower hemisphere's energy.
 
 How these scores compare with earlier builds of the same databases is in
 [HISTORY](HISTORY.md#the-2017-noise-abatement-databases).
+
+### Database screen
+
+The load-time screen ([MANUAL](MANUAL.md#screening-a-database)) on every shipped database, and on
+the NASA R44 spheres built for the cross-code comparison. Margins: a dBA cell more than 40 dB from
+the median of its sphere, a band more than 45 dB above the median of its cell's spectrum.
+
+| Database | dBA cells flagged (spheres) | Bands flagged (spheres) | Worst entry, against the median |
+| --- | --- | --- | --- |
+| `B407_M2` | 240 (24 of 1248), all low | — | 27.1 dBA against 89.3 |
+| `B407_M3` | 3928 (72 of 1296), all low | — | 0 dBA (a written zero) against 89.6 |
+| `S-76D_M4` | 1376 (32 of 1312), all high | — | 1463.5 dBA against 108.3 |
+| `S-76D_fixed_load_factor` | 172 (4 of 164), all high | — | 1449.5 dBA against 94.3 (μ 0.208, γ −7.8°) |
+| NASA R44 spheres | 2397 (86 of 122), all high | 5380 (102 of 122) | 170.2 dB at 10 kHz against 70.1 |
+| The other 17 shipped files | 0 | 0 | |
+
+- **The margins clear every sound database.** On the 17, no stored cell sits more than 29.1 dB
+  above its sphere's median (B205) or 21.4 dB below it (B407), and no band more than 35.9 dB above
+  its cell's median (RO-44). Most S-76D cells flagged are whole azimuth columns 40–60 dB high:
+  sphere 33 of `S-76D_fixed_load_factor` reads 135–139 dBA along φ 100° against a median of 91.
+- **Two rules that were tried do not separate.** Against the median of its eight grid neighbors, a
+  sound cell beside a strip of written zeros reads 44 dB off (224 sound 88 dBA cells in
+  `B407_M3`), and a strip two cells wide is its own median. Against the same band in neighboring
+  cells, gating leaves sound bands in the AS350 file up to 169 dB below and 116 dB above.
+- **The S-76D defects move the demo footprint.** On `S-76D_fixed_load_factor`, masking moves 958
+  of the 14,400 nodes by more than 0.1 dB, from −1.8 to +7.5 dB (`S-76D_M4`: 957, the same
+  range). The rises are where a spike set the observer's peak: at (3363, −1394) ft its kept peak
+  is 69.5 dB, which narrows the 10 dB-down window to 105 samples (SEL 65.8 dB); masked, the peak
+  is 62.0 dB, the window 2275 samples and the SEL 73.3 dB.
+- **The fill value** (a group never written) is in none of the shipped files.
 
 ### Source options: blend and load-factor law
 
@@ -940,7 +989,7 @@ range-dependent source fit would confound descent state drift with path loss.
 - **EPNL** is compared only to 5 kHz, where the measured frames stop, with no pseudo-tone
   exclusion; predicted spectra carry less tone correction than measured.
 - **Terrain** is a plane fitted over the whole path, with no screening.
-- **The nose.** No shipped database records a heading-filed azimuth, and WGS84 tracks carry no
-  heading.
+- **The nose.** No shipped database records a heading-filed azimuth, and a WGS84 track's
+  heading has to be given as a column.
 - **Source coverage.** Every aircraft over-predicts at low elevation; the B407 hover between 3°
   and 17° below the horizon, and under the aircraft, is an interpolation.

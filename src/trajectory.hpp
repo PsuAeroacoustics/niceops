@@ -29,8 +29,7 @@
 
 namespace niceops {
 
-constexpr double g = 9.80665; // m/s^2
-constexpr double mps2g = 1.0 / g;
+constexpr double mps2g = 1.0 / standard_gravity;
 // ft2m lives in util/constants.hpp, beside the unit system that uses it.
 constexpr double fps2g = mps2g * ft2m;
 
@@ -107,8 +106,8 @@ const char* to_string(NoseSource source);
 // upper edge (8 kt) the nose is the velocity.  Shipped tracks never fly under
 // 10 kt.  Before this, a hard switch at 5 kt stepped the level 2.2-4.4 dB for a
 // nose rotated 30-90 degrees between the two.
-constexpr double heading_nose_speed = 3.0 * 1852.0 / 3600.0; // m/s
-constexpr double velocity_nose_speed = 8.0 * 1852.0 / 3600.0; // m/s
+constexpr double heading_nose_speed = 3.0 * knot; // m/s
+constexpr double velocity_nose_speed = 8.0 * knot; // m/s
 
 // The smoothstep weight the nose gives the velocity at horizontal speed
 // `speed`, m/s: 0 at or below heading_nose_speed, 1 at or above

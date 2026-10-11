@@ -15,7 +15,7 @@ the code, start with the [README](../README.md); developers start at
   options](#command-line-options) · [Units](#units) · [Errors and refusals](#errors-and-refusals)
 - [Inputs](#inputs): [Input files](#input-files) · [Trajectories](#trajectories) · [Vehicle
   file](#vehicle-file) · [Observers](#observers)
-- [Noise databases](#noise-databases): [Shipped databases](#shipped-databases) · [Spectra](#spectra)
+- [Noise databases](#noise-databases): [Shipped databases](#shipped-databases) · [Spectra](#spectra) · [Screening a database](#screening-a-database)
   · [Choosing spheres: blending and `--blend`](#choosing-spheres-blending-and---blend) · [The
   load-factor law below 1 g](#the-load-factor-law-below-1-g) · [Speed reference](#speed-reference) ·
   [The sphere's nose](#the-spheres-nose) · [Reading the sphere's
@@ -28,12 +28,12 @@ the code, start with the [README](../README.md); developers start at
   layers](#refraction-through-the-profiles-layers) · [Low sources near grazing: the resolved
   shadow](#low-sources-near-grazing-the-resolved-shadow) · [Micro-shadows and skip
   zones](#micro-shadows-and-skip-zones) · [Propagation loss tables](#propagation-loss-tables)
-- [Metrics and output files](#metrics-and-output-files): [Output files](#output-files) · [Exposure
+- [Metrics and output files](#metrics-and-output-files): [Output files](#output-files) · [Run records and option files](#run-records-and-option-files) · [Exposure
   (SEL) and the 10 dB-down window](#exposure-sel-and-the-10-db-down-window) · [Several trajectories,
   and the day-night level](#several-trajectories-and-the-day-night-level) · [Maximum level, time
   above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel) · [EPNL and reception-time
   frames](#epnl-and-reception-time-frames)
-- [Companion tools](#companion-tools): [`niceops_propagation_table`](#niceops_propagation_table) ·
+- [Companion tools](#companion-tools): [`niceops_procedure`](#niceops_procedure) · [`niceops_propagation_table`](#niceops_propagation_table) ·
   [`niceops_pe_compare`](#niceops_pe_compare) · [`niceops_benchmark`](#niceops_benchmark) · [Plot
   scripts](#plot-scripts)
 - [Performance](#performance): [How much gets evaluated](#how-much-gets-evaluated) ·
@@ -109,9 +109,12 @@ is a physical quantity, given here in meters with its value in feet.
 | `--path_smoothing` | How far, rms per axis, the path fitted through a WGS84 track may sit from its positions. Default 10 ft (3.048 m). Zero interpolates exactly. |
 | `-s`, `--step` | Resampling step, s (default 0.5), for a WGS84 track whose sampling is uneven or coarser than this. A finer track is never coarsened, and an AC track is used as sampled. Not the SEL integration step. |
 | `--trim` | Crop each trajectory from this x to its lowest or slowest point. Off by default; it changes which part of the flight is integrated. |
-| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night periods. Required with `-D`, `--lden_file` or `--cnel_file` when the track has no `utcsec` column. |
+| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night periods. Required with `-D`, `--lden_file`, `--cnel_file` or a period level when the track has no `utcsec` column. Once, or once per trajectory. |
 | `--units` | `ft` (default) or `m`: the length unit of the command line and of every file ([Units](#units)). |
 | `-l`, `--logfile` | Log file. Default `log/niceops.log`. |
+| `--manifest` | Write a JSON record of the run ([Run records and option files](#run-records-and-option-files)). |
+| `--config` | Read options from a TOML file; the command line overrides it. |
+| `--version` | Print the build's version (its git state) and exit. |
 | `-L`, `--loglevel` | `trace`, `info`, `warn`, `error` or `fatal`. Default `info`. |
 
 #### Source and database
@@ -126,6 +129,8 @@ is a physical quantity, given here in meters with its value in feet.
 | `--speed_reference` | `ground` or `air`: which velocity sets μ, the path angle and the `velocity` nose. Default: what the database records, ground if nothing ([Speed reference](#speed-reference)). |
 | `--nose` | `velocity`, `ground_velocity` or `heading`. Default: what the database's `azimuth_reference` records, `velocity` if nothing ([The sphere's nose](#the-spheres-nose)). |
 | `--accept_vehicle_mismatch` | Warn, rather than refuse, when the vehicle file disagrees with the database by more than 2 percent ([Vehicle file](#vehicle-file)). |
+| `--screen_database` | Write every entry the load-time screen finds suspect to this CSV ([Screening a database](#screening-a-database)). One database per run. |
+| `--mask_suspect_cells` | Drop the suspect entries, as gating drops a direction, instead of only warning. Not with `--self_test`. |
 
 #### Atmosphere and wind
 
@@ -133,9 +138,9 @@ is a physical quantity, given here in meters with its value in feet.
 | --- | --- |
 | `--spectral` / `--no-spectral` | On by default when the database carries spectra: propagate each band with ISO 9613-1 absorption. `--no-spectral` takes one broadband level with the database's EAA factor; a database without spectra always does. Asking for `--spectral`, or for any option that needs bands (`--ground_effect`, `--atmosphere`, `--wind`, `--propagation_table`, `--band_history`, `--csel_file`, `--epnl_file`, `--band_frames`), with a database that has no spectra is an error. |
 | `--band_limits` | Frequency range summed into the metric, Hz: `low high`. Default `20 20000`. |
-| `--humidity`, `--temperature`, `--pressure` | Relative humidity (percent), temperature (K) and pressure (kPa) for the spectral path, overriding the vehicle file. Not `--temperature` or `--humidity` with `--atmosphere`. `--pressure` only when the file has no pressure column; it is then the surface pressure. |
-| `--atmosphere` | A stratified atmosphere: CSV of temperature, humidity, and optionally pressure and wind, against height ([Stratified atmosphere](#stratified-atmosphere)). Spectral path only. |
-| `--wind` | Build the profile from one surface wind instead: `SPEED,DIRECTION[,HEIGHT]` ([A profile from the surface wind](#a-profile-from-the-surface-wind)). Not with `--atmosphere`. Spectral path only. The four rows below and `--write_atmosphere` are refused without it. |
+| `--humidity`, `--temperature`, `--pressure` | Relative humidity (percent), temperature (K) and pressure (kPa) for the spectral path, overriding the vehicle file. Not `--temperature` or `--humidity` with `--atmosphere`. `--pressure` only when the file has no pressure column; it is then the surface pressure.  Once, or once per trajectory. |
+| `--atmosphere` | A stratified atmosphere: CSV of temperature, humidity, and optionally pressure and wind, against height ([Stratified atmosphere](#stratified-atmosphere)). Spectral path only.  Once, or once per trajectory. |
+| `--wind` | Build the profile from one surface wind instead: `SPEED,DIRECTION[,HEIGHT]` ([A profile from the surface wind](#a-profile-from-the-surface-wind)). Not with `--atmosphere`. Spectral path only. The four rows below and `--write_atmosphere` are refused without it.  Once, or once per trajectory. |
 | `--roughness_length` | `--wind`: aerodynamic roughness length z₀. Default 0.03 m (0.0984 ft), open flat terrain. Not `--roughness`. |
 | `--surface_layer_depth` | `--wind`: height to which the wind follows its law; held above. Default 200 m (656.2 ft). |
 | `--stability` | `--wind`: `neutral` (default), or a TA Luft class `I`, `II`, `III/1`, `III/2`, `IV`, `V` (Pasquill `F` to `A`). The classes are unvalidated, and a run that takes one warns. |
@@ -183,9 +188,11 @@ is a physical quantity, given here in meters with its value in feet.
 | Option | Meaning |
 | --- | --- |
 | `-a`, `--ambient` | Ambient level, dB, added to every sample's level in energy. Off unless given. Refused with `--csel_file`, `--epnl_file`, `--band_frames` and `--coverage_file`. |
-| `--full_history` | Integrate every exposure (SEL, C-SEL, and each operation's share of DNL, Lden and CNEL) over the whole history rather than the 10 dB-down window. |
+| `--full_history` | Integrate every exposure (SEL, C-SEL, and each operation's share of DNL, Lden, CNEL and the period levels) over the whole history rather than the 10 dB-down window. |
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory ([Several trajectories](#several-trajectories-and-the-day-night-level)). |
 | `--lden_file` | Write the day-evening-night level (EU Directive 2002/49/EC). |
+| `--lday_file`, `--levening_file`, `--lnight_file` | Write Lden's period levels: the energy heard 07:00–19:00, 19:00–23:00 or 23:00–07:00, over that period's length ([Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)). |
+| `--laeq_file` | Write LAeq,T over the local clock window `--laeq_window START END` (hours; `7 23` is LAeq,16h, `23 7` wraps). Needs the window, which has no default. |
 | `--cnel_file` | Write the community noise equivalent level (California Title 21). |
 | `--utc_offset` | Hours from UTC to local time, for the day-night periods. Default 0. |
 | `--lamax_file` | Write each observer's LAmax over every operation, time-weighted per `--lamax_weighting`. |
@@ -197,6 +204,8 @@ is a physical quantity, given here in meters with its value in feet.
 | `--epnl_masking` / `--no-epnl_masking` | Exclude tones in bands below their noy threshold from the tone correction. On by default; `--no-epnl_masking` is the procedure as written. |
 | `--band_frames` | Write every observer's band levels in 0.5 s reception-time frames, as netCDF. Once, or once per trajectory (`<track>_band_frames.nc`). Needs the spectral path. Refused with `-a`. |
 | `--coverage_file` | Write, per observer, the energy-weighted share of its level that came from sphere cells the database did not measure. Needs a database that records `coverage`. Straight rays only: refused with `--refraction` or `-a`. |
+| `--provenance_spheres` | With `--provenance_file`, also write every sphere's share of every observer's SEL energy to a netCDF file ([Output files](#output-files)). |
+| `--provenance_file` | Write, per observer, where its SEL energy came from: the shares from states clamped on each database axis or held at a load-factor limit, and the sphere that supplied the most ([Output files](#output-files)). One database per run; refused with `-a`. |
 
 #### Threads, culling and diagnostics
 
@@ -211,7 +220,10 @@ is a physical quantity, given here in meters with its value in feet.
 | `-p`, `--plotting` | Plot the footprint with the flight track over it ([Plotting](#plotting)). |
 | `-f`, `--figfile` | Save the footprint figure to this file. |
 | `-F`, `--statefigfile` | Save the trajectory-state figures to this file. |
-| `--cmin`, `--cmax`, `--cstep` | Contour levels of the footprint figure, dB. Defaults 65, 100 and 5. |
+| `--cmin`, `--cmax`, `--cstep` | Contour levels of the footprint figure and of `--contour_file`, dB. Defaults 65, 100 and 5. |
+| `--contour_file` | Write contour polygons and their areas as GeoJSON ([Output files](#output-files)). Needs the observer grid and a frame. |
+| `--raster_file` | Write every gridded level of the run to one CF netCDF a GIS opens ([Output files](#output-files)). Needs the observer grid. |
+| `--contour_metric` | What `--contour_file` contours: `sel` (default; one trajectory), `dnl`, `lden`, `cnel`, `lday`, `levening`, `lnight`, `laeq` or `lamax`, whose own output must be asked for too. |
 
 ### Units
 
@@ -250,11 +262,15 @@ first database) stops it with `Stopping: <why>` and exit status 2.
 time, altitude and velocity must be finite, its column names recognized, and any unit its header
 declares must agree with what is read: lengths in `--units`, speeds in `--units` per second,
 times in seconds (`Alt (ft)` under `--units m`, `Climb Rate (fpm)` and `Time (ms)` are
-refused). A text line after the first row of data is an error (above it, a header). A `--trim` that leaves fewer than
+refused). A text line after the first row of data is an error (above it, a header). A track whose states
+go below the ground plane, with no `--terrain`, is warned about (beyond the larger of 1 m and a
+WGS84 track's `--path_smoothing`, and after `--trim`): its altitude datum and `--ground_elevation`
+disagree, or an AC track's z is not height above the ground. A `--trim` that leaves fewer than
 two states is refused, naming where the track's crop ends. An observer file must keep one
 width and yield at least one observer. An `--atmosphere` file must be finite, reach every state,
 and name its wind units. A database must vary in μ, γ and (unless `fixed_load_factor`)
-C<sub>T</sub>, with no two spheres at one condition. Air must be plausible: a temperature in °C,
+C<sub>T</sub>, with no two spheres at one condition, and no group may hold the netCDF fill value
+(a group the builder never wrote). Air must be plausible: a temperature in °C,
 a pressure in Pa or a humidity fraction is refused. The vehicle file must agree with the
 database ([Vehicle file](#vehicle-file)).
 
@@ -269,17 +285,21 @@ The main ones:
 | `--spectral`, or any option that needs bands, on a database without spectra | There are no bands to carry. |
 | `--ground_effect`, `--atmosphere`, `--wind`, `--propagation_table`, `--band_history`, `--csel_file`, `--epnl_file`, `--band_frames` with `--no-spectral` | The broadband path carries one A-weighted level. |
 | `--csel_file`, `--epnl_file`, `--band_frames`, `--coverage_file` with `-a` | The ambient is an A-weighted level with no spectrum. |
+| `--provenance_file` with `-a` | The ambient's energy came from no state or sphere. |
+| `--provenance_spheres` without `--provenance_file` | It is a companion to that file, and takes its limits. |
 | `--csel_file` with `--db_cutoff` | The cutoff is proven on the A-weighted level. |
 | `--refraction` without `--atmosphere` or `--wind`; `--atmosphere` with `--wind` | One profile, stated once. |
 | `--shadow_model resolved` without `--refraction stratified` and the ground effect; `--scattering` without `--refraction` and the ground effect | They act through the shadow transition, which needs a ground model. |
 | `--tunneling`, `--skip_fill` without `--refraction stratified` | They are stratified-ray corrections. |
 | `--terrain` with `--refraction` or `--propagation_table`, or without a frame | Those models are built over flat ground; terrain needs to know where x/y lie. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
-| `--latlon`, `--nose heading` without a frame | Nothing to turn compass directions or invert positions with. |
-| `-D`, `--lden_file`, `--cnel_file` on a track with no clock | Day or night would be made up. |
+| `--latlon`, `--contour_file`, `--nose heading` without a frame; `--contour_file` or `--raster_file` with `-b`; `--contour_file` with `--contour_metric sel` over several trajectories | Nothing to turn compass directions or invert positions with; scattered observers have no grid to contour; one SEL per trajectory. |
+| `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock | Day or night would be made up. |
+| `--laeq_file` without `--laeq_window`, or an empty window | There is no default period. |
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
 | `--speed_reference air` without a wind | Calm air is not assumed. |
 | Two trajectories writing one file; a list of `-d`, `-v`, `-o` that is neither one nor one per track | Outputs would overwrite one another. |
+| `--mask_suspect_cells` with `--self_test`; `--screen_database` or `--provenance_file` with more than one database; `--screen_database` or `--manifest` naming an input | The self test checks the file as written; one list would overwrite the other, and a sphere index names a sphere of one database; the input would be overwritten. |
 | `-p`, `-f`, `-F` in a build without plotting | Rather than silently doing nothing. |
 
 ## Inputs
@@ -317,6 +337,7 @@ column.
 | `lat`, `lon` | Degrees. |
 | `alt` | Altitude in `--units`, on the datum of `--ground_elevation`; z is the altitude less `--ground_elevation`. |
 | `vE`, `vN`, `vUp` | Optional velocity, `--units` per second, used when all three are present. |
+| `heading` | Optional compass heading of the nose, degrees from true north (`hdg` serves too); a unit other than degrees, a header naming a magnetic heading, and a second heading column are refused, wherever the header says it (`heading (rad)` and `heading_rad` alike). It sets the hover nose and `--nose heading` ([The sphere's nose](#the-spheres-nose)). Resampled linearly, through north the short way. |
 
 Names are matched case-insensitively, ignoring punctuation and a parenthesized unit (`Latitude`,
 `LAT` and `lat (deg)` are one column), in any order. `alt_ft` is read under `--units ft` and
@@ -433,6 +454,29 @@ the AAM/RNM hemisphere format, whose payload is `AMPLITUDE(PHI, THETA, FREQUENCY
 spectra. Of the shipped databases, the six `_fixed_load_factor` files of the 2017 aircraft carry
 spectra; the S-76D demo database does not, so the demo case runs broadband.
 
+### Screening a database
+
+Every database is screened as it loads, for entries no sound database holds, which would
+otherwise be blended as real levels:
+
+- **a dBA cell far from the rest of its sphere**: more than 40 dB from the median of that sphere's
+  cells, whether a spike or a near-silent cell;
+- **a band far above its cell's spectrum**: more than 45 dB above the median of that cell's bands.
+  A band far *below* the rest is what ambient gating leaves, and is not flagged.
+
+The screen warns once per kind, with the count, the spheres affected and the worst entry, and
+otherwise changes nothing. `--screen_database FILE` lists every entry it found: sphere, its
+condition, φ, θ, band (blank for the overall level), the level and the median it was judged
+against. `--mask_suspect_cells` drops them, so the blends read those entries as unmeasured and take
+the other conditions' level there. Masking is a judgment about data: rebuilding the database is
+the fix, and a masked run should say so.
+
+Four shipped databases warn: `B407_M2`, `B407_M3`, `S-76D_M4` and `S-76D_fixed_load_factor`. The
+demo database and the 2017 databases do not. A sphere more than half defective has a defective
+median, and the screen cannot judge it. The counts are in
+[FIDELITY](FIDELITY.md#database-screen). The screen costs well under a second at load and nothing
+afterward.
+
 ### Choosing spheres: blending and `--blend`
 
 By default (`--blend barycentric`) the database's conditions are normalized into the unit cube and
@@ -501,8 +545,8 @@ record it, as `track`); any other value is refused. An explicit
 `--nose` wins, with a warning when the file records the other; `--export_sphere` carries the
 attribute on. **The frame must be known; it is never inferred**: with no frame (an AC track
 without `--frame_bearing`, and no `--origin`) `--nose heading` is refused. A track with no heading
-column (a WGS84 track) is refused under `--nose heading`, and falls back to the velocity with a
-warning when only the database asks for heading mode; a state without a heading is refused,
+(a WGS84 track without a `heading` column) is refused under `--nose heading`, and falls back to the
+velocity with a warning when only the database asks for heading mode; a state without a heading is refused,
 naming its time. The log gives the mean crab (heading less ground track, positive with the nose
 right of the track) and its rms above 8 kt, and warns past 45°, which is a frame turned the wrong
 way rather than a crosswind.
@@ -722,8 +766,9 @@ file's z, with a warning where it differs from the terrain by more than 1 m;
 `--observers_on_terrain` stands them on the terrain instead.
 
 **What is not modeled.** Terrain does not screen or diffract: a ridge between source and receiver
-puts the source below the mean plane, and its height is set to zero. Each path's ground is one
-plane. `--refraction` and `--propagation_table` are refused, because they are built over flat
+puts the source below the mean plane, and its height is set to zero, so the level there is too
+high. The run warns when it happens, with how many observers had such paths (a receiver in a dip
+raises the same flag). Each path's ground is one plane. `--refraction` and `--propagation_table` are refused, because they are built over flat
 ground, and on the broadband path `--terrain` only places the observers.
 
 **Cost and effect.** Plates keep their tables over terrain; point receivers over real terrain are
@@ -843,9 +888,15 @@ one value means every direction), `source_height` and `receiver_height` (above t
 - **Coverage.** A pair the table does not cover, by a NaN among the values it would interpolate
   or by falling outside an axis, takes the run's own model: `--refraction` if on, the ground
   effect if on, free field otherwise.
-- **Receivers.** A microphone height outside the table's is refused. A flush plate microphone
-  reads the lowest receiver height plus the plate's level over bare ground at the pair's azimuth.
+- **Receivers.** A point microphone whose height is outside the table's is refused. A flush plate
+  microphone reads the lowest receiver height plus the plate's level over bare ground there, at
+  the pair's azimuth and elevation. For plates, give the table a receiver row at 0: over a raised
+  row the bare-ground term is a comb in elevation, which the plate's offset has to follow.
 - **Bearings are compass bearings**, so a rotated frame needs `--frame_bearing`.
+- **Turbulence and roughness come from the table.** A covered pair carries what the table was
+  built with, and the run's `--turbulence`, `--gamma_t` and `--roughness` reach only the pairs
+  that fall back. Build the table with the run's (`niceops_propagation_table --turbulence`,
+  `--gamma_t`, `--roughness`); a run whose settings differ from what the table records is warned.
 - **With `--refraction` too**, every state is evaluated rather than windowed from the peak.
 - **The file** is netCDF, SI: `relative_level(bearing, source_height, receiver_height, range,
   band)`, a coordinate variable per axis, and the attributes `propagation_table_version` (1),
@@ -872,8 +923,9 @@ others:
 - `-o`: the SEL per observer. A grid writes the x and y axes on the first two lines, then one row
   of levels per y; scattered observers give one row each.
 - `-m`: appends a line for the case: its name, the energy mean of the per-observer SELs (10 lg of
-  the mean of 10^(L/10), not a mean of decibels), their maximum, and the fraction of observers at
-  or above 65 dB.
+  the mean of 10^(L/10), not a mean of decibels), their maximum, the fraction of observers at or
+  above 65 dB, and the area at or above 65 dB in the run's units squared, contoured as
+  `--contour_file` contours it (NaN for scattered observers).
 - `-i`: per-observer level histories, one file per observer.
 - `--band_history`: per-observer band histories, one file per observer with a row per state:
   `emission_time`, `reception_time` (s), `range` (the ray tube's under `--refraction`),
@@ -883,12 +935,76 @@ others:
   `--band_limits` and culled states are empty; the `-a` ambient goes into `level_dBA` only.
 - `-S`: the derived state (time, position, velocity, load factor, C<sub>T</sub>, μ, path
   angles), metric whatever `--units` says.
+- `--provenance_file`: one row per observer, grid or scattered: `x`, `y`, `exposure_db` (the SEL
+  for one operation, the energy sum of the SELs for several), then the shares of that exposure
+  from states whose advance ratio, path angle or C<sub>T</sub> lay outside the database and were
+  clamped to its edge, and from states whose load factor was held at `--max_load_factor` or
+  `--min_load_factor`; then the sphere that supplied the most of it (its index in the database),
+  its share, and its stored μ, γ and C<sub>T</sub>. Each state counts as the SEL counts it (inside
+  the 10 dB-down window, or the whole history under `--full_history`), and its energy is shared
+  among its spheres by their blend weights, so a sphere with nothing measured toward the observer
+  is still credited. The run evaluates every state, as `--coverage_file` does, whose share is
+  weighted the same way. An observer that heard nothing is written as NaN.
+- `--provenance_spheres`: netCDF, the whole sphere breakdown behind `--provenance_file`'s top
+  sphere. Per observer, its `x` and `y` (meters) and `exposure_db`; per sphere, its stored
+  `advance_ratio`, `flight_path_angle` (deg) and `thrust_coefficient`, in the database's group
+  order (the index `top_sphere` gives); and `energy_share(observer, sphere)`, each sphere's
+  share of the observer's exposure, summing to one (NaN for an observer that heard nothing).
+  Summing the shares over a group of spheres gives that group's share, for any grouping: by
+  speed, by flight day, measured or synthetic. Mostly zeros, it is compressed.
+- `--contour_file`: GeoJSON (WGS84 longitude and latitude, RFC 7946), one MultiPolygon feature
+  per level from `--cmin` to `--cmax` in steps of `--cstep`, covering where `--contour_metric` is
+  at or above it, holes included, with the level and its area (m², km², square miles). It works
+  in a build without plotting and opens in any GIS. Contours are drawn by linear interpolation
+  between grid nodes, so a contour's position is as good as the grid's spacing; the area of a
+  smooth footprint converges with the square of it. A culled observer counts as below every
+  level, and a region reaching the grid's edge is closed along it, so widen `--grid` until the
+  outermost level closes inside it. It needs the run's frame (`--origin`, or a geodetic track)
+  and the observer grid.
+- `--raster_file`: a CF-1.8 netCDF of the grid, with `x` and `y` in meters in the run's frame
+  and, when the run has a frame, each node's WGS84 `latitude` and `longitude`, which GDAL, QGIS
+  and xarray read as the grid's position. It holds one variable for each gridded level the run
+  writes: `sel` (one trajectory only), `dnl`, `lden`, `cnel`, `lday`, `levening`, `lnight`,
+  `laeq`, `lamax`, `nax`, `time_above` and `unmeasured_share` (`--coverage_file`), each present
+  only if its own file is asked for, with its values. An observer that heard nothing is the
+  fill value, NaN, where the text files write `-inf`.
 - `--latlon`: a `_latlon` companion beside every level file (`out.csv` → `out_latlon.csv`), one
   row per observer of latitude, longitude and level, always scattered.
 - `--epnl_file`, `--band_frames` ([EPNL](#epnl-and-reception-time-frames)); `--write_atmosphere`
   ([A profile from the surface wind](#a-profile-from-the-surface-wind)); `--powerfile`;
   `--export_sphere` and `--export_aam` (a whole sphere, as a one-group `.nod` or in AAM/RNM
   format).
+
+### Run records and option files
+
+`--manifest FILE` writes one JSON file saying what produced the run's outputs:
+
+- the build: its version (`git describe`, `-dirty` when the tree had uncommitted changes, or
+  `unknown` when built outside git), compiler, build type, and whether asserts and plotting were
+  on (`--version` prints the version alone);
+- the command line, and the options given on it or in a `--config` file (the rest are the
+  build's defaults);
+- every input (trajectories, databases, vehicle, observer, atmosphere, terrain and table files)
+  and every output, figures included, each with its size and SHA-256, which `shasum -a 256`
+  reproduces; the log file is named only, since runs append to it;
+- each database's root attributes and scalar variables, which record how it was built;
+- the number of warnings and errors, the first 20 of them, the exit status and the run time.
+
+It is written after the run, including one that stops on a refused input, so the exit status it
+records is the one the process returns. A command line that does not parse (an unknown option,
+an unreadable `--config`) stops before there is a run to record, and writes none. A run writing more than 1000 files (per-observer histories) lists the
+first 1000 and counts the rest. Hashing reads every input once more: about 0.3 s for the largest shipped
+database (72 MB). A manifest that names one of the run's inputs or its log file is refused before the run; one
+that names an output is refused after it, keeping the output.
+
+`--config FILE` reads options from a TOML file, one `name = value` per line, using the long
+option name without its dashes. Flags take `true`; a negated flag is written as its own name.
+A key that names no option is refused. The command line overrides the file. The demo case of [Quick start](#quick-start) as a file:
+
+```toml
+no-spectral = true
+no-ground_effect = true
+```
 
 ### Exposure (SEL) and the 10 dB-down window
 
@@ -905,7 +1021,11 @@ the window is found.
 ### Several trajectories, and the day-night level
 
 `-t` may be repeated. `-d`, `-v`, `-o`, `-S`, `--csel_file`, `--epnl_file` and `--band_frames`
-then take one value shared by every trajectory, or one per trajectory. One output name for
+then take one value shared by every trajectory, or one per trajectory, and so does each
+trajectory's air: `--atmosphere`, `--wind`, `--humidity`, `--temperature`, `--pressure` and
+`--start_utc`, so a day's operations can each fly in their own weather and at their own time.
+The profile's shape (`--roughness_length`, `--stability`, `--surface_layer_depth`,
+`--profile_levels`) is the run's. One output name for
 several tracks becomes one per track (`<track>_state.csv`, `<track>_LCE.csv`, `<track>_EPNL.csv`,
 `<track>_band_frames.nc`, `<track>_atmosphere.csv`), and `-i` and `--band_history` files are
 named for their track. Plotting is skipped.
@@ -927,7 +1047,15 @@ its period, local time (the propagation delay is not added):
 | CNEL | `--cnel_file` | 19:00–22:00, +10 lg 3 = 4.77 dB | 22:00–07:00, +10 dB | California Code of Regulations, Title 21, §5001 |
 
 A period's opening hour belongs to it (07:00 is day, 19:00 evening); a member state's shifted
-evening is not offered. The clock is the track's `utcsec` column (column 0 of an AC track) or
+evening is not offered.
+
+**The period levels** (`--lday_file`, `--levening_file`, `--lnight_file`, and `--laeq_file` over
+`--laeq_window`) are each the energy heard in one period over that period's length, with no
+penalty: Lnight, for example, is the EU's night indicator and the basis of the WHO's 2018 night
+guideline. Samples outside the period carry no energy, and an operation's 10 dB-down window is
+found among those inside. An observer that heard nothing in the period is written as `-inf`.
+Lden is its three periods recombined as the directive writes it, exactly for operations that
+lie wholly in one period, and under `--full_history` for any. The clock is the track's `utcsec` column (column 0 of an AC track) or
 `--start_utc`, shifted by `--utc_offset`, and a track without one is refused. By default each operation contributes its own
 penalized 10 dB-down window; `--full_history` integrates its whole history, as AAM and NORAH2 do,
 which reads a few tenths of a dB higher ([FIDELITY](FIDELITY.md#day-night-window-choice)). Use it
@@ -1009,8 +1137,65 @@ to the run; `--band_frames` more than doubles it and holds about 0.9 GB.
 
 ## Companion tools
 
-The build also makes three tools for checking the propagation models and building tables. They
-share the `--units` convention (feet by default) and the profile format.
+The build also makes three tools for checking the propagation models and building tables, and
+one for building tracks. They share the `--units` convention (feet by default) and the profile
+format.
+
+### `niceops_procedure`
+
+Flies a procedure into a track: a start and a list of segments, integrated into a WGS84 track with
+velocity and heading columns, which `niceops` reads as it is. Use it where you would otherwise
+write sparse waypoints, whose load factor is an artifact of the interpolant
+([FIDELITY](FIDELITY.md#trajectory-smoothing)); a flown procedure carries its own.
+
+```sh
+./build/niceops_procedure approach.json -o tracks/approach.csv
+./build/niceops -t tracks/approach.csv --origin 39.8291 -74.41 --frame_bearing 210 ...
+```
+
+The procedure is JSON. Every length and speed names its unit in its key (`_ft` or `_m`; `_kt`,
+`_mps` or `_fps`; rates `_kt_per_s` or `_mps2`; angles `_deg`; times `_s`), and a bare number is
+refused:
+
+```json
+{"start": {"lat": 39.8291, "lon": -74.41, "alt_ft": 1000, "speed_kt": 100, "course_deg": 210},
+ "segments": [
+   {"type": "level", "duration_s": 20},
+   {"type": "descent", "angle_deg": 6, "until_alt_ft": 700},
+   {"type": "speed", "to_speed_kt": 40, "rate_kt_per_s": 1.5, "angle_deg": -3},
+   {"type": "turn", "bank_deg": -15, "turn_deg": 30},
+   {"type": "speed", "to_speed_kt": 0, "rate_kt_per_s": 1},
+   {"type": "hover", "duration_s": 15}]}
+```
+
+| Segment | Keys |
+| --- | --- |
+| `level` | `duration_s` or `distance` |
+| `climb`, `descent` | `angle` (a descent's is taken downward) and `duration_s` or `until_alt` |
+| `speed` | `to_speed`, optional `rate` (default 0.5 m/s²) and `angle` (default level) |
+| `turn` | `bank` (signed, positive right, under 60°) and `turn`, the course change |
+| `hover` | `duration_s`; it must start at rest |
+
+- **The start** is a position, `alt` on the track's datum (what `niceops` takes
+  `--ground_elevation` off), a ground speed and a compass course. An optional `ground_alt` (default
+  0) is the ground on that datum: a segment that goes below it is refused.
+- **Transitions are flown**: the path angle changes at a limited pull (`limits.pull_g`, default
+  0.1 g), the bank at a limited roll rate (`limits.roll_rate_deg_per_s`, default 10), and speed at
+  the segment's rate, so a join puts no spike in the load factor. A climb overshoots its altitude
+  by the leveling-off. A turn rolls in, holds and rolls out within itself, ending level-winged on
+  the asked course to within a degree; one too short to reach full bank banks only as far as it
+  needs. A target altitude already passed, and any key the format does not know, are refused.
+- **The end** is flown on to the next written step, so the last state is written.
+- **Calm air**: the heading is the course and the ground speed the airspeed. `step_s` (default
+  0.2) is the spacing of the written states.
+- **`--check DATABASE --vehicle VEHICLE`** reads the written track back as niceops reads it and
+  reports the states the database would clamp on each axis (advance ratio, path angle, C<sub>T</sub>)
+  or hold at `--max_load_factor` (default 2 g, as in niceops), with the stretches of time they
+  span, so a procedure can be kept inside its database before any acoustics run. `--no-qsam`
+  matches niceops's `--no-qsam`. A vehicle file that disagrees with the database is refused as
+  niceops refuses it, and `--accept_vehicle_mismatch` maps the states anyway. The procedure is calm, so the database's speed reference makes
+  no difference. How much of the footprint those states carry is what `--provenance_file`
+  reports.
 
 ### `niceops_propagation_table`
 
@@ -1039,7 +1224,8 @@ niceops_propagation_table --method pe --atmosphere atmospheres/example_windy.csv
 | `--flow_resistance`, `--impedance_model`, `--porosity_rate`, `--layer_depth` | The ground, as for `niceops`, except that `--layer_depth` is in meters whatever `--units` says. |
 | `--ppw` | `pe`: grid points per wavelength in height. Default the PE's own. |
 | `--march` | `pe`: `receiver` (default) marches once per receiver height and reads every source height by reciprocity, 2–3 times faster; `source` marches once per source height. They agree to about 0.01 dB. |
-| `--gamma_t`, `--outer_scale`, `--realizations`, `--seed`, `--gamma_profile` | `pe`: turbulence by phase screens, for reference only. Defaults still air, 10 m, 1 realization, seed 1. `--gamma_profile` is a CSV of z (in `--units`) and γ. |
+| `--gamma_t`, `--outer_scale`, `--realizations`, `--seed`, `--gamma_profile` | `pe`: turbulence by phase screens, for reference only. Defaults still air, 10 m, 1 realization, seed 1. `--gamma_profile` is a CSV of z (in `--units`) and γ. `ground_model`: `--gamma_t` alone, the HARMONOISE coherence of the direct and reflected paths, as `niceops --turbulence_model harmonoise --gamma_t`. |
+| `--turbulence`, `--roughness` | `ground_model`: Chessell's coherence (rad·s/√m) and the ground's RMS roughness (in `--units`), as for `niceops`. Default 0. Not with `--gamma_t`, and not for `pe`. |
 | `--validation_csv`, `--validation_samples`, `--validation_max_error` | Check the table between its nodes (below). Defaults 21 samples and 1 dB. |
 | `-j`, `--threads` | Worker threads. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. The table is the same bits at any count. A `NICEOPS_THREADS` that is not a positive whole number is refused. |
 | `--units`, `-o` | `ft` (default) or `m`; the table to write (SI). |

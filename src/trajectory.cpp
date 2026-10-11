@@ -36,6 +36,9 @@ double json_to_double(const nlohmann::json& value)
 // format is read by column name rather than by position, so whatever a planner
 // already exports can be used without being reordered first, and a file carries
 // only the columns it actually has.
+// The names a WGS84 track's heading column answers to.
+const std::vector<const char*> heading_aliases = {"heading", "hdg", "true heading", "heading true", "heading deg"};
+
 struct GeodeticColumns
 {
     std::size_t time = LabeledCsv::npos;
@@ -46,6 +49,8 @@ struct GeodeticColumns
     std::size_t east_speed = LabeledCsv::npos;
     std::size_t north_speed = LabeledCsv::npos;
     std::size_t up_speed = LabeledCsv::npos;
+    // Optional: the nose's compass heading, degrees from true north.
+    std::size_t heading = LabeledCsv::npos;
 
     // A file is a WGS84 track when it says where the aircraft is.  Time can
     // come from either of two columns and velocity is optional, so neither of
@@ -71,7 +76,7 @@ struct GeodeticColumns
     {
         std::size_t widest = 0;
         for (std::size_t index : {time, utc, latitude, longitude, altitude, east_speed,
-                     north_speed, up_speed})
+                     north_speed, up_speed, heading})
         {
             if (index != LabeledCsv::npos)
                 widest = std::max(widest, index + 1);
@@ -130,6 +135,61 @@ void check_declared_units(const std::string& filename, const LabeledCsv& csv,
     for (std::size_t index : {columns.east_speed, columns.north_speed, columns.up_speed})
         if (index != LabeledCsv::npos)
             check(index, "velocity", speed_conflicts(csv.unit_token(index)), speed_unit);
+    // The heading is held to more than a deny-list: a magnetic heading is
+    // degrees too, and read as true it turns the nose by the declination (about
+    // 12 degrees at the 2017 site, worth up to 2 dB) with nothing said.  So any
+    // unit but degrees is refused, a header naming a magnetic reference is
+    // refused, and so is a file offering two heading columns.
+    //
+    // A heading whose reference or unit is spelled into the name itself
+    // ("magnetic heading", "heading_rad") matches no alias, and would be
+    // passed over for the velocity's nose without a word; so every column
+    // naming a heading is looked at, not only the one that matched.
+    for (std::size_t i = 0; i < csv.header.size(); i++)
+    {
+        const std::string name = LabeledCsv::normalize(csv.header[i]);
+        if (name.find("heading") == std::string::npos && name.find("hdg") == std::string::npos)
+            continue;
+        if (name.find("mag") != std::string::npos)
+            input_error("Column \"", csv.header[i], "\" of ", filename, " is a magnetic heading, "
+                    "and the heading is read in degrees from true north. Add the site's declination "
+                    "and name the column heading.");
+        // The unit as a word of the header: "heading_rad", "hdg turns".
+        std::string word;
+        for (const char c : csv.header[i] + " ")
+        {
+            if (std::isalnum(static_cast<unsigned char>(c)))
+            {
+                word.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                continue;
+            }
+            if (in(word, {"rad", "rads", "radian", "radians", "turn", "turns", "grad", "grads", "gon", "mil", "mils"}))
+                input_error("Column \"", csv.header[i], "\" of ", filename, " declares its heading in ", word,
+                        ", but the heading is read in degrees from true north. Nothing is converted.");
+            word.clear();
+        }
+    }
+    if (columns.heading != LabeledCsv::npos)
+    {
+        std::string raw = csv.header[columns.heading];
+        std::transform(raw.begin(), raw.end(), raw.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (raw.find("mag") != std::string::npos)
+            input_error("Column \"", csv.header[columns.heading], "\" of ", filename, " is a magnetic heading, "
+                    "and the heading is read in degrees from true north. Add the site's declination "
+                    "and name the column heading.");
+        const std::string token = csv.unit_token(columns.heading);
+        if (!token.empty() && !in(token, {"deg", "degs", "degree", "degrees", "degt", "true", "t"}))
+            input_error("Column \"", csv.header[columns.heading], "\" of ", filename, " declares its heading in ",
+                    token, ", but the heading is read in degrees from true north. Nothing is converted.");
+        std::vector<std::string> candidates;
+        for (std::size_t i = 0; i < csv.header.size(); i++)
+            if (csv.column_matches(i, heading_aliases))
+                candidates.push_back(csv.header[i]);
+        if (candidates.size() > 1)
+            input_error(filename, " has ", candidates.size(), " heading columns (\"", candidates[0], "\" and \"",
+                    candidates[1], "\"): keep the one in degrees from true north.");
+    }
 }
 
 GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
@@ -158,6 +218,7 @@ GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
     columns.east_speed = csv.column({"ve", "v east", "veast", "east velocity"});
     columns.north_speed = csv.column({"vn", "v north", "vnorth", "north velocity"});
     columns.up_speed = csv.column({"vu", "vup", "v up", "up velocity", "climb rate", "climb"});
+    columns.heading = csv.column(heading_aliases);
     return columns;
 }
 
@@ -227,6 +288,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
     std::vector<double> vx;
     std::vector<double> vy;
     std::vector<double> vz;
+    std::vector<double> heading;
     time.reserve(rows);
     x.reserve(rows);
     y.reserve(rows);
@@ -264,7 +326,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         // what is read is not, and one NaN then ran through the spline fit into
         // every footprint cell.
         for (std::size_t index : {time_column, columns.altitude, columns.east_speed,
-                     columns.north_speed, columns.up_speed})
+                     columns.north_speed, columns.up_speed, columns.heading})
         {
             if (index != LabeledCsv::npos && !std::isfinite(data[index]))
             {
@@ -287,6 +349,16 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         y.push_back(local(1));
         z.push_back(local(2));
 
+        if (columns.heading != LabeledCsv::npos)
+        {
+            // Unwrapped as it is read, so that interpolating between two rows
+            // either side of north turns through north rather than the long
+            // way round through south.
+            double h = data[columns.heading];
+            if (!heading.empty())
+                h = heading.back() + std::remainder(h - heading.back(), 360.0);
+            heading.push_back(h);
+        }
         if (velocity_given)
         {
             // East/north/up in ft/s, turned onto the frame's axes.  A velocity
@@ -428,6 +500,20 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
             now.ny = fit_y.derivative(t, 2) * mps2g;
             now.nz = fit_z.derivative(t, 2) * mps2g + 1.0;
         }
+        if (!heading.empty())
+        {
+            // Linear between rows, never a spline: a heading is a measured
+            // angle, and a spline through a sharp turn overshoots it.
+            const auto above = std::upper_bound(time.begin(), time.end(), t);
+            const std::size_t hi = std::min<std::size_t>(
+                    static_cast<std::size_t>(above - time.begin()), time.size() - 1);
+            const std::size_t lo = hi == 0 ? 0 : hi - 1;
+            const double fraction = hi == lo ? 0.0 : (t - time[lo]) / (time[hi] - time[lo]);
+            double h = std::fmod(heading[lo] + fraction * (heading[hi] - heading[lo]), 360.0);
+            if (h < 0.0)
+                h += 360.0;
+            now.heading = h;
+        }
         derive_flight_parameters(now, vehicle);
         states.push_back(now);
         trace("Parsed geodetic state: ", states.back());
@@ -474,7 +560,7 @@ dimensional_data configure_vehicle(const std::string& filename)
     dimensional_data vehicle;
     vehicle.radius = json_to_double(config["Main Rotor"]["radius"]);
     vehicle.tip_speed = json_to_double(config["Main Rotor"]["tip speed"]);
-    vehicle.weight = json_to_double(config["Vehicle"]["weight"]) * g; // Actually a mass (kg), so convert to Newtons
+    vehicle.weight = json_to_double(config["Vehicle"]["weight"]) * standard_gravity; // Actually a mass (kg), so convert to Newtons
     vehicle.rho = json_to_double(config["Atmosphere"]["density"]);
 
     // Atmospheric state, for the optional spectral path.  Only density is
@@ -881,7 +967,7 @@ void Trajectory::write_state(const std::string& state_file) const
     ensure_parent_directory(state_file);
     std::ofstream file(state_file);
     if (!file)
-        fatal("Unable to open state file for writing: ", state_file);
+        input_error("Unable to open state file for writing: ", state_file);
     // Write header from field names (mirrors __traits(allMembers, State))
     file << "t,x,y,z,vx,vy,vz,nx,ny,nz,LF,CT,mu,fpa_e,fpa\n";
     file << std::setprecision(17);
@@ -981,7 +1067,7 @@ std::vector<double> Trajectory::column(const std::string& varname) const
         {"mu", &State::mu}, {"fpa_e", &State::fpa_e}, {"fpa", &State::fpa}};
     auto it = fields.find(varname);
     if (it == fields.end())
-        fatal("Unknown state variable: ", varname);
+        input_error("Unknown state variable: ", varname);
     std::vector<double> x;
     x.reserve(states.size());
     for (const auto& state : states)
@@ -1091,7 +1177,7 @@ std::optional<double> heading_offset(const std::vector<State>& states, double fr
     // the heading the file gives.
     if (!std::isnan(frame_bearing))
         return frame_bearing * pi / 180.0;
-    constexpr double fast = 20.0 * 1852.0 / 3600.0; // m/s
+    constexpr double fast = 20.0 * knot; // m/s
     constexpr std::size_t enough = 50;
     double sum_cos = 0.0, sum_sin = 0.0;
     std::size_t count = 0;

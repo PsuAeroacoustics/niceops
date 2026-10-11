@@ -5,16 +5,20 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <limits>
 #include <cstdint>
 #include <numeric>
+#include <sstream>
 #include <system_error>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
 #include <netcdf.h>
 
+#include "manifest.hpp"
 #include "propagation.hpp"
 #include "util/logger.hpp"
 #include "weighting.hpp"
@@ -480,6 +484,34 @@ inline bool is_empty(double level, double weight)
     return weight != 0.0 && level <= empty_level_db;
 }
 
+// A group panam never finished writing holds the netCDF fill value (9.97e36)
+// in every entry.  It is finite, so the non-finite floor passes it, and it
+// read as a 1e37 dB level: the September 2026 AS350, EC130, RO-44 and RO-66
+// files gave an infinite SEL wherever a state reached their last condition.
+// No level, attenuation factor or band amplitude is within 1e30 of it.
+void refuse_fill_values(const std::string& path, std::size_t sphere, const char* variable,
+        const std::vector<double>& values)
+{
+    const auto unwritten = std::count_if(values.begin(), values.end(),
+            [](double v) { return std::isfinite(v) && std::fabs(v) > 1e30; });
+    if (unwritten > 0)
+        input_error("Database ", path, ": sphere ", sphere, " holds the netCDF fill value in ",
+                unwritten, " of ", values.size(), " ", variable, " entries, so that group was never "
+                "written. Rebuild the database (panam c53588f or later writes every group).");
+}
+
+// The median of `values`, reordering them; the mean of the middle two for an
+// even count.
+double median_of(std::vector<double>& values)
+{
+    assert(!values.empty());
+    const auto middle = values.begin() + static_cast<std::ptrdiff_t>(values.size() / 2);
+    std::nth_element(values.begin(), middle, values.end());
+    if (values.size() % 2 == 1)
+        return *middle;
+    return 0.5 * (*middle + *std::max_element(values.begin(), middle));
+}
+
 // Blending in dB is linear in the level, so one empty entry at the floor pulls
 // the whole blend toward it in proportion to its weight: a 20% weight on
 // -1000 dB costs 200 dB.  Where a sphere simply has no measurement in a
@@ -925,10 +957,11 @@ bool approx_equal(double value, double reference, double max_rel_diff, double ma
             || std::fabs(value - reference) <= max_abs_diff;
 }
 
-Database::Database(const std::string& datafile_path)
+Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& load)
 {
     const int file_ncid = open_database(datafile_path);
     NcGuard guard(file_ncid);
+    root_attributes_ = netcdf_root_attributes(file_ncid);
 
     // Database format version.  Absent (or 0) means the file predates the
     // versioned builder, and its hover spheres may carry the broken directivity
@@ -1065,6 +1098,10 @@ Database::Database(const std::string& datafile_path)
     std::vector<double> placed_phis, placed_thetas;
     bool placed = false;
     std::size_t layout_warnings = 0;
+    // Which grid entries a channel filled; the rest hold the {0, 0} the grid
+    // starts at (the layout warning reports them), which the suspect-cell
+    // screen must not take for a measured 0 dBA.
+    std::vector<char> reached_cells;
     // The spectral amplitude layout is a function of the same labels.
     std::vector<std::size_t> cached_cell_of;
     bool cached_cell_of_valid = false;
@@ -1191,6 +1228,7 @@ Database::Database(const std::string& datafile_path)
             // Allocate the noise level grid
             n_conditions = group_ids.size();
             grid.assign(phis.size() * thetas.size() * n_conditions, Sample {0.0, 0.0});
+            reached_cells.assign(grid.size(), 0);
             measured_.assign(grid.size(), 0.0F);
         }
         if (!placed || placed_phis != phis_scattered || placed_thetas != thetas_scattered)
@@ -1239,6 +1277,8 @@ Database::Database(const std::string& datafile_path)
         EAAs_scattered.resize(nchannels);
         require_array(group_id, "dBA", dBAs_scattered.size(), dBAs_scattered);
         require_array(group_id, "EAA", EAAs_scattered.size(), EAAs_scattered);
+        refuse_fill_values(datafile_path, i, "dBA", dBAs_scattered);
+        refuse_fill_values(datafile_path, i, "EAA", EAAs_scattered);
         // Optional per-band spectra, written gridded over the sorted unique
         // angles.  Absent from every database built before the builder learned
         // to carry them, so its absence is not an error -- but a database that
@@ -1296,6 +1336,7 @@ Database::Database(const std::string& datafile_path)
             if (NC_NOERR
                     != nc_get_var_double(group_id, amplitude_id, sphere_amplitudes.data()))
                 input_error("Database error: could not read amplitude for sphere ", i, ".");
+            refuse_fill_values(datafile_path, i, "amplitude", sphere_amplitudes);
             const std::size_t n_conditions_total = group_ids.size();
             // Which sorted (phi, theta) cell each row and column of the array
             // is.  The format means amplitude to be gridded over the sorted
@@ -1451,6 +1492,7 @@ Database::Database(const std::string& datafile_path)
                             std::isfinite(dBAs_scattered[c]) ? dBAs_scattered[c] : no_energy_floor_db;
                     const double EAA = std::isfinite(EAAs_scattered[c]) ? EAAs_scattered[c] : 0.0;
                     grid[(m * thetas.size() + n) * n_conditions + i] = {dBA, EAA};
+                    reached_cells[(m * thetas.size() + n) * n_conditions + i] = 1;
                     if (channel_coverage)
                         measured_[(m * thetas.size() + n) * n_conditions + i] =
                                 coverage_scattered[c] != 0 ? 1.0F : 0.0F;
@@ -1483,6 +1525,10 @@ Database::Database(const std::string& datafile_path)
         info("Not every sphere stores its upper half: directions above the plane read the mirror image.");
     max_level_ = dba_max;
     min_excess_factor_ = eaa_min;
+    conditions_.resize(advance_ratios.size());
+    for (std::size_t i = 0; i < conditions_.size(); i++)
+        conditions_[i] = {advance_ratios[i], flight_path_angles[i], thrust_coefficients[i]};
+    screen_suspect_cells(datafile_path, load, reached_cells);
     info("Max level found in database is: ", max_level_);
     info("Lowest excess attenuation factor is: ", min_excess_factor_);
     // Set sphere_radius to dimensional_radius
@@ -1738,7 +1784,6 @@ void Database::blend_aam(double advance_ratio, double flight_path_angle, double 
         input_error("--blend aam needs the rotor tip speed to turn its 20 kt speed gate into advance "
                 "ratio, and neither the database nor the vehicle gives one.");
     }
-    constexpr double knot = 1852.0 / 3600.0; // m/s
     const double speed_gate = options.aam_limits.speed_kt * knot / tip_speed;
 
     // The thrust layer nearest the state (the only one on a fixed_load_factor
@@ -2407,6 +2452,212 @@ std::array<int, 2> Database::bin_padding() const
                     grid_spacing(phis) / DirectionBounds::azimuth_bin_degrees())) + 1};
 }
 
+// A screen for entries no sound database holds, run once the grid and spectra
+// are filled.  Two kinds of fault reach this far as finite levels the blends
+// take as real: a dBA cell far above or below the rest of its sphere (the S-76D
+// M4 and fixed_load_factor files' 150-1450 dBA channels, the September files'
+// near-silent cells, B407_M3's written zeros), and a band far above the rest
+// of its own cell's spectrum (NASA's R44 spheres' 135-170 dB at 8-10 kHz).
+//
+// - A dBA cell is compared with the median of its sphere's measured cells
+//   (unreached cells, which hold the grid's initial 0, left out).  Comparing
+//   it with its grid neighbors instead flagged sound cells along a strip of
+//   zeros, whose neighbors were half zeros, and could not see a strip wider
+//   than half a neighborhood, which is its own median.  A sphere more than
+//   half defective has a defective median, and is beyond any such screen.
+// - A band is compared with the median of its cell's non-empty bands, and
+//   needs five.  Comparing a band with the same band in neighboring cells
+//   does not separate: sound spectra jump 100 dB and more between cells where
+//   gating thins a band.  Only an excess is suspect; a band far below its
+//   cell's median is what gating leaves.
+//
+// It only warns unless asked to mask, so the default path is unchanged.
+// Masking floors an entry to no_energy_floor_db, which the blends read as
+// gated (a dBA cell with every band of its spectrum), and so only removes
+// energy: the bounds, built from the grid on
+// demand, stay valid.
+void Database::screen_suspect_cells(const std::string& datafile_path, const DatabaseLoadOptions& load,
+        const std::vector<char>& reached)
+{
+    struct Suspect
+    {
+        std::size_t condition, cell;
+        std::size_t band; // n_bands for a dBA cell
+        double level, reference;
+    };
+    const std::size_t n_phi = phis.size(), n_theta = thetas.size();
+    const std::size_t n_bands = frequencies_.size();
+    const std::size_t n_cond = conditions_.size();
+    assert(reached.size() == grid.size());
+    // Each condition is screened on its own, so they are spread over a few
+    // threads (the band medians are most of a load's screen time) and joined
+    // in condition order, which the warning and the CSV list them in.
+    std::vector<std::vector<Suspect>> per_condition(n_cond);
+    const auto screen_condition = [&](std::size_t i, std::vector<double>& around) {
+        auto& found = per_condition[i];
+        around.clear();
+        for (std::size_t cell = 0; cell < n_phi * n_theta; cell++)
+        {
+            const std::size_t at = cell * n_cond + i;
+            if (reached[at] != 0 && grid[at].dBA > empty_level_db)
+                around.push_back(grid[at].dBA);
+        }
+        if (around.size() >= 3)
+        {
+            const double reference = median_of(around);
+            for (std::size_t cell = 0; cell < n_phi * n_theta; cell++)
+            {
+                const std::size_t at = cell * n_cond + i;
+                if (reached[at] != 0 && grid[at].dBA > empty_level_db
+                        && std::fabs(grid[at].dBA - reference) > suspect_cell_margin_db)
+                    found.push_back({i, cell, n_bands, grid[at].dBA, reference});
+            }
+        }
+        if (n_bands < 5)
+            return;
+        for (std::size_t cell = 0; cell < n_phi * n_theta; cell++)
+        {
+            around.clear();
+            for (std::size_t band = 0; band < n_bands; band++)
+            {
+                const double v = spectra_[(cell * n_bands + band) * n_cond + i];
+                if (v > empty_level_db)
+                    around.push_back(v);
+            }
+            if (around.size() < 5)
+                continue;
+            const double reference = median_of(around);
+            for (std::size_t band = 0; band < n_bands; band++)
+            {
+                const double v = spectra_[(cell * n_bands + band) * n_cond + i];
+                if (v > empty_level_db && v - reference > suspect_band_margin_db)
+                    found.push_back({i, cell, band, v, reference});
+            }
+        }
+    };
+    const std::size_t workers = std::max<std::size_t>(1,
+            std::min<std::size_t>({n_cond, 8, std::thread::hardware_concurrency()}));
+    std::vector<std::future<void>> jobs;
+    for (std::size_t w = 0; w < workers; w++)
+    {
+        jobs.push_back(std::async(std::launch::async, [&, w] {
+            std::vector<double> around;
+            around.reserve(std::max<std::size_t>(8, n_bands));
+            for (std::size_t i = w; i < n_cond; i += workers)
+                screen_condition(i, around);
+        }));
+    }
+    for (auto& job : jobs)
+        job.get();
+    std::vector<Suspect> found;
+    for (const auto& list : per_condition)
+        found.insert(found.end(), list.begin(), list.end());
+
+    suspect_cells_ = static_cast<std::size_t>(std::count_if(found.begin(), found.end(),
+            [&](const Suspect& s) { return s.band == n_bands; }));
+    suspect_bands_ = found.size() - suspect_cells_;
+
+    const auto describe = [&](const Suspect& s) {
+        std::ostringstream text;
+        text << "sphere " << s.condition << " (mu " << conditions_[s.condition][0] << ", gamma "
+             << conditions_[s.condition][1] << ", C_T " << conditions_[s.condition][2]
+             << ") at phi " << phis[s.cell / n_theta] << ", theta " << thetas[s.cell % n_theta];
+        if (s.band < n_bands)
+            text << ", " << frequencies_[s.band] << " Hz";
+        text << ": " << s.level << " dB against " << s.reference;
+        return text.str();
+    };
+    const auto report = [&](bool bands, const char* one, const char* many, double margin) {
+        std::size_t count = 0;
+        std::vector<bool> sphere_hit(n_cond, false);
+        const Suspect* worst = nullptr;
+        for (const auto& s : found)
+        {
+            if ((s.band < n_bands) != bands)
+                continue;
+            count++;
+            sphere_hit[s.condition] = true;
+            if (!worst || std::fabs(s.level - s.reference) > std::fabs(worst->level - worst->reference))
+                worst = &s;
+        }
+        if (count == 0)
+            return;
+        const auto spheres = std::count(sphere_hit.begin(), sphere_hit.end(), true);
+        warn("Database ", datafile_path, ": ", count, " ", count == 1 ? one : many, " in ", spheres,
+                " of ", n_cond, " spheres ", count == 1 ? "lies" : "lie", " more than ", margin, " dB from ",
+                count == 1 ? "the median of its " : "the median of their ",
+                bands ? "cell's spectrum" : "sphere",
+                ", which no sound database does; the worst is ", describe(*worst), ". ",
+                load.mask_suspect_cells ? "Dropped (--mask_suspect_cells)."
+                                        : "Blended as real levels; --screen_database lists them "
+                                          "and --mask_suspect_cells drops them.");
+    };
+    report(false, "dBA cell", "dBA cells", suspect_cell_margin_db);
+    report(true, "spectral band", "spectral bands", suspect_band_margin_db);
+
+    if (!load.screen_file.empty())
+    {
+        ensure_parent_directory(load.screen_file);
+        std::ofstream out(load.screen_file);
+        if (!out)
+            input_error("Cannot write --screen_database file ", load.screen_file, ".");
+        out << "# Suspect entries in " << datafile_path << ": dBA cells more than "
+            << suspect_cell_margin_db << " dB from the median of their sphere, and bands more than "
+            << suspect_band_margin_db << " dB above the median of their cell's spectrum.\n";
+        out << "sphere,advance_ratio,flight_path_angle,thrust_coefficient,phi,theta,band_hz,"
+               "level_db,reference_db,masked\n";
+        out.precision(10);
+        for (const auto& s : found)
+        {
+            out << s.condition << ',' << conditions_[s.condition][0] << ','
+                << conditions_[s.condition][1] << ',' << conditions_[s.condition][2] << ','
+                << phis[s.cell / n_theta] << ',' << thetas[s.cell % n_theta] << ',';
+            if (s.band < n_bands)
+                out << frequencies_[s.band];
+            out << ',' << s.level << ',' << s.reference << ',' << (load.mask_suspect_cells ? 1 : 0)
+                << '\n';
+        }
+        if (!out.flush())
+            input_error("Could not finish writing --screen_database file ", load.screen_file, ".");
+        log("Wrote ", found.size(), found.size() == 1 ? " suspect entry to " : " suspect entries to ",
+                load.screen_file, ".");
+    }
+
+    if (!load.mask_suspect_cells || found.empty())
+        return;
+    for (const auto& s : found)
+    {
+        if (s.band < n_bands)
+        {
+            spectra_[(s.cell * n_bands + s.band) * n_cond + s.condition] = no_energy_floor_db;
+            continue;
+        }
+        // The spectral path reads only the bands, so a dropped cell drops them
+        // too: a spectrum raised or lowered as a whole has no band out of line
+        // with its own cell, and would otherwise still be blended.
+        grid[s.cell * n_cond + s.condition].dBA = no_energy_floor_db;
+        for (std::size_t band = 0; band < n_bands; band++)
+            spectra_[(s.cell * n_bands + band) * n_cond + s.condition] = no_energy_floor_db;
+    }
+    if (suspect_cells_ == 0)
+        return;
+    // The per-sphere maxima bound a blended state's level (cull_range,
+    // condition_bounds); a masked cell must leave them, or a 1450 dBA spike
+    // keeps every observer in range.
+    max_level_ = -std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < n_cond; i++)
+    {
+        sphere_max_[i] = -std::numeric_limits<double>::infinity();
+        for (std::size_t cell = 0; cell < n_phi * n_theta; cell++)
+        {
+            const double v = grid[cell * n_cond + i].dBA;
+            if (v > empty_level_db)
+                sphere_max_[i] = std::max(sphere_max_[i], v);
+        }
+        max_level_ = std::max(max_level_, sphere_max_[i]);
+    }
+}
+
 DirectionBounds Database::direction_bounds(const std::vector<SourceState>& states) const
 {
     DirectionBounds bounds;
@@ -2950,8 +3201,8 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
     }
     ensure_parent_directory(path);
 
-    const double m2ft = 1.0 / 0.3048;
-    const double mps2kt = 1.94384;
+    const double m2ft = 1.0 / ft2m;
+    const double mps2kt = 1.0 / knot;
 
     int file = 0;
     nc_check(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file), "creating " + path);

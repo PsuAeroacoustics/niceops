@@ -69,6 +69,34 @@ TEST_CASE("sound_exposure_level integrates in reception time", "[sel]")
     REQUIRE(sound_exposure_level(levels, T, {1.0, 2.0}, c) == emission);
 }
 
+TEST_CASE("sound_exposure_level_by_sample is the SEL, and its samples sum to it", "[sel]")
+{
+    // A two-peaked history with a culled state, receding, so the window, the
+    // reception factor and a -inf level all take part.
+    const double T = 0.5, c = 340.0;
+    const double minus_inf = -std::numeric_limits<double>::infinity();
+    const std::vector<double> levels = {40.0, 61.5, 70.25, minus_inf, 66.0, 72.0, 58.0, 45.0};
+    std::vector<double> ranges;
+    for (std::size_t i = 0; i < levels.size(); i++)
+        ranges.push_back(150.0 + 20.0 * static_cast<double>(i));
+    for (const bool full : {false, true})
+    {
+        std::vector<double> share;
+        const double sel = sound_exposure_level_by_sample(levels, T, ranges, c, full, share);
+        // Bit for bit: the reports share out the SEL the run wrote.
+        CHECK(sel == (full ? full_sound_exposure_level(levels, T, ranges, c)
+                           : sound_exposure_level(levels, T, ranges, c)));
+        REQUIRE(share.size() == levels.size());
+        double sum = 0.0;
+        for (const double e : share)
+            sum += e;
+        CHECK(std::fabs(10.0 * std::log10(sum) - sel) < 1e-12);
+        CHECK(share[3] == 0.0);
+        if (!full)
+            CHECK(share[0] == 0.0); // below the 10 dB-down window
+    }
+}
+
 TEST_CASE("uniform_sample_interval", "[sel]")
 {
     // Evenly spaced: the interval is exact and the spread is zero.

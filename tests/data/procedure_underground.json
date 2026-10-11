@@ -1,0 +1,7 @@
+{
+  "start": {"lat": 39.8291, "lon": -74.4100, "alt_ft": 300, "ground_alt_ft": 50, "speed_kt": 80, "course_deg": 210},
+  "segments": [
+    {"type": "level", "duration_s": 5},
+    {"type": "descent", "angle_deg": 6, "duration_s": 60}
+  ]
+}

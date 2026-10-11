@@ -42,6 +42,8 @@
 
 namespace niceops {
 
+struct GroundModel;
+
 class PropagationTable
 {
 public:
@@ -144,5 +146,44 @@ private:
     bool includes_absorption_ = false;
     std::map<std::string, std::string> provenance_;
 };
+
+// The turbulence and ground roughness a table's levels already carry, as its
+// builder recorded them in its provenance.  A table pair takes them from the
+// table, not from the run's --turbulence, --gamma_t or --roughness, which
+// reach only the pairs the table does not cover; the run compares the two.
+//   model "none"           still air (and every table that records nothing)
+//   model "chessell"       the ground model's coherence, value = C, rad s/sqrt(m)
+//   model "harmonoise"     the ground model's coherence, value = gamma_t, m^-2/3
+//   model "phase_screens"  a turbulent PE table, value = gamma_t, m^-2/3
+// A table that records gamma_t with no model was built before the record.
+struct TableCoherence
+{
+    std::string model = "none";
+    double value = 0.0;
+    double roughness = 0.0; // m, the ground model's Kirchhoff roughness
+    // A turbulent PE table built before the record wrote gamma_t to six
+    // decimals ("0.000002"): its strength is known only that far, and that
+    // text is kept to compare against.
+    std::string rounded_gamma_t;
+};
+
+TableCoherence table_coherence(const std::map<std::string, std::string>& provenance);
+
+// The coherence a ground model applies: what a ground-model table built with
+// it bakes in, and what a run compares its table against.
+TableCoherence ground_coherence(const GroundModel& ground);
+
+// Whether a run with `run` would treat its covered and uncovered pairs
+// alike: the same model and strength (a HARMONOISE run matches a PE table's
+// phase screens of the same gamma_t) and the same roughness, either way round.
+// Returns the warning's text when they differ, empty when they agree.
+std::string coherence_mismatch(const TableCoherence& run, const TableCoherence& table);
+
+// Writes a table's coherence into its provenance (keys turbulence_model,
+// turbulence or gamma_t, roughness_m) at full precision.
+void record_coherence(std::map<std::string, std::string>& provenance, const TableCoherence& coherence);
+
+// A value at full precision (%.17g), for provenance.
+std::string exact_text(double value);
 
 } // namespace niceops

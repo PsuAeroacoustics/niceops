@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -759,7 +760,7 @@ TEST_CASE("at hover the sphere's nose is the heading, turned into the local fram
     double previous_angle = std::numeric_limits<double>::quiet_NaN();
     for (int i = 0; i <= 500; i++)
     {
-        const double speed = (2.0 + 0.012 * i) * 1852.0 / 3600.0; // 2 kt to 8 kt
+        const double speed = (2.0 + 0.012 * i) * knot; // 2 kt to 8 kt
         const State s = state(speed * std::cos(1.0), speed * std::sin(1.0), 274.0);
         const auto n = unit_nose(nose_direction(s, inferred));
         const double angle = std::atan2(n[1], n[0]);
@@ -915,8 +916,8 @@ TEST_CASE("--nose heading takes the climb out at hover, continuously", "[traject
     for (int i = 0; i <= 1000; i++)
     {
         State s {};
-        s.vx = 0.01 * i * 1852.0 / 3600.0 * std::cos(0.7); // 0 to 10 kt
-        s.vy = 0.01 * i * 1852.0 / 3600.0 * std::sin(0.7);
+        s.vx = 0.01 * i * knot * std::cos(0.7); // 0 to 10 kt
+        s.vy = 0.01 * i * knot * std::sin(0.7);
         s.vz = -0.8;
         const double speed = std::hypot(s.vx, s.vy);
         s.heading = 300.0;
@@ -1243,4 +1244,82 @@ TEST_CASE("write the heading tracks and database for the --nose CTests", "[.head
     auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
     sphere.azimuth_reference = AzimuthReference::heading;
     write_sphere(sphere, "integrated/heading_sphere.nod");
+}
+
+TEST_CASE("A WGS84 track's heading column is the nose's compass heading", "[trajectory][geodetic]")
+{
+    // The AC file's column 9 is the heading; written beside its lat/lon/alt, the
+    // WGS84 reader has to hand back the same heading at every state (0.02 s
+    // samples, already uniform, so nothing is resampled).
+    const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
+    std::ostringstream out;
+    out << "time,lat,lon,alt,heading (deg)\n" << std::setprecision(17);
+    for (const auto& r : records)
+        out << r[1] << "," << r[2] << "," << r[3] << "," << r[4] << "," << r[8] << "\n";
+    const TempCsv track(out.str());
+    const Trajectory geodetic(track.path, "databases/S-76D.json", demo_frame(0.02));
+    const Trajectory reference("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+    REQUIRE(geodetic.states.size() == reference.states.size());
+    double worst = 0.0;
+    for (std::size_t i = 0; i < geodetic.states.size(); i++)
+        worst = std::max(worst, std::fabs(std::remainder(
+                                        geodetic.states[i].heading - reference.states[i].heading, 360.0)));
+    REQUIRE(worst < 1e-9);
+}
+
+TEST_CASE("A WGS84 heading is interpolated through north, not around through south",
+        "[trajectory][geodetic]")
+{
+    // 350 then 10 degrees a second apart: halfway is north.  Interpolated as
+    // plain numbers it would be 180, the aircraft facing backward.
+    const TempCsv track("time,lat,lon,alt,heading\n0,39.8,-74.4,1000,350\n1,39.8001,-74.4,1000,10\n"
+                        "2,39.8002,-74.4,1000,30\n");
+    GeodeticInput input = demo_frame();
+    input.resample_dt = 0.5;
+    const Trajectory trajectory(track.path, "databases/S-76D.json", input);
+    REQUIRE(trajectory.states.size() == 5);
+    REQUIRE(std::fabs(std::remainder(trajectory.states[1].heading, 360.0)) < 1e-9);
+    REQUIRE(trajectory.states[1].heading >= 0.0);
+    REQUIRE(trajectory.states[1].heading < 360.0);
+    REQUIRE(std::fabs(trajectory.states[3].heading - 20.0) < 1e-9);
+}
+
+TEST_CASE("A WGS84 heading in radians is refused", "[trajectory][geodetic]")
+{
+    const TempCsv radians("time,lat,lon,alt,heading (rad)\n0,39.8,-74.4,1000,3.1\n1,39.8001,-74.4,1000,3.1\n"
+                          "2,39.8002,-74.4,1000,3.1\n");
+    REQUIRE_THROWS_WITH(Trajectory(radians.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("declares its heading in rad"));
+}
+
+TEST_CASE("A WGS84 heading must be true degrees, and only one", "[trajectory][geodetic]")
+{
+    // Read as true, a magnetic heading turns the nose by the declination.
+    const TempCsv magnetic("time,lat,lon,alt,heading (mag)\n0,39.8,-74.4,1000,30\n1,39.8001,-74.4,1000,30\n"
+                           "2,39.8002,-74.4,1000,30\n");
+    REQUIRE_THROWS_WITH(Trajectory(magnetic.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("is a magnetic heading"));
+    const TempCsv turns("time,lat,lon,alt,hdg (turns)\n0,39.8,-74.4,1000,0.1\n1,39.8001,-74.4,1000,0.1\n"
+                        "2,39.8002,-74.4,1000,0.1\n");
+    REQUIRE_THROWS_WITH(Trajectory(turns.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("declares its heading in turns"));
+    // Spelled into the name, the reference or unit matches no alias: such a
+    // column was passed over for the velocity's nose, unrefused.
+    const TempCsv spelled_magnetic("time,lat,lon,alt,magnetic heading\n0,39.8,-74.4,1000,30\n"
+                                   "1,39.8001,-74.4,1000,30\n2,39.8002,-74.4,1000,30\n");
+    REQUIRE_THROWS_WITH(Trajectory(spelled_magnetic.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("is a magnetic heading"));
+    const TempCsv spelled_radians("time,lat,lon,alt,heading_rad\n0,39.8,-74.4,1000,0.5\n"
+                                  "1,39.8001,-74.4,1000,0.5\n2,39.8002,-74.4,1000,0.5\n");
+    REQUIRE_THROWS_WITH(Trajectory(spelled_radians.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("declares its heading in rad"));
+    // Two candidates: the first match is not necessarily the true one.
+    const TempCsv two("time,lat,lon,alt,hdg,true heading\n0,39.8,-74.4,1000,18,30\n1,39.8001,-74.4,1000,18,30\n"
+                      "2,39.8002,-74.4,1000,18,30\n");
+    REQUIRE_THROWS_WITH(Trajectory(two.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("has 2 heading columns"));
+    // Degrees, declared or not, true or not said, are read.
+    const TempCsv degrees("time,lat,lon,alt,heading (deg true)\n0,39.8,-74.4,1000,30\n1,39.8001,-74.4,1000,30\n"
+                          "2,39.8002,-74.4,1000,30\n");
+    REQUIRE_NOTHROW(Trajectory(degrees.path, "databases/S-76D.json", demo_frame()));
 }

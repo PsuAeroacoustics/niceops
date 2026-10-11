@@ -85,6 +85,35 @@ sample times (a uniform file at or below `-s` is used as sampled), and only spar
 spaced input is refitted onto the `-s` grid. `-s` has no other effect: it does not touch an AC
 track.
 
+## `niceops_procedure`
+
+`src/procedure.{hpp,cpp}`, `tools/procedure.cpp`. Things to keep:
+
+- **It writes velocity and heading columns**, so niceops interpolates the flown velocity and
+  differentiates it for the load factor, rather than differentiating positions twice. A steady
+  30° turn reads back as 1/cos 30° to 1e-6 ("niceops reads a flown turn's load factor as
+  1 / cos(bank)").
+- **Transitions are rate-limited** (pull, roll rate, acceleration), never stepped: a step in the
+  path angle is an infinite load factor once differentiated.
+- **A turn rolls out within its own segment**, measured in the commanded direction, starting the
+  roll-out when the course still to go equals what the roll-out from the bank reached turns,
+  (g / (V p)) (−ln cos φ). Leaving the roll-out to the next segment let a reversal count the
+  previous turn's roll-out as its own (an S-turn ended 44° off), skipped a turn shorter than the
+  full-bank roll-out, and left a final turn banked and short. The tests fly an S-turn, a 20° turn
+  under the full-bank roll-out, a final turn and a left turn through north to within 1°.
+- **At rest the path angle and bank are zero**, so a descending deceleration to rest can hover.
+- **Time counts internal steps** (`t = n h`, h dividing `step_s` exactly), so the written states are
+  evenly spaced and niceops keeps them rather than resampling.
+- **Units in keys, a bare number refused, an unknown key refused** (a typo flew the default);
+  a segment below `ground_alt`, or a climb whose altitude is already passed, is refused. niceops
+  itself warns of states below its ground plane without terrain (`track_below_ground_warns`), after
+  `--trim` and beyond the smoothing a WGS84 fit is allowed, since a landing dips that far.
+- **`--check` maps states through `state_condition`** (`src/state_condition.{hpp,cpp}`), the
+  function run() uses, then `Database::blend_at`, after reading the track through `Trajectory`
+  as niceops does, after the same vehicle check (`check_vehicle`). A copy of either would drift;
+  `procedure_check_agrees_with_niceops` pins its counts to niceops's own warnings on the same
+  track, and `procedure_check_refuses_wrong_vehicle` the refusal.
+
 ## Trajectory class
 
 `src/trajectory.{hpp,cpp}`: the `Trajectory` class. It parses the 27-column CSV into `State`
@@ -121,12 +150,17 @@ descent has a constant dz/dt with no variance to correlate, and must still decid
   turns from the heading to the velocity on a smoothstep weight, the horizontal angle the short
   way round, so there is no step. A hard switch at 5 kt stepped the level by 2.2–4.4 dB for a
   nose rotated 30–90 degrees.
-- The AC format's column 9 (`State::heading`, compass, NaN for the geodetic formats) is turned
+- The AC format's column 9 (`State::heading`, compass; a WGS84 track's `heading` column, NaN
+  without one) is turned
   into the local frame by `--frame_bearing` (or east under a settled geodetic frame) whenever
   the run knows one. Only otherwise is it turned by an offset inferred from the track's states
   over 20 kt: the circular mean of the velocity's angle plus the heading, which folds in the INS
   heading's few degrees off the ground track and the mean crab (see below for why the frame
   wins). With neither, the nose follows the drift, with a warning.
+- **A WGS84 heading is unwrapped as it is read and interpolated linearly**, never by spline (a
+  heading through a sharp turn would overshoot), and wrapped back into [0, 360). Unwrapping as it
+  is read is what sends 350 → 10 through north. Its round trip from the AC file's column 9 is
+  exact ("A WGS84 track's heading column is the nose's compass heading").
 - No shipped track goes under 12 kt (AW139 `192217AC.csv` reaches 12.5 kt, column 21, `VGk`) and
   no 2017 B407 flight track other than the day-283 hovers under 13, so neither the goldens nor
   the approaches depend on this; the 2017 hover runs (H1-H12) do.

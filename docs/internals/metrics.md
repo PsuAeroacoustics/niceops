@@ -95,7 +95,92 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
 [table](testing.md#mutation-guarded-tests). The one-off independent rebuild of the frames is in
 [FIDELITY](../FIDELITY.md#lamax-ta-and-epnl-against-the-2017-measurements).
 
+## Source provenance
+
+`--provenance_file` (`write_provenance` and the observer loop's provenance block in
+`niceops.cpp`). Things to keep:
+
+- **Each state is weighted as the SEL integrated it** (`sound_exposure_level_by_sample` in
+  `util/sel.hpp`, the SEL's own pass: the 10 dB-down window, or the whole history, times the step
+  and the reception factor), as is `--coverage_file`. Summing
+  every sample alike counted states the SEL leaves out, and across operations of different steps
+  weighted each by its sample count. `exposure_db` reproduces the SEL to 5e-9 dB.
+- **Energy is attributed by nominal blend weight.** The blend is linear in dB, so a sphere's weight
+  is not its share of the energy exactly, and a sphere empty toward the observer, which the
+  evaluation drops, is still credited. It shares out all of the energy (the writer asserts the
+  sums agree to 1e-9).
+- **Per-state flags are taken where the run decides them**: the axis clamps from the blend, the
+  load-factor holds where the run applies `--max_load_factor` and `--min_load_factor`.
+- **Per-sphere sums are dense per thread and sparse per observer.** A dense observer-by-sphere
+  table is 150 MB on the demo grid with a 1312-sphere database; the sparse list holds the few
+  dozen spheres an observer hears. Only touched entries are reset.
+- **It marches** (bounding off), since every state's energy is needed; the SEL is the windowed
+  run's (`provenance_leaves_sel_alone`).
+- **One database per run**: a sphere index means nothing across two.
+- **`--provenance_spheres` is written a chunk (16 observers) at a time** from the sparse lists
+  (`src/sphere_energy.cpp`), so the dense table never sits in memory and each deflated chunk is
+  written once; deflate shrinks the rows of zeros. It takes `--provenance_file`'s refusals by requiring it.
+  `provenance_spheres_match` (`tests/check_sphere_energy.cpp`) holds its largest share to the
+  CSV's top sphere and the shares' sum to one.
+
+## Contours
+
+`src/contour.{hpp,cpp}` (`--contour_file`). Things to keep:
+
+- **The grid is padded by one node on every side, each pad at its edge neighbor's coordinate**
+  and below every level. The crossing toward a pad then sits on the edge node, so a region
+  reaching the edge closes along it and every ring closes; the zero-width pad cells only repeat
+  points, which are dropped.
+- **Segments carry the high region on their left**, so rings around high ground run
+  counterclockwise and holes clockwise, as RFC 7946 wants, and an outer ring is told from a hole
+  by its signed area. A rotation (`--frame_bearing`) keeps orientation; only a reflection would not.
+- **A saddle is decided by the mean of its four corners.** A non-finite node (culled) is below
+  every level, and a crossing against one sits on the finite node.
+- **A hole goes to the smallest outer ring holding a point strictly inside it**: a hair to the
+  right of the midpoint of its longest edge (holes run clockwise). Rings of one level never
+  cross, so that ring is its own. Its vertex mean was tried and failed: it lies outside a U-shaped
+  hole, which was dropped (area 33% high), and inside an island standing in the hole, which took
+  the hole and came out with negative area.
+- **Rings are made simple** (`simple_rings`): repeats and out-and-back spikes removed, and a ring
+  meeting itself at a vertex split there. They come from nodes exactly at a level, whose crossings
+  land on the node; areas are unaffected, but GIS validity checks reject such rings.
+- **Areas are planar, in the local frame**, before the projection to longitude and latitude.
+- The unit tests pin the geometry against analytic fields (a cone's disc, an annulus with its
+  hole, two peaks, the grid edge, culled nodes, both saddles), an island in a hole, a U-shaped
+  hole, exact ties, and 300 random integer fields (simple rings, positive polygons, holes inside
+  their outer rings); on the demo footprint the areas agree with a count of grid cells above each
+  level to 1–2%.
+
+## Raster
+
+`src/raster.{hpp,cpp}` (`--raster_file`). Things to keep:
+
+- **Each field is the very vector its text file was written from**, so the two cannot disagree;
+  `raster_matches_grids` (`tests/check_raster.cpp`) holds them to 1e-12 and the latitude and
+  longitude to the `--latlon` companion's.
+- **`x` and `y` are meters whatever `--units` says**: CF wants the unit stated, and a GIS reads
+  meters without being told the run's.
+- **Silence is the fill value, NaN, not −∞**: GDAL and QGIS take −∞ as data and stretch every
+  color ramp to it.
+- **Latitude and longitude are two-dimensional auxiliary coordinates**, not a `grid_mapping`:
+  the local frame is a rotated tangent plane, which CF has no projection for, and GDAL reads the
+  two arrays as geolocation.
+- **The `-m` area is the 65 dB contour's polygon area** (`append_metrics_file`), not the
+  observer fraction times the grid's area, which is the column before it.
 ## Time weighting, day metrics, C-SEL
+
+**The period levels** (`DayMetric::lday` … `laeq` in `util/sel.hpp`) reuse the penalized-exposure
+path: a sample outside the period takes a penalty of −∞, so it carries no energy and the 10 dB-down
+window is found among the samples inside, and the energy is averaged over the period's length
+(`averaging_seconds`). An operation wholly outside gives −∞, not NaN (`peak_range` of an all −∞
+history takes every sample, whose sum is 0). The CTests pin them against each other on the
+geodetic demo track: LAeq 0–24 equals Lden by day, Lday equals LAeq 7–19, Lnight equals LAeq 23–7,
+and a night flight leaves Lday −∞; `period_*_over_*_hours` pin each period's normalization
+against Lden (`golden_compare`'s offset), which the pairs above share and so cannot see; "Lden is
+its period levels recombined" pins the arithmetic. A metric whose penalty is the same at every
+state of a trajectory skips its own pass, which for a flight inside one period is most of them: 0
+everywhere is the SEL itself, bit for bit (x + 0 = x), and −∞ everywhere is no energy, as above.
+
 
 `--lamax_weighting`, `--nax_file`, `--ta_file`, `--lden_file`, `--cnel_file` and `--csel_file`
 (`src/util/time_weighting.hpp`; the day schedules are in `src/util/sel.hpp`). What to keep:

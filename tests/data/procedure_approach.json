@@ -1,0 +1,12 @@
+{
+  "start": {"lat": 39.8291, "lon": -74.4100, "alt_ft": 1000, "speed_kt": 100, "course_deg": 210},
+  "step_s": 0.2,
+  "segments": [
+    {"type": "level", "duration_s": 20},
+    {"type": "descent", "angle_deg": 6, "until_alt_ft": 700},
+    {"type": "speed", "to_speed_kt": 40, "rate_kt_per_s": 1.5, "angle_deg": -3},
+    {"type": "turn", "bank_deg": -15, "turn_deg": 30},
+    {"type": "speed", "to_speed_kt": 0, "rate_kt_per_s": 1},
+    {"type": "hover", "duration_s": 15}
+  ]
+}

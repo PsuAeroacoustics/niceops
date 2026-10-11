@@ -57,7 +57,7 @@ AtmosphereProfile lapsing_profile()
         profile.height.push_back(z);
         profile.temperature.push_back(t);
         profile.relative_humidity.push_back(70.0 - 0.01 * z);
-        profile.pressure.push_back(101.325 * std::pow(t / 288.15, 9.80665 / (0.0065 * 287.05)));
+        profile.pressure.push_back(101.325 * std::pow(t / 288.15, standard_gravity / (0.0065 * 287.05)));
     }
     return profile;
 }
@@ -163,7 +163,7 @@ TEST_CASE("AtmosphereProfile::at interpolates and holds the ends", "[atmosphere_
 
 TEST_CASE("with_hydrostatic_pressure matches the analytic atmospheres", "[atmosphere_profile]")
 {
-    const double g_over_r = 9.80665 / 287.05;
+    const double g_over_r = standard_gravity / 287.05;
 
     SECTION("isothermal: an exponential")
     {
@@ -431,7 +431,7 @@ TEST_CASE("parse_surface_wind reads the speed's named unit, the direction and th
         "[atmosphere_profile][wind]")
 {
     const auto knots = parse_surface_wind("10kt,270,33", feet);
-    CHECK(knots.speed == Catch::Approx(10.0 * 1852.0 / 3600.0).epsilon(1e-15));
+    CHECK(knots.speed == Catch::Approx(10.0 * knot).epsilon(1e-15));
     CHECK(knots.direction == 270.0);
     CHECK(knots.height == Catch::Approx(33.0 * 0.3048).epsilon(1e-15));
 
@@ -441,7 +441,7 @@ TEST_CASE("parse_surface_wind reads the speed's named unit, the direction and th
     CHECK(mps.height == 10.0); // the WMO standard exposure when omitted, whatever --units says
     CHECK(parse_surface_wind("5.5m/s,90", feet).height == 10.0);
     CHECK(parse_surface_wind("4KT,0,10", meters).height == 10.0);
-    CHECK(parse_surface_wind("4KT,0,10", meters).speed == Catch::Approx(4.0 * 0.514444).epsilon(1e-5));
+    CHECK(parse_surface_wind("4KT,0,10", meters).speed == Catch::Approx(4.0 * knot).epsilon(1e-15));
     CHECK(parse_surface_wind("22.369mph,180", meters).speed == Catch::Approx(10.0).epsilon(1e-4));
 
     // No unit, or one that is not a speed: refused, never taken from --units.
@@ -581,7 +581,7 @@ TEST_CASE("synthetic_profile's air lapses dry-adiabatically, hydrostatically, ke
         const double t = surface.temperature - 0.0098 * z;
         CHECK(profile.pressure[i]
                 == Catch::Approx(surface.pressure
-                        * std::pow(t / surface.temperature, 9.80665 / (0.0098 * 287.05)))
+                        * std::pow(t / surface.temperature, standard_gravity / (0.0098 * 287.05)))
                            .epsilon(1e-12));
         // The molar concentration ISO 9613-1 takes is held; the relative humidity rises.
         CHECK(profile.at(z).molar_concentration_water_vapor()
@@ -713,7 +713,7 @@ TEST_CASE("hydrostatic prefix agrees with independent walks from the bottom", "[
             const auto filled = p.with_hydrostatic_pressure(101.325);
             const double ground = walk(0.0);
             for (std::size_t i = 0; i < count; i++)
-                REQUIRE(filled.pressure[i] == 101.325 * std::exp(-(9.80665 / 287.05)
+                REQUIRE(filled.pressure[i] == 101.325 * std::exp(-(standard_gravity / 287.05)
                         * (walk(p.height[i]) - ground)));
         }
 }

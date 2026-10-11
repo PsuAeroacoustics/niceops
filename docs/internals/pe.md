@@ -355,10 +355,42 @@ model; the format is the specification, so other methods can write it. The compo
   It reproduces `--ground_effect --exact_ground` to the table's interpolation, and the error
   falls fourfold per halving of the height spacing, which is what says it is interpolation.
 - **Plates read the table at its lowest receiver height plus K**, the plate over bare ground
-  there per band and azimuth at 2 degrees (`table_plate_offset` in niceops.cpp), as
-  ShadowTransition places a plate. **With `--refraction` the table takes the pairs it covers and
+  there per band, azimuth and elevation on a 1 km sphere (`table_plate_offset` in niceops.cpp),
+  as ShadowTransition places a plate, bilinear in azimuth and elevation. Things to keep:
+  - **K depends on elevation.** It was taken at 2 degrees for every pair; through the ground-model
+    table's flush row that put the demo footprint up to 0.34 dB off
+    ([FIDELITY](../FIDELITY.md#propagation-tables)).
+  - **A raised lowest row is warned about.** Its error grows with the row's height (0.13 dB at
+    1.2 m, 1.3 dB at 30 m) and is not the grid: a twelve times finer K grid leaves it unchanged.
+  - **The elevation step follows the bare term's fringes**: eight steps per λ/(2h) in the sine of
+    the elevation at the highest band, clamped to 0.05–0.5 degrees (0.5 for a flush row, about
+    900 elevations for 1.2 m at 10 kHz).
+  - **The bound multiplies the table's largest gain by the largest K node**, which bounds the
+    interpolant. No current CTest needs it: through a ground-model table, table plus K is the
+    plate's level, which the plate's own gain bound covers. A PE table, whose fringes need not
+    line up with bare ground's, can need it.
+  - **Flush microphones are not checked against the table's receiver heights**, since they read
+    its lowest row. Checking them refused every plate run whose table had no row at 0; the
+    warning above replaces that. **With `--refraction` the table takes the pairs it covers and
   the ray model the rest** (`table_level` first in `refracted_level`); that run evaluates every
   state, since its bounds were not built for both geometries.
+- **Turbulence and roughness are baked into the table, not applied on it.** A ground-model table
+  takes `--turbulence`, `--gamma_t` (HARMONOISE) and `--roughness` into the ground model it
+  tabulates, and records them (`record_coherence`: `turbulence_model`, `turbulence` or `gamma_t`,
+  `roughness_m`, at full precision); a turbulent PE table records `phase_screens` and its
+  `gamma_t` the same way. The run reads them back (`table_coherence`) and warns when its own
+  settings differ, since table pairs ignore them.
+  Applying the run's coherence on top of a table would need the direct and reflected fields
+  apart (a still PE table holds only their sum, a turbulent one has it already), which is a new
+  file format; building the table with the run's settings needs none, and a ground-model table
+  so built reproduces `--ground_effect` with them (`propagation_table_carries_turbulence`,
+  `propagation_table_carries_harmonoise`). A table that records nothing is still air, which every
+  table built before the record was unless it says `gamma_t` with no `turbulence_model`; that one
+  wrote it to six decimals, so it is compared at that precision, and "0.000000" counts as
+  turbulent. The check runs either
+  way round: a still run on a turbulent table is warned too, since its uncovered pairs and the
+  plate offset's bare ground are still (`a run's turbulence and roughness are held to its
+  table's, either way round`).
 - **Thread count is invisible.** `-j` (or `NICEOPS_THREADS`, which only the PE tools read) gives
   the same bits at any count, turbulent tables included, because each march's seeds are fixed
   before the work is dealt out (`pe_tools_thread_count_is_invisible`).
@@ -423,6 +455,6 @@ specification; `PropagationTable::load` refuses a file that does not match it.
 | `includes_absorption` | global, one integer | nonzero when the values already include atmospheric absorption |
 | `method` | global text | how it was built (`pe`, `ground_model`, or another writer's name) |
 | `bearing_convention` | global text | written for readers; not read |
-| `provenance_*` | global text | free-form build record, read back with the table |
+| `provenance_*` | global text | free-form build record, read back with the table; `provenance_turbulence_model`, `provenance_turbulence`, `provenance_gamma_t` and `provenance_roughness_m` are read as the table's turbulence and roughness (`table_coherence`) |
 
 Values are interpolated linearly in dB along each axis.

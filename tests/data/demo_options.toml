@@ -1,0 +1,3 @@
+# The demo case of regression_default, as a --config file.
+no-spectral = true
+no-ground_effect = true

@@ -1,5 +1,7 @@
 #include "plotting.hpp"
 
+#include "util/paths.hpp"
+
 #include <pybind11/embed.h>
 // Supplies the std::vector <-> Python conversions.  Without it every call
 // taking a vector -- which is most of them -- throws pybind11::cast_error at
@@ -112,6 +114,8 @@ void tight_layout()
 
 void savefig(const std::string& filename)
 {
+    // As every writer does: the directory, and the run manifest's record.
+    niceops::ensure_parent_directory(filename);
     pyplot().attr("savefig")(filename);
 }
 

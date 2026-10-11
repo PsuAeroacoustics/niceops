@@ -2,11 +2,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
 #include <limits>
 #include <stdexcept>
 
 #include <netcdf.h>
 
+#include "ground_effect.hpp"
 #include "util/logger.hpp"
 #include "util/netcdf.hpp"
 #include "util/paths.hpp"
@@ -378,6 +382,100 @@ std::vector<double> PropagationTable::max_power_ratio(const BandMap& bands) cons
         ratio[band] = std::max(1.0, std::pow(10.0, 0.1 * largest));
     }
     return ratio;
+}
+
+TableCoherence table_coherence(const std::map<std::string, std::string>& provenance)
+{
+    auto number = [&](const char* key) {
+        const auto found = provenance.find(key);
+        return found == provenance.end() ? 0.0 : std::strtod(found->second.c_str(), nullptr);
+    };
+    TableCoherence coherence;
+    coherence.roughness = number("roughness_m");
+    const auto model = provenance.find("turbulence_model");
+    if (model != provenance.end())
+    {
+        coherence.model = model->second;
+        coherence.value = number(model->second == "chessell" ? "turbulence" : "gamma_t");
+    }
+    else if (const auto gamma_t = provenance.find("gamma_t"); gamma_t != provenance.end())
+    {
+        // A turbulent PE table built before the record, which wrote gamma_t
+        // with std::to_string's six decimals: "0.000000" is turbulent too.
+        coherence.model = "phase_screens";
+        coherence.value = number("gamma_t");
+        coherence.rounded_gamma_t = gamma_t->second;
+        return coherence;
+    }
+    if (coherence.model != "none" && !(coherence.value > 0.0))
+        coherence = TableCoherence {"none", 0.0, coherence.roughness, {}};
+    return coherence;
+}
+
+std::string coherence_mismatch(const TableCoherence& run, const TableCoherence& table)
+{
+    auto same = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::max(std::abs(a), std::abs(b)); };
+    bool same_turbulence = run.model == table.model
+            || (run.model == "harmonoise" && table.model == "phase_screens");
+    if (same_turbulence && run.model != "none")
+    {
+        if (!table.rounded_gamma_t.empty())
+        {
+            char text[32];
+            std::snprintf(text, sizeof text, "%f", run.value);
+            same_turbulence = table.rounded_gamma_t == text;
+        }
+        else
+            same_turbulence = same(run.value, table.value);
+    }
+    const bool same_roughness = same(run.roughness, table.roughness);
+    if (same_turbulence && same_roughness)
+        return {};
+    auto describe = [](const TableCoherence& c) {
+        std::ostringstream text;
+        if (c.model == "none")
+            text << "still air";
+        else if (c.model == "chessell")
+            text << "Chessell turbulence " << c.value << " rad s/sqrt(m)";
+        else if (!c.rounded_gamma_t.empty())
+            text << "PE phase screens, gamma_t " << c.rounded_gamma_t << " m^-2/3 (recorded to six decimals)";
+        else
+            text << (c.model == "harmonoise" ? "HARMONOISE turbulence" : "PE phase screens") << ", gamma_t " << c.value
+                 << " m^-2/3";
+        text << ", roughness " << c.roughness << " m";
+        return text.str();
+    };
+    return "the table was built with " + describe(table) + ", and its pairs take that; the run's " + describe(run)
+            + " reaches only the pairs it does not cover and plate microphones' offset from bare ground";
+}
+
+TableCoherence ground_coherence(const GroundModel& ground)
+{
+    TableCoherence coherence;
+    if (ground.turbulence_model == TurbulenceModel::chessell && ground.turbulence > 0.0)
+        coherence = {"chessell", ground.turbulence, 0.0, {}};
+    else if (ground.turbulence_model == TurbulenceModel::harmonoise && ground.gamma_t > 0.0)
+        coherence = {"harmonoise", ground.gamma_t, 0.0, {}};
+    coherence.roughness = ground.roughness;
+    return coherence;
+}
+
+std::string exact_text(double value)
+{
+    char text[32];
+    std::snprintf(text, sizeof text, "%.17g", value);
+    return text;
+}
+
+void record_coherence(std::map<std::string, std::string>& provenance, const TableCoherence& coherence)
+{
+    if (coherence.model != "none")
+    {
+        provenance["turbulence_model"] = coherence.model;
+        provenance[coherence.model == "chessell" ? "turbulence" : "gamma_t"] = exact_text(coherence.value);
+    }
+    if (coherence.roughness > 0.0)
+        provenance["roughness_m"] = exact_text(coherence.roughness);
 }
 
 } // namespace niceops

@@ -11,40 +11,23 @@
 #include <vector>
 
 #include "util/logger.hpp"
+#include "util/netcdf_write.hpp"
 #include "util/paths.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
 
 namespace {
 
+constexpr const char* option = "--band_frames";
+
 void nc_check(int status, const std::string& what, const std::string& path)
 {
-    if (status != NC_NOERR)
-        input_error("--band_frames ", path, ": netCDF error while ", what, ": ", nc_strerror(status), ".");
+    netcdf::check_write(status, option, what, path);
 }
-
-// Closes on scope exit unless closed explicitly, which is the only close whose
-// status is looked at.
-struct NcFile
-{
-    int id = -1;
-    ~NcFile()
-    {
-        if (id >= 0)
-            nc_close(id);
-    }
-    int close()
-    {
-        const int status = id >= 0 ? nc_close(id) : NC_NOERR;
-        id = -1;
-        return status;
-    }
-};
 
 void put_text(int ncid, int var, const char* name, const std::string& value, const std::string& path)
 {
-    nc_check(nc_put_att_text(ncid, var, name, value.size(), value.c_str()),
-            std::string("writing attribute ") + name, path);
+    netcdf::put_text(ncid, var, name, value, option, path);
 }
 
 } // namespace
@@ -76,7 +59,7 @@ void write_band_frames(const std::string& path, const BandFramesFile& meta,
         first = 0;
 
     ensure_parent_directory(path);
-    NcFile file;
+    netcdf::File file;
     nc_check(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file.id), "creating it", path);
     const int ncid = file.id;
 

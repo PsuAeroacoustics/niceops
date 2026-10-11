@@ -119,6 +119,33 @@ facade in namespace `plt` (`figure`, `contourf`, `tricontourf`, `plot`, labels, 
 No CTest exercises plotting; CI covers it with a separate figure step
 ([testing.md](testing.md#the-plotting-gap)).
 
+## The run manifest and build information
+
+`--manifest` (`src/manifest.{hpp,cpp}`, `util/sha256.hpp`) records the build, the options, and
+the SHA-256 of every input and output. Things to keep:
+
+- **The git state is read at every build, not at configure.** The `niceops_build_info` target runs
+  `cmake/build_info.cmake`, which writes `build/generated/niceops_build_info.hpp` only when its
+  text changes, so an unchanged tree recompiles nothing and a commit after configuring is still
+  seen. A tree with no git records `unknown`. Only `src/build_info.cpp` includes the header.
+- **Outputs are found, not listed.** Every writer passes its file through
+  `ensure_parent_directory` (`util/paths.hpp`), which records it once a `RunManifest` exists.
+  A writer that skips it is missing from the manifest as well as unsafe in a fresh clone. The log
+  file goes through it too, and the manifest names it without hashing it: runs append to it.
+- **Warnings and errors are counted whatever `-L` says**: `Logger::write` formats and notes
+  anything at warn or above before the level test. Below warn, nothing changed.
+- **Options are recorded as given, not resolved.** CLI11's `config_to_str(true)` writes an empty
+  value for every default it did not capture, which reads as if the default were empty;
+  capturing them all would change every `--help` line. The version pins the defaults.
+- **Nothing is opened twice for it.** A database's root attributes come from the loader, which has
+  the file open (`Database::root_attributes`); a second `nc_open` cost about 0.55 s, since
+  netCDF-4 reads every group's metadata at open. Only a database that never loaded is opened at
+  write. The inputs are hashed in the background from the start of the run
+  (`RunManifest::start_hashing`), so a 67 MB database's 0.2 s overlaps the computation.
+- **`main()` writes the manifest**, after `run()` returns or throws, so the status it records is
+  the process's. A manifest path that is an input is refused before the run, before the request
+  is handed to `main()`, so a refused one leaves nothing to write.
+
 ## Licensing
 
 The project is MIT (`LICENSE`). `THIRD_PARTY_NOTICES.md` carries the verbatim notices for

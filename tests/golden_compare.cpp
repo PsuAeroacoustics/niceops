@@ -3,8 +3,12 @@
 // element with a relative tolerance.  Non-numeric header lines are skipped,
 // so files may differ in their text headers.
 //
-// Usage: golden_compare <candidate.csv> <golden.csv>
-// Exit code 0 if they agree within tolerance, 1 otherwise.
+// Usage: golden_compare <candidate.csv> <golden.csv> [absolute tolerance
+//            [offset [leading lines]]]
+// Exit code 0 if they agree within tolerance, 1 otherwise.  With an offset, the
+// candidate is compared less the offset, after its first `leading lines`
+// numeric lines (a grid file's x and y axes), which are compared as they are:
+// a level that should sit a known number of dB from another.
 
 #include <cmath>
 #include <cstdlib>
@@ -18,8 +22,12 @@
 namespace {
 
 // Parse a CSV of numbers, skipping blank and non-numeric lines (headers).
-std::vector<double> parse_csv(const std::string& filename)
+// `leading_values`, when given, receives how many values the first
+// `leading_lines` numeric lines held.
+std::vector<double> parse_csv(const std::string& filename, std::size_t leading_lines = 0,
+        std::size_t* leading_values = nullptr)
 {
+    std::size_t numeric_lines = 0;
     std::ifstream file(filename);
     if (!file)
     {
@@ -59,6 +67,8 @@ std::vector<double> parse_csv(const std::string& filename)
         {
             continue; // header or comment line
         }
+        if (++numeric_lines == leading_lines && leading_values != nullptr)
+            *leading_values = values.size();
     }
     return values;
 }
@@ -67,19 +77,23 @@ std::vector<double> parse_csv(const std::string& filename)
 
 int main(int argc, char** argv)
 {
-    if (argc != 3 && argc != 4)
+    if (argc < 3 || argc > 6)
     {
-        std::cerr << "Usage: " << argv[0] << " <candidate.csv> <golden.csv> [absolute tolerance]\n";
+        std::cerr << "Usage: " << argv[0]
+                  << " <candidate.csv> <golden.csv> [absolute tolerance [offset [leading lines]]]\n";
         return 1;
     }
     // An absolute tolerance, for comparing two runs that are meant to agree
     // to within an approximation rather than to the bit.
-    const double absolute = argc == 4 ? std::atof(argv[3]) : 0.0;
+    const double absolute = argc >= 4 ? std::atof(argv[3]) : 0.0;
+    const double offset = argc >= 5 ? std::atof(argv[4]) : 0.0;
+    const auto leading_lines = argc >= 6 ? static_cast<std::size_t>(std::atoi(argv[5])) : std::size_t {0};
+    std::size_t leading_values = 0;
 
     std::vector<double> candidate, golden;
     try
     {
-        candidate = parse_csv(argv[1]);
+        candidate = parse_csv(argv[1], leading_lines, &leading_values);
         golden = parse_csv(argv[2]);
     }
     catch (const std::exception& e)
@@ -106,7 +120,7 @@ int main(int argc, char** argv)
         // golden and every test built on this tool was blind to non-finite
         // output.  Two NaNs, or two equal infinities (a culled cell is -inf in
         // both runs), still agree.
-        const double c = candidate[i];
+        const double c = i < leading_values ? candidate[i] : candidate[i] - offset;
         const double g = golden[i];
         bool agree;
         if (std::isnan(c) || std::isnan(g))

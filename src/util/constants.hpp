@@ -16,6 +16,12 @@ inline constexpr double pi = 3.14159265358979323846;
 inline constexpr double deg_to_rad = pi / 180.0;
 inline constexpr double rad_to_deg = 180.0 / pi;
 
+// Standard gravity, m/s^2 (CGPM 1901, exact).
+inline constexpr double standard_gravity = 9.80665;
+
+// One knot in m/s: a nautical mile (1852 m, exact) per hour.
+inline constexpr double knot = 1852.0 / 3600.0;
+
 // Feet to meters, exactly.  The computation is metric throughout; feet exist
 // only at the edges, where files and the command line are read and written.
 inline constexpr double ft2m = 0.3048;
