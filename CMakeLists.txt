@@ -649,8 +649,9 @@ add_test(NAME propagation_table_is_the_ground_model COMMAND golden_compare integ
 set_tests_properties(propagation_table_is_the_ground_model PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
 # Plate microphones read the table at its lowest receiver height plus K, the plate over bare ground
 # there at the pair's elevation and azimuth.  Through the ground-model table that must be the plate
-# run (0.13 dB at worst on this grid; K taken at 2 degrees for every pair was 1.3 dB low on average
-# and 5.6 dB off at worst), and K enters the peak search's bound, so windowed equals marched.
+# run (0.13 dB at worst on this grid, through its 1.2 m row; K taken at 2 degrees for every pair
+# would have been 5.6 dB off), and K enters the peak search's bound, so windowed equals marched.
+# A table without a row at 0 is warned about.
 add_test(NAME propagation_table_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc --propagation_table tables/ground_model_test.nc --gridstep 492 -L warn -o integrated/propagation_table_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME propagation_table_plate_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc --propagation_table tables/ground_model_test.nc --gridstep 492 -L warn -D integrated/propagation_table_plate_dnl.csv -o integrated/propagation_table_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME propagation_table_plate_reference COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --flow_resistance 225 --ground_effect --exact_ground --plate_table plates/gr1425_db225.nc --gridstep 492 -L warn -o integrated/propagation_table_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -659,6 +660,8 @@ set_tests_properties(propagation_table_plate_reference PROPERTIES FIXTURES_SETUP
 add_test(NAME propagation_table_plate_windowed_is_exact COMMAND golden_compare integrated/propagation_table_plate.csv integrated/propagation_table_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME propagation_table_plate_is_the_plate_model COMMAND golden_compare integrated/propagation_table_plate.csv integrated/propagation_table_plate_reference.csv 0.15 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_plate_windowed_is_exact propagation_table_plate_is_the_plate_model PROPERTIES FIXTURES_REQUIRED propagation_table_plate_runs)
+add_test(NAME propagation_table_plate_warns_raised_row COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc --propagation_table tables/ground_model_test.nc --gridstep 4000 -L warn -o integrated/propagation_table_plate_warns.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_plate_warns_raised_row PROPERTIES FIXTURES_REQUIRED propagation_table_file PASS_REGULAR_EXPRESSION "at its lowest receiver height, 3\\.937.*Give the table a receiver height of 0")
 # --atmosphere through a single-level profile holding the vehicle file's own
 # atmosphere has to reproduce the homogeneous run: the whole layered-absorption
 # path (the table, the per-state and per-observer integrals, the per-path mean)

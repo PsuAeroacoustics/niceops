@@ -2176,16 +2176,24 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // receiver height, plus K, the plate over bare ground there, per
             // band, azimuth and elevation, on a 1 km sphere as ShadowTransition
             // places a plate.  K was once taken at 2 degrees for every pair, as
-            // if it barely depended on elevation: against the plate run it
-            // reproduces, that put the demo footprint 1.3 dB low on average and
-            // up to 5.6 dB off.  Over a receiver above the ground the bare
-            // term's interference fringes are lambda / (2 h) apart in the sine
-            // of the elevation, so the grid takes eight steps per fringe at the
-            // highest band, and K is interpolated linearly in elevation.
+            // if it barely depended on elevation: through a flush row that put
+            // the demo footprint up to 0.34 dB low against the plate run.  Over
+            // a receiver above the ground the bare term's interference fringes
+            // are lambda / (2 h) apart in the sine of the elevation, so the grid
+            // takes eight steps per fringe at the highest band (clamped), and K
+            // is interpolated linearly in elevation.  A raised row is still
+            // only an approximation of the plate, growing with the row's height
+            // and not from the grid, so it is warned about.
             if (plate)
             {
                 GroundModel bare = options.ground;
                 const double lowest = table.axes().receiver_heights.front();
+                if (lowest > 0.0)
+                    warn("Plate microphones read --propagation_table ", options.propagation_table_path,
+                            " at its lowest receiver height, ", lowest / options.unit.to_meters, " ",
+                            options.unit.name, ", plus the plate's offset over bare ground there, which "
+                            "approximates the plate less well the higher the row. Give the table a "
+                            "receiver height of 0 for plate microphones.");
                 bare.receiver_height = lowest;
                 const double shortest_wavelength = sound_speed / bands[last_band - 1];
                 const double fringe = lowest > 0.0 ? shortest_wavelength / (2.0 * lowest) : 1.0;

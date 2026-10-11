@@ -462,11 +462,19 @@ None moves the SEL: the exposure within 10 dB of each microphone's measured peak
   past 1 km) differ by up to 0.55 dB, because the absorbing layer follows each march's domain.
 - **Turbulent tables** agree between the two marches only in the ensemble mean, to sampling
   noise.
-- **Plate microphones through the ground-model table** reproduce the plate run under
-  `--ground_effect --exact_ground` (`gr1425_db225`, demo grid at 492 ft): with the table's lowest
-  row at 1.2 m, −0.003 dB mean and −0.13 to +0.11 dB at worst; with a flush row, −0.001 dB mean
-  and 0.012 dB at worst. With K taken at 2° for every pair, they were −1.3 dB mean (−5.6 to
-  +1.3 dB) and −0.014 dB mean (−0.34 to +0.08 dB).
+- **Plate microphones through the ground-model table** against the plate run under
+  `--ground_effect --exact_ground` (`gr1425_db225`, demo grid at 492 ft), by the table's lowest
+  receiver row:
+
+  | lowest row | mean | worst |
+  | --- | --- | --- |
+  | 0 (flush) | −0.001 dB | −0.012 dB |
+  | 1.2 m | −0.003 | −0.13 / +0.11 |
+  | 5 m | +0.008 | −0.46 / +0.60 |
+  | 30 m | −0.024 | −1.28 / +0.55 |
+
+  The raised rows' error does not shrink with a twelve times finer elevation grid for K. With K
+  taken at 2° for every pair, the flush row was −0.014 dB mean (−0.34 to +0.08 dB).
 
 A table checked with `--validation_csv` is compared with direct solves at cell midpoints. That
 comparison includes both interpolation error and differences in resolution and band quadrature;
