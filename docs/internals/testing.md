@@ -54,6 +54,7 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `stratified_calm_floor_plate_200hz.csv` | C++ build | `stratified_calm_floor_plate_200hz_golden` (1e-4 dB abs.) | `stratified_calm_floor_plate_200hz` | copy the run's output |
 | `terrain_hills_point.csv` | C++ build | `terrain_hills_point_golden` (1e-6 dB abs.) | `terrain_hills_point` | copy the run's output |
 | `terrain_hills_plate.csv` | C++ build | `terrain_hills_plate_golden` (1e-6 dB abs.) | `terrain_hills_plate` | copy the run's output |
+| `terrain_steep_table_plate.csv` | C++ build | `terrain_steep_table_plate_golden` (1e-5 dB abs.) | `terrain_steep_table_plate` | copy the run's output |
 
 All files are in `golden/`; each producing run writes `integrated/<name>.csv` unless the table
 says otherwise. To regenerate a C++ golden, run its comparison with the build that carries the
@@ -102,6 +103,12 @@ Notes on each:
   pinned for the same reason: passing the plate's receiver as a point receiver at its call site
   (the plate then measures the source from the line, not from its microphone) moved cells by
   0.01 dB with every other terrain test green.
+- **`terrain_steep_table_plate.csv`** pins six plate microphones under the approach on the
+  5.7 degree plane, read through the ground-model table. A plate whose source's foot lies behind
+  it on the path's mean line (d' < 0) takes K at the turned separation's azimuth; taking it from
+  the true separation passed every other test, because such pairs are nearly overhead and too few
+  to move the grids, and moves these plates by 2e-4 to 7e-4 dB. The tolerance is looser than the
+  other terrain goldens' because the table is built by the test run.
 
 ## `self_test`
 
@@ -149,6 +156,8 @@ CTests are defined in `CMakeLists.txt`.
 | `epnl_frames_follow_reception_time` | CTest | states filed at t − r/c, or at their emission time: the energy check is blind to *when* |
 | `terrain_hills_point_golden`, `terrain_hills_plate_golden` | CTest | the plate's receiver passed as a point receiver at its call site |
 | `terrain_hills_table_point_is_the_ground_model`, `terrain_hills_table_plate_is_the_plate_model` | CTest | a table read over terrain taking the source's height above z = 0 for its height above the pair's mean plane: the flat-table and windowed tests compare a run with itself or with level ground, and passed with it |
+| `terrain_steep_table_plate_golden` | CTest | a table-read plate taking K's azimuth from the true separation rather than the turned one (`TableRead::plate_separation`) |
+| `terrain_hills_table_misses_are_free_field` | CTest | every pair over the plane counted toward the raised-height warning, including pairs the table misses that fall back to free field with no ground model; `terrain_hills_table_warns_unscreened` only shows that the pairs the table reads are counted |
 | `database_cache_loads_each_once`, `database_spellings_run`, `database_spellings_load_once` | CTest | a one-entry database cache (the front database reloaded in `-d A -d B -d A -d B`); a database erased before its last trajectory; databases compared by the path as typed. Output cannot see any of them, so the check reads the run's own log for a second "Opening netCDF file". The front database erased after its last trajectory, which leaves the provenance a dangling reference, trips an assert after the loop instead, so this and every other run aborts with asserts on |
 | `operations_count_three_equals_repeated_t` | CTest | the day-metric weight folded into the exponent (`pow(10, 0.1 L + lg w)`), which a count of 1 and the 1e-9 count-10 checks both pass; NAx adding 1 rather than the weight; the weight dropped from one coverage energy |
 | `operations_count_three_provenance` | CTest | the weight dropped from the provenance's per-state energy |

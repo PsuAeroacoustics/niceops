@@ -1550,6 +1550,11 @@ set_tests_properties(terrain_table_warns_receiver_rows PROPERTIES FIXTURES_REQUI
 # model at all: the table alone takes them onto the plane.
 add_test(NAME terrain_hills_table_warns_unscreened COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --no-ground_effect --propagation_table tables/ground_model_terrain_test.nc --receiver_height 3.93701 --gridstep 4000 -o integrated/terrain_hills_table_warns.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_hills_table_warns_unscreened PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" PASS_REGULAR_EXPRESSION "observers, paths had a source or receiver below their mean ground plane")
+# ... and only those: a pair the table misses, with no ground model to fall back on, is free field
+# and never used the plane.  Every point receiver here misses the one-row table, and counting
+# those pairs as well raised the same warning at 3 of 9 observers.
+add_test(NAME terrain_hills_table_misses_are_free_field COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --no-ground_effect --propagation_table tables/ground_model_test.nc --gridstep 4000 -o integrated/terrain_hills_table_misses.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_misses_are_free_field PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "point-receiver evaluations put the microphone .* and took free-field propagation" FAIL_REGULAR_EXPRESSION "below their mean ground plane")
 add_test(NAME terrain_table_refuses_refraction COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 ${TERRAIN_FLAT} --atmosphere atmospheres/B407_uniform.csv --refraction linear --propagation_table tables/ground_model_test.nc -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_table_refuses_refraction PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "does not combine with --refraction")
 # A table that refracts is read over terrain as if its stratification followed each path's mean
@@ -1586,3 +1591,11 @@ add_test(NAME terrain_hills_table_point_is_the_ground_model COMMAND golden_compa
 set_tests_properties(terrain_hills_table_point_is_the_ground_model PROPERTIES FIXTURES_REQUIRED terrain_hills_low_runs)
 add_test(NAME terrain_hills_table_plate_is_the_plate_model COMMAND golden_compare integrated/terrain_hills_table_plate.csv integrated/terrain_hills_plate.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_hills_table_plate_is_the_plate_model PROPERTIES FIXTURES_REQUIRED "terrain_hills_table_runs;terrain_hills_runs")
+# A plate whose source's foot lies behind it on its path's mean line (d' < 0, nearly overhead on
+# ground falling toward the source) takes K at the turned separation's azimuth.  Those pairs are
+# too few in the grids above to move them: K from the true separation's azimuth passed every other
+# test, and moves these plates, under the approach on the 5.7 degree plane, by 2e-4 to 7e-4 dB.
+add_test(NAME terrain_steep_table_plate COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_steep.nc --ground_elevation 54.2651 ${TERRAIN_TABLE_PLATE} -b tests/data/steep_under_track.csv --observers_on_terrain -o integrated/terrain_steep_table_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_steep_table_plate PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" FIXTURES_SETUP terrain_steep_table_plate_run)
+add_test(NAME terrain_steep_table_plate_golden COMMAND golden_compare integrated/terrain_steep_table_plate.csv golden/terrain_steep_table_plate.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_steep_table_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_steep_table_plate_run)
