@@ -13,7 +13,8 @@ conversion happens once, in `run()`, where the command line is parsed, and nothi
 that seam sees anything else. The seam converts exactly these options, each only when given:
 `--grid`, `--gridstep`, `--trim`, `--ground_elevation`, `--receiver_height`, `--path_smoothing`,
 `--roughness`, `--layer_depth`, `--roughness_length`, `--surface_layer_depth`,
-`--terrain_offset` and `--terrain_step`, and an operations file's `offset` column. The anemometer
+`--terrain_offset` and `--terrain_step`, an operations file's `offset` column, and a ground
+classes file's `layer_depth` and `roughness` columns (`ground_classes_from`). The anemometer
 height in `--wind` is a length in `--units` too. Speeds are not lengths: `--wind`'s speed names its unit (`12kt`, `6.2mps`,
 `14mph`), as an `--atmosphere` file's wind columns must, and a bare number is refused rather than
 read in `--units`. A new length option joins the list above, or `--units m` silently reads it as
@@ -62,7 +63,9 @@ with exit status 0. Know these before adding a reader, and follow the same rules
   `--start_utc`, rather than defaulting to UTC midnight and so to the night penalty.
 - **CSV layout.** A text line *after* the first row of data is an error (`CsvReport`; text above
   it is a header). Observer files keep one width, and an observer file that yields no observers
-  is an error. `--atmosphere` rejects non-finite cells. `--trim` past the crop is diagnosed.
+  is an error. A sixth observer column is the microphone's ground class, which must be a whole
+  number from 0 to 2^31 − 1 and is checked against `--ground_classes` in `run()`; it needs the
+  height column, so no width is ambiguous. `--atmosphere` rejects non-finite cells. `--trim` past the crop is diagnosed.
 - **Padding.** `read_numeric_csv` accepts fields padded on either side of the comma.
   `arrays/coyle_approach.csv`, the only scattered-observer set in the repository, pads *before*
   the comma, and all 84 shipped AC tracks pad on the left, which `std::stod` always skips. Keep
@@ -140,6 +143,32 @@ the manifest and every check that reads those lists. Things to keep:
 - **Lateral offsets stay in `--units` until the seam**, which scales `OperationRun::offsets`
   with the other lengths; the job hands each to `GeodeticInput::lateral_offset`. What the reader
   does with it is in [trajectory.md](trajectory.md#lateral-subtracks).
+
+### The ground classes file
+
+`--ground_classes` is read by `read_ground_classes` (`src/ground_classes.cpp`), which follows the
+operations file's rules: it is pure, every refusal names the line, rows are never dropped, a
+quote is refused, and columns are matched by `LabeledCsv::normalize` with an unknown one
+refused and the known ones listed. It has its own reader for the same reason: its rows hold
+impedance model names. Beyond those rules:
+
+- **Ids are labels, not row indexes**: whole numbers from 0 to 2^31 − 1 written as digits only
+  (`1.0`, `-1` and `1e3` are refused), unique, in any order. A land-cover raster's codes can
+  then be a later file's ids.
+- **What a row leaves out is the command line's.** `ground_classes_from` starts every class from
+  the run's `GroundModel` after the seam, so a row of only an id is that model field for field,
+  and receiver height, turbulence and the boundary-loss switch always come from it. A turbulence
+  column is refused with the reason: turbulence is the air's.
+- **Units.** `layer_depth` and `roughness` are lengths in `--units`, converted by
+  `ground_classes_from` with the same single multiply the seam uses, and a header unit on them
+  is checked against `--units`. The flow resistance may declare kPa and the porosity rate 1/m
+  (a material rate whatever `--units` says, as on the command line); any other label is refused.
+- **Values** carry the limits the models need: a positive flow resistance and layer depth, a
+  non-negative porosity rate and roughness. A non-passive admittance can only be found once the
+  database's bands are known, in `process_trajectory`.
+- **The observer file and the classes name each other** (`run()`): a sixth column without
+  `--ground_classes`, `--ground_classes` without one (or with grid observers), and a microphone
+  on an id the file does not define are each refused with the row named.
 
 ### Tests
 

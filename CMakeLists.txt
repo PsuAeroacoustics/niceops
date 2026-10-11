@@ -185,6 +185,7 @@ add_library(niceops_core STATIC
   src/band_frames.cpp
   src/faddeeva.cpp
   src/ground_effect.cpp
+  src/ground_classes.cpp
   src/plate_receiver.cpp
   src/geodetic.cpp
   src/terrain.cpp
@@ -292,6 +293,7 @@ add_executable(niceops_unit_tests
   tests/test_trajectory.cpp
   tests/test_csv.cpp
   tests/test_operations.cpp
+  tests/test_ground_classes.cpp
   tests/test_legacy_repair.cpp
   tests/test_smoothing_spline.cpp
 )
@@ -1211,6 +1213,20 @@ add_test(NAME mixed_receivers_are_their_subsets COMMAND golden_compare integrate
 set_tests_properties(mixed_receivers_are_their_subsets PROPERTIES FIXTURES_REQUIRED "mixed_runs;mixed_expected_file")
 add_test(NAME mixed_receivers_windowed_is_exact COMMAND golden_compare integrated/mixed_receivers.csv integrated/mixed_receivers_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(mixed_receivers_windowed_is_exact PROPERTIES FIXTURES_REQUIRED mixed_runs)
+# --ground_classes (src/ground_classes.hpp) and the observer file's sixth column
+# (id,x,y,z,height,ground) name each other; the reader's own refusals are unit
+# tests ([ground_classes]).
+set(GROUND_CLASS_DEMO -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --impedance_model variable_porosity --flow_resistance 200 -L warn)
+add_test(NAME ground_classes_column_needs_file COMMAND niceops ${GROUND_CLASS_DEMO} -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_column_needs_file PROPERTIES PASS_REGULAR_EXPRESSION "gives each microphone a ground class .* and there is no --ground_classes")
+add_test(NAME ground_classes_refuses_grid COMMAND niceops ${GROUND_CLASS_DEMO} --ground_classes tests/data/ground_classes_two.csv --gridstep 4000 -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuses_grid PROPERTIES PASS_REGULAR_EXPRESSION "grid observers have none")
+add_test(NAME ground_classes_need_column COMMAND niceops ${GROUND_CLASS_DEMO} --ground_classes tests/data/ground_classes_two.csv -b tests/data/mixed_receivers.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_need_column PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes needs the observer file to name each microphone's class in a sixth column")
+add_test(NAME ground_classes_refuse_undefined_class COMMAND niceops ${GROUND_CLASS_DEMO} --ground_classes tests/data/ground_classes_one.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_undefined_class PROPERTIES PASS_REGULAR_EXPRESSION "data row 1 stands on ground class 0, which --ground_classes tests/data/ground_classes_one.csv does not define \\(it defines 7\\)")
+add_test(NAME ground_classes_refuse_fractional_class COMMAND niceops ${GROUND_CLASS_DEMO} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_bad_id.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_fractional_class PROPERTIES PASS_REGULAR_EXPRESSION "data row 2 gives the ground class 2.5; a class is an integer")
 # --band_history over flush plate microphones.  Writing the bands forces a
 # march, and must leave the footprint equal to the peak search's; a refracted
 # path through uniform air must record the straight one's geometry and bands.

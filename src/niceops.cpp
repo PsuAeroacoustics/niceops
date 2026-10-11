@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -41,6 +42,7 @@
 #include "pnl.hpp"
 #include "refraction.hpp"
 #include "stratified.hpp"
+#include "ground_classes.hpp"
 #include "ground_effect.hpp"
 #include "manifest.hpp"
 #include "operations.hpp"
@@ -499,7 +501,7 @@ double windowed_sound_exposure_level(const Database& database,
 }
 
 void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers,
-        std::vector<double>& microphone_heights, LengthUnit unit)
+        std::vector<double>& microphone_heights, std::vector<std::int64_t>& ground_class_ids, LengthUnit unit)
 {
     trace("Reading observers from ", observer_file, ".");
     // D reads this with csvReader!(double)(contents, null), which consumes the
@@ -514,7 +516,8 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
                 " is not a row of numbers", report.dropped > 1
                         ? " (and " + std::to_string(report.dropped - 1) + " more are not)"
                         : std::string(),
-                ". After the header every line must be x,y,z, id,x,y,z or id,x,y,z,height.");
+                ". After the header every line must be x,y,z, id,x,y,z, id,x,y,z,height or "
+                "id,x,y,z,height,ground.");
     }
     // One shape for the whole file: a 3-field row is x,y,z and a 4-field one is
     // id,x,y,z, and the width was decided row by row, so a row cut short became
@@ -556,9 +559,30 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
             }
             microphone_heights.push_back(data[4] * unit.to_meters);
         }
+        else if (data.size() == 6)
+        {
+            // id, x, y, z, height, and the ground class the microphone stands
+            // on: an id in --ground_classes, an integer from 0 to 2^31 - 1.
+            observers.push_back(Vec3(data[1] * unit.to_meters, data[2] * unit.to_meters,
+                    data[3] * unit.to_meters));
+            if (!(data[4] >= 0.0))
+            {
+                input_error("Observer file ", observer_file, " gives a microphone height of ",
+                        data[4], " ", unit.name, "; it must not be negative.");
+            }
+            microphone_heights.push_back(data[4] * unit.to_meters);
+            if (!(data[5] >= 0.0 && data[5] <= 2147483647.0 && data[5] == std::floor(data[5])))
+            {
+                input_error("Observer file ", observer_file, " data row ", observers.size(),
+                        " gives the ground class ", data[5], "; a class is an integer from 0 to 2147483647, "
+                        "an id in --ground_classes.");
+            }
+            ground_class_ids.push_back(static_cast<std::int64_t>(data[5]));
+        }
         else
         {
-            input_error("Observer file format unreadable.");
+            input_error("Observer file format unreadable: ", data.size(), " fields where x,y,z, id,x,y,z, "
+                    "id,x,y,z,height or id,x,y,z,height,ground was expected.");
         }
     }
     if (!microphone_heights.empty() && microphone_heights.size() != observers.size())
@@ -574,7 +598,7 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
         // numbers, so a one-line file lands here too.
         input_error("Observer file ", observer_file, " yielded no observers. The first record "
                 "is taken as a header and discarded; every row after it must be x,y,z, "
-                "id,x,y,z or id,x,y,z,height in ", unit.name, ".");
+                "id,x,y,z, id,x,y,z,height or id,x,y,z,height,ground in ", unit.name, ".");
     }
 }
 
@@ -589,12 +613,15 @@ struct ObserverSet
     // observer file gives one (id,x,y,z,height); empty otherwise, and every
     // observer takes the run's receiver (Receivers in process_trajectory).
     std::vector<double> microphone_heights;
+    // Each observer's ground class id, when the observer file gives one
+    // (id,x,y,z,height,ground); empty otherwise.
+    std::vector<std::int64_t> ground_class_ids;
 };
 
 ObserverSet scattered_observers(const std::string& observer_file, LengthUnit unit)
 {
     ObserverSet set;
-    read_observer_file(observer_file, set.observers, set.microphone_heights, unit);
+    read_observer_file(observer_file, set.observers, set.microphone_heights, set.ground_class_ids, unit);
     set.x.reserve(set.observers.size());
     set.y.reserve(set.observers.size());
     for (const auto& observer : set.observers)
@@ -4096,6 +4123,7 @@ int run(int argc, char* argv[])
     std::string turbulence_model = "chessell";
     double gamma_t = 0.0;
     double roughness = 0.0;          // m
+    std::string ground_classes_file;
     std::string plate_table;
     std::string propagation_table;
     std::string terrain_file;
@@ -4529,6 +4557,12 @@ int run(int argc, char* argv[])
     auto* roughness_option = app.add_option("--roughness", roughness,
             "RMS roughness height of the ground, in --units: the coherent reflection falls by "
             "exp(-2 (k sigma cos theta)^2). Default 0.");
+    app.add_option("--ground_classes", ground_classes_file,
+            "A CSV of ground surfaces keyed by an integer class id (class, and any of name, "
+            "impedance_model, flow_resistance, porosity_rate, layer_depth, roughness; a missing "
+            "column or empty cell takes the command line's value), which an observer file's sixth "
+            "column (id,x,y,z,height,ground) picks per microphone. Each microphone is evaluated as "
+            "if the whole ground were its class. Turbulence stays run-wide.");
     app.add_flag("--exact_ground", exact_ground,
             "Evaluate the --ground_effect model (or --plate_table's reflection coefficients) at "
             "every observer and state instead of interpolating tables of it built per "
@@ -4645,6 +4679,7 @@ int run(int argc, char* argv[])
         for (const auto& f : atmosphere_files)
             request.manifest.add_input("atmosphere", f);
         request.manifest.add_input("terrain", terrain_file);
+        request.manifest.add_input("ground_classes", ground_classes_file);
         request.manifest.add_input("plate_table", plate_table);
         request.manifest.add_input("propagation_table", propagation_table);
         request.manifest.refuse_overwriting_an_input(manifest_file);
@@ -5086,6 +5121,39 @@ int run(int argc, char* argv[])
     auto& observers = observer_set.observers;
     auto& x_obs = observer_set.x;
     auto& y_obs = observer_set.y;
+    // --ground_classes and the observer file's sixth column name each other:
+    // one without the other is refused, as is a class the file does not define.
+    std::optional<GroundClassFile> ground_class_file;
+    if (ground_classes_file.empty())
+    {
+        if (!observer_set.ground_class_ids.empty())
+            input_error("Observer file ", observer_file, " gives each microphone a ground class (its sixth column, "
+                    "id,x,y,z,height,ground), and there is no --ground_classes to say what the classes are.");
+    }
+    else
+    {
+        if (!scattered)
+            input_error("--ground_classes picks each microphone's ground through an observer file's sixth "
+                    "column (-b, id,x,y,z,height,ground); grid observers have none. A grid over one ground "
+                    "takes it from --flow_resistance and --impedance_model.");
+        if (observer_set.ground_class_ids.empty())
+            input_error("--ground_classes needs the observer file to name each microphone's class in a sixth "
+                    "column (id,x,y,z,height,ground); ", observer_file, " has none.");
+        ground_class_file = read_ground_classes(ground_classes_file);
+        std::string defined;
+        for (const auto& row : ground_class_file->rows)
+            defined += (defined.empty() ? "" : ", ") + std::to_string(row.id);
+        for (std::size_t i = 0; i < observer_set.ground_class_ids.size(); i++)
+        {
+            const std::int64_t id = observer_set.ground_class_ids[i];
+            const bool known = std::any_of(ground_class_file->rows.begin(), ground_class_file->rows.end(),
+                    [id](const GroundClassRow& row) { return row.id == id; });
+            if (!known)
+                input_error("Observer file ", observer_file, " data row ", i + 1, " stands on ground class ", id,
+                        ", which --ground_classes ", ground_classes_file, " does not define (it defines ", defined,
+                        ").");
+        }
+    }
     std::vector<double> integrated_levels(observers.size());
     // DNL, Lden and CNEL are properties of the whole set of operations, not of
     // one flight: each trajectory's penalized exposure is an energy, and they sum.
@@ -5404,6 +5472,15 @@ int run(int argc, char* argv[])
     options.ground.turbulence_model = parse_turbulence_model(turbulence_model);
     options.ground.gamma_t = gamma_t;
     options.ground.roughness = roughness;
+    if (ground_class_file)
+    {
+        // The file's lengths are in --units, as the command line's are, and
+        // what it leaves out is the command line's ground.
+        const std::vector<GroundClass> classes = ground_classes_from(*ground_class_file, options.ground, unit);
+        (void)classes;
+        input_error("--ground_classes ", ground_classes_file, " is read and checked, but evaluating each "
+                "microphone over its own ground class is not built yet.");
+    }
     options.exact_ground = exact_ground;
     options.terrain = terrain;
     options.terrain_path = terrain_file;
