@@ -85,6 +85,49 @@ sample times (a uniform file at or below `-s` is used as sampled), and only spar
 spaced input is refitted onto the `-s` grid. `-s` has no other effect: it does not touch an AC
 track.
 
+## Lateral subtracks
+
+An operations file's `offset` reaches the reader as `GeodeticInput::lateral_offset` (meters, +
+left of travel; converted at the `--units` seam). The equations are in
+[THEORY §3](../THEORY.md#3-trajectories). Things to keep:
+
+- **A WGS84 track is displaced on its raw samples, before `fit_path`** (`offset_raw_samples`). A
+  preliminary fit at the same `--path_smoothing` gives each sample's direction and curvature, the
+  samples move by d along the left normal, and the real fit then smooths and differentiates the
+  subtrack. So the speed, load factor and C_T are the subtrack's: a 200 m offset inside a 1000 m
+  turn flies at 0.8 of the speed with the load factor of an 800 m turn ("an offset turn has radius
+  R - d, and the load factor of that radius").
+- **Rejected: offsetting the fitted states.** Moving each resampled state by d n̂ after the fit is
+  simpler, but keeps the centerline's velocity and load factor on a path of another radius, so a
+  subtrack inside a turn would keep the centerline's bank and thrust and be heard as louder than
+  it flies. It would also need its own resampling decision, which the raw-sample placement
+  inherits unchanged.
+- **Given velocity columns orient the shift, then are dropped** (`use_given_velocity =
+  velocity_given && d == 0`). They are the centerline's speed; interpolating them on a displaced
+  path would be the rejected design again. The log says so. `a geodetic track's velocity
+  columns orient the offset and are then dropped` gives columns that disagree with the path, so
+  using them fails it.
+- **Slow samples hold their direction** (`lateral_normals`). Below `heading_nose_speed` (3 kt) a
+  velocity's direction is drift, so the normal is held from the nearest faster sample (the
+  earlier on a tie), and the curvature there is not tested. A track never faster than 3 kt is
+  refused. An instant stop is not a fair test of this: the exact interpolant rings past the stop
+  at more than 3 kt backward, which flips the normal, so the test brakes at 2 m/s².
+- **The fold criterion is 1 − dκ ≤ 0.1**, the subtrack's speed ratio, refused naming t and the
+  turn's radius in `--units`. It is a criterion on the path, not on the noise: an offset toward the
+  outside of a turn is always accepted.
+- **An AC track is translated rigidly**, after `correct_vertical_speed_sign` (so the curvature
+  test sees the corrected state; the sign does not enter it), with κ from the recorded velocity
+  and acceleration (`n * LF * g`, as `derive_flight_parameters` left them). Its velocities and
+  accelerations are measurements and are kept, so this is exact on a straight leg only.
+  `recorded` stays unshifted: it is what `--terrain` checks the frame and `--ground_elevation`
+  against, and the file's lat/lon are the centerline's.
+- **A static hold refuses an offset**: it has no direction of travel.
+- **Every branch is guarded by `d != 0`**, so a zero offset (and −0.0) leaves every state bit for
+  bit; `operations_offset_zero_is_bit_identical` and its geodetic twin pin it end to end, and `an
+  offset of zero leaves every state bit for bit` per state.
+- **An offset adds no gain**, so the windowed peak search needs nothing new;
+  `operations_windowed_is_exact_with_offset` pins that.
+
 ## `niceops_procedure`
 
 `src/procedure.{hpp,cpp}`, `tools/procedure.cpp`. Things to keep:

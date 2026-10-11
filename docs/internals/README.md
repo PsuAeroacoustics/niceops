@@ -47,7 +47,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `tools/` | [pe.md](pe.md) |
 | Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `plate_receiver`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
 | EPNL, reception-time band frames, LAmax/NAx/TA, DNL/Lden/CNEL, C-SEL | `pnl`, `band_frames`, `util/time_weighting.hpp` | [metrics.md](metrics.md) |
-| AC and geodetic tracks, smoothing spline, hover nose, `--nose`, `--speed_reference`, `niceops_procedure` | `trajectory`, `geodetic`, `smoothing_spline`, `util/csv.hpp`, `procedure`, `state_condition`, `tools/procedure.cpp` | [trajectory.md](trajectory.md) |
+| AC and geodetic tracks, smoothing spline, hover nose, lateral subtracks, `--nose`, `--speed_reference`, `niceops_procedure` | `trajectory`, `geodetic`, `smoothing_spline`, `util/csv.hpp`, `procedure`, `state_condition`, `tools/procedure.cpp` | [trajectory.md](trajectory.md) |
 | `--units`, input checking, the operations file (`--operations`) | `run()` in `niceops.cpp`, the readers, `operations` | [inputs.md](inputs.md) |
 | Goldens, `self_test`, mutation-guarded tests | `golden/`, `tests/` | [testing.md](testing.md) |
 | Replacements for D and its libraries, port quirks kept on purpose | `util/iota.hpp`, `util/rootfind.hpp`, `util/logger.hpp`, `vec3.hpp` | [porting.md](porting.md) |

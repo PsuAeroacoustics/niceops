@@ -151,6 +151,7 @@ CTests are defined in `CMakeLists.txt`.
 | `database_cache_loads_each_once`, `database_spellings_run`, `database_spellings_load_once` | CTest | a one-entry database cache (the front database reloaded in `-d A -d B -d A -d B`); a database erased before its last trajectory; databases compared by the path as typed. Output cannot see any of them, so the check reads the run's own log for a second "Opening netCDF file". The front database erased after its last trajectory, which leaves the provenance a dangling reference, trips an assert after the loop instead, so this and every other run aborts with asserts on |
 | `operations_count_three_equals_repeated_t` | CTest | the day-metric weight folded into the exponent (`pow(10, 0.1 L + lg w)`), which a count of 1 and the 1e-9 count-10 checks both pass; NAx adding 1 rather than the weight; the weight dropped from one coverage energy |
 | `operations_count_three_provenance` | CTest | the weight dropped from the provenance's per-state energy |
+| `operations_offset_mirror_left`, `operations_offset_mirror_right` | CTest; the hidden Catch case `[.offset_tracks]` in `test_trajectory.cpp` writes the tracks | the offset left unconverted at the `--units` seam (500 ft read as 500 m), or not handed to the job; the normal's sign. The `[lateral_offset]` cases build `Trajectory` directly and cannot see the seam |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.
@@ -236,11 +237,24 @@ covers the clock on AC and WGS84 tracks. The CTests `operations_*` run the fixtu
   `operations_period_dnl_counts_evening_as_day`, `operations_period_cnel_recombines`), the log
   says the track's clock is not read, and a track with no clock runs under `-D`
   (`operations_period_clockless_runs`);
+- an offset of 0 is `regression_default`'s output byte for byte, and a WGS84 track's `-t` run
+  byte for byte (`operations_offset_zero_is_bit_identical`,
+  `operations_offset_zero_geodetic_is_bit_identical`); a straight eastbound track offset 500 ft
+  left or right is the same track written 500 ft north or south, at 1e-9, on a grid asymmetric in
+  y (`operations_offset_mirror_*`); a subtrack through the spectral peak search is its marched run
+  (`operations_windowed_is_exact_with_offset`) and differs from the centerline;
 - the manifest records the operations file;
 - each refusal that needs a run (`-t` with the file, two `-d`, a row without a database, a missing
   track, shared names, a bare wind speed, an empty air cell, a mismatched offset unit, `count`
-  or `local_time` beside period counts, `--laeq_file` with period counts, offsets not yet run,
-  provenance over two databases, a clockless row under `-D`), by its message.
+  or `local_time` beside period counts, `--laeq_file` with period counts, an offset on a static
+  hold, an offset that folds the path, an offset on a track never faster than 3 kt, provenance
+  over two databases, a clockless row under `-D`), by its message.
+
+The reader's side of the offset is in the `[lateral_offset]` cases (`test_trajectory.cpp`): a
+straight track moves by exactly d with v and n unchanged, a turn has radius R − d and that
+radius's load factor, zero is bit for bit, slow samples hold their direction, given velocities
+are dropped, an AC track keeps `recorded` and its kinematics, and the fold, hover and static
+refusals.
 
 ### C-weighted SEL
 

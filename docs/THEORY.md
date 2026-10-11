@@ -286,6 +286,31 @@ The same rotation, without the translation, turns velocities and compass bearing
 directions, headings) into the local frame. Without `--frame_bearing` the axes are east and
 north ($b = 90°$).
 
+**Lateral subtracks.** An operations file's `offset` $d$ (positive to the left) moves a track
+square to its horizontal direction of travel, as dispersed subtracks do in airport noise models
+[57, 58]. With $\mathbf v = (v_x, v_y)$ the horizontal velocity and $\mathbf a = (a_x, a_y)$
+the horizontal acceleration, the left normal and the signed curvature (positive turning left)
+are
+
+$$
+\hat{\mathbf n} = \frac{(-v_y,\ v_x)}{|\mathbf v|}, \qquad
+\kappa = \frac{v_x a_y - v_y a_x}{|\mathbf v|^3},
+$$
+
+and the displaced path $\mathbf r + d\,\hat{\mathbf n}$ moves at $(1 - d\kappa)$ times the
+original's speed, on a radius $1/\kappa - d$. An offset with $1 - d\kappa \le 0.1$ at any
+point, 90% of the radius or more toward the inside of a turn, is refused. Where
+$|\mathbf v|$ is below 3 kt, $\hat{\mathbf n}$ is taken from the nearest point that is faster.
+
+- **WGS84 tracks.** $\mathbf v$ and $\mathbf a$ come from a preliminary fit of the raw samples
+  at the same $\sigma$, or $\mathbf v$ from the file's velocity columns when it has them; each
+  raw sample is moved by $d\,\hat{\mathbf n}$, and the displaced samples are fitted as above.
+  The velocity and load factor are the displaced path's, and the file's velocities are not
+  used for them.
+- **AC tracks.** Each state is moved by $d\,\hat{\mathbf n}$ from its own recorded velocity,
+  and keeps its recorded velocity and acceleration: exact on a straight leg, while in a turn
+  the speed and load factor stay the centerline's.
+
 ## 4. Spreading and atmospheric absorption
 
 ### 4.1 The broadband path
@@ -1296,3 +1321,5 @@ than for SEL.
 54. "Noise Standards: Definitions," California Code of Regulations, Title 21, Sec. 5001.
 55. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
 56. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
+57. "Report on Standard Method of Computing Noise Contours around Civil Airports, Volume 2: Technical Guide," ECAC.CEAC Doc 29, 4th ed., European Civil Aviation Conference, Neuilly-sur-Seine, France, December 2016.
+58. "Procedure for the Calculation of Airplane Noise in the Vicinity of Airports," SAE AIR1845A, SAE International, Warrendale, PA, 2012.

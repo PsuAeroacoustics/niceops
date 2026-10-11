@@ -4449,10 +4449,6 @@ int run(int argc, char* argv[])
             input_error("--laeq_file is the level over a clock window, and ", operations_file, " gives day, evening "
                     "and night counts, which carry no clock. Give count and local_time instead, or leave out "
                     "--laeq_file.");
-        // Read, but not run yet: lateral offsets are refused here, and only here.
-        for (std::size_t i = 0; i < operations->offsets.size(); i++)
-            if (operations->offsets[i] != 0.0)
-                input_error(operations->labels[i], ": lateral offsets are not supported yet.");
     }
 
     if (!manifest_file.empty())
@@ -4907,6 +4903,12 @@ int run(int argc, char* argv[])
     to_meters(surface_layer_option, surface_layer_depth);
     to_meters(terrain_offset_option, terrain_offset);
     to_meters(terrain_step_option, terrain_step);
+    // An operations file's offsets are lengths the user wrote, in --units.
+    if (operations)
+    {
+        for (double& offset : operations->offsets)
+            offset *= unit.to_meters;
+    }
 
     ObserverSet observer_set = scattered
             ? scattered_observers(observer_file, unit)
@@ -5447,6 +5449,7 @@ int run(int argc, char* argv[])
                 job.period_counts = operations->periods[path_index];
                 job.operations = true;
                 path_options.geodetic.clock_replaces_track = operations->clock_replaces_track[path_index] != 0;
+                path_options.geodetic.lateral_offset = operations->offsets[path_index];
                 if (path_options.geodetic.clock_replaces_track)
                     info("local_time dates ", job.name, " at ", path_options.geodetic.start_utc,
                             " s UTC, in place of any clock its track carries.");

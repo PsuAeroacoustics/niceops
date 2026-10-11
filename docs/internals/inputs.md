@@ -13,8 +13,8 @@ conversion happens once, in `run()`, where the command line is parsed, and nothi
 that seam sees anything else. The seam converts exactly these options, each only when given:
 `--grid`, `--gridstep`, `--trim`, `--ground_elevation`, `--receiver_height`, `--path_smoothing`,
 `--roughness`, `--layer_depth`, `--roughness_length`, `--surface_layer_depth`,
-`--terrain_offset` and `--terrain_step`. The anemometer height in `--wind` is a length in
-`--units` too. Speeds are not lengths: `--wind`'s speed names its unit (`12kt`, `6.2mps`,
+`--terrain_offset` and `--terrain_step`, and an operations file's `offset` column. The anemometer
+height in `--wind` is a length in `--units` too. Speeds are not lengths: `--wind`'s speed names its unit (`12kt`, `6.2mps`,
 `14mph`), as an `--atmosphere` file's wind columns must, and a bare number is refused rather than
 read in `--units`. A new length option joins the list above, or `--units m` silently reads it as
 feet.
@@ -137,8 +137,9 @@ the manifest and every check that reads those lists. Things to keep:
   `OperationRun::periods` to `PathJob::period_counts`; the reader refuses them beside `count` or
   `local_time`, and `run()` refuses them with `--laeq_file`. The weighting is in
   [metrics.md](metrics.md).
-- **Lateral offsets are read and refused in one place** in `run()`, right after
-  `expand_operations`, until the run uses them.
+- **Lateral offsets stay in `--units` until the seam**, which scales `OperationRun::offsets`
+  with the other lengths; the job hands each to `GeodeticInput::lateral_offset`. What the reader
+  does with it is in [trajectory.md](trajectory.md#lateral-subtracks).
 
 ### Tests
 

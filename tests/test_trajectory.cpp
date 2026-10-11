@@ -7,6 +7,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <unistd.h>
+#include <vector>
 
 #include "atmosphere_profile.hpp"
 #include "sphere_database.hpp"
@@ -1359,4 +1361,302 @@ TEST_CASE("A WGS84 heading must be true degrees, and only one", "[trajectory][ge
     const TempCsv degrees("time,lat,lon,alt,heading (deg true)\n0,39.8,-74.4,1000,30\n1,39.8001,-74.4,1000,30\n"
                           "2,39.8002,-74.4,1000,30\n");
     REQUIRE_NOTHROW(Trajectory(degrees.path, "databases/S-76D.json", demo_frame()));
+}
+
+// ---------------------------------------------------------------------------
+// Lateral subtracks (GeodeticInput::lateral_offset, + left of travel).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A WGS84 track through local positions (t, x, y, z) of an east/north frame,
+// meters, written with full precision so that the reader projects it back onto
+// the same points to round-off.  Velocity columns (m/s, east/north/up) when
+// `velocities` is given, one per row.
+std::string local_track_as_geodetic(const LocalFrame& frame, const std::vector<std::array<double, 4>>& points,
+        const std::vector<std::array<double, 3>>& velocities = {})
+{
+    std::ostringstream out;
+    out << (velocities.empty() ? "time,lat,lon,alt\n" : "time,lat,lon,alt,vE,vN,vUp\n") << std::setprecision(17);
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+        const auto& [t, x, y, z] = points[i];
+        const Geodetic position = frame.to_geodetic(Vec3(x, y, z));
+        out << t << "," << position.latitude << "," << position.longitude << "," << position.altitude;
+        if (!velocities.empty())
+            out << "," << velocities[i][0] << "," << velocities[i][1] << "," << velocities[i][2];
+        out << "\n";
+    }
+    return out.str();
+}
+
+const LocalFrame& offset_frame()
+{
+    static const LocalFrame frame(Geodetic {40.0, -75.0, 0.0});
+    return frame;
+}
+
+// East at 40 m/s and 150 m for 120 s, sampled every 0.5 s.
+std::vector<std::array<double, 4>> straight_east()
+{
+    std::vector<std::array<double, 4>> points;
+    for (int i = 0; i <= 240; i++)
+    {
+        const double t = 0.5 * i;
+        points.push_back({t, -2400.0 + 40.0 * t, 0.0, 150.0});
+    }
+    return points;
+}
+
+// A left turn at 40 m/s on a radius of 1000 m about the origin, half a circle,
+// sampled every 0.5 s.
+constexpr double turn_radius = 1000.0;
+constexpr double turn_speed = 40.0;
+std::vector<std::array<double, 4>> left_turn()
+{
+    std::vector<std::array<double, 4>> points;
+    const double duration = pi * turn_radius / turn_speed;
+    for (int i = 0; 0.5 * i <= duration; i++)
+    {
+        const double t = 0.5 * i;
+        const double angle = -pi / 2.0 + turn_speed * t / turn_radius;
+        points.push_back({t, turn_radius * std::cos(angle), turn_radius * std::sin(angle), 150.0});
+    }
+    return points;
+}
+
+GeodeticInput offset_input(double offset, double smoothing = 0.0)
+{
+    GeodeticInput input;
+    input.frame = offset_frame();
+    input.path_smoothing = smoothing;
+    input.lateral_offset = offset;
+    return input;
+}
+
+std::string refusal(const std::function<void()>& build)
+{
+    try
+    {
+        build();
+    }
+    catch (const std::exception& problem)
+    {
+        return problem.what();
+    }
+    return {};
+}
+
+} // namespace
+
+TEST_CASE("a straight track shifts left by exactly the offset, its kinematics unchanged", "[lateral_offset]")
+{
+    const TempCsv track(local_track_as_geodetic(offset_frame(), straight_east()));
+    for (const double smoothing : {0.0, 3.048})
+    {
+        INFO("path_smoothing " << smoothing << " m");
+        const Trajectory center(track.path, "databases/S-76D.json", offset_input(0.0, smoothing), meters);
+        const Trajectory left(track.path, "databases/S-76D.json", offset_input(100.0, smoothing), meters);
+        const Trajectory right(track.path, "databases/S-76D.json", offset_input(-100.0, smoothing), meters);
+        REQUIRE(left.states.size() == center.states.size());
+        REQUIRE(right.states.size() == center.states.size());
+        // The exact interpolant differentiates the coordinates' rounding twice
+        // (1/step^2), which leaves about 1e-8 g of noise in n; the 10 ft fit
+        // leaves none worth naming.
+        const double n_margin = smoothing > 0.0 ? 1e-9 : 1e-7;
+        for (std::size_t i = 0; i < center.states.size(); i++)
+        {
+            const State& c = center.states[i];
+            for (const auto& [shifted, d] : {std::pair {&left.states[i], 100.0}, {&right.states[i], -100.0}})
+            {
+                // East-going, so left is +y.
+                CHECK(shifted->x == Catch::Approx(c.x).margin(1e-8));
+                CHECK(shifted->y - c.y == Catch::Approx(d).margin(1e-9));
+                CHECK(shifted->z == c.z);
+                CHECK(shifted->vx == Catch::Approx(c.vx).margin(1e-9));
+                CHECK(shifted->vy == Catch::Approx(c.vy).margin(1e-9));
+                CHECK(shifted->vz == Catch::Approx(c.vz).margin(1e-9));
+                CHECK(shifted->nx == Catch::Approx(c.nx).margin(n_margin));
+                CHECK(shifted->ny == Catch::Approx(c.ny).margin(n_margin));
+                CHECK(shifted->nz == Catch::Approx(c.nz).margin(n_margin));
+                CHECK(shifted->LF == Catch::Approx(c.LF).margin(1e-9));
+            }
+        }
+    }
+}
+
+TEST_CASE("an offset turn has radius R - d, and the load factor of that radius", "[lateral_offset]")
+{
+    // Interpolated exactly, so the only bias is the natural spline's ends,
+    // which the middle 60% of the turn is clear of.
+    const TempCsv track(local_track_as_geodetic(offset_frame(), left_turn()));
+    for (const double d : {200.0, -200.0, 700.0})
+    {
+        INFO("offset " << d << " m");
+        const Trajectory turn(track.path, "databases/S-76D.json", offset_input(d), meters);
+        const double radius = turn_radius - d;
+        const double speed = turn_speed * radius / turn_radius;
+        const std::size_t n = turn.states.size();
+        for (std::size_t i = n / 5; i < n - n / 5; i++)
+        {
+            const State& s = turn.states[i];
+            CHECK(std::hypot(s.x, s.y) == Catch::Approx(radius).margin(1e-3));
+            CHECK(std::hypot(s.vx, s.vy) == Catch::Approx(speed).epsilon(1e-4));
+            const double lateral_g = speed * speed / radius / standard_gravity;
+            CHECK(s.LF == Catch::Approx(std::hypot(lateral_g, 1.0)).epsilon(1e-4));
+        }
+    }
+}
+
+TEST_CASE("an offset of zero leaves every state bit for bit", "[lateral_offset]")
+{
+    const auto same = [](const Trajectory& a, const Trajectory& b) {
+        REQUIRE(a.states.size() == b.states.size());
+        for (std::size_t i = 0; i < a.states.size(); i++)
+        {
+            const State& p = a.states[i];
+            const State& q = b.states[i];
+            REQUIRE((p.t == q.t && p.x == q.x && p.y == q.y && p.z == q.z && p.vx == q.vx && p.vy == q.vy
+                    && p.vz == q.vz && p.nx == q.nx && p.ny == q.ny && p.nz == q.nz && p.LF == q.LF && p.CT == q.CT
+                    && p.mu == q.mu && p.fpa == q.fpa && p.fpa_e == q.fpa_e));
+        }
+    };
+    const TempCsv turn(local_track_as_geodetic(offset_frame(), left_turn()));
+    GeodeticInput plain;
+    plain.frame = offset_frame();
+    plain.path_smoothing = 3.048;
+    same(Trajectory(turn.path, "databases/S-76D.json", plain, meters),
+            Trajectory(turn.path, "databases/S-76D.json", offset_input(0.0, 3.048), meters));
+    same(Trajectory(turn.path, "databases/S-76D.json", plain, meters),
+            Trajectory(turn.path, "databases/S-76D.json", offset_input(-0.0, 3.048), meters));
+    same(Trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json"),
+            Trajectory("tracks/S-76D/197421AC.csv", "databases/S-76D.json", offset_input(0.0)));
+}
+
+TEST_CASE("an offset past 90% of the turn radius, or with no direction of travel, is refused", "[lateral_offset]")
+{
+    const TempCsv turn(local_track_as_geodetic(offset_frame(), left_turn()));
+    const std::string folded = refusal([&] { Trajectory(turn.path, "databases/S-76D.json", offset_input(950.0), meters); });
+    CHECK_THAT(folded, Catch::Matchers::ContainsSubstring("folds the path at t = "));
+    CHECK_THAT(folded, Catch::Matchers::ContainsSubstring("turns left on a radius of"));
+    // Toward the outside of the turn it is only a wider turn.
+    CHECK(refusal([&] { Trajectory(turn.path, "databases/S-76D.json", offset_input(-5000.0), meters); }).empty());
+
+    // 1 kt: drift, never a direction of travel.
+    std::vector<std::array<double, 4>> slow;
+    for (int i = 0; i <= 60; i++)
+        slow.push_back({0.5 * i, 0.5144 * 0.5 * i, 0.0, 10.0});
+    const TempCsv hover(local_track_as_geodetic(offset_frame(), slow));
+    CHECK_THAT(refusal([&] { Trajectory(hover.path, "databases/S-76D.json", offset_input(30.0), meters); }),
+            Catch::Matchers::ContainsSubstring("never moves faster than 3 kt"));
+    CHECK(refusal([&] { Trajectory(hover.path, "databases/S-76D.json", offset_input(0.0), meters); }).empty());
+
+    const TempCsv hold("duration,x,y,z,heading\n30,0,0,12,210\n");
+    CHECK_THAT(refusal([&] { Trajectory(hold.path, "databases/S-76D.json", offset_input(30.0)); }),
+            Catch::Matchers::ContainsSubstring("is a static operation, which has no direction of travel"));
+}
+
+TEST_CASE("slow samples hold the direction of the nearest faster one", "[lateral_offset]")
+{
+    // East at 40 m/s, braking at 2 m/s^2 to a stop and holding there for
+    // 10 s: the stopped samples keep the eastbound normal, so they shift north
+    // by d, not anywhere else.
+    auto points = straight_east();
+    const auto last = points.back();
+    for (int i = 1; i <= 60; i++)
+    {
+        const double t = std::min(0.5 * i, 20.0);
+        points.push_back({last[0] + 0.5 * i, last[1] + 40.0 * t - t * t, 0.0, 150.0});
+    }
+    const TempCsv track(local_track_as_geodetic(offset_frame(), points));
+    const Trajectory center(track.path, "databases/S-76D.json", offset_input(0.0), meters);
+    const Trajectory left(track.path, "databases/S-76D.json", offset_input(100.0), meters);
+    REQUIRE(left.states.size() == center.states.size());
+    const State& c = center.states.back();
+    const State& s = left.states.back();
+    CHECK(s.y - c.y == Catch::Approx(100.0).margin(1e-6));
+    CHECK(s.x == Catch::Approx(c.x).margin(1e-6));
+}
+
+TEST_CASE("a geodetic track's velocity columns orient the offset and are then dropped", "[lateral_offset]")
+{
+    // The columns say 45 m/s where the path flies 40: the centerline's
+    // speed, which a displaced path does not keep.  Without an offset they are
+    // read as given.
+    const auto points = straight_east();
+    const std::vector<std::array<double, 3>> velocities(points.size(), {45.0, 0.0, 0.0});
+    const TempCsv with(local_track_as_geodetic(offset_frame(), points, velocities));
+    const TempCsv without(local_track_as_geodetic(offset_frame(), points));
+    const Trajectory given(with.path, "databases/S-76D.json", offset_input(100.0, 3.048), meters);
+    const Trajectory derived(without.path, "databases/S-76D.json", offset_input(100.0, 3.048), meters);
+    const Trajectory centerline(with.path, "databases/S-76D.json", offset_input(0.0, 3.048), meters);
+    REQUIRE(centerline.states[10].vx == Catch::Approx(45.0).margin(1e-9));
+    REQUIRE(given.states.size() == derived.states.size());
+    for (std::size_t i = 0; i < given.states.size(); i++)
+    {
+        CHECK(given.states[i].y == Catch::Approx(derived.states[i].y).margin(1e-9));
+        CHECK(given.states[i].vx == Catch::Approx(derived.states[i].vx).margin(1e-9));
+        CHECK(given.states[i].nx == Catch::Approx(derived.states[i].nx).margin(1e-9));
+    }
+}
+
+TEST_CASE("an AC track is translated rigidly, its recorded kinematics kept", "[lateral_offset]")
+{
+    const Trajectory center("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+    const double d = 100.0 * ft2m;
+    const Trajectory left("tracks/S-76D/197421AC.csv", "databases/S-76D.json", offset_input(d));
+    REQUIRE(left.states.size() == center.states.size());
+    REQUIRE(left.recorded.size() == center.recorded.size());
+    for (std::size_t i = 0; i < left.recorded.size(); i++)
+    {
+        const auto& p = left.recorded[i];
+        const auto& q = center.recorded[i];
+        REQUIRE((p.latitude == q.latitude && p.longitude == q.longitude && p.altitude == q.altitude && p.x == q.x
+                && p.y == q.y && p.z == q.z));
+    }
+    for (std::size_t i = 0; i < left.states.size(); i++)
+    {
+        const State& p = left.states[i];
+        const State& q = center.states[i];
+        REQUIRE((p.t == q.t && p.z == q.z && p.vx == q.vx && p.vy == q.vy && p.vz == q.vz && p.nx == q.nx
+                && p.ny == q.ny && p.nz == q.nz && p.LF == q.LF && p.CT == q.CT && p.mu == q.mu && p.fpa == q.fpa
+                && p.fpa_e == q.fpa_e && p.utcsec == q.utcsec));
+        const double dx = p.x - q.x, dy = p.y - q.y;
+        const double speed = std::hypot(q.vx, q.vy);
+        CHECK(std::hypot(dx, dy) == Catch::Approx(d).margin(1e-9));
+        // Square to the horizontal velocity, on its left.
+        CHECK((dx * q.vx + dy * q.vy) / speed == Catch::Approx(0.0).margin(1e-9));
+        CHECK((q.vx * dy - q.vy * dx) / speed == Catch::Approx(d).margin(1e-9));
+    }
+}
+
+TEST_CASE("write the straight tracks for the lateral-offset CTests", "[.offset_tracks]")
+{
+    // East at 80 kt, 500 ft up, about --origin 40 -75: on y = 0 and on y = +/-500
+    // ft, which an offset of +/-500 ft from the first has to reproduce.
+    const auto write = [](const std::string& path, double y) {
+        std::vector<std::array<double, 4>> points;
+        for (int i = 0; i <= 150; i++)
+        {
+            const double t = 1.0 * i;
+            points.push_back({t, -3000.0 + 80.0 * knot * t, y, 500.0 * ft2m});
+        }
+        ensure_parent_directory(path);
+        std::ofstream out(path);
+        // Altitude in feet, the CTests' --units.
+        std::string text = local_track_as_geodetic(offset_frame(), points);
+        std::istringstream lines(text);
+        std::string line;
+        std::getline(lines, line);
+        out << line << "\n" << std::setprecision(17);
+        while (std::getline(lines, line))
+        {
+            const auto comma = line.rfind(',');
+            out << line.substr(0, comma) << "," << std::stod(line.substr(comma + 1)) / ft2m << "\n";
+        }
+        REQUIRE(out.good());
+    };
+    write("integrated/offset_center.csv", 0.0);
+    write("integrated/offset_left.csv", 500.0 * ft2m);
+    write("integrated/offset_right.csv", -500.0 * ft2m);
 }

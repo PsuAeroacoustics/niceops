@@ -92,7 +92,7 @@ is a physical quantity, given here in meters with its value in feet.
 | Option | Meaning |
 | --- | --- |
 | `-t`, `--trajectoryfile` | Trajectory CSV ([Trajectories](#trajectories)). Repeat for several flight paths. Default the demo track. |
-| `--operations` | A CSV of operations, one row per track flown, with its count and optionally its database, vehicle, clock and air ([An operations file](#an-operations-file)). Replaces `-t`. |
+| `--operations` | A CSV of operations, one row per track flown, with its count and optionally its database, vehicle, clock, lateral offset and air ([An operations file](#an-operations-file)). Replaces `-t`. |
 | `-d`, `--database` | netCDF noise database. Once, or once per trajectory. Default `databases/S-76D_M3.nod`. |
 | `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Default `databases/S-76D.json`. |
 | `-o`, `--output` | SEL output file, once per trajectory. Default `integrated/197421_LAE.csv`. With several tracks and one name (or none), each is named after its track. |
@@ -1070,7 +1070,7 @@ for a DNL meant to sit beside their contours.
 ### An operations file
 
 `--operations FILE` describes a day's traffic as a table: each row is a track and how many times
-an average day flies it, and may name its own database, vehicle, clock and air. It replaces `-t`
+an average day flies it, and may name its own database, vehicle, clock, lateral offset and air. It replaces `-t`
 (the two are refused together), and is the way to model a fleet mix or a schedule without a
 command line per operation.
 
@@ -1101,8 +1101,7 @@ such as `count (per year)`, is refused, and `wind_direction` may say only `(deg)
 | `atmosphere` | As `--atmosphere`. | See the air, below. |
 | `wind_speed`, `wind_direction`, `wind_height` | Joined as `--wind`'s `speed,direction[,height]`: the speed names its unit (`8kt`), the direction is a compass bearing, the height is in `--units`. The first two go together. | See the air, below. |
 | `humidity` (%), `temperature` (K), `pressure` (kPa) | As the options of those names. | See the air, below. |
-
-`offset` is reserved: it is read and checked, and a file with a nonzero offset is refused.
+| `offset` | A lateral subtrack: how far to the left of the direction of travel the row flies its track, in `--units` (negative is to the right). | 0, the track itself. |
 
 **Paths** in the file are taken from the operations file's own folder, so a study folder moves as
 a whole; absolute paths are used as given. Each resolved path is in the log, and a track,
@@ -1149,6 +1148,32 @@ or `count` and `local_time`, never both; `--laeq_file`, whose window is a clock 
 refused with period counts. Use `local_time` where the hour matters within a period, or when a
 flight straddles a period's edge: period counts weight the whole operation by one period.
 
+**Subtracks.** A route is rarely flown on its centerline, and a study spreads its operations over
+subtracks either side of it: one row per subtrack, each with its share of the count and its
+`offset`. The offset is measured square to the track's horizontal direction of travel, so on a
+turn the subtrack flies a tighter turn on the inside and a wider one on the outside.
+
+- A WGS84 track is displaced before it is smoothed, so its speed, load factor and thrust are the
+  subtrack's own: on the inside of a turn it flies slower and with less bank. Velocity columns
+  in the file are the centerline's, so with an offset they only set the direction, and the
+  velocity comes from the displaced path (the log says so).
+- An AC track is moved sideways state by state, keeping the speeds and accelerations it
+  recorded, which is right on a straight leg and approximate in a turn.
+- Where the track is slower than 3 kt (a hover's drift) the direction is held from the nearest
+  faster point. A track that is never faster than 3 kt is refused, and so is an offset on a
+  static operation: move the hold's x and y instead.
+- An offset toward the inside of a turn must be under 90% of the turn's radius; one that is not
+  would fold the path back on itself, and is refused naming the time.
+- `--trim` applies to the displaced track, and the outputs, the `-S` state included, are the
+  subtrack's.
+
+```text
+name,track,count,offset (ft)
+dep21_c,../tracks/dep21.csv,6,0
+dep21_l,../tracks/dep21.csv,2,500
+dep21_r,../tracks/dep21.csv,2,-500
+```
+
 **Outputs.** Each row's SEL file, and its `-S`, `--csel_file`, `--epnl_file`, `--band_frames` and
 `--write_atmosphere` files, are one operation's, whatever its count. With several rows each is
 `<name>_LAE.csv` (and `<name>_state.csv` and so on) in the folder of the name given to the option
@@ -1164,7 +1189,9 @@ not a positive number (`0`, `-2`, `nan`,
 `6.2 ops`; comment a row out with `#` to leave it out), a `local_time` that is not a clock time
 (`25:00`, `7pm`), a `start_utc` column (use `local_time`), a temperature, pressure or humidity
 column declaring another unit, an `offset` or `wind_height` column declaring a length unit other
-than `--units`, a wind speed without its unit, and a name outside the allowed characters.
+than `--units`, a wind speed without its unit, and a name outside the allowed characters. A
+row is skipped, and the run exits 1, for an offset on a static operation, on a track never faster
+than 3 kt, or toward the inside of a turn by 90% of its radius or more.
 
 **Cost.** One run per row, as for a `-t` per row. Each distinct database is loaded once,
 however its rows are ordered. Rows run in file order.

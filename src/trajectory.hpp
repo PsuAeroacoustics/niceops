@@ -204,6 +204,13 @@ struct GeodeticInput
     // clock it carries (an AC file's first column, a geodetic utcsec column),
     // as start_utc + (t - t0).
     bool clock_replaces_track = false;
+    // An operations file's lateral subtrack, in METERS, + to the left of
+    // travel.  A geodetic track's raw samples are displaced along the left
+    // normal of a preliminary fit before the path is fitted, so the velocity
+    // and load factor come from the displaced path; an AC track is translated
+    // rigidly, its recorded kinematics kept; a static hold refuses it.  Zero
+    // leaves every path as it was, bit for bit.
+    double lateral_offset = 0.0;
     // Resampling step in seconds, used when the samples are unevenly spaced or
     // coarser than this.  It never coarsens -- a 50 Hz file keeps its own
     // sample times -- because the sound exposure integral is a Riemann sum over
