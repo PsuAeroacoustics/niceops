@@ -3453,6 +3453,7 @@ int run(int argc, char* argv[])
     std::string load_factor_correction = "one_sided";
     double min_load_factor = 0.5;
     bool accept_vehicle_mismatch = false;
+    DatabaseLoadOptions database_load;
     double flow_resistance = flow_resistance::grassy_field;
     double receiver_height = 1.2; // meters
     double turbulence = 0.0;
@@ -3686,6 +3687,12 @@ int run(int argc, char* argv[])
                         return value > 0.0 && value <= 1.0 ? std::string() : std::string("must be in (0, 1]");
                     },
                     "in (0, 1]"));
+    app.add_option("--screen_database", database_load.screen_file,
+            "Write every database entry the load-time screen finds suspect (a dBA cell far from "
+            "its neighbors, a band far above its cell's spectrum) to this CSV.");
+    auto* mask_suspect_option = app.add_flag("--mask_suspect_cells", database_load.mask_suspect_cells,
+            "Drop the entries the load-time screen finds suspect, as gating drops a direction, "
+            "instead of only warning about them.");
     app.add_flag("--accept_vehicle_mismatch", accept_vehicle_mismatch,
             "Warn, rather than refuse, a vehicle file that disagrees with the database by more "
             "than 2 percent.");
@@ -3983,6 +3990,12 @@ int run(int argc, char* argv[])
     if (!band_frames_files.empty())
         expand_per_path(band_frames_files, "--band_frames names");
     expand_per_path(database_files, "database files");
+    // Each database load writes the screen afresh, so a second database would
+    // overwrite the first one's list.
+    if (!database_load.screen_file.empty()
+            && std::any_of(database_files.begin(), database_files.end(),
+                    [&](const std::string& f) { return f != database_files.front(); }))
+        input_error("--screen_database lists one database's entries: run it once per database.");
     expand_per_path(vehicle_files, "vehicle files");
     expand_per_path(out_files, "output files");
     if (!state_files.empty())
@@ -4144,7 +4157,20 @@ int run(int argc, char* argv[])
     // that name the same file, which for the usual case of one database shared
     // by every path means loading once.
     std::string loaded_database = database_files.front();
-    auto database = Database(loaded_database);
+    // The screen writes its list while the database loads, with a truncating
+    // open: `-d X --screen_database X` would replace the database with it.
+    if (!database_load.screen_file.empty())
+    {
+        std::error_code ignored;
+        if (std::filesystem::exists(database_load.screen_file, ignored)
+                && std::filesystem::equivalent(database_load.screen_file, database_files.front(), ignored))
+            input_error("--screen_database would overwrite the database it reads, ", database_files.front(),
+                    ". Give another file name.");
+    }
+    if (self_test && mask_suspect_option->count() > 0)
+        input_error("--self_test checks the database as the file holds it; it does not combine "
+                "with --mask_suspect_cells.");
+    auto database = Database(loaded_database, database_load);
     auto t1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
             - watch_start)
                         .count();
@@ -4681,7 +4707,7 @@ int run(int argc, char* argv[])
         {
             log("Loading database ", database_files[path_index], " for ",
                     path_files[path_index]);
-            database = Database(database_files[path_index]);
+            database = Database(database_files[path_index], database_load);
             // Only once it loaded.  Recording the name first would leave the cache
             // claiming a database that failed to open, so a later trajectory naming
             // the same file would skip the reload and quietly use the previous one.

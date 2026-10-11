@@ -319,6 +319,31 @@ set_tests_properties(regression_default PROPERTIES FIXTURES_SETUP demo_run)
 # (1.8M samples).  Was "broken_self_test" and excluded from CI while legacy
 # hover directivity made it fail; it passes now and is a real test.
 add_test(NAME self_test COMMAND niceops "--self_test" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The load-time screen finds nothing in the golden database: the demo path never warns.
+set_tests_properties(self_test PROPERTIES FAIL_REGULAR_EXPRESSION "dB from the median of (its|their)")
+# It does find the S-76D fixed_load_factor file's 135-1450 dBA channels, names the worst,
+# and with the mask drops them; on the golden database the mask changes nothing.
+# PASS_REGULAR_EXPRESSION replaces the exit status, so the run is pinned by a plain test, the
+# message by a second run, and the list by reading what the first left.
+add_test(NAME screen_database_run COMMAND niceops -d databases/S-76D_fixed_load_factor.nod --gridstep 2000 -L warn -o integrated/screen_s76d.csv --screen_database integrated/screen_s76d_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(screen_database_run PROPERTIES FIXTURES_SETUP screen_s76d_run)
+add_test(NAME screen_database_warns COMMAND niceops -d databases/S-76D_fixed_load_factor.nod --gridstep 2000 -L warn -o integrated/screen_s76d_warns.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(screen_database_warns PROPERTIES PASS_REGULAR_EXPRESSION "172 dBA cells in 4 of 164 spheres lie more than 40 dB from the median of their sphere.*1449\\.54")
+add_test(NAME screen_database_lists_spikes COMMAND ${CMAKE_COMMAND} -E cat integrated/screen_s76d_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(screen_database_lists_spikes PROPERTIES FIXTURES_REQUIRED screen_s76d_run PASS_REGULAR_EXPRESSION "\n62,0\\.208[0-9]*,-7\\.77[0-9]*,0\\.00586[0-9]*,-120,180,,1449\\.5")
+# On a copy: a guard that failed would replace the file.
+add_test(NAME screen_database_victim COMMAND ${CMAKE_COMMAND} -E copy databases/AW139_fixed_load_factor.nod integrated/screen_victim.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(screen_database_victim PROPERTIES FIXTURES_SETUP screen_victim)
+add_test(NAME screen_database_refuses_overwriting_it COMMAND niceops -d integrated/screen_victim.nod --screen_database integrated/screen_victim.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(screen_database_refuses_overwriting_it PROPERTIES FIXTURES_REQUIRED screen_victim PASS_REGULAR_EXPRESSION "would overwrite the database it reads")
+add_test(NAME mask_suspect_cells_clean COMMAND niceops --no-spectral --no-ground_effect --mask_suspect_cells -L warn -o integrated/mask_suspect_clean.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(mask_suspect_cells_clean PROPERTIES FIXTURES_SETUP mask_clean_run)
+add_test(NAME mask_suspect_cells_clean_is_golden COMMAND golden_compare integrated/mask_suspect_clean.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(mask_suspect_cells_clean_is_golden PROPERTIES FIXTURES_REQUIRED mask_clean_run)
+add_test(NAME mask_suspect_cells_refuses_self_test COMMAND niceops --self_test --mask_suspect_cells WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(mask_suspect_cells_refuses_self_test PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with --mask_suspect_cells")
+add_test(NAME screen_database_refuses_two_databases COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -d databases/S-76D_M4.nod -o integrated/screen_two.csv --screen_database integrated/screen_two_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(screen_database_refuses_two_databases PROPERTIES PASS_REGULAR_EXPRESSION "run it once per database")
 add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME state_golden COMMAND golden_compare state/ci_state.csv golden/state_197421.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

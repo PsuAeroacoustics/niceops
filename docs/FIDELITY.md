@@ -572,6 +572,36 @@ with the shipped database:
 How these scores compare with earlier builds of the same databases is in
 [HISTORY](HISTORY.md#the-2017-noise-abatement-databases).
 
+### Database screen
+
+The load-time screen ([MANUAL](MANUAL.md#screening-a-database)) on every shipped database, and on
+the NASA R44 spheres built for the cross-code comparison. Margins: a dBA cell more than 40 dB from
+the median of its sphere, a band more than 45 dB above the median of its cell's spectrum.
+
+| Database | dBA cells flagged (spheres) | Bands flagged (spheres) | Worst entry, against the median |
+| --- | --- | --- | --- |
+| `B407_M2` | 240 (24 of 1248), all low | — | 27.1 dBA against 89.3 |
+| `B407_M3` | 3928 (72 of 1296), all low | — | 0 dBA (a written zero) against 89.6 |
+| `S-76D_M4` | 1376 (32 of 1312), all high | — | 1463.5 dBA against 108.3 |
+| `S-76D_fixed_load_factor` | 172 (4 of 164), all high | — | 1449.5 dBA against 94.3 (μ 0.208, γ −7.8°) |
+| NASA R44 spheres | 2397 (86 of 122), all high | 5380 (102 of 122) | 170.2 dB at 10 kHz against 70.1 |
+| The other 17 shipped files | 0 | 0 | |
+
+- **The margins clear every sound database.** On the 17, no stored cell sits more than 29.1 dB
+  above its sphere's median (B205) or 21.4 dB below it (B407), and no band more than 35.9 dB above
+  its cell's median (RO-44). Most S-76D cells flagged are whole azimuth columns 40–60 dB high:
+  sphere 33 of `S-76D_fixed_load_factor` reads 135–139 dBA along φ 100° against a median of 91.
+- **Two rules that were tried do not separate.** Against the median of its eight grid neighbors, a
+  sound cell beside a strip of written zeros reads 44 dB off (224 sound 88 dBA cells in
+  `B407_M3`), and a strip two cells wide is its own median. Against the same band in neighboring
+  cells, gating leaves sound bands in the AS350 file up to 169 dB below and 116 dB above.
+- **The S-76D defects move the demo footprint.** On `S-76D_fixed_load_factor`, masking moves 958
+  of the 14,400 nodes by more than 0.1 dB, from −1.8 to +7.5 dB (`S-76D_M4`: 957, the same
+  range). The rises are where a spike set the observer's peak: at (3363, −1394) ft its kept peak
+  is 69.5 dB, which narrows the 10 dB-down window to 105 samples (SEL 65.8 dB); masked, the peak
+  is 62.0 dB, the window 2275 samples and the SEL 73.3 dB.
+- **The fill value** (a group never written) is in none of the shipped files.
+
 ### Source options: blend and load-factor law
 
 **Condition selection.** On the day-286 B407 approaches (all 114,720 states), AAM's bracketing

@@ -689,12 +689,14 @@ const std::vector<std::array<double, 4>> fixed_load_factor_conditions = {
 // emptied); reverse_phi_rows lays the channels -- and so the amplitude rows --
 // out with phi descending, the way panam's unsorted completion order arrives,
 // and writes each amplitude as 200 + that row's phi + 10 * band so a test can
-// see which direction every spectrum landed in.
+// see which direction every spectrum landed in.  bands and cell_amplitude(condition,
+// cell, band) replace the two bands and their levels.
 std::string write_shared_grid_test_database(const std::string& name,
         const std::vector<std::array<double, 4>>& conditions, bool shared_grid_and_frequency,
         bool with_spectrum, double sphere_radius_m = 30.48,
         std::function<double(std::size_t, std::size_t)> channel_dba = {},
-        bool reverse_phi_rows = false)
+        bool reverse_phi_rows = false, std::vector<double> bands = {500.0, 2000.0},
+        std::function<double(std::size_t, std::size_t, std::size_t)> cell_amplitude = {})
 {
     const auto path = (std::filesystem::temp_directory_path() / name).string();
     int file = 0;
@@ -715,7 +717,6 @@ std::string write_shared_grid_test_database(const std::string& name,
     const std::vector<double> phis = {-90.0, -30.0, 30.0, 90.0};
     const std::vector<double> thetas = {0.0, 60.0, 120.0, 180.0};
     const std::size_t n_channels = phis.size() * thetas.size();
-    const std::vector<double> bands = {500.0, 2000.0};
     std::vector<double> phi_channel, theta_channel;
     std::vector<double> row_phis = phis;
     if (reverse_phi_rows)
@@ -847,7 +848,9 @@ std::string write_shared_grid_test_database(const std::string& name,
             std::vector<double> amplitude(phis.size() * thetas.size() * bands.size());
             for (std::size_t cell = 0; cell < phis.size() * thetas.size(); cell++)
                 for (std::size_t band = 0; band < bands.size(); band++)
-                    amplitude[cell * bands.size() + band] = reverse_phi_rows
+                    amplitude[cell * bands.size() + band] = cell_amplitude
+                            ? cell_amplitude(i, cell, band)
+                            : reverse_phi_rows
                             ? 200.0 + phi_channel[cell] + 10.0 * static_cast<double>(band)
                             : conditions[i][3] + 10.0 * static_cast<double>(band);
             REQUIRE(nc_put_var_double(v.group, v.amplitude, amplitude.data()) == NC_NOERR);
@@ -1388,6 +1391,183 @@ TEST_CASE("a sphere whose channels miss the grid is reported", "[sphere_database
     CHECK(text.find("drops 16 of 16 channels") != std::string::npos);
     // The aligned twin says nothing of the sort: one warning, not two.
     CHECK(text.find("without a channel") == text.rfind("without a channel"));
+}
+
+namespace {
+constexpr double netcdf_fill_value = 9.9692099683868690e+36;
+} // namespace
+
+TEST_CASE("a group holding the netCDF fill value is refused", "[sphere_database][validation][screen]")
+{
+    // A group panam never finished writing holds the fill value everywhere.  It
+    // is finite, so the non-finite floor passed it, and it read as a 1e37 dB
+    // level: an infinite SEL wherever a state reached that condition.
+    const auto path = write_shared_grid_test_database("niceops_fill_value.nod", uniform_conditions,
+            false, false, 30.48,
+            [](std::size_t condition, std::size_t) { return condition == 2 ? netcdf_fill_value : 100.0; });
+    std::string problem;
+    try
+    {
+        Database db(path);
+    }
+    catch (const std::exception& e)
+    {
+        problem = e.what();
+    }
+    std::filesystem::remove(path);
+    REQUIRE(problem.find("sphere 2 holds the netCDF fill value in 16 of 16 dBA entries") != std::string::npos);
+}
+
+TEST_CASE("a dBA cell far from the rest of its sphere is reported, and dropped when asked",
+        "[sphere_database][screen]")
+{
+    // The S-76D M4 and fixed_load_factor files carry channels up to 1450 dBA
+    // beside 90-100 dBA neighbors, which the blends took as real.
+    const auto path = write_shared_grid_test_database("niceops_spike.nod", uniform_conditions, false,
+            false, 30.48, [](std::size_t condition, std::size_t channel) {
+                return condition == 0 && channel == gated_channel ? 1450.0 : 100.0;
+            });
+    const auto clean_path = write_shared_grid_test_database("niceops_spike_clean.nod",
+            uniform_conditions, false, false);
+    const Database kept(path);
+    DatabaseLoadOptions mask;
+    mask.mask_suspect_cells = true;
+    const Database masked(path, mask);
+    const Database clean(clean_path);
+    CHECK(kept.suspect_cells() == 1);
+    CHECK(kept.suspect_bands() == 0);
+    CHECK(masked.suspect_cells() == 1);
+    CHECK(clean.suspect_cells() == 0);
+    // Kept, the spike is blended in; masked, it reads as a gated direction,
+    // which takes the other conditions' level.
+    CHECK(kept.interpolate_sphere(0.3, 0.3, 0.005).cells[gated_channel].dBA > 200.0);
+    CHECK(approx_equal(masked.interpolate_sphere(0.3, 0.3, 0.005).cells[gated_channel].dBA, 100.0));
+    // The per-sphere maximum leaves with it, or the cull and the bounds would
+    // keep every observer in range of a level no direction holds.
+    const double cutoff = 90.0;
+    const double clean_range = clean.cull_range(clean.blend_at(0.0, 0.0, 0.005), cutoff);
+    CHECK(masked.cull_range(masked.blend_at(0.0, 0.0, 0.005), cutoff) == clean_range);
+    CHECK(kept.cull_range(kept.blend_at(0.0, 0.0, 0.005), cutoff) > clean_range);
+    std::filesystem::remove(path);
+    std::filesystem::remove(clean_path);
+}
+
+TEST_CASE("a near-silent cell is reported, and a steep but sound sphere is not",
+        "[sphere_database][screen]")
+{
+    // B407_M3's written zeros and the September files' -70 dBA cells beside
+    // 84 dBA neighbors are as wrong as a spike, the other way.
+    const auto zero = write_shared_grid_test_database("niceops_zero_cell.nod", uniform_conditions,
+            false, false, 30.48, [](std::size_t condition, std::size_t channel) {
+                return condition == 1 && channel == gated_channel ? 0.0 : 100.0;
+            });
+    // 12 dB per row, 36 across the sphere: steeper than most real directivity,
+    // well inside the margin.
+    const auto steep = write_shared_grid_test_database("niceops_steep.nod", uniform_conditions,
+            false, false, 30.48, [](std::size_t, std::size_t channel) {
+                return 60.0 + 12.0 * static_cast<double>(channel / 4);
+            });
+    CHECK(Database(zero).suspect_cells() == 1);
+    CHECK(Database(steep).suspect_cells() == 0);
+    std::filesystem::remove(zero);
+    std::filesystem::remove(steep);
+}
+
+TEST_CASE("a sound cell beside a strip of zeros is not flagged with it", "[sphere_database][screen]")
+{
+    // Channels 7 to 11 are zeros (row 2, and the end of row 1).  Against its
+    // grid neighbors, half of them zeros, channel 6 read 50 dB off and the
+    // whole of row 3 was cut off behind the strip: next to B407_M3's zero
+    // blocks, 224 sound 88 dBA cells were flagged that way.  Against the
+    // sphere's median, only the zeros are.
+    const auto path = write_shared_grid_test_database("niceops_zero_strip.nod", uniform_conditions,
+            false, false, 30.48, [](std::size_t condition, std::size_t channel) {
+                return condition == 0 && channel >= 7 && channel <= 11 ? 0.0 : 100.0;
+            });
+    const auto list = (std::filesystem::temp_directory_path() / "niceops_zero_strip_screen.csv").string();
+    DatabaseLoadOptions load;
+    load.screen_file = list;
+    CHECK(Database(path, load).suspect_cells() == 5);
+    std::ifstream in(list);
+    std::string line;
+    std::getline(in, line);
+    std::getline(in, line);
+    std::size_t rows = 0;
+    while (std::getline(in, line))
+    {
+        rows++;
+        CHECK(line.find(",,0,100,0") != std::string::npos); // a zero, against the median 100
+    }
+    CHECK(rows == 5);
+    std::filesystem::remove(path);
+    std::filesystem::remove(list);
+}
+
+TEST_CASE("a dropped dBA cell drops its spectrum too", "[sphere_database][screen][spectrum]")
+{
+    // The spectral path reads only the bands.  A spectrum lowered as a whole has
+    // no band out of line with its own cell, so only the dBA screen sees it,
+    // and masking the dBA alone left the default path blending it.
+    const std::vector<double> bands = {500.0, 1000.0, 2000.0, 4000.0, 8000.0, 10000.0};
+    const auto path = write_shared_grid_test_database("niceops_quiet_cell.nod", uniform_conditions,
+            false, true, 30.48,
+            [](std::size_t condition, std::size_t channel) {
+                return condition == 1 && channel == gated_channel ? 10.0 : 100.0;
+            },
+            false, bands, [](std::size_t condition, std::size_t cell, std::size_t) {
+                return condition == 1 && cell == gated_channel ? 5.0 : 90.0;
+            });
+    DatabaseLoadOptions mask;
+    mask.mask_suspect_cells = true;
+    const Database masked(path, mask);
+    CHECK(masked.suspect_cells() == 1);
+    CHECK(masked.suspect_bands() == 0);
+    const auto sphere = masked.interpolate_sphere(1.0, 0.0, 0.005);
+    for (std::size_t band = 0; band < bands.size(); band++)
+        CHECK(sphere.amplitudes[gated_channel * bands.size() + band] <= Database::no_energy_floor_db + 1.0);
+    CHECK(sphere.amplitudes[(gated_channel + 1) * bands.size()] == 90.0);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a band far above its cell's spectrum is reported, listed and dropped when asked",
+        "[sphere_database][screen][spectrum]")
+{
+    // NASA's R44 spheres hold 135-170 dB at 8 and 10 kHz in cells whose other
+    // bands are 64-82 dB.  A band 40 dB above the rest is inside the margin.
+    const std::vector<double> bands = {500.0, 1000.0, 2000.0, 4000.0, 8000.0, 10000.0};
+    const auto path = write_shared_grid_test_database("niceops_hot_band.nod", uniform_conditions,
+            false, true, 30.48, {}, false, bands,
+            [](std::size_t condition, std::size_t cell, std::size_t band) {
+                if (condition == 1 && cell == gated_channel && band == 5)
+                    return 170.0;
+                if (condition == 1 && cell == 6 && band == 0)
+                    return 120.0;
+                return 80.0;
+            });
+    const auto list = (std::filesystem::temp_directory_path() / "niceops_hot_band_screen.csv").string();
+    std::filesystem::remove(list);
+    const Database kept(path);
+    CHECK(kept.suspect_bands() == 1);
+    CHECK(kept.suspect_cells() == 0);
+    CHECK(kept.interpolate_sphere(1.0, 0.0, 0.005).amplitudes[gated_channel * bands.size() + 5] == 170.0);
+    DatabaseLoadOptions mask;
+    mask.mask_suspect_cells = true;
+    mask.screen_file = list;
+    const Database masked(path, mask);
+    const auto sphere = masked.interpolate_sphere(1.0, 0.0, 0.005);
+    CHECK(sphere.amplitudes[gated_channel * bands.size() + 5] <= Database::no_energy_floor_db + 1.0);
+    CHECK(sphere.amplitudes[gated_channel * bands.size() + 4] == 80.0);
+    CHECK(sphere.amplitudes[6 * bands.size()] == 120.0);
+    std::ifstream in(list);
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(in, line);)
+        lines.push_back(line);
+    REQUIRE(lines.size() == 3);
+    CHECK(lines[1] == "sphere,advance_ratio,flight_path_angle,thrust_coefficient,phi,theta,band_hz,"
+                      "level_db,reference_db,masked");
+    CHECK(lines[2] == "1,1,0,0.005,-30,60,10000,170,80,1");
+    std::filesystem::remove(path);
+    std::filesystem::remove(list);
 }
 
 TEST_CASE("a frame with no velocity is still a frame", "[sphere_database][validation]")

@@ -15,7 +15,7 @@ the code, start with the [README](../README.md); developers start at
   options](#command-line-options) · [Units](#units) · [Errors and refusals](#errors-and-refusals)
 - [Inputs](#inputs): [Input files](#input-files) · [Trajectories](#trajectories) · [Vehicle
   file](#vehicle-file) · [Observers](#observers)
-- [Noise databases](#noise-databases): [Shipped databases](#shipped-databases) · [Spectra](#spectra)
+- [Noise databases](#noise-databases): [Shipped databases](#shipped-databases) · [Spectra](#spectra) · [Screening a database](#screening-a-database)
   · [Choosing spheres: blending and `--blend`](#choosing-spheres-blending-and---blend) · [The
   load-factor law below 1 g](#the-load-factor-law-below-1-g) · [Speed reference](#speed-reference) ·
   [The sphere's nose](#the-spheres-nose) · [Reading the sphere's
@@ -126,6 +126,8 @@ is a physical quantity, given here in meters with its value in feet.
 | `--speed_reference` | `ground` or `air`: which velocity sets μ, the path angle and the `velocity` nose. Default: what the database records, ground if nothing ([Speed reference](#speed-reference)). |
 | `--nose` | `velocity`, `ground_velocity` or `heading`. Default: what the database's `azimuth_reference` records, `velocity` if nothing ([The sphere's nose](#the-spheres-nose)). |
 | `--accept_vehicle_mismatch` | Warn, rather than refuse, when the vehicle file disagrees with the database by more than 2 percent ([Vehicle file](#vehicle-file)). |
+| `--screen_database` | Write every entry the load-time screen finds suspect to this CSV ([Screening a database](#screening-a-database)). One database per run. |
+| `--mask_suspect_cells` | Drop the suspect entries, as gating drops a direction, instead of only warning. Not with `--self_test`. |
 
 #### Atmosphere and wind
 
@@ -254,7 +256,8 @@ refused). A text line after the first row of data is an error (above it, a heade
 two states is refused, naming where the track's crop ends. An observer file must keep one
 width and yield at least one observer. An `--atmosphere` file must be finite, reach every state,
 and name its wind units. A database must vary in μ, γ and (unless `fixed_load_factor`)
-C<sub>T</sub>, with no two spheres at one condition. Air must be plausible: a temperature in °C,
+C<sub>T</sub>, with no two spheres at one condition, and no group may hold the netCDF fill value
+(a group the builder never wrote). Air must be plausible: a temperature in °C,
 a pressure in Pa or a humidity fraction is refused. The vehicle file must agree with the
 database ([Vehicle file](#vehicle-file)).
 
@@ -280,6 +283,7 @@ The main ones:
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
 | `--speed_reference air` without a wind | Calm air is not assumed. |
 | Two trajectories writing one file; a list of `-d`, `-v`, `-o` that is neither one nor one per track | Outputs would overwrite one another. |
+| `--mask_suspect_cells` with `--self_test`; `--screen_database` with more than one database | The self test checks the file as written; one list would overwrite the other. |
 | `-p`, `-f`, `-F` in a build without plotting | Rather than silently doing nothing. |
 
 ## Inputs
@@ -432,6 +436,29 @@ path by default, and serves every option that works on bands. `--export_aam` wri
 the AAM/RNM hemisphere format, whose payload is `AMPLITUDE(PHI, THETA, FREQUENCY)`, so it needs
 spectra. Of the shipped databases, the six `_fixed_load_factor` files of the 2017 aircraft carry
 spectra; the S-76D demo database does not, so the demo case runs broadband.
+
+### Screening a database
+
+Every database is screened as it loads, for entries no sound database holds, which would
+otherwise be blended as real levels:
+
+- **a dBA cell far from the rest of its sphere**: more than 40 dB from the median of that sphere's
+  cells, whether a spike or a near-silent cell;
+- **a band far above its cell's spectrum**: more than 45 dB above the median of that cell's bands.
+  A band far *below* the rest is what ambient gating leaves, and is not flagged.
+
+The screen warns once per kind, with the count, the spheres affected and the worst entry, and
+otherwise changes nothing. `--screen_database FILE` lists every entry it found: sphere, its
+condition, φ, θ, band (blank for the overall level), the level and the median it was judged
+against. `--mask_suspect_cells` drops them, so the blends read those entries as unmeasured and take
+the other conditions' level there. Masking is a judgment about data: rebuilding the database is
+the fix, and a masked run should say so.
+
+Four shipped databases warn: `B407_M2`, `B407_M3`, `S-76D_M4` and `S-76D_fixed_load_factor`. The
+demo database and the 2017 databases do not. A sphere more than half defective has a defective
+median, and the screen cannot judge it. The counts are in
+[FIDELITY](FIDELITY.md#database-screen). The screen costs well under a second at load and nothing
+afterward.
 
 ### Choosing spheres: blending and `--blend`
 
