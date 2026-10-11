@@ -36,6 +36,9 @@ double json_to_double(const nlohmann::json& value)
 // format is read by column name rather than by position, so whatever a planner
 // already exports can be used without being reordered first, and a file carries
 // only the columns it actually has.
+// The names a WGS84 track's heading column answers to.
+const std::vector<const char*> heading_aliases = {"heading", "hdg", "true heading", "heading true", "heading deg"};
+
 struct GeodeticColumns
 {
     std::size_t time = LabeledCsv::npos;
@@ -132,10 +135,32 @@ void check_declared_units(const std::string& filename, const LabeledCsv& csv,
     for (std::size_t index : {columns.east_speed, columns.north_speed, columns.up_speed})
         if (index != LabeledCsv::npos)
             check(index, "velocity", speed_conflicts(csv.unit_token(index)), speed_unit);
+    // The heading is held to more than a deny-list: a magnetic heading is
+    // degrees too, and read as true it turns the nose by the declination (about
+    // 12 degrees at the 2017 site, worth up to 2 dB) with nothing said.  So any
+    // unit but degrees is refused, a header naming a magnetic reference is
+    // refused, and so is a file offering two heading columns.
     if (columns.heading != LabeledCsv::npos)
-        check(columns.heading, "heading",
-                in(csv.unit_token(columns.heading), {"rad", "rads", "radian", "radians", "mil", "mils", "grad"}),
-                "degrees");
+    {
+        std::string raw = csv.header[columns.heading];
+        std::transform(raw.begin(), raw.end(), raw.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (raw.find("mag") != std::string::npos)
+            input_error("Column \"", csv.header[columns.heading], "\" of ", filename, " is a magnetic heading, "
+                    "and the heading is read in degrees from true north. Add the site's declination "
+                    "and name the column heading.");
+        const std::string token = csv.unit_token(columns.heading);
+        if (!token.empty() && !in(token, {"deg", "degs", "degree", "degrees", "degt", "true", "t"}))
+            input_error("Column \"", csv.header[columns.heading], "\" of ", filename, " declares its heading in ",
+                    token, ", but the heading is read in degrees from true north. Nothing is converted.");
+        std::vector<std::string> candidates;
+        for (std::size_t i = 0; i < csv.header.size(); i++)
+            if (csv.column_matches(i, heading_aliases))
+                candidates.push_back(csv.header[i]);
+        if (candidates.size() > 1)
+            input_error(filename, " has ", candidates.size(), " heading columns (\"", candidates[0], "\" and \"",
+                    candidates[1], "\"): keep the one in degrees from true north.");
+    }
 }
 
 GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
@@ -164,7 +189,7 @@ GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
     columns.east_speed = csv.column({"ve", "v east", "veast", "east velocity"});
     columns.north_speed = csv.column({"vn", "v north", "vnorth", "north velocity"});
     columns.up_speed = csv.column({"vu", "vup", "v up", "up velocity", "climb rate", "climb"});
-    columns.heading = csv.column({"heading", "hdg", "true heading", "heading true", "heading deg"});
+    columns.heading = csv.column(heading_aliases);
     return columns;
 }
 

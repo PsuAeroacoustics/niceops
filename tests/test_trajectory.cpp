@@ -1291,3 +1291,25 @@ TEST_CASE("A WGS84 heading in radians is refused", "[trajectory][geodetic]")
     REQUIRE_THROWS_WITH(Trajectory(radians.path, "databases/S-76D.json", demo_frame()),
             Catch::Matchers::ContainsSubstring("declares its heading in rad"));
 }
+
+TEST_CASE("A WGS84 heading must be true degrees, and only one", "[trajectory][geodetic]")
+{
+    // Read as true, a magnetic heading turns the nose by the declination.
+    const TempCsv magnetic("time,lat,lon,alt,heading (mag)\n0,39.8,-74.4,1000,30\n1,39.8001,-74.4,1000,30\n"
+                           "2,39.8002,-74.4,1000,30\n");
+    REQUIRE_THROWS_WITH(Trajectory(magnetic.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("is a magnetic heading"));
+    const TempCsv turns("time,lat,lon,alt,hdg (turns)\n0,39.8,-74.4,1000,0.1\n1,39.8001,-74.4,1000,0.1\n"
+                        "2,39.8002,-74.4,1000,0.1\n");
+    REQUIRE_THROWS_WITH(Trajectory(turns.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("declares its heading in turns"));
+    // Two candidates: the first match is not necessarily the true one.
+    const TempCsv two("time,lat,lon,alt,hdg,true heading\n0,39.8,-74.4,1000,18,30\n1,39.8001,-74.4,1000,18,30\n"
+                      "2,39.8002,-74.4,1000,18,30\n");
+    REQUIRE_THROWS_WITH(Trajectory(two.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("has 2 heading columns"));
+    // Degrees, declared or not, true or not said, are read.
+    const TempCsv degrees("time,lat,lon,alt,heading (deg true)\n0,39.8,-74.4,1000,30\n1,39.8001,-74.4,1000,30\n"
+                          "2,39.8002,-74.4,1000,30\n");
+    REQUIRE_NOTHROW(Trajectory(degrees.path, "databases/S-76D.json", demo_frame()));
+}
