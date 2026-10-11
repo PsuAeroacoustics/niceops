@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -395,6 +396,11 @@ public:
     std::size_t condition_count() const
     {
         return conditions_.size();
+    }
+    // The file's root attributes and scalar variables, as text, for --manifest.
+    const std::map<std::string, std::string>& root_attributes() const
+    {
+        return root_attributes_;
     }
     // Entries the screen found: dBA cells, then spectral bands.
     std::size_t suspect_cells() const
@@ -863,6 +869,7 @@ private:
     // loud a blended state can be at a given range.
     std::vector<double> sphere_max_;
     std::vector<std::array<double, 3>> conditions_;
+    std::map<std::string, std::string> root_attributes_;
     std::size_t suspect_cells_ = 0;
     std::size_t suspect_bands_ = 0;
     // The constructor's last pass over the grid and spectra: see the definition.

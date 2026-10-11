@@ -185,6 +185,33 @@ inline double full_sound_exposure_level(const std::vector<double>& levels, doubl
             });
 }
 
+// The SEL (sound_exposure_level, or full_sound_exposure_level when `full`),
+// bit for bit, and what each sample added to it: its energy times the step
+// and its share of reception time, zero outside the window and for a
+// non-finite level.  Those are what --coverage_file and --provenance_file
+// share out, so they come from the same pass as the SEL they share.
+inline double sound_exposure_level_by_sample(const std::vector<double>& levels, double T,
+        const std::vector<double>& ranges, double c, bool full, std::vector<double>& sample_exposure)
+{
+    sample_exposure.assign(levels.size(), 0.0);
+    if (full && levels.empty())
+        return -std::numeric_limits<double>::infinity();
+    const auto window = full ? std::array<std::size_t, 2> {0, levels.size() - 1} : peak_range(levels);
+    const bool reception = ranges.size() == levels.size() && c > 0.0;
+    double sum = 0.0;
+    for (std::size_t i = window[0]; i <= window[1]; i++)
+    {
+        const double energy = std::pow(10.0, 0.1 * levels[i])
+                * (reception ? reception_factor(i, ranges.size(), T, c,
+                                       [&ranges](std::size_t k) { return ranges[k]; })
+                             : 1.0);
+        sum += energy;
+        if (std::isfinite(levels[i]))
+            sample_exposure[i] = energy * T;
+    }
+    return 10.0 * std::log10(T * sum);
+}
+
 // The day-evening-night metrics (-D, --lden_file, --cnel_file).  Each is the
 // energy average over a 24-hour day of every operation's exposure, with a
 // penalty added to the level of every sample heard in a penalized period:

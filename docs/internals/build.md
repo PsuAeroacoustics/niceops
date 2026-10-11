@@ -137,9 +137,14 @@ the SHA-256 of every input and output. Things to keep:
 - **Options are recorded as given, not resolved.** CLI11's `config_to_str(true)` writes an empty
   value for every default it did not capture, which reads as if the default were empty;
   capturing them all would change every `--help` line. The version pins the defaults.
+- **Nothing is opened twice for it.** A database's root attributes come from the loader, which has
+  the file open (`Database::root_attributes`); a second `nc_open` cost about 0.55 s, since
+  netCDF-4 reads every group's metadata at open. Only a database that never loaded is opened at
+  write. The inputs are hashed in the background from the start of the run
+  (`RunManifest::start_hashing`), so a 67 MB database's 0.2 s overlaps the computation.
 - **`main()` writes the manifest**, after `run()` returns or throws, so the status it records is
-  the process's. A manifest path that is an input is refused before the run, and the request is
-  dropped so `main()` does not try again.
+  the process's. A manifest path that is an input is refused before the run, before the request
+  is handed to `main()`, so a refused one leaves nothing to write.
 
 ## Licensing
 

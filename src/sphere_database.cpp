@@ -12,11 +12,13 @@
 #include <numeric>
 #include <sstream>
 #include <system_error>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
 #include <netcdf.h>
 
+#include "manifest.hpp"
 #include "propagation.hpp"
 #include "util/logger.hpp"
 #include "weighting.hpp"
@@ -959,6 +961,7 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
 {
     const int file_ncid = open_database(datafile_path);
     NcGuard guard(file_ncid);
+    root_attributes_ = netcdf_root_attributes(file_ncid);
 
     // Database format version.  Absent (or 0) means the file predates the
     // versioned builder, and its hover spheres may carry the broken directivity
@@ -2486,12 +2489,13 @@ void Database::screen_suspect_cells(const std::string& datafile_path, const Data
     const std::size_t n_phi = phis.size(), n_theta = thetas.size();
     const std::size_t n_bands = frequencies_.size();
     const std::size_t n_cond = conditions_.size();
-    std::vector<Suspect> found;
-    std::vector<double> around;
     assert(reached.size() == grid.size());
-    around.reserve(std::max<std::size_t>(8, n_bands));
-    for (std::size_t i = 0; i < n_cond; i++)
-    {
+    // Each condition is screened on its own, so they are spread over a few
+    // threads (the band medians are most of a load's screen time) and joined
+    // in condition order, which the warning and the CSV list them in.
+    std::vector<std::vector<Suspect>> per_condition(n_cond);
+    const auto screen_condition = [&](std::size_t i, std::vector<double>& around) {
+        auto& found = per_condition[i];
         around.clear();
         for (std::size_t cell = 0; cell < n_phi * n_theta; cell++)
         {
@@ -2511,7 +2515,7 @@ void Database::screen_suspect_cells(const std::string& datafile_path, const Data
             }
         }
         if (n_bands < 5)
-            continue;
+            return;
         for (std::size_t cell = 0; cell < n_phi * n_theta; cell++)
         {
             around.clear();
@@ -2531,7 +2535,24 @@ void Database::screen_suspect_cells(const std::string& datafile_path, const Data
                     found.push_back({i, cell, band, v, reference});
             }
         }
+    };
+    const std::size_t workers = std::max<std::size_t>(1,
+            std::min<std::size_t>({n_cond, 8, std::thread::hardware_concurrency()}));
+    std::vector<std::future<void>> jobs;
+    for (std::size_t w = 0; w < workers; w++)
+    {
+        jobs.push_back(std::async(std::launch::async, [&, w] {
+            std::vector<double> around;
+            around.reserve(std::max<std::size_t>(8, n_bands));
+            for (std::size_t i = w; i < n_cond; i += workers)
+                screen_condition(i, around);
+        }));
     }
+    for (auto& job : jobs)
+        job.get();
+    std::vector<Suspect> found;
+    for (const auto& list : per_condition)
+        found.insert(found.end(), list.begin(), list.end());
 
     suspect_cells_ = static_cast<std::size_t>(std::count_if(found.begin(), found.end(),
             [&](const Suspect& s) { return s.band == n_bands; }));

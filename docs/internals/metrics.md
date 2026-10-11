@@ -100,8 +100,9 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
 `--provenance_file` (`write_provenance` and the observer loop's provenance block in
 `niceops.cpp`). Things to keep:
 
-- **Each state is weighted as the SEL integrated it** (`sel_weight`: the 10 dB-down window, or
-  the whole history, times the step and the reception factor), as is `--coverage_file`. Summing
+- **Each state is weighted as the SEL integrated it** (`sound_exposure_level_by_sample` in
+  `util/sel.hpp`, the SEL's own pass: the 10 dB-down window, or the whole history, times the step
+  and the reception factor), as is `--coverage_file`. Summing
   every sample alike counted states the SEL leaves out, and across operations of different steps
   weighted each by its sample count. `exposure_db` reproduces the SEL to 5e-9 dB.
 - **Energy is attributed by nominal blend weight.** The blend is linear in dB, so a sphere's weight
@@ -176,7 +177,9 @@ history takes every sample, whose sum is 0). The CTests pin them against each ot
 geodetic demo track: LAeq 0–24 equals Lden by day, Lday equals LAeq 7–19, Lnight equals LAeq 23–7,
 and a night flight leaves Lday −∞; `period_*_over_*_hours` pin each period's normalization
 against Lden (`golden_compare`'s offset), which the pairs above share and so cannot see; "Lden is
-its period levels recombined" pins the arithmetic.
+its period levels recombined" pins the arithmetic. A metric whose penalty is the same at every
+state of a trajectory skips its own pass, which for a flight inside one period is most of them: 0
+everywhere is the SEL itself, bit for bit (x + 0 = x), and −∞ everywhere is no energy, as above.
 
 
 `--lamax_weighting`, `--nax_file`, `--ta_file`, `--lden_file`, `--cnel_file` and `--csel_file`

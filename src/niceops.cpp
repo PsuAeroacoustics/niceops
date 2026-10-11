@@ -1246,6 +1246,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     options.laeq_window);
         }
     }
+    // A flight usually lies inside one period, so most metrics need no pass of
+    // their own: with no penalty at any state the penalized SEL is the SEL
+    // itself, bit for bit (x + 0 == x), and with every state outside a period
+    // level's period (-inf) its energy is zero.
+    enum class DayPass { integrate, the_sel, none };
+    std::array<DayPass, day_metric_count> day_pass {};
+    for (std::size_t m = 0; m < day_metric_count; m++)
+    {
+        const auto& penalty = day_penalty[m];
+        if (std::all_of(penalty.begin(), penalty.end(), [](double p) { return p == 0.0; }))
+            day_pass[m] = DayPass::the_sel;
+        else if (std::all_of(penalty.begin(), penalty.end(), [](double p) { return p == -std::numeric_limits<double>::infinity(); }))
+            day_pass[m] = DayPass::none;
+    }
 
     // How each state's condition picks its spheres (--blend), and the
     // load-factor law's sides (--load_factor_correction).  The tip speed is
@@ -3106,11 +3120,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     levels[it] = level;
                 }
             }
-            integrated_levels[index] = options.full_history
-                    ? full_sound_exposure_level(levels, integration_step, ranges, sound_speed)
-                    : sound_exposure_level(levels, integration_step, ranges, sound_speed);
-            // What that SEL integrated, per state, for the reports that share
-            // it out (--coverage_file, --provenance_file): its 10 dB-down
+            // With the SEL, for the reports that share it out (--coverage_file,
+            // --provenance_file), what it integrated per state: its 10 dB-down
             // window (the whole history under --full_history), each sample's
             // energy times the step and its share of reception time, and zero
             // outside.  Summing every sample alike counted states the SEL
@@ -3118,19 +3129,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // count rather than its exposure.
             if (options.want_coverage || options.want_provenance)
             {
-                sel_weight.assign(nt, 0.0);
-                const auto window = options.full_history ? std::array<std::size_t, 2> {0, nt - 1}
-                                                         : peak_range(levels);
-                const bool reception = ranges.size() == nt && sound_speed > 0.0;
-                for (std::size_t it = window[0]; it <= window[1]; it++)
-                {
-                    if (!std::isfinite(levels[it]))
-                        continue;
-                    sel_weight[it] = std::pow(10.0, 0.1 * levels[it]) * integration_step
-                            * (reception ? reception_factor(it, nt, integration_step, sound_speed,
-                                                   [&ranges](std::size_t k) { return ranges[k]; })
-                                         : 1.0);
-                }
+                integrated_levels[index] = sound_exposure_level_by_sample(levels, integration_step, ranges,
+                        sound_speed, options.full_history, sel_weight);
+            }
+            else
+            {
+                integrated_levels[index] = options.full_history
+                        ? full_sound_exposure_level(levels, integration_step, ranges, sound_speed)
+                        : sound_exposure_level(levels, integration_step, ranges, sound_speed);
             }
             if (options.want_csel)
             {
@@ -3242,8 +3248,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
             for (std::size_t m = 0; m < day_metric_count; m++)
             {
-                if (!options.want_day_metric[m])
+                if (!options.want_day_metric[m] || day_pass[m] == DayPass::none)
                     continue;
+                if (day_pass[m] == DayPass::the_sel)
+                {
+                    totals.day_energy[m][index] += std::pow(10.0, 0.1 * integrated_levels[index]);
+                    continue;
+                }
                 // Energies add across operations; the logarithm comes at the
                 // end, once every trajectory has contributed.  Each observer
                 // index belongs to exactly one worker, and the trajectories run
@@ -4174,16 +4185,15 @@ int run(int argc, char* argv[])
 
     if (!manifest_file.empty())
     {
-        auto& request = manifest_request().emplace();
+        // Handed to main() only once it passes its checks: a refused one
+        // leaves nothing to write.
+        ManifestRequest request;
         request.path = manifest_file;
         request.manifest.set_command_line(argc, argv);
         request.manifest.set_options_given(app.config_to_str(false, false));
         request.manifest.set_log_file(log_file);
         if (same_file(manifest_file, log_file))
-        {
-            manifest_request().reset();
             input_error("--manifest would overwrite the log file ", log_file, ". Give another file name.");
-        }
         if (config_option->count() > 0)
             request.manifest.add_input("config", config_option->as<std::string>());
         for (const auto& f : path_files)
@@ -4198,15 +4208,9 @@ int run(int argc, char* argv[])
         request.manifest.add_input("terrain", terrain_file);
         request.manifest.add_input("plate_table", plate_table);
         request.manifest.add_input("propagation_table", propagation_table);
-        try
-        {
-            request.manifest.refuse_overwriting_an_input(manifest_file);
-        }
-        catch (const std::exception&)
-        {
-            manifest_request().reset(); // nothing for main() to write
-            throw;
-        }
+        request.manifest.refuse_overwriting_an_input(manifest_file);
+        request.manifest.start_hashing();
+        manifest_request().emplace(std::move(request));
     }
 
     Database::BlendOptions blend_options;
@@ -5121,6 +5125,8 @@ int run(int argc, char* argv[])
             // claiming a database that failed to open, so a later trajectory naming
             // the same file would skip the reload and quietly use the previous one.
             loaded_database = database_files[path_index];
+            if (auto& request = manifest_request())
+                request->manifest.set_database_attributes(loaded_database, database.root_attributes());
         }
             PathJob job;
             job.trajectory = path_files[path_index];

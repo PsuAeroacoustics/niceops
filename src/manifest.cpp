@@ -28,33 +28,19 @@ void RunManifest::set_command_line(int argc, const char* const* argv)
     argv_.assign(argv, argv + argc);
 }
 
-void RunManifest::add(std::vector<Entry>& list, const std::string& role, const std::string& path)
+void RunManifest::add_input(const std::string& role, const std::string& path)
 {
     if (path.empty())
         return;
-    const bool listed = std::any_of(list.begin(), list.end(),
+    const bool listed = std::any_of(inputs_.begin(), inputs_.end(),
             [&](const Entry& e) { return e.role == role && e.path == path; });
     if (!listed)
-        list.push_back({role, path});
+        inputs_.push_back({role, path});
 }
 
-void RunManifest::add_input(const std::string& role, const std::string& path)
-{
-    add(inputs_, role, path);
-}
-
-
-namespace {
-
-// Every root attribute and scalar variable of a netCDF file, text as it is and
-// numbers as text;
-// empty if the file cannot be opened (the loader will have said why).
-std::map<std::string, std::string> root_attributes(const std::string& path)
+std::map<std::string, std::string> niceops::netcdf_root_attributes(int file)
 {
     std::map<std::string, std::string> attributes;
-    int file = 0;
-    if (nc_open(path.c_str(), NC_NOWRITE, &file) != NC_NOERR)
-        return attributes;
     int count = 0;
     if (nc_inq_natts(file, &count) == NC_NOERR)
     {
@@ -101,33 +87,45 @@ std::map<std::string, std::string> root_attributes(const std::string& path)
                 attributes[name] = nlohmann::json(value).dump();
         }
     }
-    nc_close(file);
     return attributes;
 }
-
-} // namespace
 
 void RunManifest::add_database(const std::string& path)
 {
     add_input("database", path);
-    if (!path.empty() && databases_.count(path) == 0)
-        databases_[path] = root_attributes(path);
+}
+
+void RunManifest::set_database_attributes(const std::string& path, std::map<std::string, std::string> attributes)
+{
+    databases_.emplace(path, std::move(attributes));
+}
+
+void RunManifest::start_hashing()
+{
+    for (const auto& input : inputs_)
+    {
+        if (digests_.count(input.path) == 0)
+            digests_[input.path] = std::async(std::launch::async, sha256_of_file, input.path).share();
+    }
 }
 
 namespace {
 
-nlohmann::ordered_json describe_files(const std::vector<std::string>& roles,
-        const std::vector<std::string>& paths)
+// Each file's size and digest: from `digests` when it was hashed ahead,
+// otherwise now.
+template <typename Entries>
+nlohmann::ordered_json describe_files(const Entries& files,
+        const std::map<std::string, std::shared_future<std::optional<std::string>>>& digests)
 {
     auto list = nlohmann::ordered_json::array();
-    for (std::size_t k = 0; k < paths.size(); k++)
+    for (const auto& file : files)
     {
         nlohmann::ordered_json entry;
-        if (!roles[k].empty())
-            entry["role"] = roles[k];
-        entry["path"] = paths[k];
+        if (!file.role.empty())
+            entry["role"] = file.role;
+        entry["path"] = file.path;
         std::error_code ec;
-        const auto size = std::filesystem::file_size(paths[k], ec);
+        const auto size = std::filesystem::file_size(file.path, ec);
         if (ec)
         {
             entry["exists"] = false;
@@ -135,7 +133,8 @@ nlohmann::ordered_json describe_files(const std::vector<std::string>& roles,
         else
         {
             entry["bytes"] = size;
-            const auto digest = sha256_of_file(paths[k]);
+            const auto ahead = digests.find(file.path);
+            const auto digest = ahead != digests.end() ? ahead->second.get() : sha256_of_file(file.path);
             if (digest)
                 entry["sha256"] = *digest;
             else
@@ -201,23 +200,27 @@ void RunManifest::write(const std::string& path, int exit_status, double seconds
     manifest["options_given"] = options_given_;
     manifest["log_file"] = log_file_;
 
-    const auto split = [](const std::vector<Entry>& list, std::vector<std::string>& roles,
-                               std::vector<std::string>& paths) {
-        for (const auto& e : list)
+    manifest["inputs"] = describe_files(inputs_, digests_);
+    // Every database, in path order: as the loader read it, or read now if it
+    // never loaded (empty if it cannot be opened; the loader said why).
+    std::map<std::string, std::map<std::string, std::string>> databases = databases_;
+    for (const auto& input : inputs_)
+    {
+        if (input.role != "database" || databases.count(input.path) != 0)
+            continue;
+        auto& attributes = databases[input.path];
+        int file = 0;
+        if (nc_open(input.path.c_str(), NC_NOWRITE, &file) == NC_NOERR)
         {
-            roles.push_back(e.role);
-            paths.push_back(e.path);
+            attributes = netcdf_root_attributes(file);
+            nc_close(file);
         }
-    };
-    std::vector<std::string> roles, paths;
-    split(inputs_, roles, paths);
-    manifest["inputs"] = describe_files(roles, paths);
-    auto databases = nlohmann::ordered_json::object();
-    for (const auto& [database, attributes] : databases_)
-        databases[database] = attributes;
-    manifest["databases"] = databases;
-    roles.clear();
-    paths.clear();
+    }
+    auto listed_databases = nlohmann::ordered_json::object();
+    for (const auto& [database, attributes] : databases)
+        listed_databases[database] = attributes;
+    manifest["databases"] = listed_databases;
+    std::vector<Entry> outputs;
     std::size_t unlisted = 0;
     {
         auto& written = detail::written_files();
@@ -226,16 +229,15 @@ void RunManifest::write(const std::string& path, int exit_status, double seconds
         {
             if (output == log_file_ || output == path)
                 continue;
-            if (paths.size() == max_listed_outputs)
+            if (outputs.size() == max_listed_outputs)
             {
                 unlisted++;
                 continue;
             }
-            roles.emplace_back();
-            paths.push_back(output);
+            outputs.push_back({"", output});
         }
     }
-    manifest["outputs"] = describe_files(roles, paths);
+    manifest["outputs"] = describe_files(outputs, {});
     manifest["outputs_not_listed"] = unlisted;
 
     const auto& logger = Logger::instance();
@@ -245,7 +247,6 @@ void RunManifest::write(const std::string& path, int exit_status, double seconds
     manifest["exit_status"] = exit_status;
     manifest["seconds"] = seconds;
 
-    refuse_overwriting_an_input(path);
     // An output is known only once written; the run's results are kept, and
     // the manifest refused.
     {

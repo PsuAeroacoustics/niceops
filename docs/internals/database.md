@@ -42,7 +42,9 @@ scattered (φ, θ) channels of dBA level and EAA excess-attenuation factor.
   passed it, and it read as a 1e37 dB level (the September 2026 files, HISTORY).
 - **The suspect-cell screen** (`screen_suspect_cells`) runs once the grid and spectra are filled.
   It warns by default and changes nothing, so the default path is untouched; `--mask_suspect_cells`
-  floors the entries to `no_energy_floor_db`. Things to keep:
+  floors the entries to `no_energy_floor_db`. Each condition is screened on its own, spread over up
+  to eight threads and joined in condition order, which the warning and the CSV list them in; on
+  one thread the band medians took 15% of a spectral database's load. Things to keep:
   - **The rules and margins were measured** ([FIDELITY](../FIDELITY.md#database-screen)): a dBA
     cell against the median of its sphere's reached cells (40 dB), a band against the median of
     its own cell's bands (45 dB, excess only). The sound files reach 29.1 and 35.9 dB.

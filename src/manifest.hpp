@@ -6,7 +6,9 @@
 // days, fitting corrections to the wrong physics, had nothing that would have
 // shown it.
 
+#include <future>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,6 +17,11 @@ namespace niceops {
 // Whether two paths name one file: the same file when both exist, else the same
 // path once made absolute and normalized.
 bool same_file(const std::string& a, const std::string& b);
+
+// Every root attribute and scalar variable of an open netCDF file, text as it
+// is and numbers as text: how a database was built, for the manifest.  The
+// loader reads them while it has the file open (Database::root_attributes).
+std::map<std::string, std::string> netcdf_root_attributes(int ncid);
 
 // What the build recorded about itself (src/build_info.cpp, from a header the
 // build regenerates whenever the git state changes).
@@ -53,11 +60,18 @@ public:
     void add_input(const std::string& role, const std::string& path);
     // A database: listed as an input, with its root attributes and scalar
     // variables (how it was built: speed_reference, the build atmosphere,
-    // hover_source, database_version, fixed_load_factor, ...).
+    // hover_source, database_version, fixed_load_factor, ...), which the run
+    // passes on once it has loaded it.  One that never loaded is read at write.
     void add_database(const std::string& path);
+    void set_database_attributes(const std::string& path, std::map<std::string, std::string> attributes);
+
+    // Starts hashing the inputs in the background, so the digests are ready
+    // by the time the run ends.  Called once every input is added.
+    void start_hashing();
 
     // Refuses a manifest path that is one of the inputs, which the write
-    // would truncate.  Called before the run, so it costs nothing.
+    // would truncate.  Called before the run, so it costs nothing; the
+    // inputs do not change after it.
     void refuse_overwriting_an_input(const std::string& path) const;
 
     // Hashes every listed file and writes the manifest, the outputs the first
@@ -73,13 +87,13 @@ private:
         std::string role;
         std::string path;
     };
-    static void add(std::vector<Entry>& list, const std::string& role, const std::string& path);
 
     std::vector<std::string> argv_;
     std::string options_given_;
     std::string log_file_;
     std::vector<Entry> inputs_;
     std::map<std::string, std::map<std::string, std::string>> databases_;
+    std::map<std::string, std::shared_future<std::optional<std::string>>> digests_;
 };
 
 } // namespace niceops
