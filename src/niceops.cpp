@@ -39,6 +39,7 @@
 #include "refraction.hpp"
 #include "stratified.hpp"
 #include "ground_effect.hpp"
+#include "manifest.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
 #include "terrain.hpp"
@@ -55,6 +56,21 @@
 using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code reads like the D original
 
 namespace {
+
+// --manifest: run() fills it in, and main() writes it once run() has returned
+// or failed, so the exit status it records is the one the process returns.
+struct ManifestRequest
+{
+    std::string path;
+    RunManifest manifest;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+};
+
+std::optional<ManifestRequest>& manifest_request()
+{
+    static std::optional<ManifestRequest> request;
+    return request;
+}
 
 // ft2m comes from trajectory.hpp (niceops::ft2m); defining a second one
 // here made every use ambiguous under the using-directive above.
@@ -3887,6 +3903,16 @@ int run(int argc, char* argv[])
             "ignoring the file's z. Without it the file's z stands, and a disagreement over 1 m "
             "is warned about.");
 
+    std::string manifest_file;
+    app.add_option("--manifest", manifest_file,
+            "Write a JSON record of the run to this file: the build, the command line and "
+            "resolved options, the SHA-256 of every input and output, each database's build "
+            "attributes, and the warnings.");
+    auto* config_option = app.set_config("--config", "",
+            "Read options from this TOML file, as `name = value` lines (the command line "
+            "overrides it).");
+    app.set_version_flag("--version", build_info().version);
+
     try
     {
         app.parse(argc, argv);
@@ -3894,6 +3920,37 @@ int run(int argc, char* argv[])
     catch (const CLI::ParseError& e)
     {
         return app.exit(e);
+    }
+
+    if (!manifest_file.empty())
+    {
+        auto& request = manifest_request().emplace();
+        request.path = manifest_file;
+        request.manifest.set_command_line(argc, argv);
+        request.manifest.set_options_given(app.config_to_str(false, false));
+        request.manifest.set_log_file(log_file);
+        if (config_option->count() > 0)
+            request.manifest.add_input("config", config_option->as<std::string>());
+        for (const auto& f : path_files)
+            request.manifest.add_input("trajectory", f);
+        for (const auto& f : database_files)
+            request.manifest.add_database(f);
+        for (const auto& f : vehicle_files)
+            request.manifest.add_input("vehicle", f);
+        request.manifest.add_input("observers", observer_file);
+        request.manifest.add_input("atmosphere", atmosphere_file);
+        request.manifest.add_input("terrain", terrain_file);
+        request.manifest.add_input("plate_table", plate_table);
+        request.manifest.add_input("propagation_table", propagation_table);
+        try
+        {
+            request.manifest.refuse_overwriting_an_input(manifest_file);
+        }
+        catch (const std::exception&)
+        {
+            manifest_request().reset(); // nothing for main() to write
+            throw;
+        }
     }
 
     Database::BlendOptions blend_options;
@@ -4838,13 +4895,29 @@ int main(int argc, char* argv[])
     // cost only one trajectory are caught inside the loop instead.  That puts
     // the decision about what a failure costs in one place, rather than having
     // each call site guess it by choosing fatal() or input_error().
+    int status = 0;
     try
     {
-        return run(argc, argv);
+        status = run(argc, argv);
     }
     catch (const std::exception& problem)
     {
         error("Stopping: ", problem.what());
-        return 2;
+        status = 2;
     }
+    if (auto& request = manifest_request())
+    {
+        const double seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - request->start).count();
+        try
+        {
+            request->manifest.write(request->path, status, seconds);
+        }
+        catch (const std::exception& problem)
+        {
+            error("Stopping: ", problem.what());
+            status = 2;
+        }
+    }
+    return status;
 }

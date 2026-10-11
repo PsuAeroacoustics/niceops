@@ -155,9 +155,35 @@ public:
 #endif
     void write(LogLevel level, Args&&... args)
     {
+        // Warnings and errors are counted, and the first few kept, whatever -L
+        // says, for the run manifest.
+        if (level >= LogLevel::warn)
+        {
+            const auto message = detail::format_message(std::forward<Args>(args)...);
+            note(level, message);
+            write_line(level, message);
+            return;
+        }
         if (!log_enabled(level))
             return;
         write_line(level, detail::format_message(std::forward<Args>(args)...));
+    }
+
+    std::size_t warning_count() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return warnings_;
+    }
+    std::size_t error_count() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return errors_;
+    }
+    // The first warnings and errors, each prefixed with its level.
+    std::vector<std::string> first_problems() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return first_problems_;
     }
 
     // The formatted half, once the message is a string.  input_error needs both
@@ -188,6 +214,19 @@ public:
 
 private:
     Logger() = default;
+
+    static constexpr std::size_t kept_problems = 20;
+
+    void note(LogLevel level, const std::string& message)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (level == LogLevel::warn)
+            warnings_++;
+        else
+            errors_++;
+        if (first_problems_.size() < kept_problems)
+            first_problems_.push_back(std::string(level_name(level)) + ": " + message);
+    }
 
     static const char* level_name(LogLevel level)
     {
@@ -226,7 +265,10 @@ private:
     }
 
     std::ofstream file_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
+    std::size_t warnings_ = 0;
+    std::size_t errors_ = 0; // errors and fatals
+    std::vector<std::string> first_problems_;
 };
 
 // Forced inline so the level test folds into the caller and the argument setup

@@ -28,7 +28,7 @@ the code, start with the [README](../README.md); developers start at
   layers](#refraction-through-the-profiles-layers) · [Low sources near grazing: the resolved
   shadow](#low-sources-near-grazing-the-resolved-shadow) · [Micro-shadows and skip
   zones](#micro-shadows-and-skip-zones) · [Propagation loss tables](#propagation-loss-tables)
-- [Metrics and output files](#metrics-and-output-files): [Output files](#output-files) · [Exposure
+- [Metrics and output files](#metrics-and-output-files): [Output files](#output-files) · [Run records and option files](#run-records-and-option-files) · [Exposure
   (SEL) and the 10 dB-down window](#exposure-sel-and-the-10-db-down-window) · [Several trajectories,
   and the day-night level](#several-trajectories-and-the-day-night-level) · [Maximum level, time
   above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel) · [EPNL and reception-time
@@ -112,6 +112,9 @@ is a physical quantity, given here in meters with its value in feet.
 | `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night periods. Required with `-D`, `--lden_file` or `--cnel_file` when the track has no `utcsec` column. |
 | `--units` | `ft` (default) or `m`: the length unit of the command line and of every file ([Units](#units)). |
 | `-l`, `--logfile` | Log file. Default `log/niceops.log`. |
+| `--manifest` | Write a JSON record of the run ([Run records and option files](#run-records-and-option-files)). |
+| `--config` | Read options from a TOML file; the command line overrides it. |
+| `--version` | Print the build's version (its git state) and exit. |
 | `-L`, `--loglevel` | `trace`, `info`, `warn`, `error` or `fatal`. Default `info`. |
 
 #### Source and database
@@ -283,7 +286,7 @@ The main ones:
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
 | `--speed_reference air` without a wind | Calm air is not assumed. |
 | Two trajectories writing one file; a list of `-d`, `-v`, `-o` that is neither one nor one per track | Outputs would overwrite one another. |
-| `--mask_suspect_cells` with `--self_test`; `--screen_database` with more than one database | The self test checks the file as written; one list would overwrite the other. |
+| `--mask_suspect_cells` with `--self_test`; `--screen_database` with more than one database; `--screen_database` or `--manifest` naming an input | The self test checks the file as written; one list would overwrite the other; the input would be overwritten. |
 | `-p`, `-f`, `-F` in a build without plotting | Rather than silently doing nothing. |
 
 ## Inputs
@@ -916,6 +919,35 @@ others:
   ([A profile from the surface wind](#a-profile-from-the-surface-wind)); `--powerfile`;
   `--export_sphere` and `--export_aam` (a whole sphere, as a one-group `.nod` or in AAM/RNM
   format).
+
+### Run records and option files
+
+`--manifest FILE` writes one JSON file saying what produced the run's outputs:
+
+- the build: its version (`git describe`, `-dirty` when the tree had uncommitted changes, or
+  `unknown` when built outside git), compiler, build type, and whether asserts and plotting were
+  on (`--version` prints the version alone);
+- the command line, and the options given on it or in a `--config` file (the rest are the
+  build's defaults);
+- every input (trajectories, databases, vehicle, observer, atmosphere, terrain and table files)
+  and every output, each with its size and SHA-256, which `shasum -a 256` reproduces; the log
+  file is named only, since runs append to it;
+- each database's root attributes and scalar variables, which record how it was built;
+- the number of warnings and errors, the first 20 of them, the exit status and the run time.
+
+It is written after the run, including one that stops, so the exit status it records is the one
+the process returns. A run writing more than 1000 files (per-observer histories) lists the
+first 1000 and counts the rest. Hashing reads every input once more: about 0.3 s for the largest shipped
+database (72 MB). A manifest that names one of the run's inputs is refused.
+
+`--config FILE` reads options from a TOML file, one `name = value` per line, using the long
+option name without its dashes. Flags take `true`; a negated flag is written as its own name.
+The command line overrides the file. The demo case of [Quick start](#quick-start) as a file:
+
+```toml
+no-spectral = true
+no-ground_effect = true
+```
 
 ### Exposure (SEL) and the 10 dB-down window
 

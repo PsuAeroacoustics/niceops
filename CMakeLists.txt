@@ -200,11 +200,32 @@ add_library(niceops_core STATIC
   src/trajectory.cpp
   ${NICEOPS_PLOTTING_SOURCE}
   src/smoothing_spline.cpp
+  src/manifest.cpp
+  src/build_info.cpp
 )
 target_include_directories(niceops_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${NETCDF_INCLUDE_DIR}
 )
+# What the run manifest says built it.  The git state is read at every build, not at
+# configure, which a later commit would leave stale; cmake/build_info.cmake rewrites the
+# header only when the state changes, so an unchanged tree recompiles nothing.
+set(NICEOPS_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${NICEOPS_GENERATED_DIR})
+add_custom_target(niceops_build_info
+  COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+          -DOUTPUT=${NICEOPS_GENERATED_DIR}/niceops_build_info.hpp
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/build_info.cmake
+  BYPRODUCTS ${NICEOPS_GENERATED_DIR}/niceops_build_info.hpp)
+add_dependencies(niceops_core niceops_build_info)
+target_include_directories(niceops_core PRIVATE ${NICEOPS_GENERATED_DIR})
+set(NICEOPS_BUILD_INFO_DEFINITIONS
+  "NICEOPS_COMPILER=\"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\""
+  "NICEOPS_BUILD_TYPE=\"${CMAKE_BUILD_TYPE}\"")
+if(NICEOPS_PLOTTING)
+  list(APPEND NICEOPS_BUILD_INFO_DEFINITIONS NICEOPS_PLOTTING_ENABLED)
+endif()
+set_source_files_properties(src/build_info.cpp PROPERTIES COMPILE_DEFINITIONS "${NICEOPS_BUILD_INFO_DEFINITIONS}")
 # The library itself starts threads (the observer loop, the PE's band pool and the
 # propagation-table builds), so everything that links it needs the thread library;
 # only niceops and niceops_benchmark said so, and the rest relied on a libc that
@@ -233,6 +254,7 @@ add_executable(niceops_unit_tests
   tests/test_time_weighting.cpp
   tests/test_parallel.cpp
   tests/test_build.cpp
+  tests/test_manifest.cpp
   tests/test_iota.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
@@ -345,6 +367,27 @@ set_tests_properties(mask_suspect_cells_refuses_self_test PROPERTIES PASS_REGULA
 add_test(NAME screen_database_refuses_two_databases COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -d databases/S-76D_M4.nod -o integrated/screen_two.csv --screen_database integrated/screen_two_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(screen_database_refuses_two_databases PROPERTIES PASS_REGULAR_EXPRESSION "run it once per database")
 add_test(NAME unit_test COMMAND niceops_unit_tests WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# --manifest: the run's record.  The run is a plain test (exit status), the record is read back.
+add_test(NAME manifest_run COMMAND niceops --no-spectral --no-ground_effect --gridstep 2000 -L warn -o integrated/manifest_demo.csv --manifest integrated/manifest_demo.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(manifest_run PROPERTIES FIXTURES_SETUP manifest_demo_run)
+add_test(NAME manifest_records_run COMMAND ${CMAKE_COMMAND} -E cat integrated/manifest_demo.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(manifest_records_run PROPERTIES FIXTURES_REQUIRED manifest_demo_run PASS_REGULAR_EXPRESSION "\"role\": \"database\",[^}]*\"path\": \"databases/S-76D_M3\\.nod\",[^}]*\"sha256\": \"[0-9a-f]+\".*\"outputs\": \\[[^}]*\"path\": \"integrated/manifest_demo\\.csv\",[^}]*\"sha256\": \"[0-9a-f]+\".*\"exit_status\": 0")
+# A run that stops still leaves its record, with the status it returned.
+add_test(NAME manifest_records_failure COMMAND niceops --self_test --mask_suspect_cells --manifest integrated/manifest_failed.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(manifest_records_failure PROPERTIES FIXTURES_SETUP manifest_failed_run WILL_FAIL TRUE)
+add_test(NAME manifest_records_failure_status COMMAND ${CMAKE_COMMAND} -E cat integrated/manifest_failed.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(manifest_records_failure_status PROPERTIES FIXTURES_REQUIRED manifest_failed_run PASS_REGULAR_EXPRESSION "error: --self_test checks the database.*\"exit_status\": 2")
+add_test(NAME manifest_victim COMMAND ${CMAKE_COMMAND} -E copy databases/S-76D.json integrated/manifest_victim.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(manifest_victim PROPERTIES FIXTURES_SETUP manifest_victim)
+add_test(NAME manifest_refuses_overwriting_an_input COMMAND niceops -v integrated/manifest_victim.json --manifest integrated/manifest_victim.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(manifest_refuses_overwriting_an_input PROPERTIES FIXTURES_REQUIRED manifest_victim PASS_REGULAR_EXPRESSION "--manifest would overwrite the vehicle")
+# --config: a file of options is the command line it spells.
+add_test(NAME config_demo COMMAND niceops --config tests/data/demo_options.toml -L warn -o integrated/config_demo.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(config_demo PROPERTIES FIXTURES_SETUP config_demo_run)
+add_test(NAME config_demo_is_golden COMMAND golden_compare integrated/config_demo.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(config_demo_is_golden PROPERTIES FIXTURES_REQUIRED config_demo_run)
+add_test(NAME version_names_the_build COMMAND niceops --version WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(version_names_the_build PROPERTIES PASS_REGULAR_EXPRESSION "^([0-9a-f]+|v?[0-9][^ ]*|unknown)(-dirty)?\n$")
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME state_golden COMMAND golden_compare state/ci_state.csv golden/state_197421.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(regression_golden state_golden PROPERTIES FIXTURES_REQUIRED demo_run)
