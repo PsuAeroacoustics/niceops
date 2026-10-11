@@ -1,0 +1,492 @@
+{
+ "findings": {
+  "family": "Acceleration and precomputation strategies for urban multipath propagation inside a ~1e8-evaluation footprint tool with an elevated, moving source",
+  "models": [
+   {
+    "name": "Per-receiver reciprocal directional transfer table (a 'canyon HRTF'): far-field factorisation of the urban response by direction of incidence",
+    "physics_captured": "For an elevated source whose range is much greater than the canyon size (helicopter 100-1500 m up, canyon 10-40 m), the field at a street-level microphone factors as (free-field arrival at the canyon top, which NICEOPS already computes: straight, linear, stratified or PE ray, absorption, spreading) x H_r(f, theta_inc, phi_inc). H_r is the receiver's local multipath response to a plane wave arriving from that direction: direct path or roof-edge diffraction, facade image sources, flutter between parallel facades, the ground reflection inside the canyon, diffuse facade scattering. By reciprocity, H_r for every incidence direction comes out of ONE simulation per receiver with a point source at the microphone, by sampling the outgoing far field over the upper hemisphere. This is the same structure as an HRTF (a per-listener transfer over source direction) and as the reciprocal probe sampling used in game precomputed acoustics. Stored per third-octave band as an energetic |H|^2 averaged over the band. That band averaging is what makes the table smooth enough to interpolate.",
+    "limitations": "(1) Reciprocity in its plain form fails in a moving medium; the flow-reversal theorem (Godin) is the moving-medium counterpart. Wind inside a canyon is weak and recirculating, and the long atmospheric leg, where wind matters, stays in NICEOPS's existing eigenray solvers. So the split 'atmosphere with wind' x 'canyon in still air, reciprocal' is a sound approximation, but it is an approximation. (2) The far-field factorisation breaks down for low passes. At 30 m altitude over a 20 m-wide canyon, the incident wavefront curvature across the canyon matters, so the table needs a range (or 1/R-curvature) axis, or a position-dependent near-field table for the lowest states. (3) Per-band energetic |H|^2 throws away phase. Fine for SEL and band levels, not for auralization or narrowband tones. (4) Diffraction over roof edges into deep shadow needs a wave or UTD solver in the precompute, because pure specular ray tracing gives zero there. (5) Storage scales with urban receivers x directions x bands.",
+    "cost": "In-loop: one direction-index computation (already done for the sphere lookup, reusing the arrival direction from straight_ray or the eigenray) plus a bilinear gather per band. That is ~27 bands x a few ns = ~0.1 us per evaluation, about a tenth of the existing spectral+ground path (~1 us), which it partly REPLACES, since the canyon ground reflection is inside H_r. Storage: 5-deg grid over the upper hemisphere (72 az x 18 el = 1296 directions) x 27 bands x float = 140 kB per receiver; 14,400 urban receivers = 2.0 GB. Spherical-harmonic compression of a smooth band-energy field at order 10-15 (121-256 coefficients) gives 13-28 kB per receiver (0.2-0.4 GB per grid). HRTF experience suggests detailed directional transfer needs order ~6 just to reach -10 dB NMSE (Ben-Hur et al.), and canyon responses have sharper shadow edges than heads, so a direct direction grid, or SH plus a separate shadow mask, is safer than pure SH. Precompute: see the GPU-tracing and wave-precompute entries. Seconds to minutes per receiver set. [Storage figures are my arithmetic, not from the literature.]",
+    "niceops_fit": "This is the best fit to the roadmap's 'per-receiver urban reciprocity tables' and to the existing code shape. The hot loop already forms, per (state, observer), the arrival direction and range (RayPath from straight_ray, DirectEigenray from refraction/stratified). A UrbanReceiverTable keyed by observer index would be read in spectral_level_at_observer exactly where the ground_effect term is applied now, as a per-band gain (in energy) instead of the Weyl-van der Pol term. Open-field observers keep today's path, so only receivers flagged urban pay. Bounds: max_b |H_r|^2 over directions per receiver gives a ground-like gain bound for the windowed peak search, the same way max_power_ratio does now, so windowed_sound_exposure_level stays exact. Building per distinct receiver (like GroundTable per distinct height) parallels existing structure. For a 1e8-evaluation run it adds ~10 s of CPU at 0.1 us each on top of the spectral path (~1 s wall on 14 threads). For the inverse problem (de-propagating flight-test mics to spheres), a per-mic table is ideal: the 96-mic arrays are few receivers, and tables can be computed at high fidelity (wave-based to 1 kHz).",
+    "elevated_moving_source_suitability": "Excellent for altitudes above ~3-5 canyon widths, where the plane-wave incidence assumption holds. A moving source just sweeps (theta, phi) through the table, one lookup per trajectory state. The time variation needs no special handling for SEL. Below that altitude, add a range axis.",
+    "frequency_range_and_scale": "50 Hz - 10 kHz if the precompute is hybrid: wave-based (FDTD, PSTD or ESM) up to ~0.5-1 kHz, geometric (image source + radiosity/diffuse rain) above. Spatial scale: one canyon or courtyard neighbourhood (~100 m) around each receiver.",
+    "references": [
+     {
+      "citation": "Raghuvanshi N, Snyder J (2014). Parametric wave field coding for precomputed sound propagation. ACM Trans. Graphics 33(4):38 (SIGGRAPH 2014).",
+      "supports_claim": "Precomputed wave-field tables encoded as perceptual parameters; removing 2 of 7 dimensions fits whole game maps in ~100 MB, with ~100 us decoding per source",
+      "url_or_doi": "10.1145/2601097.2601184",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Raghuvanshi N, Snyder J (2018). Parametric directional coding for precomputed sound propagation. ACM Trans. Graphics (SIGGRAPH 2018).",
+      "supports_claim": "Directional (arrival-direction) encoding of precomputed propagation per source/listener probe, a direct analogue of a per-receiver directional transfer table (details from memory; existence verified)",
+      "url_or_doi": "https://www.microsoft.com/en-us/research/publication/parametric-directional-coding-for-precomputed-sound-propagation/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Ben-Hur Z, Alon DL, Rafaely B, Mehra R (2019). Efficient representation and sparse sampling of head-related transfer functions using phase correction based on ear alignment. IEEE/ACM TASLP.",
+      "supports_claim": "SH order ~6 needed for NMSE < -10 dB on HRTFs, with ~100 measurement directions; truncation/aliasing trade-off for directional transfer tables",
+      "url_or_doi": "https://cris.bgu.ac.il/en/publications/efficient-representation-and-sparse-sampling-of-head-related-tran/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Godin OA (1995). Flow reversal theorem abstracts, ASA 129th/130th meetings.",
+      "supports_claim": "Reciprocity is invalid in a moving fluid; the flow reversal theorem is its counterpart (swap source and receiver and reverse the flow)",
+      "url_or_doi": "https://auditory.org/asamtgs/asa95stl/1aPA/1aPA7.html",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schafer P, Reich L, Vorlander M (2022). Linking atmospheric and urban auralization models. Acta Acustica 6:28.",
+      "supports_claim": "Precedent for splitting the problem into curved atmospheric eigenrays (stratified moving medium) plus straight-path urban reflection/diffraction models for flyovers",
+      "url_or_doi": "10.1051/aacus/2022021",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Listener-centric (reciprocal) GPU ray / beam tracing as the table builder: image sources + diffuse radiosity, OptiX/RT-core class hardware",
+    "physics_captured": "Rays launched FROM each receiver (reciprocity) into the upper hemisphere. Each ray that escapes above roof level after k specular or diffuse bounces is binned by escape direction with its accumulated energy (facade absorption, scattering coefficient, ground impedance) and delay. The binned histogram IS the directional transfer table of the previous entry, in one pass per receiver. Edge diffraction can be added via UTD/BTM edge sources (the iSound/GAMMA line does GPU specular + edge diffraction). Diffuse facade scattering via radiosity: Kang showed that for street width < building height, diffuse and specular boundaries give similar along-street propagation, but they differ otherwise, and diffuse reflections dominated the sonic boom canyon signatures in Riegel & Sparrow. Gaussian beam tracing (Yunus et al.) carries smooth fields into shadow zones, where rays give nothing.",
+    "limitations": "Geometric acoustics fails at low frequency: below a few tens of Hz per ONERA's UAM work, and in practice where the wavelength approaches facade detail or canyon width (~100-300 Hz for 3-10 m features). It needs diffraction added explicitly. Ray noise needs ~1e4-1e5 rays per receiver for smooth band energy. GPU acoustic tracers (NVIDIA VRWorks Audio/NVAR is built on OptiX) are game- and room-oriented; no peer-reviewed OptiX/RT-core urban-noise paper was found. The closest mature analogue is radio: Sionna RT, a differentiable GPU ray tracer computing urban coverage maps with reflection, diffraction and diffuse scattering.",
+    "cost": "Not in the hot loop; precompute only. Estimate (mine, not from the literature): 1e5 rays x ~10 bounces per receiver = 1e6 ray-scene intersections. RT-core GPUs do ~1e9-1e10 intersections/s on city meshes, so ~0.1-1 ms per receiver and 1.5-15 s for a 14,400-receiver grid; a multi-core CPU with Embree is perhaps 10-50x slower (minutes). Radiosity on patches adds a modest cost per canyon.",
+    "niceops_fit": "This is the practical builder for per-receiver tables above ~500 Hz. Because escape directions are binned in the same (theta, phi) frame the sphere lookup uses, no geometry is needed at run time. A CPU path (Embree or a simple BVH) keeps the C++17, no-GPU build intact, and GPU acceleration becomes an optional build flag like NICEOPS_PLOTTING. Sionna RT's differentiability is attractive for the inverse use: gradients of received level with respect to source position and material parameters. Its Python/Dr.Jit stack would live in a preprocessing tool, not in niceops_core.",
+    "elevated_moving_source_suitability": "Good: reciprocal tracing from receivers avoids retracing per trajectory state, which is the key point for a moving source. Forward tracing from 6500 source positions would be ~450x more work than tracing from receivers once.",
+    "frequency_range_and_scale": "~250 Hz - 10 kHz reliable; to ~100 Hz with diffraction and diffuse terms. City blocks up to km scale (mesh size not limiting with BVH).",
+    "references": [
+     {
+      "citation": "Kang J (2000). Sound propagation in street canyons: Comparison between diffusely and geometrically reflecting boundaries. J. Acoust. Soc. Am. 107(3):1394-1404.",
+      "supports_claim": "Radiosity for diffuse vs image sources for specular canyon walls give considerably different fields; similar when street width < building height",
+      "url_or_doi": "10.1121/1.428580",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Riegel K, Sparrow VW (2024). Sonic boom propagation in urban canyons using a combined ray tracing/radiosity method. J. Acoust. Soc. Am. 155(2):1527-1533.",
+      "supports_claim": "Combined ray tracing + radiosity for an aerial source into canyons (no diffraction); PLdB from 0 in shadow zones to 94 dB; 1-4 boom arrivals; diffuse reflections had the greatest impact",
+      "url_or_doi": "10.1121/10.0024980",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Yunus F, Casalino D, Avallone F, Ragni D (2023). Efficient prediction of urban air mobility noise in a vertiport environment. Aerospace Science and Technology (Gaussian beam tracer).",
+      "supports_claim": "Gaussian beam tracing with terrain and wind cut prediction error relative to straight rays by 5 dB in illuminated zones and 35 dB in shadow zones",
+      "url_or_doi": "10.1016/j.ast.2023.108410",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Taylor M, Chandak A, Mo Q, Lauterbach C, Schissler C, Manocha D. Guided multiview ray tracing for fast auralization; iSound (UNC GAMMA).",
+      "supports_claim": "GPU multi-view ray casting for image sources plus edge diffraction at interactive rates",
+      "url_or_doi": "https://gamma.cs.unc.edu/Sound/Guided/Guided.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "NVIDIA VRWorks Audio SDK: NVIDIA Acoustic Raytracer (NVAR), CUDA + OptiX (developer documentation, not peer-reviewed).",
+      "supports_claim": "Production GPU geometric-acoustics engine built on OptiX",
+      "url_or_doi": "https://developer.nvidia.com/vrworks-audio-sdk-depth",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hoydis J et al. (2023). Sionna RT: Differentiable ray tracing for radio propagation modeling. arXiv:2303.11103; Sionna RT Technical Report arXiv:2504.21719 (2025).",
+      "supports_claim": "GPU (Mitsuba 3/Dr.Jit) differentiable urban ray tracer with reflection, diffraction and diffuse scattering, producing coverage maps and gradients with respect to positions and materials; the closest analogue to an acoustic urban table builder",
+      "url_or_doi": "https://arxiv.org/abs/2303.11103",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Mo Q, Yeh H, Manocha D (2014). Tracing analytic ray curves for light and sound propagation in non-linear media. arXiv:1409.2235.",
+      "supports_claim": "Analytic curved rays with an adaptive media mesh give interactive outdoor propagation with wind/temperature profiles and complex boundaries",
+      "url_or_doi": "https://arxiv.org/abs/1409.2235",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Parker SG et al. (2013). GPU ray tracing (OptiX). Communications of the ACM 56(5).",
+      "supports_claim": "OptiX engine; lists sound propagation among its target applications",
+      "url_or_doi": "https://cacm.acm.org/magazines/2013/5/163758-gpu-ray-tracing/fulltext",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Wave-based precomputation of the urban low-frequency response (ESM, 2.5D ESM, PSTD, GPU FDTD) with compact encoding",
+    "physics_captured": "Full diffraction, interference and facade flutter at low frequencies, which geometric acoustics misses and which matters most in shielded canyons and courtyards. Mehra et al. precompute per-object scattering operators (incoming to outgoing equivalent sources) plus inter-object transfer operators, and evaluate a moving listener by fast summation, for open scenes of hundreds of metres. Hornikx & Forssen's 2.5D ESM handles long canyons cheaply. They found that treating a line source as coherent overpredicts levels at shielded canyon positions, and that multiple facade reflections dominate there. Extended Fourier PSTD reaches 3D courtyards to ~500 Hz. Empa's GPU FDTD (moving frame) reaches 500 m domains at 1.5 cm resolution.",
+    "limitations": "Cost grows as f^3-f^4, so wave methods top out around 0.5-1 kHz for neighbourhood-scale 3D domains. Equivalent-source counts limit ESM with many radiating objects. 2D/2.5D models overpredict distant contributions and underpredict facade mitigation (by up to 1.5 dB(A) for absorption and 4.4 dB(A) for screens in the PSTD courtyard study). Results need encoding (directional tables or parametric) before they can be used in a 1e8-evaluation loop.",
+    "cost": "Precompute: hours per courtyard at a few hundred Hz on a CPU (Hornikx et al. era); GPU FDTD is faster but no city-scale runtime was published. Runtime decode, if encoded as a directional table: the same ~0.1 us per evaluation as the table entry. Raghuvanshi-style encoding reported ~100 MB per map and ~100 us per source decode (game setting, many listener positions).",
+    "niceops_fit": "Use as the low-frequency half of the per-receiver table builder (bands up to ~500 Hz-1 kHz), with geometric tracing above, crossfaded per band. The existing Crank-Nicolson PE (now with turbulence phase screens) is a natural extension for 2D vertical slices through canyons: one PE per (receiver, azimuth) gives H_r(f, theta) for that azimuth, exploiting reciprocity. It cannot do 3D backscatter between facades, though, so the per-canyon -1 to -4 dB PE/ESM results (Schiff et al.) are more of a calibration target than a builder. For validation of the urban tables, a 3D FDTD/PSTD reference to ~500 Hz is the analogue of the PE's role for refraction.",
+    "elevated_moving_source_suitability": "Good when run reciprocally (source at the receiver, sample the outgoing far field over elevation/azimuth). Forward simulation per trajectory state is infeasible.",
+    "frequency_range_and_scale": "~20 Hz - 0.5/1 kHz; domains ~100-500 m.",
+    "references": [
+     {
+      "citation": "Mehra R, Raghuvanshi N, Antani L, Chandak A, Curtis S, Manocha D (2013). Wave-based sound propagation in large open scenes using an equivalent source formulation. ACM Trans. Graphics 32(2):19.",
+      "supports_claim": "Precomputed per-object and inter-object transfer functions; real-time moving-listener evaluation over open scenes of hundreds of metres with small memory",
+      "url_or_doi": "https://www.microsoft.com/en-us/research/publication/wave-based-sound-propagation-large-open-scenes-using-equivalent-source-formulation/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx M, Forssen J (2007). The 2.5-dimensional equivalent sources method for directly exposed and shielded urban canyons. J. Acoust. Soc. Am.",
+      "supports_claim": "Fast 2.5D ESM for canyons; a coherent line source overpredicts shielded-canyon levels; multiple facade reflections are important in shielded areas",
+      "url_or_doi": "10.1121/1.2783197",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx M, Forssen J (2011). Modelling of sound propagation to three-dimensional urban courtyards using the extended Fourier PSTD method. Applied Acoustics.",
+      "supports_claim": "3D PSTD to 500 Hz; 2D models overpredict distant sources and underpredict facade mitigation by up to 1.5 dB(A) (absorption) and 4.4 dB(A) (screens)",
+      "url_or_doi": "https://research.chalmers.se/en/publication/143443",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schiff M, Hornikx M, Forssen J (2010). Excess attenuation for sound propagation over an urban canyon. Applied Acoustics.",
+      "supports_claim": "PE + ESM give about -1 to -4 dB excess attenuation per intermediate canyon, usable as an engineering term",
+      "url_or_doi": "https://research.chalmers.se/en/publication/122579",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Montanaro et al. (2023, 2024). Empapu GPU FDTD outdoor solver, Forum Acusticum 2023 and Inter-Noise 2024.",
+      "supports_claim": "GPU 3D FDTD with moving frame; cases up to 500 m at 1.5 cm resolution; turbulence; compared with ISO 9613-2/CNOSSOS-EU",
+      "url_or_doi": "https://dael.euracoustics.org/confs/fa2023/data/articles/000147.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Parametric / statistical reduced canyon models: tabulated excess attenuation as a function of geometry descriptors and incidence angle",
+    "physics_captured": "Engineering correction terms instead of a per-receiver simulation. Hornikx et al.'s multiple-reflection term A_can separates into a source-side term A_s and a receiver-side term A_r, with an analytical 3D expression (built from 2D simulations) in street W/H, building height difference and facade openings, valid when the source is more than 4 street widths from the receiver's environment. The receiver-side term is exactly what an overhead source needs. Mesoscale aircraft data (Hao & Kang): flyover attenuation correlates mainly with the Building Frontal Area Index and the horizontal distance from the first-row building to the flight path; site-to-site variation up to 4.6 dB at 3150 Hz within 1000 m; altitude 200-400 ft matters by only ~2 dB. Facade corrections: ~+6 dB at a facade microphone, < +3 dB at 2 m (Toronto); ISO 1996-2's simplified 3 dB.",
+    "limitations": "Calibrated mainly for road traffic (near-horizontal incidence), not for steep overhead incidence. Courtyard measurements under Schiphol flyovers show 8-9 dB(A) position differences with straight facades and 14 dB(A) with a slanted facade and inset, so facade shape, not just W/H, matters for aerial sources. Statistical models (BFAI regressions) give area-average attenuation, not per-cell values.",
+    "cost": "Negligible: one table lookup per evaluation (~ns), or per receiver if the term does not depend on incidence direction.",
+    "niceops_fit": "Cheapest first step and a useful bound. Assign each grid receiver a canyon class from OSM/LoD1 (W/H, facade distance, orientation relative to its local street). Then tabulate DeltaL_class(f, theta_inc, phi_inc - street_azimuth, x_receiver/W) ONCE per class with the GPU tracer or wave solver: tens of classes instead of 14,400 receiver tables, so storage is MBs. Evaluated in the band loop like the per-receiver table. It gives a principled hierarchy: class tables for wide-area footprints, per-receiver tables for validation microphones and for inversion.",
+    "elevated_moving_source_suitability": "Moderate: published terms are mostly for horizontally distant sources. The class-table approach recovers the steep-incidence dependence if the tables are built reciprocally.",
+    "frequency_range_and_scale": "Octave/third-octave, 63 Hz - 8 kHz; neighbourhood statistics.",
+    "references": [
+     {
+      "citation": "Hornikx M, Forssen J, Botteldooren D, Van Renterghem T, Wei W, Ogren M, Salomons E (2014). Urban background noise mapping: The multiple-reflection correction term. Acta Acustica united with Acustica 100(2):293-305.",
+      "supports_claim": "A_can splits into source- and receiver-side terms with an analytical 3D expression in W/H, height differences and facade openings; valid for separation > 4 street widths",
+      "url_or_doi": "10.3813/AAA.918709",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hao Y, Kang J (2014). Influence of mesoscale urban morphology on the spatial noise attenuation of flyover aircrafts. Applied Acoustics 84:73-82.",
+      "supports_claim": "Flyover attenuation correlates with BFAI and first-row building distance; up to 4.6 dB site variation at 3150 Hz; 200-400 ft altitude changes it by only ~2 dB",
+      "url_or_doi": "10.1016/j.apacoust.2013.12.001",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Lugten M (2022). Internoise 2022 (container field lab, Schiphol), 10.3397/IN_2022_0976; Lugten M, Wuite, Peng, Tenpierik M (2024). Building and Environment 255:111400.",
+      "supports_claim": "Measured flyover level differences across courtyard microphones of 8-9 dB(A) (straight facades) to 14 dB(A) (slanted facade + inset); modelled slanted or overhanging roofs reduce levels",
+      "url_or_doi": "10.1016/j.buildenv.2024.111400",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Canadian facade-microphone study near Toronto airport (J. Canadian Acoustics).",
+      "supports_claim": "Facade mic ~+6 dB vs free field, < +3 dB at 2 m; the increase varies with frequency and rarely reaches +6 dB",
+      "url_or_doi": "https://jcaa.caa-aca.ca/index.php/jcaa/article/download/1285/1025/1415",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Yu, Ma, Kang (2019). Combined radiosity and image-source model for streets, validated in 5 streets. Applied Sciences.",
+      "supports_claim": "Hybrid radiosity/image-source (IMCRI) agrees with measured SPL and RT in real streets",
+      "url_or_doi": "https://doaj.org/article/cb50b8de5f844096a0e248ab4246a5dc",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Machine-learning surrogates (CNN/U-Net, normalizing flows, neural operators) trained on wave or ray simulations",
+    "physics_captured": "Learned maps from building layout plus source parameters to a sound-pressure or path-loss field. Urban Sound Propagation benchmark (Spitznagel & Keuper): 100k OSM 2D layouts with simulated fields over four tasks of increasing reflection/diffraction complexity. U-Net, GAN and diffusion baselines handle simple cases but systematically fail on higher-order reflection and diffraction. Full-Glow conditional normalizing flow (Eckerle, Spitznagel, Keuper, NeurIPS 2025): 256x256 map in ~102 ms on an RTX 4090, 0.65 dB NLoS MAE in the baseline case, >2000x faster than the reference solver. A U-FNO for 3D Helmholtz from loudspeakers: 0.87 dB MAE at 500 Hz rising to 5.35 dB at 4 kHz, 15-3000x faster than BEM. Radio analogue RadioUNet: urban path loss from building maps, trained on simulation, with sim-to-real transfer. Outdoor-sound precedent: Hart, Wilson et al. trained ML on CNPE excess-attenuation predictions.",
+    "limitations": "All published urban acoustic surrogates are 2D (horizontal plane, source near the ground), not elevated incidence into 3D canyons. Error grows with frequency and with reflection order, exactly the multipath regime of interest. They do not guarantee energy bounds, which the exact windowed SEL search needs. They are poorly suited to inversion (de-propagation), since errors are uncontrolled and not physically attributable. ~100 ms per map is far too slow per state for 6500 states unless it is used to build per-receiver tables.",
+    "cost": "Inference ~0.1 s per field map on a GPU. Training needs ~1e5 simulations. Per-evaluation it is useless in the 20 ns - 1 us budget; per receiver-table it is competitive with GPU ray tracing but less accurate.",
+    "niceops_fit": "Low priority. The right role, if any, is as a precompute accelerator that predicts H_r(f, theta, phi) or class tables from local geometry patches (a learned 'canyon HRTF' from a height raster), validated against tracer/wave results. It should not sit in the evaluation loop. The physics tables are already cheaper at run time and keep the exactness properties (bounds, golden-style regression) that NICEOPS relies on.",
+    "elevated_moving_source_suitability": "Poor as published (2D, ground-level sources). It would need a new training set with elevated incidence.",
+    "frequency_range_and_scale": "Demonstrated to ~4 kHz (FNO) with degrading accuracy; 2D maps of a few hundred metres.",
+    "references": [
+     {
+      "citation": "Spitznagel M, Keuper J (2024). Urban Sound Propagation: a benchmark for 1-step generative modeling of complex physical systems. arXiv:2403.10904 (DMLR @ ICLR 2024).",
+      "supports_claim": "100k OSM-based 2D urban propagation samples; deep generative baselines fail on higher-order reflection/diffraction",
+      "url_or_doi": "https://arxiv.org/abs/2403.10904",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Eckerle A, Spitznagel M, Keuper J (2025). Real-time prediction of urban sound propagation with conditioned normalizing flows. arXiv:2510.04510 (NeurIPS 2025).",
+      "supports_claim": "~102 ms per 256x256 map on RTX 4090; 0.65 dB NLoS MAE in the baseline case; >2000x speedup over the reference solver",
+      "url_or_doi": "https://arxiv.org/abs/2510.04510",
+      "verified_by_search": true
+     },
+     {
+      "citation": "AES e-library paper (2025): U-shaped Fourier Neural Operator for 3D Helmholtz propagation from simplified loudspeakers.",
+      "supports_claim": "MAE 0.87 dB at 500 Hz to 5.35 dB at 4 kHz; 15-3000x faster than BEM",
+      "url_or_doi": "https://aes2.org/publications/elibrary-page/?id=23005",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Levie R, Yapar C, Kutyniok G, Caire G (2021). RadioUNet: Fast radio map estimation with convolutional neural networks. IEEE Trans. Wireless Commun. 20(6).",
+      "supports_claim": "U-Net surrogate of urban path loss trained on simulations, with sim-to-real transfer; the radio analogue of urban acoustic surrogates",
+      "url_or_doi": "https://arxiv.org/abs/1911.09002",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hart CR, Wilson DK, Pettit CL, Nykaza ET (2016). Machine-learning models for the prediction of long-range outdoor sound propagation.",
+      "supports_claim": "ML trained on Crank-Nicolson PE excess-attenuation predictions",
+      "url_or_doi": "https://labs.sonicfield.org/library/machine-learning-models-for-the-prediction-of-long-range-outdoor-sound-propagati",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Moving-source multipath handling: Doppler, time variation, and coherent vs partially coherent vs incoherent summation",
+    "physics_captured": "For each trajectory state, multipath arrivals (direct, facade images, canyon-floor reflection) have different delays and different Doppler factors, since each image source has its own radial velocity. NASA's Auralization Framework does receiver-based synthesis with propagated spectra interpolated in time, plus a path finder/traversal plugin for the differential direct-vs-ground-reflected path length. Rietdijk et al. use time-varying filters for elevated distant sources in urban settings, with turbulence-induced amplitude/phase modulation. Schafer et al. show that scheduled updates produce Doppler artefacts for fast sources unless interpolated. Turbulence reduces direct/reflected coherence (Ostashev et al. coherence factor; Nord2000 'partial incoherence'). Band-level multipath in streets: larger delay spread means a narrower coherence bandwidth (DYNAMAP analysis).",
+    "limitations": "Coherent per-frequency summation of many paths needs fine frequency sampling within a band, or the band levels are biased by interference (the INCE 2023 point on monochromatic calculations inside bands). Fully incoherent summation loses the real low-frequency canyon resonance/comb structure. Auralization-grade phase is not needed for SEL.",
+    "cost": "Band-energy summation of N paths: N x bands multiply-adds. Coherent sums need ~5-10 frequencies per band. Precomputing the band energy with a partial-coherence factor per path pair into the table moves all of it out of the loop.",
+    "niceops_fit": "Recommended rule, derived here (not from a single source): within a third-octave band of centre f (bandwidth ~0.23 f), two paths with delay difference dt add incoherently once dt > ~1/(0.23 f). That is 43 ms (~15 m path difference) at 100 Hz, 4.3 ms (1.5 m) at 1 kHz, 0.4 ms (15 cm) at 10 kHz. So facade flutter in a 20 m canyon is effectively incoherent above ~200-300 Hz, while the canyon-floor/near-facade reflections (path differences < 1-2 m) stay coherent to ~1 kHz. Doppler spread between paths (helicopter at ~60 m/s, M ~0.18; up to +/-18% frequency, under one third-octave band) further decorrelates paths over a state's time step, and the SEL time integral averages what is left. Practical scheme: store per-receiver energetic band |H|^2 computed from a coherent fine-frequency sum averaged over the band, with a turbulence coherence factor applied to long-delay pairs, as the existing ground model already effectively does. Then the loop sums energy across bands exactly as today. Doppler matters for SEL only through the source-frame band shift, which the sphere database lookup already ignores or handles. NAF-style per-path Doppler is needed only if NICEOPS adds auralization.",
+    "elevated_moving_source_suitability": "Directly targeted at aircraft flyovers (NAF, Rietdijk, Schafer).",
+    "frequency_range_and_scale": "All bands; the coherent regime is mainly < ~1 kHz in canyons.",
+    "references": [
+     {
+      "citation": "Aumann AR, Rizzi SA, Heath SL (2020). Receiver-based auralization of broadband flyover noise in the NASA Auralization Framework. NASA NTRS 20200002559.",
+      "supports_claim": "Receiver-based synthesis with time-interpolated propagated spectra and a path finder/traversal for the direct vs ground-reflected path-length difference",
+      "url_or_doi": "https://ntrs.nasa.gov/citations/20200002559",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Rizzi SA, Sahai AK. Auralization of air vehicle noise for community noise assessment (NASA NTRS overview).",
+      "supports_claim": "Overview of time- vs frequency-domain auralization and propagation methods for flyovers",
+      "url_or_doi": "https://ntrs.nasa.gov/citations/20200002559",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Rietdijk F, Forssen J, Heutschi K. Auralization of aircraft noise in an urban environment (Chalmers record 207819); PhD thesis 2017; Acta Acustica 103(2):331-338 (2017) on acoustic scintillation sequences.",
+      "supports_claim": "Time-varying digital filters for elevated, distant sources in urban settings; turbulence amplitude/phase modulation alongside Doppler and ground reflection",
+      "url_or_doi": "https://research.chalmers.se/en/publication/207819",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Ostashev VE, Salomons EM, Clifford SF, Lataitis RJ, Wilson DK, Blanc-Benon P, Juve D (2001). Sound propagation in a turbulent atmosphere near the ground: a parabolic equation approach. J. Acoust. Soc. Am.",
+      "supports_claim": "Mean-squared pressure for direct + ground-reflected waves with a coherence factor equal to the normalized spherical-wave coherence function",
+      "url_or_doi": "https://labs.sonicfield.org/library/sound-propagation-in-a-turbulent-atmosphere-near-the-ground-a-parabolic-equation",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Lincke D, Pieren R (2021). DAGA 2021 (aircraft auralization, turbulence and ground reflection).",
+      "supports_claim": "Turbulence phase fluctuations decrease direct/ground-reflected coherence, changing the interference pattern",
+      "url_or_doi": "https://pub.dega-akustik.de/DAGA_2021/data/articles/000195.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schafer P, Fatela, Vorlander M (2023/2024). Interpolation of scheduled simulation results for real-time auralization of moving sources. Acta Acustica.",
+      "supports_claim": "Scheduled updates cause audible Doppler artefacts for fast sources like aircraft unless interpolated",
+      "url_or_doi": "10.1051/aacus/2024073",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Alsina-Pages RM et al. (2019). An approach to frequency selectivity in an urban environment by means of multi-path acoustic channel analysis. Sensors 19:2793.",
+      "supports_claim": "Larger street delay spread gives a narrower coherence bandwidth and more distortion; samples must be treated as wide-band",
+      "url_or_doi": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6630746/",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Building geometry pipeline and level of detail (OSM footprints, CityGML LoD1/LoD2, airborne LiDAR)",
+    "physics_captured": "Input geometry for the table builders and canyon classifiers. LoD1 means footprints extruded to a height; LoD2 adds roof shapes; LiDAR gives point-cloud heights and roof edges. LoD1 is the noise-software norm, and CadnaA recommends flattening LoD2 roofs to the area-weighted mean height. OSM gives global footprints but sparse heights; OSM+LiDAR reconstructions achieved < 1 m height error in one study, but only ~44% reconstruction accuracy overall.",
+    "limitations": "For road traffic (near-horizontal incidence) LoD1 is adequate. For an overhead source, roof edges and facade inclination govern diffraction into canyons: courtyard measurements show 14 dB(A) differences with slanted facades, and models show slanted or overhanging roofs lower levels. So LoD1 with flattened roofs may be insufficient for helicopters; this is unquantified (open question). Height-reference inconsistencies in LoD1 (eave vs ridge vs mean) change the same building by metres. No study found directly quantifying the dB error of LoD1 vs LoD2 for noise.",
+    "cost": "Preprocessing only (mesh build, BVH). Not in the loop.",
+    "niceops_fit": "Recommend LoD2 (or LiDAR-derived roof edges) for per-receiver tables at validation sites and for inversion microphones, and LoD1 plus canyon classes for wide-area footprints. Store, per receiver, a hash of the geometry patch used, so tables are invalidated when geometry changes.",
+    "elevated_moving_source_suitability": "Roof detail matters more for elevated sources than for ground traffic (inference from Lugten et al.).",
+    "frequency_range_and_scale": "Geometric detail ~0.5-1 m matters up to ~1 kHz (wavelength 0.34 m), and facade detail matters above that for scattering coefficients.",
+    "references": [
+     {
+      "citation": "CadnaA documentation: Import CityGML (DataKustik).",
+      "supports_claim": "LoD1 is the useful format for noise calculations; LoD2 roofs converted to the area-weighted mean height",
+      "url_or_doi": "https://doku.datakustik.com/CadnaA/en/Import_CityGML.html",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Biljecki F, Ledoux H, Stoter J et al. (TU Delft). Generalising 3D buildings from LoD2 to LoD1; LoD1 height-reference study.",
+      "supports_claim": "LoD1 representations of the same building differ substantially with height reference; LoD1 is used for noise simulation",
+      "url_or_doi": "https://3d.bk.tudelft.nl/hledoux/pdfs/17_gisruk_genzlod1.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "ISPRS Archives XLVI-4-W6-2021: LoD1/LoD2 from OSM footprints and LiDAR (Philippines).",
+      "supports_claim": "Height errors < 1 m vs manual digitization but ~44% overall reconstruction accuracy",
+      "url_or_doi": "https://isprs-archives.copernicus.org/articles/XLVI-4-W6-2021/77/2021/",
+      "verified_by_search": true
+     }
+    ]
+   }
+  ],
+  "key_quantitative_findings": [
+   "Urban effects for aerial sources are large: courtyard flyover measurements under Schiphol show 8-9 dB(A) differences between microphone positions with straight facades and 14 dB(A) with a slanted facade and inset (Lugten 2022 Internoise, 10.3397/IN_2022_0976; Building and Environment 255:111400, 2024).",
+   "Mesoscale flyover attenuation correlates with Building Frontal Area Index and first-row distance; site variation up to 4.6 dB at 3150 Hz within 1000 m; altitude 200-400 ft changes it by only ~2 dB (Hao & Kang 2014, Applied Acoustics 84:73-82).",
+   "Facade microphones read ~+6 dB vs free field, < +3 dB at 2 m, and the increase rarely reaches +6 dB in practice (Canadian Acoustics, Toronto airport study).",
+   "Per-canyon excess attenuation from PE/ESM is about -1 to -4 dB per intermediate canyon (Schiff, Hornikx, Forssen 2010, Applied Acoustics).",
+   "2D wave models underpredict facade mitigation by up to 1.5 dB(A) (absorption) and 4.4 dB(A) (screens) and overpredict distant sources; 3D PSTD ran to 500 Hz (Hornikx & Forssen 2011, Applied Acoustics).",
+   "Gaussian beam tracing vs straight rays for UAM in 3D terrain: prediction error cut by 5 dB in illuminated zones and 35 dB in shadow zones (Yunus et al. 2023, AST, 10.1016/j.ast.2023.108410).",
+   "Ray tracing + radiosity for sonic booms in canyons: PLdB from 0 (shadow) to 94 dB, 1-4 boom arrivals, and diffuse reflections dominate the signature change (Riegel & Sparrow 2024, JASA 155:1527, 10.1121/10.0024980).",
+   "Precomputed wave acoustics encoding: ~100 MB per game map and ~100 us decode per source (Raghuvanshi & Snyder 2014, 10.1145/2601097.2601184).",
+   "ML surrogates: normalizing flow 0.65 dB NLoS MAE, ~102 ms per 256x256 map, >2000x faster than the solver (Eckerle et al. 2025, arXiv 2510.04510). U-FNO Helmholtz 0.87 dB MAE at 500 Hz rising to 5.35 dB at 4 kHz, 15-3000x faster than BEM (AES 2025). Generative baselines fail on higher-order reflection/diffraction (Spitznagel & Keuper 2024, arXiv 2403.10904).",
+   "Directional transfer compression: HRTFs need SH order ~6 (~100 directions) for NMSE < -10 dB (Ben-Hur et al. 2019), which suggests urban canyon tables with sharp shadow edges need either a direct 5-deg grid or high-order SH.",
+   "Derived estimate (my own arithmetic, not from the literature): a per-receiver directional table at 5 deg x 27 bands x float = 140 kB per receiver, or 2.0 GB for a 14,400-point urban grid; SH order 10-15 gives 0.2-0.4 GB; an in-loop lookup costs ~0.1 us per evaluation, about 10 s of CPU per 1e8 evaluations, cheaper than the current ~1 us spectral+ground path it would partly replace.",
+   "Derived coherence rule: two paths add incoherently within a third-octave band once the delay difference exceeds ~1/(0.23 f). That is 43 ms (~15 m) at 100 Hz, 4.3 ms (1.5 m) at 1 kHz, 0.4 ms (15 cm) at 10 kHz. So canyon flutter is effectively incoherent above ~200-300 Hz, while near-facade and floor reflections stay coherent to ~1 kHz.",
+   "Derived: reciprocal (receiver-launched) tracing needs ~N_receivers simulations rather than N_states x N_receivers. For the demo, that is about 450x fewer than forward tracing from 6551 states. An estimated 1e5 rays per receiver on RT-core hardware gives ~0.1-1 ms per receiver (no published urban acoustic OptiX benchmark found)."
+  ],
+  "open_questions": [
+   "How low can the helicopter be before the far-field (plane-wave incidence) factorisation of the canyon response fails? Needs a check of the table against a point-source 3D solve at 30-100 m altitude over 10-30 m canyons; this sets whether a range axis is required.",
+   "Is LoD1 (flat roofs) adequate for overhead sources, or do LoD2 roof edges change canyon levels by several dB? No study quantifying LoD1 vs LoD2 dB error for aircraft noise was found.",
+   "Can wind and reciprocity be split cleanly (atmospheric eigenray with wind to the canyon top, still-air reciprocal canyon table), and how large is the error from in-canyon recirculating flow? The flow-reversal theorem would be the exact treatment.",
+   "Which compression of the per-receiver table holds ~0.5 dB band accuracy at least storage: a direct direction grid, SH plus a shadow mask, or clustering receivers into canyon classes?",
+   "How should the windowed peak-search bound be formed with urban gain? max over directions of |H_r|^2 per receiver is valid, but may loosen the bound enough to erase the windowing savings.",
+   "No validated measurement set exists of helicopter flyovers in real street canyons; the Lugten container field lab is the closest analogue. Inversion use would need canyon microphones with known geometry.",
+   "No peer-reviewed OptiX/RT-core urban-acoustics paper was found; GPU acoustic tracing is documented mainly for games (VRWorks/NVAR) and for radio (Sionna RT).",
+   "Not verified by search this session: specific Pieren urban auralization papers, the Hornikx 'Ten questions concerning computational urban acoustics' paper, and the Mehra 2012 outdoor ESM noise-modelling paper's numbers."
+  ]
+ },
+ "verdict": {
+  "family": "Acceleration and precomputation strategies for urban multipath propagation (per-receiver reciprocal tables, GPU tracing, wave precompute, parametric canyon terms, ML surrogates, moving-source coherence)",
+  "checked": [
+   {
+    "item": "Lugten et al. (2024) Building and Environment 255:111400, plus Internoise 2022: 8-9 dB(A) between courtyard mics with straight facades, 14 dB(A) with a slanted facade and inset",
+    "status": "confirmed",
+    "correction": "The paper exists with that DOI. Its title is 'Assessing the influence of street canyon shape on aircraft noise: Results from measurements in courtyards near Amsterdam Schiphol Airport' (Lugten, Wuite, Peng, Tenpierik). The 8/9 and 14 dB(A) figures come from the Internoise 2022 conference version. Related work from the group cites up to 14.6 dB(A). I could not check the 2024 journal text itself, so attribute the figures to the 2022 paper."
+   },
+   {
+    "item": "Hao & Kang (2014) Applied Acoustics 84:73-82: BFAI and first-row distance are the main predictors; site variation ~4.6 dB at 3150 Hz within 1000 m; 200-400 ft altitude changes attenuation by only ~2 dB",
+    "status": "confirmed",
+    "correction": "The abstract supports all of it. Two caveats: the ~2 dB altitude effect is at 630 and 1600 Hz in open areas, and the study used 20 low-density sites of 250 m x 250 m. That is not street-canyon geometry."
+   },
+   {
+    "item": "Yunus, Casalino, Avallone, Ragni (2023) AST 139:108410: Gaussian beam tracer cuts prediction error vs straight rays by 5 dB in illuminated zones and 35 dB in terrain shadow zones",
+    "status": "confirmed",
+    "correction": "The abstract (via OpenAlex) states both numbers. It also says buildings raise illuminated-zone levels by ~5 dB through multiple reflections, which the findings could have used."
+   },
+   {
+    "item": "Riegel & Sparrow (2024) JASA 155(2):1527-1533: ray tracing plus radiosity, no diffraction; 0-94 PLdB; 1-4 booms; diffuse reflections have the greatest impact",
+    "status": "confirmed"
+   },
+   {
+    "item": "Raghuvanshi & Snyder (2014) TOG 33(4): ~100 MB per game map, ~100 us decode per source, removes 2 of 7 dimensions",
+    "status": "confirmed"
+   },
+   {
+    "item": "Raghuvanshi & Snyder (2018) Parametric directional coding (marked 'details from memory')",
+    "status": "confirmed",
+    "correction": "ACM TOG 37(4), DOI 10.1145/3197517.3201339. It handles a 9D response including arrival direction, compressed to ~100 MB for large scenes, and its rendering cost is largely independent of the number of sources."
+   },
+   {
+    "item": "Ben-Hur et al. (2019) IEEE/ACM TASLP: SH order 6 and ~100 measurements for NMSE < -10 dB",
+    "status": "corrected",
+    "correction": "The numbers are confirmed. Author order is Ben-Hur, Alon, Mehra, Rafaely. Order 6 is the effective order after ear-alignment phase correction. It is not the order a raw HRTF needs, so the analogy argues for pre-alignment (removing the delay) as much as for a high order."
+   },
+   {
+    "item": "Godin flow reversal theorem (ASA 1995 abstract 1aPA7)",
+    "status": "confirmed",
+    "correction": "This is a conference abstract. The archival references are Godin (1997) Wave Motion 25 and later JASA papers on reciprocity and flow reversal, and those should be cited instead."
+   },
+   {
+    "item": "Schafer, Reich, Vorlander (2022) Linking atmospheric and urban auralization models, Acta Acustica 6:28",
+    "status": "confirmed"
+   },
+   {
+    "item": "Kang (2000) JASA 107(3):1394-1404: diffuse vs geometric boundaries differ considerably; similar when street width < building height",
+    "status": "unverifiable",
+    "correction": "The 'considerable differences' part is confirmed. The abstract says nothing about W < H giving similar results, and I could not check that against the full text."
+   },
+   {
+    "item": "Hornikx & Forssen (2007) JASA 122(5):2532-2541: 2.5D ESM; coherent line sources overpredict shielded levels; multiple facade reflections matter",
+    "status": "confirmed",
+    "correction": "The context matters: the 'coherent line source' result concerns road-traffic line sources. It does not apply directly to an elevated point source."
+   },
+   {
+    "item": "Hornikx & Forssen (2011) Applied Acoustics 72(9):665-676: 3D PSTD to 500 Hz; 2D underpredicts facade absorption by up to 1.5 dB(A) and facade screens by up to 4.4 dB(A)",
+    "status": "confirmed",
+    "correction": "The record also says 2D overpredicts roof screens by up to 1.7 dB(A). The claim that 2D 'overpredicts distant sources' was not in the abstract I read."
+   },
+   {
+    "item": "Schiff, Hornikx, Forssen (2010) Applied Acoustics 71(6):510-517: -1 to -4 dB excess attenuation per intermediate canyon from PE + ESM",
+    "status": "confirmed",
+    "correction": "The abstract says the values are fairly constant with frequency. The geometry is propagation across canyon tops between a ground source and receiver, which is not overhead incidence."
+   },
+   {
+    "item": "Hornikx et al. (2014) Acta Acustica 100(2): A_can splits into A_s and A_r; analytical 3D expression from 2D; valid at > 4 street widths",
+    "status": "confirmed",
+    "correction": "It was derived for road-traffic noise into shielded yards, as the finding's limitations already note."
+   },
+   {
+    "item": "Montanaro et al. (FA2023) Empapu GPU FDTD: moving frame, 500 m at 1.5 cm, turbulence",
+    "status": "corrected",
+    "correction": "The paper simulates propagation distances up to 500 m by moving a frame along with the wavefront. It does not have '500 m domains'. Without the moving frame, a 24 GB GPU at 2 kHz holds only ~6000 m^3. It is not urban, and FA2023 only states the intent to assess CNOSSOS-EU, ISO 9613-2 and sonX."
+   },
+   {
+    "item": "Mehra et al. (2013) ACM TOG 32(2): equivalent-source per-object and inter-object transfer, moving listener, scenes of hundreds of metres",
+    "status": "confirmed",
+    "correction": "The abstract gives no numeric memory figure."
+   },
+   {
+    "item": "Eckerle, Spitznagel, Keuper (2025) arXiv:2510.04510: 0.65 dB NLoS MAE, >2000x speedup, ~102 ms per 256x256 map on an RTX 4090, NeurIPS 2025",
+    "status": "corrected",
+    "correction": "The 0.65 dB, >2000x and RTX 4090 figures are confirmed. The abstract says only 'real time' and gives no 102 ms. The arXiv page has no comments field or journal-ref, so the NeurIPS 2025 venue is unverified."
+   },
+   {
+    "item": "Spitznagel & Keuper (2024) arXiv:2403.10904: 100k OSM 2D samples; baselines fail on higher-order effects",
+    "status": "confirmed",
+    "correction": "The abstract says approximation of 'higher order equations systematically fails'. It does not tie that failure specifically to reflection or diffraction order. The DMLR@ICLR venue was not confirmed on the arXiv page."
+   },
+   {
+    "item": "Hart, Wilson, Pettit, Nykaza (2016): ML trained on CNPE excess attenuation",
+    "status": "confirmed",
+    "correction": "This is a JASA 139(4) supplement conference abstract, not a full paper. Its reported example is an RMSE of 6.7 dB for an ensemble tree model trained on 5000 samples, which shows how poor the accuracy was."
+   },
+   {
+    "item": "AES 2025 U-FNO: 0.87 dB MAE at 500 Hz rising to 5.35 dB at 4 kHz, 15-3000x faster than BEM",
+    "status": "unverifiable",
+    "correction": "The AES page returned 403."
+   },
+   {
+    "item": "Toronto facade-microphone study (J. Canadian Acoustics): +6 dB at the facade, < +3 dB at 2 m",
+    "status": "unverifiable",
+    "correction": "The PDF is a scanned image with no text layer."
+   },
+   {
+    "item": "Derived storage: 72x18 directions x 27 bands x 4 B = 140 kB per receiver; 2.0 GB for 14,400 receivers; SH order 10-15 gives 13-28 kB, or 0.19-0.40 GB",
+    "status": "confirmed",
+    "correction": "The arithmetic checks: 139,968 B, 2.016 GB, 121x27x4 = 13 kB, 256x27x4 = 27.6 kB."
+   },
+   {
+    "item": "Derived coherence rule: dt > 1/(0.23 f) gives 43 ms (~15 m) at 100 Hz, 4.3 ms (1.5 m) at 1 kHz, 0.43 ms (15 cm) at 10 kHz",
+    "status": "confirmed",
+    "correction": "The arithmetic is right. The conclusions drawn from it are not; see overstated claims."
+   },
+   {
+    "item": "Derived: reciprocal tracing is ~450x fewer simulations than forward tracing from 6551 states",
+    "status": "fabricated_or_wrong",
+    "correction": "One forward trace from a source position reaches every receiver at once, so forward cost scales as N_states (6551), not N_states x N_receivers. Reciprocal cost scales as N_receivers (14,400 on the demo grid), which is about 2x MORE traces. Reciprocity's real advantage is that a table is independent of the trajectory: it can be reused across tracks and altitudes and directly yields a directional table the hot loop can index."
+   },
+   {
+    "item": "Derived in-loop cost: ~0.1 us per evaluation (27 bands x bilinear gather), ~10 s CPU per 1e8 evaluations",
+    "status": "confirmed",
+    "correction": "Plausible, and the arithmetic is consistent. It is an estimate, not a measurement."
+   },
+   {
+    "item": "Doppler: helicopter at M ~0.18 gives up to +/-18% frequency shift, under one third-octave band",
+    "status": "corrected",
+    "correction": "The source Doppler factor 1/(1 - M cos theta) runs from 0.85 to 1.22 (-15% to +22%). The total excursion of ~37% exceeds a third-octave band width (~23%). The difference between paths at one instant is much smaller, so the conclusion survives only for the inter-path spread."
+   }
+  ],
+  "overstated_or_wrong_claims": [
+   "The '~450x fewer simulations' claim for reciprocal tracing is wrong. Forward tracing costs ~N_states (one trace per source position serves every receiver), and reciprocal tracing costs N_receivers, which is the larger number on the 14,400-point demo grid. The case for reciprocity is that the table is independent of the trajectory and can be reused, not a reduction in trace count.",
+   "The claim that facade flutter in a 20 m canyon is 'effectively incoherent above ~200-300 Hz' contradicts the findings' own coherence rule. A flutter path difference of 2W = 40 m decorrelates above ~343/(0.23*40) = 37 Hz. Even at steep incidence (path difference ~2W cos(elevation), e.g. 20 m at 60 degrees) the threshold is ~75 Hz. The rule itself is a crude bandwidth heuristic: two-ray band-averaged interference fades gradually, not at a threshold.",
+   "Kang (2000) is cited for diffuse and geometric boundaries giving similar results when street width < building height. Nothing found supports that qualifier; the abstract reports only considerable differences.",
+   "Eckerle et al. are attributed '~102 ms per map' and 'NeurIPS 2025'. Neither appears on the arXiv record, which says only 'real time' and gives no venue.",
+   "Montanaro et al. are described as reaching '500 m domains at 1.5 cm'. The solver tracks the wavefront with a moving frame over 500 m of propagation, so the domain is far smaller than 500 m. It is also not an urban study.",
+   "Hornikx & Forssen (2007), Hornikx et al. (2014) and Schiff et al. (2010) are used as if they inform overhead incidence. All three are road-traffic or ground-to-ground geometries. The line-source coherence result in particular does not transfer to a helicopter point source.",
+   "The proposed table replaces the Weyl-van der Pol ground term with a plane-wave-incidence |H_r|^2. That drops the spherical-wave and ground-wave terms, which matter at near-grazing incidence inside a canyon and for low states. The findings acknowledge low altitudes but not this ground-term consequence.",
+   "'±18% Doppler, under one third-octave' understates the range. The source Doppler factor spans -15% to +22% across a pass. Only the spread between paths is small.",
+   "Hart et al. (2016) is a conference abstract with a 6.7 dB RMSE. It is presented as an outdoor-sound ML precedent without noting how poor its accuracy was, though that does reinforce the findings' 'low priority' verdict.",
+   "Godin is cited via a 1995 meeting abstract. The archival flow-reversal-theorem papers (Godin 1997, Wave Motion; later JASA work) should be the reference."
+  ],
+  "important_omissions": [
+   "Radio-propagation closed-form models for an elevated source into street canyons, the closest physical analogue to helicopter incidence: Ikegami et al. (1984), Walfisch & Bertoni (1988) multi-screen diffraction, and COST 231 Walfisch-Ikegami's roof-to-street diffraction term L_rts. These are exactly a cheap, per-receiver, incidence-angle-dependent canyon correction that could be evaluated in the hot loop.",
+   "Engineering urban models with reflections and diffraction that are already standardised: CNOSSOS-EU, Nord2000 (including its partial coherence), Harmonoise/Imagine, and the sonX/sonAIR aircraft model from Empa (Pieren et al.), which handles buildings for aircraft noise.",
+   "Diffusion-equation and sound-particle models for streets: Picaut, Valeau and colleagues' time-dependent diffusion model for urban streets, and SPPS/I-Simpa. These are cheap energetic precompute options for multiply-reflecting canyons.",
+   "Hybrid FDTD-PE and other urban wave methods: Van Renterghem & Botteldooren's PE-FDTD coupling for canyons and roofs, Van Renterghem's 2014 review of efficient outdoor FDTD, openPSTD and DG solvers from Hornikx's TU/e group, and Hornikx's 'Ten questions concerning computational urban acoustics' (Building and Environment, 2016), which the findings name as unverified.",
+   "Adaptive rectangular decomposition (Raghuvanshi et al. 2009) and the acoustic radiance transfer / room acoustic rendering equation (Siltanen et al.) as precompute engines that output directional energy transfer.",
+   "Edge-diffraction theory for roof-to-street incidence: UTD (Kouyoumjian-Pathak), Pierce's wedge solution, Biot-Tolstoy-Medwin (Svensson), and Hadden-Pierce. The findings mention BTM/UTD only in passing, but roof-edge diffraction is the dominant mechanism for shielded receivers under an overhead source.",
+   "Aircraft- and UAM-specific urban propagation work: NASA's urban-UAM propagation studies (ray tracing and AFTD with buildings), DLR and ONERA urban UAM propagation papers, and measured helicopter or drone flyovers in built-up areas. The findings conclude no helicopter-canyon data exists without surveying this.",
+   "Turbulence and coherence treatments for many-path urban sums beyond Ostashev's: Salomons' book (2001) on frequency averaging and partial coherence, and Harmonoise's coherence-factor approach, which supply a principled replacement for the ad hoc 1/(0.23 f) rule.",
+   "Reciprocity-based plane-wave and directivity encodings for wave precompute: Mehra et al. (2014), 'Source and listener directivity for interactive wave-based sound propagation', and fast-multipole/plane-wave HRTF computation (Gumerov & Duraiswami). These are the direct technical precedent for computing a canyon transfer over incidence directions from one reciprocal solve."
+  ]
+ }
+}

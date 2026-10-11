@@ -1,0 +1,444 @@
+{
+ "findings": {
+  "family": "Full-wave numerical methods for urban / street-canyon outdoor acoustics (FDTD, PSTD, TLM, BEM/2.5D, ESM, ARD, DG, and hybrids)",
+  "models": [
+   {
+    "name": "FDTD on the linearised Euler equations (staggered-grid, moving medium): Van Renterghem/Botteldooren (Ghent), Heimann (DLR), Albert & Liu (CRREL)",
+    "physics_captured": "All wave effects in the domain: multiple facade reflections, roof-edge diffraction (diffraction acts as a low-pass filter into shadow regions), canyon resonances, ground and facade impedance (time-domain impedance BCs / porous layers such as green roofs), and refraction by a full inhomogeneous wind and temperature field, which can be taken from CFD/LES or a mesoscale model (Heimann pairs FDTD with a meteorological model). Gives pulse responses directly, so it covers impulsive/transient sources.",
+    "limitations": "Needs about 10-20 points per wavelength (2nd order), so cost goes as f^4 in 3D. Most urban studies are 2-D cross-sections, and Hornikx shows 2-D gets façade-measure benefits wrong by up to 4.4 dB(A). 3-D work is limited to low frequencies, a few hundred Hz over km domains (Heimann 2013) or a few streets. Absorbing boundaries (PML) and the open sky need care. Turbulence needs explicit stochastic fields. Field validation shows wind-induced refraction into shielded canyons is small, while turbulent coherence loss is large (Van Renterghem et al. 2010 courtyard measurements).",
+    "cost": "My scaling estimate, not a published figure: at 10 points per wavelength, a 100x100x50 m canyon block has ~5e6 cells at 250 Hz, ~3e8 at 1 kHz and ~3e11 at 4 kHz, with time steps rising in proportion. Practically, 3-D runs are capped around 0.5-1 kHz on clusters or GPUs, and 10 kHz is out of reach. Literature: FDTD is called 'very computationally intensive', which is what drives the hybrids. PSTD ran ~100x faster than 2nd-order FDTD on 3-D screen problems (Hornikx et al. 2010).",
+    "elevated_moving_source_suitability": "Possible but wasteful when run forward: the helicopter is 30-1500 m up and moves, so a forward domain would have to hold the whole air column. The usable form is reciprocal: put the source at the ground receiver, propagate up out of the canyon, and record the field on a surface above the rooftops. That gives the receiver's transfer function against incidence direction, valid for any distant elevated source. Moving-source effects (Doppler, retarded time) are second order for SEL and dBA and can be left to the existing straight or refracted ray above roof level.",
+    "frequency_range_and_scale": "Typical: 2-D canyon cross-sections up to ~1-2 kHz; 3-D up to ~250-500 Hz for a few streets; km-scale 3-D only at a few tens of Hz to ~100 Hz.",
+    "niceops_fit": "Offline only. It can never run in the 1e8-evaluation loop. Best role: (a) a reference for validating any fast urban model (as the PE already is for refraction), using the 2017 JASA benchmark cases; (b) a generator of per-receiver reciprocity tables H_r(f_band, azimuth, elevation) in the low bands (~50-500 Hz, perhaps 1 kHz). Looking such a table up costs one bilinear gather per band, about the cost of the current sphere gather, so ~1e8 evaluations is fine. The table cost lands at build time: one 3-D simulation per receiver or receiver cluster. Because a time-domain run is broadband, one impulse covers all low bands at once.",
+    "references": [
+     {
+      "citation": "Van Renterghem T, Salomons EM, Botteldooren D (2005). Efficient FDTD-PE model for sound propagation in situations with complex obstacles and wind profiles. Acta Acustica united with Acustica 91(4):671-679",
+      "supports_claim": "FDTD near obstacles coupled to PE far-field; handles complex obstacles plus wind profiles",
+      "url_or_doi": "https://www.ingentaconnect.com/content/dav/aaua/2005/00000091/00000004",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Van Renterghem T (2014). Efficient outdoor sound propagation modeling with the finite-difference time-domain (FDTD) method: a review. International Journal of Aeroacoustics 13(5-6):385-404",
+      "supports_claim": "Review of FDTD efficiency techniques for outdoor propagation",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Heimann D (2007). Three-dimensional linearised Euler model simulations of sound propagation in idealised urban situations with wind effects. Applied Acoustics",
+      "supports_claim": "3-D time-domain LEE in idealised urban geometries with wind; upwind facades slightly louder than downwind in parallel streets",
+      "url_or_doi": "https://elib.dlr.de/46076/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Heimann D et al. (2013). Wide-area assessment of topographical and meteorological effects on sound propagation by time-domain modeling. JASA",
+      "supports_claim": "FDTD coupled to a meteorological model over km-scale areas, made affordable by restricting to low frequencies",
+      "url_or_doi": "https://labs.sonicfield.org/library/wide-area-assessment-of-topographical-and-meteorological-effects-on-sound-propag",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Albert DG, Liu L (2010). The effect of buildings on acoustic pulse propagation in an urban environment. JASA 127:1335-1346 (2-D FDTD vs measurements in an army training village)",
+      "supports_claim": "2-D FDTD captures many measured building effects on pulses; diffraction low-passes waveforms into shadow",
+      "url_or_doi": "https://apps.dtic.mil/sti/tr/pdf/ADA627396.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Van Renterghem T, Botteldooren D et al. (2010). Meteorological influence on sound propagation between adjacent city canyons: a real-life experiment. JASA",
+      "supports_claim": "Months of courtyard-to-street measurements: strong coherence loss rising with wind speed and frequency, no measurable temperature-gradient effect, only limited downwind refraction into the shielded canyon",
+      "url_or_doi": "https://sonicfield.org/library/meteorological-influence-on-sound-propagation-between-adjacent-city-canyons-a-re",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Van Renterghem T, Hornikx M, Forssén J, Botteldooren D (2013). The potential of building envelope greening to achieve quietness. Building and Environment",
+      "supports_claim": "2-D and 3-D full-wave studies; green roofs have the highest potential for quiet courtyards",
+      "url_or_doi": "https://research.chalmers.se/en/publication/175378",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Fourier pseudospectral time-domain (PSTD), the extended Fourier PSTD and openPSTD (Hornikx, Waxler, Forssén; TU/e)",
+    "physics_captured": "Linearised Euler equations in a moving, inhomogeneous medium: reflections, diffraction, canyon modes and refraction by wind and temperature. Turbulence is added through realisations. Subdomain decomposition puts rigid or real-impedance walls on rectangular block interfaces. 2-D and 3-D.",
+    "limitations": "Spatial derivatives are global FFTs, so boundaries are staircase and axis-aligned. Classic PSTD supports only real, frequency-independent impedance, and openPSTD was initially 2-D and orthogonal. Complex facade shapes, sloped roofs, and frequency-dependent or porous boundaries need the DG hybrid. Long time-steps in large 3-D domains are still costly.",
+    "cost": "About 2 points per wavelength, against ~10 or more for FDTD. Reported ~100x faster than 2nd-order FDTD for 3-D screen problems at equal accuracy. The openPSTD partial GPU implementation gives up to 15x more throughput. My estimate: a 100x100x50 m block at 1 kHz is ~(300x300x150) ~1.4e7 points, tractable. At 4 kHz it is ~9e8 points, heavy but GPU-feasible per receiver. 10 kHz is not practical.",
+    "elevated_moving_source_suitability": "Same as FDTD: run reciprocally from each ground receiver, record on a box above the roofs, and extrapolate to plane-wave incidence (Kirchhoff-Helmholtz or a near-to-far-field transform). This suits an elevated far source well because the incident field over a canyon is close to a plane wave.",
+    "frequency_range_and_scale": "3-D courtyards and streets with cross streets computed up to 500 Hz (Hornikx & Forssén 2011). 2-D canyon cross-sections up to ~1-2 kHz.",
+    "niceops_fit": "The best-documented low-frequency engine for building per-receiver urban transfer tables. The NICEOPS runtime side is a table lookup per band, which is O(10-100 ns) per evaluation and compatible with ~1e8 evaluations. The open-source code (openPSTD, CPC 2016) lowers the integration cost. The 2017 benchmark cases (with CFD wind) supply a validation suite like the existing Attenborough benchmark.",
+    "references": [
+     {
+      "citation": "Hornikx M, Waxler R, Forssén J (2010). The extended Fourier pseudospectral time-domain method for atmospheric sound propagation. JASA 128(4):1632-1646",
+      "supports_claim": "Two points per wavelength; good amplitude and phase on a 2-D urban canyon; ~100x faster than 2nd-order FDTD for 3-D screen problems",
+      "url_or_doi": "https://research.chalmers.se/en/publication/128738",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx M, Forssén J (2011). Modelling of sound propagation to three-dimensional urban courtyards using the extended Fourier PSTD method. Applied Acoustics 72(9)",
+      "supports_claim": "3-D up to 500 Hz; 2-D overpredicts distant sources, underpredicts facade screens by up to 4.4 dB(A), overpredicts roof screens by up to 1.7 dB(A); a facade opening can raise courtyard levels by up to 10 dB(A)",
+      "url_or_doi": "https://research.chalmers.se/en/publication/143443",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx M, Krijnen T, van Harten L (2016). openPSTD: The open source pseudospectral time-domain method for acoustic propagation. Computer Physics Communications (DOI 10.1016/j.cpc.2016.02.029)",
+      "supports_claim": "Open-source PSTD for the built environment; partial GPU implementation gives up to 15x throughput",
+      "url_or_doi": "https://doi.org/10.1016/j.cpc.2016.02.029",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Trikootam S, Hornikx M, Fernandes ML, van Hooff T, Blocken B, Van Renterghem T (2017). Benchmark cases for urban sound propagation. JASA",
+      "supports_claim": "2-D urban cross-section benchmark cases with reflections, diffraction and CFD wind and temperature fields; openPSTD v2.0 vs FDTD",
+      "url_or_doi": "https://sonicfield.org/library/benchmark-cases-for-urban-sound-propagation",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Hybrid Fourier-PSTD / nodal discontinuous Galerkin (DG), and stand-alone DG time-domain (Hornikx group TU/e, Cosnefroy, Wang; DTU; TU Graz)",
+    "physics_captured": "DG handles arbitrary geometry (sloped roofs, balconies, curved facades), frequency-dependent time-domain impedance boundaries and the full wind velocity vector (not just effective sound speed) near buildings. PSTD carries the bulk air domain. The two exchange data in a buffer zone. Arbitrary high-order DG with local time-stepping handles multi-scale meshes.",
+    "limitations": "Code complexity is high. Stand-alone DG is expensive at large scale, which is why the hybrid exists. Published urban validation uses scale models and wind tunnels rather than full-scale flyover data. No helicopter or aircraft application was found.",
+    "cost": "No per-run times found in abstracts. The stated rationale is that DG alone 'becomes very expensive for large-scale simulations'. The hybrid confines DG to thin layers around the boundaries.",
+    "elevated_moving_source_suitability": "Same reciprocal strategy as PSTD. Gives the most faithful facade and balcony detail for receivers near facades, where balconies alone change levels by -3.5 to +6.3 dB depending on source position (DTU DG study).",
+    "frequency_range_and_scale": "Comparable to PSTD for the bulk. DG resolves sub-wavelength façade detail. In practice low to mid frequencies (hundreds of Hz to ~1 kHz in 3-D).",
+    "niceops_fit": "The reference to use when facade detail matters (balconies, recessed windows, the 'self-shielding' facades Van Renterghem studies). Offline table generation or validation only. Helpful for the de-propagation use, because it can model the actual microphone installation near a facade.",
+    "references": [
+     {
+      "citation": "Cosnefroy M, Hornikx M et al. (2021). Hybrid Fourier pseudospectral/discontinuous Galerkin time-domain method for urban sound propagation in a moving atmosphere (TU/e record)",
+      "supports_claim": "PSTD+DG hybrid extended to the full wind vector; DG for complex boundaries, PSTD for the bulk",
+      "url_or_doi": "https://research.tue.nl/en/publications/hybrid-fourier-pseudospectraldiscontinuous-galerkin-time-domain-m/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Wang H, Cosnefroy M, Hornikx M (2021). An arbitrary high-order discontinuous Galerkin method with local time-stepping for linear acoustic wave propagation. JASA 149",
+      "supports_claim": "High-order DG with local time-stepping; validated on a transmissive noise barrier",
+      "verified_by_search": true
+     },
+     {
+      "citation": "DTU (Orbit) study: Impact of building façade design on road and rooftop noises using 3-D nodal DG",
+      "supports_claim": "Balconies screen or amplify by -3.5 dB to +6.3 dB depending on source position",
+      "url_or_doi": "https://orbit.dtu.dk/en/publications/impact-of-building-fa%C3%A7ade-design-on-road-and-rooftop-noises-using/",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Kraxberger F et al. (2025). Outdoor sound propagation simulations using the discontinuous Galerkin method (TU Graz; DAGA/Euronoise 2025)",
+      "supports_claim": "Time-domain DG applied to a large outdoor environment",
+      "url_or_doi": "https://tugraz.elsevierpure.com/en/publications/outdoor-sound-propagation-simulations-using-the-discontinuous-gal/",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Equivalent sources method (ESM), 2-D and 2.5-D (Ögren & Kropp; Hornikx & Forssén, Chalmers), and its object-based large-scene form (Mehra et al.)",
+    "physics_captured": "Frequency-domain Helmholtz solution. Fictitious sources inside the buildings satisfy facade and ground boundary conditions, so it captures multiple reflections, diffraction and canyon modes exactly within its geometry. The 2.5-D form inverse-Fourier-transforms 2-D solutions over the out-of-plane wavenumber to give a point source or an incoherent line source in a geometry invariant along the street. Absorption, diffusion and turbulence (statistically) have been added. Mehra's form stores per-object equivalent-source transfer functions and couples objects analytically, including all interaction orders.",
+    "limitations": "Homogeneous, still atmosphere. 'No atmospheric effects are considered' in the 2.5-D paper; turbulence was added separately by Ögren & Forssén. 2.5-D needs geometry invariant along the street, so no cross streets or courtyards. A coherent line source overpredicts shielded levels. Each frequency is a separate solve, and cost grows with frequency times the size of the scattering surface.",
+    "cost": "Cheap compared with volume methods because unknowns sit on the surfaces only, and 2.5-D removes a dimension. Mehra: a few thousand equivalent sources per object give a few percent error, with a runtime memory footprint of tens of MB, and the moving listener is auralised in real time.",
+    "elevated_moving_source_suitability": "Good for the frequency-domain transfer from plane-wave incidence (elevated far source) to a canyon receiver. An incident plane wave is the natural right-hand side, and a sweep over incidence angles reuses one factorised matrix per frequency, so many directions cost little more than one.",
+    "frequency_range_and_scale": "2-D and 2.5-D parallel canyons over the full traffic-noise range in 2-D (validated at 1:40 scale). Mehra's 3-D scenes are hundreds of metres, at low to mid frequency (game-audio bandwidths).",
+    "niceops_fit": "Very attractive as the table builder for receivers in long, uniform street canyons. One LU factorisation per band, then cheap solves for all incidence directions, filling H_r(band, az, el) directly. Runtime is a lookup. Its 'intermediate canyon' result (Schiff et al.: -1 to -4 dB excess attenuation per canyon crossed, roughly flat in frequency) also suggests a cheap parametric term for shallow-grazing paths over rooftops.",
+    "references": [
+     {
+      "citation": "Hornikx M, Forssén J (2007). The 2.5-dimensional equivalent sources method for directly exposed and shielded urban canyons. JASA 122(5):2532-2541",
+      "supports_claim": "2.5-D ESM for parallel canyons; no atmospheric effects; a coherent line source overpredicts shielded levels; an incoherent line source is computed efficiently",
+      "url_or_doi": "https://doi.org/10.1121/1.2783197",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Ögren M, Kropp W (2004). Road traffic noise propagation between two dimensional city canyons using an equivalent sources approach. Acta Acustica united with Acustica 90",
+      "supports_claim": "2-D ESM for canyon-to-canyon shielding; measured shielding correction term 6-10 dB (thesis)",
+      "url_or_doi": "https://publications.lib.chalmers.se/records/fulltext/22/22.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Ögren M, Forssén J (2004). Modelling of a city canyon problem in a turbulent atmosphere using an equivalent sources approach. Applied Acoustics 65:629-642",
+      "supports_claim": "Turbulence raises the expected shielded-canyon SPL: negligible at low frequency, 2-5 dB at 1.6 kHz",
+      "url_or_doi": "https://research.chalmers.se/en/publication/305",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Hornikx M, Forssén J (2008/2009). A scale model study of parallel urban canyons (1:40 scale). Acta Acustica united with Acustica",
+      "supports_claim": "1:40 scale-model validation of the ESM canyon-to-canyon transfer function including diffusion, absorption and turbulence",
+      "url_or_doi": "https://research.chalmers.se/en/publication/9690",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Schiff MT, Hornikx M, Forssén J (2010). Excess attenuation for sound propagation over an urban canyon. Applied Acoustics 71(6):510-517",
+      "supports_claim": "PE+ESM: wideband excess attenuation of -1 to -4 dB per intermediate canyon, fairly constant with frequency",
+      "url_or_doi": "https://research.chalmers.se/en/publication/122579",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Mehra R, Raghuvanshi N, Antani L, Chandak A, Curtis S, Manocha D (2013). Wave-based sound propagation in large open scenes using an equivalent source formulation. ACM Transactions on Graphics",
+      "supports_claim": "Per-object equivalent-source transfer functions; scenes hundreds of metres; a few thousand sources for a few % error; tens of MB; real time",
+      "url_or_doi": "https://www.microsoft.com/en-us/research/publication/wave-based-sound-propagation-large-open-scenes-using-equivalent-source-formulation/",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Adaptive rectangular decomposition (ARD) (Raghuvanshi, Mehra, Manocha; applied to urban pulses with Albert and Wilson)",
+    "physics_captured": "Splits the air volume into rectangles where the wave equation has an analytic cosine-mode solution, so dispersion within each rectangle is near zero. Rectangles couple through interface operators. Captures reflection, diffraction and rooftop propagation in 3-D, in a homogeneous medium.",
+    "limitations": "No wind or temperature gradients (homogeneous medium). Boundaries are rectangular or voxelised, with simple impedance. Interface errors are a few percent.",
+    "cost": "3-D urban pulse simulation with ~450 Hz usable bandwidth took 'only a few minutes on a desktop computer' (Mehra et al. 2014).",
+    "elevated_moving_source_suitability": "Same reciprocal construction as PSTD and FDTD. 3-D matters for rooftop paths, which is exactly the path an elevated source uses.",
+    "frequency_range_and_scale": "Village-scale 3-D (~hundreds of m) to ~450 Hz on a desktop.",
+    "niceops_fit": "The cheapest 3-D low-frequency table builder found for still air. Since wind refraction inside canyons was measured to be small (Van Renterghem 2010), the homogeneous-medium limitation may be acceptable for the in-canyon part, with refraction left to NICEOPS's existing above-roof ray models.",
+    "references": [
+     {
+      "citation": "Mehra R, Raghuvanshi N, Chandak A, Albert DG, Wilson DK, Manocha D (2014). Acoustic pulse propagation in an urban environment using a three-dimensional numerical simulation. JASA 135(6):3231-3242",
+      "supports_claim": "ARD 3-D matches measurements better than 2-D, especially for rooftop propagation; ~450 Hz bandwidth in minutes on a desktop",
+      "url_or_doi": "https://www.microsoft.com/en-us/research/publication/acoustic-pulse-propagation-urban-environment-using-three-dimensional-numerical-simulation/",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Transmission line matrix (TLM) (Guillaume, Picaut, Dutilleux; Goestchel et al.)",
+    "physics_captured": "Huygens-type discrete scattering network, equivalent to an FDTD scheme. Includes atmospheric absorption, sound-speed gradients from wind and temperature, and diffraction and reflection from building frontages. Vegetated facades and roofs have been modelled.",
+    "limitations": "The space-time scheme is dispersive and degrades free-field predictions (Goestchel et al. 2025). Long-range urban work is mostly 2-D. Cost scales like FDTD.",
+    "cost": "FDTD-like, about 10 or more nodes per wavelength. A multi-GPU OpenCL implementation exists.",
+    "elevated_moving_source_suitability": "As for FDTD. No advantage for elevated sources.",
+    "frequency_range_and_scale": "2-D long-range urban; 3-D at low frequency.",
+    "niceops_fit": "No advantage over FDTD or PSTD for NICEOPS, and its dispersion error makes it a weaker reference. Listed for completeness.",
+    "references": [
+     {
+      "citation": "Guillaume G, Picaut J, Dutilleux G et al. (2008/2009). Use of the transmission line matrix method for the sound propagation modelling in urban area",
+      "supports_claim": "2-D TLM with atmospheric absorption, wind and temperature gradients, and frontage diffraction and reflection",
+      "url_or_doi": "https://hal.archives-ouvertes.fr/hal-00399882",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Goestchel Q et al. (2025). Acta Acustica, TLM numerical properties for outdoor propagation",
+      "supports_claim": "The TLM space-time scheme is dispersive and affects free-field predictions",
+      "url_or_doi": "https://acta-acustica.edpsciences.org/articles/aacus/abs/2025/01/aacus240023/aacus240023.html",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Boundary element method (2-D / 2.5-D BEM)",
+    "physics_captured": "Exact Helmholtz scattering by facades, balconies and barriers with impedance boundary conditions, in a homogeneous medium.",
+    "limitations": "Dense matrices of order (surface DOF)^2 in memory and up to ^3 in time without fast multipole. No meteorology. Mostly 2-D in urban use.",
+    "cost": "Fine in 2-D. 3-D at high frequency needs fast-multipole or H-matrix BEM.",
+    "elevated_moving_source_suitability": "A plane-wave incidence sweep reuses the factorisation, as in ESM.",
+    "frequency_range_and_scale": "2-D cross-sections across the traffic band; balconies and facades.",
+    "niceops_fit": "Interchangeable with ESM as a frequency-domain table builder for local facade detail. Hothersall et al. found balcony shielding largely cancelled by ceiling and rear-wall reflections, a warning against facade-free models for facade microphones.",
+    "references": [
+     {
+      "citation": "Hothersall DC, Horoshenkov KV, Mercy SE (1996). Numerical modelling of the sound field near a tall building with balconies near a road. JSV",
+      "supports_claim": "2-D BEM: balcony-wall shielding largely cancelled by reflections from the ceiling and rear wall",
+      "url_or_doi": "https://acnpsearch.tweb-dev.unibo.it/singlejournalindex/1814765",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Van Renterghem T, Hornikx M, Forssén J, Botteldooren D et al. (2012). Road traffic noise reduction by vegetated low noise barriers in urban streets (EURONOISE)",
+      "supports_claim": "FDTD, PSTD and BEM used side by side for street-canyon measures",
+      "url_or_doi": "https://research.chalmers.se/en/publication/164281",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Hybrids: FDTD-PE (Van Renterghem), PE/modal for canyons (Lihoreau, Pelat), FDTD-diffusion (Pasareanu, Burdisso, Remillieux), high-order Euler for sonic boom in canyons (Emmanuelli, Dragna)",
+    "physics_captured": "FDTD-PE: a full-wave solution around obstacles near the source, handed to a PE for long-range refraction. A 3-D PE and a modal expansion for U-shaped canyons treat the open top as a radiating waveguide, with effective sound speed. FDTD-diffusion: full-wave near the source and in open areas, a diffusion (energy) equation where the field is diffuse in dense building blocks. 2-D Euler with high-order FD over 10 local-climate-zone urban geometries shows canyon resonances lengthening the ground signal for incident booms from above.",
+    "limitations": "The PE and modal forms are one-way and cannot carry backscatter from a facade toward a source at grazing incidence. The diffusion model loses phase, interference and resonance, and is calibrated empirically. The sonic boom studies are 2-D.",
+    "cost": "FDTD-PE confines the expensive FDTD to the obstacle region. Diffusion runs in near real time (Pasareanu et al.: energy-based near-real-time modelling).",
+    "elevated_moving_source_suitability": "The sonic boom canyon work is the closest wave-based analogue to an elevated source illuminating canyons from above. It finds wider streets behave like isolated buildings, while narrow, high-aspect canyons produce multiple reflections and resonance that prolong signals without raising peak loudness. No wave-based helicopter or subsonic aircraft canyon study was found. TU Delft notes most aircraft-in-street studies use geometric models, mostly for aircraft below 200 m, without measurement backing.",
+    "frequency_range_and_scale": "Domain-dependent. The hybrids let the full-wave part stay small.",
+    "niceops_fit": "Fits NICEOPS's structure naturally: the existing straight, refracted and PE propagation carries the field to roof level, and a precomputed canyon transfer function (the full-wave part) finishes it to the receiver. That is the FDTD-PE idea run in reverse, by reciprocity. At high frequencies in dense blocks, a diffusion or reverberation term could stand in for the full-wave table above ~1 kHz.",
+    "references": [
+     {
+      "citation": "Lihoreau B, Richoux O. A 3D parabolic equation code for street canyon propagation (IOA proceedings)",
+      "supports_claim": "3-D PE in a U-shaped canyon with effective-sound-speed meteorology",
+      "url_or_doi": "https://www.ioa.org.uk/system/files/proceedings/b_lihoreau_o_richoux_a_3d_parabolic_equation_code_for_street_canyon_propagation.pdf",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Pelat A, Félix S, Pagneux V (2009). Effect of the open roof on low frequency acoustic propagation in street canyons (arXiv 0907.0605)",
+      "supports_claim": "Modal model of a canyon with a radiating open top",
+      "url_or_doi": "https://arxiv.org/pdf/0907.0605",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Pasareanu SM, Burdisso RA, Remillieux MC (2018). A numerical hybrid model for outdoor sound propagation in complex urban environments. JASA",
+      "supports_claim": "FDTD near the source and in open areas coupled to a diffusion model in diffuse regions",
+      "url_or_doi": "https://labs.sonicfield.org/library/a-numerical-hybrid-model-for-outdoor-sound-propagation-in-complex-urban-environm",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Dragna D, Emmanuelli A, Ollivier S, Blanc-Benon P (2022). Sonic boom reflection over urban areas. JASA",
+      "supports_claim": "2-D high-order Euler over 10 LCZ geometries; canyon resonances prolong signals; narrow canyons give complex multiple reflections without louder peaks",
+      "url_or_doi": "https://sonicfield.org/library/reflection-of-sonic-boom-over-realistic-urban-areas",
+      "verified_by_search": true
+     },
+     {
+      "citation": "Lugten M et al. (TU Delft, 2022-2024). Aircraft noise and courtyard and urban form near Schiphol (Forum Acusticum 2023 / Inter-Noise)",
+      "supports_claim": "Up to 14.6 dB(A) measured between shielded and exposed courtyard sides; aircraft-in-street studies mostly geometric, aircraft below 200 m, not measurement-backed",
+      "url_or_doi": "https://dael.euracoustics.org/confs/fa2023/data/articles/000264.pdf",
+      "verified_by_search": true
+     }
+    ]
+   },
+   {
+    "name": "Precomputed wave-field tables with reciprocity (Raghuvanshi & Snyder, 'parametric wave field coding'): the runtime pattern rather than a solver",
+    "physics_captured": "Whatever the offline wave solver captures (they use ARD or FDTD), compressed into smooth parameter fields over source and listener positions, using reciprocity to swap the roles of probes and sources.",
+    "limitations": "Parameters are perceptual (energy decay and so on) rather than per-band levels. Built for indoor and game scenes. No public implementation (per a 2026 arXiv paper).",
+    "cost": "Entire game maps fit in ~100 MB. Runtime is a lookup.",
+    "elevated_moving_source_suitability": "The pattern NICEOPS's roadmap names: per-receiver tables indexed by source direction. For distant elevated sources the 6-D table collapses to 2-D direction times band per receiver.",
+    "frequency_range_and_scale": "Simulated to ~500 Hz to 1 kHz and extrapolated for higher bands.",
+    "niceops_fit": "Direct precedent for 'per-receiver urban reciprocity tables'. Suggests storing excess level relative to free field, smooth in direction, per band, at roughly 2-5 degree resolution. Per receiver that is about 30 bands x 72 x 30 directions, ~65k floats or 260 kB. 14,400 grid receivers would need ~3.7 GB, so tables suit scattered microphone sets or receiver classes rather than the full grid, unless compressed or shared by canyon type.",
+    "references": [
+     {
+      "citation": "Raghuvanshi N, Snyder J (2014). Parametric wave field coding for precomputed sound propagation. ACM Transactions on Graphics",
+      "supports_claim": "Precomputed wave simulation encoded as smooth parameter fields; large scenes in ~100 MB",
+      "url_or_doi": "https://www.microsoft.com/en-us/research/publication/parametric-wave-field-coding-precomputed-sound-propagation/",
+      "verified_by_search": true
+     }
+    ]
+   }
+  ],
+  "key_quantitative_findings": [
+   "Extended Fourier PSTD needs about 2 points per wavelength and ran about 100x faster than 2nd-order FDTD on 3-D screen problems (Hornikx, Waxler, Forssén 2010, JASA 128:1632).",
+   "The openPSTD partial GPU implementation raises throughput by up to 15x (Hornikx, Krijnen, van Harten 2016, CPC).",
+   "3-D PSTD courtyards and streets have been computed only up to 500 Hz (Hornikx & Forssén 2011). In 2-D, facade-screen benefit is underpredicted by up to 4.4 dB(A), roof-screen effect overpredicted by up to 1.7 dB(A), and distant sources overpredicted. A facade opening can raise courtyard levels by up to 10 dB(A).",
+   "ARD 3-D urban pulse simulation reached about 450 Hz usable bandwidth in a few minutes on a desktop. 3-D beats 2-D against measurements, especially where rooftop propagation matters (Mehra et al. 2014, JASA 135:3231).",
+   "Excess attenuation per intermediate urban canyon crossed at grazing is -1 to -4 dB wideband, roughly flat in frequency (Schiff, Hornikx, Forssén 2010, Appl. Acoust. 71:510, PE+ESM).",
+   "Turbulent scattering into shielded canyons is negligible at low frequency and 2-5 dB at 1.6 kHz (Ögren & Forssén 2004, Appl. Acoust. 65:629). The measured shielding correction across Swedish areas is 6-10 dB (Ögren thesis 2004).",
+   "Field data (months, courtyard to adjacent street): strong coherence loss rising with wind speed and frequency, no measurable effect from vertical temperature gradient, only limited downwind refraction into the shielded canyon (Van Renterghem et al. 2010, JASA).",
+   "Realistic facade absorption changes give about 5 dB(A) reduction at shielded Gothenburg sites, and asphalt-to-grass ground about 3 dB(A) (Hornikx & Forssén 2006, ESM).",
+   "Balconies change facade levels by -3.5 to +6.3 dB depending on source position (DTU 3-D DG study). Balcony shielding is largely cancelled by ceiling and rear-wall reflections (Hothersall et al. 1996, 2-D BEM).",
+   "Measured aircraft-noise difference between shielded and exposed courtyard sides reaches 14.6 dB(A) (Lugten et al. 2022, TU Delft). Most aircraft-in-canyon studies are geometric, for aircraft below 200 m, without measurement validation.",
+   "Sonic-boom canyon simulations (2-D high-order Euler, 10 LCZ geometries): narrow, high-aspect canyons give multiple reflections and resonance that lengthen ground signals without raising peak loudness, while wide streets behave like isolated buildings (Dragna et al. 2022, JASA).",
+   "Mehra ESM: a few thousand equivalent sources per object give a few percent error, with a runtime footprint of tens of MB, in real time for a moving listener (ACM TOG 2013). Raghuvanshi & Snyder: whole game maps' precomputed wave fields fit in about 100 MB.",
+   "My own scaling estimate, not from the literature: volume methods cost about f^4 in 3-D. A 100x100x50 m block is about 1.4e7 PSTD points at 1 kHz and about 9e8 at 4 kHz. FDTD at 10 points per wavelength is about 3e8 cells at 1 kHz. Full-wave 3-D above about 1-2 kHz per receiver is impractical, and 10 kHz is out of reach. The 1-10 kHz part of the 50 Hz-10 kHz range needs image-source, ray or diffusion methods."
+  ],
+  "open_questions": [
+   "No wave-based study of a subsonic, elevated helicopter or aircraft source over street canyons was found. The closest analogues are the sonic-boom canyon simulations and TU Delft's geometric aircraft-in-courtyard work. Validation for NICEOPS's case would have to be new, for example using the 2017 Noise Abatement microphone sites where any are near buildings.",
+   "How far up can a per-receiver reciprocal full-wave table go before an image-source, ray or diffusion model has to take over? A crossover of roughly 500 Hz to 1 kHz is suggested by the 3-D PSTD, ARD and DG literature, but nobody has published a hybrid crossover error for elevated-source incidence.",
+   "Storage: about 260 kB per receiver (30 bands x 72 az x 30 el, float) makes a 14,400-point grid about 3.7 GB. Is the transfer function smooth enough in direction and position to compress, or to share by canyon class (aspect ratio, facade absorption), without losing more than ~1 dB?",
+   "Is meteorology inside the canyon negligible for downward incidence from 30-1500 m? Van Renterghem 2010 measured little refraction effect over short canyon-to-canyon paths, but turbulent coherence loss was strong and rose with frequency. A coherent wave table may overpredict interference nulls at high frequency, so it may need partial-coherence or phase-randomised energy summation like Ögren & Forssén's turbulence treatment.",
+   "Coherence across the time history: SEL integrates energy over many source directions, which may average out the sharp directional interference structure. That would allow coarser direction tables, which needs testing.",
+   "For inverse use (de-propagating flight-test data near buildings), how well-conditioned is the table inversion? Deep canyon resonances and nulls could amplify noise.",
+   "Papers whose full text was not seen in this session: the Hornikx 'Ten questions concerning computational urban acoustics' review (Building and Environment, ~2016) is remembered but was not found, and should be confirmed before citing. DOIs for several of the papers above (Albert & Liu 2010, Van Renterghem et al. 2010, Trikootam et al. 2017) were not captured."
+  ]
+ },
+ "verdict": {
+  "family": "Full-wave numerical methods for urban / street-canyon outdoor acoustics (FDTD, PSTD, TLM, BEM/2.5D, ESM, ARD, DG, hybrids)",
+  "checked": [
+   {
+    "item": "Hornikx, Waxler, Forssén 2010, JASA 128(4):1632-1646: extended Fourier PSTD, 2 points per wavelength, ~100x faster than 2nd-order FDTD on a 3-D screen case",
+    "status": "confirmed",
+    "correction": "DOI 10.1121/1.3474234. The abstract says 'in the order of 100 times faster' for the 3-D screen case. The 2-D validation included an urban canyon."
+   },
+   {
+    "item": "Hornikx & Forssén 2011, Appl. Acoust. 72(9): 3-D PSTD courtyards up to 500 Hz; 2-D underpredicts facade screens by up to 4.4 dB(A) and overpredicts roof screens by up to 1.7 dB(A); a facade opening raises levels by up to 10 dB(A)",
+    "status": "confirmed",
+    "correction": "Pages 665-676, DOI 10.1016/j.apacoust.2011.03.005. The abstract also reports facade absorption underpredicted by up to 1.5 dB(A) in 2-D. CLAUDE-side note: the models entry says '2-D gets façade-measure benefits wrong by up to 4.4 dB(A)'. That figure is specific to facade screens."
+   },
+   {
+    "item": "Ögren & Forssén 2004, Appl. Acoust. 65:629-642: turbulence raises shielded-canyon SPL, negligible at low frequency and 2-5 dB at 1.6 kHz",
+    "status": "fabricated_or_wrong",
+    "correction": "The paper exists (65(6):629-642, DOI 10.1016/j.apacoust.2003.11.010), but its abstract says the increase is negligible at low frequency and 'at 1.6 kHz it reaches 25 dB' for the geometries and turbulence parameters studied. The stated 2-5 dB understates the effect by about 20 dB. This changes the conclusion: for shielded receivers, turbulent scattering can dominate at mid frequencies, so a coherent table would badly underpredict."
+   },
+   {
+    "item": "Schiff, Hornikx, Forssén 2010, Appl. Acoust. 71(6):510-517: -1 to -4 dB excess attenuation per intermediate canyon, roughly constant with frequency",
+    "status": "confirmed",
+    "correction": "DOI 10.1016/j.apacoust.2010.01.005. The finding is for grazing propagation over canyon tops between ground-level source and receiver canyons. It does not transfer to an elevated helicopter source."
+   },
+   {
+    "item": "Mehra et al. 2014, JASA 135(6):3231-3242: ARD, ~450 Hz bandwidth, a few minutes on a desktop, 3-D better than 2-D especially for rooftop propagation",
+    "status": "confirmed",
+    "correction": "The abstract also confirms that Albert & Liu's 2-D FDTD was compared with measurements in an army training village."
+   },
+   {
+    "item": "Hornikx, Krijnen, van Harten 2016, openPSTD, CPC (DOI 10.1016/j.cpc.2016.02.029): partial GPU implementation gives up to 15x throughput",
+    "status": "unverifiable",
+    "correction": "The DOI resolves to Elsevier pii S0010465516300443, so the paper exists. The abstract was blocked (403), so the 15x figure was not checked."
+   },
+   {
+    "item": "Raghuvanshi & Snyder 2014, ACM TOG (SIGGRAPH): whole game maps in ~100 MB",
+    "status": "confirmed",
+    "correction": "The abstract says 'within 100MB' and ~100 microseconds per source to decode. It does not mention reciprocity or a frequency limit, so those details are unverified. The claim 'no public implementation' is overstated: the method shipped as Microsoft Project Acoustics (Triton), which is a public but closed-source product."
+   },
+   {
+    "item": "Mehra et al. 2013, ACM TOG 32: equivalent-source large open scenes, a few thousand sources per object for a few percent error, tens of MB, real time",
+    "status": "unverifiable",
+    "correction": "The paper exists (TOG vol 32, 2013). The abstract confirms scenes 'spanning hundreds of meters', a 'small memory footprint' and real-time auralisation for a moving listener. The source counts, error figure and 'tens of MB' are not in the abstract."
+   },
+   {
+    "item": "DTU 3-D nodal DG facade study: balconies change levels by -3.5 to +6.3 dB depending on source position",
+    "status": "corrected",
+    "correction": "Confirmed, but the citation was incomplete. It is Feriani SJ, Engsig-Karup AP, Jeong CH (2025), 'Impact of building façade design on road and rooftop noises using the discontinuous Galerkin finite element method', Applied Acoustics 240:110935."
+   },
+   {
+    "item": "Heimann 2007, Applied Acoustics: 3-D LEE in idealised urban geometries with wind; upwind facades slightly louder in parallel streets",
+    "status": "confirmed",
+    "correction": "Appl. Acoust. 68:217-237, DOI 10.1016/j.apacoust.2005.10.002. The abstract also says that for single buildings, facades are quieter upwind and louder downwind."
+   },
+   {
+    "item": "Van Renterghem & Botteldooren 2010, 'Meteorological influence on sound propagation between adjacent city canyons: a real-life experiment', JASA",
+    "status": "confirmed",
+    "correction": "JASA 127:3335-3346, DOI 10.1121/1.3425731 (Crossref). The listed URL is dead (410). The specific findings (coherence loss, no temperature-gradient effect, limited downwind refraction) were not checked against the abstract."
+   },
+   {
+    "item": "Trikootam et al. 2017, 'Benchmark cases for urban sound propagation', JASA",
+    "status": "corrected",
+    "correction": "JASA 141(5):4035, DOI 10.1121/1.4989306. This is a one-page Acoustics'17 meeting abstract, not a full benchmark paper. It cannot serve as a published validation suite 'like the Attenborough benchmark' without locating the actual case definitions and data."
+   },
+   {
+    "item": "Dragna, Emmanuelli, Ollivier, Blanc-Benon 2022, 'Sonic boom reflection over urban areas', JASA",
+    "status": "confirmed",
+    "correction": "JASA 152:3323-3339, DOI 10.1121/10.0016442. The URL given (sonicfield) is dead and points to a separate meeting abstract, JASA 151:A86. The '10 LCZ geometries' and the resonance findings were not checked."
+   },
+   {
+    "item": "Lugten et al., TU Delft (Forum Acusticum 2023, cited URL): 14.6 dB(A) measured between shielded and exposed courtyard sides; aircraft-in-street studies mostly geometric, aircraft below 200 m, not measurement-backed",
+    "status": "corrected",
+    "correction": "The cited PDF is Lugten, Wuite, Peng, Kim, Tenpierik, 'A scale model approach to simulate aircraft noise in street canyons: a comparison between in-situ and laboratory measurements', FA2023, DOI 10.61782/fa.2023.0264. It contains neither the 14.6 dB(A) figure nor the 'below 200 m' statement. It does say most prior studies use geometrical-acoustics models 'with mixed results'. The 14.6 dB(A) may come from another Lugten paper; it is unverified as cited."
+   },
+   {
+    "item": "Cosnefroy, Hornikx et al. 2021, 'Hybrid Fourier PSTD/DG time-domain method for urban sound propagation in a moving atmosphere' (TU/e record)",
+    "status": "unverifiable",
+    "correction": "The truncated TU/e URL resolves to a different record: Pagán Muñoz R, Hornikx M (2017), 'Hybrid Fourier PSTD/DG time-domain method for arbitrary boundary conditions', JASA 141(5) Suppl:3809, which makes no mention of wind. The PSTD-DG hybrid line is mainly Pagán Muñoz & Hornikx. The attribution to Cosnefroy and the 'full wind vector' claim are unconfirmed."
+   },
+   {
+    "item": "Hornikx & Forssén 2007, JASA 122(5):2532-2541, 2.5-D ESM (DOI 10.1121/1.2783197)",
+    "status": "confirmed",
+    "correction": "The DOI resolves to that title in JASA 122(5):2532. The abstract text was blocked (403), so the 'no atmospheric effects' and coherent-line-source details are unchecked."
+   },
+   {
+    "item": "Agent's own scaling estimate: 100x100x50 m block about 5e6 FDTD cells at 250 Hz and 3e8 at 1 kHz (10 ppw); PSTD about 1.4e7 points at 1 kHz and 9e8 at 4 kHz",
+    "status": "fabricated_or_wrong",
+    "correction": "Recomputed with dx = lambda/ppw and c = 343 m/s. FDTD at 10 ppw: 1.9e8 cells at 250 Hz, 1.2e10 at 1 kHz, 7.9e11 at 4 kHz. PSTD at 2 ppw: 9.9e7 at 1 kHz, 6.3e9 at 4 kHz. The PSTD figure of 300x300x150 is about 1 point per wavelength. The agent's numbers are low by roughly 7-40x, so per-receiver 3-D tables are even less practical above about 500 Hz to 1 kHz than claimed."
+   },
+   {
+    "item": "Van Renterghem, Salomons, Botteldooren 2005, Acta Acust. 91(4):671-679, FDTD-PE",
+    "status": "unverifiable",
+    "correction": "The Ingenta page returned 403. The paper is well known and plausible, but its pages were not checked."
+   },
+   {
+    "item": "Albert & Liu 2010, JASA 127:1335-1346, 2-D FDTD vs training-village measurements",
+    "status": "unverifiable",
+    "correction": "The DTIC PDF returned 403. The Mehra 2014 abstract independently confirms the work exists and what it did. Volume and pages were not checked."
+   }
+  ],
+  "overstated_or_wrong_claims": [
+   "The Ögren & Forssén 2004 turbulence figure is wrong: the abstract says the shielded-canyon increase reaches 25 dB at 1.6 kHz, not 2-5 dB. This undercuts the implied conclusion that a coherent full-wave table plus minor corrections suffices. For shielded receivers, turbulent scattering is a first-order term above about 1 kHz, and the in-canyon model needs an explicit scattering or partial-coherence component, like NICEOPS's ShadowScattering.",
+   "The agent's grid-size estimates are too low by roughly an order of magnitude: FDTD at 1 kHz on a 100x100x50 m block is about 1.2e10 cells, not 3e8; PSTD at 4 kHz is about 6e9 points, not 9e8. Calling 3-D 4 kHz PSTD 'GPU-feasible per receiver' is overstated.",
+   "The Trikootam et al. 2017 'benchmark' is a one-page JASA meeting abstract (141:4035). Calling it a validation suite comparable to the Attenborough 1995 benchmark is overstated until the case definitions and data are located.",
+   "The Lugten / TU Delft claims (14.6 dB(A); aircraft below 200 m, not measurement-backed) are not in the cited Forum Acusticum 2023 paper, which is a scale-model versus in-situ comparison. They need a correct source.",
+   "The 'Cosnefroy et al. 2021' PSTD/DG moving-atmosphere hybrid citation is not supported by the URL given. The record found is Pagán Muñoz & Hornikx 2017 on arbitrary boundary conditions, with no wind. The authorship and title are likely garbled.",
+   "Raghuvanshi & Snyder: 'no public implementation' ignores Microsoft Project Acoustics (Triton), a public, closed-source product. Reciprocity and the 500 Hz-1 kHz simulation limit are not in the abstract.",
+   "Mehra 2013 specifics ('a few thousand sources per object, a few percent error, tens of MB') are not in the abstract and remain unverified.",
+   "Schiff et al.'s -1 to -4 dB per canyon is for grazing propagation between ground-level canyons. The niceops_fit text proposes it for 'shallow-grazing paths over rooftops'; it should not be applied to elevated-source incidence, which is most helicopter geometries.",
+   "Van Renterghem 2010's finding that in-canyon wind refraction is small comes from short canyon-to-canyon paths with ground-level sources. Using it to justify homogeneous-medium ARD tables for steep downward helicopter incidence is an extrapolation, not a finding.",
+   "openPSTD's 15x GPU throughput could not be checked; the abstract was blocked."
+  ],
+  "important_omissions": [
+   "Van Renterghem, Salomons, Botteldooren (2006), 'Parameter study of sound propagation between city canyons with a coupled FDTD-PE model', Appl. Acoust. 67:487-510. This is the core FDTD-PE canyon paper and is missing; only the 2005 method paper is cited.",
+   "Hornikx M (2016), 'Ten questions concerning computational urban acoustics', Building and Environment 106:409-421. The agent remembered it but did not cite it; it is the main review of this exact family.",
+   "Kang J (2000), JASA 107:1394, and the energy-based radiosity and diffusion-equation canyon models (Picaut, Valeau, Kang). These are the high-frequency (above about 1 kHz) counterpart that any full-wave table would hand over to, and are needed given the corrected grid counts.",
+   "Time-domain impedance boundary conditions and high-order FD for outdoor propagation from Dragna, Blanc-Benon and Ostashev (e.g. Ostashev et al. 2005 JASA, FDTD in moving inhomogeneous media; Dragna et al. 2013 TDIBC). These are the foundations for frequency-dependent ground and facade BCs in any FDTD or PSTD table builder.",
+   "Hornikx & Forssén (2006/2009) noise-abatement and facade-absorption ESM papers. The quantitative finding (about 5 dB(A) facade absorption, 3 dB(A) grass) is listed with no reference at all.",
+   "Urban air mobility / eVTOL / drone urban-canyon propagation work (NASA AARON and ray-tracing studies, and recent UAM street-canyon studies). These are the closest analogue to an elevated moving rotorcraft source in canyons and are mostly geometric, but they are the relevant comparison set.",
+   "Lattice-Boltzmann and k-space / GPU FDTD solvers (e.g. Spa, Hamilton, Bilbao room-acoustics FDTD on GPUs) as practical 3-D engines for table generation.",
+   "Fast-multipole and H-matrix BEM for 3-D plane-wave incidence sweeps over facades. BEM is mentioned but no 3-D urban BEM reference is given.",
+   "Turbulence in urban canyons beyond Ögren & Forssén: e.g. Forssén & Hornikx's statistical models and Van Renterghem's coherence-loss work, which is the dominant mid-frequency effect for shielded receivers.",
+   "Measured helicopter or aircraft noise in urban settings for validation (e.g. Lugten's Amsterdam field lab measurements, and other flyover measurements near buildings). Any wave-model table needs a field reference for elevated sources."
+  ]
+ }
+}
