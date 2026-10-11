@@ -48,6 +48,7 @@
 #include "terrain.hpp"
 #include "weighting.hpp"
 #include "sphere_database.hpp"
+#include "sphere_energy.hpp"
 #include "trajectory.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
@@ -3695,6 +3696,7 @@ int run(int argc, char* argv[])
     std::vector<std::string> csel_files;
     std::string coverage_file = "";
     std::string provenance_file;
+    std::string provenance_spheres_file;
     bool full_history = false;
     bool epnl_masking = true;
     double utc_offset = 0.0;
@@ -3955,6 +3957,9 @@ int run(int argc, char* argv[])
     app.add_option("--provenance_file", provenance_file,
             "Write, per observer, the shares of its SEL energy from states the database clamped "
             "on each axis or held at a load-factor limit, and the sphere that supplied the most.");
+    app.add_option("--provenance_spheres", provenance_spheres_file,
+            "With --provenance_file, also write every sphere's share of every observer's SEL "
+            "energy, and each sphere's stored condition, to this netCDF file.");
     app.add_option("--coverage_file", coverage_file,
             "Write, per observer, the energy-weighted share of its levels that came from cells "
             "the database did not measure (straight rays only; needs a database with coverage).");
@@ -4386,6 +4391,8 @@ int run(int argc, char* argv[])
                             : list == &temperature_overrides  ? "--temperature values"
                             : list == &pressure_overrides     ? "--pressure values"
                                                               : "--start_utc values");
+    if (!provenance_spheres_file.empty() && provenance_file.empty())
+        input_error("--provenance_spheres writes beside --provenance_file: give that too.");
     if (!provenance_file.empty() && !std::isnan(ambient_level))
         input_error("--provenance_file attributes the aircraft's energy to the states and spheres "
                 "it came from: it does not combine with -a, whose energy came from neither.");
@@ -5283,6 +5290,22 @@ int run(int argc, char* argv[])
         log("Writing where each observer's energy came from, over ", path_count,
                 path_count == 1 ? " operation, to " : " operations, to ", provenance_file);
         write_provenance(x_obs, y_obs, totals, database, provenance_file, scattered, unit);
+        if (!provenance_spheres_file.empty())
+        {
+            SphereEnergyFile meta;
+            meta.grid = !scattered;
+            for (std::size_t i = 0; i < totals.provenance.size(); i++)
+            {
+                meta.x.push_back(scattered ? x_obs[i] : x_obs[i % x_obs.size()]);
+                meta.y.push_back(scattered ? y_obs[i] : y_obs[i / x_obs.size()]);
+                meta.exposure.push_back(totals.provenance[i][0]);
+            }
+            for (std::size_t k = 0; k < database.condition_count(); k++)
+                meta.conditions.push_back(database.condition(k));
+            meta.database = database_files.front();
+            log("Writing each sphere's share of each observer's energy to ", provenance_spheres_file);
+            write_sphere_energy(provenance_spheres_file, meta, totals.sphere_energy);
+        }
     }
 
     if (want_coverage)

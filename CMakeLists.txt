@@ -204,6 +204,7 @@ add_library(niceops_core STATIC
   src/build_info.cpp
   src/contour.cpp
   src/raster.cpp
+  src/sphere_energy.cpp
   src/procedure.cpp
 )
 target_include_directories(niceops_core PUBLIC
@@ -301,6 +302,9 @@ target_link_libraries(check_band_frames niceops_core)
 # What --raster_file wrote, against the grid files the same run wrote.
 add_executable(check_raster tests/check_raster.cpp)
 target_link_libraries(check_raster niceops_core)
+# What --provenance_spheres wrote, against the --provenance_file beside it.
+add_executable(check_sphere_energy tests/check_sphere_energy.cpp)
+target_link_libraries(check_sphere_energy niceops_core)
 # Refraction models against the parabolic equation on one path (tools/pe_compare.cpp):
 # a research tool, not part of a run.
 add_executable(niceops_pe_compare tools/pe_compare.cpp)
@@ -403,13 +407,18 @@ add_test(NAME config_refuses_an_unknown_key COMMAND niceops --config tests/data/
 set_tests_properties(config_refuses_an_unknown_key PROPERTIES PASS_REGULAR_EXPRESSION "gridstpe")
 # --provenance_file: a load-factor ceiling of 1.05 g holds 600 of the demo's 6551 states on B407.
 # It needs every state, so the run marches, and the SEL must be the windowed run's.
-add_test(NAME provenance_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --gridstep 2000 --max_load_factor 1.05 -L error -o integrated/provenance_sel.csv --provenance_file integrated/provenance.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME provenance_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --gridstep 2000 --max_load_factor 1.05 -L error -o integrated/provenance_sel.csv --provenance_file integrated/provenance.csv --provenance_spheres integrated/provenance_spheres.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME provenance_windowed COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --gridstep 2000 --max_load_factor 1.05 -L error -o integrated/provenance_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_run provenance_windowed PROPERTIES FIXTURES_SETUP provenance_runs)
 add_test(NAME provenance_leaves_sel_alone COMMAND golden_compare integrated/provenance_sel.csv integrated/provenance_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME provenance_shares_held_states COMMAND ${CMAKE_COMMAND} -E cat integrated/provenance.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_leaves_sel_alone provenance_shares_held_states PROPERTIES FIXTURES_REQUIRED provenance_runs)
 set_tests_properties(provenance_shares_held_states PROPERTIES PASS_REGULAR_EXPRESSION "exposure_db,share_mu_clamped,.*\n-4921\\.[0-9]+,-4921\\.[0-9]+,62\\.583[0-9]*,0,0,0,0\\.0955[0-9]*,0,31,0\\.485")
+# --provenance_spheres: every sphere's share, whose largest is the CSV's top sphere.
+add_test(NAME provenance_spheres_match COMMAND check_sphere_energy integrated/provenance_spheres.nc integrated/provenance.csv 0.3048 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(provenance_spheres_match PROPERTIES FIXTURES_REQUIRED provenance_runs PASS_REGULAR_EXPRESSION "check_sphere_energy: [1-9][0-9]* of [0-9]+ observers match")
+add_test(NAME provenance_spheres_need_the_file COMMAND niceops --provenance_spheres integrated/provenance_alone.nc -o integrated/provenance_alone_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(provenance_spheres_need_the_file PROPERTIES PASS_REGULAR_EXPRESSION "--provenance_spheres writes beside --provenance_file: give that too")
 add_test(NAME provenance_refuses_ambient COMMAND niceops -a 40 --provenance_file integrated/provenance_ambient.csv -o integrated/provenance_ambient_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with -a")
 add_test(NAME provenance_refuses_two_databases COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -d databases/S-76D_M4.nod -o integrated/provenance_two.csv --provenance_file integrated/provenance_two_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

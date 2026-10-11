@@ -204,6 +204,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--epnl_masking` / `--no-epnl_masking` | Exclude tones in bands below their noy threshold from the tone correction. On by default; `--no-epnl_masking` is the procedure as written. |
 | `--band_frames` | Write every observer's band levels in 0.5 s reception-time frames, as netCDF. Once, or once per trajectory (`<track>_band_frames.nc`). Needs the spectral path. Refused with `-a`. |
 | `--coverage_file` | Write, per observer, the energy-weighted share of its level that came from sphere cells the database did not measure. Needs a database that records `coverage`. Straight rays only: refused with `--refraction` or `-a`. |
+| `--provenance_spheres` | With `--provenance_file`, also write every sphere's share of every observer's SEL energy to a netCDF file ([Output files](#output-files)). |
 | `--provenance_file` | Write, per observer, where its SEL energy came from: the shares from states clamped on each database axis or held at a load-factor limit, and the sphere that supplied the most ([Output files](#output-files)). One database per run; refused with `-a`. |
 
 #### Threads, culling and diagnostics
@@ -285,6 +286,7 @@ The main ones:
 | `--ground_effect`, `--atmosphere`, `--wind`, `--propagation_table`, `--band_history`, `--csel_file`, `--epnl_file`, `--band_frames` with `--no-spectral` | The broadband path carries one A-weighted level. |
 | `--csel_file`, `--epnl_file`, `--band_frames`, `--coverage_file` with `-a` | The ambient is an A-weighted level with no spectrum. |
 | `--provenance_file` with `-a` | The ambient's energy came from no state or sphere. |
+| `--provenance_spheres` without `--provenance_file` | It is a companion to that file, and takes its limits. |
 | `--csel_file` with `--db_cutoff` | The cutoff is proven on the A-weighted level. |
 | `--refraction` without `--atmosphere` or `--wind`; `--atmosphere` with `--wind` | One profile, stated once. |
 | `--shadow_model resolved` without `--refraction stratified` and the ground effect; `--scattering` without `--refraction` and the ground effect | They act through the shadow transition, which needs a ground model. |
@@ -939,6 +941,13 @@ others:
   among its spheres by their blend weights, so a sphere with nothing measured toward the observer
   is still credited. The run evaluates every state, as `--coverage_file` does, whose share is
   weighted the same way. An observer that heard nothing is written as NaN.
+- `--provenance_spheres`: netCDF, the whole sphere breakdown behind `--provenance_file`'s top
+  sphere. Per observer, its `x` and `y` (meters) and `exposure_db`; per sphere, its stored
+  `advance_ratio`, `flight_path_angle` (deg) and `thrust_coefficient`, in the database's group
+  order (the index `top_sphere` gives); and `energy_share(observer, sphere)`, each sphere's
+  share of the observer's exposure, summing to one (NaN for an observer that heard nothing).
+  Summing the shares over a group of spheres gives that group's share, for any grouping: by
+  speed, by flight day, measured or synthetic. Mostly zeros, it is compressed.
 - `--contour_file`: GeoJSON (WGS84 longitude and latitude, RFC 7946), one MultiPolygon feature
   per level from `--cmin` to `--cmax` in steps of `--cstep`, covering where `--contour_metric` is
   at or above it, holes included, with the level and its area (m², km², square miles). It works

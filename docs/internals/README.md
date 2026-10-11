@@ -53,6 +53,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | Replacements for D and its libraries, port quirks kept on purpose | `util/iota.hpp`, `util/rootfind.hpp`, `util/logger.hpp`, `vec3.hpp` | [porting.md](porting.md) |
 | Contour polygons (`--contour_file`) | `contour` | [metrics.md](metrics.md#contours) |
 | Gridded levels as CF netCDF (`--raster_file`) | `raster` | [metrics.md](metrics.md#raster) |
+| Energy by sphere (`--provenance_spheres`) | `sphere_energy` | [metrics.md](metrics.md#source-provenance) |
 | Build, link layout, shared helpers, the run manifest | `CMakeLists.txt`, `util/paths.hpp`, `util/netcdf.hpp`, `util/constants.hpp`, `manifest`, `build_info`, `util/sha256.hpp`, `cmake/build_info.cmake` | [build.md](build.md) |
 | Plotting (pybind11-embedded matplotlib, created lazily, `Agg` backend) | `plotting`, `plotting_disabled.cpp` | [build.md](build.md#plotting) |
 

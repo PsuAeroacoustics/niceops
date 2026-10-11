@@ -15,6 +15,7 @@
 
 #include <netcdf.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
