@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -295,6 +296,43 @@ inline std::vector<PenaltyPeriod> penalty_periods(DayMetric metric, ClockWindow 
         break;
     }
     return {{22.0, 7.0, 10.0}};
+}
+
+// What `day`, `evening` and `night` operations, each heard as its plain SEL,
+// count for in a metric's energy: each period's count times its weighting,
+// 10^(penalty/10) for a penalized level and 1 inside, 0 outside, a period
+// level's period.  The periods are Lden's (07-19, 19-23, 23-07), and for DNL
+// and CNEL an evening operation is weighted as each metric weights 19:00-22:00
+// (DNL counts it as day, the AEDT and INM convention).  The entries are
+// spelled exactly (3, not 10^(lg 3)); a unit test pins each to
+// schedule_penalty at 13:00, 21:00 and 03:00.  LAeq has no periods to count.
+inline double period_count_weight(DayMetric metric, double day, double evening, double night)
+{
+    assert(metric != DayMetric::laeq);
+    std::array<double, 3> a {1.0, 1.0, 10.0};
+    switch (metric)
+    {
+    case DayMetric::lden:
+        a = {1.0, std::sqrt(10.0), 10.0};
+        break;
+    case DayMetric::cnel:
+        a = {1.0, 3.0, 10.0};
+        break;
+    case DayMetric::lday:
+        a = {1.0, 0.0, 0.0};
+        break;
+    case DayMetric::levening:
+        a = {0.0, 1.0, 0.0};
+        break;
+    case DayMetric::lnight:
+        a = {0.0, 0.0, 1.0};
+        break;
+    case DayMetric::laeq:
+        return std::numeric_limits<double>::quiet_NaN();
+    case DayMetric::dnl:
+        break;
+    }
+    return day * a[0] + evening * a[1] + night * a[2];
 }
 
 // The time the metric's energy is averaged over, s: the whole day for the

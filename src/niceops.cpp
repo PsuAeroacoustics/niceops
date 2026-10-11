@@ -789,12 +789,20 @@ struct PathJob
     std::string name;
     // How many trajectories the run has (for naming only).
     std::size_t count = 1;
+    // How many operations this trajectory stands for: what its contribution
+    // to the run totals is multiplied by, after its own SEL is formed.
+    double weight = 1.0;
+    // Day, evening and night counts, in place of the track's clock: each day
+    // metric then weights the plain SEL by period_count_weight (util/sel.hpp).
+    std::optional<std::array<double, 3>> period_counts;
 };
 
 // What every trajectory of a run adds to, per observer: each day-evening-night
 // metric's penalized energy (summed, normalized to the day at the end), the
 // largest weighted level, the NAx count, the time above, and the coverage
-// report's two energies.  A metric not asked for keeps an empty vector.
+// report's two energies.  Each trajectory's share is multiplied by its
+// operations' weight, except the largest level, which no count raises.  A
+// metric not asked for keeps an empty vector.
 struct RunTotals
 {
     std::array<std::vector<double>, day_metric_count> day_energy;
@@ -831,7 +839,7 @@ void write_provenance(const std::vector<Vec3>& observers, const RunTotals& total
         const double x = observers[i].x, y = observers[i].y;
         const auto& p = totals.provenance[i];
         // The exposure shared out: the SEL itself for one operation, the
-        // energy sum of the operations' SELs for several.
+        // weighted energy sum of the operations' SELs for several.
         file << x / unit.to_meters << "," << y / unit.to_meters << "," << 10.0 * std::log10(p[0]);
         for (int axis = 1; axis < 6; axis++)
             file << "," << (p[0] > 0.0 ? p[axis] / p[0] : nan);
@@ -1234,13 +1242,28 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 "takes any step.");
     }
 
+    // What this trajectory's energy counts for in each day metric: its
+    // operation count, or, with day, evening and night counts, each period's
+    // count times the period's weighting (period_count_weight).  It multiplies
+    // the exposure after it is formed, never the levels, the window or the
+    // bound.
+    std::array<double, day_metric_count> day_weight;
+    for (std::size_t m = 0; m < day_metric_count; m++)
+    {
+        day_weight[m] = job.period_counts
+                ? period_count_weight(static_cast<DayMetric>(m), (*job.period_counts)[0], (*job.period_counts)[1],
+                          (*job.period_counts)[2])
+                : job.weight;
+    }
+
     // The day-evening-night penalties (-D, --lden_file, --cnel_file), per
     // state, from the track's UTC seconds shifted into local time.  Each is a
-    // level added to the sample (0 outside its periods).
+    // level added to the sample (0 outside its periods).  Period counts take
+    // the clock's place, so they need none.
     std::array<std::vector<double>, day_metric_count> day_penalty;
     for (std::size_t m = 0; m < day_metric_count; m++)
     {
-        if (!options.want_day_metric[m])
+        if (!options.want_day_metric[m] || job.period_counts)
             continue;
         const auto metric = static_cast<DayMetric>(m);
         day_penalty[m].resize(nt);
@@ -1268,6 +1291,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::array<DayPass, day_metric_count> day_pass {};
     for (std::size_t m = 0; m < day_metric_count; m++)
     {
+        if (job.period_counts)
+        {
+            // Every period's energy is the plain SEL, weighted by its count.
+            day_pass[m] = day_weight[m] > 0.0 ? DayPass::the_sel : DayPass::none;
+            continue;
+        }
         const auto& penalty = day_penalty[m];
         if (std::all_of(penalty.begin(), penalty.end(), [](double p) { return p == 0.0; }))
             day_pass[m] = DayPass::the_sel;
@@ -3178,13 +3207,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         options.want_ta ? options.ta_threshold : std::numeric_limits<double>::infinity());
                 if (options.want_lamax)
                     lamax[index] = std::max(lamax[index], weighted.maximum);
-                // NAx: operations whose own peak reaches the threshold.  Each
-                // trajectory is one operation, so the count adds per trajectory.
+                // NAx: operations whose own peak reaches the threshold.  A
+                // trajectory stands for job.weight operations, so the count
+                // adds by its weight (a fractional count gives a fractional NAx).
                 if (options.want_nax && weighted.maximum >= options.nax_threshold)
-                    nax[index] += 1.0;
+                    nax[index] += job.weight;
                 // Time above: seconds, adding across operations.
                 if (options.want_ta)
-                    totals.time_above[index] += weighted.time_above;
+                    totals.time_above[index] += job.weight * weighted.time_above;
             }
             if (options.want_coverage)
             {
@@ -3206,8 +3236,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     unmeasured_energy += weight
                             * database.unmeasured_share(angles, source_states[it].blend);
                 }
-                coverage[index][0] += unmeasured_energy;
-                coverage[index][1] += energy;
+                // Scaled at the add, so a count of N sums as N repeats would.
+                coverage[index][0] += job.weight * unmeasured_energy;
+                coverage[index][1] += job.weight * energy;
             }
             if (options.want_provenance)
             {
@@ -3221,7 +3252,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 auto& totals_here = totals.provenance[index];
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    const double weight = sel_weight[it];
+                    // The state's SEL energy, times the operations it stands
+                    // for, so the totals and the spheres' shares stay one sum.
+                    const double weight = sel_weight[it] * job.weight;
                     if (weight == 0.0)
                         continue;
                     totals_here[0] += weight;
@@ -3264,7 +3297,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     continue;
                 if (day_pass[m] == DayPass::the_sel)
                 {
-                    totals.day_energy[m][index] += std::pow(10.0, 0.1 * integrated_levels[index]);
+                    totals.day_energy[m][index] += day_weight[m] * std::pow(10.0, 0.1 * integrated_levels[index]);
                     continue;
                 }
                 // Energies add across operations; the logarithm comes at the
@@ -3272,8 +3305,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // index belongs to exactly one worker, and the trajectories run
                 // one after another, so this needs no synchronization.  The
                 // operation's window is its own penalized 10 dB-down window, or
-                // the whole history under --full_history.
-                totals.day_energy[m][index] += std::pow(10.0,
+                // the whole history under --full_history.  The weight
+                // multiplies the energy; folded into the exponent it would
+                // round differently.
+                totals.day_energy[m][index] += day_weight[m] * std::pow(10.0,
                         0.1 * penalized_exposure_level(levels, integration_step, day_penalty[m], penalized,
                                       ranges, sound_speed, options.full_history));
             }
@@ -5127,6 +5162,9 @@ int run(int argc, char* argv[])
     options.geodetic.path_smoothing = path_smoothing;
 
     std::size_t failed_paths = 0;
+    // The operations the run totals stand for: each finished trajectory's
+    // weight, summed.
+    double operations_run = 0.0;
 
     for (std::size_t path_index = 0; path_index < path_count; path_index++)
     {
@@ -5169,6 +5207,7 @@ int run(int argc, char* argv[])
             path_options.geodetic.start_utc = value_for(start_utcs, path_index);
             trajectory_holder = process_trajectory(cached->second, job, path_options, observers,
                     observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
+            operations_run += job.weight;
         }
         catch (const std::exception& problem)
         {
@@ -5189,6 +5228,18 @@ int run(int argc, char* argv[])
         log(failed_paths, " of ", path_count, " trajectories could not be processed.");
     }
 
+    // "over 3 operations" in the logs below: the weighted count, with the
+    // runs it came from when the two differ.
+    const std::size_t runs_finished = path_count - failed_paths;
+    const auto operations_phrase = [&](const char* after) {
+        std::ostringstream phrase;
+        phrase << operations_run << (operations_run == 1.0 ? " operation" : " operations");
+        if (operations_run != static_cast<double>(runs_finished))
+            phrase << " (" << runs_finished << (runs_finished == 1 ? " run)" : " runs)");
+        phrase << after;
+        return phrase.str();
+    };
+
     std::array<std::vector<double>, day_metric_count> day_levels;
     for (std::size_t m = 0; m < day_metric_count; m++)
     {
@@ -5204,8 +5255,7 @@ int run(int argc, char* argv[])
         for (std::size_t i = 0; i < energy.size(); i++)
             level[i] = 10.0 * std::log10(energy[i] / seconds);
         day_levels[m] = level;
-        log("Writing the ", day_metric_name(static_cast<DayMetric>(m)), " over ", path_count,
-                path_count == 1 ? " operation" : " operations",
+        log("Writing the ", day_metric_name(static_cast<DayMetric>(m)), " over ", operations_phrase(""),
                 full_history ? ", each integrated over its whole history," : ", each over its own 10 dB-down window,",
                 " to ", file);
         write_levels(x_obs, y_obs, level, file, scattered, unit);
@@ -5215,8 +5265,7 @@ int run(int argc, char* argv[])
 
     if (want_lamax)
     {
-        log("Writing LAmax (", maximum_name(level_weighting), ") over ", path_count,
-                path_count == 1 ? " operation to " : " operations to ", lamax_file);
+        log("Writing LAmax (", maximum_name(level_weighting), ") over ", operations_phrase(" to "), lamax_file);
         write_levels(x_obs, y_obs, totals.lamax, lamax_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, totals.lamax, *frame, latlon_companion(lamax_file), scattered);
@@ -5225,7 +5274,7 @@ int run(int argc, char* argv[])
     if (want_nax)
     {
         log("Writing NAx (operations with ", maximum_name(level_weighting), " at or above ", nax_threshold,
-                " dBA) over ", path_count, path_count == 1 ? " operation to " : " operations to ", nax_file);
+                " dBA) over ", operations_phrase(" to "), nax_file);
         write_levels(x_obs, y_obs, totals.nax, nax_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, totals.nax, *frame, latlon_companion(nax_file), scattered);
@@ -5234,8 +5283,7 @@ int run(int argc, char* argv[])
     if (want_ta)
     {
         log("Writing the time above ", ta_threshold, " dBA (", to_string(level_weighting),
-                " weighting, seconds of reception time) over ", path_count,
-                path_count == 1 ? " operation to " : " operations to ", ta_file);
+                " weighting, seconds of reception time) over ", operations_phrase(" to "), ta_file);
         write_levels(x_obs, y_obs, totals.time_above, ta_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, totals.time_above, *frame, latlon_companion(ta_file), scattered);
@@ -5243,8 +5291,7 @@ int run(int argc, char* argv[])
 
     if (want_provenance)
     {
-        log("Writing where each observer's energy came from, over ", path_count,
-                path_count == 1 ? " operation, to " : " operations, to ", provenance_file);
+        log("Writing where each observer's energy came from, over ", operations_phrase(", to "), provenance_file);
         // The front database: the provenance refuses a run of several.
         assert(!several_databases);
         write_provenance(observers, totals, database, provenance_file, unit);
@@ -5279,8 +5326,7 @@ int run(int argc, char* argv[])
             unmeasured_share[i] = coverage[i][1] > 0.0 ? coverage[i][0] / coverage[i][1]
                                                        : std::numeric_limits<double>::quiet_NaN();
         }
-        log("Writing the unmeasured share of the levels over ", path_count,
-                path_count == 1 ? " operation to " : " operations to ", coverage_file);
+        log("Writing the unmeasured share of the levels over ", operations_phrase(" to "), coverage_file);
         write_levels(x_obs, y_obs, unmeasured_share, coverage_file, scattered, unit);
         if (latlon)
         {
