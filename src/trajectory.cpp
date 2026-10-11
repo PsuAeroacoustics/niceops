@@ -881,7 +881,7 @@ void Trajectory::write_state(const std::string& state_file) const
     ensure_parent_directory(state_file);
     std::ofstream file(state_file);
     if (!file)
-        fatal("Unable to open state file for writing: ", state_file);
+        input_error("Unable to open state file for writing: ", state_file);
     // Write header from field names (mirrors __traits(allMembers, State))
     file << "t,x,y,z,vx,vy,vz,nx,ny,nz,LF,CT,mu,fpa_e,fpa\n";
     file << std::setprecision(17);
@@ -981,7 +981,7 @@ std::vector<double> Trajectory::column(const std::string& varname) const
         {"mu", &State::mu}, {"fpa_e", &State::fpa_e}, {"fpa", &State::fpa}};
     auto it = fields.find(varname);
     if (it == fields.end())
-        fatal("Unknown state variable: ", varname);
+        input_error("Unknown state variable: ", varname);
     std::vector<double> x;
     x.reserve(states.size());
     for (const auto& state : states)

@@ -3911,6 +3911,9 @@ int run(int argc, char* argv[])
     auto* config_option = app.set_config("--config", "",
             "Read options from this TOML file, as `name = value` lines (the command line "
             "overrides it).");
+    // CLI11 drops a key it does not know by default: a misspelled option would
+    // be a run with the default, and exit 0.
+    app.allow_config_extras(CLI::config_extras_mode::error);
     app.set_version_flag("--version", build_info().version);
 
     try
@@ -3929,6 +3932,11 @@ int run(int argc, char* argv[])
         request.manifest.set_command_line(argc, argv);
         request.manifest.set_options_given(app.config_to_str(false, false));
         request.manifest.set_log_file(log_file);
+        if (same_file(manifest_file, log_file))
+        {
+            manifest_request().reset();
+            input_error("--manifest would overwrite the log file ", log_file, ". Give another file name.");
+        }
         if (config_option->count() > 0)
             request.manifest.add_input("config", config_option->as<std::string>());
         for (const auto& f : path_files)
@@ -4788,7 +4796,7 @@ int run(int argc, char* argv[])
         catch (const std::exception& problem)
         {
             failed_paths++;
-            error("Skipping ", path_files[path_index], ": ", problem.what());
+            report_again(problem, "Skipping " + path_files[path_index] + ": ");
         }
     }
 
@@ -4902,7 +4910,7 @@ int main(int argc, char* argv[])
     }
     catch (const std::exception& problem)
     {
-        error("Stopping: ", problem.what());
+        report_again(problem, "Stopping: ");
         status = 2;
     }
     if (auto& request = manifest_request())
@@ -4915,7 +4923,7 @@ int main(int argc, char* argv[])
         }
         catch (const std::exception& problem)
         {
-            error("Stopping: ", problem.what());
+            report_again(problem, "Stopping: ");
             status = 2;
         }
     }

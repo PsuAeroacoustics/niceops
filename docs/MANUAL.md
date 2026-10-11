@@ -930,19 +930,21 @@ others:
 - the command line, and the options given on it or in a `--config` file (the rest are the
   build's defaults);
 - every input (trajectories, databases, vehicle, observer, atmosphere, terrain and table files)
-  and every output, each with its size and SHA-256, which `shasum -a 256` reproduces; the log
-  file is named only, since runs append to it;
+  and every output, figures included, each with its size and SHA-256, which `shasum -a 256`
+  reproduces; the log file is named only, since runs append to it;
 - each database's root attributes and scalar variables, which record how it was built;
 - the number of warnings and errors, the first 20 of them, the exit status and the run time.
 
-It is written after the run, including one that stops, so the exit status it records is the one
-the process returns. A run writing more than 1000 files (per-observer histories) lists the
+It is written after the run, including one that stops on a refused input, so the exit status it
+records is the one the process returns. A command line that does not parse (an unknown option,
+an unreadable `--config`) stops before there is a run to record, and writes none. A run writing more than 1000 files (per-observer histories) lists the
 first 1000 and counts the rest. Hashing reads every input once more: about 0.3 s for the largest shipped
-database (72 MB). A manifest that names one of the run's inputs is refused.
+database (72 MB). A manifest that names one of the run's inputs or its log file is refused before the run; one
+that names an output is refused after it, keeping the output.
 
 `--config FILE` reads options from a TOML file, one `name = value` per line, using the long
 option name without its dashes. Flags take `true`; a negated flag is written as its own name.
-The command line overrides the file. The demo case of [Quick start](#quick-start) as a file:
+A key that names no option is refused. The command line overrides the file. The demo case of [Quick start](#quick-start) as a file:
 
 ```toml
 no-spectral = true

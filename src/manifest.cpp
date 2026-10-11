@@ -162,15 +162,24 @@ std::string utc_now()
 
 } // namespace
 
+bool niceops::same_file(const std::string& a, const std::string& b)
+{
+    if (a.empty() || b.empty())
+        return false;
+    std::error_code ec;
+    if (std::filesystem::exists(a, ec) && std::filesystem::exists(b, ec))
+        return std::filesystem::equivalent(a, b, ec);
+    const auto ca = std::filesystem::weakly_canonical(a, ec);
+    const auto cb = std::filesystem::weakly_canonical(b, ec);
+    return !ec && ca == cb;
+}
+
 void RunManifest::refuse_overwriting_an_input(const std::string& path) const
 {
     for (const auto& input : inputs_)
-    {
-        std::error_code ignored;
-        if (std::filesystem::exists(path, ignored) && std::filesystem::equivalent(path, input.path, ignored))
+        if (same_file(path, input.path))
             input_error("--manifest would overwrite the ", input.role, " ", input.path,
                     ". Give another file name.");
-    }
 }
 
 void RunManifest::write(const std::string& path, int exit_status, double seconds) const
@@ -215,7 +224,7 @@ void RunManifest::write(const std::string& path, int exit_status, double seconds
         std::lock_guard<std::mutex> lock(written.mutex);
         for (const auto& output : written.paths)
         {
-            if (output == path || output == log_file_)
+            if (output == log_file_ || output == path)
                 continue;
             if (paths.size() == max_listed_outputs)
             {
@@ -237,6 +246,15 @@ void RunManifest::write(const std::string& path, int exit_status, double seconds
     manifest["seconds"] = seconds;
 
     refuse_overwriting_an_input(path);
+    // An output is known only once written; the run's results are kept, and
+    // the manifest refused.
+    {
+        auto& written = detail::written_files();
+        std::lock_guard<std::mutex> lock(written.mutex);
+        for (const auto& output : written.paths)
+            if (output != log_file_ && same_file(path, output))
+                input_error("--manifest would overwrite the output ", output, ". Give another file name.");
+    }
     ensure_parent_directory(path);
     std::ofstream out(path);
     if (!out)

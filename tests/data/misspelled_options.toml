@@ -1,0 +1,3 @@
+# A misspelled option: refused, not run with the default.
+no-spectral = true
+gridstpe = 1000

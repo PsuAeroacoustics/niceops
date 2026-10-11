@@ -12,6 +12,10 @@
 
 namespace niceops {
 
+// Whether two paths name one file: the same file when both exist, else the same
+// path once made absolute and normalized.
+bool same_file(const std::string& a, const std::string& b);
+
 // What the build recorded about itself (src/build_info.cpp, from a header the
 // build regenerates whenever the git state changes).
 struct BuildInfo

@@ -314,6 +314,14 @@ void error(Args&&... args)
     Logger::instance().write(LogLevel::error, std::forward<Args>(args)...);
 }
 
+// What input_error throws: its message is already logged (and counted), so a
+// caller reporting it again ("Skipping ...", "Stopping: ...") uses
+// report_again rather than counting the one failure twice.
+struct InputError : std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
+
 // For a failure that condemns one input rather than the whole run: logs at
 // error level and throws, so a caller processing several trajectories can note
 // which one failed and carry on with the rest.  fatal() below still aborts, for
@@ -325,7 +333,18 @@ template <typename... Args>
     // drift apart.
     const auto message = detail::format_message(std::forward<Args>(args)...);
     Logger::instance().write(LogLevel::error, message);
-    throw std::runtime_error(message);
+    throw InputError(message);
+}
+
+// Logs a failure that is being reported a second time, with its context, at
+// error level: counted only if it was not an InputError, which counted itself.
+inline void report_again(const std::exception& problem, const std::string& context)
+{
+    const std::string message = context + problem.what();
+    if (dynamic_cast<const InputError*>(&problem) != nullptr)
+        Logger::instance().write_line(LogLevel::error, message);
+    else
+        Logger::instance().write(LogLevel::error, message);
 }
 
 template <typename... Args>
