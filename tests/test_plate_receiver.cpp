@@ -178,6 +178,44 @@ TEST_CASE("Plate receiver refuses a table for another ground or other bands", "[
     REQUIRE_NOTHROW(plate.bound(shifted, grass(), 343.0, 11, 31));
 }
 
+TEST_CASE("a plate's ground mismatch is empty exactly when bound() accepts the ground, and is its refusal",
+        "[plate_receiver]")
+{
+    std::vector<GroundModel> grounds = {grass(), amedee()};
+    auto other = grass();
+    other.flow_resistance = 200.0;
+    grounds.push_back(other);
+    auto porous = amedee();
+    porous.porosity_rate = 0.5;
+    grounds.push_back(porous);
+    auto layer = grass();
+    layer.impedance_model = ImpedanceModel::delany_bazley_layer;
+    layer.layer_depth = 0.05;
+    grounds.push_back(layer);
+    for (const std::string path : {"plates/gr1425_db225.nc", "plates/gr1425_vp200.nc"})
+    {
+        const auto plate = PlateReceiver::load(path);
+        std::size_t accepted = 0;
+        for (const auto& ground : grounds)
+        {
+            const std::string mismatch = plate.ground_mismatch(ground);
+            std::string refusal;
+            try
+            {
+                (void)plate.bound(kBands, ground, 343.0);
+            }
+            catch (const std::exception& e)
+            {
+                refusal = e.what();
+            }
+            INFO(path << ": " << mismatch);
+            CHECK(mismatch == refusal);
+            accepted += mismatch.empty();
+        }
+        CHECK(accepted == 1);
+    }
+}
+
 TEST_CASE("Plate receiver's tabulated Q stays close to the evaluated one, inside the bound",
         "[plate_receiver]")
 {
