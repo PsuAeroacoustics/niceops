@@ -5180,6 +5180,9 @@ int run(int argc, char* argv[])
         if (last_use.at(key) == path_index && key != front_key)
             databases.erase(key);
     }
+    // `database` refers to the front entry, which the provenance reads below;
+    // erasing it would leave a dangling reference that no output shows.
+    assert(databases.count(front_key) == 1 && &databases.find(front_key)->second == &database);
 
     if (failed_paths > 0)
     {
