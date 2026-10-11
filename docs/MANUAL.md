@@ -1188,7 +1188,8 @@ refused:
   reports the states the database would clamp on each axis (advance ratio, path angle, C<sub>T</sub>)
   or hold at `--max_load_factor` (default 2 g, as in niceops), with the stretches of time they
   span, so a procedure can be kept inside its database before any acoustics run. `--no-qsam`
-  matches niceops's `--no-qsam`. The procedure is calm, so the database's speed reference makes
+  matches niceops's `--no-qsam`. A vehicle file that disagrees with the database is refused as
+  niceops refuses it, and `--accept_vehicle_mismatch` maps the states anyway. The procedure is calm, so the database's speed reference makes
   no difference. How much of the footprint those states carry is what `--provenance_file`
   reports.
 

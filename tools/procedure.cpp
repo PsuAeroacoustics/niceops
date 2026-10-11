@@ -55,12 +55,13 @@ std::vector<std::pair<double, double>> spans(const std::vector<State>& states, c
 // reports, per axis, the states `database` clamps.  Returns how many states
 // were clamped or held on any axis.
 std::size_t check_envelope(const std::string& track, LengthUnit unit, const std::string& database_file,
-        const std::string& vehicle_file, double max_load_factor, bool qsam)
+        const std::string& vehicle_file, double max_load_factor, bool qsam, bool accept_vehicle_mismatch)
 {
     GeodeticInput geodetic;
     geodetic.resample_dt = 0.5;
     Trajectory trajectory(track, vehicle_file, geodetic, unit);
     const Database database(database_file);
+    check_vehicle(trajectory.vehicle, database, vehicle_file, accept_vehicle_mismatch);
     BlendOptions blend;
     blend.tip_speed = trajectory.vehicle.tip_speed;
     const auto& states = trajectory.states;
@@ -114,6 +115,7 @@ int main(int argc, char* argv[])
     std::string check_database, vehicle;
     double max_load_factor = 2.0;
     bool qsam = true;
+    bool accept_vehicle_mismatch = false;
     app.add_option("--check", check_database,
             "Report the states this database (.nod) would clamp on each axis, or hold at "
             "--max_load_factor, as niceops maps them. Needs --vehicle.");
@@ -121,6 +123,9 @@ int main(int argc, char* argv[])
     app.add_option("--max_load_factor", max_load_factor,
             "For --check: niceops's --max_load_factor, in g (default 2).");
     app.add_flag("--qsam,!--no-qsam", qsam, "For --check: niceops's --qsam (default on).");
+    app.add_flag("--accept_vehicle_mismatch", accept_vehicle_mismatch,
+            "For --check: map the states through a vehicle file that disagrees with the database, "
+            "as niceops's --accept_vehicle_mismatch.");
     CLI11_PARSE(app, argc, argv);
     // The database and track readers narrate at info; the tool's own report
     // is on stdout.
@@ -136,7 +141,7 @@ int main(int argc, char* argv[])
         std::printf("Wrote %s: %zu states over %.1f s.\n", output.c_str(), states.size(),
                 states.empty() ? 0.0 : states.back().t);
         if (!check_database.empty())
-            check_envelope(output, unit, check_database, vehicle, max_load_factor, qsam);
+            check_envelope(output, unit, check_database, vehicle, max_load_factor, qsam, accept_vehicle_mismatch);
     }
     catch (const std::exception& problem)
     {

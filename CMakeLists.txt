@@ -418,6 +418,11 @@ set_tests_properties(provenance_shares_held_states PROPERTIES PASS_REGULAR_EXPRE
 # --provenance_spheres: every sphere's share, whose largest is the CSV's top sphere.
 add_test(NAME provenance_spheres_match COMMAND check_sphere_energy integrated/provenance_spheres.nc integrated/provenance.csv 0.3048 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_spheres_match PROPERTIES FIXTURES_REQUIRED provenance_runs PASS_REGULAR_EXPRESSION "check_sphere_energy: [1-9][0-9]* of [0-9]+ observers match")
+# Culled observers (--db_cutoff) heard nothing: a row of NaN shares and an exposure of -inf.
+add_test(NAME provenance_spheres_silent_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --gridstep 2000 --no-spectral --db_cutoff 80 -L error -o integrated/provenance_silent_sel.csv --provenance_file integrated/provenance_silent.csv --provenance_spheres integrated/provenance_silent.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(provenance_spheres_silent_run PROPERTIES FIXTURES_SETUP provenance_runs)
+add_test(NAME provenance_spheres_silent COMMAND check_sphere_energy integrated/provenance_silent.nc integrated/provenance_silent.csv 0.3048 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(provenance_spheres_silent PROPERTIES FIXTURES_REQUIRED provenance_runs PASS_REGULAR_EXPRESSION "check_sphere_energy: [1-9][0-9]* of 25 observers match, [1-9][0-9]* heard nothing")
 add_test(NAME provenance_spheres_need_the_file COMMAND niceops --provenance_spheres integrated/provenance_alone.nc -o integrated/provenance_alone_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_spheres_need_the_file PROPERTIES PASS_REGULAR_EXPRESSION "--provenance_spheres writes beside --provenance_file: give that too")
 add_test(NAME provenance_refuses_ambient COMMAND niceops -a 40 --provenance_file integrated/provenance_ambient.csv -o integrated/provenance_ambient_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -603,6 +608,8 @@ add_test(NAME procedure_check COMMAND niceops_procedure tests/data/procedure_env
 set_tests_properties(procedure_check PROPERTIES FIXTURES_SETUP procedure_envelope PASS_REGULAR_EXPRESSION "122 of 301 states \\(every 0\\.20 s\\) clamped or held\\.\n  advance ratio clamped to the database's range: 87 states, t = 0\\.0-17\\.2 s\n.*load factor held at --max_load_factor: 35 states, t = 44\\.0-50\\.8 s")
 add_test(NAME procedure_check_agrees_with_niceops COMMAND niceops -t integrated/procedure_envelope.csv -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --max_load_factor 1.3 --gridstep 4000 -L warn -o integrated/procedure_envelope_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(procedure_check_agrees_with_niceops PROPERTIES FIXTURES_REQUIRED procedure_envelope PASS_REGULAR_EXPRESSION "advance ratio 87, flight-path angle 0, thrust coefficient 0 of 301 states.*35 of 301 states exceed 1\\.3 g")
+add_test(NAME procedure_check_refuses_wrong_vehicle COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope_s76.csv --check databases/B407_fixed_load_factor.nod --vehicle databases/S-76D.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(procedure_check_refuses_wrong_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle main rotor tip speed disagrees: databases/S-76D.json gives 220 m/s.*so the run is refused")
 add_test(NAME procedure_check_needs_vehicle COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope_nov.csv --check databases/B407_fixed_load_factor.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(procedure_check_needs_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "--check maps the states through the vehicle's rotor: give --vehicle")
 add_test(NAME procedure_refuses_going_underground COMMAND niceops_procedure tests/data/procedure_underground.json -o integrated/procedure_underground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

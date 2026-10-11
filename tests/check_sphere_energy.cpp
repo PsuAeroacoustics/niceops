@@ -90,7 +90,7 @@ int main(int argc, char** argv)
         fail(std::string("cannot open ") + argv[2]);
     std::string line;
     std::getline(file, line);
-    std::size_t i = 0, heard = 0;
+    std::size_t i = 0, heard = 0, silent = 0;
     while (std::getline(file, line))
     {
         std::vector<double> row;
@@ -113,6 +113,9 @@ int main(int argc, char** argv)
             for (std::size_t k = 0; k < spheres; k++)
                 if (!std::isnan(shares[k]))
                     fail(where + " heard nothing, but has a share");
+            if (std::isfinite(exposure[i]))
+                fail(where + " heard nothing, but its exposure_db is finite");
+            silent++;
             i++;
             continue;
         }
@@ -141,7 +144,7 @@ int main(int argc, char** argv)
                 + " observers");
     if (heard == 0)
         fail("no observer heard anything: the check is empty");
-    std::cout << "check_sphere_energy: " << heard << " of " << observers << " observers match, over " << spheres
-              << " spheres\n";
+    std::cout << "check_sphere_energy: " << heard << " of " << observers << " observers match, " << silent
+              << " heard nothing, over " << spheres << " spheres\n";
     return 0;
 }

@@ -110,8 +110,9 @@ track.
   `--trim` and beyond the smoothing a WGS84 fit is allowed, since a landing dips that far.
 - **`--check` maps states through `state_condition`** (`src/state_condition.{hpp,cpp}`), the
   function run() uses, then `Database::blend_at`, after reading the track through `Trajectory`
-  as niceops does. A copy of the mapping would drift; `procedure_check_agrees_with_niceops` pins
-  its counts to niceops's own warnings on the same track.
+  as niceops does, after the same vehicle check (`check_vehicle`). A copy of either would drift;
+  `procedure_check_agrees_with_niceops` pins its counts to niceops's own warnings on the same
+  track, and `procedure_check_refuses_wrong_vehicle` the refusal.
 
 ## Trajectory class
 
