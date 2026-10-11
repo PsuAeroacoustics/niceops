@@ -1085,8 +1085,9 @@ arr03,../tracks/arr03.csv,../databases/AS350_fixed_load_factor.nod,../databases/
 The file is plain comma-separated text. The first line that is not blank or a `#` comment is the
 header; every row after it must have as many fields, and fields are trimmed. Quoting is not
 supported, so a field cannot hold a comma or a quote. Column names match whatever their case and
-punctuation (`Local Time`, `local_time` and `LOCAL_TIME` are one column), and a unit in brackets
-is checked where a column has one.
+punctuation (`Local Time`, `local_time` and `LOCAL_TIME` are one column). A unit in brackets
+is checked where a column has one, and nothing is converted: a unit on a column that has none,
+such as `count (per year)`, is refused, and `wind_direction` may say only `(deg)`.
 
 | Column | Meaning | When the cell or column is empty |
 | --- | --- | --- |

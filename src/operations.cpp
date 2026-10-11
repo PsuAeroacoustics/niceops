@@ -224,6 +224,27 @@ OperationsFile niceops::read_operations(const std::string& path)
                     input_error(path, ": column \"", header.header[found->second], "\" declares ", token, "; the ",
                             column, " column is in ", expected, ".");
             }
+            // Columns with no unit to declare: a label on one would be dropped
+            // by normalize, so `count (per year)` would read annual counts as
+            // daily ones. The wind direction may say it is in degrees, and the
+            // wind speed names its unit in each cell.
+            for (const auto& [column, value] : index)
+            {
+                const std::string token = header.unit_token(value);
+                if (token.empty() || column == "humidity" || column == "temperature" || column == "pressure"
+                        || column == "offset" || column == "windheight")
+                    continue;
+                if (column == "winddirection" && (token == "deg" || token == "degree" || token == "degrees"))
+                    continue;
+                const std::string what = column == "windspeed" ? "the speed names its unit in each cell (8kt)"
+                        : column == "winddirection"            ? "it is a compass bearing in degrees"
+                        : column == "localtime"                ? "it is local time, by --utc_offset"
+                        : column == "count" || column == "day" || column == "evening" || column == "night"
+                        ? "it counts operations per average day"
+                        : "it has no unit";
+                input_error(path, ": column \"", header.header[value], "\" declares ", token, ", and ", what,
+                        ". Nothing in the operations file is converted.");
+            }
             if (file.has("offset"))
                 file.offset_unit = header.unit_token(index.at("offset"));
             if (file.has("windheight"))

@@ -114,6 +114,10 @@ the manifest and every check that reads those lists. Things to keep:
 - **Columns are matched by `LabeledCsv::normalize`**, so `local_time` is `localtime`. An unknown
   column is refused with the known names listed, so a misspelled `cnt` cannot be a file of counts
   of 1. A `start_utc` column is refused with a pointer to `local_time`.
+- **Every header unit is checked**, since normalize drops it from the name. Humidity,
+  temperature and pressure name their fixed units, the offset and `wind_height` are checked
+  against `--units`, `wind_direction` may say degrees, and any label on another column is
+  refused: `count (per year)` read as daily counts would be 25.6 dB high and exit 0.
 - **Paths resolve against the operations file's folder** and are made `lexically_normal`, so
   the log, the `Loading database` line, the manifest's deduplication (on role and path) and the
   database cache's keys see one spelling. Absolute paths stand.

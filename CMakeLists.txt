@@ -756,6 +756,9 @@ add_test(NAME operations_fleet_mix COMMAND ${CMAKE_COMMAND} "-DPAIRS=integrated/
 add_test(NAME operations_fleet_loads_each_once COMMAND ${CMAKE_COMMAND} -E cat integrated/ops_fleet.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(operations_fleet_mix operations_fleet_loads_each_once PROPERTIES FIXTURES_REQUIRED ops_fleet_runs)
 set_tests_properties(operations_fleet_loads_each_once PROPERTIES PASS_REGULAR_EXPRESSION "Loading database databases/B407_fixed_load_factor\\.nod for tracks/S-76D/197422AC\\.csv" FAIL_REGULAR_EXPRESSION "Opening netCDF file: databases/S-76D_M3\\.nod.*Opening netCDF file: databases/S-76D_M3\\.nod;Opening netCDF file: databases/B407_fixed_load_factor\\.nod.*Opening netCDF file: databases/B407_fixed_load_factor\\.nod")
+# The rows' resolved paths are read before the run starts, and still reach -l.
+add_test(NAME operations_fleet_logs_its_paths COMMAND ${CMAKE_COMMAND} -E cat integrated/ops_fleet.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_fleet_logs_its_paths PROPERTIES FIXTURES_REQUIRED ops_fleet_runs PASS_REGULAR_EXPRESSION "\\[info\\] Operation a1 \\(tests/data/operations/fleet\\.csv line 2\\): track tracks/S-76D/197421AC\\.csv")
 # The manifest records the operations file beside the tracks it names.
 add_test(NAME operations_manifest_run COMMAND niceops --no-spectral --no-ground_effect --gridstep 2000 -L error -d databases/S-76D_M3.nod -v databases/S-76D.json --operations tests/data/operations/count3.csv -o integrated/ops_manifest.csv --manifest integrated/ops_manifest.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(operations_manifest_run PROPERTIES FIXTURES_SETUP ops_manifest_run)
@@ -771,6 +774,11 @@ add_test(NAME operations_needs_a_database COMMAND niceops --operations ${OPS_DIR
 set_tests_properties(operations_needs_a_database PROPERTIES PASS_REGULAR_EXPRESSION "operation 197421AC \\(tests/data/operations/no_database\\.csv line 2\\) names no database")
 add_test(NAME operations_missing_track COMMAND niceops --operations ${OPS_DIR}/missing_track.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(operations_missing_track PROPERTIES PASS_REGULAR_EXPRESSION "line 2 \\(no_such_track\\): the track file tests/data/operations/no_such_track\\.csv does not exist")
+# A refusal of the operations file reaches -l, as every refusal does.
+add_test(NAME operations_refusal_run COMMAND sh -c "rm -f integrated/ops_refusal.log; $<TARGET_FILE:niceops> --operations ${OPS_DIR}/missing_track.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv -l integrated/ops_refusal.log; test -f integrated/ops_refusal.log" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_refusal_run PROPERTIES FIXTURES_SETUP ops_refusal_run)
+add_test(NAME operations_refusal_is_logged COMMAND ${CMAKE_COMMAND} -E cat integrated/ops_refusal.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_refusal_is_logged PROPERTIES FIXTURES_REQUIRED ops_refusal_run PASS_REGULAR_EXPRESSION "\\[error\\] [^\n]*the track file tests/data/operations/no_such_track\\.csv does not exist")
 add_test(NAME operations_duplicate_names COMMAND niceops --operations ${OPS_DIR}/duplicate_names.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(operations_duplicate_names PROPERTIES PASS_REGULAR_EXPRESSION "the rows on lines 2 and 3 share the name 197421AC; add a name column")
 add_test(NAME operations_bare_wind_speed COMMAND niceops ${OPS_RUN} --operations ${OPS_DIR}/bare_wind.csv -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

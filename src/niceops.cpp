@@ -4415,6 +4415,17 @@ int run(int argc, char* argv[])
         return app.exit(e);
     }
 
+    // The log is set up before any input is read, so that a refusal of the
+    // operations file, and the paths its rows resolve to, reach -l under -L
+    // like the rest of the run.
+    Logger::instance().set_file(log_file);
+    // The eval loop's trace() calls are gated so they cost nothing at info, but
+    // they are there to be turned on when something needs explaining.
+    const std::map<std::string, LogLevel> levels {{"trace", LogLevel::trace},
+            {"info", LogLevel::info}, {"warn", LogLevel::warn}, {"error", LogLevel::error},
+            {"fatal", LogLevel::fatal}};
+    Logger::instance().set_level(levels.at(log_level));
+
     // --operations fills the per-trajectory lists, one entry per row, before
     // anything reads them.
     std::optional<OperationRun> operations;
@@ -4676,15 +4687,6 @@ int run(int argc, char* argv[])
     {
         write_state = true;
     }
-
-    // Set default logging to file
-    Logger::instance().set_file(log_file);
-    // The eval loop's trace() calls are gated so they cost nothing at info, but
-    // they are there to be turned on when something needs explaining.
-    const std::map<std::string, LogLevel> levels {{"trace", LogLevel::trace},
-            {"info", LogLevel::info}, {"warn", LogLevel::warn}, {"error", LogLevel::error},
-            {"fatal", LogLevel::fatal}};
-    Logger::instance().set_level(levels.at(log_level));
 
     // Settle the local frame before anything is loaded.  Every trajectory in a
     // run shares the observers, so a position in one has to mean the same place

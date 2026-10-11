@@ -171,6 +171,17 @@ TEST_CASE("an operations file refuses what it cannot read, naming the line", "[o
     refuses("track,wind_height\ntracks/a.csv,10\n", "needs wind_speed");
     refuses("track,wind_speed,wind_direction\ntracks/a.csv,8kt,\n", "give wind_speed and wind_direction together");
     refuses("track,temperature (C)\ntracks/a.csv,15\n", "the temperature column is in K");
+    refuses("track,count (per year)\ntracks/a.csv,365\n",
+            "column \"count (per year)\" declares per, and it counts operations per average day");
+    refuses("track,night [annual]\ntracks/a.csv,365\n", "declares annual, and it counts operations");
+    refuses("track,wind_speed (kt),wind_direction\ntracks/a.csv,8,200\n", "the speed names its unit in each cell");
+    refuses("track,wind_speed,wind_direction (rad)\ntracks/a.csv,8kt,3.1\n", "it is a compass bearing in degrees");
+    refuses("track,local_time (UTC)\ntracks/a.csv,12:00\n", "declares utc, and it is local time, by --utc_offset");
+    refuses("track (csv)\ntracks/a.csv\n", "declares csv, and it has no unit");
+    REQUIRE(read_operations(folder.write("track,wind_speed,wind_direction (deg)\ntracks/a.csv,8kt,200\n"))
+                    .rows.front()
+                    .wind_text
+            == "8kt,200");
     refuses("track,count\n", "has no operations");
     refuses("# only a comment\n", "has no header");
     REQUIRE_THROWS_WITH(read_operations((folder.root / "absent.csv").string()),
