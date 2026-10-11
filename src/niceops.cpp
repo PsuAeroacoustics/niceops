@@ -759,6 +759,15 @@ struct PathJob
     std::string epnl;
     std::string band_frames;
     std::size_t count = 1;
+    // This trajectory's air (--atmosphere, --wind, --humidity, --temperature,
+    // --pressure, --start_utc), given once for the run or once per trajectory.
+    // process_trajectory reads them through its own copy of the run's options.
+    std::optional<AtmosphereProfile> atmosphere;
+    std::optional<SurfaceWind> surface_wind;
+    double humidity_override = std::numeric_limits<double>::quiet_NaN();
+    double temperature_override = std::numeric_limits<double>::quiet_NaN();
+    double pressure_override = std::numeric_limits<double>::quiet_NaN();
+    double start_utc = std::numeric_limits<double>::quiet_NaN();
 };
 
 // What every trajectory of a run adds to, per observer: each day-evening-night
@@ -1076,11 +1085,19 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
 // trajectory itself for the single-path plotting block.  Anything that throws
 // in here condemns this trajectory alone; the caller catches and moves on.
 Trajectory process_trajectory(const Database& database, const PathJob& job,
-        const RunOptions& options, const std::vector<Vec3>& observers,
+        const RunOptions& run_options, const std::vector<Vec3>& observers,
         const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
         const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
         RunTotals& totals)
 {
+    // The run's options with this trajectory's own air.
+    RunOptions options = run_options;
+    options.atmosphere = job.atmosphere;
+    options.surface_wind = job.surface_wind;
+    options.humidity_override = job.humidity_override;
+    options.temperature_override = job.temperature_override;
+    options.pressure_override = job.pressure_override;
+    options.geodetic.start_utc = job.start_utc;
     auto& lamax = totals.lamax;
     auto& nax = totals.nax;
     auto& coverage = totals.coverage;
@@ -3696,13 +3713,14 @@ int run(int argc, char* argv[])
     bool observers_on_terrain = false;
     std::string plate_mic_azimuth = "outboard";
     bool exact_ground = false;
-    double humidity_override = std::numeric_limits<double>::quiet_NaN();
-    double temperature_override = std::numeric_limits<double>::quiet_NaN();
-    double pressure_override = std::numeric_limits<double>::quiet_NaN();
-    std::string atmosphere_file;
+    // The air: once for the run, or once per trajectory (empty: not given).
+    std::vector<double> humidity_overrides;
+    std::vector<double> temperature_overrides;
+    std::vector<double> pressure_overrides;
+    std::vector<std::string> atmosphere_files;
     // --wind and the options that shape the profile built from it.  The
     // lengths are meters until the --units seam, like every default.
-    std::string wind_text;
+    std::vector<std::string> wind_texts;
     double roughness_length = SurfaceWind().roughness_length;
     double surface_layer_depth = SurfaceWind().surface_layer_depth;
     std::string stability = "neutral";
@@ -3727,7 +3745,7 @@ int run(int argc, char* argv[])
     std::vector<double> origin;
     double frame_bearing = std::numeric_limits<double>::quiet_NaN();
     double ground_elevation = 0.0;
-    double start_utc = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> start_utcs;
     // Waypoints state intent, not a constraint to be met to the inch: forcing
     // a path exactly through them manufactures curvature, and the load factor
     // is that curvature, so it lands in CT and then in the levels.  Ten feet is
@@ -3948,21 +3966,24 @@ int run(int argc, char* argv[])
     app.add_flag("--accept_vehicle_mismatch", accept_vehicle_mismatch,
             "Warn, rather than refuse, a vehicle file that disagrees with the database by more "
             "than 2 percent.");
-    app.add_option("--humidity", humidity_override,
-            "Relative humidity in percent, overriding the vehicle file. Not with --atmosphere.");
-    app.add_option("--temperature", temperature_override,
-            "Temperature in K, overriding the vehicle file. Not with --atmosphere.");
-    app.add_option("--pressure", pressure_override,
+    app.add_option("--humidity", humidity_overrides,
+            "Relative humidity in percent, overriding the vehicle file. Not with --atmosphere. "
+            "Once, or once per trajectory.");
+    app.add_option("--temperature", temperature_overrides,
+            "Temperature in K, overriding the vehicle file. Not with --atmosphere. Once, or once "
+            "per trajectory.");
+    app.add_option("--pressure", pressure_overrides,
             "Ambient pressure in kPa, overriding the vehicle file. With --atmosphere, only when "
-            "the file has no pressure column; it is then the surface pressure.");
-    app.add_option("--atmosphere", atmosphere_file,
+            "the file has no pressure column; it is then the surface pressure. Once, or once per "
+            "trajectory.");
+    app.add_option("--atmosphere", atmosphere_files,
             "A stratified atmosphere: CSV of temperature, relative humidity and optionally "
             "pressure against height (see the manual's Stratified atmosphere), with optional wind "
             "columns (wind_speed_mps or wind_speed_kt with wind_direction, or u_mps and v_mps). "
             "Per-band absorption is integrated through "
             "it, and its ground level replaces the vehicle file's atmosphere. Spectral path "
-            "only.");
-    app.add_option("--wind", wind_text,
+            "only. Once, or once per trajectory.");
+    app.add_option("--wind", wind_texts,
             "Build the stratified atmosphere from one surface wind instead of an --atmosphere file: "
             "SPEED,DIRECTION[,HEIGHT]. SPEED names its unit (12kt, 6.2mps or 14mph); DIRECTION is "
             "the compass bearing, degrees, the wind blows FROM (as an --atmosphere file's "
@@ -4067,10 +4088,10 @@ int run(int argc, char* argv[])
             "from a geodetic track's altitude column to give height above the observers "
             "(default 0). With --terrain it places the local z = 0 against the terrain's heights; "
             "an AC track's own alt - z must match it.");
-    app.add_option("--start_utc", start_utc,
+    app.add_option("--start_utc", start_utcs,
             "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
             "periods. Required with -D, --lden_file, --cnel_file or a period level when the "
-            "track has no utcsec column; ignored when it has one.");
+            "track has no utcsec column; ignored when it has one. Once, or once per trajectory.");
     auto* path_smoothing_option = app.add_option("--path_smoothing", path_smoothing,
             "How far, RMS in --units, the path fitted through a geodetic track may sit from "
             "the given positions, per axis. Default 10 ft. Zero flies through them exactly, "
@@ -4182,7 +4203,8 @@ int run(int argc, char* argv[])
         for (const auto& f : vehicle_files)
             request.manifest.add_input("vehicle", f);
         request.manifest.add_input("observers", observer_file);
-        request.manifest.add_input("atmosphere", atmosphere_file);
+        for (const auto& f : atmosphere_files)
+            request.manifest.add_input("atmosphere", f);
         request.manifest.add_input("terrain", terrain_file);
         request.manifest.add_input("plate_table", plate_table);
         request.manifest.add_input("propagation_table", propagation_table);
@@ -4219,14 +4241,14 @@ int run(int argc, char* argv[])
     const std::size_t path_count = path_files.size();
     if (path_count == 0)
         input_error("No trajectory file given.");
-    auto expand_per_path = [path_count](std::vector<std::string>& list, const char* what) {
+    auto expand_per_path = [path_count](auto& list, const char* what) {
         if (list.size() == path_count)
             return;
         if (list.size() == 1)
         {
             // Copy first: assign() clears the vector before reading its
             // argument, and list.front() points into the vector.
-            const std::string shared = list.front();
+            const auto shared = list.front();
             list.assign(path_count, shared);
             return;
         }
@@ -4291,6 +4313,16 @@ int run(int argc, char* argv[])
     if (!band_frames_files.empty())
         expand_per_path(band_frames_files, "--band_frames names");
     expand_per_path(database_files, "database files");
+    // The air, when given: once for every trajectory, or once each.
+    for (auto* list : {&atmosphere_files, &wind_texts})
+        if (!list->empty())
+            expand_per_path(*list, list == &atmosphere_files ? "--atmosphere files" : "--wind values");
+    for (auto* list : {&humidity_overrides, &temperature_overrides, &pressure_overrides, &start_utcs})
+        if (!list->empty())
+            expand_per_path(*list, list == &humidity_overrides ? "--humidity values"
+                            : list == &temperature_overrides  ? "--temperature values"
+                            : list == &pressure_overrides     ? "--pressure values"
+                                                              : "--start_utc values");
     if (!provenance_file.empty() && !std::isnan(ambient_level))
         input_error("--provenance_file attributes the aircraft's energy to the states and spheres "
                 "it came from: it does not combine with -a, whose energy came from neither.");
@@ -4371,14 +4403,14 @@ int run(int argc, char* argv[])
     }
     // The atmosphere overrides are checked where they are read, before anything
     // loads: a bad one used to run the whole case and write a footprint.
-    if (!std::isnan(temperature_override))
-        if (const auto problem = temperature_problem(temperature_override); !problem.empty())
+    for (const double temperature : temperature_overrides)
+        if (const auto problem = temperature_problem(temperature); !problem.empty())
             input_error("--temperature: ", problem);
-    if (!std::isnan(pressure_override))
-        if (const auto problem = pressure_problem(pressure_override); !problem.empty())
+    for (const double pressure : pressure_overrides)
+        if (const auto problem = pressure_problem(pressure); !problem.empty())
             input_error("--pressure: ", problem);
-    if (!std::isnan(humidity_override))
-        if (const auto problem = humidity_problem(humidity_override); !problem.empty())
+    for (const double humidity : humidity_overrides)
+        if (const auto problem = humidity_problem(humidity); !problem.empty())
             input_error("--humidity: ", problem);
     if (grid_bounds[1] <= grid_bounds[0] || grid_bounds[3] <= grid_bounds[2])
     {
@@ -4711,24 +4743,24 @@ int run(int argc, char* argv[])
         input_error("--band_limits needs low < high, got ", band_limits[0], " and ",
                 band_limits[1], ".");
     }
-    if (!atmosphere_file.empty() && !spectral)
+    if (!atmosphere_files.empty() && !spectral)
     {
         input_error("--atmosphere needs the spectral path: layered absorption is per band, and "
                     "the broadband path (--no-spectral) carries one level attenuated by the "
                     "database's own EAA factor.");
     }
-    if (!wind_text.empty() && !atmosphere_file.empty())
+    if (!wind_texts.empty() && !atmosphere_files.empty())
     {
         input_error("--wind builds the atmosphere that --atmosphere would read; give one or the "
                     "other. (--write_atmosphere saves the built one in the file format.)");
     }
-    if (!wind_text.empty() && !spectral)
+    if (!wind_texts.empty() && !spectral)
     {
         input_error("--wind needs the spectral path: the profile it builds is integrated per band, "
                     "and the broadband path (--no-spectral) carries one level attenuated by the "
                     "database's own EAA factor.");
     }
-    if (wind_text.empty())
+    if (wind_texts.empty())
     {
         for (const auto& [option, name] : {std::pair {roughness_length_option, "--roughness_length"},
                      std::pair {surface_layer_option, "--surface_layer_depth"},
@@ -4741,7 +4773,7 @@ int run(int argc, char* argv[])
         if (!write_atmosphere.empty())
             input_error("--write_atmosphere writes the profile --wind builds, and there is no --wind.");
     }
-    if (refraction != "none" && atmosphere_file.empty() && wind_text.empty())
+    if (refraction != "none" && atmosphere_files.empty() && wind_texts.empty())
     {
         input_error("--refraction ", refraction, " needs --atmosphere or --wind: it refracts "
                     "through the profile's temperature and wind.");
@@ -4762,8 +4794,7 @@ int run(int argc, char* argv[])
         input_error("--scattering fills the shadows --refraction casts, through the shadow-boundary "
                     "field that --ground_effect's ground model sets up; give both.");
     }
-    if (!atmosphere_file.empty()
-            && (!std::isnan(temperature_override) || !std::isnan(humidity_override)))
+    if (!atmosphere_files.empty() && (!temperature_overrides.empty() || !humidity_overrides.empty()))
     {
         input_error("--atmosphere gives temperature and humidity at every height; --temperature "
                     "and --humidity would contradict it.");
@@ -4951,9 +4982,15 @@ int run(int argc, char* argv[])
             }
         }
     }
-    options.humidity_override = humidity_override;
-    options.temperature_override = temperature_override;
-    options.pressure_override = pressure_override;
+    // Each trajectory's air goes with its job (PathJob); the run's options
+    // hold the first trajectory's, which is every trajectory's when each was
+    // given once.
+    const auto value_for = [](const std::vector<double>& list, std::size_t path) {
+        return list.empty() ? std::numeric_limits<double>::quiet_NaN() : list[path];
+    };
+    options.humidity_override = value_for(humidity_overrides, 0);
+    options.temperature_override = value_for(temperature_overrides, 0);
+    options.pressure_override = value_for(pressure_overrides, 0);
     options.refraction = refraction != "none";
     options.stratified = refraction == "stratified";
     if ((tunneling || skip_fill) && !options.stratified)
@@ -4972,46 +5009,71 @@ int run(int argc, char* argv[])
         options.speed_reference = parse_speed_reference(speed_reference);
     if (!nose.empty())
         options.nose = parse_nose_source(nose);
-    if (!wind_text.empty())
+    // Each distinct --wind and --atmosphere is parsed once, and its warnings
+    // given once.
+    std::vector<std::optional<SurfaceWind>> winds(path_count);
+    std::vector<std::optional<AtmosphereProfile>> profiles(path_count);
     {
-        SurfaceWind wind = parse_surface_wind(wind_text, unit);
-        wind.roughness_length = roughness_length;
-        wind.surface_layer_depth = surface_layer_depth;
-        wind.stability = parse_stability(stability);
-        wind.levels_per_decade = profile_levels;
-        if (const auto problem = surface_wind_problem(wind, unit); !problem.empty())
-            input_error("--wind: ", problem);
-        if (wind.stability != Stability::neutral)
+        std::map<std::string, SurfaceWind> parsed_winds;
+        std::map<std::string, AtmosphereProfile> read_profiles;
+        for (std::size_t path = 0; path < path_count; path++)
         {
-            warn("--stability ", stability, ": ", describe(wind.stability), ". The stability classes "
-                    "are unvalidated: on the 2017 windy day an assumed stable class was 0.3 dB rms "
-                    "worse than the neutral log law. Prefer neutral unless the class is known.");
+            if (!wind_texts.empty())
+            {
+                const std::string& wind_text = wind_texts[path];
+                auto found = parsed_winds.find(wind_text);
+                if (found == parsed_winds.end())
+                {
+                    SurfaceWind wind = parse_surface_wind(wind_text, unit);
+                    wind.roughness_length = roughness_length;
+                    wind.surface_layer_depth = surface_layer_depth;
+                    wind.stability = parse_stability(stability);
+                    wind.levels_per_decade = profile_levels;
+                    if (const auto problem = surface_wind_problem(wind, unit); !problem.empty())
+                        input_error("--wind: ", problem);
+                    if (wind.stability != Stability::neutral && parsed_winds.empty())
+                    {
+                        warn("--stability ", stability, ": ", describe(wind.stability), ". The stability classes "
+                                "are unvalidated: on the 2017 windy day an assumed stable class was 0.3 dB rms "
+                                "worse than the neutral log law. Prefer neutral unless the class is known.");
+                    }
+                    if (wind.height < 10.0 * wind.roughness_length)
+                    {
+                        warn("--wind: the anemometer at ", wind.height / unit.to_meters, " ", unit.name,
+                                " stands within ten roughness lengths of the ground (z0 ",
+                                wind.roughness_length / unit.to_meters, " ", unit.name, "), where the surface "
+                                "layer's law does not yet hold; the profile carried up from it is uncertain.");
+                    }
+                    if (wind.speed > 0.0 && refraction != "none" && std::isnan(frame_bearing) && !frame
+                            && parsed_winds.empty())
+                    {
+                        warn("--wind: the direction is a compass bearing, turned into the local frame taking "
+                             "+x as east. If this run's x/y are rotated -- the shipped AC tracks run +x along "
+                             "210 degrees -- give --frame_bearing.");
+                    }
+                    found = parsed_winds.emplace(wind_text, wind).first;
+                }
+                winds[path] = found->second;
+            }
+            if (!atmosphere_files.empty())
+            {
+                const std::string& atmosphere_file = atmosphere_files[path];
+                auto found = read_profiles.find(atmosphere_file);
+                if (found == read_profiles.end())
+                    found = read_profiles.emplace(atmosphere_file,
+                            read_atmosphere_profile(atmosphere_file, unit, ground_elevation)).first;
+                if (found->second.has_pressure() && !std::isnan(value_for(pressure_overrides, path)))
+                {
+                    input_error("--atmosphere ", atmosphere_file, " gives pressure at every height; "
+                            "--pressure would contradict it. (Without a pressure column, --pressure "
+                            "sets the surface pressure the profile is integrated from.)");
+                }
+                profiles[path] = found->second;
+            }
         }
-        if (wind.height < 10.0 * wind.roughness_length)
-        {
-            warn("--wind: the anemometer at ", wind.height / unit.to_meters, " ", unit.name,
-                    " stands within ten roughness lengths of the ground (z0 ",
-                    wind.roughness_length / unit.to_meters, " ", unit.name, "), where the surface "
-                    "layer's law does not yet hold; the profile carried up from it is uncertain.");
-        }
-        if (wind.speed > 0.0 && refraction != "none" && std::isnan(frame_bearing) && !frame)
-        {
-            warn("--wind: the direction is a compass bearing, turned into the local frame taking "
-                 "+x as east. If this run's x/y are rotated -- the shipped AC tracks run +x along "
-                 "210 degrees -- give --frame_bearing.");
-        }
-        options.surface_wind = wind;
     }
-    if (!atmosphere_file.empty())
-    {
-        options.atmosphere = read_atmosphere_profile(atmosphere_file, unit, ground_elevation);
-        if (options.atmosphere->has_pressure() && !std::isnan(pressure_override))
-        {
-            input_error("--atmosphere ", atmosphere_file, " gives pressure at every height; "
-                    "--pressure would contradict it. (Without a pressure column, --pressure "
-                    "sets the surface pressure the profile is integrated from.)");
-        }
-    }
+    options.surface_wind = winds.front();
+    options.atmosphere = profiles.front();
     options.trim_start = trim_start;
     options.utc_offset = utc_offset;
     if (!laeq_window_hours.empty())
@@ -5039,7 +5101,7 @@ int run(int argc, char* argv[])
     options.unit = unit;
     options.geodetic.frame = frame;
     options.geodetic.ground_elevation = ground_elevation;
-    options.geodetic.start_utc = start_utc;
+    options.geodetic.start_utc = value_for(start_utcs, 0);
     // -s is the resampling step for both adapt() and a geodetic track that
     // needs resampling; neither ever coarsens a track that is already finer.
     options.geodetic.resample_dt = dt;
@@ -5073,6 +5135,12 @@ int run(int argc, char* argv[])
                                                               : atmosphere_out_files[path_index];
             job.csel_output = csel_files.empty() ? std::string() : csel_files[path_index];
             job.count = path_count;
+            job.atmosphere = profiles[path_index];
+            job.surface_wind = winds[path_index];
+            job.humidity_override = value_for(humidity_overrides, path_index);
+            job.temperature_override = value_for(temperature_overrides, path_index);
+            job.pressure_override = value_for(pressure_overrides, path_index);
+            job.start_utc = value_for(start_utcs, path_index);
             trajectory_holder = process_trajectory(database, job, options, observers,
                     observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
         }

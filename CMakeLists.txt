@@ -514,6 +514,25 @@ add_test(NAME contour_needs_the_grid COMMAND niceops ${PERIOD_RUN} -b tests/data
 set_tests_properties(contour_needs_the_grid PROPERTIES PASS_REGULAR_EXPRESSION "scattered observers \\(-b\\) have none")
 add_test(NAME contour_metric_needs_its_output COMMAND niceops ${PERIOD_RUN} --contour_metric lamax -o integrated/contour_nolamax.csv --contour_file integrated/contours_nolamax.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(contour_metric_needs_its_output PROPERTIES PASS_REGULAR_EXPRESSION "--contour_metric lamax contours that metric's output: ask for it too")
+# The air per trajectory: two copies of the demo track, each with its own humidity (and its own
+# --atmosphere), must each be the run of that track alone with that air; and the two differ.
+set(AIR_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json --gridstep 1640 -L warn)
+add_test(NAME air_per_track COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv --humidity 20 --humidity 60 -o integrated/air_track_a.csv -o integrated/air_track_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_alone_20 COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv --humidity 20 -o integrated/air_alone_20.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_alone_60 COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv --humidity 60 -o integrated/air_alone_60.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_profile_per_track COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/isa.csv --atmosphere atmospheres/B407_uniform.csv -o integrated/air_profile_a.csv -o integrated/air_profile_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_profile_alone_isa COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/isa.csv -o integrated/air_profile_alone_isa.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_profile_alone_uniform COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/B407_uniform.csv -o integrated/air_profile_alone_uniform.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(air_per_track air_alone_20 air_alone_60 air_profile_per_track air_profile_alone_isa air_profile_alone_uniform PROPERTIES FIXTURES_SETUP air_runs)
+add_test(NAME air_first_track_is_its_own COMMAND golden_compare integrated/air_track_a.csv integrated/air_alone_20.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_second_track_is_its_own COMMAND golden_compare integrated/air_track_b.csv integrated/air_alone_60.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_tracks_differ COMMAND golden_compare integrated/air_track_a.csv integrated/air_track_b.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_first_profile_is_its_own COMMAND golden_compare integrated/air_profile_a.csv integrated/air_profile_alone_isa.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_second_profile_is_its_own COMMAND golden_compare integrated/air_profile_b.csv integrated/air_profile_alone_uniform.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(air_first_track_is_its_own air_second_track_is_its_own air_tracks_differ air_first_profile_is_its_own air_second_profile_is_its_own PROPERTIES FIXTURES_REQUIRED air_runs)
+set_tests_properties(air_tracks_differ PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+add_test(NAME air_count_must_match COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv --humidity 20 --humidity 40 --humidity 60 -o integrated/air_count_a.csv -o integrated/air_count_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(air_count_must_match PROPERTIES PASS_REGULAR_EXPRESSION "Got 3 --humidity values for 2 trajectories")
 # An observer exactly at a source position: spherical spreading diverges at r = 0.
 # The level was +inf in the CSV, and with the asserts live the run aborted.  The
 # case passes only if the run finishes.

@@ -138,9 +138,9 @@ is a physical quantity, given here in meters with its value in feet.
 | --- | --- |
 | `--spectral` / `--no-spectral` | On by default when the database carries spectra: propagate each band with ISO 9613-1 absorption. `--no-spectral` takes one broadband level with the database's EAA factor; a database without spectra always does. Asking for `--spectral`, or for any option that needs bands (`--ground_effect`, `--atmosphere`, `--wind`, `--propagation_table`, `--band_history`, `--csel_file`, `--epnl_file`, `--band_frames`), with a database that has no spectra is an error. |
 | `--band_limits` | Frequency range summed into the metric, Hz: `low high`. Default `20 20000`. |
-| `--humidity`, `--temperature`, `--pressure` | Relative humidity (percent), temperature (K) and pressure (kPa) for the spectral path, overriding the vehicle file. Not `--temperature` or `--humidity` with `--atmosphere`. `--pressure` only when the file has no pressure column; it is then the surface pressure. |
-| `--atmosphere` | A stratified atmosphere: CSV of temperature, humidity, and optionally pressure and wind, against height ([Stratified atmosphere](#stratified-atmosphere)). Spectral path only. |
-| `--wind` | Build the profile from one surface wind instead: `SPEED,DIRECTION[,HEIGHT]` ([A profile from the surface wind](#a-profile-from-the-surface-wind)). Not with `--atmosphere`. Spectral path only. The four rows below and `--write_atmosphere` are refused without it. |
+| `--humidity`, `--temperature`, `--pressure` | Relative humidity (percent), temperature (K) and pressure (kPa) for the spectral path, overriding the vehicle file. Not `--temperature` or `--humidity` with `--atmosphere`. `--pressure` only when the file has no pressure column; it is then the surface pressure.  Once, or once per trajectory. |
+| `--atmosphere` | A stratified atmosphere: CSV of temperature, humidity, and optionally pressure and wind, against height ([Stratified atmosphere](#stratified-atmosphere)). Spectral path only.  Once, or once per trajectory. |
+| `--wind` | Build the profile from one surface wind instead: `SPEED,DIRECTION[,HEIGHT]` ([A profile from the surface wind](#a-profile-from-the-surface-wind)). Not with `--atmosphere`. Spectral path only. The four rows below and `--write_atmosphere` are refused without it.  Once, or once per trajectory. |
 | `--roughness_length` | `--wind`: aerodynamic roughness length z₀. Default 0.03 m (0.0984 ft), open flat terrain. Not `--roughness`. |
 | `--surface_layer_depth` | `--wind`: height to which the wind follows its law; held above. Default 200 m (656.2 ft). |
 | `--stability` | `--wind`: `neutral` (default), or a TA Luft class `I`, `II`, `III/1`, `III/2`, `IV`, `V` (Pasquill `F` to `A`). The classes are unvalidated, and a run that takes one warns. |
@@ -995,7 +995,10 @@ the window is found.
 ### Several trajectories, and the day-night level
 
 `-t` may be repeated. `-d`, `-v`, `-o`, `-S`, `--csel_file`, `--epnl_file` and `--band_frames`
-then take one value shared by every trajectory, or one per trajectory. One output name for
+then take one value shared by every trajectory, or one per trajectory, and so does each
+trajectory's air: `--atmosphere`, `--wind`, `--humidity`, `--temperature`, `--pressure` and
+`--start_utc`, so a day's operations can each fly in their own weather and at their own time.
+The profile's shape (`--roughness_length`, `--stability`, `--surface_layer_depth`) is the run's. One output name for
 several tracks becomes one per track (`<track>_state.csv`, `<track>_LCE.csv`, `<track>_EPNL.csv`,
 `<track>_band_frames.nc`, `<track>_atmosphere.csv`), and `-i` and `--band_history` files are
 named for their track. Plotting is skipped.
