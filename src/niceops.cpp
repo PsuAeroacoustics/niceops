@@ -22,6 +22,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -42,6 +43,7 @@
 #include "stratified.hpp"
 #include "ground_effect.hpp"
 #include "manifest.hpp"
+#include "operations.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
 #include "raster.hpp"
@@ -792,6 +794,8 @@ struct PathJob
     // How many operations this trajectory stands for: what its contribution
     // to the run totals is multiplied by, after its own SEL is formed.
     double weight = 1.0;
+    // Whether it came from an operations file (for the messages).
+    bool operations = false;
     // Day, evening and night counts, in place of the track's clock: each day
     // metric then weights the plain SEL by period_count_weight (util/sel.hpp).
     std::optional<std::array<double, 3>> period_counts;
@@ -1282,8 +1286,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // defaulted to zero, as UTC midnight, i.e. night: +10 dB on the
                 // whole footprint, silently.  Either way the answer was made up.
                 input_error(day_metric_option(metric), " needs the time of day, and ", job.trajectory,
-                        " does not carry one (a geodetic track without a utcsec column, or a static hold). "
-                        "Give --start_utc <seconds since UTC midnight at t = 0>.");
+                        " does not carry one (a geodetic track without a utcsec column, or a static hold). ",
+                        job.operations ? "Give --start_utc, or local_time in the operations file."
+                                       : "Give --start_utc <seconds since UTC midnight at t = 0>.");
             }
             day_penalty[m][it] = schedule_penalty(trajectory.states[it].utcsec, options.utc_offset, metric,
                     options.laeq_window);
@@ -3648,6 +3653,177 @@ void draw_figures(const Trajectory& trajectory, const std::vector<double>& integ
     plt::clear();
 }
 
+// What an operations file adds to a run beyond the per-trajectory lists it
+// fills: each row's name, how its failures are reported, its weight, its
+// period counts, whether its clock replaces the track's, and its lateral
+// offset (in --units; converted at the seam).
+struct OperationRun
+{
+    OperationsFile file;
+    std::vector<std::string> names;
+    std::vector<std::string> labels;
+    std::vector<double> weights;
+    std::vector<std::optional<std::array<double, 3>>> periods;
+    std::vector<char> clock_replaces_track;
+    std::vector<double> offsets;
+};
+
+// The per-trajectory lists -t and its companions fill on the command line.
+struct PerPathLists
+{
+    std::vector<std::string>& path_files;
+    std::vector<std::string>& database_files;
+    std::vector<std::string>& vehicle_files;
+    std::vector<std::string>& out_files;
+    std::vector<std::string>& atmosphere_files;
+    std::vector<std::string>& wind_texts;
+    std::vector<double>& humidity_overrides;
+    std::vector<double>& temperature_overrides;
+    std::vector<double>& pressure_overrides;
+    std::vector<double>& start_utcs;
+    std::vector<std::string>& state_files;
+    std::vector<std::string>& csel_files;
+    std::vector<std::string>& epnl_files;
+    std::vector<std::string>& band_frames_files;
+};
+
+// Reads --operations and fills the per-trajectory lists from it, one entry per
+// row, so everything after (the naming, the distinctness checks, the manifest,
+// the list-level air checks, the job loop) runs as it does for several -t.
+// A per-trajectory option given once fills the rows' empty cells; given more
+// than once it is refused, since the file is where per-operation values go.
+OperationRun expand_operations(const std::string& operations_file, PerPathLists lists, bool trajectories_given,
+        bool database_given, bool vehicle_given, bool output_given, double utc_offset_hours)
+{
+    if (trajectories_given)
+        input_error("--operations names the trajectories; give them in its track column, not with -t.");
+    OperationRun run;
+    run.file = read_operations(operations_file);
+    const auto& rows = run.file.rows;
+    const auto where = [&](const Operation& row) {
+        return "operation " + row.name + " (" + operations_file + " line " + std::to_string(row.line) + ")";
+    };
+    const auto at_most_one = [](std::size_t given, const char* option, const char* column) {
+        if (given > 1)
+            input_error("With --operations, give per-operation ", option, " in the file's ", column, " column.");
+    };
+    for (const auto& [list, option] : {std::pair{&lists.state_files, "-S"}, {&lists.csel_files, "--csel_file"},
+                 {&lists.epnl_files, "--epnl_file"}, {&lists.band_frames_files, "--band_frames"}})
+        if (list->size() > 1)
+            input_error("With --operations, give ", option, " once: each operation's file is named after its row.");
+    if (output_given)
+        at_most_one(lists.out_files.size(), "-o", "output");
+    if (database_given)
+        at_most_one(lists.database_files.size(), "-d", "database");
+    if (vehicle_given)
+        at_most_one(lists.vehicle_files.size(), "-v", "vehicle");
+
+    // The files each row names, or the one -d/-v for the rows that name none.
+    // The demo's S-76D defaults never fill an operations file: a row without a
+    // database would otherwise run the demo aircraft without a word.
+    const auto file_for = [&](const Operation& row, const std::string& cell, bool given,
+                                  const std::vector<std::string>& list, const char* column, const char* option) {
+        if (!cell.empty())
+            return cell;
+        if (!given)
+            input_error(where(row), " names no ", column, ": fill the file's ", column, " column, or give ", option,
+                    " once for the rows that leave it empty.");
+        return list.front();
+    };
+    std::vector<std::string> databases, vehicles, outputs;
+    const auto output_folder = std::filesystem::path(lists.out_files.front()).parent_path();
+    for (const auto& row : rows)
+    {
+        databases.push_back(file_for(row, row.database, database_given, lists.database_files, "database", "-d"));
+        vehicles.push_back(file_for(row, row.vehicle, vehicle_given, lists.vehicle_files, "vehicle", "-v"));
+        // A row's output cell beats -o; one row keeps -o as given, and
+        // several are named after their rows, beside it.
+        if (!row.output.empty())
+            outputs.push_back(row.output);
+        else if (rows.size() == 1 && output_given)
+            outputs.push_back(lists.out_files.front());
+        else
+            outputs.push_back((output_folder / (row.name + "_LAE.csv")).string());
+    }
+
+    // The air: a column present must be filled in every row, unless its option
+    // was given once, which then fills the empty cells.  The list-level checks
+    // (wind with --atmosphere, --atmosphere with --humidity, ...) then see the
+    // filled lists, as they would see the command line's.
+    const auto fill = [&](auto& list, const char* option, const char* column, bool has_column, auto value_of) {
+        at_most_one(list.size(), option, column);
+        if (!has_column)
+            return;
+        std::remove_reference_t<decltype(list)> filled;
+        for (const auto& row : rows)
+        {
+            if (const auto value = value_of(row))
+                filled.push_back(*value);
+            else if (list.size() == 1)
+                filled.push_back(list.front());
+            else
+                input_error(where(row), ": the ", column, " column is empty. Fill it in every row, or give ", option,
+                        " once for the empty cells.");
+        }
+        list = std::move(filled);
+    };
+    const auto text = [](const std::string& value) {
+        return value.empty() ? std::optional<std::string>() : std::optional<std::string>(value);
+    };
+    fill(lists.atmosphere_files, "--atmosphere", "atmosphere", run.file.has("atmosphere"),
+            [&](const Operation& row) { return text(row.atmosphere); });
+    fill(lists.wind_texts, "--wind", "wind_speed and wind_direction", run.file.has("windspeed"),
+            [&](const Operation& row) { return text(row.wind_text); });
+    fill(lists.humidity_overrides, "--humidity", "humidity", run.file.has("humidity"),
+            [](const Operation& row) { return row.humidity; });
+    fill(lists.temperature_overrides, "--temperature", "temperature", run.file.has("temperature"),
+            [](const Operation& row) { return row.temperature; });
+    fill(lists.pressure_overrides, "--pressure", "pressure", run.file.has("pressure"),
+            [](const Operation& row) { return row.pressure; });
+
+    // The clock: a row's local_time replaces whatever clock its track carries,
+    // dating t = 0; a row without one keeps the track's own clock, or the one
+    // --start_utc.
+    at_most_one(lists.start_utcs.size(), "--start_utc", "local_time");
+    std::vector<double> start_utcs;
+    for (const auto& row : rows)
+    {
+        run.clock_replaces_track.push_back(row.local_time.has_value());
+        if (row.local_time)
+        {
+            double utc = std::fmod(*row.local_time - utc_offset_hours * 3600.0, 86400.0);
+            if (utc < 0.0)
+                utc += 86400.0;
+            start_utcs.push_back(utc);
+        }
+        else
+            start_utcs.push_back(lists.start_utcs.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                                          : lists.start_utcs.front());
+    }
+    if (run.file.has("localtime") || !lists.start_utcs.empty())
+        lists.start_utcs = std::move(start_utcs);
+
+    lists.path_files.clear();
+    for (const auto& row : rows)
+    {
+        lists.path_files.push_back(row.track);
+        run.names.push_back(row.name);
+        run.labels.push_back(where(row));
+        run.weights.push_back(operation_count(row));
+        run.periods.push_back(row.periods);
+        run.offsets.push_back(row.offset.value_or(0.0));
+    }
+    lists.database_files = std::move(databases);
+    lists.vehicle_files = std::move(vehicles);
+    lists.out_files = std::move(outputs);
+    // The SEL files are single events whatever a row's count: the count
+    // weights only the run totals.
+    if (rows.size() == 1 && run.weights.front() != 1.0)
+        info("The SEL file ", lists.out_files.front(), " is one operation's; its count of ", run.weights.front(),
+                " weights only the run totals.");
+    return run;
+}
+
 } // namespace
 
 // Everything after the command line is parsed.  Wrapped by main below, which
@@ -3797,16 +3973,20 @@ int run(int argc, char* argv[])
     bool latlon = false;
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
-    app.add_option("-d,--database", database_files,
+    auto* database_option = app.add_option("-d,--database", database_files,
             "netCDF noise database file. Once, or once per trajectory.");
     app.add_option("-l,--logfile", log_file, "Output log file.");
     app.add_option("-L,--loglevel", log_level, "Log verbosity: trace, info, warn, error, fatal.")
             ->check(CLI::IsMember({"trace", "info", "warn", "error", "fatal"}));
-    app.add_option("-t,--trajectoryfile", path_files,
+    auto* trajectory_option = app.add_option("-t,--trajectoryfile", path_files,
             "CSV trajectory input file. Repeat for several flight paths.");
-    app.add_option("-v,--vehicle", vehicle_files,
+    std::string operations_file;
+    app.add_option("--operations", operations_file,
+            "CSV of operations: per row a track, its count, and optionally its database, vehicle, clock, "
+            "lateral offset and air. Replaces -t.");
+    auto* vehicle_option = app.add_option("-v,--vehicle", vehicle_files,
             "JSON vehicle definition file. Once, or once per trajectory.");
-    app.add_option("-o,--output", out_files,
+    auto* output_option = app.add_option("-o,--output", out_files,
             "Output file name, once per trajectory. Default integrated/197421_LAE.csv; with several "
             "trajectories and one name (or the default), each is named after its track.");
     app.add_flag("-p,--plotting", plotting, "Enable plotting.");
@@ -4235,6 +4415,27 @@ int run(int argc, char* argv[])
         return app.exit(e);
     }
 
+    // --operations fills the per-trajectory lists, one entry per row, before
+    // anything reads them.
+    std::optional<OperationRun> operations;
+    if (!operations_file.empty())
+    {
+        operations = expand_operations(operations_file,
+                PerPathLists {path_files, database_files, vehicle_files, out_files, atmosphere_files, wind_texts,
+                        humidity_overrides, temperature_overrides, pressure_overrides, start_utcs, state_files,
+                        csel_files, epnl_files, band_frames_files},
+                trajectory_option->count() > 0, database_option->count() > 0, vehicle_option->count() > 0,
+                output_option->count() > 0, utc_offset);
+        // Read, but not run yet: the day, evening and night counts and the
+        // lateral offsets are refused here, and only here.
+        if (operations->file.has("day") || operations->file.has("evening") || operations->file.has("night"))
+            input_error(operations_file, ": day, evening and night counts are not supported yet. Give count, "
+                    "with local_time for each operation's clock.");
+        for (std::size_t i = 0; i < operations->offsets.size(); i++)
+            if (operations->offsets[i] != 0.0)
+                input_error(operations->labels[i], ": lateral offsets are not supported yet.");
+    }
+
     if (!manifest_file.empty())
     {
         // Handed to main() only once it passes its checks: a refused one
@@ -4248,6 +4449,7 @@ int run(int argc, char* argv[])
             input_error("--manifest would overwrite the log file ", log_file, ". Give another file name.");
         if (config_option->count() > 0)
             request.manifest.add_input("config", config_option->as<std::string>());
+        request.manifest.add_input("operations", operations_file);
         for (const auto& f : path_files)
             request.manifest.add_input("trajectory", f);
         for (const auto& f : database_files)
@@ -4302,10 +4504,13 @@ int run(int argc, char* argv[])
                 " trajectories; give one, or one per trajectory.");
     };
     // Each trajectory's name in the run, which its per-track files are named
-    // after: the track's stem.
+    // after: the track's stem, or an operations file's row name.
     std::vector<std::string> run_names;
-    for (const auto& path : path_files)
-        run_names.push_back(std::filesystem::path(path).stem().string());
+    if (operations)
+        run_names = operations->names;
+    else
+        for (const auto& path : path_files)
+            run_names.push_back(std::filesystem::path(path).stem().string());
     if (out_files.size() == 1 && path_count > 1)
     {
         // A single output name cannot serve several tracks, so name each after
@@ -4494,6 +4699,21 @@ int run(int argc, char* argv[])
     // a metric track headed alt_m looked unpositioned, the frame was never
     // settled, and --frame_bearing was silently dropped.
     const LengthUnit unit = unit_name == "m" ? meters : feet;
+    // An operations file's lengths (offset, wind_height) are in --units, as the
+    // command line's are.  A header naming another unit means a file in it,
+    // which nothing converts.
+    if (operations)
+    {
+        const std::set<std::string> spellings = unit.to_meters == 1.0
+                ? std::set<std::string> {"m", "meter", "meters", "metre", "metres"}
+                : std::set<std::string> {"ft", "feet", "foot"};
+        for (const auto& [token, column] : {std::pair {operations->file.offset_unit, "offset"},
+                     std::pair {operations->file.wind_height_unit, "wind_height"}})
+            if (!token.empty() && spellings.count(token) == 0)
+                input_error(operations_file, ": the ", column, " column declares ", token, ", and this run reads "
+                        "lengths in ", unit.name, " (--units). Nothing is converted: give the column in ", unit.name,
+                        ", or change --units.");
+    }
     std::optional<LocalFrame> frame;
     std::optional<Geodetic> reference;
     if (!origin.empty())
@@ -5211,6 +5431,15 @@ int run(int argc, char* argv[])
             path_options.temperature_override = value_for(temperature_overrides, path_index);
             path_options.pressure_override = value_for(pressure_overrides, path_index);
             path_options.geodetic.start_utc = value_for(start_utcs, path_index);
+            if (operations)
+            {
+                job.weight = operations->weights[path_index];
+                job.operations = true;
+                path_options.geodetic.clock_replaces_track = operations->clock_replaces_track[path_index] != 0;
+                if (path_options.geodetic.clock_replaces_track)
+                    info("local_time dates ", job.name, " at ", path_options.geodetic.start_utc,
+                            " s UTC, in place of any clock its track carries.");
+            }
             trajectory_holder = process_trajectory(cached->second, job, path_options, observers,
                     observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
             operations_run += job.weight;
@@ -5218,7 +5447,8 @@ int run(int argc, char* argv[])
         catch (const std::exception& problem)
         {
             failed_paths++;
-            report_again(problem, "Skipping " + path_files[path_index] + ": ");
+            report_again(problem, "Skipping " + (operations ? operations->labels[path_index]
+                                                            : path_files[path_index]) + ": ");
         }
         // Done with it once no later trajectory names it; the front one stays.
         const std::string& key = database_keys[path_index];

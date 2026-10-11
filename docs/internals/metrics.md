@@ -240,6 +240,14 @@ everywhere is the SEL itself, bit for bit (x + 0 = x), and −∞ everywhere is 
   0 + x + x + x gives; for everything but provenance a count equals repeated runs bit for bit.
   Every weight is 1.0 unless an operations file gives one, and x · 1.0 = x, so the goldens do
   not move.
+- **An operations file's count is that weight, and its `local_time` is a clock, not a
+  weight.** The count enters only through `PathJob::weight`; the clock replaces the track's
+  (`GeodeticInput::clock_replaces_track`), so `schedule_penalty` and the day passes run as for
+  any dated track and are exact for every metric, a flight across a period's edge included.
+  `operations_count_three_equals_repeated_t` holds a count of 3 to three `-t` byte for byte on
+  every total but the provenance (held at 1e-9, though it is bitwise today), and is what fails if
+  the weight is folded into the exponent: a count of 1 adds lg 1 = 0 and cannot see it, and a
+  count of 10 agrees with +10 dB at 1e-9 either way.
 - **Day, evening and night counts (`PathJob::period_counts`) take the clock's place.** Each
   metric's weight is then `period_count_weight` (`util/sel.hpp`): each period's count times
   10^(penalty/10), or 1 and 0 for a period level, applied to the plain SEL (`DayPass::the_sel`,

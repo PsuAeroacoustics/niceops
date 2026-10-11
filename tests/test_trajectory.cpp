@@ -1099,6 +1099,34 @@ TEST_CASE("A geodetic track with no clock has no time of day", "[trajectory][geo
     REQUIRE(noon.states.back().utcsec == Catch::Approx(43200.0 + noon.states.back().t));
 }
 
+TEST_CASE("an operations file's local_time replaces the clock a track carries", "[trajectory][geodetic]")
+{
+    // A geodetic track's utcsec column, and an AC file's first column, date
+    // the flight unless clock_replaces_track says start_utc dates it instead,
+    // as start_utc + (t - t0).
+    const TempCsv track(demo_track_as_geodetic("utcsec,lat,lon,alt", 50));
+    const Trajectory own(track.path, "databases/S-76D.json", demo_frame(0.02));
+    GeodeticInput replaced = demo_frame(0.02);
+    replaced.start_utc = 43200.0;
+    replaced.clock_replaces_track = true;
+    const Trajectory noon(track.path, "databases/S-76D.json", replaced);
+    REQUIRE(own.states.front().utcsec != Catch::Approx(43200.0));
+    REQUIRE(noon.states.front().utcsec == Catch::Approx(43200.0));
+    REQUIRE(noon.states.back().utcsec - noon.states.front().utcsec
+            == Catch::Approx(own.states.back().utcsec - own.states.front().utcsec));
+
+    GeodeticInput ac_input;
+    ac_input.start_utc = 43200.0;
+    ac_input.clock_replaces_track = true;
+    const Trajectory ac("tracks/S-76D/197421AC.csv", "databases/S-76D.json", ac_input);
+    const Trajectory ac_own("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+    REQUIRE(ac.states.size() == ac_own.states.size());
+    REQUIRE(ac_own.states.front().utcsec != 43200.0);
+    REQUIRE(ac.states.front().utcsec == 43200.0);
+    REQUIRE(ac.states.back().utcsec == 43200.0 + (ac.states.back().t - ac.states.front().t));
+    REQUIRE(ac.states.back().x == ac_own.states.back().x);
+}
+
 TEST_CASE("watts_trim refuses a start past the end of the crop", "[trajectory][validation]")
 {
     // The crop ends at the lowest or slowest point.  A start beyond it built a

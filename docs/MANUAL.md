@@ -30,7 +30,8 @@ the code, start with the [README](../README.md); developers start at
   zones](#micro-shadows-and-skip-zones) · [Propagation loss tables](#propagation-loss-tables)
 - [Metrics and output files](#metrics-and-output-files): [Output files](#output-files) · [Run records and option files](#run-records-and-option-files) · [Exposure
   (SEL) and the 10 dB-down window](#exposure-sel-and-the-10-db-down-window) · [Several trajectories,
-  and the day-night level](#several-trajectories-and-the-day-night-level) · [Maximum level, time
+  and the day-night level](#several-trajectories-and-the-day-night-level) · [An operations
+  file](#an-operations-file) · [Maximum level, time
   above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel) · [EPNL and reception-time
   frames](#epnl-and-reception-time-frames)
 - [Companion tools](#companion-tools): [`niceops_procedure`](#niceops_procedure) · [`niceops_propagation_table`](#niceops_propagation_table) ·
@@ -91,6 +92,7 @@ is a physical quantity, given here in meters with its value in feet.
 | Option | Meaning |
 | --- | --- |
 | `-t`, `--trajectoryfile` | Trajectory CSV ([Trajectories](#trajectories)). Repeat for several flight paths. Default the demo track. |
+| `--operations` | A CSV of operations, one row per track flown, with its count and optionally its database, vehicle, clock and air ([An operations file](#an-operations-file)). Replaces `-t`. |
 | `-d`, `--database` | netCDF noise database. Once, or once per trajectory. Default `databases/S-76D_M3.nod`. |
 | `-v`, `--vehicle` | JSON vehicle file ([Vehicle file](#vehicle-file)). Once, or once per trajectory. Default `databases/S-76D.json`. |
 | `-o`, `--output` | SEL output file, once per trajectory. Default `integrated/197421_LAE.csv`. With several tracks and one name (or none), each is named after its track. |
@@ -197,8 +199,8 @@ is a physical quantity, given here in meters with its value in feet.
 | `--utc_offset` | Hours from UTC to local time, for the day-night periods. Default 0. |
 | `--lamax_file` | Write each observer's LAmax over every operation, time-weighted per `--lamax_weighting`. |
 | `--lamax_weighting` | `fast` (default), `slow`, `leq0.5` or `instantaneous` ([Maximum level](#maximum-level-time-above-and-c-weighted-sel)). Refused without `--lamax_file`, `--nax_file` or `--ta_file`. |
-| `--nax_file`, `--nax_threshold` | Write each observer's NAx: the number of operations whose own LAmax reaches the threshold, dBA. The threshold has no default and is required. |
-| `--ta_file`, `--ta_threshold` | Write each observer's time above: seconds of reception time the weighted level exceeds the threshold, dBA, summed over operations. The threshold has no default and is required. |
+| `--nax_file`, `--nax_threshold` | Write each observer's NAx: the number of operations whose own LAmax reaches the threshold, dBA, each trajectory counting as many operations as it stands for. The threshold has no default and is required. |
+| `--ta_file`, `--ta_threshold` | Write each observer's time above: seconds of reception time the weighted level exceeds the threshold, dBA, summed over operations (each trajectory times its count). The threshold has no default and is required. |
 | `--csel_file` | Write the C-weighted SEL (LCE) per observer. One name, or one per trajectory (`<track>_LCE.csv`). Spectral path only; refused with `--db_cutoff` or `-a`. |
 | `--epnl_file` | Write each observer's EPNL, PNLTM, duration and tone corrections (14 CFR 36 A36.4). Once, or once per trajectory (`<track>_EPNL.csv`). Needs the spectral path and the 24 bands 50 Hz–10 kHz. Refused with `-a`. See [EPNL](#epnl-and-reception-time-frames). |
 | `--epnl_masking` / `--no-epnl_masking` | Exclude tones in bands below their noy threshold from the tone correction. On by default; `--no-epnl_masking` is the procedure as written. |
@@ -299,6 +301,7 @@ The main ones:
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
 | `--speed_reference air` without a wind | Calm air is not assumed. |
 | Two trajectories writing one file; a list of `-d`, `-v`, `-o` that is neither one nor one per track | Outputs would overwrite one another. |
+| `-t` with `--operations`; a per-trajectory option given more than once with it; a row with no database or vehicle and no `-d` or `-v` | The file names the operations; the demo aircraft never fills a row. The file's own refusals are in [An operations file](#an-operations-file). |
 | `--mask_suspect_cells` with `--self_test`; `--screen_database` or `--provenance_file` with more than one database; `--screen_database` or `--manifest` naming an input | The self test checks the file as written; one list would overwrite the other, and a sphere index names a sphere of one database; the input would be overwritten. |
 | `-p`, `-f`, `-F` in a build without plotting | Rather than silently doing nothing. |
 
@@ -369,7 +372,7 @@ The demo case restated in WGS84 is
 of holds at one position (in `--units`), each `duration` seconds long with the nose on the compass
 `heading`. The states are sampled at 50 Hz, at 1 g and zero velocity. A static operation has no
 clock of its own, so `-D`, `--lden_file`, `--cnel_file` and the period levels refuse it unless
-`--start_utc` dates its start.
+`--start_utc`, or an operations file's `local_time`, dates its start.
 
 ### Vehicle file
 
@@ -986,7 +989,7 @@ others:
   on (`--version` prints the version alone);
 - the command line, and the options given on it or in a `--config` file (the rest are the
   build's defaults);
-- every input (trajectories, databases, vehicle, observer, atmosphere, terrain and table files)
+- every input (the operations file, trajectories, databases, vehicle, observer, atmosphere, terrain and table files)
   and every output, figures included, each with its size and SHA-256, which `shasum -a 256`
   reproduces; the log file is named only, since runs append to it;
 - each database's root attributes and scalar variables, which record how it was built;
@@ -1063,6 +1066,90 @@ lie wholly in one period, and under `--full_history` for any. The clock is the t
 penalized 10 dB-down window; `--full_history` integrates its whole history, as AAM and NORAH2 do,
 which reads a few tenths of a dB higher ([FIDELITY](FIDELITY.md#day-night-window-choice)). Use it
 for a DNL meant to sit beside their contours.
+
+### An operations file
+
+`--operations FILE` describes a day's traffic as a table: each row is a track and how many times
+an average day flies it, and may name its own database, vehicle, clock and air. It replaces `-t`
+(the two are refused together), and is the way to model a fleet mix or a schedule without a
+command line per operation.
+
+```text
+# Runway 21 departures and arrivals, an average annual day
+name,track,database,vehicle,count,local_time,wind_speed,wind_direction
+dep21,../tracks/dep21.csv,../databases/B407_fixed_load_factor.nod,../databases/B407.json,6,10:00,8kt,200
+dep21_night,../tracks/dep21.csv,../databases/B407_fixed_load_factor.nod,../databases/B407.json,0.5,23:30,3kt,180
+arr03,../tracks/arr03.csv,../databases/AS350_fixed_load_factor.nod,../databases/AS350.json,4,14:00,8kt,200
+```
+
+The file is plain comma-separated text. The first line that is not blank or a `#` comment is the
+header; every row after it must have as many fields, and fields are trimmed. Quoting is not
+supported, so a field cannot hold a comma or a quote. Column names match whatever their case and
+punctuation (`Local Time`, `local_time` and `LOCAL_TIME` are one column), and a unit in brackets
+is checked where a column has one.
+
+| Column | Meaning | When the cell or column is empty |
+| --- | --- | --- |
+| `track` | The trajectory file: an AC track, a WGS84 track or a static operation. Required. | Refused. |
+| `name` | The row's name: what its files are named after, and the `-m` case name. Letters, digits, `_`, `.` and `-`, not starting with a dot. | The track's file name, less its extension. |
+| `count` | Operations per average day. Any positive number, fractions included. | 1. |
+| `local_time` | `HH:MM` or `HH:MM:SS` (00:00 to 23:59:59), local time by `--utc_offset`, at the track's first state. It replaces any clock the track carries. | The track's own clock, or `--start_utc`. |
+| `database`, `vehicle` | As `-d` and `-v`. | The one `-d` or `-v` given; refused without it. |
+| `output` | This row's SEL file, as `-o`. | Named after the row (below). |
+| `atmosphere` | As `--atmosphere`. | See the air, below. |
+| `wind_speed`, `wind_direction`, `wind_height` | Joined as `--wind`'s `speed,direction[,height]`: the speed names its unit (`8kt`), the direction is a compass bearing, the height is in `--units`. The first two go together. | See the air, below. |
+| `humidity` (%), `temperature` (K), `pressure` (kPa) | As the options of those names. | See the air, below. |
+
+`day`, `evening`, `night` and `offset` are reserved: they are read and checked, and a file that
+uses the counts or a nonzero offset is refused.
+
+**Paths** in the file are taken from the operations file's own folder, so a study folder moves as
+a whole; absolute paths are used as given. Each resolved path is in the log, and a track,
+database, vehicle or atmosphere file that does not exist is refused before anything is computed,
+naming the row and the path.
+
+**Per-trajectory options.** `-d`, `-v`, `--atmosphere`, `--wind`, `--humidity`, `--temperature`,
+`--pressure` and `--start_utc` may each be given once with `--operations`, as the value for the
+rows that leave that column empty; given twice they are refused, since per-operation values go
+in the file. The demo's S-76D database and vehicle never fill a row.
+
+**The air.** An air column that is present must be filled in every row, unless its option was
+given once, which then fills the empty cells. The run's own checks then apply to the rows as
+they would to the command line: rows mixing an atmosphere file with a wind, for example, are
+refused.
+
+**Counts.** A row's count multiplies its contribution to every run total after its exposure is
+formed: DNL, Lden, CNEL and the period levels add count times the operation's energy, NAx adds
+the count when the operation's maximum reaches the threshold, and the time above adds count
+times the operation's seconds ([THEORY §10.3](THEORY.md#103-maximum-level-time-above-and-number-above),
+[§10.4](THEORY.md#104-daynight-metrics)). LAmax, the largest level, is not raised by a count.
+A count of 3 gives what three `-t` of the same track give, and a count of 10 adds 10 dB to the
+day metrics. The coverage and provenance reports weight each row the same way.
+
+**The clock.** `local_time` dates the row's first state, and every later state by the track's
+own time; the day-night penalties then fall where they would for a flight at that hour, across
+22:00 or midnight too. A row without `local_time` keeps its track's clock (an AC track's first
+column, a WGS84 track's `utcsec`), or `--start_utc`, and a track with neither is refused by the
+day metrics. Give each operation its own row and `local_time`: a row's count flies it that many
+times at the same hour.
+
+**Outputs.** Each row's SEL file, and its `-S`, `--csel_file`, `--epnl_file`, `--band_frames` and
+`--write_atmosphere` files, are one operation's, whatever its count. With several rows each is
+`<name>_LAE.csv` (and `<name>_state.csv` and so on) in the folder of the name given to the option
+(`integrated/` for the default `-o`); a row's `output` cell names its own. A one-row file keeps
+the `-o` it was given. The `-i` and `--band_history` files carry the row's name, as they carry
+the track's for several `-t`. These options take one name with `--operations`. Two rows may not
+share a name, compared ignoring case: give such rows a `name` column.
+
+**Refusals.** An unknown or repeated column, a file with no `track` column or no rows, a row with
+the wrong number of fields, a quote, a count that is not a positive number (`0`, `-2`, `nan`,
+`6.2 ops`; comment a row out with `#` to leave it out), a `local_time` that is not a clock time
+(`25:00`, `7pm`), a `start_utc` column (use `local_time`), a temperature, pressure or humidity
+column declaring another unit, an `offset` or `wind_height` column declaring a length unit other
+than `--units`, a wind speed without its unit, and a name outside the allowed characters.
+
+**Cost.** One run per row, as for a `-t` per row. Each distinct database is loaded once,
+however its rows are ordered. Rows run in file order.
 
 ### Maximum level, time above and C-weighted SEL
 

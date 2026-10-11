@@ -61,11 +61,11 @@ vehicle file, `--humidity` or `--atmosphere`.
 ```
 
 `-t`, `-d` and `-v` give the trajectory, database and vehicle; `-o` is the SEL output file, and
-`-D` adds the day-night level over every trajectory in the run. Paths are relative to the
-working directory, so run from the repository root to use the shipped data; output directories
-are created as needed. Each run prints a one-line `Physics:` summary of the path, ground model
-and atmosphere used. The manual lists every [option](docs/MANUAL.md#command-line-options),
-[input file](docs/MANUAL.md#input-files) and [output file](docs/MANUAL.md#output-files).
+`-D` adds the day-night level over every trajectory, or every [operations file](docs/MANUAL.md#an-operations-file)
+row. Paths are relative to the working directory: run from the repository root to use the shipped
+data. Each run prints a one-line `Physics:` summary of the path, ground model and atmosphere. The
+manual lists every [option](docs/MANUAL.md#command-line-options), [input file](docs/MANUAL.md#input-files)
+and [output file](docs/MANUAL.md#output-files).
 
 ### Units
 

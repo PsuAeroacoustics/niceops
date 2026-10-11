@@ -1058,6 +1058,17 @@ Time above a threshold (TA) is the reception time during which the weighted leve
 exceeds it, solved for analytically within each sample (each sample counts whole under
 `instantaneous`). The number of events above (NAx) counts the operations whose maximum reaches
 the threshold. Over several operations, the maximum level is the largest of theirs and TA adds.
+A trajectory $j$ standing for $N_j$ operations (an operations file's count; 1 otherwise) is
+counted that many times:
+
+$$
+\mathrm{NA}x = \sum_j N_j \left[L_{\mathrm{max},j} \ge x\right], \qquad
+\mathrm{TA} = \sum_j N_j\, \mathrm{TA}_j, \qquad
+L_\mathrm{max} = \max_j L_{\mathrm{max},j} .
+$$
+
+The coverage report's two energies and the provenance's per-state energies are weighted by
+$N_j$ in the same way, so their shares are $N_j$-weighted ratios over the trajectories.
 
 ### 10.4 Day–night metrics
 
@@ -1067,8 +1078,12 @@ window is found on the penalized history, or the whole history is summed under
 `--full_history`. The operations are then summed and normalized to a 24-hour day:
 
 $$
-L_\mathrm{dn} = 10\lg\left(\frac{1}{86\,400\ \mathrm{s}} \sum_\mathrm{ops} t_\mathrm{ref}\, 10^{\mathrm{SEL}_P/10}\right).
+L_\mathrm{dn} = 10\lg\left(\frac{1}{86\,400\ \mathrm{s}} \sum_j N_j\, t_\mathrm{ref}\, 10^{\mathrm{SEL}_{P,j}/10}\right),
 $$
+
+where trajectory $j$ stands for $N_j$ operations: an operations file's count, or 1. The count
+multiplies the energy after the exposure is formed; it does not enter the levels, the window
+or the penalty. An operations file's `local_time` sets the clock the penalties are read from.
 
 | Metric | Evening | Night | Definition |
 | --- | --- | --- | --- |
@@ -1090,7 +1105,7 @@ The period levels (`--lday_file`, `--levening_file`, `--lnight_file`) are those 
 $L_n$, and `--laeq_file` is the same over a clock window $[t_1, t_2)$ of length $T_w$:
 
 $$
-L_{\mathrm{Aeq},T} = 10\lg\left(\frac{1}{T_w} \sum_\mathrm{ops} t_\mathrm{ref}\, 10^{\mathrm{SEL}_w/10}\right),
+L_{\mathrm{Aeq},T} = 10\lg\left(\frac{1}{T_w} \sum_j N_j\, t_\mathrm{ref}\, 10^{\mathrm{SEL}_{w,j}/10}\right),
 $$
 
 where $\mathrm{SEL}_w$ is the operation's exposure over its samples inside the window (its 10 dB-down

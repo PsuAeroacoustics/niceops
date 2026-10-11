@@ -149,6 +149,8 @@ CTests are defined in `CMakeLists.txt`.
 | `epnl_frames_follow_reception_time` | CTest | states filed at t − r/c, or at their emission time: the energy check is blind to *when* |
 | `terrain_hills_point_golden`, `terrain_hills_plate_golden` | CTest | the plate's receiver passed as a point receiver at its call site |
 | `database_cache_loads_each_once`, `database_spellings_run`, `database_spellings_load_once` | CTest | a one-entry database cache (the front database reloaded in `-d A -d B -d A -d B`); a database erased before its last trajectory; databases compared by the path as typed. Output cannot see any of them, so the check reads the run's own log for a second "Opening netCDF file". The front database erased after its last trajectory, which leaves the provenance a dangling reference, trips an assert after the loop instead, so this and every other run aborts with asserts on |
+| `operations_count_three_equals_repeated_t` | CTest | the day-metric weight folded into the exponent (`pow(10, 0.1 L + lg w)`), which a count of 1 and the 1e-9 count-10 checks both pass; NAx adding 1 rather than the weight; the weight dropped from one coverage energy |
+| `operations_count_three_provenance` | CTest | the weight dropped from the provenance's per-state energy |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.
@@ -206,6 +208,32 @@ The unit test `a day of steady noise gives each metric's period weighting`
 at 23:30 local, and check which metrics coincide there (`lden_by_day_is_dnl`,
 `cnel_by_day_is_dnl`, `cnel_at_22h30_is_dnl`, `lden_at_23h30_is_dnl`) and which must not
 (`lden_at_22h30_is_not_dnl`, `dnl_full_history_is_not_windowed`).
+
+### The operations file
+
+The reader's unit tests (tag `[operations]`, `test_operations.cpp`) cover the column matching,
+comments, defaults, path resolution, the wind columns, the period counts, the clock (00:00 and
+23:59:59 accepted, 24:00 and `7pm` refused) and every refusal by its message;
+`an operations file's local_time replaces the clock a track carries` (`test_trajectory.cpp`)
+covers the clock on AC and WGS84 tracks. The CTests `operations_*` run the fixtures in
+`tests/data/operations/`, which name their files relative to that folder:
+
+- a count of 1 is `regression_default`'s output byte for byte and the golden at 1e-9
+  (`operations_count_one_is_bit_identical`, `operations_count_one_is_golden`), and every run
+  total of a `-t` run byte for byte (`operations_count_one_totals_are_t`);
+- a count of 10 is +10 dB on DNL, Lden and CNEL at 1e-9 and leaves the SEL file and LAmax
+  alone; a count of 3 is three repeated `-t` byte for byte on the day metrics, NAx, TA, LAmax and
+  the coverage, and at 1e-9 on the provenance;
+- `local_time` at 23:30 is +10 dB of DNL on 12:00, 12:00 is the track's own daytime clock, and a
+  static hold at 12:00 is the hold dated by `--start_utc 43200`;
+- a fleet of rows A, B, A on two databases is `-t A -t B -t A` byte for byte, loads each
+  database once (read from the run's log, as `database_cache_loads_each_once` does), and names
+  each row's SEL file after it;
+- the manifest records the operations file;
+- each refusal that needs a run (`-t` with the file, two `-d`, a row without a database, a missing
+  track, shared names, a bare wind speed, an empty air cell, a mismatched offset unit, period
+  counts and offsets not yet run, provenance over two databases, a clockless row under `-D`), by
+  its message.
 
 ### C-weighted SEL
 

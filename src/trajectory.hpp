@@ -200,6 +200,10 @@ struct GeodeticInput
     // timezone but the one a few hours west -- so a clockless track got the 10 dB
     // night penalty silently.
     double start_utc = std::numeric_limits<double>::quiet_NaN();
+    // An operations file's local_time: start_utc then dates the track whatever
+    // clock it carries (an AC file's first column, a geodetic utcsec column),
+    // as start_utc + (t - t0).
+    bool clock_replaces_track = false;
     // Resampling step in seconds, used when the samples are unevenly spaced or
     // coarser than this.  It never coarsens -- a 50 Hz file keeps its own
     // sample times -- because the sound exposure integral is a Riemann sum over

@@ -465,9 +465,11 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         fit_velocity.push_back(fit_path(time, vz, velocity_tolerance));
     }
 
-    // A file with its own utcsec column dates the flight itself; otherwise the
-    // run says when t = 0 was, and the default of zero puts it at UTC midnight.
-    const double utc_at_start = have_utc ? csv.rows.front()[columns.utc] : input.start_utc;
+    // A file with its own utcsec column dates the flight itself, unless an
+    // operations file's local_time replaces it; otherwise the run says when
+    // t = 0 was, and without that the states have no clock (NaN).
+    const double utc_at_start = have_utc && !input.clock_replaces_track ? csv.rows.front()[columns.utc]
+                                                                         : input.start_utc;
 
     states.clear();
     states.reserve(sample_times.size());
@@ -920,6 +922,14 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                 }
             }
             correct_vertical_speed_sign(states, filename);
+            // An operations file's local_time dates the flight in place of
+            // the file's own UTC column.
+            if (geodetic.clock_replaces_track)
+            {
+                const double t0 = states.front().t;
+                for (auto& state : states)
+                    state.utcsec = geodetic.start_utc + (state.t - t0);
+            }
         }
         else if (csv.column({"duration"}) != LabeledCsv::npos)
         {
