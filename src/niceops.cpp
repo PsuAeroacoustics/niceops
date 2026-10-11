@@ -3868,11 +3868,11 @@ int run(int argc, char* argv[])
             "Write, per observer, the energy-weighted share of its levels that came from cells "
             "the database did not measure (straight rays only; needs a database with coverage).");
     app.add_flag("--full_history", full_history,
-            "Integrate each exposure (SEL, C-SEL, and each operation's share of DNL, Lden and "
-            "CNEL) over the whole history rather than the event's 10 dB-down window, as AAM and "
+            "Integrate each exposure (SEL, C-SEL, and each operation's share of DNL, Lden, "
+            "CNEL and the period levels) over the whole history rather than the event's 10 dB-down window, as AAM and "
             "NORAH2 do. Slower: no window is found.");
     app.add_option("--utc_offset", utc_offset,
-            "Hours from UTC to local time, for the DNL, Lden and CNEL periods.");
+            "Hours from UTC to local time, for the DNL, Lden and CNEL periods and the period levels.");
     app.add_option("--powerfile", power_file,
             "Write per-state shaft power, if the database carries any, to this file.");
     app.add_option("--export_sphere", sphere_file,
@@ -4059,8 +4059,8 @@ int run(int argc, char* argv[])
             "an AC track's own alt - z must match it.");
     app.add_option("--start_utc", start_utc,
             "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
-            "window (-D). Required with -D when the track has no utcsec column; ignored "
-            "when it has one.");
+            "periods. Required with -D, --lden_file, --cnel_file or a period level when the "
+            "track has no utcsec column; ignored when it has one.");
     auto* path_smoothing_option = app.add_option("--path_smoothing", path_smoothing,
             "How far, RMS in --units, the path fitted through a geodetic track may sit from "
             "the given positions, per axis. Default 10 ft. Zero flies through them exactly, "

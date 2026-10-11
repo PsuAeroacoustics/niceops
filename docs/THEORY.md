@@ -1081,7 +1081,7 @@ $$
 
 where $\mathrm{SEL}_w$ is the operation's exposure over its samples inside the window (its 10 dB-down
 window found among them), $T_w$ is 12 h, 4 h and 8 h for the three periods, and no penalty
-applies. An operation lying wholly in its periods recombines into $L_\mathrm{den}$ exactly; one
+applies. An operation lying wholly in one period recombines into $L_\mathrm{den}$ exactly; one
 that straddles a period's edge does so exactly under `--full_history`, and to the difference of
 the windows otherwise.
 

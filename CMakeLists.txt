@@ -360,6 +360,9 @@ add_test(NAME screen_database_refuses_overwriting_it COMMAND niceops -d integrat
 set_tests_properties(screen_database_refuses_overwriting_it PROPERTIES FIXTURES_REQUIRED screen_victim PASS_REGULAR_EXPRESSION "would overwrite the database it reads")
 add_test(NAME mask_suspect_cells_clean COMMAND niceops --no-spectral --no-ground_effect --mask_suspect_cells -L warn -o integrated/mask_suspect_clean.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(mask_suspect_cells_clean PROPERTIES FIXTURES_SETUP mask_clean_run)
+# golden_compare's offset: a file against itself less 1 dB must mismatch, and the axes are exempt.
+add_test(NAME golden_compare_offset_rejects COMMAND golden_compare integrated/mask_suspect_clean.csv integrated/mask_suspect_clean.csv 0 1 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(golden_compare_offset_rejects PROPERTIES FIXTURES_REQUIRED mask_clean_run PASS_REGULAR_EXPRESSION "mismatch at value 240:")
 add_test(NAME mask_suspect_cells_clean_is_golden COMMAND golden_compare integrated/mask_suspect_clean.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(mask_suspect_cells_clean_is_golden PROPERTIES FIXTURES_REQUIRED mask_clean_run)
 add_test(NAME mask_suspect_cells_refuses_self_test COMMAND niceops --self_test --mask_suspect_cells WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -472,8 +475,15 @@ add_test(NAME dnl_with_start_utc COMMAND niceops -t tests/data/demo_geodetic_noc
 set(PERIOD_RUN -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -L warn)
 add_test(NAME period_noon COMMAND niceops ${PERIOD_RUN} --start_utc 43200 --lden_file integrated/period_noon_lden.csv --lday_file integrated/period_noon_lday.csv --laeq_file integrated/period_noon_laeq24.csv --laeq_window 0 24 -o integrated/period_noon.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME period_noon_day_window COMMAND niceops ${PERIOD_RUN} --start_utc 43200 --laeq_file integrated/period_noon_laeq_day.csv --laeq_window 7 19 -o integrated/period_noon_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME period_night COMMAND niceops ${PERIOD_RUN} --start_utc 3600 --lnight_file integrated/period_night_lnight.csv --laeq_file integrated/period_night_laeq.csv --laeq_window 23 7 --lday_file integrated/period_night_lday.csv -o integrated/period_night.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(period_noon period_noon_day_window period_night PROPERTIES FIXTURES_SETUP period_runs)
+add_test(NAME period_night COMMAND niceops ${PERIOD_RUN} --start_utc 3600 --lden_file integrated/period_night_lden.csv --lnight_file integrated/period_night_lnight.csv --laeq_file integrated/period_night_laeq.csv --laeq_window 23 7 --lday_file integrated/period_night_lday.csv -o integrated/period_night.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME period_evening COMMAND niceops ${PERIOD_RUN} --start_utc 72000 --lden_file integrated/period_evening_lden.csv --levening_file integrated/period_evening_levening.csv -o integrated/period_evening.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(period_noon period_noon_day_window period_night period_evening PROPERTIES FIXTURES_SETUP period_runs)
+# Each over its own length, against Lden over the day: a flight in one period gives
+# Lday = Lden + 10 lg 2, Levening = Lden - 5 + 10 lg 6, Lnight = Lden - 10 + 10 lg 3.
+add_test(NAME period_lday_over_12_hours COMMAND golden_compare integrated/period_noon_lday.csv integrated/period_noon_lden.csv 0 3.010299956639812 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME period_levening_over_4_hours COMMAND golden_compare integrated/period_evening_levening.csv integrated/period_evening_lden.csv 0 2.781512503836437 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME period_lnight_over_8_hours COMMAND golden_compare integrated/period_night_lnight.csv integrated/period_night_lden.csv 0 -5.228787452803376 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(period_lday_over_12_hours period_levening_over_4_hours period_lnight_over_8_hours PROPERTIES FIXTURES_REQUIRED period_runs)
 add_test(NAME period_laeq_whole_day_is_lden_by_day COMMAND golden_compare integrated/period_noon_laeq24.csv integrated/period_noon_lden.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME period_lday_is_laeq_07_19 COMMAND golden_compare integrated/period_noon_lday.csv integrated/period_noon_laeq_day.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME period_lnight_is_laeq_23_07 COMMAND golden_compare integrated/period_night_lnight.csv integrated/period_night_laeq.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

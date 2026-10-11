@@ -125,7 +125,9 @@ window is found among the samples inside, and the energy is averaged over the pe
 (`averaging_seconds`). An operation wholly outside gives −∞, not NaN (`peak_range` of an all −∞
 history takes every sample, whose sum is 0). The CTests pin them against each other on the
 geodetic demo track: LAeq 0–24 equals Lden by day, Lday equals LAeq 7–19, Lnight equals LAeq 23–7,
-and a night flight leaves Lday −∞; "Lden is its period levels recombined" pins the arithmetic.
+and a night flight leaves Lday −∞; `period_*_over_*_hours` pin each period's normalization
+against Lden (`golden_compare`'s offset), which the pairs above share and so cannot see; "Lden is
+its period levels recombined" pins the arithmetic.
 
 
 `--lamax_weighting`, `--nax_file`, `--ta_file`, `--lden_file`, `--cnel_file` and `--csel_file`

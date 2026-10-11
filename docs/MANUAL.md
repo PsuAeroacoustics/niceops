@@ -188,7 +188,7 @@ is a physical quantity, given here in meters with its value in feet.
 | Option | Meaning |
 | --- | --- |
 | `-a`, `--ambient` | Ambient level, dB, added to every sample's level in energy. Off unless given. Refused with `--csel_file`, `--epnl_file`, `--band_frames` and `--coverage_file`. |
-| `--full_history` | Integrate every exposure (SEL, C-SEL, and each operation's share of DNL, Lden and CNEL) over the whole history rather than the 10 dB-down window. |
+| `--full_history` | Integrate every exposure (SEL, C-SEL, and each operation's share of DNL, Lden, CNEL and the period levels) over the whole history rather than the 10 dB-down window. |
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory ([Several trajectories](#several-trajectories-and-the-day-night-level)). |
 | `--lden_file` | Write the day-evening-night level (EU Directive 2002/49/EC). |
 | `--lday_file`, `--levening_file`, `--lnight_file` | Write Lden's period levels: the energy heard 07:00–19:00, 19:00–23:00 or 23:00–07:00, over that period's length ([Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)). |
