@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 #include <limits>
 #include <stdexcept>
 
@@ -400,10 +401,56 @@ TableCoherence table_coherence(const std::map<std::string, std::string>& provena
     {
         coherence.model = "phase_screens";
         coherence.value = number("gamma_t");
+        // std::to_string's fixed six decimals, as tables built before the
+        // record wrote it: "0.000000" is a turbulent table too.
+        const std::string& text = provenance.at("gamma_t");
+        if (text.size() == 8 && text.compare(0, 2, "0.") == 0
+                && text.find_first_not_of("0123456789", 2) == std::string::npos)
+        {
+            coherence.rounded_gamma_t = text;
+            return coherence;
+        }
     }
     if (coherence.model != "none" && !(coherence.value > 0.0))
-        coherence = TableCoherence {"none", 0.0, coherence.roughness};
+        coherence = TableCoherence {"none", 0.0, coherence.roughness, {}};
     return coherence;
+}
+
+std::string coherence_mismatch(const TableCoherence& run, const TableCoherence& table)
+{
+    auto same = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::max(std::abs(a), std::abs(b)); };
+    bool same_turbulence = run.model == table.model
+            || (run.model == "harmonoise" && table.model == "phase_screens");
+    if (same_turbulence && run.model != "none")
+    {
+        if (!table.rounded_gamma_t.empty())
+        {
+            char text[32];
+            std::snprintf(text, sizeof text, "%f", run.value);
+            same_turbulence = table.rounded_gamma_t == text;
+        }
+        else
+            same_turbulence = same(run.value, table.value);
+    }
+    const bool same_roughness = same(run.roughness, table.roughness);
+    if (same_turbulence && same_roughness)
+        return {};
+    auto describe = [](const TableCoherence& c) {
+        std::ostringstream text;
+        if (c.model == "none")
+            text << "still air";
+        else if (c.model == "chessell")
+            text << "Chessell turbulence " << c.value << " rad s/sqrt(m)";
+        else if (!c.rounded_gamma_t.empty())
+            text << "PE phase screens, gamma_t " << c.rounded_gamma_t << " m^-2/3 (recorded to six decimals)";
+        else
+            text << (c.model == "harmonoise" ? "HARMONOISE turbulence" : "PE phase screens") << ", gamma_t " << c.value
+                 << " m^-2/3";
+        text << ", roughness " << c.roughness << " m";
+        return text.str();
+    };
+    return "the table was built with " + describe(table) + ", and its pairs take that; the run's " + describe(run)
+            + " reaches only the pairs it does not cover and plate microphones' offset from bare ground";
 }
 
 void record_coherence(std::map<std::string, std::string>& provenance, const TableCoherence& coherence)

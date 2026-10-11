@@ -980,8 +980,17 @@ $$
 
 A table that declares `includes_absorption` drops the $\alpha_b$ term. A pair the table does
 not cover (outside an axis, or a NaN cell) falls back to the run's own ground and refraction
-model. Plate microphones read the lowest receiver height plus the plate offset $K$ at the pair's
-azimuth and elevation (§8.1).
+model. A flush plate microphone (§6.2) reads the table at its lowest receiver height $h_0$ and
+adds
+
+$$
+K(f, \phi, \varepsilon) = L_\mathrm{plate}(f, \phi, \varepsilon) - L_\mathrm{bare}(f, \varepsilon; h_0),
+$$
+
+the plate's level (§6.2) less bare ground's at $h_0$ (§5), for a source on a 1 km sphere at azimuth $\phi$ in the plate's frame and elevation $\varepsilon$, interpolated
+bilinearly in $\phi$ and $\varepsilon$. Unlike the shadow transition's $K$(band, azimuth) of
+§8.1, taken at 2°, it depends on elevation, because over a raised $h_0$ the bare term is a comb
+in elevation that $K$ has to follow; over $h_0 = 0$ it is the plate's offset from flush.
 
 Turbulence and ground roughness are the table's own. A ground-model table built with
 Chessell's $C$ or HARMONOISE's $\gamma_T$ carries the coherence $T(f)$ of §5, and one built with

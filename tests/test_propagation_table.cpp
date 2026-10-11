@@ -415,13 +415,13 @@ TEST_CASE("a table's turbulence and roughness are read back from its provenance"
 
     // A ground-model table's record round-trips to the bit.
     std::map<std::string, std::string> provenance;
-    record_coherence(provenance, {"chessell", 4e-4 / 3.0, 0.3 * 0.3048});
+    record_coherence(provenance, {"chessell", 4e-4 / 3.0, 0.3 * 0.3048, {}});
     auto read = table_coherence(provenance);
     CHECK(read.model == "chessell");
     CHECK(read.value == 4e-4 / 3.0);
     CHECK(read.roughness == 0.3 * 0.3048);
     provenance.clear();
-    record_coherence(provenance, {"harmonoise", 3.7e-7, 0.0});
+    record_coherence(provenance, {"harmonoise", 3.7e-7, 0.0, {}});
     read = table_coherence(provenance);
     CHECK(read.model == "harmonoise");
     CHECK(read.value == 3.7e-7);
@@ -434,4 +434,41 @@ TEST_CASE("a table's turbulence and roughness are read back from its provenance"
 
     // A model named with no strength is still air.
     CHECK(table_coherence({{"turbulence_model", "chessell"}}).model == "none");
+}
+
+TEST_CASE("a run's turbulence and roughness are held to its table's, either way round", "[propagation_table]")
+{
+    using Catch::Matchers::ContainsSubstring;
+    const TableCoherence still {};
+    const TableCoherence chessell {"chessell", 4e-4, 0.0, {}};
+    const TableCoherence harmonoise {"harmonoise", 3e-5, 0.0, {}};
+    const TableCoherence screens {"phase_screens", 3e-5, 0.0, {}};
+    const TableCoherence rough {"none", 0.0, 0.09144, {}};
+
+    CHECK(coherence_mismatch(still, still).empty());
+    CHECK(coherence_mismatch(chessell, chessell).empty());
+    CHECK(coherence_mismatch(rough, rough).empty());
+    // A HARMONOISE run is the phase screens' counterpart at the same strength.
+    CHECK(coherence_mismatch(harmonoise, screens).empty());
+    CHECK_FALSE(coherence_mismatch({"harmonoise", 1e-5, 0.0, {}}, screens).empty());
+    // A different strength, a different model, a different roughness.
+    CHECK_FALSE(coherence_mismatch({"chessell", 2e-4, 0.0, {}}, chessell).empty());
+    CHECK_FALSE(coherence_mismatch(harmonoise, chessell).empty());
+    CHECK_FALSE(coherence_mismatch(still, rough).empty());
+    CHECK_FALSE(coherence_mismatch(rough, still).empty());
+    // A still run on a turbulent table, and the other way round.
+    CHECK_THAT(coherence_mismatch(still, chessell),
+            ContainsSubstring("the table was built with Chessell turbulence 0.0004 rad s/sqrt(m), roughness 0 m"));
+    CHECK_THAT(coherence_mismatch(chessell, still), ContainsSubstring("the table was built with still air"));
+
+    // A PE table built before the record: gamma_t to six decimals, compared
+    // at that precision, and turbulent even when it rounded to zero.
+    const auto legacy = table_coherence({{"gamma_t", "0.000002"}});
+    CHECK(legacy.model == "phase_screens");
+    CHECK(coherence_mismatch({"harmonoise", 1.5e-6, 0.0, {}}, legacy).empty());
+    CHECK_FALSE(coherence_mismatch({"harmonoise", 1e-6, 0.0, {}}, legacy).empty());
+    const auto tiny = table_coherence({{"gamma_t", "0.000000"}});
+    CHECK(tiny.model == "phase_screens");
+    CHECK(coherence_mismatch({"harmonoise", 3e-7, 0.0, {}}, tiny).empty());
+    CHECK_THAT(coherence_mismatch(still, tiny), ContainsSubstring("recorded to six decimals"));
 }

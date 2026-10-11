@@ -158,9 +158,19 @@ struct TableCoherence
     std::string model = "none";
     double value = 0.0;
     double roughness = 0.0; // m, the ground model's Kirchhoff roughness
+    // A turbulent PE table built before the record wrote gamma_t to six
+    // decimals ("0.000002"): its strength is known only that far, and that
+    // text is kept to compare against.
+    std::string rounded_gamma_t;
 };
 
 TableCoherence table_coherence(const std::map<std::string, std::string>& provenance);
+
+// Whether a run with `run` would treat its covered and uncovered pairs
+// alike: the same model and strength (a HARMONOISE run matches a PE table's
+// phase screens of the same gamma_t) and the same roughness, either way round.
+// Returns the warning's text when they differ, empty when they agree.
+std::string coherence_mismatch(const TableCoherence& run, const TableCoherence& table);
 
 // Writes a ground-model table's coherence into its provenance (keys
 // turbulence_model, turbulence or gamma_t, roughness_m) at full precision.

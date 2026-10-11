@@ -384,7 +384,11 @@ model; the format is the specification, so other methods can write it. The compo
   file format; building the table with the run's settings needs none, and a ground-model table
   so built reproduces `--ground_effect` with them (`propagation_table_carries_turbulence`,
   `propagation_table_carries_harmonoise`). A table that records nothing is still air, which every
-  table built before the record was unless it says `gamma_t`.
+  table built before the record was unless it says `gamma_t`; that one wrote it to six decimals,
+  so it is compared at that precision, and "0.000000" counts as turbulent. The check runs either
+  way round: a still run on a turbulent table is warned too, since its uncovered pairs and the
+  plate offset's bare ground are still (`a run's turbulence and roughness are held to its
+  table's, either way round`).
 - **Thread count is invisible.** `-j` (or `NICEOPS_THREADS`, which only the PE tools read) gives
   the same bits at any count, turbulent tables included, because each march's seeds are fixed
   before the work is dealt out (`pe_tools_thread_count_is_invisible`).
