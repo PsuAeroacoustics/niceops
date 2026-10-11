@@ -214,8 +214,10 @@ int main(int argc, char** argv)
             if (!(gamma_t > 0.0))
                 throw std::runtime_error(gamma_profile + " is zero everywhere");
         }
-        if (method != "pe" && (march != "receiver" || !gamma_profile.empty() || realizations != 1))
-            throw std::runtime_error("--march, --gamma_profile and --realizations apply to --method pe only");
+        if (method != "pe" && (march != "receiver" || !gamma_profile.empty() || realizations != 1
+                                      || app.count("--outer_scale") > 0 || app.count("--seed") > 0))
+            throw std::runtime_error("--march, --gamma_profile, --realizations, --outer_scale and --seed apply to "
+                                     "--method pe only");
         if (method == "pe" && (turbulence > 0.0 || roughness > 0.0))
             throw std::runtime_error("--turbulence and --roughness apply to --method ground_model only; the PE's "
                                      "turbulence is --gamma_t's phase screens");

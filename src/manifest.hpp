@@ -65,8 +65,9 @@ public:
     void add_database(const std::string& path);
     void set_database_attributes(const std::string& path, std::map<std::string, std::string> attributes);
 
-    // Starts hashing the inputs in the background, so the digests are ready
-    // by the time the run ends.  Called once every input is added.
+    // Starts hashing the inputs, one after another on one background thread,
+    // so the digests are ready by the time the run ends.  Called once every
+    // input is added.
     void start_hashing();
 
     // Refuses a manifest path that is one of the inputs, which the write
@@ -93,7 +94,9 @@ private:
     std::string log_file_;
     std::vector<Entry> inputs_;
     std::map<std::string, std::map<std::string, std::string>> databases_;
-    std::map<std::string, std::shared_future<std::optional<std::string>>> digests_;
+    // The background hashing's result: each input's digest, by path.
+    using Digests = std::map<std::string, std::optional<std::string>>;
+    std::shared_future<Digests> digests_;
 };
 
 } // namespace niceops

@@ -102,11 +102,18 @@ void RunManifest::set_database_attributes(const std::string& path, std::map<std:
 
 void RunManifest::start_hashing()
 {
+    std::vector<std::string> paths;
     for (const auto& input : inputs_)
-    {
-        if (digests_.count(input.path) == 0)
-            digests_[input.path] = std::async(std::launch::async, sha256_of_file, input.path).share();
-    }
+        paths.push_back(input.path);
+    // One thread for them all: a batch run can name hundreds of inputs, and a
+    // thread and a full-file read for each at once would swamp both.
+    digests_ = std::async(std::launch::async, [paths = std::move(paths)] {
+        Digests digests;
+        for (const auto& path : paths)
+            if (digests.count(path) == 0)
+                digests[path] = sha256_of_file(path);
+        return digests;
+    }).share();
 }
 
 namespace {
@@ -115,7 +122,7 @@ namespace {
 // otherwise now.
 template <typename Entries>
 nlohmann::ordered_json describe_files(const Entries& files,
-        const std::map<std::string, std::shared_future<std::optional<std::string>>>& digests)
+        const std::map<std::string, std::optional<std::string>>& digests)
 {
     auto list = nlohmann::ordered_json::array();
     for (const auto& file : files)
@@ -134,7 +141,7 @@ nlohmann::ordered_json describe_files(const Entries& files,
         {
             entry["bytes"] = size;
             const auto ahead = digests.find(file.path);
-            const auto digest = ahead != digests.end() ? ahead->second.get() : sha256_of_file(file.path);
+            const auto digest = ahead != digests.end() ? ahead->second : sha256_of_file(file.path);
             if (digest)
                 entry["sha256"] = *digest;
             else
@@ -200,7 +207,7 @@ void RunManifest::write(const std::string& path, int exit_status, double seconds
     manifest["options_given"] = options_given_;
     manifest["log_file"] = log_file_;
 
-    manifest["inputs"] = describe_files(inputs_, digests_);
+    manifest["inputs"] = describe_files(inputs_, digests_.valid() ? digests_.get() : Digests {});
     // Every database, in path order: as the loader read it, or read now if it
     // never loaded (empty if it cannot be opened; the loader said why).
     std::map<std::string, std::map<std::string, std::string>> databases = databases_;

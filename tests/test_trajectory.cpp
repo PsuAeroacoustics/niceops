@@ -1303,6 +1303,16 @@ TEST_CASE("A WGS84 heading must be true degrees, and only one", "[trajectory][ge
                         "2,39.8002,-74.4,1000,0.1\n");
     REQUIRE_THROWS_WITH(Trajectory(turns.path, "databases/S-76D.json", demo_frame()),
             Catch::Matchers::ContainsSubstring("declares its heading in turns"));
+    // Spelled into the name, the reference or unit matches no alias: such a
+    // column was passed over for the velocity's nose, unrefused.
+    const TempCsv spelled_magnetic("time,lat,lon,alt,magnetic heading\n0,39.8,-74.4,1000,30\n"
+                                   "1,39.8001,-74.4,1000,30\n2,39.8002,-74.4,1000,30\n");
+    REQUIRE_THROWS_WITH(Trajectory(spelled_magnetic.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("is a magnetic heading"));
+    const TempCsv spelled_radians("time,lat,lon,alt,heading_rad\n0,39.8,-74.4,1000,0.5\n"
+                                  "1,39.8001,-74.4,1000,0.5\n2,39.8002,-74.4,1000,0.5\n");
+    REQUIRE_THROWS_WITH(Trajectory(spelled_radians.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("declares its heading in rad"));
     // Two candidates: the first match is not necessarily the true one.
     const TempCsv two("time,lat,lon,alt,hdg,true heading\n0,39.8,-74.4,1000,18,30\n1,39.8001,-74.4,1000,18,30\n"
                       "2,39.8002,-74.4,1000,18,30\n");

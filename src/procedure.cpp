@@ -143,7 +143,11 @@ Procedure niceops::read_procedure(const std::string& path)
             input_error(w, " needs a type: level, climb, speed, turn or hover.");
         const std::string type = item["type"].get<std::string>();
         {
-            std::vector<std::pair<std::string, const std::map<std::string, double>*>> keys = {{"duration", &times}};
+            // Only the segments that run for a time take duration_s: a speed
+            // segment runs to its speed, a turn through its angle.
+            std::vector<std::pair<std::string, const std::map<std::string, double>*>> keys;
+            if (type == "level" || type == "climb" || type == "descent" || type == "hover")
+                keys.push_back({"duration", &times});
             if (type == "level")
                 keys.push_back({"distance", &lengths});
             else if (type == "climb" || type == "descent")
@@ -162,6 +166,8 @@ Procedure niceops::read_procedure(const std::string& path)
             s.distance = read_quantity(item, w, "distance", lengths, false);
             if (std::isnan(s.duration) == std::isnan(s.distance))
                 input_error(w, " (level) needs duration_s or distance, one of them.");
+            if (!std::isnan(s.distance) && !(s.distance > 0.0))
+                input_error(w, " (level): distance must be positive.");
         }
         else if (type == "climb" || type == "descent")
         {

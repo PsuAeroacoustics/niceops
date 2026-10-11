@@ -189,7 +189,20 @@ TEST_CASE("a procedure refuses what it cannot fly as asked", "[procedure]")
             R"({"start": {"lat": 39.8, "lon": -74.4, "alt_ft": 1000, "speed_kt": 80, "course_deg": 0},
                 "segments": [{"type": "descent", "angel_deg": 6, "until_alt_ft": 500}]})");
     REQUIRE_THROWS_WITH(read_procedure(typo), Catch::Matchers::ContainsSubstring("unknown key \"angel_deg\""));
+    // A speed segment runs to its speed and a turn through its angle: a
+    // duration on either was accepted and ignored.
+    const auto timed = write_text("niceops_procedure_timed.json",
+            R"({"start": {"lat": 39.8, "lon": -74.4, "alt_ft": 1000, "speed_kt": 80, "course_deg": 0},
+                "segments": [{"type": "speed", "to_speed_kt": 60, "duration_s": 30}]})");
+    REQUIRE_THROWS_WITH(read_procedure(timed), Catch::Matchers::ContainsSubstring("unknown key \"duration_s\""));
+    // A negative distance flew nothing.
+    const auto backward = write_text("niceops_procedure_backward.json",
+            R"({"start": {"lat": 39.8, "lon": -74.4, "alt_ft": 1000, "speed_kt": 80, "course_deg": 0},
+                "segments": [{"type": "level", "distance_ft": -500}]})");
+    REQUIRE_THROWS_WITH(read_procedure(backward), Catch::Matchers::ContainsSubstring("distance must be positive"));
     std::filesystem::remove(typo);
+    std::filesystem::remove(timed);
+    std::filesystem::remove(backward);
 }
 
 TEST_CASE("a descending deceleration to rest can hover", "[procedure]")

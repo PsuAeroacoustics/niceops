@@ -612,6 +612,8 @@ add_test(NAME procedure_check_refuses_wrong_vehicle COMMAND niceops_procedure te
 set_tests_properties(procedure_check_refuses_wrong_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "Vehicle main rotor tip speed disagrees: databases/S-76D.json gives 220 m/s.*so the run is refused")
 add_test(NAME procedure_check_needs_vehicle COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope_nov.csv --check databases/B407_fixed_load_factor.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(procedure_check_needs_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "--check maps the states through the vehicle's rotor: give --vehicle")
+add_test(NAME procedure_check_needs_a_positive_load_factor COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope_zero.csv --check databases/B407_fixed_load_factor.nod --vehicle databases/B407.json --max_load_factor 0 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(procedure_check_needs_a_positive_load_factor PROPERTIES PASS_REGULAR_EXPRESSION "--max_load_factor: Value 0 not in range")
 add_test(NAME procedure_refuses_going_underground COMMAND niceops_procedure tests/data/procedure_underground.json -o integrated/procedure_underground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(procedure_refuses_going_underground PROPERTIES PASS_REGULAR_EXPRESSION "segment 2 goes below the ground")
 # A track below the observers' plane (here an altitude datum 5000 ft too high) ran silently.

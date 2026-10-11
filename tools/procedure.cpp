@@ -121,7 +121,8 @@ int main(int argc, char* argv[])
             "--max_load_factor, as niceops maps them. Needs --vehicle.");
     app.add_option("--vehicle", vehicle, "Vehicle file (JSON) for --check.");
     app.add_option("--max_load_factor", max_load_factor,
-            "For --check: niceops's --max_load_factor, in g (default 2).");
+            "For --check: niceops's --max_load_factor, in g (default 2).")
+            ->check(CLI::PositiveNumber);
     app.add_flag("--qsam,!--no-qsam", qsam, "For --check: niceops's --qsam (default on).");
     app.add_flag("--accept_vehicle_mismatch", accept_vehicle_mismatch,
             "For --check: map the states through a vehicle file that disagrees with the database, "

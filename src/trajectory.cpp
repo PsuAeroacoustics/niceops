@@ -140,6 +140,35 @@ void check_declared_units(const std::string& filename, const LabeledCsv& csv,
     // 12 degrees at the 2017 site, worth up to 2 dB) with nothing said.  So any
     // unit but degrees is refused, a header naming a magnetic reference is
     // refused, and so is a file offering two heading columns.
+    //
+    // A heading whose reference or unit is spelled into the name itself
+    // ("magnetic heading", "heading_rad") matches no alias, and would be
+    // passed over for the velocity's nose without a word; so every column
+    // naming a heading is looked at, not only the one that matched.
+    for (std::size_t i = 0; i < csv.header.size(); i++)
+    {
+        const std::string name = LabeledCsv::normalize(csv.header[i]);
+        if (name.find("heading") == std::string::npos && name.find("hdg") == std::string::npos)
+            continue;
+        if (name.find("mag") != std::string::npos)
+            input_error("Column \"", csv.header[i], "\" of ", filename, " is a magnetic heading, "
+                    "and the heading is read in degrees from true north. Add the site's declination "
+                    "and name the column heading.");
+        // The unit as a word of the header: "heading_rad", "hdg turns".
+        std::string word;
+        for (const char c : csv.header[i] + " ")
+        {
+            if (std::isalnum(static_cast<unsigned char>(c)))
+            {
+                word.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                continue;
+            }
+            if (in(word, {"rad", "rads", "radian", "radians", "turn", "turns", "grad", "grads", "gon", "mil", "mils"}))
+                input_error("Column \"", csv.header[i], "\" of ", filename, " declares its heading in ", word,
+                        ", but the heading is read in degrees from true north. Nothing is converted.");
+            word.clear();
+        }
+    }
     if (columns.heading != LabeledCsv::npos)
     {
         std::string raw = csv.header[columns.heading];

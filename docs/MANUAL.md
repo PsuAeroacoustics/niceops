@@ -337,7 +337,7 @@ column.
 | `lat`, `lon` | Degrees. |
 | `alt` | Altitude in `--units`, on the datum of `--ground_elevation`; z is the altitude less `--ground_elevation`. |
 | `vE`, `vN`, `vUp` | Optional velocity, `--units` per second, used when all three are present. |
-| `heading` | Optional compass heading of the nose, degrees from true north (`hdg` serves too); a unit other than degrees, a header naming a magnetic heading, and a second heading column are refused. It sets the hover nose and `--nose heading` ([The sphere's nose](#the-spheres-nose)). Resampled linearly, through north the short way. |
+| `heading` | Optional compass heading of the nose, degrees from true north (`hdg` serves too); a unit other than degrees, a header naming a magnetic heading, and a second heading column are refused, wherever the header says it (`heading (rad)` and `heading_rad` alike). It sets the hover nose and `--nose heading` ([The sphere's nose](#the-spheres-nose)). Resampled linearly, through north the short way. |
 
 Names are matched case-insensitively, ignoring punctuation and a parenthesized unit (`Latitude`,
 `LAT` and `lat (deg)` are one column), in any order. `alt_ft` is read under `--units ft` and
