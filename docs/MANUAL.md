@@ -219,7 +219,9 @@ is a physical quantity, given here in meters with its value in feet.
 | `-p`, `--plotting` | Plot the footprint with the flight track over it ([Plotting](#plotting)). |
 | `-f`, `--figfile` | Save the footprint figure to this file. |
 | `-F`, `--statefigfile` | Save the trajectory-state figures to this file. |
-| `--cmin`, `--cmax`, `--cstep` | Contour levels of the footprint figure, dB. Defaults 65, 100 and 5. |
+| `--cmin`, `--cmax`, `--cstep` | Contour levels of the footprint figure and of `--contour_file`, dB. Defaults 65, 100 and 5. |
+| `--contour_file` | Write contour polygons and their areas as GeoJSON ([Output files](#output-files)). Needs the observer grid and a frame. |
+| `--contour_metric` | What `--contour_file` contours: `sel` (default; one trajectory), `dnl`, `lden`, `cnel`, `lday`, `levening`, `lnight`, `laeq` or `lamax`, whose own output must be asked for too. |
 
 ### Units
 
@@ -285,7 +287,7 @@ The main ones:
 | `--tunneling`, `--skip_fill` without `--refraction stratified` | They are stratified-ray corrections. |
 | `--terrain` with `--refraction` or `--propagation_table`, or without a frame | Those models are built over flat ground; terrain needs to know where x/y lie. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
-| `--latlon`, `--nose heading` without a frame | Nothing to turn compass directions or invert positions with. |
+| `--latlon`, `--contour_file`, `--nose heading` without a frame; `--contour_file` with `-b`, or with `--contour_metric sel` over several trajectories | Nothing to turn compass directions or invert positions with; scattered observers have no grid to contour; one SEL per trajectory. |
 | `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock | Day or night would be made up. |
 | `--laeq_file` without `--laeq_window`, or an empty window | There is no default period. |
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
@@ -931,6 +933,15 @@ others:
   among its spheres by their blend weights, so a sphere with nothing measured toward the observer
   is still credited. The run evaluates every state, as `--coverage_file` does, whose share is
   weighted the same way. An observer that heard nothing is written as NaN.
+- `--contour_file`: GeoJSON (WGS84 longitude and latitude, RFC 7946), one MultiPolygon feature
+  per level from `--cmin` to `--cmax` in steps of `--cstep`, covering where `--contour_metric` is
+  at or above it, holes included, with the level and its area (m², km², square miles). It works
+  in a build without plotting and opens in any GIS. Contours are drawn by linear interpolation
+  between grid nodes, so a contour's position is as good as the grid's spacing; the area of a
+  smooth footprint converges with the square of it. A culled observer counts as below every
+  level, and a region reaching the grid's edge is closed along it, so widen `--grid` until the
+  outermost level closes inside it. It needs the run's frame (`--origin`, or a geodetic track)
+  and the observer grid.
 - `--latlon`: a `_latlon` companion beside every level file (`out.csv` → `out_latlon.csv`), one
   row per observer of latitude, longitude and level, always scattered.
 - `--epnl_file`, `--band_frames` ([EPNL](#epnl-and-reception-time-frames)); `--write_atmosphere`

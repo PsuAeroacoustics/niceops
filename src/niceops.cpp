@@ -35,6 +35,7 @@
 
 #include "atmosphere.hpp"
 #include "atmosphere_profile.hpp"
+#include "contour.hpp"
 #include "band_frames.hpp"
 #include "pnl.hpp"
 #include "refraction.hpp"
@@ -3651,6 +3652,8 @@ int run(int argc, char* argv[])
     double contour_step = 5.0;
     bool scattered = false;
     std::string observer_file = "";
+    std::string contour_file;
+    std::string contour_metric = "sel";
     double dt = 0.5;
     // NOTE: D default-initializes `double` to NaN, not 0, so the !isNaN guard
     // below is FALSE by default and D never mixes in an ambient level unless
@@ -3749,6 +3752,14 @@ int run(int argc, char* argv[])
     app.add_flag("-p,--plotting", plotting, "Enable plotting.");
     app.add_option("-f,--figfile", figure_file, "Filename to save figure.");
     app.add_option("-F,--statefigfile", state_figure_file, "Filename to save state figures.");
+    app.add_option("--contour_file", contour_file,
+            "Write contour polygons of --contour_metric at the --cmin/--cmax/--cstep levels, with "
+            "their areas, as GeoJSON (WGS84). Needs the observer grid and a frame (--origin, or a "
+            "geodetic track).");
+    app.add_option("--contour_metric", contour_metric,
+            "What --contour_file contours: sel (default; one trajectory), dnl, lden, cnel, lday, "
+            "levening, lnight, laeq or lamax, whose own output must be asked for too.")
+            ->check(CLI::IsMember({"sel", "dnl", "lden", "cnel", "lday", "levening", "lnight", "laeq", "lamax"}));
     app.add_option("--cmin", contour_min, "Minimum contour level, dB.");
     app.add_option("--cmax", contour_max, "Maximum contour level, dB.");
     app.add_option("--cstep", contour_step, "Contour level step, dB.");
@@ -4441,6 +4452,25 @@ int run(int argc, char* argv[])
         frame = std::isnan(frame_bearing) ? LocalFrame(*reference)
                                           : LocalFrame::track_aligned(*reference, frame_bearing);
     }
+    if (!contour_file.empty())
+    {
+        if (!frame)
+            input_error("--contour_file writes WGS84 polygons and needs the run's frame: give --origin "
+                        "<latitude> <longitude> (and usually --frame_bearing), or use a geodetic trajectory.");
+        if (!observer_file.empty())
+            input_error("--contour_file contours the observer grid; scattered observers (-b) have none.");
+        if (!(contour_step > 0.0) || !(contour_max >= contour_min))
+            input_error("--contour_file needs --cmin <= --cmax and a positive --cstep.");
+        const std::map<std::string, const std::string*> needs = {{"dnl", &dnl_file}, {"lden", &lden_file},
+                {"cnel", &cnel_file}, {"lday", &lday_file}, {"levening", &levening_file},
+                {"lnight", &lnight_file}, {"laeq", &laeq_file}, {"lamax", &lamax_file}};
+        const auto need = needs.find(contour_metric);
+        if (need != needs.end() && need->second->empty())
+            input_error("--contour_metric ", contour_metric, " contours that metric's output: ask for it too.");
+        if (contour_metric == "sel" && path_files.size() > 1)
+            input_error("--contour_metric sel contours one trajectory's SEL; with several, contour a "
+                        "metric that sums them (dnl, lden, cnel, a period level or lamax).");
+    }
     if (latlon && !frame)
     {
         input_error("--latlon has no frame to invert: give --origin <latitude> <longitude> "
@@ -5058,6 +5088,7 @@ int run(int argc, char* argv[])
         log(failed_paths, " of ", path_count, " trajectories could not be processed.");
     }
 
+    std::array<std::vector<double>, day_metric_count> day_levels;
     for (std::size_t m = 0; m < day_metric_count; m++)
     {
         if (!want_day_metric[m])
@@ -5073,6 +5104,7 @@ int run(int argc, char* argv[])
         std::vector<double> level(energy.size());
         for (std::size_t i = 0; i < energy.size(); i++)
             level[i] = 10.0 * std::log10(energy[i] / seconds);
+        day_levels[m] = level;
         log("Writing the ", day_metric_name(static_cast<DayMetric>(m)), " over ", path_count,
                 path_count == 1 ? " operation" : " operations",
                 full_history ? ", each integrated over its whole history," : ", each over its own 10 dB-down window,",
@@ -5134,6 +5166,25 @@ int run(int argc, char* argv[])
         write_levels(x_obs, y_obs, share, coverage_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, share, *frame, latlon_companion(coverage_file), scattered);
+    }
+
+    if (!contour_file.empty())
+    {
+        static const std::map<std::string, DayMetric> day_names = {{"dnl", DayMetric::dnl},
+                {"lden", DayMetric::lden}, {"cnel", DayMetric::cnel}, {"lday", DayMetric::lday},
+                {"levening", DayMetric::levening}, {"lnight", DayMetric::lnight}, {"laeq", DayMetric::laeq}};
+        const auto day = day_names.find(contour_metric);
+        const std::vector<double>& field = contour_metric == "sel" ? integrated_levels
+                : contour_metric == "lamax" ? totals.lamax
+                                            : day_levels[static_cast<std::size_t>(day->second)];
+        // The figures' levels, as D's iota(cmin, cmax + cstep, cstep) runs them.
+        const auto levels = iota_exclusive(contour_min, contour_max + contour_step, contour_step);
+        const auto areas = write_contour_geojson(contour_file, x_obs, y_obs, field, levels, *frame, contour_metric);
+        std::ostringstream summary;
+        for (std::size_t k = 0; k < levels.size(); k++)
+            summary << (k ? ", " : "") << levels[k] << " dB: " << areas[k] / (unit.to_meters * unit.to_meters)
+                    << " " << unit.name << "^2";
+        log("Wrote ", contour_metric, " contours to ", contour_file, "; areas at or above ", summary.str(), ".");
     }
 
     if (path_count > 1 && want_plots)

@@ -202,6 +202,7 @@ add_library(niceops_core STATIC
   src/smoothing_spline.cpp
   src/manifest.cpp
   src/build_info.cpp
+  src/contour.cpp
 )
 target_include_directories(niceops_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -255,6 +256,7 @@ add_executable(niceops_unit_tests
   tests/test_parallel.cpp
   tests/test_build.cpp
   tests/test_manifest.cpp
+  tests/test_contour.cpp
   tests/test_iota.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
@@ -495,6 +497,23 @@ add_test(NAME laeq_needs_a_window COMMAND niceops ${PERIOD_RUN} --start_utc 4320
 set_tests_properties(laeq_needs_a_window PROPERTIES PASS_REGULAR_EXPRESSION "--laeq_file needs --laeq_window")
 add_test(NAME laeq_window_refuses_empty COMMAND niceops ${PERIOD_RUN} --start_utc 43200 --laeq_file integrated/laeq_empty.csv --laeq_window 7 7 -o integrated/laeq_empty_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(laeq_window_refuses_empty PROPERTIES PASS_REGULAR_EXPRESSION "is empty; for a whole day give 0 24")
+# --contour_file: GeoJSON polygons of the footprint at the --cmin..--cmax levels, on the geodetic
+# demo track (whose frame the run knows).  The polygons' geometry is pinned by the unit tests
+# ([contour]); here the file, its levels and the refusals.
+add_test(NAME contour_run COMMAND niceops ${PERIOD_RUN} -o integrated/contour_sel.csv --contour_file integrated/contours.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(contour_run PROPERTIES FIXTURES_SETUP contour_runs)
+add_test(NAME contour_writes_geojson COMMAND ${CMAKE_COMMAND} -E cat integrated/contours.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(contour_writes_geojson PROPERTIES FIXTURES_REQUIRED contour_runs PASS_REGULAR_EXPRESSION "^\\{\"type\":\"FeatureCollection\",\"features\":\\[\\{\"type\":\"Feature\",\"properties\":\\{\"metric\":\"sel\",\"level_db\":65\\.0,\"area_m2\":[0-9.e+]+,.*\"geometry\":\\{\"type\":\"MultiPolygon\",\"coordinates\":\\[\\[\\[\\[-74\\.[0-9]+,39\\.[0-9]+\\]")
+add_test(NAME contour_dnl COMMAND niceops ${PERIOD_RUN} --start_utc 43200 -D integrated/contour_dnl_levels.csv --contour_metric dnl --cmin 20 --cmax 30 --cstep 5 -o integrated/contour_dnl_sel.csv --contour_file integrated/contours_dnl.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(contour_dnl PROPERTIES FIXTURES_SETUP contour_runs)
+add_test(NAME contour_dnl_levels COMMAND ${CMAKE_COMMAND} -E cat integrated/contours_dnl.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(contour_dnl_levels PROPERTIES FIXTURES_REQUIRED contour_runs PASS_REGULAR_EXPRESSION "\"metric\":\"dnl\",\"level_db\":20\\.0,\"area_m2\":[1-9].*\"level_db\":25\\.0.*\"level_db\":30\\.0")
+add_test(NAME contour_needs_a_frame COMMAND niceops --gridstep 1640 -o integrated/contour_noframe.csv --contour_file integrated/contours_noframe.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(contour_needs_a_frame PROPERTIES PASS_REGULAR_EXPRESSION "--contour_file writes WGS84 polygons and needs the run's frame")
+add_test(NAME contour_needs_the_grid COMMAND niceops ${PERIOD_RUN} -b tests/data/mixed_flush.csv -o integrated/contour_scattered.csv --contour_file integrated/contours_scattered.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(contour_needs_the_grid PROPERTIES PASS_REGULAR_EXPRESSION "scattered observers \\(-b\\) have none")
+add_test(NAME contour_metric_needs_its_output COMMAND niceops ${PERIOD_RUN} --contour_metric lamax -o integrated/contour_nolamax.csv --contour_file integrated/contours_nolamax.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(contour_metric_needs_its_output PROPERTIES PASS_REGULAR_EXPRESSION "--contour_metric lamax contours that metric's output: ask for it too")
 # An observer exactly at a source position: spherical spreading diverges at r = 0.
 # The level was +inf in the CSV, and with the asserts live the run aborted.  The
 # case passes only if the run finishes.

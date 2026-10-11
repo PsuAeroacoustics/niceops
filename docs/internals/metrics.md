@@ -117,6 +117,26 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
   run's (`provenance_leaves_sel_alone`).
 - **One database per run**: a sphere index means nothing across two.
 
+## Contours
+
+`src/contour.{hpp,cpp}` (`--contour_file`). Things to keep:
+
+- **The grid is padded by one node on every side, each pad at its edge neighbor's coordinate**
+  and below every level. The crossing toward a pad then sits on the edge node, so a region
+  reaching the edge closes along it and every ring closes; the zero-width pad cells only repeat
+  points, which are dropped.
+- **Segments carry the high region on their left**, so rings around high ground run
+  counterclockwise and holes clockwise, as RFC 7946 wants, and an outer ring is told from a hole
+  by its signed area. A rotation (`--frame_bearing`) keeps orientation; only a reflection would not.
+- **A saddle is decided by the mean of its four corners.** A non-finite node (culled) is below
+  every level, and a crossing against one sits on the finite node.
+- **A hole goes to the smallest outer ring holding its vertex mean**, not its first vertex, which
+  can lie on its outer ring's edge where both follow the grid's edge.
+- **Areas are planar, in the local frame**, before the projection to longitude and latitude.
+- The unit tests pin the geometry against analytic fields (a cone's disc, an annulus with its
+  hole, two peaks, the grid edge, culled nodes, both saddles); on the demo footprint the areas
+  agree with a count of grid cells above each level to 1–2%.
+
 ## Time weighting, day metrics, C-SEL
 
 **The period levels** (`DayMetric::lday` … `laeq` in `util/sel.hpp`) reuse the penalized-exposure
