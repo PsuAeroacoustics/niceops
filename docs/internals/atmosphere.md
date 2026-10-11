@@ -95,7 +95,7 @@ preserve:
   `process_trajectory` reads it through its own copy of the run's options, so everything below it
   that reads `options` sees that trajectory's air without knowing there are several. The run's
   options hold the first trajectory's. Each distinct `--wind` and `--atmosphere` is parsed once.
-  `air_*_is_its_own` pins each copy against its run alone.
+  `air_*_is_its_own` and `air_clock_is_each_tracks_own` pin each of the six against a run alone.
 - **Built per trajectory, in `process_trajectory`, not in `run()`.** Its surface air is that
   trajectory's vehicle file's (under `--temperature` and friends, which `--wind`, unlike
   `--atmosphere`, accepts), and its top has to clear that track. Inside `process_trajectory` the

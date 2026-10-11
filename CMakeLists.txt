@@ -535,6 +535,23 @@ add_test(NAME air_first_profile_is_its_own COMMAND golden_compare integrated/air
 add_test(NAME air_second_profile_is_its_own COMMAND golden_compare integrated/air_profile_b.csv integrated/air_profile_alone_uniform.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(air_first_track_is_its_own air_second_track_is_its_own air_tracks_differ air_first_profile_is_its_own air_second_profile_is_its_own PROPERTIES FIXTURES_REQUIRED air_runs)
 set_tests_properties(air_tracks_differ PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+# Wind, temperature and pressure per track likewise (through --refraction, so the wind matters),
+# and the clock: a noon copy and a 01:00 copy give the 01:00 copy's Lnight exactly, the noon one
+# adding nothing.
+set(AIR_WIND -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 50 --refraction linear --frame_bearing 210 --gridstep 1640 -L warn)
+add_test(NAME air_wind_per_track COMMAND niceops ${AIR_WIND} -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv --wind 15kt,30 --wind 5kt,200 --temperature 280 --temperature 300 --pressure 95 --pressure 101 -o integrated/air_wind_a.csv -o integrated/air_wind_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_wind_alone_a COMMAND niceops ${AIR_WIND} -t tracks/S-76D/197421AC.csv --wind 15kt,30 --temperature 280 --pressure 95 -o integrated/air_wind_alone_a.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_wind_alone_b COMMAND niceops ${AIR_WIND} -t tracks/S-76D/197421AC.csv --wind 5kt,200 --temperature 300 --pressure 101 -o integrated/air_wind_alone_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_clock_per_track COMMAND niceops ${PERIOD_RUN} -t tests/data/demo_geodetic_noclock.csv --start_utc 43200 --start_utc 3600 --lnight_file integrated/air_clock_both.csv -o integrated/air_clock_a.csv -o integrated/air_clock_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_clock_alone COMMAND niceops ${PERIOD_RUN} --start_utc 3600 --lnight_file integrated/air_clock_alone.csv -o integrated/air_clock_alone_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(air_wind_per_track air_wind_alone_a air_wind_alone_b air_clock_per_track air_clock_alone PROPERTIES FIXTURES_SETUP air_more_runs)
+add_test(NAME air_first_wind_is_its_own COMMAND golden_compare integrated/air_wind_a.csv integrated/air_wind_alone_a.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_second_wind_is_its_own COMMAND golden_compare integrated/air_wind_b.csv integrated/air_wind_alone_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME air_clock_is_each_tracks_own COMMAND golden_compare integrated/air_clock_both.csv integrated/air_clock_alone.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(air_first_wind_is_its_own air_second_wind_is_its_own air_clock_is_each_tracks_own PROPERTIES FIXTURES_REQUIRED air_more_runs)
+# The wind's bearing warning reaches a blowing wind that follows a calm one.
+add_test(NAME air_wind_bearing_warns_after_calm COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 50 --refraction linear --gridstep 4000 -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv --wind 0kt,0 --wind 15kt,30 -o integrated/air_bearing_a.csv -o integrated/air_bearing_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(air_wind_bearing_warns_after_calm PROPERTIES PASS_REGULAR_EXPRESSION "the direction is a compass bearing")
 add_test(NAME air_count_must_match COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv --humidity 20 --humidity 40 --humidity 60 -o integrated/air_count_a.csv -o integrated/air_count_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(air_count_must_match PROPERTIES PASS_REGULAR_EXPRESSION "Got 3 --humidity values for 2 trajectories")
 # niceops_procedure: a descending, decelerating approach to a hover, flown into a WGS84 track

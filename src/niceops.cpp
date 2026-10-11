@@ -5036,6 +5036,7 @@ int run(int argc, char* argv[])
     {
         std::map<std::string, SurfaceWind> parsed_winds;
         std::map<std::string, AtmosphereProfile> read_profiles;
+        bool warned_bearing = false;
         for (std::size_t path = 0; path < path_count; path++)
         {
             if (!wind_texts.empty())
@@ -5064,9 +5065,11 @@ int run(int argc, char* argv[])
                                 wind.roughness_length / unit.to_meters, " ", unit.name, "), where the surface "
                                 "layer's law does not yet hold; the profile carried up from it is uncertain.");
                     }
+                    // Once, for the first wind that blows: a calm one has no direction.
                     if (wind.speed > 0.0 && refraction != "none" && std::isnan(frame_bearing) && !frame
-                            && parsed_winds.empty())
+                            && !warned_bearing)
                     {
+                        warned_bearing = true;
                         warn("--wind: the direction is a compass bearing, turned into the local frame taking "
                              "+x as east. If this run's x/y are rotated -- the shipped AC tracks run +x along "
                              "210 degrees -- give --frame_bearing.");

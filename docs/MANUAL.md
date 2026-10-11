@@ -109,7 +109,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--path_smoothing` | How far, rms per axis, the path fitted through a WGS84 track may sit from its positions. Default 10 ft (3.048 m). Zero interpolates exactly. |
 | `-s`, `--step` | Resampling step, s (default 0.5), for a WGS84 track whose sampling is uneven or coarser than this. A finer track is never coarsened, and an AC track is used as sampled. Not the SEL integration step. |
 | `--trim` | Crop each trajectory from this x to its lowest or slowest point. Off by default; it changes which part of the flight is integrated. |
-| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night periods. Required with `-D`, `--lden_file`, `--cnel_file` or a period level when the track has no `utcsec` column. |
+| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night periods. Required with `-D`, `--lden_file`, `--cnel_file` or a period level when the track has no `utcsec` column. Once, or once per trajectory. |
 | `--units` | `ft` (default) or `m`: the length unit of the command line and of every file ([Units](#units)). |
 | `-l`, `--logfile` | Log file. Default `log/niceops.log`. |
 | `--manifest` | Write a JSON record of the run ([Run records and option files](#run-records-and-option-files)). |
@@ -1000,7 +1000,8 @@ the window is found.
 then take one value shared by every trajectory, or one per trajectory, and so does each
 trajectory's air: `--atmosphere`, `--wind`, `--humidity`, `--temperature`, `--pressure` and
 `--start_utc`, so a day's operations can each fly in their own weather and at their own time.
-The profile's shape (`--roughness_length`, `--stability`, `--surface_layer_depth`) is the run's. One output name for
+The profile's shape (`--roughness_length`, `--stability`, `--surface_layer_depth`,
+`--profile_levels`) is the run's. One output name for
 several tracks becomes one per track (`<track>_state.csv`, `<track>_LCE.csv`, `<track>_EPNL.csv`,
 `<track>_band_frames.nc`, `<track>_atmosphere.csv`), and `-i` and `--band_history` files are
 named for their track. Plotting is skipped.
