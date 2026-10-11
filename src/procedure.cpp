@@ -5,6 +5,8 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -54,6 +56,23 @@ const std::map<std::string, double> accelerations = {{"kt_per_s", knot}, {"mps2"
 const std::map<std::string, double> angles = {{"deg", deg_to_rad}};
 const std::map<std::string, double> times = {{"s", 1.0}};
 
+// A key no reader knows is a typo, and ignoring it flies the default
+// instead, silently.  `quantities` are the names read with a unit suffix.
+void refuse_unknown_keys(const nlohmann::json& object, const std::string& where,
+        const std::vector<std::string>& plain, const std::vector<std::pair<std::string, const std::map<std::string, double>*>>& quantities)
+{
+    for (const auto& item : object.items())
+    {
+        const std::string& key = item.key();
+        bool known = std::find(plain.begin(), plain.end(), key) != plain.end();
+        for (const auto& [name, units] : quantities)
+            for (const auto& unit : *units)
+                known = known || key == name + "_" + unit.first || key == name;
+        if (!known)
+            input_error(where, ": unknown key \"", key, "\".");
+    }
+}
+
 } // namespace
 
 Procedure niceops::read_procedure(const std::string& path)
@@ -71,6 +90,9 @@ Procedure niceops::read_procedure(const std::string& path)
         input_error("Procedure ", path, " is not JSON: ", e.what());
     }
     Procedure p;
+    if (!doc.is_object())
+        input_error("Procedure ", path, " must be a JSON object.");
+    refuse_unknown_keys(doc, "Procedure " + path, {"start", "step_s", "limits", "segments"}, {});
     if (!doc.contains("start") || !doc["start"].is_object())
         input_error("Procedure ", path, " needs a \"start\" object.");
     const auto& start = doc["start"];
@@ -78,6 +100,8 @@ Procedure niceops::read_procedure(const std::string& path)
     for (const char* key : {"lat", "lon"})
         if (!start.contains(key) || !start[key].is_number())
             input_error(where, " needs ", key, " (degrees).");
+    refuse_unknown_keys(start, where, {"lat", "lon"},
+            {{"alt", &lengths}, {"speed", &speeds}, {"course", &angles}, {"ground_alt", &lengths}});
     p.start = Geodetic {start["lat"].get<double>(), start["lon"].get<double>(), 0.0};
     if (!(std::fabs(p.start.latitude) <= 90.0) || !(std::fabs(p.start.longitude) <= 180.0))
         input_error(where, " is not a WGS84 position.");
@@ -98,6 +122,8 @@ Procedure niceops::read_procedure(const std::string& path)
     {
         const auto& limits = doc["limits"];
         const std::string lw = "Procedure " + path + ", limits";
+        const std::map<std::string, double> roll_units = {{"deg_per_s", deg_to_rad}};
+        refuse_unknown_keys(limits, lw, {"pull_g"}, {{"roll_rate", &roll_units}, {"acceleration", &accelerations}});
         if (limits.contains("pull_g"))
             p.pull = limits["pull_g"].get<double>();
         const double roll = read_quantity(limits, lw, "roll_rate", {{"deg_per_s", deg_to_rad}}, false);
@@ -119,6 +145,18 @@ Procedure niceops::read_procedure(const std::string& path)
         if (!item.contains("type") || !item["type"].is_string())
             input_error(w, " needs a type: level, climb, speed, turn or hover.");
         const std::string type = item["type"].get<std::string>();
+        {
+            std::vector<std::pair<std::string, const std::map<std::string, double>*>> keys = {{"duration", &times}};
+            if (type == "level")
+                keys.push_back({"distance", &lengths});
+            else if (type == "climb" || type == "descent")
+                keys.insert(keys.end(), {{"angle", &angles}, {"until_alt", &lengths}});
+            else if (type == "speed")
+                keys.insert(keys.end(), {{"to_speed", &speeds}, {"rate", &accelerations}, {"angle", &angles}});
+            else if (type == "turn")
+                keys.insert(keys.end(), {{"bank", &angles}, {"turn", &angles}});
+            refuse_unknown_keys(item, w, {"type"}, keys);
+        }
         ProcedureSegment s;
         s.duration = read_quantity(item, w, "duration", times, false);
         if (type == "level")
@@ -180,13 +218,13 @@ Procedure niceops::read_procedure(const std::string& path)
 std::vector<ProcedureState> niceops::fly(const Procedure& p)
 {
     // Integrated at a fine internal step, east/north/up about the start; the
-    // step divides the written one exactly.
+    // step divides the written one exactly, and time counts internal steps,
+    // so the written states stay evenly spaced, which spares niceops
+    // resampling them.
     const double h = p.step / std::ceil(p.step / 0.01);
-    const LocalFrame frame(p.start);
-    // Time counts internal steps, so a long procedure's written states stay
-    // evenly spaced, which spares niceops resampling them.
-    std::size_t steps = 0;
     const auto every = static_cast<std::size_t>(std::llround(p.step / h));
+    std::size_t steps = 0;
+    const LocalFrame frame(p.start);
     double t = 0.0, east = 0.0, north = 0.0, z = p.altitude;
     double speed = p.speed, course = p.course, gamma = 0.0, bank = 0.0;
     std::vector<ProcedureState> states;
@@ -217,6 +255,12 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
         gamma = approach(gamma, target_gamma, gamma_rate);
         bank = approach(bank, target_bank, p.roll_rate);
         speed = approach(speed, target_speed, acceleration);
+        // At rest there is no path to have an angle, nor a turn to bank for.
+        if (speed == 0.0)
+        {
+            gamma = 0.0;
+            bank = 0.0;
+        }
         if (speed > 1.0)
             course += gravity * std::tan(bank) / speed * h;
         east += speed * std::cos(gamma) * std::sin(course) * h;
@@ -225,6 +269,12 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
         steps++;
         t = static_cast<double>(steps) * h;
         write();
+    };
+    // The course a roll-out from bank phi turns, at the roll rate p and speed
+    // V: the integral of g tan(phi) / V as phi falls linearly to zero, which
+    // is (g / (V p)) (-ln cos phi).
+    const auto roll_out_turn = [&](double phi) {
+        return speed > 1.0 ? gravity / (speed * p.roll_rate) * -std::log(std::cos(std::fabs(phi))) : 0.0;
     };
     write();
     std::size_t index = 0;
@@ -241,13 +291,15 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
         case ProcedureSegment::Kind::level:
         {
             double travelled = 0.0;
+            if (!std::isnan(s.distance) && speed < 0.1)
+                input_error(w, " (level) at rest never covers its distance.");
             while (std::isnan(s.duration) ? travelled < s.distance : t < start_t + s.duration - 0.5 * h)
             {
                 const double before_e = east, before_n = north;
                 advance(0.0, 0.0, speed, p.acceleration);
                 travelled += std::hypot(east - before_e, north - before_n);
-                if (t - start_t > limit || (!std::isnan(s.distance) && speed < 0.1))
-                    input_error(w, " (level) at ", speed / knot, " kt never covers its distance.");
+                if (t - start_t > limit)
+                    input_error(w, " (level) never covers its distance.");
             }
             break;
         }
@@ -256,6 +308,9 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
             if (speed < 0.1)
                 input_error(w, " climbs or descends from rest: give it a speed first.");
             const bool up = s.path_angle > 0.0;
+            if (!std::isnan(s.until_altitude) && (up ? s.until_altitude <= z : s.until_altitude >= z))
+                input_error(w, up ? " climbs" : " descends", " to an altitude of ", s.until_altitude, " m, and "
+                        "starts at ", z, " m, already past it.");
             while (std::isnan(s.duration) ? (up ? z < s.until_altitude : z > s.until_altitude)
                                           : t < start_t + s.duration - 0.5 * h)
             {
@@ -282,13 +337,21 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
         {
             if (speed < 5.0)
                 input_error(w, " turns at ", speed / knot, " kt; a coordinated turn needs way on.");
-            // Roll out early by the course the roll-out itself still turns.
-            const double roll_time = std::fabs(s.bank) / p.roll_rate;
-            const double lead = 0.5 * gravity * std::tan(std::fabs(s.bank)) / speed * roll_time;
+            // Measured in the commanded direction.  The bank builds toward the
+            // segment's while more course is to go than the roll-out from the
+            // bank reached would turn, then rolls out; a short turn so never
+            // reaches full bank, and every turn ends level-winged.
+            const double sense = s.bank > 0.0 ? 1.0 : -1.0;
             const double start_course = course;
-            while (std::fabs(course - start_course) < std::max(s.turn - lead, 0.0))
+            bool rolling_out = false;
+            while (true)
             {
-                advance(0.0, s.bank, speed, p.acceleration);
+                const double to_go = s.turn - sense * (course - start_course);
+                if (!rolling_out && to_go <= roll_out_turn(bank))
+                    rolling_out = true;
+                if (rolling_out && bank == 0.0)
+                    break;
+                advance(0.0, rolling_out ? 0.0 : s.bank, speed, p.acceleration);
                 if (t - start_t > limit)
                     input_error(w, " never completes its turn.");
             }
@@ -296,7 +359,7 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
         }
         case ProcedureSegment::Kind::hover:
         {
-            if (speed > 0.0 || std::fabs(gamma) > 0.0 || std::fabs(bank) > 0.0)
+            if (speed > 0.0)
                 input_error(w, " (hover) starts at ", speed / knot, " kt: slow to 0 first (a speed segment).");
             while (t < start_t + s.duration - 0.5 * h)
                 advance(0.0, 0.0, 0.0, p.acceleration);
@@ -307,6 +370,12 @@ std::vector<ProcedureState> niceops::fly(const Procedure& p)
             if (states[k].altitude < p.ground_altitude - 1e-9)
                 input_error(w, " goes below the ground (ground_alt) at t = ", states[k].t, " s.");
     }
+    // Fly on as the last segment left it to the next written step, so the end
+    // is written.
+    while (steps % every != 0)
+        advance(gamma, bank, speed, p.acceleration);
+    if (states.back().altitude < p.ground_altitude - 1e-9)
+        input_error("The procedure ends below the ground (ground_alt).");
     return states;
 }
 
@@ -324,7 +393,7 @@ void niceops::write_procedure_track(const std::string& path, const std::vector<P
     for (const auto& s : states)
     {
         if (s.t <= last_t)
-            continue; // the closing write can repeat the last sample
+            continue; // a repeated sample, which fly() does not write
         last_t = s.t;
         out << s.t << "," << s.position.latitude << "," << s.position.longitude << ","
             << s.altitude / unit.to_meters << "," << s.east / unit.to_meters << "," << s.north / unit.to_meters

@@ -130,3 +130,84 @@ TEST_CASE("a procedure names its units, and refuses what cannot be flown", "[pro
     std::filesystem::remove(hover);
     std::filesystem::remove(both);
 }
+
+namespace {
+
+double final_heading_change(Procedure p)
+{
+    const auto states = fly(p);
+    return std::remainder(states.back().heading - p.course * rad_to_deg, 360.0);
+}
+
+ProcedureSegment turn_of(double bank_deg, double turn_deg)
+{
+    ProcedureSegment s;
+    s.kind = ProcedureSegment::Kind::turn;
+    s.bank = bank_deg * deg_to_rad;
+    s.turn = turn_deg * deg_to_rad;
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("turns end where they are asked to, small, last or reversed", "[procedure]")
+{
+    ProcedureSegment level;
+    level.duration = 5.0;
+    // A right 90 then a left 45: the second used to count the first's roll-out
+    // as its own turning, and ended at 89 degrees.
+    auto s_turn = start_at(40.0, 0.0, 1000.0);
+    s_turn.segments = {level, turn_of(30.0, 90.0), turn_of(-30.0, 45.0), level};
+    CHECK(std::fabs(final_heading_change(s_turn) - 45.0) < 1.0);
+    // Smaller than a full-bank roll-out's turning (about 24 degrees here): it
+    // used to be skipped.  The bank builds only as far as the turn needs.
+    auto small = start_at(40.0, 0.0, 1000.0);
+    small.segments = {level, turn_of(30.0, 20.0), level};
+    CHECK(std::fabs(final_heading_change(small) - 20.0) < 1.0);
+    // The last segment rolls out within itself.
+    auto last = start_at(40.0, 0.0, 1000.0);
+    last.segments = {level, turn_of(30.0, 90.0)};
+    const auto states = fly(last);
+    CHECK(std::fabs(states.back().heading - 90.0) < 1.0);
+    CHECK(std::fabs(states.back().heading - states[states.size() - 2].heading) < 0.01); // level-winged
+    // Left, through north.
+    auto left = start_at(100.0, 10.0, 1000.0);
+    left.segments = {turn_of(-20.0, 120.0)};
+    CHECK(std::fabs(final_heading_change(left) + 120.0) < 1.0);
+}
+
+TEST_CASE("a procedure refuses what it cannot fly as asked", "[procedure]")
+{
+    // A descent to an altitude above the start did nothing, silently.
+    auto wrong_way = start_at(80.0, 0.0, 1000.0);
+    ProcedureSegment descent;
+    descent.kind = ProcedureSegment::Kind::climb;
+    descent.path_angle = -6.0 * deg_to_rad;
+    descent.until_altitude = 1500.0 * ft2m;
+    wrong_way.segments = {descent};
+    REQUIRE_THROWS_WITH(fly(wrong_way), Catch::Matchers::ContainsSubstring("already past it"));
+    // A misspelled key flew the default.
+    const auto typo = write_text("niceops_procedure_typo.json",
+            R"({"start": {"lat": 39.8, "lon": -74.4, "alt_ft": 1000, "speed_kt": 80, "course_deg": 0},
+                "segments": [{"type": "descent", "angel_deg": 6, "until_alt_ft": 500}]})");
+    REQUIRE_THROWS_WITH(read_procedure(typo), Catch::Matchers::ContainsSubstring("unknown key \"angel_deg\""));
+    std::filesystem::remove(typo);
+}
+
+TEST_CASE("a descending deceleration to rest can hover", "[procedure]")
+{
+    // At rest the path angle goes, so the hover is not refused for it.
+    auto p = start_at(40.0, 0.0, 600.0);
+    ProcedureSegment stop;
+    stop.kind = ProcedureSegment::Kind::speed;
+    stop.target_speed = 0.0;
+    stop.acceleration = 1.0 * knot;
+    stop.path_angle = -3.0 * deg_to_rad;
+    ProcedureSegment hover;
+    hover.kind = ProcedureSegment::Kind::hover;
+    hover.duration = 10.0;
+    p.segments = {stop, hover};
+    const auto states = fly(p);
+    CHECK(states.back().up == 0.0);
+    CHECK(states.back().east == 0.0);
+}

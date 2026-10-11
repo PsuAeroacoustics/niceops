@@ -261,8 +261,9 @@ time, altitude and velocity must be finite, its column names recognized, and any
 declares must agree with what is read: lengths in `--units`, speeds in `--units` per second,
 times in seconds (`Alt (ft)` under `--units m`, `Climb Rate (fpm)` and `Time (ms)` are
 refused). A text line after the first row of data is an error (above it, a header). A track whose states
-go below the ground plane, with no `--terrain`, is warned about: its altitude datum and
-`--ground_elevation` disagree. A `--trim` that leaves fewer than
+go below the ground plane, with no `--terrain`, is warned about (beyond the larger of 1 m and a
+WGS84 track's `--path_smoothing`, and after `--trim`): its altitude datum and `--ground_elevation`
+disagree, or an AC track's z is not height above the ground. A `--trim` that leaves fewer than
 two states is refused, naming where the track's crop ends. An observer file must keep one
 width and yield at least one observer. An `--atmosphere` file must be finite, reach every state,
 and name its wind units. A database must vary in μ, γ and (unless `fixed_load_factor`)
@@ -1159,7 +1160,10 @@ refused:
 - **Transitions are flown**: the path angle changes at a limited pull (`limits.pull_g`, default
   0.1 g), the bank at a limited roll rate (`limits.roll_rate_deg_per_s`, default 10), and speed at
   the segment's rate, so a join puts no spike in the load factor. A climb overshoots its altitude
-  by the leveling-off, and a turn rolls out early by the course its roll-out turns.
+  by the leveling-off. A turn rolls in, holds and rolls out within itself, ending level-winged on
+  the asked course to within a degree; one too short to reach full bank banks only as far as it
+  needs. A target altitude already passed, and any key the format does not know, are refused.
+- **The end** is flown on to the next written step, so the last state is written.
 - **Calm air**: the heading is the course and the ground speed the airspeed. `step_s` (default
   0.2) is the spacing of the written states.
 - Whether the flown conditions stay inside a database's envelope is what `--provenance_file`

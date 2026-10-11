@@ -1103,26 +1103,6 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     auto& coverage = totals.coverage;
     // Create trajectory from CSV data
     Trajectory trajectory(job.trajectory, job.vehicle, options.geodetic, options.unit);
-    // Over flat ground the observers stand at z = 0, so a state below it is
-    // underground: almost always an altitude datum that disagrees with
-    // --ground_elevation.  It ran with exit status 0 and no word.  Over
-    // --terrain the datum may stand above the ground, and z < 0 can be flown.
-    if (!options.terrain)
-    {
-        std::size_t below = 0;
-        const State* lowest = nullptr;
-        for (const auto& state : trajectory.states)
-        {
-            if (state.z < 0.0)
-                below++;
-            if (lowest == nullptr || state.z < lowest->z)
-                lowest = &state;
-        }
-        if (below > 0)
-            warn(below, " of ", trajectory.states.size(), " states of ", job.trajectory, " are below the "
-                    "ground, the lowest at z = ", lowest->z / options.unit.to_meters, " ", options.unit.name,
-                    " (t = ", lowest->t, " s). Check the track's altitude datum against --ground_elevation.");
-    }
     // Ground effect is on by default, but it acts on per-band levels, so it is
     // applied only where the spectral path runs on a database that has spectra.
     const bool ground_effect = options.ground_effect && options.spectral && database.has_spectra();
@@ -1183,6 +1163,34 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (!std::isnan(options.trim_start))
     {
         trajectory.watts_trim(options.trim_start);
+    }
+
+    // Over flat ground the observers stand at z = 0, so a state below it is
+    // underground: almost always an altitude datum that disagrees with the
+    // run's ground.  It ran with exit status 0 and no word.  Checked on the
+    // states the run integrates (after --trim), with a tolerance of the
+    // smoothing a WGS84 track's fit is allowed (a track landing at the ground
+    // dips that far), and at least a meter.  Over --terrain the datum may stand
+    // above the ground, and z < 0 can be flown.
+    if (!options.terrain)
+    {
+        const bool geodetic = trajectory.frame().has_value();
+        const double tolerance = std::max(1.0, geodetic ? options.geodetic.path_smoothing : 0.0);
+        std::size_t below = 0;
+        const State* lowest = nullptr;
+        for (const auto& state : trajectory.states)
+        {
+            if (state.z < -tolerance)
+                below++;
+            if (lowest == nullptr || state.z < lowest->z)
+                lowest = &state;
+        }
+        if (below > 0)
+            warn(below, " of ", trajectory.states.size(), " states of ", job.trajectory, " are below the "
+                    "ground, the lowest at z = ", lowest->z / options.unit.to_meters, " ", options.unit.name,
+                    " (t = ", lowest->t, " s). ",
+                    geodetic ? "Check the track's altitude datum against --ground_elevation."
+                             : "Check the track's z, which is read as height above the observers' ground.");
     }
 
     // Resample onto the -s grid, smoothing the path first.  Disabled, matching

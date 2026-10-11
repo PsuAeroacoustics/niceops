@@ -95,11 +95,19 @@ track.
   1 / cos(bank)").
 - **Transitions are rate-limited** (pull, roll rate, acceleration), never stepped: a step in the
   path angle is an infinite load factor once differentiated.
+- **A turn rolls out within its own segment**, measured in the commanded direction, starting the
+  roll-out when the course still to go equals what the roll-out from the bank reached turns,
+  (g / (V p)) (−ln cos φ). Leaving the roll-out to the next segment let a reversal count the
+  previous turn's roll-out as its own (an S-turn ended 44° off), skipped a turn shorter than the
+  full-bank roll-out, and left a final turn banked and short. The tests fly an S-turn, a 20° turn
+  under the full-bank roll-out, a final turn and a left turn through north to within 1°.
+- **At rest the path angle and bank are zero**, so a descending deceleration to rest can hover.
 - **Time counts internal steps** (`t = n h`, h dividing `step_s` exactly), so the written states are
   evenly spaced and niceops keeps them rather than resampling.
-- **Units in keys, a bare number refused**, as on niceops's command line; a segment below
-  `ground_alt` is refused. niceops itself warns of states below its ground plane without terrain
-  (`track_below_ground_warns`).
+- **Units in keys, a bare number refused, an unknown key refused** (a typo flew the default);
+  a segment below `ground_alt`, or a climb whose altitude is already passed, is refused. niceops
+  itself warns of states below its ground plane without terrain (`track_below_ground_warns`), after
+  `--trim` and beyond the smoothing a WGS84 fit is allowed, since a landing dips that far.
 
 ## Trajectory class
 
