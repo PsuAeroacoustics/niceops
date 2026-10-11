@@ -132,9 +132,6 @@ struct LabeledCsv
     std::vector<std::string> header;
     std::vector<std::vector<double>> rows;
 
-    // Index of the first column whose name matches any of `names`, or npos.
-    // Both sides are normalized first (see normalize below), so "Latitude",
-    // " lat (deg) " and "LAT" all find the same column.
     // Whether column `index` answers to any of `names`, as column() matches.
     bool column_matches(std::size_t index, const std::vector<const char*>& names) const
     {
@@ -145,25 +142,14 @@ struct LabeledCsv
         return false;
     }
 
+    // Index of the first column whose name matches any of `names`, or npos.
+    // Both sides are normalized first (see normalize below), so "Latitude",
+    // " lat (deg) " and "LAT" all find the same column.
     std::size_t column(const std::vector<const char*>& names) const
     {
         for (std::size_t i = 0; i < header.size(); i++)
             if (column_matches(i, names))
                 return i;
-        return npos;
-    }
-
-    std::size_t column(std::initializer_list<const char*> names) const
-    {
-        for (std::size_t i = 0; i < header.size(); i++)
-        {
-            const std::string field = normalize(header[i]);
-            for (const char* name : names)
-            {
-                if (field == normalize(name))
-                    return i;
-            }
-        }
         return npos;
     }
 

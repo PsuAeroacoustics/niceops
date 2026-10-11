@@ -1522,11 +1522,10 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
         info("Not every sphere stores its upper half: directions above the plane read the mirror image.");
     max_level_ = dba_max;
     min_excess_factor_ = eaa_min;
-    screen_suspect_cells(datafile_path, load, advance_ratios, flight_path_angles, thrust_coefficients,
-            reached_cells);
     conditions_.resize(advance_ratios.size());
     for (std::size_t i = 0; i < conditions_.size(); i++)
         conditions_[i] = {advance_ratios[i], flight_path_angles[i], thrust_coefficients[i]};
+    screen_suspect_cells(datafile_path, load, reached_cells);
     info("Max level found in database is: ", max_level_);
     info("Lowest excess attenuation factor is: ", min_excess_factor_);
     // Set sphere_radius to dimensional_radius
@@ -2476,8 +2475,7 @@ std::array<int, 2> Database::bin_padding() const
 // energy: the bounds, built from the grid on
 // demand, stay valid.
 void Database::screen_suspect_cells(const std::string& datafile_path, const DatabaseLoadOptions& load,
-        const std::vector<double>& advance_ratios, const std::vector<double>& flight_path_angles,
-        const std::vector<double>& thrust_coefficients, const std::vector<char>& reached)
+        const std::vector<char>& reached)
 {
     struct Suspect
     {
@@ -2487,7 +2485,7 @@ void Database::screen_suspect_cells(const std::string& datafile_path, const Data
     };
     const std::size_t n_phi = phis.size(), n_theta = thetas.size();
     const std::size_t n_bands = frequencies_.size();
-    const std::size_t n_cond = advance_ratios.size();
+    const std::size_t n_cond = conditions_.size();
     std::vector<Suspect> found;
     std::vector<double> around;
     assert(reached.size() == grid.size());
@@ -2541,8 +2539,8 @@ void Database::screen_suspect_cells(const std::string& datafile_path, const Data
 
     const auto describe = [&](const Suspect& s) {
         std::ostringstream text;
-        text << "sphere " << s.condition << " (mu " << advance_ratios[s.condition] << ", gamma "
-             << flight_path_angles[s.condition] << ", C_T " << thrust_coefficients[s.condition]
+        text << "sphere " << s.condition << " (mu " << conditions_[s.condition][0] << ", gamma "
+             << conditions_[s.condition][1] << ", C_T " << conditions_[s.condition][2]
              << ") at phi " << phis[s.cell / n_theta] << ", theta " << thetas[s.cell % n_theta];
         if (s.band < n_bands)
             text << ", " << frequencies_[s.band] << " Hz";
@@ -2591,8 +2589,8 @@ void Database::screen_suspect_cells(const std::string& datafile_path, const Data
         out.precision(10);
         for (const auto& s : found)
         {
-            out << s.condition << ',' << advance_ratios[s.condition] << ','
-                << flight_path_angles[s.condition] << ',' << thrust_coefficients[s.condition] << ','
+            out << s.condition << ',' << conditions_[s.condition][0] << ','
+                << conditions_[s.condition][1] << ',' << conditions_[s.condition][2] << ','
                 << phis[s.cell / n_theta] << ',' << thetas[s.cell % n_theta] << ',';
             if (s.band < n_bands)
                 out << frequencies_[s.band];

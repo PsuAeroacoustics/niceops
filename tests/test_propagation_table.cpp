@@ -427,10 +427,13 @@ TEST_CASE("a table's turbulence and roughness are read back from its provenance"
     CHECK(read.value == 3.7e-7);
     CHECK(provenance.count("roughness_m") == 0);
 
-    // A turbulent PE table records gamma_t alone: phase screens.
-    read = table_coherence({{"gamma_t", "1.0000000000000001e-05"}, {"march", "receiver"}});
+    // A turbulent PE table records its phase screens' gamma_t.
+    provenance.clear();
+    record_coherence(provenance, {"phase_screens", 1e-5, 0.0, {}});
+    read = table_coherence(provenance);
     CHECK(read.model == "phase_screens");
     CHECK(read.value == 1e-5);
+    CHECK(read.rounded_gamma_t.empty());
 
     // A model named with no strength is still air.
     CHECK(table_coherence({{"turbulence_model", "chessell"}}).model == "none");

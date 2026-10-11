@@ -11,40 +11,23 @@
 #include <vector>
 
 #include "util/logger.hpp"
+#include "util/netcdf_write.hpp"
 #include "util/paths.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
 
 namespace {
 
+constexpr const char* option = "--provenance_spheres";
+
 void nc_check(int status, const std::string& what, const std::string& path)
 {
-    if (status != NC_NOERR)
-        input_error("--provenance_spheres ", path, ": netCDF error while ", what, ": ", nc_strerror(status), ".");
+    netcdf::check_write(status, option, what, path);
 }
-
-// Closes on scope exit unless closed explicitly, which is the only close whose
-// status is looked at.
-struct NcFile
-{
-    int id = -1;
-    ~NcFile()
-    {
-        if (id >= 0)
-            nc_close(id);
-    }
-    int close()
-    {
-        const int status = id >= 0 ? nc_close(id) : NC_NOERR;
-        id = -1;
-        return status;
-    }
-};
 
 void put_text(int ncid, int var, const char* name, const std::string& value, const std::string& path)
 {
-    nc_check(nc_put_att_text(ncid, var, name, value.size(), value.c_str()),
-            std::string("writing attribute ") + name, path);
+    netcdf::put_text(ncid, var, name, value, option, path);
 }
 
 } // namespace
@@ -58,7 +41,7 @@ void write_sphere_energy(const std::string& path, const SphereEnergyFile& meta,
     const std::size_t spheres = meta.conditions.size();
     assert(meta.x.size() == observers && meta.y.size() == observers && meta.exposure.size() == observers);
     ensure_parent_directory(path);
-    NcFile file;
+    netcdf::File file;
     nc_check(nc_create(path.c_str(), NC_NETCDF4 | NC_CLOBBER, &file.id), "creating it", path);
     const int ncid = file.id;
 
@@ -91,7 +74,7 @@ void write_sphere_energy(const std::string& path, const SphereEnergyFile& meta,
     {
         // A row per observer, mostly zeros: compression shrinks it to the
         // dozen spheres an observer hears.
-        const std::size_t chunk[2] = {std::min<std::size_t>(observers, 16), spheres};
+        const std::size_t chunk[2] = {std::min<std::size_t>(observers, 16), spheres}; // as written below
         nc_check(nc_def_var_chunking(ncid, share_var, NC_CHUNKED, chunk), "setting the chunking", path);
         nc_check(nc_def_var_deflate(ncid, share_var, 1, 1, 1), "setting compression", path);
     }
@@ -115,24 +98,30 @@ void write_sphere_energy(const std::string& path, const SphereEnergyFile& meta,
         nc_check(nc_put_var_double(ncid, axis == 0 ? mu_var : axis == 1 ? gamma_var : ct_var, column.data()),
                 "writing the conditions", path);
     }
-    std::vector<float> row(spheres);
-    for (std::size_t i = 0; i < observers; i++)
+    // A chunk's rows at a time, so each deflated chunk is written once.
+    const std::size_t rows = std::min<std::size_t>(observers, 16);
+    std::vector<float> block(rows * spheres);
+    for (std::size_t first = 0; first < observers && spheres > 0; first += rows)
     {
-        const double total = meta.exposure[i];
-        std::fill(row.begin(), row.end(), total > 0.0 ? 0.0f : fill);
-        if (total > 0.0)
+        const std::size_t here = std::min(rows, observers - first);
+        for (std::size_t r = 0; r < here; r++)
         {
-            for (const auto& [sphere, value] : energy[i])
+            const std::size_t i = first + r;
+            const double total = meta.exposure[i];
+            float* row = &block[r * spheres];
+            std::fill(row, row + spheres, total > 0.0 ? 0.0f : fill);
+            if (total > 0.0)
             {
-                assert(sphere < spheres);
-                row[sphere] = static_cast<float>(value / total);
+                for (const auto& [sphere, value] : energy[i])
+                {
+                    assert(sphere < spheres);
+                    row[sphere] = static_cast<float>(value / total);
+                }
             }
         }
-        if (spheres == 0)
-            continue;
-        const std::size_t start[2] = {i, 0};
-        const std::size_t count[2] = {1, spheres};
-        nc_check(nc_put_vara_float(ncid, share_var, start, count, row.data()), "writing energy_share", path);
+        const std::size_t start[2] = {first, 0};
+        const std::size_t count[2] = {here, spheres};
+        nc_check(nc_put_vara_float(ncid, share_var, start, count, block.data()), "writing energy_share", path);
     }
     nc_check(file.close(), "closing it", path);
 }

@@ -286,8 +286,7 @@ int main(int argc, char** argv)
             ground.gamma_t = gamma_t;
             ground.turbulence_model = gamma_t > 0.0 ? TurbulenceModel::harmonoise : TurbulenceModel::chessell;
             ground.roughness = roughness * unit.to_meters;
-            coherence = {gamma_t > 0.0 ? "harmonoise" : turbulence > 0.0 ? "chessell" : "none",
-                    gamma_t > 0.0 ? gamma_t : turbulence, ground.roughness};
+            coherence = ground_coherence(ground);
         }
         const auto admittance = ground_impedance(ground, bands, sound_speed);
 
@@ -390,9 +389,7 @@ int main(int argc, char** argv)
             provenance["march"] = march;
             if (gamma_t > 0.0)
             {
-                char text[32];
-                std::snprintf(text, sizeof text, "%.17g", gamma_t);
-                provenance["gamma_t"] = text;
+                record_coherence(provenance, {"phase_screens", gamma_t, 0.0, {}});
                 provenance["outer_scale_m"] = std::to_string(outer_scale);
                 provenance["realizations"] = std::to_string(realizations);
                 provenance["seed"] = std::to_string(seed);

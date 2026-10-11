@@ -56,7 +56,7 @@ struct Procedure
     double step = 0.2;     // s between written states
     // How hard transitions are flown.
     double pull = 0.1;                         // g above or below 1 g, changing the path angle
-    double roll_rate = 10.0 * 3.14159265358979323846 / 180.0; // rad/s
+    double roll_rate = 10.0 * deg_to_rad; // rad/s
     double acceleration = 0.5;                 // m/s^2, when a speed segment gives none
     std::vector<ProcedureSegment> segments;
 };

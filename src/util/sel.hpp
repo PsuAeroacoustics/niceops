@@ -283,6 +283,29 @@ inline double averaging_seconds(DayMetric metric, ClockWindow window = {})
     return hours * 3600.0;
 }
 
+// The metric's short name: --contour_metric's value and its --raster_file field.
+inline const char* day_metric_key(DayMetric metric)
+{
+    switch (metric)
+    {
+    case DayMetric::lden:
+        return "lden";
+    case DayMetric::cnel:
+        return "cnel";
+    case DayMetric::lday:
+        return "lday";
+    case DayMetric::levening:
+        return "levening";
+    case DayMetric::lnight:
+        return "lnight";
+    case DayMetric::laeq:
+        return "laeq";
+    case DayMetric::dnl:
+        break;
+    }
+    return "dnl";
+}
+
 // The option that asks for a metric, for messages.
 inline const char* day_metric_option(DayMetric metric)
 {

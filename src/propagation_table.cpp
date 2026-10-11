@@ -10,6 +10,7 @@
 
 #include <netcdf.h>
 
+#include "ground_effect.hpp"
 #include "util/logger.hpp"
 #include "util/netcdf.hpp"
 #include "util/paths.hpp"
@@ -397,19 +398,14 @@ TableCoherence table_coherence(const std::map<std::string, std::string>& provena
         coherence.model = model->second;
         coherence.value = number(model->second == "chessell" ? "turbulence" : "gamma_t");
     }
-    else if (provenance.count("gamma_t") != 0)
+    else if (const auto gamma_t = provenance.find("gamma_t"); gamma_t != provenance.end())
     {
+        // A turbulent PE table built before the record, which wrote gamma_t
+        // with std::to_string's six decimals: "0.000000" is turbulent too.
         coherence.model = "phase_screens";
         coherence.value = number("gamma_t");
-        // std::to_string's fixed six decimals, as tables built before the
-        // record wrote it: "0.000000" is a turbulent table too.
-        const std::string& text = provenance.at("gamma_t");
-        if (text.size() == 8 && text.compare(0, 2, "0.") == 0
-                && text.find_first_not_of("0123456789", 2) == std::string::npos)
-        {
-            coherence.rounded_gamma_t = text;
-            return coherence;
-        }
+        coherence.rounded_gamma_t = gamma_t->second;
+        return coherence;
     }
     if (coherence.model != "none" && !(coherence.value > 0.0))
         coherence = TableCoherence {"none", 0.0, coherence.roughness, {}};
@@ -453,20 +449,33 @@ std::string coherence_mismatch(const TableCoherence& run, const TableCoherence& 
             + " reaches only the pairs it does not cover and plate microphones' offset from bare ground";
 }
 
+TableCoherence ground_coherence(const GroundModel& ground)
+{
+    TableCoherence coherence;
+    if (ground.turbulence_model == TurbulenceModel::chessell && ground.turbulence > 0.0)
+        coherence = {"chessell", ground.turbulence, 0.0, {}};
+    else if (ground.turbulence_model == TurbulenceModel::harmonoise && ground.gamma_t > 0.0)
+        coherence = {"harmonoise", ground.gamma_t, 0.0, {}};
+    coherence.roughness = ground.roughness;
+    return coherence;
+}
+
+std::string exact_text(double value)
+{
+    char text[32];
+    std::snprintf(text, sizeof text, "%.17g", value);
+    return text;
+}
+
 void record_coherence(std::map<std::string, std::string>& provenance, const TableCoherence& coherence)
 {
-    auto exact = [](double value) {
-        char text[32];
-        std::snprintf(text, sizeof text, "%.17g", value);
-        return std::string(text);
-    };
-    if (coherence.model == "chessell" || coherence.model == "harmonoise")
+    if (coherence.model != "none")
     {
         provenance["turbulence_model"] = coherence.model;
-        provenance[coherence.model == "chessell" ? "turbulence" : "gamma_t"] = exact(coherence.value);
+        provenance[coherence.model == "chessell" ? "turbulence" : "gamma_t"] = exact_text(coherence.value);
     }
     if (coherence.roughness > 0.0)
-        provenance["roughness_m"] = exact(coherence.roughness);
+        provenance["roughness_m"] = exact_text(coherence.roughness);
 }
 
 } // namespace niceops

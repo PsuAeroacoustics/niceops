@@ -775,15 +775,6 @@ struct PathJob
     std::string epnl;
     std::string band_frames;
     std::size_t count = 1;
-    // This trajectory's air (--atmosphere, --wind, --humidity, --temperature,
-    // --pressure, --start_utc), given once for the run or once per trajectory.
-    // process_trajectory reads them through its own copy of the run's options.
-    std::optional<AtmosphereProfile> atmosphere;
-    std::optional<SurfaceWind> surface_wind;
-    double humidity_override = std::numeric_limits<double>::quiet_NaN();
-    double temperature_override = std::numeric_limits<double>::quiet_NaN();
-    double pressure_override = std::numeric_limits<double>::quiet_NaN();
-    double start_utc = std::numeric_limits<double>::quiet_NaN();
 };
 
 // What every trajectory of a run adds to, per observer: each day-evening-night
@@ -798,10 +789,10 @@ struct RunTotals
     std::vector<double> time_above;
     std::vector<std::array<double, 2>> coverage;
     // --provenance_file, per observer: the SEL energy, and the shares of it
-    // from states clamped on each axis or with the load-factor law held
-    // (provenance_axes), and the energy each sphere supplied, sorted by
+    // from states with each ConditionFlag (state_condition.hpp), in bit
+    // order, and the energy each sphere supplied, sorted by
     // sphere, through the states' blend weights.
-    std::vector<std::array<double, 6>> provenance;
+    std::vector<std::array<double, 1 + condition_flag_count>> provenance;
     std::vector<std::vector<std::pair<std::uint32_t, double>>> sphere_energy;
 };
 
@@ -812,9 +803,8 @@ struct RunTotals
 // by their blend weights as the blend gave them, so a sphere with nothing
 // measured toward the observer, which the evaluation leaves out, still is.  An observer that
 // heard nothing has no shares, and is written as NaN.
-void write_provenance(const std::vector<double>& x_obs, const std::vector<double>& y_obs,
-        const RunTotals& totals, const Database& database, const std::string& out_file,
-        bool scattered, LengthUnit unit)
+void write_provenance(const std::vector<Vec3>& observers, const RunTotals& totals, const Database& database,
+        const std::string& out_file, LengthUnit unit)
 {
     auto file = open_output(out_file);
     file << "x(" << unit.name << "),y(" << unit.name << "),exposure_db,share_mu_clamped,share_gamma_clamped,"
@@ -824,8 +814,7 @@ void write_provenance(const std::vector<double>& x_obs, const std::vector<double
     const double nan = std::numeric_limits<double>::quiet_NaN();
     for (std::size_t i = 0; i < totals.provenance.size(); i++)
     {
-        const double x = scattered ? x_obs[i] : x_obs[i % x_obs.size()];
-        const double y = scattered ? y_obs[i] : y_obs[i / x_obs.size()];
+        const double x = observers[i].x, y = observers[i].y;
         const auto& p = totals.provenance[i];
         // The exposure shared out: the SEL itself for one operation, the
         // energy sum of the operations' SELs for several.
@@ -1101,19 +1090,11 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
 // trajectory itself for the single-path plotting block.  Anything that throws
 // in here condemns this trajectory alone; the caller catches and moves on.
 Trajectory process_trajectory(const Database& database, const PathJob& job,
-        const RunOptions& run_options, const std::vector<Vec3>& observers,
+        const RunOptions& options, const std::vector<Vec3>& observers,
         const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
         const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
         RunTotals& totals)
 {
-    // The run's options with this trajectory's own air.
-    RunOptions options = run_options;
-    options.atmosphere = job.atmosphere;
-    options.surface_wind = job.surface_wind;
-    options.humidity_override = job.humidity_override;
-    options.temperature_override = job.temperature_override;
-    options.pressure_override = job.pressure_override;
-    options.geodetic.start_utc = job.start_utc;
     auto& lamax = totals.lamax;
     auto& nax = totals.nax;
     auto& coverage = totals.coverage;
@@ -1319,9 +1300,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::array<std::size_t, 4> spheres_blended {};
     std::vector<Database::SourceState> source_states;
     source_states.reserve(nt);
-    // Per state, for --provenance_file: bit k set when provenance_axes[k]
-    // applies (1 mu clamped, 2 gamma clamped, 4 C_T clamped, 8 load factor
-    // held at --max_load_factor, 16 held at --min_load_factor).
+    // Per state, for --provenance_file: its ConditionFlag bits.
     std::vector<unsigned char> state_provenance(nt, 0);
     for (const auto& state : trajectory.states)
     {
@@ -1350,22 +1329,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const auto condition = state_condition(state, database, options.qsam, options.max_load_factor,
                 blend_options);
         if (condition.load_capped)
-        {
             load_capped++;
-            state_provenance[source_states.size()] |= 8;
-        }
         if (condition.load_floored)
-        {
             load_floored++;
-            state_provenance[source_states.size()] |= 16;
-        }
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
                 Vec3(nose[0], nose[1], nose[2]),
                 Vec3(state.nx, state.ny, state.nz), condition.advance_ratio,
                 condition.flight_path_angle, condition.thrust_coefficient, blend_options));
         const auto& blend = source_states.back().blend;
-        state_provenance[source_states.size() - 1] |= (blend.advance_ratio_clamped ? 1 : 0)
-                | (blend.flight_path_angle_clamped ? 2 : 0) | (blend.thrust_coefficient_clamped ? 4 : 0);
+        state_provenance[source_states.size() - 1]
+                = static_cast<unsigned char>(condition_flags(condition, blend));
         mu_clamped += blend.advance_ratio_clamped;
         fpa_clamped += blend.flight_path_angle_clamped;
         ct_clamped += blend.thrust_coefficient_clamped;
@@ -2439,10 +2412,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     const bool needs_full_history = options.write_time_history || any_day_metric
             || options.full_history || options.want_lamax || options.want_nax || options.want_ta
             || options.want_csel || write_band_history || want_frames;
+    // run() refuses --provenance_file with -a.
+    assert(!(options.want_provenance && level_is_transformed));
     // The coverage report needs every state's level, so nothing is skipped.
-    if (options.want_provenance && level_is_transformed)
-        input_error("--provenance_file attributes the aircraft's energy to the states and spheres "
-                "it came from: it does not combine with -a, whose energy came from neither.");
     const bool bounded = !level_is_transformed && !options.want_coverage && !options.want_provenance;
     DirectionBounds direction_bounds;
     // Only the spectral path has a bound worth building.  A broadband evaluation
@@ -3235,7 +3207,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     if (weight == 0.0)
                         continue;
                     totals_here[0] += weight;
-                    for (int axis = 0; axis < 5; axis++)
+                    for (int axis = 0; axis < condition_flag_count; axis++)
                         if (state_provenance[it] & (1u << axis))
                             totals_here[1 + axis] += weight;
                     const auto& blend = source_states[it].blend;
@@ -3785,10 +3757,14 @@ int run(int argc, char* argv[])
             "Write every gridded level this run writes (SEL for one trajectory, the day and period "
             "levels, LAmax, NAx, TA, the unmeasured share) to one CF netCDF, with WGS84 latitude "
             "and longitude when the run has a frame. Needs the observer grid.");
+    std::vector<std::string> contour_metrics = {"sel"};
+    for (std::size_t m = 0; m < day_metric_count; m++)
+        contour_metrics.push_back(day_metric_key(static_cast<DayMetric>(m)));
+    contour_metrics.push_back("lamax");
     app.add_option("--contour_metric", contour_metric,
             "What --contour_file contours: sel (default; one trajectory), dnl, lden, cnel, lday, "
             "levening, lnight, laeq or lamax, whose own output must be asked for too.")
-            ->check(CLI::IsMember({"sel", "dnl", "lden", "cnel", "lday", "levening", "lnight", "laeq", "lamax"}));
+            ->check(CLI::IsMember(contour_metrics));
     app.add_option("--cmin", contour_min, "Minimum contour level, dB.");
     app.add_option("--cmax", contour_max, "Maximum contour level, dB.");
     app.add_option("--cstep", contour_step, "Contour level step, dB.");
@@ -4328,30 +4304,27 @@ int run(int argc, char* argv[])
         expand_per_path(band_frames_files, "--band_frames names");
     expand_per_path(database_files, "database files");
     // The air, when given: once for every trajectory, or once each.
-    for (auto* list : {&atmosphere_files, &wind_texts})
+    for (auto [list, what] : {std::pair{&atmosphere_files, "--atmosphere files"}, {&wind_texts, "--wind values"}})
         if (!list->empty())
-            expand_per_path(*list, list == &atmosphere_files ? "--atmosphere files" : "--wind values");
-    for (auto* list : {&humidity_overrides, &temperature_overrides, &pressure_overrides, &start_utcs})
+            expand_per_path(*list, what);
+    for (auto [list, what] : {std::pair{&humidity_overrides, "--humidity values"},
+                 {&temperature_overrides, "--temperature values"}, {&pressure_overrides, "--pressure values"},
+                 {&start_utcs, "--start_utc values"}})
         if (!list->empty())
-            expand_per_path(*list, list == &humidity_overrides ? "--humidity values"
-                            : list == &temperature_overrides  ? "--temperature values"
-                            : list == &pressure_overrides     ? "--pressure values"
-                                                              : "--start_utc values");
+            expand_per_path(*list, what);
     if (!provenance_spheres_file.empty() && provenance_file.empty())
         input_error("--provenance_spheres writes beside --provenance_file: give that too.");
     if (!provenance_file.empty() && !std::isnan(ambient_level))
         input_error("--provenance_file attributes the aircraft's energy to the states and spheres "
                 "it came from: it does not combine with -a, whose energy came from neither.");
+    const bool several_databases = std::any_of(database_files.begin(), database_files.end(),
+            [&](const std::string& f) { return f != database_files.front(); });
     // The provenance names spheres by their index in one database.
-    if (!provenance_file.empty()
-            && std::any_of(database_files.begin(), database_files.end(),
-                    [&](const std::string& f) { return f != database_files.front(); }))
+    if (!provenance_file.empty() && several_databases)
         input_error("--provenance_file names spheres of one database: run it once per database.");
     // Each database load writes the screen afresh, so a second database would
     // overwrite the first one's list.
-    if (!database_load.screen_file.empty()
-            && std::any_of(database_files.begin(), database_files.end(),
-                    [&](const std::string& f) { return f != database_files.front(); }))
+    if (!database_load.screen_file.empty() && several_databases)
         input_error("--screen_database lists one database's entries: run it once per database.");
     expand_per_path(vehicle_files, "vehicle files");
     expand_per_path(out_files, "output files");
@@ -4500,6 +4473,8 @@ int run(int argc, char* argv[])
         frame = std::isnan(frame_bearing) ? LocalFrame(*reference)
                                           : LocalFrame::track_aligned(*reference, frame_bearing);
     }
+    const std::array<const std::string*, day_metric_count> day_files = {&dnl_file, &lden_file, &cnel_file,
+            &lday_file, &levening_file, &lnight_file, &laeq_file};
     if (!contour_file.empty())
     {
         if (!frame)
@@ -4509,11 +4484,11 @@ int run(int argc, char* argv[])
             input_error("--contour_file contours the observer grid; scattered observers (-b) have none.");
         if (!(contour_step > 0.0) || !(contour_max >= contour_min))
             input_error("--contour_file needs --cmin <= --cmax and a positive --cstep.");
-        const std::map<std::string, const std::string*> needs = {{"dnl", &dnl_file}, {"lden", &lden_file},
-                {"cnel", &cnel_file}, {"lday", &lday_file}, {"levening", &levening_file},
-                {"lnight", &lnight_file}, {"laeq", &laeq_file}, {"lamax", &lamax_file}};
-        const auto need = needs.find(contour_metric);
-        if (need != needs.end() && need->second->empty())
+        const std::string* need = contour_metric == "lamax" ? &lamax_file : nullptr;
+        for (std::size_t m = 0; m < day_metric_count; m++)
+            if (contour_metric == day_metric_key(static_cast<DayMetric>(m)))
+                need = day_files[m];
+        if (need && need->empty())
             input_error("--contour_metric ", contour_metric, " contours that metric's output: ask for it too.");
         if (contour_metric == "sel" && path_files.size() > 1)
             input_error("--contour_metric sel contours one trajectory's SEL; with several, contour a "
@@ -4539,9 +4514,7 @@ int run(int argc, char* argv[])
     // open: `-d X --screen_database X` would replace the database with it.
     if (!database_load.screen_file.empty())
     {
-        std::error_code ignored;
-        if (std::filesystem::exists(database_load.screen_file, ignored)
-                && std::filesystem::equivalent(database_load.screen_file, database_files.front(), ignored))
+        if (same_file(database_load.screen_file, database_files.front()))
             input_error("--screen_database would overwrite the database it reads, ", database_files.front(),
                     ". Give another file name.");
     }
@@ -4653,8 +4626,6 @@ int run(int argc, char* argv[])
     std::vector<double> integrated_levels(observers.size());
     // DNL, Lden and CNEL are properties of the whole set of operations, not of
     // one flight: each trajectory's penalized exposure is an energy, and they sum.
-    const std::array<const std::string*, day_metric_count> day_files = {&dnl_file, &lden_file, &cnel_file,
-            &lday_file, &levening_file, &lnight_file, &laeq_file};
     if (laeq_file.empty() != laeq_window_hours.empty())
         input_error(laeq_file.empty() ? "--laeq_window is for --laeq_file, which is not given."
                                       : "--laeq_file needs --laeq_window START END, local clock hours: there "
@@ -4684,7 +4655,8 @@ int run(int argc, char* argv[])
     const bool want_coverage = !coverage_file.empty();
     totals.coverage.assign(want_coverage ? observers.size() : 0, std::array<double, 2> {0.0, 0.0});
     const bool want_provenance = !provenance_file.empty();
-    totals.provenance.assign(want_provenance ? observers.size() : 0, std::array<double, 6> {});
+    totals.provenance.assign(want_provenance ? observers.size() : 0,
+            std::array<double, 1 + condition_flag_count> {});
     totals.sphere_energy.assign(want_provenance ? observers.size() : 0, {});
     const bool want_csel = !csel_files.empty();
     if (want_nax && !std::isfinite(nax_threshold))
@@ -4987,13 +4959,7 @@ int run(int argc, char* argv[])
         // offset's bare ground).  Either way round, a difference would treat
         // the two kinds of pair differently without a word.
         const TableCoherence table_has = table_coherence(options.propagation_table->provenance());
-        TableCoherence run_has;
-        if (options.ground.turbulence_model == TurbulenceModel::chessell && options.ground.turbulence > 0.0)
-            run_has = {"chessell", options.ground.turbulence, 0.0, {}};
-        else if (options.ground.turbulence_model == TurbulenceModel::harmonoise && options.ground.gamma_t > 0.0)
-            run_has = {"harmonoise", options.ground.gamma_t, 0.0, {}};
-        run_has.roughness = options.ground.roughness;
-        const std::string mismatch = coherence_mismatch(run_has, table_has);
+        const std::string mismatch = coherence_mismatch(ground_coherence(options.ground), table_has);
         if (!mismatch.empty())
         {
             warn("--propagation_table ", propagation_table, ": ", mismatch, ". Build the table with the "
@@ -5018,15 +4984,12 @@ int run(int argc, char* argv[])
             }
         }
     }
-    // Each trajectory's air goes with its job (PathJob); the run's options
-    // hold the first trajectory's, which is every trajectory's when each was
-    // given once.
+    // Each trajectory's air (--atmosphere, --wind, --humidity, --temperature,
+    // --pressure, --start_utc) goes into its own copy of the options, in the
+    // trajectory loop.
     const auto value_for = [](const std::vector<double>& list, std::size_t path) {
         return list.empty() ? std::numeric_limits<double>::quiet_NaN() : list[path];
     };
-    options.humidity_override = value_for(humidity_overrides, 0);
-    options.temperature_override = value_for(temperature_overrides, 0);
-    options.pressure_override = value_for(pressure_overrides, 0);
     options.refraction = refraction != "none";
     options.stratified = refraction == "stratified";
     if ((tunneling || skip_fill) && !options.stratified)
@@ -5111,8 +5074,6 @@ int run(int argc, char* argv[])
             }
         }
     }
-    options.surface_wind = winds.front();
-    options.atmosphere = profiles.front();
     options.trim_start = trim_start;
     options.utc_offset = utc_offset;
     if (!laeq_window_hours.empty())
@@ -5140,7 +5101,6 @@ int run(int argc, char* argv[])
     options.unit = unit;
     options.geodetic.frame = frame;
     options.geodetic.ground_elevation = ground_elevation;
-    options.geodetic.start_utc = value_for(start_utcs, 0);
     // -s is the resampling step for both adapt() and a geodetic track that
     // needs resampling; neither ever coarsens a track that is already finer.
     options.geodetic.resample_dt = dt;
@@ -5174,13 +5134,14 @@ int run(int argc, char* argv[])
                                                               : atmosphere_out_files[path_index];
             job.csel_output = csel_files.empty() ? std::string() : csel_files[path_index];
             job.count = path_count;
-            job.atmosphere = profiles[path_index];
-            job.surface_wind = winds[path_index];
-            job.humidity_override = value_for(humidity_overrides, path_index);
-            job.temperature_override = value_for(temperature_overrides, path_index);
-            job.pressure_override = value_for(pressure_overrides, path_index);
-            job.start_utc = value_for(start_utcs, path_index);
-            trajectory_holder = process_trajectory(database, job, options, observers,
+            RunOptions path_options = options;
+            path_options.atmosphere = profiles[path_index];
+            path_options.surface_wind = winds[path_index];
+            path_options.humidity_override = value_for(humidity_overrides, path_index);
+            path_options.temperature_override = value_for(temperature_overrides, path_index);
+            path_options.pressure_override = value_for(pressure_overrides, path_index);
+            path_options.geodetic.start_utc = value_for(start_utcs, path_index);
+            trajectory_holder = process_trajectory(database, job, path_options, observers,
                     observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
         }
         catch (const std::exception& problem)
@@ -5203,9 +5164,7 @@ int run(int argc, char* argv[])
         // Each is an energy average: over a 24-hour day for the penalized
         // levels, the summed event energies over 86 400 s, not their raw sum
         // (which reads 49.37 dB high); over its own period for a period level.
-        const double seconds = averaging_seconds(static_cast<DayMetric>(m),
-                laeq_window_hours.empty() ? ClockWindow {}
-                                          : ClockWindow {laeq_window_hours[0], laeq_window_hours[1]});
+        const double seconds = averaging_seconds(static_cast<DayMetric>(m), options.laeq_window);
         const auto& energy = totals.day_energy[m];
         const std::string& file = *day_files[m];
         std::vector<double> level(energy.size());
@@ -5253,15 +5212,15 @@ int run(int argc, char* argv[])
     {
         log("Writing where each observer's energy came from, over ", path_count,
                 path_count == 1 ? " operation, to " : " operations, to ", provenance_file);
-        write_provenance(x_obs, y_obs, totals, database, provenance_file, scattered, unit);
+        write_provenance(observers, totals, database, provenance_file, unit);
         if (!provenance_spheres_file.empty())
         {
             SphereEnergyFile meta;
             meta.grid = !scattered;
             for (std::size_t i = 0; i < totals.provenance.size(); i++)
             {
-                meta.x.push_back(scattered ? x_obs[i] : x_obs[i % x_obs.size()]);
-                meta.y.push_back(scattered ? y_obs[i] : y_obs[i / x_obs.size()]);
+                meta.x.push_back(observers[i].x);
+                meta.y.push_back(observers[i].y);
                 meta.exposure.push_back(totals.provenance[i][0]);
             }
             for (std::size_t k = 0; k < database.condition_count(); k++)
@@ -5272,96 +5231,99 @@ int run(int argc, char* argv[])
         }
     }
 
+    // The energy-weighted fraction of each observer's levels that came from
+    // cells the database did not measure.  An observer that heard nothing has
+    // no fraction to give, and is written as NaN.
+    std::vector<double> unmeasured_share;
     if (want_coverage)
     {
-        // The energy-weighted fraction of each observer's levels that came from
-        // cells the database did not measure.  An observer that heard nothing
-        // has no fraction to give, and is written as NaN.
         const auto& coverage = totals.coverage;
-        std::vector<double> share(coverage.size());
+        unmeasured_share.resize(coverage.size());
         for (std::size_t i = 0; i < coverage.size(); i++)
         {
-            share[i] = coverage[i][1] > 0.0 ? coverage[i][0] / coverage[i][1]
-                                            : std::numeric_limits<double>::quiet_NaN();
+            unmeasured_share[i] = coverage[i][1] > 0.0 ? coverage[i][0] / coverage[i][1]
+                                                       : std::numeric_limits<double>::quiet_NaN();
         }
         log("Writing the unmeasured share of the levels over ", path_count,
                 path_count == 1 ? " operation to " : " operations to ", coverage_file);
-        write_levels(x_obs, y_obs, share, coverage_file, scattered, unit);
+        write_levels(x_obs, y_obs, unmeasured_share, coverage_file, scattered, unit);
         if (latlon)
-            write_geodetic_levels(x_obs, y_obs, share, *frame, latlon_companion(coverage_file), scattered);
+        {
+            write_geodetic_levels(x_obs, y_obs, unmeasured_share, *frame, latlon_companion(coverage_file),
+                    scattered);
+        }
     }
 
-    if (!contour_file.empty() && contour_metric == "sel" && failed_paths > 0)
+    // Every gridded level this run wrote, each as it went to its own file, for
+    // --contour_file and --raster_file.  A skipped trajectory writes no -o, and
+    // its SEL vector holds only zeros, so the SEL is here only when the one
+    // trajectory ran.
+    std::vector<RasterField> gridded;
+    if (path_count == 1 && failed_paths == 0)
+        gridded.push_back({"sel", "sound exposure level (SEL), A-weighted", "dB", &integrated_levels});
+    for (std::size_t m = 0; m < day_metric_count; m++)
     {
-        warn("--contour_file ", contour_file, " is not written: its trajectory was skipped, so there is no "
-                "SEL to contour.");
+        const auto metric = static_cast<DayMetric>(m);
+        if (want_day_metric[m])
+            gridded.push_back({day_metric_key(metric), day_metric_name(metric), "dB", &day_levels[m]});
     }
-    else if (!contour_file.empty())
+    if (want_lamax)
+        gridded.push_back({"lamax", std::string("LAmax, ") + maximum_name(level_weighting), "dB", &totals.lamax});
+    if (want_nax)
     {
-        static const std::map<std::string, DayMetric> day_names = {{"dnl", DayMetric::dnl},
-                {"lden", DayMetric::lden}, {"cnel", DayMetric::cnel}, {"lday", DayMetric::lday},
-                {"levening", DayMetric::levening}, {"lnight", DayMetric::lnight}, {"laeq", DayMetric::laeq}};
-        const auto day = day_names.find(contour_metric);
-        const std::vector<double>& field = contour_metric == "sel" ? integrated_levels
-                : contour_metric == "lamax" ? totals.lamax
-                                            : day_levels[static_cast<std::size_t>(day->second)];
-        // The figures' levels, as D's iota(cmin, cmax + cstep, cstep) runs them.
-        const auto levels = iota_exclusive(contour_min, contour_max + contour_step, contour_step);
-        const auto areas = write_contour_geojson(contour_file, x_obs, y_obs, field, levels, *frame, contour_metric);
-        std::ostringstream summary;
-        for (std::size_t k = 0; k < levels.size(); k++)
-            summary << (k ? ", " : "") << levels[k] << " dB: " << areas[k] / (unit.to_meters * unit.to_meters)
-                    << " " << unit.name << "^2";
-        log("Wrote ", contour_metric, " contours to ", contour_file, "; areas at or above ", summary.str(), ".");
+        std::ostringstream name;
+        name << "operations with " << maximum_name(level_weighting) << " at or above " << nax_threshold << " dB";
+        gridded.push_back({"nax", name.str(), "1", &totals.nax});
+    }
+    if (want_ta)
+    {
+        std::ostringstream name;
+        name << "time above " << ta_threshold << " dB (" << to_string(level_weighting)
+             << " weighting, reception time)";
+        gridded.push_back({"time_above", name.str(), "s", &totals.time_above});
+    }
+    if (want_coverage)
+    {
+        gridded.push_back({"unmeasured_share", "energy share of the level from cells the database did not "
+                "measure", "1", &unmeasured_share});
+    }
+
+    if (!contour_file.empty())
+    {
+        // The metric's own output was required up front, and SEL with one
+        // trajectory, so only a skipped trajectory's SEL can be missing.
+        const auto field = std::find_if(gridded.begin(), gridded.end(),
+                [&](const RasterField& f) { return f.name == contour_metric; });
+        if (field == gridded.end())
+        {
+            warn("--contour_file ", contour_file, " is not written: its trajectory was skipped, so there is no "
+                    "SEL to contour.");
+        }
+        else
+        {
+            // The figures' levels, as D's iota(cmin, cmax + cstep, cstep) runs them.
+            const auto levels = iota_exclusive(contour_min, contour_max + contour_step, contour_step);
+            const auto areas = write_contour_geojson(contour_file, x_obs, y_obs, *field->values, levels, *frame,
+                    contour_metric);
+            std::ostringstream summary;
+            for (std::size_t k = 0; k < levels.size(); k++)
+                summary << (k ? ", " : "") << levels[k] << " dB: " << areas[k] / (unit.to_meters * unit.to_meters)
+                        << " " << unit.name << "^2";
+            log("Wrote ", contour_metric, " contours to ", contour_file, "; areas at or above ", summary.str(),
+                    ".");
+        }
     }
 
     if (!raster_file.empty())
     {
-        // Each field as the run writes it to its own file.  A skipped
-        // trajectory writes no -o, and its SEL vector holds only zeros.
-        std::vector<RasterField> fields;
-        if (path_count == 1 && failed_paths == 0)
-            fields.push_back({"sel", "sound exposure level (SEL), A-weighted", "dB", &integrated_levels});
-        static const char* const day_keys[] = {"dnl", "lden", "cnel", "lday", "levening", "lnight", "laeq"};
-        static_assert(sizeof(day_keys) / sizeof(day_keys[0]) == day_metric_count);
-        for (std::size_t m = 0; m < day_metric_count; m++)
-        {
-            if (want_day_metric[m])
-                fields.push_back({day_keys[m], day_metric_name(static_cast<DayMetric>(m)), "dB", &day_levels[m]});
-        }
-        if (want_lamax)
-            fields.push_back({"lamax", std::string("LAmax, ") + maximum_name(level_weighting), "dB", &totals.lamax});
-        if (want_nax)
-        {
-            std::ostringstream name;
-            name << "operations with " << maximum_name(level_weighting) << " at or above " << nax_threshold << " dB";
-            fields.push_back({"nax", name.str(), "1", &totals.nax});
-        }
-        if (want_ta)
-        {
-            std::ostringstream name;
-            name << "time above " << ta_threshold << " dB (" << to_string(level_weighting)
-                 << " weighting, reception time)";
-            fields.push_back({"time_above", name.str(), "s", &totals.time_above});
-        }
-        std::vector<double> share;
-        if (want_coverage)
-        {
-            share.resize(totals.coverage.size());
-            for (std::size_t i = 0; i < share.size(); i++)
-                share[i] = totals.coverage[i][1] > 0.0 ? totals.coverage[i][0] / totals.coverage[i][1]
-                                                       : std::numeric_limits<double>::quiet_NaN();
-            fields.push_back({"unmeasured_share", "energy share of the level from cells the database did not "
-                    "measure", "1", &share});
-        }
-        if (fields.empty())
+        if (gridded.empty())
         {
             warn("--raster_file ", raster_file, " has no gridded level to hold: SEL goes in it for one "
                     "trajectory, and a day or period level, LAmax, NAx, TA or coverage for several.");
         }
-        log("Writing ", fields.size(), fields.size() == 1 ? " gridded level" : " gridded levels", " to ",
+        log("Writing ", gridded.size(), gridded.size() == 1 ? " gridded level" : " gridded levels", " to ",
                 raster_file, frame ? ", with WGS84 positions." : " (no frame: local x/y only).");
-        write_raster(raster_file, x_obs, y_obs, fields, frame ? &*frame : nullptr, frame_bearing);
+        write_raster(raster_file, x_obs, y_obs, gridded, frame ? &*frame : nullptr, frame_bearing);
     }
 
     if (path_count > 1 && want_plots)

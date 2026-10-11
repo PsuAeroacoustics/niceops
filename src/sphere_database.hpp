@@ -867,8 +867,7 @@ private:
     std::size_t suspect_bands_ = 0;
     // The constructor's last pass over the grid and spectra: see the definition.
     void screen_suspect_cells(const std::string& datafile_path, const DatabaseLoadOptions& load,
-            const std::vector<double>& advance_ratios, const std::vector<double>& flight_path_angles,
-            const std::vector<double>& thrust_coefficients, const std::vector<char>& reached);
+            const std::vector<char>& reached);
     // Band centers shared by every sphere, and the per-band levels laid out as
     // spectra_[(cell * frequencies_.size() + band) * n_conditions + condition].
     //

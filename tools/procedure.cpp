@@ -35,14 +35,15 @@ using namespace niceops; // NOLINT(google-build-using-namespace) -- ported code 
 namespace {
 
 // The spans of time, [first, last] state times, over which `flagged` holds.
-std::vector<std::pair<double, double>> spans(const std::vector<State>& states, const std::vector<bool>& flagged)
+std::vector<std::pair<double, double>> spans(const std::vector<State>& states, const std::vector<unsigned>& flags,
+        unsigned flag)
 {
     std::vector<std::pair<double, double>> result;
     for (std::size_t i = 0; i < states.size(); i++)
     {
-        if (!flagged[i])
+        if (!(flags[i] & flag))
             continue;
-        if (i > 0 && flagged[i - 1])
+        if (i > 0 && (flags[i - 1] & flag))
             result.back().second = states[i].t;
         else
             result.emplace_back(states[i].t, states[i].t);
@@ -52,9 +53,8 @@ std::vector<std::pair<double, double>> spans(const std::vector<State>& states, c
 
 // Reads `track` back as niceops would (WGS84, at -s's default, which never
 // coarsens the track's own step) and
-// reports, per axis, the states `database` clamps.  Returns how many states
-// were clamped or held on any axis.
-std::size_t check_envelope(const std::string& track, LengthUnit unit, const std::string& database_file,
+// reports, per axis, the states `database` clamps.
+void check_envelope(const std::string& track, LengthUnit unit, const std::string& database_file,
         const std::string& vehicle_file, double max_load_factor, bool qsam, bool accept_vehicle_mismatch)
 {
     GeodeticInput geodetic;
@@ -65,40 +65,40 @@ std::size_t check_envelope(const std::string& track, LengthUnit unit, const std:
     BlendOptions blend;
     blend.tip_speed = trajectory.vehicle.tip_speed;
     const auto& states = trajectory.states;
-    const char* const names[] = {"advance ratio clamped to the database's range",
-            "flight path angle clamped to the database's range", "thrust coefficient clamped to the database's range",
-            "load factor held at --max_load_factor"};
-    std::array<std::vector<bool>, 4> flags;
-    for (auto& f : flags)
-        f.assign(states.size(), false);
+    // The flags reported, in order; the --min_load_factor floor is not one.
+    const std::pair<unsigned, const char*> reported[] = {
+            {advance_ratio_clamped, "advance ratio clamped to the database's range"},
+            {flight_path_angle_clamped, "flight path angle clamped to the database's range"},
+            {thrust_coefficient_clamped, "thrust coefficient clamped to the database's range"},
+            {load_held_at_max, "load factor held at --max_load_factor"}};
+    const unsigned any_reported = advance_ratio_clamped | flight_path_angle_clamped | thrust_coefficient_clamped
+            | load_held_at_max;
+    std::vector<unsigned> flags(states.size());
     std::size_t any = 0;
     for (std::size_t i = 0; i < states.size(); i++)
     {
         const auto condition = state_condition(states[i], database, qsam, max_load_factor, blend);
         const auto at = database.blend_at(condition.advance_ratio, condition.flight_path_angle,
                 condition.thrust_coefficient, blend);
-        flags[0][i] = at.advance_ratio_clamped;
-        flags[1][i] = at.flight_path_angle_clamped;
-        flags[2][i] = at.thrust_coefficient_clamped;
-        flags[3][i] = condition.load_capped;
-        any += flags[0][i] || flags[1][i] || flags[2][i] || flags[3][i];
+        flags[i] = condition_flags(condition, at);
+        any += (flags[i] & any_reported) != 0;
     }
     std::printf("Envelope of %s: %zu of %zu states (every %.2f s) clamped or held.\n", database_file.c_str(), any,
             states.size(), states.size() > 1 ? states[1].t - states[0].t : 0.0);
-    for (int axis = 0; axis < 4; axis++)
+    for (const auto& [flag, name] : reported)
     {
-        if (axis == 3 && !database.fixed_load_factor())
+        if (flag == load_held_at_max && !database.fixed_load_factor())
             continue;
-        const auto found = spans(states, flags[axis]);
+        const auto found = spans(states, flags, flag);
         std::size_t count = 0;
-        for (const bool f : flags[axis])
-            count += f;
-        std::printf("  %s: %zu states", names[axis], count);
+        for (const unsigned f : flags)
+            count += (f & flag) != 0;
+        std::printf("  %s: %zu states", name, count);
         for (std::size_t k = 0; k < found.size(); k++)
             std::printf("%s t = %.1f-%.1f s", k == 0 ? "," : ";", found[k].first, found[k].second);
         std::printf("\n");
     }
-    return any;
+
 }
 
 } // namespace
@@ -145,7 +145,7 @@ int main(int argc, char* argv[])
     }
     catch (const std::exception& problem)
     {
-        error("Stopping: ", problem.what());
+        report_again(problem, "Stopping: ");
         return 2;
     }
     return 0;

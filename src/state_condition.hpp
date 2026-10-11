@@ -32,6 +32,29 @@ struct StateCondition
 StateCondition state_condition(const State& state, const Database& database, bool qsam,
         double max_load_factor, const BlendOptions& blend);
 
+// The ways a state's lookup is not its own condition, as bits: niceops's
+// --provenance_file shares and niceops_procedure --check's report.
+enum ConditionFlag : unsigned
+{
+    advance_ratio_clamped = 1u << 0,
+    flight_path_angle_clamped = 1u << 1,
+    thrust_coefficient_clamped = 1u << 2,
+    load_held_at_max = 1u << 3, // --max_load_factor
+    load_held_at_min = 1u << 4, // --min_load_factor
+};
+inline constexpr int condition_flag_count = 5;
+
+// A state's flags, from its condition and the blend the database gave it
+// (Database::Blend).
+template <typename Blend>
+unsigned condition_flags(const StateCondition& condition, const Blend& blend)
+{
+    return (blend.advance_ratio_clamped ? advance_ratio_clamped : 0u)
+            | (blend.flight_path_angle_clamped ? flight_path_angle_clamped : 0u)
+            | (blend.thrust_coefficient_clamped ? thrust_coefficient_clamped : 0u)
+            | (condition.load_capped ? load_held_at_max : 0u) | (condition.load_floored ? load_held_at_min : 0u);
+}
+
 // The vehicle file's tip speed, rotor radius, weight and (on a
 // fixed_load_factor database) C_T at 1 g against what the database records:
 // warns past 1 percent, and past 2 throws input_error unless accept_mismatch

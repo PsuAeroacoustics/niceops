@@ -126,7 +126,7 @@ Procedure niceops::read_procedure(const std::string& path)
         refuse_unknown_keys(limits, lw, {"pull_g"}, {{"roll_rate", &roll_units}, {"acceleration", &accelerations}});
         if (limits.contains("pull_g"))
             p.pull = limits["pull_g"].get<double>();
-        const double roll = read_quantity(limits, lw, "roll_rate", {{"deg_per_s", deg_to_rad}}, false);
+        const double roll = read_quantity(limits, lw, "roll_rate", roll_units, false);
         if (!std::isnan(roll))
             p.roll_rate = roll;
         const double accel = read_quantity(limits, lw, "acceleration", accelerations, false);
@@ -389,12 +389,8 @@ void niceops::write_procedure_track(const std::string& path, const std::vector<P
     const bool feet_unit = unit.to_meters != 1.0;
     out << "time,lat,lon," << (feet_unit ? "alt_ft" : "alt_m") << ",vE,vN,vUp,heading\n";
     out << std::setprecision(12);
-    double last_t = -1.0;
     for (const auto& s : states)
     {
-        if (s.t <= last_t)
-            continue; // a repeated sample, which fly() does not write
-        last_t = s.t;
         out << s.t << "," << s.position.latitude << "," << s.position.longitude << ","
             << s.altitude / unit.to_meters << "," << s.east / unit.to_meters << "," << s.north / unit.to_meters
             << "," << s.up / unit.to_meters << "," << s.heading << "\n";

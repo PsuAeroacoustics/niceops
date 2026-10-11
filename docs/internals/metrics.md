@@ -116,9 +116,9 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
 - **It marches** (bounding off), since every state's energy is needed; the SEL is the windowed
   run's (`provenance_leaves_sel_alone`).
 - **One database per run**: a sphere index means nothing across two.
-- **`--provenance_spheres` is written a row at a time** from the sparse lists
-  (`src/sphere_energy.cpp`), so the dense table never sits in memory; deflate shrinks the rows
-  of zeros. It takes `--provenance_file`'s refusals by requiring it.
+- **`--provenance_spheres` is written a chunk (16 observers) at a time** from the sparse lists
+  (`src/sphere_energy.cpp`), so the dense table never sits in memory and each deflated chunk is
+  written once; deflate shrinks the rows of zeros. It takes `--provenance_file`'s refusals by requiring it.
   `provenance_spheres_match` (`tests/check_sphere_energy.cpp`) holds its largest share to the
   CSV's top sphere and the shares' sum to one.
 

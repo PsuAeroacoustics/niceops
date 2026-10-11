@@ -377,15 +377,17 @@ model; the format is the specification, so other methods can write it. The compo
 - **Turbulence and roughness are baked into the table, not applied on it.** A ground-model table
   takes `--turbulence`, `--gamma_t` (HARMONOISE) and `--roughness` into the ground model it
   tabulates, and records them (`record_coherence`: `turbulence_model`, `turbulence` or `gamma_t`,
-  `roughness_m`, at full precision); a turbulent PE table records `gamma_t`. The run reads them
-  back (`table_coherence`) and warns when its own settings differ, since table pairs ignore them.
+  `roughness_m`, at full precision); a turbulent PE table records `phase_screens` and its
+  `gamma_t` the same way. The run reads them back (`table_coherence`) and warns when its own
+  settings differ, since table pairs ignore them.
   Applying the run's coherence on top of a table would need the direct and reflected fields
   apart (a still PE table holds only their sum, a turbulent one has it already), which is a new
   file format; building the table with the run's settings needs none, and a ground-model table
   so built reproduces `--ground_effect` with them (`propagation_table_carries_turbulence`,
   `propagation_table_carries_harmonoise`). A table that records nothing is still air, which every
-  table built before the record was unless it says `gamma_t`; that one wrote it to six decimals,
-  so it is compared at that precision, and "0.000000" counts as turbulent. The check runs either
+  table built before the record was unless it says `gamma_t` with no `turbulence_model`; that one
+  wrote it to six decimals, so it is compared at that precision, and "0.000000" counts as
+  turbulent. The check runs either
   way round: a still run on a turbulent table is warned too, since its uncovered pairs and the
   plate offset's bare ground are still (`a run's turbulence and roughness are held to its
   table's, either way round`).
