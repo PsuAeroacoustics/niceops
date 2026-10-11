@@ -1239,8 +1239,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // defaulted to zero, as UTC midnight, i.e. night: +10 dB on the
                 // whole footprint, silently.  Either way the answer was made up.
                 input_error(day_metric_option(metric), " needs the time of day, and ", job.trajectory,
-                        " does not carry one: it has no utcsec column. Give --start_utc <seconds since UTC "
-                        "midnight at t = 0>.");
+                        " does not carry one (a geodetic track without a utcsec column, or a static hold). "
+                        "Give --start_utc <seconds since UTC midnight at t = 0>.");
             }
             day_penalty[m][it] = schedule_penalty(trajectory.states[it].utcsec, options.utc_offset, metric,
                     options.laeq_window);
