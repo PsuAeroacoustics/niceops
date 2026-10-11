@@ -578,8 +578,8 @@ with the shipped database:
   [Source options](#source-options-blend-and-load-factor-law). Its hover's two measured rings
   score 2.8 dB held-out rms (18–25° below the horizon) and 5 dB (0.5–3°, in
   ground effect). Nothing measures 3–17° or the region under the aircraft.
-- **Coverage.** On the demo grid, the B407 database's levels come 1.2% from unmeasured cells at
-  the median observer and 27% at the 95th percentile. The builder's SNR gate drops the
+- **Coverage.** On the demo grid, the B407 database's levels come 0.94% from unmeasured cells at
+  the median observer and 31% at the 95th percentile. The builder's SNR gate drops the
   5–10 kHz bands in about half the measured cells, 0.4% of the lower hemisphere's energy.
 
 How these scores compare with earlier builds of the same databases is in

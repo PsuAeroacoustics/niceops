@@ -396,7 +396,7 @@ set_tests_properties(provenance_run provenance_windowed PROPERTIES FIXTURES_SETU
 add_test(NAME provenance_leaves_sel_alone COMMAND golden_compare integrated/provenance_sel.csv integrated/provenance_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME provenance_shares_held_states COMMAND ${CMAKE_COMMAND} -E cat integrated/provenance.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_leaves_sel_alone provenance_shares_held_states PROPERTIES FIXTURES_REQUIRED provenance_runs)
-set_tests_properties(provenance_shares_held_states PROPERTIES PASS_REGULAR_EXPRESSION "share_load_factor_held_max,.*\n-4921\\.[0-9]+,-4921\\.[0-9]+,0,0,0,0\\.0964[0-9]*,0,31,0\\.4689")
+set_tests_properties(provenance_shares_held_states PROPERTIES PASS_REGULAR_EXPRESSION "exposure_db,share_mu_clamped,.*\n-4921\\.[0-9]+,-4921\\.[0-9]+,62\\.583[0-9]*,0,0,0,0\\.0955[0-9]*,0,31,0\\.485")
 add_test(NAME provenance_refuses_ambient COMMAND niceops -a 40 --provenance_file integrated/provenance_ambient.csv -o integrated/provenance_ambient_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with -a")
 add_test(NAME provenance_refuses_two_databases COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -d databases/S-76D_M4.nod -o integrated/provenance_two.csv --provenance_file integrated/provenance_two_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

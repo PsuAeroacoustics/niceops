@@ -136,6 +136,12 @@ old and new results only with them in mind.
   means moved by about 1e-4 dB. The near-grazing three-term series that stood in past the cut
   was removed, since the exact term is what it approximated.
 
+- **`--coverage_file` shares out the energy the SEL integrated** (October 2026): its 10 dB-down
+  window, each sample weighted by the step and its share of reception time. It summed every
+  sample of the history alike, which counted states the SEL leaves out and, across operations,
+  weighted each by its sample count. On the B407 demo grid the median observer's unmeasured
+  share moved from 1.2% to 0.94%, the 95th percentile from 27% to 31%.
+
 ### Refraction and the parabolic equation
 
 - **Stratified propagation keeps every arrival it solves.** It used to keep only the 24 arrivals

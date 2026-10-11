@@ -781,14 +781,16 @@ struct RunTotals
 // --provenance_file: one row per observer, grid or scattered, of where its
 // SEL energy came from over every operation.  The shares are of the energy
 // the SEL integrated; the top sphere is the one the blend weights gave the
-// most of it, with that share and its stored condition.  An observer that
+// most of it, with that share and its stored condition.  Spheres are credited
+// by their blend weights as the blend gave them, so a sphere with nothing
+// measured toward the observer, which the evaluation leaves out, still is.  An observer that
 // heard nothing has no shares, and is written as NaN.
 void write_provenance(const std::vector<double>& x_obs, const std::vector<double>& y_obs,
         const RunTotals& totals, const Database& database, const std::string& out_file,
         bool scattered, LengthUnit unit)
 {
     auto file = open_output(out_file);
-    file << "x(" << unit.name << "),y(" << unit.name << "),share_mu_clamped,share_gamma_clamped,"
+    file << "x(" << unit.name << "),y(" << unit.name << "),exposure_db,share_mu_clamped,share_gamma_clamped,"
          << "share_ct_clamped,share_load_factor_held_max,share_load_factor_held_min,top_sphere,"
          << "top_sphere_share,top_sphere_mu,top_sphere_gamma,top_sphere_ct\n";
     file << std::setprecision(10);
@@ -797,8 +799,10 @@ void write_provenance(const std::vector<double>& x_obs, const std::vector<double
     {
         const double x = scattered ? x_obs[i] : x_obs[i % x_obs.size()];
         const double y = scattered ? y_obs[i] : y_obs[i / x_obs.size()];
-        file << x / unit.to_meters << "," << y / unit.to_meters;
         const auto& p = totals.provenance[i];
+        // The exposure shared out: the SEL itself for one operation, the
+        // energy sum of the operations' SELs for several.
+        file << x / unit.to_meters << "," << y / unit.to_meters << "," << 10.0 * std::log10(p[0]);
         for (int axis = 1; axis < 6; axis++)
             file << "," << (p[0] > 0.0 ? p[axis] / p[0] : nan);
         const auto& list = totals.sphere_energy[i];
@@ -811,7 +815,7 @@ void write_provenance(const std::vector<double>& x_obs, const std::vector<double
                 [](const auto& a, const auto& b) { return a.second < b.second; });
         if (top == list.end() || !(p[0] > 0.0))
         {
-            file << ",,nan,nan,nan,nan\n";
+            file << ",nan,nan,nan,nan,nan\n";
             continue;
         }
         const auto& condition = database.condition(top->first);
@@ -2640,6 +2644,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // deals out several chunks per worker, so this runs a few times a
         // thread, which it measures as noise against the work in the chunk.
         std::vector<double> levels(nt);
+        std::vector<double> sel_weight;
         std::vector<double> ranges(nt);
         std::vector<double> penalized;
         // Each sample's reception-time duration, for the time weighting.
@@ -3119,6 +3124,29 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             integrated_levels[index] = options.full_history
                     ? full_sound_exposure_level(levels, integration_step, ranges, sound_speed)
                     : sound_exposure_level(levels, integration_step, ranges, sound_speed);
+            // What that SEL integrated, per state, for the reports that share
+            // it out (--coverage_file, --provenance_file): its 10 dB-down
+            // window (the whole history under --full_history), each sample's
+            // energy times the step and its share of reception time, and zero
+            // outside.  Summing every sample alike counted states the SEL
+            // leaves out, and across operations weighted each by its sample
+            // count rather than its exposure.
+            if (options.want_coverage || options.want_provenance)
+            {
+                sel_weight.assign(nt, 0.0);
+                const auto window = options.full_history ? std::array<std::size_t, 2> {0, nt - 1}
+                                                         : peak_range(levels);
+                const bool reception = ranges.size() == nt && sound_speed > 0.0;
+                for (std::size_t it = window[0]; it <= window[1]; it++)
+                {
+                    if (!std::isfinite(levels[it]))
+                        continue;
+                    sel_weight[it] = std::pow(10.0, 0.1 * levels[it]) * integration_step
+                            * (reception ? reception_factor(it, nt, integration_step, sound_speed,
+                                                   [&ranges](std::size_t k) { return ranges[k]; })
+                                         : 1.0);
+                }
+            }
             if (options.want_csel)
             {
                 // The C-weighted level of every state, from the bands the
@@ -3159,15 +3187,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 // The energy-weighted share of this observer's operation that
                 // the database did not measure.  Every state's level is in
-                // `levels` (the report turns bounding off), so the share is
-                // summed over the same states the SEL integrated.
+                // `levels` (the report turns bounding off), and each is weighted
+                // as the SEL integrated it.
                 double energy = 0.0;
                 double unmeasured_energy = 0.0;
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    if (!std::isfinite(levels[it]))
+                    const double weight = sel_weight[it];
+                    if (weight == 0.0)
                         continue;
-                    const double weight = std::pow(10.0, 0.1 * levels[it]);
                     const Vec3 direction = (observers[index] - source_states[it].position).normalized();
                     const auto angles = lookup_angles(source_states[it].frame, direction,
                             !database.upper_hemisphere_measured());
@@ -3190,9 +3218,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 auto& totals_here = totals.provenance[index];
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    if (!std::isfinite(levels[it]))
+                    const double weight = sel_weight[it];
+                    if (weight == 0.0)
                         continue;
-                    const double weight = std::pow(10.0, 0.1 * levels[it]);
                     totals_here[0] += weight;
                     for (int axis = 0; axis < 5; axis++)
                         if (state_provenance[it] & (1u << axis))
@@ -4233,6 +4261,9 @@ int run(int argc, char* argv[])
     if (!band_frames_files.empty())
         expand_per_path(band_frames_files, "--band_frames names");
     expand_per_path(database_files, "database files");
+    if (!provenance_file.empty() && !std::isnan(ambient_level))
+        input_error("--provenance_file attributes the aircraft's energy to the states and spheres "
+                "it came from: it does not combine with -a, whose energy came from neither.");
     // The provenance names spheres by their index in one database.
     if (!provenance_file.empty()
             && std::any_of(database_files.begin(), database_files.end(),

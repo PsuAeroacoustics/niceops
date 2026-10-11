@@ -917,13 +917,16 @@ others:
   `--band_limits` and culled states are empty; the `-a` ambient goes into `level_dBA` only.
 - `-S`: the derived state (time, position, velocity, load factor, C<sub>T</sub>, μ, path
   angles), metric whatever `--units` says.
-- `--provenance_file`: one row per observer, grid or scattered: `x`, `y`, then the shares of
-  its SEL energy, over every operation, from states whose advance ratio, path angle or C<sub>T</sub>
-  lay outside the database and were clamped to its edge, and from states whose load factor was
-  held at `--max_load_factor` or `--min_load_factor`; then the sphere that supplied the most energy
-  (its index in the database), its share, and its stored μ, γ and C<sub>T</sub>. A state's energy
-  is shared among its spheres by their blend weights. The run evaluates every state, as
-  `--coverage_file` does. An observer that heard nothing is written as NaN.
+- `--provenance_file`: one row per observer, grid or scattered: `x`, `y`, `exposure_db` (the SEL
+  for one operation, the energy sum of the SELs for several), then the shares of that exposure
+  from states whose advance ratio, path angle or C<sub>T</sub> lay outside the database and were
+  clamped to its edge, and from states whose load factor was held at `--max_load_factor` or
+  `--min_load_factor`; then the sphere that supplied the most of it (its index in the database),
+  its share, and its stored μ, γ and C<sub>T</sub>. Each state counts as the SEL counts it (inside
+  the 10 dB-down window, or the whole history under `--full_history`), and its energy is shared
+  among its spheres by their blend weights, so a sphere with nothing measured toward the observer
+  is still credited. The run evaluates every state, as `--coverage_file` does, whose share is
+  weighted the same way. An observer that heard nothing is written as NaN.
 - `--latlon`: a `_latlon` companion beside every level file (`out.csv` → `out_latlon.csv`), one
   row per observer of latitude, longitude and level, always scattered.
 - `--epnl_file`, `--band_frames` ([EPNL](#epnl-and-reception-time-frames)); `--write_atmosphere`

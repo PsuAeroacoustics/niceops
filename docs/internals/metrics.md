@@ -100,9 +100,14 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
 `--provenance_file` (`write_provenance` and the observer loop's provenance block in
 `niceops.cpp`). Things to keep:
 
-- **Energy is attributed by blend weight.** The blend is linear in dB, so a sphere's weight is not
-  its share of the energy exactly; it is the natural attribution, and it shares out all of the
-  energy (the writer asserts the sums agree to 1e-9).
+- **Each state is weighted as the SEL integrated it** (`sel_weight`: the 10 dB-down window, or
+  the whole history, times the step and the reception factor), as is `--coverage_file`. Summing
+  every sample alike counted states the SEL leaves out, and across operations of different steps
+  weighted each by its sample count. `exposure_db` reproduces the SEL to 5e-9 dB.
+- **Energy is attributed by nominal blend weight.** The blend is linear in dB, so a sphere's weight
+  is not its share of the energy exactly, and a sphere empty toward the observer, which the
+  evaluation drops, is still credited. It shares out all of the energy (the writer asserts the
+  sums agree to 1e-9).
 - **Per-state flags are taken where the run decides them**: the axis clamps from the blend, the
   load-factor holds where the run applies `--max_load_factor` and `--min_load_factor`.
 - **Per-sphere sums are dense per thread and sparse per observer.** A dense observer-by-sphere
