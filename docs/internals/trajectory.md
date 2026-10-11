@@ -140,6 +140,12 @@ recomputed. A track with too little vertical motion is left alone. Keep it uncen
 descent has a constant dz/dt with no variance to correlate, and must still decide. The
 `[trajectory][vz]` tests pin the positive-down, positive-up, level and shipped-track cases.
 
+**A static hold's clock is `--start_utc` + t, or NaN** (`read_static_states`). A hold file has no
+time column, and its states once kept `State::utcsec`'s default of 0, so the day-night metrics
+read every hold as UTC midnight and the clockless refusal in `process_trajectory` could not
+fire. NaN is what makes that refusal work, so the reader must keep setting `utcsec` itself rather
+than leave `State`'s default. The `static_hold_dnl_needs_a_clock` CTests pin both sides.
+
 ## Hover nose and `--nose`
 
 **At hover the sphere's nose is the heading** (`nose_direction`, `heading_offset` in

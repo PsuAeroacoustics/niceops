@@ -1156,6 +1156,15 @@ TEST_CASE("A static operation holds the aircraft at hover, nose on each hold's h
     CHECK(hold.states[1].t - hold.states[0].t == Catch::Approx(0.02));
     CHECK(hold.states.back().t == Catch::Approx(39.98));
 
+    // A hold has no clock unless --start_utc gives one: its states read UTC
+    // midnight before, which -D took for night without a word.
+    CHECK(std::isnan(hold.states.front().utcsec));
+    GeodeticInput dated;
+    dated.start_utc = 43200.0;
+    const Trajectory noon(file.path, "databases/S-76D.json", dated);
+    CHECK(noon.states.front().utcsec == 43200.0);
+    CHECK(noon.states.back().utcsec == 43200.0 + noon.states.back().t);
+
     // A move between holds is a trajectory, not a static operation.
     const TempCsv moving("duration,x,y,z,heading\n5,0,0,12,0\n5,10,0,12,0\n");
     std::string message;

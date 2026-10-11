@@ -109,7 +109,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--path_smoothing` | How far, rms per axis, the path fitted through a WGS84 track may sit from its positions. Default 10 ft (3.048 m). Zero interpolates exactly. |
 | `-s`, `--step` | Resampling step, s (default 0.5), for a WGS84 track whose sampling is uneven or coarser than this. A finer track is never coarsened, and an AC track is used as sampled. Not the SEL integration step. |
 | `--trim` | Crop each trajectory from this x to its lowest or slowest point. Off by default; it changes which part of the flight is integrated. |
-| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night periods. Required with `-D`, `--lden_file`, `--cnel_file` or a period level when the track has no `utcsec` column. Once, or once per trajectory. |
+| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track or static operation, for the day-night periods. Required with `-D`, `--lden_file`, `--cnel_file` or a period level when the track has no `utcsec` column, and always for a static operation. Once, or once per trajectory. |
 | `--units` | `ft` (default) or `m`: the length unit of the command line and of every file ([Units](#units)). |
 | `-l`, `--logfile` | Log file. Default `log/niceops.log`. |
 | `--manifest` | Write a JSON record of the run ([Run records and option files](#run-records-and-option-files)). |
@@ -367,7 +367,9 @@ The demo case restated in WGS84 is
 
 **Static operations.** A CSV whose header names `duration`, `x`, `y`, `z` and `heading` is a list
 of holds at one position (in `--units`), each `duration` seconds long with the nose on the compass
-`heading`. The states are sampled at 50 Hz, at 1 g and zero velocity.
+`heading`. The states are sampled at 50 Hz, at 1 g and zero velocity. A static operation has no
+clock of its own, so `-D`, `--lden_file`, `--cnel_file` and the period levels refuse it unless
+`--start_utc` dates its start.
 
 ### Vehicle file
 
@@ -1056,7 +1058,7 @@ guideline. Samples outside the period carry no energy, and an operation's 10 dB-
 found among those inside. An observer that heard nothing in the period is written as `-inf`.
 Lden is its three periods recombined as the directive writes it, exactly for operations that
 lie wholly in one period, and under `--full_history` for any. The clock is the track's `utcsec` column (column 0 of an AC track) or
-`--start_utc`, shifted by `--utc_offset`, and a track without one is refused. By default each operation contributes its own
+`--start_utc` (a static operation's only clock), shifted by `--utc_offset`, and a track without one is refused. By default each operation contributes its own
 penalized 10 dB-down window; `--full_history` integrates its whole history, as AAM and NORAH2 do,
 which reads a few tenths of a dB higher ([FIDELITY](FIDELITY.md#day-night-window-choice)). Use it
 for a DNL meant to sit beside their contours.

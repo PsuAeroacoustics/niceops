@@ -95,6 +95,11 @@ old and new results only with them in mind.
 - **`--start_utc` is required** with `-D`, `--lden_file` or `--cnel_file` for a WGS84 track
   without a `utcsec` column. It used to default to midnight, which is night, so the whole
   footprint took the 10 dB penalty.
+- **A static operation needs `--start_utc`** for the day-night metrics. Its states carried a
+  clock of zero, so `-D`, `--lden_file`, `--cnel_file` and the period levels dated every hold at
+  UTC midnight without a word, which is night for `-D` (+10 dB); `--start_utc` was ignored for it.
+  A hold now takes its clock from `--start_utc` and is refused without one. No golden or
+  validation result moved: no shipped test or harness run asked for a day metric on a hold.
 - **`--full_history` governs `-D` as well as SEL.** `-D` used to leave each operation on its own
   10 dB-down window whatever `--full_history` said. The default is unchanged; how far the two
   windows differ is in [FIDELITY](FIDELITY.md#day-night-window-choice).

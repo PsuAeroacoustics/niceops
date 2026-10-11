@@ -724,8 +724,11 @@ namespace {
 // neither.  Sampled at 50 Hz, like the AC tracks.  The rotor is at 1 g with zero
 // velocity, so mu, both flight path angles and CT come from the same derivation
 // as a flown state, and the sphere is read at hover (its nose is the heading).
+// A hold has no clock of its own: its UTC seconds are start_utc + t, NaN when
+// --start_utc gave none, so the day-night metrics refuse it rather than date it.
 void read_static_states(const std::string& filename, const LabeledCsv& csv,
-        const dimensional_data& vehicle, LengthUnit unit, std::vector<State>& states)
+        const dimensional_data& vehicle, LengthUnit unit, double start_utc,
+        std::vector<State>& states)
 {
     const auto duration_column = csv.column({"duration"});
     const auto x_column = csv.column({"x"});
@@ -774,6 +777,7 @@ void read_static_states(const std::string& filename, const LabeledCsv& csv,
         {
             State now{};
             now.t = t + static_cast<double>(k) * dt;
+            now.utcsec = start_utc + now.t;
             now.x = x;
             now.y = y;
             now.z = z;
@@ -919,7 +923,7 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
         }
         else if (csv.column({"duration"}) != LabeledCsv::npos)
         {
-            read_static_states(filename, csv, vehicle, unit, states);
+            read_static_states(filename, csv, vehicle, unit, geodetic.start_utc, states);
         }
         else
         {

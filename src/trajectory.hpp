@@ -36,9 +36,12 @@ constexpr double fps2g = mps2g * ft2m;
 struct State
 {
     double t;
-    // Seconds since UTC midnight, straight from the AC format's first column.
-    // Only the day/night classification behind the DNL metric uses it, so it is
-    // deliberately absent from write_state's column list.
+    // Seconds since UTC midnight: the AC format's first column, a geodetic
+    // track's utcsec column or --start_utc + t, and for a static hold
+    // --start_utc + t.  NaN when none of those gives one (a clockless geodetic
+    // track or static hold), which the day-night metrics refuse.  Only the
+    // day/night classification behind them uses it, so it is deliberately
+    // absent from write_state's column list.
     double utcsec = 0.0;
     double x;
     double y;
@@ -189,8 +192,9 @@ struct GeodeticInput
     // flight.  Leaving it at zero reads altitudes as height above the
     // observers, which is what a planner working in AGL already means.
     double ground_elevation = 0.0; // meters
-    // Seconds since UTC midnight at t = 0.  Only the day-night window reads it,
-    // and a file carrying its own utcsec column supplies it instead.  NaN means
+    // Seconds since UTC midnight at t = 0, for a geodetic track or a static
+    // hold.  Only the day-night window reads it, and a file carrying its own
+    // utcsec column supplies it instead.  NaN means
     // neither did: the states then have no clock and -D refuses them.  It
     // defaulted to 0, which dates the flight at UTC midnight -- night in every
     // timezone but the one a few hours west -- so a clockless track got the 10 dB
