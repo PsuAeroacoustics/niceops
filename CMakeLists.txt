@@ -761,15 +761,17 @@ add_test(NAME plate_marched COMMAND niceops -d databases/B407_fixed_load_factor.
 set_tests_properties(plate_windowed plate_marched PROPERTIES FIXTURES_SETUP plate_runs)
 add_test(NAME plate_windowed_is_exact COMMAND golden_compare integrated/plate_windowed.csv integrated/plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED plate_runs)
+# The ground-model tables' common build: the demo database's air and ground, source heights
+# spanning the demo track's (40-1130 ft), one receiver row at 1.2 m, 10 ft in range.
+set(GROUND_TABLE_BUILD --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --flow_resistance 225
+    --source_heights 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040 1050 1060 1070 1080 1090 1100 1110 1120 1130
+    --receiver_heights 3.93701 --max_range 15000 --step 10)
 # --propagation_table, end to end: a table built by niceops_propagation_table
 # from the straight-ray ground model must give the footprint --ground_effect
 # gives, to within the table's interpolation (10 ft in height and range: 0.19 dB
 # at worst on this grid, 0.02 at 5 ft).  It checks the generator, the file, the lookup and the
-# footprint's use of it together.  Source heights span the demo track's.
-add_test(NAME propagation_table_build COMMAND niceops_propagation_table --method ground_model
-    --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --flow_resistance 225
-    --source_heights 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040 1050 1060 1070 1080 1090 1100 1110 1120 1130
-    --receiver_heights 3.93701 --max_range 15000 --step 10 -o tables/ground_model_test.nc
+# footprint's use of it together.
+add_test(NAME propagation_table_build COMMAND niceops_propagation_table --method ground_model ${GROUND_TABLE_BUILD} -o tables/ground_model_test.nc
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME propagation_table_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --propagation_table tables/ground_model_test.nc --gridstep 492 -L warn -o integrated/propagation_table.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME propagation_table_reference COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --ground_effect --exact_ground --gridstep 492 -L warn -o integrated/propagation_table_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -802,15 +804,9 @@ set_tests_properties(propagation_table_is_the_ground_model PROPERTIES FIXTURES_R
 # them reproduces --ground_effect with the same (0.1 dB at worst here, where turbulence and roughness
 # move cells by over 1 dB), Chessell and HARMONOISE alike, without the mismatch warning; a run asking
 # for turbulence its table lacks is warned that only the uncovered pairs get it.
-add_test(NAME propagation_table_turbulent_build COMMAND niceops_propagation_table --method ground_model
-    --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --flow_resistance 225
-    --source_heights 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040 1050 1060 1070 1080 1090 1100 1110 1120 1130
-    --receiver_heights 3.93701 --max_range 15000 --step 10 --turbulence 4e-4 --roughness 0.3 -o tables/ground_model_turbulent_test.nc
+add_test(NAME propagation_table_turbulent_build COMMAND niceops_propagation_table --method ground_model ${GROUND_TABLE_BUILD} --turbulence 4e-4 --roughness 0.3 -o tables/ground_model_turbulent_test.nc
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME propagation_table_harmonoise_build COMMAND niceops_propagation_table --method ground_model
-    --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --flow_resistance 225
-    --source_heights 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020 1030 1040 1050 1060 1070 1080 1090 1100 1110 1120 1130
-    --receiver_heights 3.93701 --max_range 15000 --step 10 --gamma_t 3e-5 -o tables/ground_model_harmonoise_test.nc
+add_test(NAME propagation_table_harmonoise_build COMMAND niceops_propagation_table --method ground_model ${GROUND_TABLE_BUILD} --gamma_t 3e-5 -o tables/ground_model_harmonoise_test.nc
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_turbulent_build propagation_table_harmonoise_build PROPERTIES FIXTURES_SETUP propagation_table_turbulent_files)
 add_test(NAME propagation_table_turbulent_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --propagation_table tables/ground_model_turbulent_test.nc --turbulence 4e-4 --roughness 0.3 --gridstep 492 -L warn -o integrated/propagation_table_turbulent.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
