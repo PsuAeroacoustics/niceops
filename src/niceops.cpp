@@ -1578,8 +1578,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<Vec3> microphones(observer_count);
     std::vector<double> microphone_height(observer_count, 0.0);
     std::vector<char> on_plate(observer_count, 0);
-    // Point receivers, by distinct height: each needs its own ground table.
-    std::vector<double> point_heights;
+    // The ground classes, each a surface with its own ground model, and the
+    // class each observer stands on.  There is one, the run's own ground.
+    const std::vector<GroundModel> class_models {options.ground};
+    const std::vector<std::size_t> class_of(observer_count, 0);
+    // Point receivers, by distinct (height, class): each needs its own ground
+    // table.  Keys are kept in the order they are first met, so one class gives
+    // the distinct heights in observer order.  point_heights is their heights,
+    // which the refraction setup reads over the one class it supports.
+    std::vector<std::pair<double, std::size_t>> point_keys;
     std::vector<std::size_t> point_of(observer_count, 0);
     {
         const double run_height = options.plate ? 0.0
@@ -1593,15 +1600,25 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             on_plate[i] = options.plate && height == 0.0 ? 1 : 0;
             if (ground_effect && !on_plate[i])
             {
-                const auto found = std::find(point_heights.begin(), point_heights.end(), height);
-                point_of[i] = static_cast<std::size_t>(found - point_heights.begin());
-                if (found == point_heights.end())
-                    point_heights.push_back(height);
+                const std::pair<double, std::size_t> key {height, class_of[i]};
+                const auto found = std::find(point_keys.begin(), point_keys.end(), key);
+                point_of[i] = static_cast<std::size_t>(found - point_keys.begin());
+                if (found == point_keys.end())
+                    point_keys.push_back(key);
             }
         }
     }
+    std::vector<double> point_heights;
+    // The distinct classes point receivers stand on, for the peak search's bound.
+    std::vector<std::size_t> point_classes;
+    for (const auto& [height, ground_class] : point_keys)
+    {
+        point_heights.push_back(height);
+        if (std::find(point_classes.begin(), point_classes.end(), ground_class) == point_classes.end())
+            point_classes.push_back(ground_class);
+    }
     const bool any_plate = std::any_of(on_plate.begin(), on_plate.end(), [](char c) { return c != 0; });
-    const bool any_point = !point_heights.empty();
+    const bool any_point = !point_keys.empty();
     if (ground_effect || !microphone_heights.empty())
     {
         std::vector<std::size_t> at_height(point_heights.size(), 0);
@@ -1812,10 +1829,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // [state][band], and the loop reads it instead of forming it per pair.
     std::vector<double> state_absorption_mean;
     const GroundModel* ground_model = nullptr;
-    std::vector<std::complex<double>> ground_impedance_bands;
+    // Each ground class's admittance per band.  ground_impedance_bands is the
+    // first class's, the run's own ground, which the refraction models and the
+    // table's plate offset take.
+    std::vector<std::vector<std::complex<double>>> class_impedance(class_models.size());
+    std::vector<std::complex<double>>& ground_impedance_bands = class_impedance[0];
     std::optional<PlateReceiver> plate;
-    // Per distinct point-receiver height: its ground model (receiver_height
-    // set) and, unless --exact_ground, its table.
+    // Per distinct point-receiver key (height, class): its ground model
+    // (receiver_height set) and, unless --exact_ground, its table.
     std::vector<GroundModel> point_models;
     std::vector<GroundTable> point_tables;
     // The contiguous run of bands inside the metric's limits. Band centers are
@@ -2100,8 +2121,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
         if (ground_effect)
         {
-            ground_model = &options.ground;
-            ground_impedance_bands = ground_impedance(options.ground, bands, sound_speed);
+            ground_model = &class_models[0];
+            for (std::size_t c = 0; c < class_models.size(); c++)
+                class_impedance[c] = ground_impedance(class_models[c], bands, sound_speed);
             log("  ground effect on: impedance model ", static_cast<int>(options.ground.impedance_model),
                     ", flow resistance ", options.ground.flow_resistance,
                     " kPa s/m^2, receiver ", options.ground.receiver_height, " m up, turbulence ",
@@ -2149,16 +2171,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 return r_max * 1.01;
             };
-            for (const double height : point_heights)
+            for (const auto& [height, ground_class] : point_keys)
             {
-                GroundModel model = options.ground;
+                GroundModel model = class_models[ground_class];
                 model.receiver_height = height;
                 point_models.push_back(model);
                 if (!options.exact_ground)
                 {
                     const auto table_start = std::chrono::steady_clock::now();
                     const double r_max = reach();
-                    point_tables.emplace_back(model, ground_impedance_bands, sound_speed, bands,
+                    point_tables.emplace_back(model, class_impedance[ground_class], sound_speed, bands,
                             first_band, last_band, 1.0, r_max);
                     log("  ground effect for microphones ", height / options.unit.to_meters, " ",
                             options.unit.name, " up tabulated to ", r_max, " m in ",
@@ -2169,7 +2191,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
             if (any_plate)
             {
-                plate = options.plate->bound(bands, options.ground, sound_speed, first_band,
+                plate = options.plate->bound(bands, *ground_model, sound_speed, first_band,
                         last_band);
                 if (!options.exact_ground)
                 {
@@ -2505,6 +2527,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // What the path can add above spherical spreading, a power ratio
             // per band.
             std::vector<double> path_gains(bound_gains.size(), 1.0);
+            // The loudest the ground can make a point receiver over any of
+            // the given classes: each class's bound, which does not depend on
+            // the receiver's height, and their elementwise maximum.
+            auto point_ground_gain_bounds = [&](const std::vector<std::size_t>& classes) {
+                assert(!classes.empty());
+                auto gains = ground_gain_bounds(class_models[classes[0]], class_impedance[classes[0]],
+                        first_band, last_band);
+                for (std::size_t k = 1; k < classes.size(); k++)
+                {
+                    const auto more = ground_gain_bounds(class_models[classes[k]], class_impedance[classes[k]],
+                            first_band, last_band);
+                    for (std::size_t band = 0; band < gains.size(); band++)
+                        gains[band] = std::max(gains[band], more[band]);
+                }
+                return gains;
+            };
             if (ground_model != nullptr)
             {
                 // The loudest the ground can make any observer: a plate's, a
@@ -2521,8 +2559,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 if (any_point)
                 {
-                    const auto point_gains = ground_gain_bounds(*ground_model,
-                            ground_impedance_bands, first_band, last_band);
+                    const auto point_gains = point_ground_gain_bounds(point_classes);
                     for (std::size_t band = 0; band < ground_gains.size(); band++)
                         ground_gains[band] = std::max(ground_gains[band], point_gains[band]);
                     // Near a shadow boundary the transition's field stands in
@@ -2859,6 +2896,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const GroundTable* table_here = ground_model != nullptr && !flush && !point_tables.empty()
                     ? &point_tables[point_of[index]]
                     : nullptr;
+            const std::vector<std::complex<double>>* impedance_here = &class_impedance[class_of[index]];
             const double plate_mic_azimuth = flush && options.plate_orientation.outboard
                     ? outboard_azimuth(observer, source_states)
                     : options.plate_orientation.azimuth;
@@ -2948,12 +2986,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     if (raised)
                         raised_at[index] = 1;
                     return database.spectral_level_along(path, source_states[it], absorption_for(it, observer),
-                            band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
+                            band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
                             packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, nullptr, nullptr,
                             bands_out);
                 }
                 return database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
-                        band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
+                        band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, bands_out);
             };
             const GroundGeometry ray_ground = ground_model == nullptr ? GroundGeometry::none
