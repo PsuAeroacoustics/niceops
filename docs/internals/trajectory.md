@@ -115,9 +115,15 @@ left of travel; converted at the `--units` seam). The equations are in
 - **The fold criterion is 1 − dκ ≤ 0.1**, the subtrack's speed ratio, refused naming t and the
   turn's radius in `--units`. It is a criterion on the path, not on the noise: an offset toward the
   outside of a turn is always accepted.
-- **An AC track is translated rigidly**, after `correct_vertical_speed_sign` (so the curvature
-  test sees the corrected state; the sign does not enter it), with κ from the recorded velocity
-  and acceleration (`n * LF * g`, as `derive_flight_parameters` left them). Its velocities and
+- **An AC track is translated rigidly**, after `correct_vertical_speed_sign`, along the normal of
+  its recorded velocity, with κ from a fit of the recorded x and y at `ac_fold_smoothing` (the
+  10 ft `--path_smoothing` default, which does not otherwise reach AC tracks).
+  **Rejected: κ from the recorded acceleration** (`n * LF * g`). Sampled every 0.02 s it scatters
+  by more than a turn's centripetal term (B205 `191554AC` jumps between 5 and 14 ft/s² in
+  0.04 s at 52 kt), so single samples refused ±500 ft on 3-5 of the 84 shipped tracks whose
+  turns the heading shows are wider; with the fit none is refused, and that track still folds
+  at 700 ft where its real turn tightens to about 650 ft. `an AC track's fold test reads the
+  path's curvature, not its recorded acceleration` pins it. Its velocities and
   accelerations are measurements and are kept, so this is exact on a straight leg only.
   `recorded` stays unshifted: it is what `--terrain` checks the frame and `--ground_elevation`
   against, and the file's lat/lon are the centerline's.

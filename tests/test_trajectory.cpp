@@ -1630,6 +1630,19 @@ TEST_CASE("an AC track is translated rigidly, its recorded kinematics kept", "[l
     }
 }
 
+TEST_CASE("an AC track's fold test reads the path's curvature, not its recorded acceleration", "[lateral_offset]")
+{
+    // At t = 60.06 s this track's recorded ay jumps between 5 and 14 ft/s^2
+    // within 0.04 s, and one sample's (vx ay - vy ax)/|v|^3 is a 552 ft radius,
+    // so a test on it refused 500 ft.  The turn's own radius, from the heading,
+    // tightens to about 600-670 ft near t = 63 s: 500 ft runs, 700 ft folds.
+    const std::string track = "tracks/B205/191554AC.csv";
+    CHECK_NOTHROW(Trajectory(track, "databases/B205.json", offset_input(500.0 * ft2m)));
+    const std::string folded = refusal([&] { Trajectory(track, "databases/B205.json", offset_input(700.0 * ft2m)); });
+    CHECK_THAT(folded, Catch::Matchers::ContainsSubstring("folds the path at t = 6"));
+    CHECK_THAT(folded, Catch::Matchers::ContainsSubstring("turns left on a radius of"));
+}
+
 TEST_CASE("write the straight tracks for the lateral-offset CTests", "[.offset_tracks]")
 {
     // East at 80 kt, 500 ft up, about --origin 40 -75: on y = 0 and on y = +/-500

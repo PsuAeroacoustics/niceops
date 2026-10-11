@@ -255,13 +255,13 @@ SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>
 // direction is drift, so a sample that slow takes the normal of the nearest
 // faster one (the earlier on a tie); a track that is never faster has no
 // direction of travel and is refused.  The offset path's speed is (1 - d kappa)
-// times the original's, kappa = (vx ay - vy ax)/|v|^3 the signed horizontal
-// curvature (+ turning left), so an offset at or past 90% of the turn radius on
+// times the original's, kappa (given per sample, from a fitted path) the signed
+// horizontal curvature (vx ay - vy ax)/|v|^3 (+ turning left), so an offset at or past 90% of the turn radius on
 // the inside, 1 - d kappa <= 0.1, folds the path or nearly so, and is refused
 // naming the time.  Held samples are not tested: their curvature is noise.
 std::vector<std::array<double, 2>> lateral_normals(const std::vector<double>& t, const std::vector<double>& vx,
-        const std::vector<double>& vy, const std::vector<double>& ax, const std::vector<double>& ay, double d,
-        LengthUnit unit, const std::string& filename)
+        const std::vector<double>& vy, const std::vector<double>& kappa, double d, LengthUnit unit,
+        const std::string& filename)
 {
     const std::size_t n = t.size();
     std::vector<std::array<double, 2>> normals(n);
@@ -275,12 +275,11 @@ std::vector<std::array<double, 2>> lateral_normals(const std::vector<double>& t,
         valid[i] = 1;
         any = true;
         normals[i] = {-vy[i] / speed, vx[i] / speed};
-        const double kappa = (vx[i] * ay[i] - vy[i] * ax[i]) / (speed * speed * speed);
-        if (1.0 - d * kappa <= 0.1)
+        if (1.0 - d * kappa[i] <= 0.1)
         {
             input_error("Trajectory ", filename, ": a lateral offset of ", d / unit.to_meters, " ", unit.name,
-                    " folds the path at t = ", t[i], " s, where it turns ", kappa > 0.0 ? "left" : "right",
-                    " on a radius of ", 1.0 / std::fabs(kappa) / unit.to_meters, " ", unit.name,
+                    " folds the path at t = ", t[i], " s, where it turns ", kappa[i] > 0.0 ? "left" : "right",
+                    " on a radius of ", 1.0 / std::fabs(kappa[i]) / unit.to_meters, " ", unit.name,
                     ". An offset toward the inside of a turn must stay under 90% of its radius.");
         }
     }
@@ -314,6 +313,10 @@ std::vector<std::array<double, 2>> lateral_normals(const std::vector<double>& t,
     return normals;
 }
 
+// The smoothing of the fit an AC track's fold test takes its curvature from:
+// the --path_smoothing default, which that option does not otherwise reach.
+constexpr double ac_fold_smoothing = 10.0 * ft2m;
+
 // Displace a geodetic track's raw samples d meters along the left normal of a
 // preliminary fit at the same smoothing, oriented by the file's own velocity
 // columns when it has them (vx, vy non-empty), so the path fitted afterward is
@@ -325,15 +328,16 @@ void offset_raw_samples(const std::vector<double>& time, std::vector<double>& x,
     const auto fit_x = fit_path(time, x, smoothing);
     const auto fit_y = fit_path(time, y, smoothing);
     const std::size_t n = time.size();
-    std::vector<double> ux(n), uy(n), ax(n), ay(n);
+    std::vector<double> ux(n), uy(n), kappa(n);
     for (std::size_t i = 0; i < n; i++)
     {
         ux[i] = vx.empty() ? fit_x.derivative(time[i], 1) : vx[i];
         uy[i] = vy.empty() ? fit_y.derivative(time[i], 1) : vy[i];
-        ax[i] = fit_x.derivative(time[i], 2);
-        ay[i] = fit_y.derivative(time[i], 2);
+        const double speed = std::hypot(ux[i], uy[i]);
+        kappa[i] = (ux[i] * fit_y.derivative(time[i], 2) - uy[i] * fit_x.derivative(time[i], 2))
+                / (speed * speed * speed);
     }
-    const auto normals = lateral_normals(time, ux, uy, ax, ay, d, unit, filename);
+    const auto normals = lateral_normals(time, ux, uy, kappa, d, unit, filename);
     for (std::size_t i = 0; i < n; i++)
     {
         x[i] += d * normals[i][0];
@@ -1040,18 +1044,33 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
             {
                 const double d = geodetic.lateral_offset;
                 const std::size_t n = states.size();
-                std::vector<double> t(n), vx(n), vy(n), ax(n), ay(n);
+                std::vector<double> t(n), x(n), y(n), vx(n), vy(n), kappa(n);
                 for (std::size_t i = 0; i < n; i++)
                 {
-                    // nx, ny are normalized by now; LF times them is the
-                    // acceleration in g, as read.
                     t[i] = states[i].t;
+                    x[i] = states[i].x;
+                    y[i] = states[i].y;
                     vx[i] = states[i].vx;
                     vy[i] = states[i].vy;
-                    ax[i] = states[i].nx * states[i].LF * standard_gravity;
-                    ay[i] = states[i].ny * states[i].LF * standard_gravity;
                 }
-                const auto normals = lateral_normals(t, vx, vy, ax, ay, d, unit, filename);
+                // The fold test needs the path's curvature, and the recorded
+                // acceleration is not it: sampled every 0.02 s, it jumps by
+                // more than the turn's own centripetal term within a few
+                // samples, and one such spike refused offsets well inside the
+                // radius the heading turns through.  So kappa is taken from a
+                // fit of the recorded x and y, as a WGS84 track's is, at the
+                // --path_smoothing default; the normals stay on the recorded
+                // velocity.
+                const auto fit_x = fit_path(t, x, ac_fold_smoothing);
+                const auto fit_y = fit_path(t, y, ac_fold_smoothing);
+                for (std::size_t i = 0; i < n; i++)
+                {
+                    const double ux = fit_x.derivative(t[i], 1), uy = fit_y.derivative(t[i], 1);
+                    const double speed = std::hypot(ux, uy);
+                    kappa[i] = (ux * fit_y.derivative(t[i], 2) - uy * fit_x.derivative(t[i], 2))
+                            / (speed * speed * speed);
+                }
+                const auto normals = lateral_normals(t, vx, vy, kappa, d, unit, filename);
                 for (std::size_t i = 0; i < n; i++)
                 {
                     states[i].x += d * normals[i][0];

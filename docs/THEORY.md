@@ -309,7 +309,9 @@ $|\mathbf v|$ is below 3 kt, $\hat{\mathbf n}$ is taken from the nearest point t
   used for them.
 - **AC tracks.** Each state is moved by $d\,\hat{\mathbf n}$ from its own recorded velocity,
   and keeps its recorded velocity and acceleration: exact on a straight leg, while in a turn
-  the speed and load factor stay the centerline's.
+  the speed and load factor stay the centerline's. The $\kappa$ of the fold test comes from a
+  fit of the recorded $x$ and $y$ at $\sigma = 10$ ft, not from the recorded acceleration,
+  whose sample-to-sample scatter exceeds a turn's centripetal term.
 
 ## 4. Spreading and atmospheric absorption
 

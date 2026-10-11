@@ -152,6 +152,7 @@ CTests are defined in `CMakeLists.txt`.
 | `operations_count_three_equals_repeated_t` | CTest | the day-metric weight folded into the exponent (`pow(10, 0.1 L + lg w)`), which a count of 1 and the 1e-9 count-10 checks both pass; NAx adding 1 rather than the weight; the weight dropped from one coverage energy |
 | `operations_count_three_provenance` | CTest | the weight dropped from the provenance's per-state energy |
 | `operations_offset_mirror_left`, `operations_offset_mirror_right` | CTest; the hidden Catch case `[.offset_tracks]` in `test_trajectory.cpp` writes the tracks | the offset left unconverted at the `--units` seam (500 ft read as 500 m), or not handed to the job; the normal's sign. The `[lateral_offset]` cases build `Trajectory` directly and cannot see the seam |
+| `an AC track's fold test reads the path's curvature, not its recorded acceleration` | `test_trajectory.cpp` | an AC track's κ taken from its recorded acceleration (`n * LF * g`), whose single-sample spikes refuse offsets well inside the turn, or from an exact (unsmoothed) fit of x and y |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.
