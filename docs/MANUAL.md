@@ -873,8 +873,10 @@ one value means every direction), `source_height` and `receiver_height` (above t
 - **Coverage.** A pair the table does not cover, by a NaN among the values it would interpolate
   or by falling outside an axis, takes the run's own model: `--refraction` if on, the ground
   effect if on, free field otherwise.
-- **Receivers.** A microphone height outside the table's is refused. A flush plate microphone
-  reads the lowest receiver height plus the plate's level over bare ground at the pair's azimuth.
+- **Receivers.** A point microphone whose height is outside the table's is refused. A flush plate
+  microphone reads the lowest receiver height plus the plate's level over bare ground there, at
+  the pair's azimuth and elevation. For plates, give the table a receiver row at 0: over a raised
+  row the bare-ground term is a comb in elevation, which the plate's offset has to follow.
 - **Bearings are compass bearings**, so a rotated frame needs `--frame_bearing`.
 - **With `--refraction` too**, every state is evaluated rather than windowed from the peak.
 - **The file** is netCDF, SI: `relative_level(bearing, source_height, receiver_height, range,

@@ -634,6 +634,18 @@ set_tests_properties(propagation_table_bump_windowed_is_exact PROPERTIES FIXTURE
 set_tests_properties(propagation_table_absorption_is_not_added_twice PROPERTIES FIXTURES_REQUIRED propagation_table_bump_runs PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME propagation_table_is_the_ground_model COMMAND golden_compare integrated/propagation_table.csv integrated/propagation_table_reference.csv 0.25 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_is_the_ground_model PROPERTIES FIXTURES_REQUIRED propagation_table_runs)
+# Plate microphones read the table at its lowest receiver height plus K, the plate over bare ground
+# there at the pair's elevation and azimuth.  Through the ground-model table that must be the plate
+# run (0.13 dB at worst on this grid; K taken at 2 degrees for every pair was 1.3 dB low on average
+# and 5.6 dB off at worst), and K enters the peak search's bound, so windowed equals marched.
+add_test(NAME propagation_table_plate COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc --propagation_table tables/ground_model_test.nc --gridstep 492 -L warn -o integrated/propagation_table_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_plate_marched COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc --propagation_table tables/ground_model_test.nc --gridstep 492 -L warn -D integrated/propagation_table_plate_dnl.csv -o integrated/propagation_table_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_plate_reference COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --flow_resistance 225 --ground_effect --exact_ground --plate_table plates/gr1425_db225.nc --gridstep 492 -L warn -o integrated/propagation_table_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_plate propagation_table_plate_marched PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP propagation_table_plate_runs)
+set_tests_properties(propagation_table_plate_reference PROPERTIES FIXTURES_SETUP propagation_table_plate_runs)
+add_test(NAME propagation_table_plate_windowed_is_exact COMMAND golden_compare integrated/propagation_table_plate.csv integrated/propagation_table_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME propagation_table_plate_is_the_plate_model COMMAND golden_compare integrated/propagation_table_plate.csv integrated/propagation_table_plate_reference.csv 0.15 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(propagation_table_plate_windowed_is_exact propagation_table_plate_is_the_plate_model PROPERTIES FIXTURES_REQUIRED propagation_table_plate_runs)
 # --atmosphere through a single-level profile holding the vehicle file's own
 # atmosphere has to reproduce the homogeneous run: the whole layered-absorption
 # path (the table, the per-state and per-observer integrals, the per-path mean)

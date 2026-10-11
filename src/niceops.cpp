@@ -1714,9 +1714,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // run from taking it twice.
     PropagationTable::BandMap table_bands;
     std::vector<double> table_absorption;
-    // [azimuth][band]: K for plate microphones read from the table.
+    // K for plate microphones read from the table, laid out
+    // [(elevation * table_plate_azimuths + azimuth) * bands + band], on
+    // elevations k * table_plate_step from 0 to 90 degrees.
     constexpr int table_plate_azimuths = 36;
-    std::vector<std::vector<double>> table_plate_offset;
+    std::vector<double> table_plate_offset;
+    double table_plate_step = 0.0;
+    std::size_t table_plate_elevations = 0;
 
     // The atmosphere is needed on every path now, not only the spectral one:
     // its sound speed turns the emission-time level history into reception time
@@ -2085,11 +2089,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // Receivers it does not reach are refused rather than handed to
             // the fallback wholesale: a table that misses the run's microphones
             // was built for another run.
+            // A flush microphone reads it at its lowest receiver height (below),
+            // so only point receivers are checked.
             std::vector<double> uncovered;
-            for (const double height : microphone_height)
-                if (!table.covers_receiver(height)
+            for (std::size_t i = 0; i < microphone_height.size(); i++)
+            {
+                const double height = microphone_height[i];
+                if (!on_plate[i] && !table.covers_receiver(height)
                         && std::find(uncovered.begin(), uncovered.end(), height) == uncovered.end())
                     uncovered.push_back(height);
+            }
             if (!uncovered.empty())
             {
                 std::ostringstream heights;
@@ -2104,26 +2113,43 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (table.includes_absorption())
                 table_absorption.assign(bands.size(), 0.0);
             // A flush microphone on a plate reads the table at its lowest
-            // receiver height, plus K, the plate over bare ground there, per band
-            // and azimuth -- as ShadowTransition places a plate in the shadow:
-            // near grazing K barely depends on elevation, so it is taken at 2
-            // degrees, a kilometer out.
+            // receiver height, plus K, the plate over bare ground there, per
+            // band, azimuth and elevation, on a 1 km sphere as ShadowTransition
+            // places a plate.  K was once taken at 2 degrees for every pair, as
+            // if it barely depended on elevation: against the plate run it
+            // reproduces, that put the demo footprint 1.3 dB low on average and
+            // up to 5.6 dB off.  Over a receiver above the ground the bare
+            // term's interference fringes are lambda / (2 h) apart in the sine
+            // of the elevation, so the grid takes eight steps per fringe at the
+            // highest band, and K is interpolated linearly in elevation.
             if (plate)
             {
                 GroundModel bare = options.ground;
-                bare.receiver_height = table.axes().receiver_heights.front();
-                const double elevation = 2.0 * pi / 180.0;
-                const double h = 1000.0 * std::sin(elevation), d = 1000.0 * std::cos(elevation);
+                const double lowest = table.axes().receiver_heights.front();
+                bare.receiver_height = lowest;
+                const double shortest_wavelength = sound_speed / bands[last_band - 1];
+                const double fringe = lowest > 0.0 ? shortest_wavelength / (2.0 * lowest) : 1.0;
+                table_plate_step = std::clamp(fringe / 8.0, 0.05 * pi / 180.0, 0.5 * pi / 180.0);
+                table_plate_elevations = static_cast<std::size_t>(std::ceil(0.5 * pi / table_plate_step)) + 1;
+                table_plate_step = 0.5 * pi / static_cast<double>(table_plate_elevations - 1);
+                table_plate_offset.assign(table_plate_elevations * table_plate_azimuths * bands.size(), 0.0);
                 std::vector<double> bare_db(bands.size(), 0.0), plate_db(bands.size(), 0.0);
-                excess_ground_attenuation(bare, ground_impedance_bands, h, d, sound_speed, bands,
-                        bare_db.data(), first_band, last_band, false);
-                table_plate_offset.assign(table_plate_azimuths, std::vector<double>(bands.size(), 0.0));
-                for (int i = 0; i < table_plate_azimuths; i++)
+                for (std::size_t e = 0; e < table_plate_elevations; e++)
                 {
-                    plate->level(h, d, 2.0 * pi * i / table_plate_azimuths, plate_db.data(), first_band,
-                            last_band);
-                    for (std::size_t band = first_band; band < last_band; band++)
-                        table_plate_offset[i][band] = plate_db[band] - bare_db[band];
+                    // Exact grazing has no geometry to speak of: a hundredth of
+                    // a degree stands in for it.
+                    const double elevation = std::max(static_cast<double>(e) * table_plate_step, 1e-2 * pi / 180.0);
+                    const double h = 1000.0 * std::sin(elevation), d = 1000.0 * std::cos(elevation);
+                    excess_ground_attenuation(bare, ground_impedance_bands, h, d, sound_speed, bands,
+                            bare_db.data(), first_band, last_band, false);
+                    for (int i = 0; i < table_plate_azimuths; i++)
+                    {
+                        plate->level(h, d, 2.0 * pi * i / table_plate_azimuths, plate_db.data(), first_band,
+                                last_band);
+                        double* k = &table_plate_offset[(e * table_plate_azimuths + i) * bands.size()];
+                        for (std::size_t band = first_band; band < last_band; band++)
+                            k[band] = plate_db[band] - bare_db[band];
+                    }
                 }
             }
             log("  propagation table ", options.propagation_table_path, ": ", table.method(), "; ",
@@ -2385,9 +2411,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
             // A pair the table covers can gain as much as its largest value;
             // one it does not, as much as the ground model above.
+            // A plate microphone reading the table adds its K, interpolated
+            // between nodes and so never above the largest of them.
             if (options.propagation_table)
             {
-                const auto table_gains = options.propagation_table->max_power_ratio(table_bands);
+                auto table_gains = options.propagation_table->max_power_ratio(table_bands);
+                if (!table_plate_offset.empty())
+                {
+                    for (std::size_t band = 0; band < table_gains.size(); band++)
+                    {
+                        double largest = -std::numeric_limits<double>::infinity();
+                        for (std::size_t node = 0; node < table_plate_elevations * table_plate_azimuths; node++)
+                            largest = std::max(largest, table_plate_offset[node * table_gains.size() + band]);
+                        table_gains[band] *= std::pow(10.0, 0.1 * std::max(largest, 0.0));
+                    }
+                }
                 for (std::size_t band = 0; band < path_gains.size(); band++)
                     path_gains[band] = std::max(path_gains[band], table_gains[band]);
             }
@@ -2721,24 +2759,40 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     fallback_here++;
                     return false;
                 }
-                double k_weight = 0.0;
-                std::size_t k_lo = 0, k_hi = 0;
+                // K at the pair's azimuth in the plate's frame and its elevation,
+                // bilinear between the four nodes around it.
+                const double* k[4] = {nullptr, nullptr, nullptr, nullptr};
+                double w[4] = {0.0, 0.0, 0.0, 0.0};
                 if (flush && !table_plate_offset.empty())
                 {
                     const double azimuth = std::atan2(separation.y, separation.x) - plate_mic_azimuth + 0.5 * pi;
                     double x = std::fmod(azimuth / (2.0 * pi) * table_plate_azimuths, double(table_plate_azimuths));
                     if (x < 0.0)
                         x += table_plate_azimuths;
-                    k_lo = std::min(static_cast<std::size_t>(x), std::size_t(table_plate_azimuths - 1));
-                    k_hi = (k_lo + 1) % table_plate_azimuths;
-                    k_weight = x - static_cast<double>(k_lo);
+                    const std::size_t a_lo = std::min(static_cast<std::size_t>(x), std::size_t(table_plate_azimuths - 1));
+                    const std::size_t a_hi = (a_lo + 1) % table_plate_azimuths;
+                    const double a_weight = x - static_cast<double>(a_lo);
+                    const double elevation = std::atan2(std::max(source.z, 0.0), separation.horizontal_norm());
+                    const double y = std::min(elevation / table_plate_step, double(table_plate_elevations - 1));
+                    const std::size_t e_lo = std::min(static_cast<std::size_t>(y), table_plate_elevations - 2);
+                    const double e_weight = y - static_cast<double>(e_lo);
+                    const auto node = [&](std::size_t e, std::size_t a) {
+                        return &table_plate_offset[(e * table_plate_azimuths + a) * table_loss.size()];
+                    };
+                    k[0] = node(e_lo, a_lo);
+                    k[1] = node(e_lo, a_hi);
+                    k[2] = node(e_lo + 1, a_lo);
+                    k[3] = node(e_lo + 1, a_hi);
+                    w[0] = (1.0 - e_weight) * (1.0 - a_weight);
+                    w[1] = (1.0 - e_weight) * a_weight;
+                    w[2] = e_weight * (1.0 - a_weight);
+                    w[3] = e_weight * a_weight;
                 }
                 for (std::size_t band = first_band; band < last_band; band++)
                 {
                     double gain = table_loss[band];
-                    if (flush && !table_plate_offset.empty())
-                        gain += (1.0 - k_weight) * table_plate_offset[k_lo][band]
-                                + k_weight * table_plate_offset[k_hi][band];
+                    if (k[0] != nullptr)
+                        gain += w[0] * k[0][band] + w[1] * k[1][band] + w[2] * k[2][band] + w[3] * k[3][band];
                     table_loss[band] = -gain;
                 }
                 tabled_here++;

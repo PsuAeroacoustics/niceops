@@ -355,8 +355,20 @@ model; the format is the specification, so other methods can write it. The compo
   It reproduces `--ground_effect --exact_ground` to the table's interpolation, and the error
   falls fourfold per halving of the height spacing, which is what says it is interpolation.
 - **Plates read the table at its lowest receiver height plus K**, the plate over bare ground
-  there per band and azimuth at 2 degrees (`table_plate_offset` in niceops.cpp), as
-  ShadowTransition places a plate. **With `--refraction` the table takes the pairs it covers and
+  there per band, azimuth and elevation on a 1 km sphere (`table_plate_offset` in niceops.cpp),
+  as ShadowTransition places a plate, bilinear in azimuth and elevation. Things to keep:
+  - **K depends on elevation.** It was taken at 2 degrees for every pair; through the ground-model
+    table that put the demo footprint 1.3 dB low on average with a 1.2 m lowest row, and 0.34 dB
+    off with a flush row ([FIDELITY](../FIDELITY.md#propagation-tables)).
+  - **The elevation step follows the bare term's fringes**: eight steps per λ/(2h) in the sine of
+    the elevation at the highest band, clamped to 0.05–0.5 degrees (0.5 for a flush row, about
+    900 elevations for 1.2 m at 10 kHz).
+  - **The bound multiplies the table's largest gain by the largest K node**, which bounds the
+    interpolant. No current CTest needs it: through a ground-model table, table plus K is the
+    plate's level, which the plate's own gain bound covers. A PE table, whose fringes need not
+    line up with bare ground's, can need it.
+  - **Flush microphones are not checked against the table's receiver heights**, since they read
+    its lowest row. Checking them refused every plate run whose table had no row at 0. **With `--refraction` the table takes the pairs it covers and
   the ray model the rest** (`table_level` first in `refracted_level`); that run evaluates every
   state, since its bounds were not built for both geometries.
 - **Thread count is invisible.** `-j` (or `NICEOPS_THREADS`, which only the PE tools read) gives

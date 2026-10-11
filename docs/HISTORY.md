@@ -153,6 +153,12 @@ old and new results only with them in mind.
   march) had no self-starter at all. In propagation tables built before this, the 5 ft row's
   50–100 Hz bands were up to 0.39 dB off past the first range (0.12 dB mean); nothing else moved
   by more than 0.0002 dB.
+- **Plate microphones under `--propagation_table` take the plate's offset at each pair's
+  elevation** (October 2026). It was taken at 2° for every pair, which against the plate run the
+  table should reproduce put footprints read through a flush receiver row up to 0.34 dB low, and
+  through a 1.2 m row 1.3 dB low on average
+  ([FIDELITY](FIDELITY.md#propagation-tables)). Plate runs with a table that had no row at 0
+  were refused outright, naming 0 ft as an uncovered height.
 - **The PE self-starter's ground source applies the second-order correction its derivation
   calls for** (October 2026). It had been computed and then discarded. It only affects sources
   within three grid spacings of the ground, mostly a PE table's flush-microphone rows in a
