@@ -205,6 +205,7 @@ add_library(niceops_core STATIC
   src/contour.cpp
   src/raster.cpp
   src/sphere_energy.cpp
+  src/state_condition.cpp
   src/procedure.cpp
 )
 target_include_directories(niceops_core PUBLIC
@@ -596,6 +597,14 @@ add_test(NAME procedure_build COMMAND niceops_procedure tests/data/procedure_app
 set_tests_properties(procedure_build PROPERTIES FIXTURES_SETUP procedure_track)
 add_test(NAME procedure_runs COMMAND niceops -t integrated/procedure_approach.csv --origin 39.8291 -74.4100 --frame_bearing 210 --gridstep 1640 -L warn -o integrated/procedure_approach_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(procedure_runs PROPERTIES FIXTURES_REQUIRED procedure_track)
+# niceops_procedure --check: 150 kt is past B407's advance ratios and a 50-degree bank past
+# 1.3 g; the states it reports clamped and held, and when, are the ones niceops then counts.
+add_test(NAME procedure_check COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope.csv --check databases/B407_fixed_load_factor.nod --vehicle databases/B407.json --max_load_factor 1.3 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(procedure_check PROPERTIES FIXTURES_SETUP procedure_envelope PASS_REGULAR_EXPRESSION "122 of 301 states \\(every 0\\.20 s\\) clamped or held\\.\n  advance ratio clamped to the database's range: 87 states, t = 0\\.0-17\\.2 s\n.*load factor held at --max_load_factor: 35 states, t = 44\\.0-50\\.8 s")
+add_test(NAME procedure_check_agrees_with_niceops COMMAND niceops -t integrated/procedure_envelope.csv -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --max_load_factor 1.3 --gridstep 4000 -L warn -o integrated/procedure_envelope_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(procedure_check_agrees_with_niceops PROPERTIES FIXTURES_REQUIRED procedure_envelope PASS_REGULAR_EXPRESSION "advance ratio 87, flight-path angle 0, thrust coefficient 0 of 301 states.*35 of 301 states exceed 1\\.3 g")
+add_test(NAME procedure_check_needs_vehicle COMMAND niceops_procedure tests/data/procedure_envelope.json -o integrated/procedure_envelope_nov.csv --check databases/B407_fixed_load_factor.nod WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(procedure_check_needs_vehicle PROPERTIES PASS_REGULAR_EXPRESSION "--check maps the states through the vehicle's rotor: give --vehicle")
 add_test(NAME procedure_refuses_going_underground COMMAND niceops_procedure tests/data/procedure_underground.json -o integrated/procedure_underground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(procedure_refuses_going_underground PROPERTIES PASS_REGULAR_EXPRESSION "segment 2 goes below the ground")
 # A track below the observers' plane (here an altitude datum 5000 ft too high) ran silently.

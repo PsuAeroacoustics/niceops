@@ -49,6 +49,7 @@
 #include "weighting.hpp"
 #include "sphere_database.hpp"
 #include "sphere_energy.hpp"
+#include "state_condition.hpp"
 #include "trajectory.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
@@ -1392,31 +1393,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             if (nose != velocity)
                 by_heading++;
         }
-        // On a fixed_load_factor database the load-factor law is the analytic
-        // correction 20 lg(C_T / C_T,ref), an extrapolation above the load
-        // factors its source supports.  It is held at --max_load_factor, and
-        // two-sided at --min_load_factor below (blend_at() applies that floor).
-        double thrust_coefficient = state.CT;
-        if (database.fixed_load_factor())
+        const auto condition = state_condition(state, database, options.qsam, options.max_load_factor,
+                blend_options);
+        if (condition.load_capped)
         {
-            const double ceiling = options.max_load_factor * database.reference_thrust_coefficient();
-            if (thrust_coefficient > ceiling)
-            {
-                thrust_coefficient = ceiling;
-                load_capped++;
-                state_provenance[source_states.size()] |= 8;
-            }
-            if (two_sided && thrust_coefficient
-                    < blend_options.min_load_factor * database.reference_thrust_coefficient())
-            {
-                load_floored++;
-                state_provenance[source_states.size()] |= 16;
-            }
+            load_capped++;
+            state_provenance[source_states.size()] |= 8;
+        }
+        if (condition.load_floored)
+        {
+            load_floored++;
+            state_provenance[source_states.size()] |= 16;
         }
         source_states.push_back(database.source_state(Vec3(state.x, state.y, state.z),
                 Vec3(nose[0], nose[1], nose[2]),
-                Vec3(state.nx, state.ny, state.nz), state.mu,
-                options.qsam ? state.fpa_e : state.fpa, thrust_coefficient, blend_options));
+                Vec3(state.nx, state.ny, state.nz), condition.advance_ratio,
+                condition.flight_path_angle, condition.thrust_coefficient, blend_options));
         const auto& blend = source_states.back().blend;
         state_provenance[source_states.size() - 1] |= (blend.advance_ratio_clamped ? 1 : 0)
                 | (blend.flight_path_angle_clamped ? 2 : 0) | (blend.thrust_coefficient_clamped ? 4 : 0);

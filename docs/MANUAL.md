@@ -1184,7 +1184,12 @@ refused:
 - **The end** is flown on to the next written step, so the last state is written.
 - **Calm air**: the heading is the course and the ground speed the airspeed. `step_s` (default
   0.2) is the spacing of the written states.
-- Whether the flown conditions stay inside a database's envelope is what `--provenance_file`
+- **`--check DATABASE --vehicle VEHICLE`** reads the written track back as niceops reads it and
+  reports the states the database would clamp on each axis (advance ratio, path angle, C<sub>T</sub>)
+  or hold at `--max_load_factor` (default 2 g, as in niceops), with the stretches of time they
+  span, so a procedure can be kept inside its database before any acoustics run. `--no-qsam`
+  matches niceops's `--no-qsam`. The procedure is calm, so the database's speed reference makes
+  no difference. How much of the footprint those states carry is what `--provenance_file`
   reports.
 
 ### `niceops_propagation_table`

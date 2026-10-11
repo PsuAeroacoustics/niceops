@@ -1,0 +1,11 @@
+{
+  "start": {"lat": 39.8291, "lon": -74.4100, "alt_ft": 1000, "speed_kt": 150, "course_deg": 210},
+  "step_s": 0.2,
+  "segments": [
+    {"type": "level", "duration_s": 10},
+    {"type": "speed", "to_speed_kt": 100, "rate_kt_per_s": 2},
+    {"type": "level", "duration_s": 5},
+    {"type": "turn", "bank_deg": 50, "turn_deg": 120},
+    {"type": "level", "duration_s": 5}
+  ]
+}

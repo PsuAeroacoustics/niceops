@@ -108,6 +108,10 @@ track.
   a segment below `ground_alt`, or a climb whose altitude is already passed, is refused. niceops
   itself warns of states below its ground plane without terrain (`track_below_ground_warns`), after
   `--trim` and beyond the smoothing a WGS84 fit is allowed, since a landing dips that far.
+- **`--check` maps states through `state_condition`** (`src/state_condition.{hpp,cpp}`), the
+  function run() uses, then `Database::blend_at`, after reading the track through `Trajectory`
+  as niceops does. A copy of the mapping would drift; `procedure_check_agrees_with_niceops` pins
+  its counts to niceops's own warnings on the same track.
 
 ## Trajectory class
 
