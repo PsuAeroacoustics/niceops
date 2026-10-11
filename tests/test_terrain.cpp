@@ -16,6 +16,7 @@
 #include <netcdf.h>
 
 #include "propagation.hpp"
+#include "propagation_table.hpp"
 #include "terrain.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace)
@@ -437,6 +438,142 @@ TEST_CASE("Over a uniformly tilted plane the ground models get the plane's own g
         CHECK(flush.source_height == Catch::Approx(above / norm).margin(1e-3));
         CHECK(std::isnan(flush.receiver_height));
     }
+}
+
+TEST_CASE("a table read over a tilted plane takes the closed-form heights and range", "[terrain]")
+{
+    // The same plane as above.  The last pair is nearly overhead on ground
+    // falling toward the source, so its foot on the line lies behind the
+    // microphone's (d' < 0).
+    const double gx = 0.06, gy = -0.025;
+    const auto plane = [&](double x, double y) { return 40.0 + gx * x + gy * y; };
+    const TerrainRaster raster = raster_of(plane, 3000.0, 10.0);
+    GroundPlaneCache cache(raster);
+    const double lowest_row = 0.5;
+    struct Pair
+    {
+        Vec3 observer, source;
+        double microphone;
+    };
+    const std::vector<Pair> pairs = {
+            {{0.0, 0.0, 0.0}, {800.0, 300.0, 400.0}, 1.2},
+            {{1000.0, -900.0, 0.0}, {-1200.0, 1300.0, 600.0}, 4.0},
+            {{300.0, 300.0, 0.0}, {297.0, 300.0, 120.0}, 1.2},
+    };
+    bool behind = false;
+    for (const auto& p : pairs)
+    {
+        const Vec3 ground(p.observer.x, p.observer.y, plane(p.observer.x, p.observer.y));
+        const Vec3 microphone = ground + Vec3(0.0, 0.0, p.microphone);
+        const Vec3 source = p.source + Vec3(0.0, 0.0, plane(p.source.x, p.source.y));
+        cache.set_observer(ground.x, ground.y);
+        const double dx = source.x - ground.x, dy = source.y - ground.y;
+        const double distance = std::hypot(dx, dy);
+        const GroundLine line = cache.line_to(dx, dy, distance);
+        const double slope = (gx * dx + gy * dy) / distance;
+        const double norm = std::sqrt(1.0 + slope * slope);
+        const double above = source.z - (ground.z + slope * distance);
+        const double along = (distance + slope * (source.z - microphone.z)) / norm;
+        const Vec3 separation = microphone - source;
+
+        const TableRead point = table_read(terrain_ray(source, microphone, line, false), false, lowest_row);
+        CHECK(point.source_height == Catch::Approx(above / norm).margin(1e-3));
+        CHECK(point.receiver_height == Catch::Approx(p.microphone / norm).margin(1e-6));
+        CHECK(point.range == Catch::Approx(std::fabs(along)).margin(1e-3));
+
+        // A flush microphone reads the lowest row at the source's height above
+        // it, and its plate is crossed from the side the arrival comes from.
+        const TableRead flush = table_read(terrain_ray(source, ground, line, true), true, lowest_row);
+        CHECK(flush.receiver_height == lowest_row);
+        CHECK(flush.source_height == Catch::Approx(above / norm).margin(1e-3));
+        const double side = (distance + slope * (source.z - ground.z)) < 0.0 ? -1.0 : 1.0;
+        behind = behind || side < 0.0;
+        CHECK(flush.plate_separation.x == side * (ground - source).x);
+        CHECK(flush.plate_separation.y == side * (ground - source).y);
+        CHECK(point.plate_separation.x == (along < 0.0 ? -separation.x : separation.x));
+    }
+    CHECK(behind);
+}
+
+TEST_CASE("a table read on a level line is the flat read to the bit", "[terrain]")
+{
+    const GroundLine level {0.0, 0.0};
+    const double lowest_row = 1.2;
+    for (const Vec3& source : {Vec3(812.25, -305.5, 401.75), Vec3(-3.0, 2.0, 97.0), Vec3(1500.0, 20.0, 0.0)})
+    {
+        const Vec3 microphone(10.5, -7.25, 3.937);
+        const Vec3 separation = microphone - source;
+        const TableRead point = table_read(terrain_ray(source, microphone, level, false), false, lowest_row);
+        CHECK(point.source_height == source.z);
+        CHECK(point.receiver_height == microphone.z);
+        CHECK(point.range == separation.horizontal_norm());
+        CHECK(point.plate_separation.x == separation.x);
+        CHECK(point.plate_separation.y == separation.y);
+
+        const Vec3 ground(microphone.x, microphone.y, 0.0);
+        const TableRead flush = table_read(terrain_ray(source, ground, level, true), true, lowest_row);
+        CHECK(flush.source_height == source.z);
+        CHECK(flush.receiver_height == lowest_row);
+        CHECK(flush.range == (ground - source).horizontal_norm());
+    }
+}
+
+TEST_CASE("a table read over terrain is continuous through d' = 0", "[terrain]")
+{
+    // An anisotropic table, 10 sin(bearing) dB, read by a source walking toward
+    // a microphone on ground rising away from it.  The source's foot on the
+    // line passes behind the microphone's (d' through 0) at about 7 m out.
+    // Read on the true bearing the level is continuous there; on the turned
+    // separation's bearing it would jump 20 dB.
+    PropagationTable::Axes axes;
+    axes.bearings = {0.0, 90.0, 180.0, 270.0};
+    axes.source_heights = {0.0, 100.0, 200.0};
+    axes.receiver_heights = {0.0, 2.0};
+    axes.ranges = {0.0, 10.0, 20.0, 40.0};
+    axes.bands = {1000.0};
+    std::vector<double> values;
+    for (const double b : axes.bearings)
+        for (const double s : axes.source_heights)
+            for (std::size_t h = 0; h < axes.receiver_heights.size(); h++)
+                for (const double r : axes.ranges)
+                    values.push_back(10.0 * std::sin(b * M_PI / 180.0) + 0.01 * s - 0.1 * r);
+    const PropagationTable table(axes, values, "planted", false);
+    const auto bands = table.match_bands({1000.0}, 0, 1);
+
+    const double gx = 0.06;
+    const auto plane = [&](double x, double) { return 40.0 + gx * x; };
+    const TerrainRaster raster = raster_of(plane, 500.0, 10.0);
+    GroundPlaneCache cache(raster);
+    const Vec3 ground(0.0, 0.0, plane(0.0, 0.0));
+    const Vec3 microphone = ground + Vec3(0.0, 0.0, 1.2);
+    cache.set_observer(ground.x, ground.y);
+    double previous = std::numeric_limits<double>::quiet_NaN();
+    double largest_step = 0.0, turned_step = 0.0, previous_turned = previous;
+    bool crossed = false;
+    for (double t = -20.0; t <= -1.0; t += 0.25)
+    {
+        const Vec3 source(t, 0.0, plane(t, 0.0) + 120.0);
+        const double dx = source.x - ground.x, dy = source.y - ground.y;
+        const RayPath path = terrain_ray(source, microphone, cache.line_to(dx, dy, std::hypot(dx, dy)), false);
+        const TableRead read = table_read(path, false, axes.receiver_heights.front());
+        const Vec3 separation = microphone - source;
+        crossed = crossed || path.separation.x != separation.x;
+        double level = 0.0, turned = 0.0;
+        REQUIRE(table.lookup(std::atan2(separation.x, separation.y) * 180.0 / M_PI, read.source_height,
+                read.receiver_height, read.range, bands, &level));
+        REQUIRE(table.lookup(std::atan2(read.plate_separation.x, read.plate_separation.y) * 180.0 / M_PI,
+                read.source_height, read.receiver_height, read.range, bands, &turned));
+        if (!std::isnan(previous))
+        {
+            largest_step = std::max(largest_step, std::fabs(level - previous));
+            turned_step = std::max(turned_step, std::fabs(turned - previous_turned));
+        }
+        previous = level;
+        previous_turned = turned;
+    }
+    CHECK(crossed);
+    CHECK(largest_step < 0.05);
+    CHECK(turned_step > 19.0);
 }
 
 TEST_CASE("plane_geometry is a rotation, and the identity on level ground", "[terrain]")

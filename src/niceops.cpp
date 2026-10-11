@@ -2912,16 +2912,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // The table's level for a pair it covers, into `level`; false where
             // it does not.  A plate microphone reads it at the table's lowest
             // receiver height and adds K at the pair's azimuth in its frame.
-            auto table_level = [&](std::size_t it, double* bands_out, double& level) {
+            // Over terrain `plane` is the pair's path over its mean ground
+            // line (terrain_ray), and the heights, the range and K's geometry
+            // are taken in its frame (table_read); the bearing is always the
+            // true separation's.  Without it they are the flat ground's.
+            auto table_level = [&](std::size_t it, double* bands_out, double& level, const RayPath* plane) {
                 const Vec3& source = source_states[it].position;
                 const Vec3 separation = observer - source;
                 const auto east_north = compass.east_north({separation.x, separation.y});
                 const double east = east_north[0];
                 const double north = east_north[1];
-                const double height = flush ? options.propagation_table->axes().receiver_heights.front()
-                                            : microphone_height[index];
-                if (!options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, source.z, height,
-                            separation.horizontal_norm(), table_bands, table_loss.data()))
+                const double lowest = options.propagation_table->axes().receiver_heights.front();
+                const TableRead read = plane ? table_read(*plane, flush, lowest)
+                                             : TableRead {source.z, flush ? lowest : microphone_height[index],
+                                                       separation.horizontal_norm(), separation};
+                if (!options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, read.source_height,
+                            read.receiver_height, read.range, table_bands, table_loss.data()))
                 {
                     fallback_here++;
                     return false;
@@ -2932,14 +2938,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 double w[4] = {0.0, 0.0, 0.0, 0.0};
                 if (flush && !table_plate_offset.empty())
                 {
-                    const double azimuth = std::atan2(separation.y, separation.x) - plate_mic_azimuth + 0.5 * pi;
+                    const double azimuth = std::atan2(read.plate_separation.y, read.plate_separation.x)
+                            - plate_mic_azimuth + 0.5 * pi;
                     double x = std::fmod(azimuth / (2.0 * pi) * table_plate_azimuths, double(table_plate_azimuths));
                     if (x < 0.0)
                         x += table_plate_azimuths;
                     const std::size_t a_lo = std::min(static_cast<std::size_t>(x), std::size_t(table_plate_azimuths - 1));
                     const std::size_t a_hi = (a_lo + 1) % table_plate_azimuths;
                     const double a_weight = x - static_cast<double>(a_lo);
-                    const double elevation = std::atan2(std::max(source.z, 0.0), separation.horizontal_norm());
+                    const double elevation = std::atan2(std::max(read.source_height, 0.0), read.range);
                     const double y = std::min(elevation / table_plate_step, double(table_plate_elevations - 1));
                     const std::size_t e_lo = std::min(static_cast<std::size_t>(y), table_plate_elevations - 2);
                     const double e_weight = y - static_cast<double>(e_lo);
@@ -2971,7 +2978,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             };
             auto straight_level = [&](std::size_t it, double* bands_out) {
                 double level = 0.0;
-                if (options.propagation_table && table_level(it, bands_out, level))
+                if (options.propagation_table && table_level(it, bands_out, level, nullptr))
                     return level;
                 if (over_terrain)
                 {
@@ -3015,7 +3022,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     double* table_bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
-                    if (table_level(it, table_bands_out, level))
+                    if (table_level(it, table_bands_out, level, nullptr))
                         return add_ambient ? level_with_ambient(level, ambient_energy) : level;
                 }
                 finish_ray(ray, ray_ground, microphone_height[index]);
