@@ -1271,6 +1271,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // level added to the sample (0 outside its periods).  Period counts take
     // the clock's place, so they need none.
     std::array<std::vector<double>, day_metric_count> day_penalty;
+    if (job.period_counts && nt > 0 && !std::isnan(trajectory.states.front().utcsec)
+            && std::any_of(options.want_day_metric.begin(), options.want_day_metric.end(), [](bool m) { return m; }))
+        info(job.name, ": its day, evening and night counts weight the day metrics, so the clock of ",
+                job.trajectory, " is not read for them.");
     for (std::size_t m = 0; m < day_metric_count; m++)
     {
         if (!options.want_day_metric[m] || job.period_counts)
@@ -4437,11 +4441,14 @@ int run(int argc, char* argv[])
                         csel_files, epnl_files, band_frames_files},
                 trajectory_option->count() > 0, database_option->count() > 0, vehicle_option->count() > 0,
                 output_option->count() > 0, utc_offset);
-        // Read, but not run yet: the day, evening and night counts and the
-        // lateral offsets are refused here, and only here.
-        if (operations->file.has("day") || operations->file.has("evening") || operations->file.has("night"))
-            input_error(operations_file, ": day, evening and night counts are not supported yet. Give count, "
-                    "with local_time for each operation's clock.");
+        // Day, evening and night counts weight each period without a clock,
+        // and LAeq's window is a clock window with no period to count.
+        if (!laeq_file.empty()
+                && (operations->file.has("day") || operations->file.has("evening") || operations->file.has("night")))
+            input_error("--laeq_file is the level over a clock window, and ", operations_file, " gives day, evening "
+                    "and night counts, which carry no clock. Give count and local_time instead, or leave out "
+                    "--laeq_file.");
+        // Read, but not run yet: lateral offsets are refused here, and only here.
         for (std::size_t i = 0; i < operations->offsets.size(); i++)
             if (operations->offsets[i] != 0.0)
                 input_error(operations->labels[i], ": lateral offsets are not supported yet.");
@@ -5436,6 +5443,7 @@ int run(int argc, char* argv[])
             if (operations)
             {
                 job.weight = operations->weights[path_index];
+                job.period_counts = operations->periods[path_index];
                 job.operations = true;
                 path_options.geodetic.clock_replaces_track = operations->clock_replaces_track[path_index] != 0;
                 if (path_options.geodetic.clock_replaces_track)

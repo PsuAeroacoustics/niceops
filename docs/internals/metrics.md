@@ -254,7 +254,19 @@ everywhere is the SEL itself, bit for bit (x + 0 = x), and −∞ everywhere is 
   or `none` at weight 0), so no penalty is built and the clock refusal does not apply. The table
   is spelled exactly (CNEL's 3, not 10^(lg 3)); `period counts weight each period as the clock's
   penalty does` pins each entry to `schedule_penalty` at 13:00, 21:00 and 03:00 to 1e-12. DNL
-  counts an evening operation as day, as AEDT and INM do. LAeq has no periods to count.
+  counts an evening operation as day, as AEDT and INM do. LAeq has no periods to count, so
+  `--laeq_file` with period columns is refused right after `expand_operations`. NAx, TA, the
+  coverage and the provenance take `PathJob::weight`, the three counts added up. A track's own
+  clock is not read (an info line says so), so a clockless track runs.
+- **Why both routes exist.** `local_time` is exact for every metric, LAeq and a flight across
+  22:00 included, but it needs one row per hour flown. Period counts are what an AEDT or INM
+  study's fleet tables hold, and they cost one run per track however the day is split; their
+  price is that an operation is weighted wholly by one period, and that DNL's 22:00-23:00 (night
+  by the clock) is day under the evening count. The counts are not run as three clocked passes
+  at 13:00, 21:00 and 03:00: that would cost three runs, and CNEL's 10^(lg 3) is 3 only to
+  rounding. The two are refused together in one file, so a row never carries both a clock and a
+  period. `operations_period_day_is_clocked_day` (byte for byte) and
+  `operations_period_night_matches_clock` (1e-9) tie the routes together where they agree.
 - **C-SEL reuses `--band_history`'s per-band recording** (`record_bands`, `record_path`). Every path
   that writes `bands_out` for the band history (straight, table, refracted, each extra arrival)
   feeds it, so a new propagation branch that forgets `bands_out` breaks both. Bands outside

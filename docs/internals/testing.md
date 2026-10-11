@@ -229,11 +229,18 @@ covers the clock on AC and WGS84 tracks. The CTests `operations_*` run the fixtu
 - a fleet of rows A, B, A on two databases is `-t A -t B -t A` byte for byte, loads each
   database once (read from the run's log, as `database_cache_loads_each_once` does), and names
   each row's SEL file after it;
+- day, evening and night counts of 1, 0, 0 are the demo track flown by day byte for byte on DNL,
+  Lden and CNEL (`operations_period_day_is_clocked_day`), 0, 0, 1 is it flown at 23:30 at 1e-9
+  (`operations_period_night_matches_clock_*`), 2, 1, 1 is 1, 0, 0 plus 10 lg(2 + 10^0.5 + 10)
+  on Lden, 10 lg 13 on DNL and 10 lg 15 on CNEL (`operations_period_lden_recombines`,
+  `operations_period_dnl_counts_evening_as_day`, `operations_period_cnel_recombines`), the log
+  says the track's clock is not read, and a track with no clock runs under `-D`
+  (`operations_period_clockless_runs`);
 - the manifest records the operations file;
 - each refusal that needs a run (`-t` with the file, two `-d`, a row without a database, a missing
-  track, shared names, a bare wind speed, an empty air cell, a mismatched offset unit, period
-  counts and offsets not yet run, provenance over two databases, a clockless row under `-D`), by
-  its message.
+  track, shared names, a bare wind speed, an empty air cell, a mismatched offset unit, `count`
+  or `local_time` beside period counts, `--laeq_file` with period counts, offsets not yet run,
+  provenance over two databases, a clockless row under `-D`), by its message.
 
 ### C-weighted SEL
 

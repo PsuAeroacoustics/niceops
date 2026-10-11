@@ -133,7 +133,11 @@ the manifest and every check that reads those lists. Things to keep:
 - **`local_time` goes through the clock**, not a weight: `GeodeticInput::clock_replaces_track`
   makes `start_utc + (t - t0)` the clock of an AC, WGS84 or static track whatever clock it
   carries, so the penalties, the period levels and a flight across 22:00 are all exact.
-- **Period counts and lateral offsets are read and refused in one place** in `run()`, right after
+- **Period counts never touch the clock.** `expand_operations` passes them through
+  `OperationRun::periods` to `PathJob::period_counts`; the reader refuses them beside `count` or
+  `local_time`, and `run()` refuses them with `--laeq_file`. The weighting is in
+  [metrics.md](metrics.md).
+- **Lateral offsets are read and refused in one place** in `run()`, right after
   `expand_operations`, until the run uses them.
 
 ### Tests

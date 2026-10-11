@@ -1094,6 +1094,7 @@ such as `count (per year)`, is refused, and `wind_direction` may say only `(deg)
 | `track` | The trajectory file: an AC track, a WGS84 track or a static operation. Required. | Refused. |
 | `name` | The row's name: what its files are named after, and the `-m` case name. Letters, digits, `_`, `.` and `-`, not starting with a dot. | The track's file name, less its extension. |
 | `count` | Operations per average day. Any positive number, fractions included. | 1. |
+| `day`, `evening`, `night` | Operations per average day in each period, in place of `count` and `local_time` (below). Each zero or more, and a row's three add up to more than zero. | 0. |
 | `local_time` | `HH:MM` or `HH:MM:SS` (00:00 to 23:59:59), local time by `--utc_offset`, at the track's first state. It replaces any clock the track carries. | The track's own clock, or `--start_utc`. |
 | `database`, `vehicle` | As `-d` and `-v`. | The one `-d` or `-v` given; refused without it. |
 | `output` | This row's SEL file, as `-o`. | Named after the row (below). |
@@ -1101,8 +1102,7 @@ such as `count (per year)`, is refused, and `wind_direction` may say only `(deg)
 | `wind_speed`, `wind_direction`, `wind_height` | Joined as `--wind`'s `speed,direction[,height]`: the speed names its unit (`8kt`), the direction is a compass bearing, the height is in `--units`. The first two go together. | See the air, below. |
 | `humidity` (%), `temperature` (K), `pressure` (kPa) | As the options of those names. | See the air, below. |
 
-`day`, `evening`, `night` and `offset` are reserved: they are read and checked, and a file that
-uses the counts or a nonzero offset is refused.
+`offset` is reserved: it is read and checked, and a file with a nonzero offset is refused.
 
 **Paths** in the file are taken from the operations file's own folder, so a study folder moves as
 a whole; absolute paths are used as given. Each resolved path is in the log, and a track,
@@ -1134,6 +1134,21 @@ column, a WGS84 track's `utcsec`), or `--start_utc`, and a track with neither is
 day metrics. Give each operation its own row and `local_time`: a row's count flies it that many
 times at the same hour.
 
+**Period counts.** A file may instead give each row's operations as `day` (07:00 to 19:00),
+`evening` (19:00 to 23:00) and `night` (23:00 to 07:00) counts, as an AEDT or INM study's fleet
+tables do. They take the clock's place: each operation is heard as its plain SEL, and each
+metric weights a period's count as it weights an operation flown then. A night operation counts
+ten times in DNL, Lden and CNEL. An evening operation counts three times in CNEL, about 3.16
+times (+5 dB) in Lden, and once in DNL, which has no evening: DNL counts it as day, as AEDT and
+INM do. DNL and CNEL weight every evening operation as one flown 19:00 to 22:00, though by the
+clock 22:00 to 23:00 is their night. `--lday_file`, `--levening_file` and `--lnight_file` each
+take only their own period's count. NAx, the time above, the coverage and the provenance take the
+row's three counts added up. A track's own clock is not read for the
+day metrics (the log says so), and a track with no clock runs. A file has either period columns
+or `count` and `local_time`, never both; `--laeq_file`, whose window is a clock window, is
+refused with period counts. Use `local_time` where the hour matters within a period, or when a
+flight straddles a period's edge: period counts weight the whole operation by one period.
+
 **Outputs.** Each row's SEL file, and its `-S`, `--csel_file`, `--epnl_file`, `--band_frames` and
 `--write_atmosphere` files, are one operation's, whatever its count. With several rows each is
 `<name>_LAE.csv` (and `<name>_state.csv` and so on) in the folder of the name given to the option
@@ -1143,7 +1158,9 @@ the track's for several `-t`. These options take one name with `--operations`. T
 share a name, compared ignoring case: give such rows a `name` column.
 
 **Refusals.** An unknown or repeated column, a file with no `track` column or no rows, a row with
-the wrong number of fields, a quote, a count that is not a positive number (`0`, `-2`, `nan`,
+the wrong number of fields, a quote, `count` or `local_time` beside period columns, period
+counts that are negative or add up to nothing, `--laeq_file` with period counts, a count that is
+not a positive number (`0`, `-2`, `nan`,
 `6.2 ops`; comment a row out with `#` to leave it out), a `local_time` that is not a clock time
 (`25:00`, `7pm`), a `start_utc` column (use `local_time`), a temperature, pressure or humidity
 column declaring another unit, an `offset` or `wind_height` column declaring a length unit other

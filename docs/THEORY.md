@@ -1058,8 +1058,8 @@ Time above a threshold (TA) is the reception time during which the weighted leve
 exceeds it, solved for analytically within each sample (each sample counts whole under
 `instantaneous`). The number of events above (NAx) counts the operations whose maximum reaches
 the threshold. Over several operations, the maximum level is the largest of theirs and TA adds.
-A trajectory $j$ standing for $N_j$ operations (an operations file's count; 1 otherwise) is
-counted that many times:
+A trajectory $j$ standing for $N_j$ operations (an operations file's count, or its period
+counts added up as in §10.4; 1 otherwise) is counted that many times:
 
 $$
 \mathrm{NA}x = \sum_j N_j \left[L_{\mathrm{max},j} \ge x\right], \qquad
@@ -1113,6 +1113,32 @@ window found among them), $T_w$ is 12 h, 4 h and 8 h for the three periods, and 
 applies. An operation lying wholly in one period recombines into $L_\mathrm{den}$ exactly; one
 that straddles a period's edge does so exactly under `--full_history`, and to the difference of
 the windows otherwise.
+
+Period counts replace the clock. A trajectory given $N_{d,j}$, $N_{e,j}$ and $N_{n,j}$
+operations by day (07:00–19:00), evening (19:00–23:00) and night (23:00–07:00) contributes, to
+metric $m$,
+
+$$
+w_{m,j}\, t_\mathrm{ref}\, 10^{\mathrm{SEL}_j/10}, \qquad
+w_{m,j} = a_{m,d} N_{d,j} + a_{m,e} N_{e,j} + a_{m,n} N_{n,j},
+$$
+
+with the unpenalized $\mathrm{SEL}_j$ and $a_{m,p} = 10^{P_{m,p}/10}$ the weighting of an
+operation flown in period $p$ (1 inside a period level's period, 0 outside):
+
+| Metric | $a_d$ | $a_e$ | $a_n$ |
+| --- | --- | --- | --- |
+| DNL | 1 | 1 | 10 |
+| Lden | 1 | $\sqrt{10}$ | 10 |
+| CNEL | 1 | 3 | 10 |
+| $L_d$ | 1 | 0 | 0 |
+| $L_e$ | 0 | 1 | 0 |
+| $L_n$ | 0 | 0 | 1 |
+
+DNL and CNEL weight an evening operation as one flown 19:00–22:00, so DNL counts it as day, the
+AEDT and INM convention; by the clock, 22:00–23:00 is night in both. The entries are each
+metric's weighting at 13:00, 21:00 and 03:00. $L_{\mathrm{Aeq},T}$ has no periods to count. In
+§10.3 (number above, time above, coverage and provenance), $N_j = N_{d,j} + N_{e,j} + N_{n,j}$.
 
 ### 10.5 Effective perceived noise level
 
