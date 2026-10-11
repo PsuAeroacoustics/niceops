@@ -203,6 +203,7 @@ add_library(niceops_core STATIC
   src/manifest.cpp
   src/build_info.cpp
   src/contour.cpp
+  src/procedure.cpp
 )
 target_include_directories(niceops_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -257,6 +258,7 @@ add_executable(niceops_unit_tests
   tests/test_build.cpp
   tests/test_manifest.cpp
   tests/test_contour.cpp
+  tests/test_procedure.cpp
   tests/test_iota.cpp
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
@@ -305,6 +307,8 @@ add_executable(niceops_ray_geometry tools/ray_geometry.cpp)
 target_link_libraries(niceops_ray_geometry niceops_core CLI11::CLI11)
 add_executable(niceops_pe_field tools/pe_field.cpp)
 target_link_libraries(niceops_pe_field niceops_core CLI11::CLI11)
+add_executable(niceops_procedure tools/procedure.cpp)
+target_link_libraries(niceops_procedure niceops_core CLI11::CLI11)
 add_executable(niceops_propagation_table tools/propagation_table.cpp)
 target_link_libraries(niceops_propagation_table niceops_core CLI11::CLI11)
 # The Attenborough et al. (1995) benchmark cases by the PE and the exact
@@ -533,6 +537,17 @@ set_tests_properties(air_first_track_is_its_own air_second_track_is_its_own air_
 set_tests_properties(air_tracks_differ PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME air_count_must_match COMMAND niceops ${AIR_RUN} -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv --humidity 20 --humidity 40 --humidity 60 -o integrated/air_count_a.csv -o integrated/air_count_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(air_count_must_match PROPERTIES PASS_REGULAR_EXPRESSION "Got 3 --humidity values for 2 trajectories")
+# niceops_procedure: a descending, decelerating approach to a hover, flown into a WGS84 track
+# with velocity and heading columns, which niceops then runs as it is.
+add_test(NAME procedure_build COMMAND niceops_procedure tests/data/procedure_approach.json -o integrated/procedure_approach.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(procedure_build PROPERTIES FIXTURES_SETUP procedure_track)
+add_test(NAME procedure_runs COMMAND niceops -t integrated/procedure_approach.csv --origin 39.8291 -74.4100 --frame_bearing 210 --gridstep 1640 -L warn -o integrated/procedure_approach_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(procedure_runs PROPERTIES FIXTURES_REQUIRED procedure_track)
+add_test(NAME procedure_refuses_going_underground COMMAND niceops_procedure tests/data/procedure_underground.json -o integrated/procedure_underground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(procedure_refuses_going_underground PROPERTIES PASS_REGULAR_EXPRESSION "segment 2 goes below the ground")
+# A track below the observers' plane (here an altitude datum 5000 ft too high) ran silently.
+add_test(NAME track_below_ground_warns COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --ground_elevation 5000 --gridstep 1640 -L warn -o integrated/below_ground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(track_below_ground_warns PROPERTIES PASS_REGULAR_EXPRESSION "states of tests/data/demo_geodetic_noclock\\.csv are below the ground")
 # An observer exactly at a source position: spherical spreading diverges at r = 0.
 # The level was +inf in the CSV, and with the asserts live the run aborted.  The
 # case passes only if the run finishes.

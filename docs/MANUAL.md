@@ -33,7 +33,7 @@ the code, start with the [README](../README.md); developers start at
   and the day-night level](#several-trajectories-and-the-day-night-level) · [Maximum level, time
   above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel) · [EPNL and reception-time
   frames](#epnl-and-reception-time-frames)
-- [Companion tools](#companion-tools): [`niceops_propagation_table`](#niceops_propagation_table) ·
+- [Companion tools](#companion-tools): [`niceops_procedure`](#niceops_procedure) · [`niceops_propagation_table`](#niceops_propagation_table) ·
   [`niceops_pe_compare`](#niceops_pe_compare) · [`niceops_benchmark`](#niceops_benchmark) · [Plot
   scripts](#plot-scripts)
 - [Performance](#performance): [How much gets evaluated](#how-much-gets-evaluated) ·
@@ -260,7 +260,9 @@ first database) stops it with `Stopping: <why>` and exit status 2.
 time, altitude and velocity must be finite, its column names recognized, and any unit its header
 declares must agree with what is read: lengths in `--units`, speeds in `--units` per second,
 times in seconds (`Alt (ft)` under `--units m`, `Climb Rate (fpm)` and `Time (ms)` are
-refused). A text line after the first row of data is an error (above it, a header). A `--trim` that leaves fewer than
+refused). A text line after the first row of data is an error (above it, a header). A track whose states
+go below the ground plane, with no `--terrain`, is warned about: its altitude datum and
+`--ground_elevation` disagree. A `--trim` that leaves fewer than
 two states is refused, naming where the track's crop ends. An observer file must keep one
 width and yield at least one observer. An `--atmosphere` file must be finite, reach every state,
 and name its wind units. A database must vary in μ, γ and (unless `fixed_load_factor`)
@@ -1110,8 +1112,56 @@ to the run; `--band_frames` more than doubles it and holds about 0.9 GB.
 
 ## Companion tools
 
-The build also makes three tools for checking the propagation models and building tables. They
-share the `--units` convention (feet by default) and the profile format.
+The build also makes three tools for checking the propagation models and building tables, and
+one for building tracks. They share the `--units` convention (feet by default) and the profile
+format.
+
+### `niceops_procedure`
+
+Flies a procedure into a track: a start and a list of segments, integrated into a WGS84 track with
+velocity and heading columns, which `niceops` reads as it is. Use it where you would otherwise
+write sparse waypoints, whose load factor is an artifact of the interpolant
+([FIDELITY](FIDELITY.md#trajectory-smoothing)); a flown procedure carries its own.
+
+```sh
+./build/niceops_procedure approach.json -o tracks/approach.csv
+./build/niceops -t tracks/approach.csv --origin 39.8291 -74.41 --frame_bearing 210 ...
+```
+
+The procedure is JSON. Every length and speed names its unit in its key (`_ft` or `_m`; `_kt`,
+`_mps` or `_fps`; rates `_kt_per_s` or `_mps2`; angles `_deg`; times `_s`), and a bare number is
+refused:
+
+```json
+{"start": {"lat": 39.8291, "lon": -74.41, "alt_ft": 1000, "speed_kt": 100, "course_deg": 210},
+ "segments": [
+   {"type": "level", "duration_s": 20},
+   {"type": "descent", "angle_deg": 6, "until_alt_ft": 700},
+   {"type": "speed", "to_speed_kt": 40, "rate_kt_per_s": 1.5, "angle_deg": -3},
+   {"type": "turn", "bank_deg": -15, "turn_deg": 30},
+   {"type": "speed", "to_speed_kt": 0, "rate_kt_per_s": 1},
+   {"type": "hover", "duration_s": 15}]}
+```
+
+| Segment | Keys |
+| --- | --- |
+| `level` | `duration_s` or `distance` |
+| `climb`, `descent` | `angle` (a descent's is taken downward) and `duration_s` or `until_alt` |
+| `speed` | `to_speed`, optional `rate` (default 0.5 m/s²) and `angle` (default level) |
+| `turn` | `bank` (signed, positive right, under 60°) and `turn`, the course change |
+| `hover` | `duration_s`; it must start at rest |
+
+- **The start** is a position, `alt` on the track's datum (what `niceops` takes
+  `--ground_elevation` off), a ground speed and a compass course. An optional `ground_alt` (default
+  0) is the ground on that datum: a segment that goes below it is refused.
+- **Transitions are flown**: the path angle changes at a limited pull (`limits.pull_g`, default
+  0.1 g), the bank at a limited roll rate (`limits.roll_rate_deg_per_s`, default 10), and speed at
+  the segment's rate, so a join puts no spike in the load factor. A climb overshoots its altitude
+  by the leveling-off, and a turn rolls out early by the course its roll-out turns.
+- **Calm air**: the heading is the course and the ground speed the airspeed. `step_s` (default
+  0.2) is the spacing of the written states.
+- Whether the flown conditions stay inside a database's envelope is what `--provenance_file`
+  reports.
 
 ### `niceops_propagation_table`
 

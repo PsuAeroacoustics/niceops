@@ -85,6 +85,22 @@ sample times (a uniform file at or below `-s` is used as sampled), and only spar
 spaced input is refitted onto the `-s` grid. `-s` has no other effect: it does not touch an AC
 track.
 
+## `niceops_procedure`
+
+`src/procedure.{hpp,cpp}`, `tools/procedure.cpp`. Things to keep:
+
+- **It writes velocity and heading columns**, so niceops interpolates the flown velocity and
+  differentiates it for the load factor, rather than differentiating positions twice. A steady
+  30° turn reads back as 1/cos 30° to 1e-6 ("niceops reads a flown turn's load factor as
+  1 / cos(bank)").
+- **Transitions are rate-limited** (pull, roll rate, acceleration), never stepped: a step in the
+  path angle is an infinite load factor once differentiated.
+- **Time counts internal steps** (`t = n h`, h dividing `step_s` exactly), so the written states are
+  evenly spaced and niceops keeps them rather than resampling.
+- **Units in keys, a bare number refused**, as on niceops's command line; a segment below
+  `ground_alt` is refused. niceops itself warns of states below its ground plane without terrain
+  (`track_below_ground_warns`).
+
 ## Trajectory class
 
 `src/trajectory.{hpp,cpp}`: the `Trajectory` class. It parses the 27-column CSV into `State`
