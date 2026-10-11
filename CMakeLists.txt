@@ -1561,3 +1561,28 @@ add_test(NAME terrain_steep_refracting_table_warns COMMAND niceops ${TERRAIN_DEM
 set_tests_properties(terrain_steep_refracting_table_warns PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_refracting_table_file" PASS_REGULAR_EXPRESSION "refracts, and over --terrain it is read by height above each path's mean ground plane.*had a plane tilted more than 5 degrees")
 add_test(NAME terrain_steep_ground_model_table_is_quiet COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_steep.nc --ground_elevation 54.2651 ${TERRAIN_TABLE_PLATE} --gridstep 4000 -o integrated/terrain_steep_ground_model.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_steep_ground_model_table_is_quiet PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" FAIL_REGULAR_EXPRESSION "refracts, and over --terrain")
+# ... and a ground-model table over the hills is the terrain ground model, to the table's
+# interpolation, which is the plumbing check: it fails if the read takes the source's height
+# above z = 0 for its height above the plane.  A plate reads the five-row table's row at 0 plus K,
+# the plate in the plane's frame (0.014 dB at worst; FIDELITY, Propagation tables).  A point
+# receiver reads between rows at its own height above the plane, where the ground's fringes in
+# receiver height are finer than any practical row spacing above a few hundred hertz, so its check
+# runs from 20 to 250 Hz over rows every half foot (0.17 dB at worst).
+set(TERRAIN_LOW_TABLE_ROWS 0)
+foreach(tenths RANGE 5 220 5)
+  math(EXPR feet "${tenths} / 10")
+  math(EXPR fraction "${tenths} % 10")
+  list(APPEND TERRAIN_LOW_TABLE_ROWS ${feet}.${fraction})
+endforeach()
+add_test(NAME terrain_low_table_build COMMAND niceops_propagation_table --method ground_model --database databases/B407_fixed_load_factor.nod --band_limits 20 250 --sound_speed 335.636 --impedance_model variable_porosity --flow_resistance 200
+    --source_heights ${TERRAIN_TABLE_SOURCES} --receiver_heights ${TERRAIN_LOW_TABLE_ROWS} --max_range 15000 --step 20 -o tables/ground_model_terrain_low_test.nc
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_low_table_build PROPERTIES FIXTURES_SETUP terrain_low_table_file)
+add_test(NAME terrain_hills_low_table_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --band_limits 20 250 --propagation_table tables/ground_model_terrain_low_test.nc --gridstep 492 -o integrated/terrain_hills_low_table_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_low_table_point PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_low_table_file" FIXTURES_SETUP terrain_hills_low_runs FAIL_REGULAR_EXPRESSION "outside the table's receiver heights")
+add_test(NAME terrain_hills_low_point_reference COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --band_limits 20 250 --exact_ground --gridstep 492 -o integrated/terrain_hills_low_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_low_point_reference PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_hills_low_runs)
+add_test(NAME terrain_hills_table_point_is_the_ground_model COMMAND golden_compare integrated/terrain_hills_low_table_point.csv integrated/terrain_hills_low_point_reference.csv 0.2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_point_is_the_ground_model PROPERTIES FIXTURES_REQUIRED terrain_hills_low_runs)
+add_test(NAME terrain_hills_table_plate_is_the_plate_model COMMAND golden_compare integrated/terrain_hills_table_plate.csv integrated/terrain_hills_plate.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_plate_is_the_plate_model PROPERTIES FIXTURES_REQUIRED "terrain_hills_table_runs;terrain_hills_runs")

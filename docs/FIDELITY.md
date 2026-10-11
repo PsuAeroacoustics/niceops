@@ -476,6 +476,21 @@ None moves the SEL: the exposure within 10 dB of each microphone's measured peak
   The raised rows' error does not shrink with a twelve times finer elevation grid for K. With K
   taken at 2° for every pair, the flush row was −0.014 dB mean (−0.34 to +0.08 dB).
 
+- **Over terrain**, a ground-model table read in each pair's mean-plane frame against the terrain
+  ground model itself (the synthetic hills grid, demo track, 492 ft grid, variable-porosity ground
+  of 200 kPa·s/m²):
+  - **Plates**, through the table's row at 0 plus K: 0.014 dB at worst (0.0016 dB rms) with
+    source heights and ranges every 20 ft, and 0.0046 dB (0.0004 rms) every 10 ft.
+  - **Point receivers** read between rows at their own height above the plane, 0 to 20.5 ft
+    there. From 20 to 250 Hz, with rows every 2, 1 and 0.5 ft, the worst cell is 2.26, 0.83 and
+    0.17 dB off (rms 0.31, 0.11 and 0.04 dB), so the error is the rows' interpolation. Over the
+    full band, with rows every 4, 2 and 1 ft, the worst cell is 1.67, 1.92 and 1.96 dB off (rms
+    0.37, 0.28 and 0.18 dB): the worst does not fall at these spacings, because the ground's
+    interference fringes are λ/(2 sin ε) apart in receiver height, finer than the rows in the
+    mid bands at steep elevations ε.
+
+  This checks the geometry and the plumbing only. No measured data set tests a table over
+  terrain.
 - **Turbulence and roughness built into a ground-model table** reproduce `--ground_effect
   --exact_ground` with the same settings on the plumbing check's grid: Chessell's 4e-4 rad·s/√m
   with a 0.3 ft roughness to 0.0001 dB mean and 0.021 dB at worst, HARMONOISE's γ<sub>T</sub>

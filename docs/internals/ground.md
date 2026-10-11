@@ -298,7 +298,11 @@ noticeable.
   plane for a refracting table but not for a ground-model one
   (`terrain_steep_refracting_table_warns`, `terrain_steep_ground_model_table_is_quiet`, on the
   5.7° plane `integrated/terrain_steep.nc`). The geometry is checked in `tests/test_terrain.cpp`
-  (`a table read ...`).
+  (`a table read ...`). A ground-model table over the hills is the terrain ground model to its
+  interpolation (`terrain_hills_table_point_is_the_ground_model`, from 20 to 250 Hz over rows
+  every half foot, `tables/ground_model_terrain_low_test.nc`; and
+  `terrain_hills_table_plate_is_the_plate_model`); the measured error is in
+  [FIDELITY](../FIDELITY.md#propagation-tables).
 - *Every refusal has a CTest* that passes on its message.
 
 What terrain changes at Amedee, and the slope sensitivity, are in
