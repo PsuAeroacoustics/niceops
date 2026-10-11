@@ -2666,6 +2666,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::atomic<std::size_t> fallback_samples {0};
     std::atomic<std::size_t> terrain_samples {0};
     std::atomic<std::size_t> terrain_raised {0};
+    // Which observers had a height raised onto their path's mean ground plane
+    // (each observer is one worker's, so no synchronization).
+    std::vector<char> raised_at(terrain_raster ? observers.size() : 0, 0);
     // The table's bearings are compass bearings; the run's x/y are turned from
     // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
     const CompassToLocal compass(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
@@ -2931,6 +2934,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             planes->line_to(dx, dy, std::sqrt(dx * dx + dy * dy)), flush, &raised);
                     terrain_here++;
                     raised_here += raised;
+                    if (raised)
+                        raised_at[index] = 1;
                     return database.spectral_level_along(path, source_states[it], absorption_for(it, observer),
                             band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
                             packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, nullptr, nullptr,
@@ -3398,10 +3403,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     {
         if (ground_model == nullptr)
             log("--terrain: no ground model runs, so the terrain sets only where the observers stand.");
+        else if (terrain_raised.load() == 0)
+            log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane.");
         else
-            log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane; in ",
-                    terrain_raised.load(), " of them a source or receiver below it was raised onto it (a "
-                    "receiver in a dip, or a source behind rising ground, which is not screened).");
+        {
+            // A source behind rising ground is heard as if the ground were not
+            // there: the level is too high, and the run used to say so only in
+            // the log.  A receiver in a dip raises the same flag.
+            const auto observers_raised = std::count(raised_at.begin(), raised_at.end(), char(1));
+            warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
+                    "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
+                    terrain_samples.load(), " evaluations), taken onto it. A source behind rising ground "
+                    "is not screened, so those observers' levels are too high there; a receiver in a dip "
+                    "is only approximate.");
+        }
     }
 
     if (options.propagation_table)

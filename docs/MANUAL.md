@@ -762,8 +762,9 @@ file's z, with a warning where it differs from the terrain by more than 1 m;
 `--observers_on_terrain` stands them on the terrain instead.
 
 **What is not modeled.** Terrain does not screen or diffract: a ridge between source and receiver
-puts the source below the mean plane, and its height is set to zero. Each path's ground is one
-plane. `--refraction` and `--propagation_table` are refused, because they are built over flat
+puts the source below the mean plane, and its height is set to zero, so the level there is too
+high. The run warns when it happens, with how many observers had such paths (a receiver in a dip
+raises the same flag). Each path's ground is one plane. `--refraction` and `--propagation_table` are refused, because they are built over flat
 ground, and on the broadband path `--terrain` only places the observers.
 
 **Cost and effect.** Plates keep their tables over terrain; point receivers over real terrain are
