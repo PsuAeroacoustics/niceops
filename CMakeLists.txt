@@ -769,7 +769,12 @@ add_test(NAME operations_period_dnl_counts_evening_as_day COMMAND golden_compare
 add_test(NAME operations_period_cnel_recombines COMMAND golden_compare integrated/ops_pmix_cnel.csv integrated/ops_pday_cnel.csv 0 11.760912590556813 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(operations_period_lden_recombines operations_period_dnl_counts_evening_as_day operations_period_cnel_recombines PROPERTIES FIXTURES_REQUIRED ops_period_runs)
 add_test(NAME operations_period_clockless_runs COMMAND niceops --operations tests/data/operations/noclock_periods.csv -d databases/S-76D_M3.nod -v databases/S-76D.json --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -D integrated/ops_noclock_periods_dnl.csv -o integrated/ops_noclock_periods.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(operations_period_clockless_runs PROPERTIES FAIL_REGULAR_EXPRESSION "needs the time of day;Skipping")
+set_tests_properties(operations_period_clockless_runs PROPERTIES FAIL_REGULAR_EXPRESSION "needs the time of day;Skipping" FIXTURES_SETUP ops_noclock_period_run)
+# Its DNL is the night's, not an empty one: the same track dated 01:00 by --start_utc.
+add_test(NAME operations_period_clockless_night_run COMMAND niceops -t tests/data/demo_geodetic_noclock.csv -d databases/S-76D_M3.nod -v databases/S-76D.json --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --start_utc 3600 -D integrated/ops_noclock_night_dnl.csv -o integrated/ops_noclock_night.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_clockless_night_run PROPERTIES FIXTURES_SETUP ops_noclock_period_run)
+add_test(NAME operations_period_clockless_is_the_night COMMAND golden_compare integrated/ops_noclock_periods_dnl.csv integrated/ops_noclock_night_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_clockless_is_the_night PROPERTIES FIXTURES_REQUIRED ops_noclock_period_run)
 # A fleet: rows A, B, A on two databases, against -t A -t B -t A with per-track -d and -v.  Each
 # database loads once, and each row's SEL file is named after it.
 add_test(NAME operations_fleet_run COMMAND sh -c "rm -f integrated/ops_fleet.log && $<TARGET_FILE:niceops> --no-spectral --no-ground_effect --gridstep 2000 -L info -l integrated/ops_fleet.log --operations tests/data/operations/fleet.csv -D integrated/ops_fleet_dnl.csv -o integrated/ops_fleet/sel.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
