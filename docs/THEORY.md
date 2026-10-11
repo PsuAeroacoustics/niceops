@@ -589,7 +589,8 @@ reflection point lies near the receiver, at $d'h_r'/(h_s' + h_r')$, so a line fi
 whole path also weighs terrain the reflection never sees; that is the standard practice, and on
 smooth ground the two agree. Spreading, absorption and the sphere
 direction still use the true straight line. On level terrain at $z = 0$ every quantity reduces
-to the flat-ground geometry. Terrain screening and diffraction are not modeled (§11).
+to the flat-ground geometry. A propagation table (§9.3) is read in the same rotated frame.
+Terrain screening and diffraction are not modeled (§11).
 
 ## 7. The stratified, moving atmosphere
 
@@ -1023,6 +1024,22 @@ bilinearly in $\phi$ and $\varepsilon$. Unlike the shadow transition's $K$(band,
 §8.1, taken at 2°, it depends on elevation, because over a raised $h_0$ the bare term is a comb
 in elevation that $K$ has to follow; over $h_0 = 0$ it is the plate's offset from flush.
 
+Over terrain (§6.3) the table is read in each pair's rotated frame:
+$\Delta L(\beta, h_s', h_r', |d'|, f)$ for a point receiver, and
+$\Delta L(\beta, \max(0, h_s' - h_r'), h_0, |d'|, f)$ plus $K(f, \phi', \varepsilon')$ for a flush
+plate, with $\varepsilon' = \arctan(\max(0, h_s' - h_r')/|d'|)$ and $\phi'$ the plate-frame
+azimuth of the separation as §6.3 turns it when $d' < 0$. The bearing $\beta$ is the true
+horizontal separation's, not the turned one's, so an anisotropic table stays continuous as $d'$
+passes through zero. Spreading, absorption and the sphere direction keep the true straight line,
+and since the rotation preserves distance the table's free-field reference is the true range
+except where a height was raised to zero. A point receiver whose $h_r'$ lies outside the table's
+receiver heights is not clamped onto a row; it falls back to the run's own model. Reading a
+refracting table this way takes its stratification to follow each path's mean plane. CNOSSOS-EU
+evaluates its favorable (downward-refracting) conditions over the mean plane in the same way
+[32, 33]. For a linear profile the circular ray tangent to a plane tilted by $\alpha$ has a
+radius larger by $1/\cos\alpha$ (0.14% at 3°), so the read is a small perturbation of the
+vertical-gradient geometry on gentle slopes.
+
 Turbulence and ground roughness are the table's own. A ground-model table built with
 Chessell's $C$ or HARMONOISE's $\gamma_T$ carries the coherence $T(f)$ of §5, and one built with
 a roughness the Kirchhoff factor; a PE table's turbulence is its phase screens (§9.1). The run's
@@ -1257,8 +1274,9 @@ than for SEL.
   source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
 - **Diffraction and screening** by terrain or buildings (§6.3). Terrain enters only through
   each path's mean ground plane.
-- **Refraction or propagation tables over terrain.** The ray models and the tables assume flat
-  ground, so `--terrain` is refused with `--refraction` and with `--propagation_table`.
+- **Refraction over terrain.** The ray models assume flat ground, so `--terrain` is refused
+  with `--refraction`. A propagation table is read over each path's mean plane (§9.3), which
+  for a refracting table assumes a stratification that follows the ground.
 - **Ground reflection on the broadband path.** The broadband path has only spreading and
   EAA (§4.1).
 - **Coherent summation of refracted arrivals.** Arrivals are summed in energy (§8.2).

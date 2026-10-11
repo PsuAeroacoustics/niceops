@@ -180,7 +180,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--plate_mic_azimuth` | Which way the microphone is offset on its plate: `outboard` (default, away from the track) or degrees in the local frame from +x toward +y. |
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state rather than from per-trajectory tables. Slower; for checking the tables. |
 | `--propagation_table` | A propagation loss table (netCDF) that replaces the ground and ray models wherever it covers a pair ([Propagation loss tables](#propagation-loss-tables)). Spectral path only. |
-| `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction` or `--propagation_table`. The three rows below are refused without it. |
+| `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
 | `--observers_on_terrain` | With `--terrain` and `-b`: take each observer's ground height from the terrain rather than the file's z. |
@@ -293,7 +293,7 @@ The main ones:
 | `--refraction` without `--atmosphere` or `--wind`; `--atmosphere` with `--wind` | One profile, stated once. |
 | `--shadow_model resolved` without `--refraction stratified` and the ground effect; `--scattering` without `--refraction` and the ground effect | They act through the shadow transition, which needs a ground model. |
 | `--tunneling`, `--skip_fill` without `--refraction stratified` | They are stratified-ray corrections. |
-| `--terrain` with `--refraction` or `--propagation_table`, or without a frame | Those models are built over flat ground; terrain needs to know where x/y lie. |
+| `--terrain` with `--refraction`, or without a frame | The ray models are built over flat ground; terrain needs to know where x/y lie. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
 | `--latlon`, `--contour_file`, `--nose heading` without a frame; `--contour_file` or `--raster_file` with `-b`; `--contour_file` with `--contour_metric sel` over several trajectories | Nothing to turn compass directions or invert positions with; scattered observers have no grid to contour; one SEL per trajectory. |
 | `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock, unless an operations file gives period counts | Day or night would be made up. |
@@ -773,8 +773,10 @@ file's z, with a warning where it differs from the terrain by more than 1 m;
 **What is not modeled.** Terrain does not screen or diffract: a ridge between source and receiver
 puts the source below the mean plane, and its height is set to zero, so the level there is too
 high. The run warns when it happens, with how many observers had such paths (a receiver in a dip
-raises the same flag). Each path's ground is one plane. `--refraction` and `--propagation_table` are refused, because they are built over flat
-ground, and on the broadband path `--terrain` only places the observers.
+raises the same flag). Each path's ground is one plane. `--refraction` is refused, because the
+ray models are built over flat ground, and on the broadband path `--terrain` only places the
+observers. A `--propagation_table` is read over each path's mean plane
+([Propagation loss tables](#propagation-loss-tables)).
 
 **Cost and effect.** Plates keep their tables over terrain; point receivers over real terrain are
 evaluated exactly, about 4 times the CPU, which a test array of tens of microphones does not
@@ -903,6 +905,17 @@ one value means every direction), `source_height` and `receiver_height` (above t
   that fall back. Build the table with the run's (`niceops_propagation_table --turbulence`,
   `--gamma_t`, `--roughness`); a run whose settings differ from what the table records is warned.
 - **With `--refraction` too**, every state is evaluated rather than windowed from the peak.
+- **Over terrain** each pair reads the table at its heights above, and range along, its path's
+  mean ground plane ([Terrain](#terrain)), as the ground model does there. A point microphone's
+  height above the plane is its own, not its pole's: build the table with receiver rows from 0 to
+  above the tallest microphone plus the terrain's relief. A pair whose microphone falls outside
+  the rows takes the run's own model, and the run warns with the heights seen; a table with one
+  receiver row is warned about before the run. Reading between rows is where a point receiver's
+  error is over terrain: the ground's interference fringes in receiver height are finer than a
+  practical row spacing above a few hundred hertz. A flush plate reads the lowest row, as on flat
+  ground, which needs no extra rows. A table that refracts (a PE table, or any not built by the
+  ground model with no atmosphere) is taken to have its atmosphere follow each path's mean plane;
+  the run warns when pairs read it over a plane tilted more than 5 degrees.
 - **The file** is netCDF, SI: `relative_level(bearing, source_height, receiver_height, range,
   band)`, a coordinate variable per axis, and the attributes `propagation_table_version` (1),
   `method`, `includes_absorption` and `provenance_*`. Anything that fills it can be read

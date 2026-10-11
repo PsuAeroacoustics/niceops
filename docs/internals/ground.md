@@ -210,9 +210,27 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
   `terrain_hills_plate_windowed_is_exact` hold it. The tables' reach (`reach()` in
   `process_trajectory`) extends below z = 0 under terrain; node placement does not depend on the
   reach, so the flat case is unmoved.
-- **Refused with `--refraction` and `--propagation_table`.** The ray models reflect off and shadow
-  onto z = 0, and the table's heights are over flat ground. A tilted plane per path handed to them
-  would be another model.
+- **Refused with `--refraction`.** The ray models reflect off and shadow onto z = 0; a tilted
+  plane per path handed to them would be another model. That refusal is the only one; the one
+  with `--propagation_table` had no CTest, and `terrain_table_refuses_refraction` holds that
+  `--refraction` still wins when both are given.
+- **A propagation table reads the same path.** `straight_level` finds each pair's `terrain_ray`
+  path once, when a ground model or a table will read it, and hands it to `table_level` and then,
+  for a pair the table misses, to the ground model. The plane counts as taken, and a raised
+  height as raised, only for a pair one of them read: a pair the table misses with no ground
+  model is free field. Level terrain stays byte-identical through the same three spellings
+  (`terrain_flat_table_*_is_flat`).
+  - **The bearing is the true separation's; the plate's azimuth is the turned one's.** Read at
+    |d′| on a fixed bearing, an anisotropic table is continuous as d′ passes through zero; the
+    turned separation's bearing jumps 180° there. The plate is still crossed from the side the
+    arrival comes from. `a table read over terrain is continuous through d' = 0` holds both.
+  - **A point receiver outside the table's rows falls back and is counted, never clamped**, for
+    the reason in the bullet above: a height error moves the path difference. The run warns with
+    the heights seen, and up front for a table with one receiver row.
+  - **The bound needs nothing new.** The table term is its largest node (times the largest K
+    node for plates), which no interpolation exceeds, whichever cell a pair reads, and the
+    pairs that fall back are covered by the ground bounds above
+    (`terrain_hills_table_*_windowed_is_exact`, the bump table among them).
 - **Observers' ground is read from the grid itself in `run()`**, once, not from the raster, which
   is a resampling of it.
 
@@ -272,6 +290,15 @@ noticeable.
   ground model agrees (`terrain_reaches_the_ground_model`,
   `terrain_without_ground_places_observers`). A level that reads the `GroundTable` at the wrong
   height is caught in `tests/test_spectral_propagation.cpp`.
+- *A propagation table over terrain* is the flat read on level terrain, byte for byte
+  (`terrain_flat_table_*_is_flat`), keeps the windowed search exact over the hills
+  (`terrain_hills_table_*_windowed_is_exact`), counts its pairs toward the raised-height warning
+  with no ground model (`terrain_hills_table_warns_unscreened`), warns of receiver rows
+  (`terrain_table_warns_one_row`, `terrain_table_warns_receiver_rows`), and warns of a steep
+  plane for a refracting table but not for a ground-model one
+  (`terrain_steep_refracting_table_warns`, `terrain_steep_ground_model_table_is_quiet`, on the
+  5.7° plane `integrated/terrain_steep.nc`). The geometry is checked in `tests/test_terrain.cpp`
+  (`a table read ...`).
 - *Every refusal has a CTest* that passes on its message.
 
 What terrain changes at Amedee, and the slope sensitivity, are in

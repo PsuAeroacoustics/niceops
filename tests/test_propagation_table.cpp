@@ -321,6 +321,27 @@ TEST_CASE("write a bump table for the windowed-versus-marched CTests", "[.bump_t
     PropagationTable(axes, values, "bump", true, {{"note", "bump_test"}}).save("tables/bump_absorbed_test.nc");
 }
 
+TEST_CASE("write a refracting table for the terrain tilt CTests", "[.refracting_table]")
+{
+    // Not a test: CMakeLists.txt's terrain_refracting_table_build runs it (by its hidden tag) to
+    // make tables/refracting_test.nc, tables/ground_model_test.nc's values recorded as a PE
+    // table built with an atmosphere.  Over terrain a refracting table is read by height above
+    // each path's mean plane, and the run warns where that plane is steep; a ground-model table
+    // never warns.  The values do not matter to that, only what the table says it is.
+    const auto base = PropagationTable::load("tables/ground_model_test.nc");
+    std::vector<double> values;
+    const auto& axes = base.axes();
+    for (std::size_t b = 0; b < axes.bearings.size(); b++)
+        for (std::size_t s = 0; s < axes.source_heights.size(); s++)
+            for (std::size_t h = 0; h < axes.receiver_heights.size(); h++)
+                for (std::size_t r = 0; r < axes.ranges.size(); r++)
+                    for (std::size_t f = 0; f < axes.bands.size(); f++)
+                        values.push_back(base.at(b, s, h, r, f));
+    PropagationTable(axes, values, "pe", false,
+            {{"atmosphere", "atmospheres/B407_uniform.csv"}, {"note", "refracting_test"}})
+            .save("tables/refracting_test.nc");
+}
+
 TEST_CASE("multi-band table lookup preserves gaps and inactive bands", "[propagation_table]")
 {
     PropagationTable::Axes axes {{0.0}, {10.0, 20.0}, {0.0}, {10.0},

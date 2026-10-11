@@ -1501,3 +1501,63 @@ add_test(NAME terrain_offset_needs_terrain COMMAND niceops ${TERRAIN_DEMO} --ter
 set_tests_properties(terrain_offset_needs_terrain PROPERTIES PASS_REGULAR_EXPRESSION "need --terrain")
 add_test(NAME terrain_warns_of_observer_disagreement COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_PLATE} -b arrays/coyle_approach.csv -o integrated/terrain_disagreement.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_warns_of_observer_disagreement PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "disagree by more than")
+# --propagation_table over --terrain: each pair reads the table at its heights above, and range
+# along, its path's mean ground plane, in the frame the ground model takes there.  On level terrain
+# that is the flat read, byte for byte (point receivers, plates, and scattered observers stood on
+# it); over the hills the peak search must still equal the march, with the ground-model table
+# below (rows 0 to 25 ft, Amedee's variable-porosity ground) and with the bump table on plates.
+set(TERRAIN_TABLE_PLATE --ground_effect --flow_resistance 225 --plate_table plates/gr1425_db225.nc --propagation_table tables/ground_model_test.nc)
+set(TERRAIN_TABLE_GROUND --ground_effect --impedance_model variable_porosity --flow_resistance 200 --propagation_table tables/ground_model_terrain_test.nc)
+foreach(height RANGE 0 1400 20)
+  list(APPEND TERRAIN_TABLE_SOURCES ${height})
+endforeach()
+add_test(NAME terrain_table_build COMMAND niceops_propagation_table --method ground_model --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --impedance_model variable_porosity --flow_resistance 200
+    --source_heights ${TERRAIN_TABLE_SOURCES} --receiver_heights 0 3.93701 8 16 25 --max_range 15000 --step 20 -o tables/ground_model_terrain_test.nc
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_table_build PROPERTIES FIXTURES_SETUP terrain_table_file)
+add_test(NAME terrain_flat_table_point_reference COMMAND niceops ${TERRAIN_DEMO} --propagation_table tables/ground_model_test.nc --gridstep 492 -o integrated/terrain_flat_table_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} --propagation_table tables/ground_model_test.nc --gridstep 492 -o integrated/terrain_flat_table_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_plate_reference COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_TABLE_PLATE} --gridstep 492 -o integrated/terrain_flat_table_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_TABLE_PLATE} --gridstep 492 -o integrated/terrain_flat_table_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_scattered_reference COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_TABLE_PLATE} -b tests/data/coyle_approach_level.csv -o integrated/terrain_flat_table_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_scattered COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_TABLE_PLATE} -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_flat_table_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_table_point_reference terrain_flat_table_plate_reference terrain_flat_table_scattered_reference PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP terrain_flat_table_runs)
+set_tests_properties(terrain_flat_table_point terrain_flat_table_plate terrain_flat_table_scattered PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" FIXTURES_SETUP terrain_flat_table_runs FAIL_REGULAR_EXPRESSION "below their mean ground plane")
+add_test(NAME terrain_flat_table_point_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_table_point.csv integrated/terrain_flat_table_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_plate_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_table_plate.csv integrated/terrain_flat_table_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_scattered_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_table_scattered.csv integrated/terrain_flat_table_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_table_point_is_flat terrain_flat_table_plate_is_flat terrain_flat_table_scattered_is_flat PROPERTIES FIXTURES_REQUIRED terrain_flat_table_runs)
+add_test(NAME terrain_hills_table_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_TABLE_GROUND} --gridstep 492 -o integrated/terrain_hills_table_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_point_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_TABLE_GROUND} --gridstep 492 -D integrated/terrain_hills_table_point_dnl.csv -o integrated/terrain_hills_table_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_TABLE_GROUND} --plate_table plates/gr1425_vp200.nc --gridstep 492 -o integrated/terrain_hills_table_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_TABLE_GROUND} --plate_table plates/gr1425_vp200.nc --gridstep 492 -D integrated/terrain_hills_table_plate_dnl.csv -o integrated/terrain_hills_table_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_point terrain_hills_table_point_marched terrain_hills_table_plate terrain_hills_table_plate_marched PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" FIXTURES_SETUP terrain_hills_table_runs)
+add_test(NAME terrain_hills_table_bump_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --flow_resistance 225 --plate_table plates/gr1425_db225.nc --propagation_table tables/bump_test.nc --gridstep 492 -o integrated/terrain_hills_table_bump_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_bump_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --flow_resistance 225 --plate_table plates/gr1425_db225.nc --propagation_table tables/bump_test.nc --gridstep 492 -D integrated/terrain_hills_table_bump_plate_dnl.csv -o integrated/terrain_hills_table_bump_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_bump_plate terrain_hills_table_bump_plate_marched PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_bump_file" FIXTURES_SETUP terrain_hills_table_runs)
+add_test(NAME terrain_hills_table_point_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_table_point.csv integrated/terrain_hills_table_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_plate_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_table_plate.csv integrated/terrain_hills_table_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_bump_plate_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_table_bump_plate.csv integrated/terrain_hills_table_bump_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_point_windowed_is_exact terrain_hills_table_plate_windowed_is_exact terrain_hills_table_bump_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_hills_table_runs)
+# A point receiver's height above a hillside's mean plane is not its pole's: a table with one
+# receiver row is warned about up front, and the pairs whose height falls outside the table's rows
+# take the ground model, counted and named, never clamped onto a row.
+add_test(NAME terrain_table_warns_one_row COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --propagation_table tables/ground_model_test.nc --gridstep 4000 -o integrated/terrain_table_rows.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_table_warns_one_row PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "but it has one receiver row")
+add_test(NAME terrain_table_warns_receiver_rows COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --propagation_table tables/ground_model_test.nc --gridstep 4000 -o integrated/terrain_table_receiver_rows.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_table_warns_receiver_rows PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "point-receiver evaluations put the microphone between .* above their path's mean ground plane, outside the table's receiver heights")
+# Pairs the table reads over the plane count toward the raised-height warning, with no ground
+# model at all: the table alone takes them onto the plane.
+add_test(NAME terrain_hills_table_warns_unscreened COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --no-ground_effect --propagation_table tables/ground_model_terrain_test.nc --receiver_height 3.93701 --gridstep 4000 -o integrated/terrain_hills_table_warns.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_warns_unscreened PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" PASS_REGULAR_EXPRESSION "observers, paths had a source or receiver below their mean ground plane")
+add_test(NAME terrain_table_refuses_refraction COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 ${TERRAIN_FLAT} --atmosphere atmospheres/B407_uniform.csv --refraction linear --propagation_table tables/ground_model_test.nc -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_table_refuses_refraction PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "does not combine with --refraction")
+# A table that refracts is read over terrain as if its stratification followed each path's mean
+# plane; past 5 degrees of tilt (the 5.7 degree plane) the run warns.  A ground-model table has no
+# stratification to tilt and never does.  Plates, which always read the table, carry it.
+add_test(NAME terrain_refracting_table_build COMMAND niceops_unit_tests "[.refracting_table]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_refracting_table_build PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP terrain_refracting_table_file)
+add_test(NAME terrain_steep_refracting_table_warns COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_steep.nc --ground_elevation 54.2651 --ground_effect --flow_resistance 225 --plate_table plates/gr1425_db225.nc --propagation_table tables/refracting_test.nc --gridstep 4000 -o integrated/terrain_steep_refracting.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_steep_refracting_table_warns PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_refracting_table_file" PASS_REGULAR_EXPRESSION "refracts, and over --terrain it is read by height above each path's mean ground plane.*had a plane tilted more than 5 degrees")
+add_test(NAME terrain_steep_ground_model_table_is_quiet COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_steep.nc --ground_elevation 54.2651 ${TERRAIN_TABLE_PLATE} --gridstep 4000 -o integrated/terrain_steep_ground_model.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_steep_ground_model_table_is_quiet PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" FAIL_REGULAR_EXPRESSION "refracts, and over --terrain")

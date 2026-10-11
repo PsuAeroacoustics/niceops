@@ -1857,6 +1857,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<double> table_plate_offset;
     double table_plate_step = 0.0;
     std::size_t table_plate_elevations = 0;
+    // Whether the table refracts: anything but a ground-model table, unless
+    // its provenance records that it was built with no atmosphere.  Over
+    // terrain such a table is read by height above each path's mean plane,
+    // which takes its stratification to follow the ground, and the run warns
+    // of pairs whose plane tilts past about 5 degrees.  A ground-model table
+    // has no stratification to tilt and never warns.
+    const bool table_refracts = options.propagation_table && [&]() {
+        const PropagationTable& table = *options.propagation_table;
+        if (table.method() == "ground_model")
+            return false;
+        const auto atmosphere = table.provenance().find("atmosphere");
+        return atmosphere == table.provenance().end() || atmosphere->second != "none";
+    }();
+    constexpr double refracting_tilt_degrees = 5.0;
+    const double refracting_tilt_limit = std::tan(refracting_tilt_degrees * pi / 180.0);
 
     // The atmosphere is needed on every path now, not only the spectral one:
     // its sound speed turns the emission-time level history into reception time
@@ -2247,6 +2262,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         "; this run's microphones are also at ", heights.str(), " ", options.unit.name,
                         ". Build the table with those receiver heights.");
             }
+            // Over terrain a point receiver reads the table at its own height
+            // above each path's mean plane, which is its pole's only on level
+            // ground: a table with one receiver row covers few of those pairs.
+            if (terrain_raster && table.axes().receiver_heights.size() == 1
+                    && std::find(on_plate.begin(), on_plate.end(), char(0)) != on_plate.end())
+                warn("Point receivers over --terrain read --propagation_table ", options.propagation_table_path,
+                        " at their height above each path's mean ground plane, but it has one receiver row (",
+                        table.axes().receiver_heights.front() / options.unit.to_meters, " ", options.unit.name,
+                        "); build it with receiver heights from 0 to above the tallest microphone plus the "
+                        "terrain's relief, or most of those pairs take ",
+                        ground_model ? "the ground model." : "free-field propagation.");
+            if (terrain_raster && table_refracts)
+                log("  the table refracts: over --terrain its stratification is taken to follow each path's "
+                    "mean ground plane.");
             if (table.includes_absorption())
                 table_absorption.assign(bands.size(), 0.0);
             // A flush microphone on a plate reads the table at its lowest
@@ -2717,6 +2746,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Which observers had a height raised onto their path's mean ground plane
     // (each observer is one worker's, so no synchronization).
     std::vector<char> raised_at(terrain_raster ? observers.size() : 0, 0);
+    // --propagation_table over --terrain: the pairs that read the table in
+    // their mean plane's frame; the point-receiver pairs it was asked for, and
+    // those whose microphone stood outside its receiver heights, with the
+    // lowest and highest such height per observer; and, for a table that
+    // refracts, the pairs whose plane tilts past refracting_tilt_limit, with
+    // the steepest per observer.
+    const bool table_over_terrain = terrain_raster && options.propagation_table;
+    std::atomic<std::size_t> terrain_table_samples {0};
+    std::atomic<std::size_t> terrain_table_point_samples {0};
+    std::atomic<std::size_t> receiver_fallback_samples {0};
+    std::vector<double> receiver_fallback_low(table_over_terrain ? observers.size() : 0,
+            std::numeric_limits<double>::infinity());
+    std::vector<double> receiver_fallback_high(receiver_fallback_low.size(),
+            -std::numeric_limits<double>::infinity());
+    std::atomic<std::size_t> steep_table_samples {0};
+    std::vector<double> steepest_at(table_refracts && table_over_terrain ? observers.size() : 0, 0.0);
     // The table's bearings are compass bearings; the run's x/y are turned from
     // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
     const CompassToLocal compass(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
@@ -2873,6 +2918,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (terrain_raster)
             planes.emplace(*terrain_raster);
         std::size_t terrain_here = 0, raised_here = 0;
+        std::size_t terrain_table_here = 0, terrain_table_point_here = 0, receiver_fallback_here = 0;
+        std::size_t steep_table_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
         std::vector<ResolvedBand> resolved_bands(resolved_table ? database.band_centers().size() : 0);
         std::size_t shadowed_here = 0;
@@ -2900,10 +2947,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const double plate_mic_azimuth = flush && options.plate_orientation.outboard
                     ? outboard_azimuth(observer, source_states)
                     : options.plate_orientation.azimuth;
-            // Over terrain the ground model's geometry is taken over each path's
-            // mean ground line, from this observer's foot toward the source's.
-            const bool over_terrain = planes.has_value() && ground_here != nullptr;
-            if (over_terrain)
+            // Over terrain the ground model's and the table's geometry is taken
+            // over each path's mean ground line, from this observer's foot
+            // toward the source's.
+            const bool on_planes = planes.has_value() && (ground_here != nullptr || options.propagation_table);
+            if (on_planes)
                 planes->set_observer(observers[index].x, observers[index].y);
             // The straight-ray spectral level: from --propagation_table where
             // it covers the pair, with the table's level in place of the ground
@@ -2926,10 +2974,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 const TableRead read = plane ? table_read(*plane, flush, lowest)
                                              : TableRead {source.z, flush ? lowest : microphone_height[index],
                                                        separation.horizontal_norm(), separation};
+                if (plane != nullptr && !flush)
+                    terrain_table_point_here++;
                 if (!options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, read.source_height,
                             read.receiver_height, read.range, table_bands, table_loss.data()))
                 {
                     fallback_here++;
+                    // A point receiver's height above the plane is its own,
+                    // and it is never clamped onto the table's rows: one
+                    // outside them falls back, and the run says how far out.
+                    if (plane != nullptr && !flush && !options.propagation_table->covers_receiver(read.receiver_height))
+                    {
+                        receiver_fallback_here++;
+                        receiver_fallback_low[index] = std::min(receiver_fallback_low[index], read.receiver_height);
+                        receiver_fallback_high[index] = std::max(receiver_fallback_high[index], read.receiver_height);
+                    }
                     return false;
                 }
                 // K at the pair's azimuth in the plate's frame and its elevation,
@@ -2978,20 +3037,48 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             };
             auto straight_level = [&](std::size_t it, double* bands_out) {
                 double level = 0.0;
-                if (options.propagation_table && table_level(it, bands_out, level, nullptr))
-                    return level;
-                if (over_terrain)
+                // Over terrain the pair's path over its mean ground line, found
+                // once for the table and the ground model alike.  It counts as
+                // taken, and its raised heights as raised, only when one of
+                // them reads it: a pair the table misses with no ground model
+                // to fall back on is free field and never used the plane.
+                RayPath path;
+                const RayPath* plane = nullptr;
+                bool raised = false;
+                double slope = 0.0;
+                if (on_planes)
                 {
                     const Vec3& source = source_states[it].position;
                     const double dx = source.x - observer.x;
                     const double dy = source.y - observer.y;
-                    bool raised = false;
-                    const RayPath path = terrain_ray(source, observer,
-                            planes->line_to(dx, dy, std::sqrt(dx * dx + dy * dy)), flush, &raised);
+                    const GroundLine line = planes->line_to(dx, dy, std::sqrt(dx * dx + dy * dy));
+                    path = terrain_ray(source, observer, line, flush, &raised);
+                    plane = &path;
+                    slope = line.slope;
+                }
+                auto take_plane = [&]() {
                     terrain_here++;
                     raised_here += raised;
                     if (raised)
                         raised_at[index] = 1;
+                };
+                if (options.propagation_table && table_level(it, bands_out, level, plane))
+                {
+                    if (plane != nullptr)
+                    {
+                        take_plane();
+                        terrain_table_here++;
+                        if (!steepest_at.empty() && std::fabs(slope) > refracting_tilt_limit)
+                        {
+                            steep_table_here++;
+                            steepest_at[index] = std::max(steepest_at[index], std::fabs(slope));
+                        }
+                    }
+                    return level;
+                }
+                if (plane != nullptr && ground_here != nullptr)
+                {
+                    take_plane();
                     return database.spectral_level_along(path, source_states[it], absorption_for(it, observer),
                             band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
                             packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, nullptr, nullptr,
@@ -3456,14 +3543,23 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         fallback_samples += fallback_here;
         terrain_samples += terrain_here;
         terrain_raised += raised_here;
+        terrain_table_samples += terrain_table_here;
+        terrain_table_point_samples += terrain_table_point_here;
+        receiver_fallback_samples += receiver_fallback_here;
+        steep_table_samples += steep_table_here;
     });
 
     if (terrain_raster)
     {
-        if (ground_model == nullptr)
-            log("--terrain: no ground model runs, so the terrain sets only where the observers stand.");
+        if (ground_model == nullptr && !options.propagation_table)
+            log("--terrain: no ground model or propagation table runs, so the terrain sets only where the "
+                "observers stand.");
         else if (terrain_raised.load() == 0)
-            log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane.");
+            log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane",
+                    options.propagation_table
+                            ? ", " + std::to_string(terrain_table_samples.load()) + " of them through the "
+                                                                                     "propagation table."
+                            : std::string("."));
         else
         {
             // A source behind rising ground is heard as if the ground were not
@@ -3486,6 +3582,34 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 "%); the rest -- outside its ranges or source heights, or where it has no value, as "
                 "steeper than a PE's angle limit -- took ",
                 ground_model ? "the ground model." : "free-field propagation.");
+        if (terrain_raster)
+            log("  over --terrain, ", terrain_table_samples.load(), " of the evaluations it covered read it at "
+                    "their heights above, and range along, their path's mean ground plane.");
+        if (receiver_fallback_samples.load() > 0)
+        {
+            const double low = *std::min_element(receiver_fallback_low.begin(), receiver_fallback_low.end());
+            const double high = *std::max_element(receiver_fallback_high.begin(), receiver_fallback_high.end());
+            const auto& rows = options.propagation_table->axes().receiver_heights;
+            warn("--propagation_table over --terrain: ", receiver_fallback_samples.load(), " of the ",
+                    terrain_table_point_samples.load(), " point-receiver evaluations put the microphone between ",
+                    low / options.unit.to_meters, " and ", high / options.unit.to_meters, " ", options.unit.name,
+                    " above their path's mean ground plane, outside the table's receiver heights (",
+                    rows.front() / options.unit.to_meters, " to ", rows.back() / options.unit.to_meters, " ",
+                    options.unit.name, "), and took ",
+                    ground_model ? "the ground model" : "free-field propagation",
+                    ". Build the table with receiver heights spanning ", low / options.unit.to_meters, " to ",
+                    high / options.unit.to_meters, " ", options.unit.name, ".");
+        }
+        if (steep_table_samples.load() > 0)
+        {
+            const double steepest = *std::max_element(steepest_at.begin(), steepest_at.end());
+            warn("--propagation_table ", options.propagation_table_path, " refracts, and over --terrain it is "
+                    "read by height above each path's mean ground plane, which takes its stratification to "
+                    "follow the ground. ", steep_table_samples.load(), " of the ", terrain_table_samples.load(),
+                    " evaluations it covered over the terrain had a plane tilted more than ",
+                    refracting_tilt_degrees, " degrees (the steepest ", std::atan(steepest) * 180.0 / pi,
+                    "), where that holds less well.");
+        }
     }
 
     if (effective_sound_speed)
@@ -4429,7 +4553,8 @@ int run(int argc, char* argv[])
             "model and plate take each path's least-squares mean ground plane (CNOSSOS-EU, "
             "NORAH2 / ECAC Doc 32) in place of the plane z = 0. Needs the run's frame (--origin, "
             "and --frame_bearing for rotated x/y, or a geodetic track). No screening or "
-            "diffraction by terrain; not with --refraction or --propagation_table.");
+            "diffraction by terrain; not with --refraction. A --propagation_table is read at the "
+            "heights above, and range along, each path's mean ground plane.");
     auto* terrain_offset_option = app.add_option("--terrain_offset", terrain_offset,
             "Added to every --terrain height, in --units, to put it on the trajectory's vertical "
             "datum (default 0). At Amedee 3DEP is NAVD88 and the 2017 tracks are ellipsoidal: "
@@ -5137,19 +5262,15 @@ int run(int argc, char* argv[])
     }
     else
     {
-        // Ground-reflected rays, shadow boundaries and the table's receiver
-        // heights are all built over the plane z = 0; handing them a tilted
-        // plane per path would be a different model, not this one.
+        // Ground-reflected rays and shadow boundaries are built over the plane
+        // z = 0; handing them a tilted plane per path would be a different
+        // model, not this one.  A propagation table is read in each path's
+        // mean-plane frame, as the ground model is.
         if (refraction != "none")
         {
             input_error("--terrain does not combine with --refraction: the ray models reflect off, "
                         "and cast their shadows onto, the flat ground z = 0. Use --terrain with "
                         "straight rays, or --refraction over flat ground.");
-        }
-        if (!propagation_table.empty())
-        {
-            input_error("--terrain does not combine with --propagation_table: the table's source "
-                        "and receiver heights are over flat ground.");
         }
         if (observers_on_terrain && !scattered)
             input_error("--observers_on_terrain is for an observer file (-b); grid observers always "

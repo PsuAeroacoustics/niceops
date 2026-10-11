@@ -394,8 +394,15 @@ model; the format is the specification, so other methods can write it. The compo
 - **Thread count is invisible.** `-j` (or `NICEOPS_THREADS`, which only the PE tools read) gives
   the same bits at any count, turbulent tables included, because each march's seeds are fixed
   before the work is dealt out (`pe_tools_thread_count_is_invisible`).
-- **Not done:** ground elevation (flat ground at z = 0; `--terrain` refuses a table), and a
-  sphere lookup along a refracted launch direction (the table cannot say what it is).
+- **Over terrain the table is read in each pair's mean-plane frame**, from the same
+  `terrain_ray` path the ground model takes (`table_read`; the rules are in
+  [ground.md](ground.md#things-to-preserve)). Flush microphones read the lowest row at the
+  source's height above the microphone, and the K grid is unchanged, because it is the plate in
+  the plane's own frame. A refracting table so read assumes a terrain-following stratification;
+  `table_refracts` is anything but a ground-model table, unless its provenance records the
+  atmosphere `none`, and only such a table warns past 5 degrees of tilt.
+- **Not done:** a sphere lookup along a refracted launch direction (the table cannot say what it
+  is).
 
 ### Reciprocity: one march per receiver height
 

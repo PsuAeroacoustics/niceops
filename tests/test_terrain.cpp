@@ -669,7 +669,7 @@ TEST_CASE("plane_geometry is a rotation, and the identity on level ground", "[te
 TEST_CASE("write the terrain files the --terrain CTests read", "[.terrain_files]")
 {
     // Not a test: CMakeLists.txt's terrain_files runs it (by its hidden tag) to
-    // write integrated/terrain_flat.nc and integrated/terrain_hills.nc around
+    // write integrated/terrain_flat.nc, terrain_hills.nc and terrain_steep.nc around
     // the demo track's frame (origin 39.81043 N 74.42631 W, +x along 210
     // degrees, which reproduces the track's own x/y to 0.85 ft rms; its z = 0 is at
     // altitude 54.2651 ft).  The flat one is level everywhere at the height
@@ -685,6 +685,12 @@ TEST_CASE("write the terrain files the --terrain CTests read", "[.terrain_files]
     write_terrain_file("integrated/terrain_hills.nc", lat, lon, [&](double la, double lo) {
         const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
         return -20.0 - 0.03 * p.x + 0.5 * rolling(p.x, p.y) - 6.0;
+    });
+    // And a plane tilted 5.7 degrees along x, steeper than the tilt past which
+    // a refracting propagation table's read over terrain is warned about.
+    write_terrain_file("integrated/terrain_steep.nc", lat, lon, [&](double la, double lo) {
+        const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
+        return -26.0 - 0.1 * p.x;
     });
     REQUIRE(Terrain("integrated/terrain_flat.nc").elevation(39.81043, -74.42631) == flat);
 
