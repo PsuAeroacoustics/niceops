@@ -111,6 +111,8 @@ old and new results only with them in mind.
   `-s 0.5`, which were accepted before `--lamax_weighting` existed, are refused under `fast`.
   They need `-s 0.0625` or finer for `--lamax_file` or `--nax_file`, or
   `--lamax_weighting instantaneous` for the old number.
+- **`-m` has a fifth column**, the area at or above 65 dB (October 2026). A script that read
+  the line as four fields must take the fifth or ignore it; the first four are unchanged.
 - **`--epnl_file` follows panam's corrected EPNL** (October 2026). The duration's limits are the
   records closest to PNLTM − 10; D, the duration constant, takes the regulation's −13 for the
   0.5 s records; and the band-sharing adjustment is added to EPNL rather than to a PNLTM that

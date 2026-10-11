@@ -145,6 +145,22 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
   their outer rings); on the demo footprint the areas agree with a count of grid cells above each
   level to 1–2%.
 
+## Raster
+
+`src/raster.{hpp,cpp}` (`--raster_file`). Things to keep:
+
+- **Each field is the very vector its text file was written from**, so the two cannot disagree;
+  `raster_matches_grids` (`tests/check_raster.cpp`) holds them to 1e-12 and the latitude and
+  longitude to the `--latlon` companion's.
+- **`x` and `y` are meters whatever `--units` says**: CF wants the unit stated, and a GIS reads
+  meters without being told the run's.
+- **Silence is the fill value, NaN, not −∞**: GDAL and QGIS take −∞ as data and stretch every
+  color ramp to it.
+- **Latitude and longitude are two-dimensional auxiliary coordinates**, not a `grid_mapping`:
+  the local frame is a rotated tangent plane, which CF has no projection for, and GDAL reads the
+  two arrays as geolocation.
+- **The `-m` area is the 65 dB contour's polygon area** (`append_metrics_file`), not the
+  observer fraction times the grid's area, which is the column before it.
 ## Time weighting, day metrics, C-SEL
 
 **The period levels** (`DayMetric::lday` … `laeq` in `util/sel.hpp`) reuse the penalized-exposure

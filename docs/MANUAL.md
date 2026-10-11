@@ -221,6 +221,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `-F`, `--statefigfile` | Save the trajectory-state figures to this file. |
 | `--cmin`, `--cmax`, `--cstep` | Contour levels of the footprint figure and of `--contour_file`, dB. Defaults 65, 100 and 5. |
 | `--contour_file` | Write contour polygons and their areas as GeoJSON ([Output files](#output-files)). Needs the observer grid and a frame. |
+| `--raster_file` | Write every gridded level of the run to one CF netCDF a GIS opens ([Output files](#output-files)). Needs the observer grid. |
 | `--contour_metric` | What `--contour_file` contours: `sel` (default; one trajectory), `dnl`, `lden`, `cnel`, `lday`, `levening`, `lnight`, `laeq` or `lamax`, whose own output must be asked for too. |
 
 ### Units
@@ -290,7 +291,7 @@ The main ones:
 | `--tunneling`, `--skip_fill` without `--refraction stratified` | They are stratified-ray corrections. |
 | `--terrain` with `--refraction` or `--propagation_table`, or without a frame | Those models are built over flat ground; terrain needs to know where x/y lie. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
-| `--latlon`, `--contour_file`, `--nose heading` without a frame; `--contour_file` with `-b`, or with `--contour_metric sel` over several trajectories | Nothing to turn compass directions or invert positions with; scattered observers have no grid to contour; one SEL per trajectory. |
+| `--latlon`, `--contour_file`, `--nose heading` without a frame; `--contour_file` or `--raster_file` with `-b`; `--contour_file` with `--contour_metric sel` over several trajectories | Nothing to turn compass directions or invert positions with; scattered observers have no grid to contour; one SEL per trajectory. |
 | `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock | Day or night would be made up. |
 | `--laeq_file` without `--laeq_window`, or an empty window | There is no default period. |
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
@@ -916,8 +917,9 @@ others:
 - `-o`: the SEL per observer. A grid writes the x and y axes on the first two lines, then one row
   of levels per y; scattered observers give one row each.
 - `-m`: appends a line for the case: its name, the energy mean of the per-observer SELs (10 lg of
-  the mean of 10^(L/10), not a mean of decibels), their maximum, and the fraction of observers at
-  or above 65 dB.
+  the mean of 10^(L/10), not a mean of decibels), their maximum, the fraction of observers at or
+  above 65 dB, and the area at or above 65 dB in the run's units squared, contoured as
+  `--contour_file` contours it (NaN for scattered observers).
 - `-i`: per-observer level histories, one file per observer.
 - `--band_history`: per-observer band histories, one file per observer with a row per state:
   `emission_time`, `reception_time` (s), `range` (the ray tube's under `--refraction`),
@@ -946,6 +948,13 @@ others:
   level, and a region reaching the grid's edge is closed along it, so widen `--grid` until the
   outermost level closes inside it. It needs the run's frame (`--origin`, or a geodetic track)
   and the observer grid.
+- `--raster_file`: a CF-1.8 netCDF of the grid, with `x` and `y` in meters in the run's frame
+  and, when the run has a frame, each node's WGS84 `latitude` and `longitude`, which GDAL, QGIS
+  and xarray read as the grid's position. It holds one variable for each gridded level the run
+  writes: `sel` (one trajectory only), `dnl`, `lden`, `cnel`, `lday`, `levening`, `lnight`,
+  `laeq`, `lamax`, `nax`, `time_above` and `unmeasured_share` (`--coverage_file`), each present
+  only if its own file is asked for, with its values. An observer that heard nothing is the
+  fill value, NaN, where the text files write `-inf`.
 - `--latlon`: a `_latlon` companion beside every level file (`out.csv` → `out_latlon.csv`), one
   row per observer of latitude, longitude and level, always scattered.
 - `--epnl_file`, `--band_frames` ([EPNL](#epnl-and-reception-time-frames)); `--write_atmosphere`

@@ -203,6 +203,7 @@ add_library(niceops_core STATIC
   src/manifest.cpp
   src/build_info.cpp
   src/contour.cpp
+  src/raster.cpp
   src/procedure.cpp
 )
 target_include_directories(niceops_core PUBLIC
@@ -297,6 +298,9 @@ add_executable(golden_compare tests/golden_compare.cpp)
 # What --epnl_file and --band_frames wrote, checked against each other and the SEL.
 add_executable(check_band_frames tests/check_band_frames.cpp)
 target_link_libraries(check_band_frames niceops_core)
+# What --raster_file wrote, against the grid files the same run wrote.
+add_executable(check_raster tests/check_raster.cpp)
+target_link_libraries(check_raster niceops_core)
 # Refraction models against the parabolic equation on one path (tools/pe_compare.cpp):
 # a research tool, not part of a run.
 add_executable(niceops_pe_compare tools/pe_compare.cpp)
@@ -518,6 +522,21 @@ add_test(NAME contour_needs_the_grid COMMAND niceops ${PERIOD_RUN} -b tests/data
 set_tests_properties(contour_needs_the_grid PROPERTIES PASS_REGULAR_EXPRESSION "scattered observers \\(-b\\) have none")
 add_test(NAME contour_metric_needs_its_output COMMAND niceops ${PERIOD_RUN} --contour_metric lamax -o integrated/contour_nolamax.csv --contour_file integrated/contours_nolamax.geojson WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(contour_metric_needs_its_output PROPERTIES PASS_REGULAR_EXPRESSION "--contour_metric lamax contours that metric's output: ask for it too")
+# --raster_file: every gridded level of the run in one CF netCDF, each field the grid file it
+# mirrors (a night level at noon is all silence, written as the fill value), and the latitude and
+# longitude the --latlon companion's.  -m's last column is the area at or above 65 dB.
+add_test(NAME raster_run COMMAND niceops ${PERIOD_RUN} --start_utc 43200 --lday_file integrated/raster_lday.csv --lnight_file integrated/raster_lnight.csv --lamax_file integrated/raster_lamax.csv --lamax_weighting slow --ta_file integrated/raster_ta.csv --ta_threshold 65 --latlon -o integrated/raster_sel.csv --raster_file integrated/raster.nc -m integrated/raster_metrics.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(raster_run PROPERTIES FIXTURES_SETUP raster_runs)
+add_test(NAME raster_matches_grids COMMAND check_raster integrated/raster.nc 0.3048 --latlon integrated/raster_sel_latlon.csv sel=integrated/raster_sel.csv lday=integrated/raster_lday.csv lnight=integrated/raster_lnight.csv lamax=integrated/raster_lamax.csv time_above=integrated/raster_ta.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(raster_matches_grids PROPERTIES FIXTURES_REQUIRED raster_runs PASS_REGULAR_EXPRESSION "check_raster: 5 fields match")
+add_test(NAME metrics_file_area COMMAND ${CMAKE_COMMAND} -E cat integrated/raster_metrics.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(metrics_file_area PROPERTIES FIXTURES_REQUIRED raster_runs PASS_REGULAR_EXPRESSION "demo_geodetic_noclock,7[0-9.]+,8[0-9.]+,0\\.5[0-9]+,5[0-9][0-9][0-9][0-9][0-9][0-9][0-9]\\.[0-9]+")
+add_test(NAME raster_without_frame COMMAND niceops --gridstep 1640 -o integrated/raster_noframe_sel.csv --raster_file integrated/raster_noframe.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(raster_without_frame PROPERTIES FIXTURES_SETUP raster_runs)
+add_test(NAME raster_without_frame_is_local COMMAND check_raster integrated/raster_noframe.nc 0.3048 --no-latlon sel=integrated/raster_noframe_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(raster_without_frame_is_local PROPERTIES FIXTURES_REQUIRED raster_runs PASS_REGULAR_EXPRESSION "check_raster: 1 fields match")
+add_test(NAME raster_needs_the_grid COMMAND niceops ${PERIOD_RUN} -b tests/data/mixed_flush.csv -o integrated/raster_scattered.csv --raster_file integrated/raster_scattered.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(raster_needs_the_grid PROPERTIES PASS_REGULAR_EXPRESSION "--raster_file writes the observer grid; scattered observers \\(-b\\) have none")
 # The air per trajectory: two copies of the demo track, each with its own humidity (and its own
 # --atmosphere), must each be the run of that track alone with that air; and the two differ.
 set(AIR_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json --gridstep 1640 -L warn)

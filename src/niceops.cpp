@@ -44,6 +44,7 @@
 #include "manifest.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
+#include "raster.hpp"
 #include "terrain.hpp"
 #include "weighting.hpp"
 #include "sphere_database.hpp"
@@ -298,8 +299,13 @@ void write_epnl_file(const std::vector<EpnlRow>& rows, const std::vector<Vec3>& 
     }
 }
 
+// One line per trajectory: the case, the energy mean and the maximum of its
+// SELs, the fraction of observers at or above `threshold`, and on a grid the
+// area at or above it, contoured as --contour_file contours it, in `unit`
+// squared (NaN for scattered observers, which enclose nothing).
 void append_metrics_file(const std::string& filename, const std::string& casename,
-        const std::vector<double>& levels, double threshold = 65.0)
+        const std::vector<double>& x_obs, const std::vector<double>& y_obs, bool scattered,
+        const LengthUnit& unit, const std::vector<double>& levels, double threshold = 65.0)
 {
     auto file = open_output(filename, std::ios::app);
     double energy = 0;
@@ -318,7 +324,15 @@ void append_metrics_file(const std::string& filename, const std::string& casenam
     }
     const double average = 10.0 * std::log10(energy / levels.size());
     auto area = double(count) / levels.size();
-    file << casename << "," << average << "," << maximum << "," << area << "\n";
+    double enclosed = std::numeric_limits<double>::quiet_NaN();
+    if (!scattered)
+    {
+        enclosed = 0.0;
+        for (const auto& polygon : contour_polygons(x_obs, y_obs, levels, threshold))
+            enclosed += polygon_area(polygon);
+        enclosed /= unit.to_meters * unit.to_meters;
+    }
+    file << casename << "," << average << "," << maximum << "," << area << "," << enclosed << "\n";
 }
 
 // Sound exposure level at one observer without marching every emission time.
@@ -3492,7 +3506,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (!options.metric_file.empty())
     {
         auto casename = std::filesystem::path(job.trajectory).stem().string();
-        append_metrics_file(options.metric_file, casename, integrated_levels);
+        append_metrics_file(options.metric_file, casename, x_obs, y_obs, options.scattered, options.unit,
+                integrated_levels);
     }
 
     if (want_epnl)
@@ -3714,6 +3729,7 @@ int run(int argc, char* argv[])
     std::string observer_file = "";
     std::string contour_file;
     std::string contour_metric = "sel";
+    std::string raster_file;
     double dt = 0.5;
     // NOTE: D default-initializes `double` to NaN, not 0, so the !isNaN guard
     // below is FALSE by default and D never mixes in an ambient level unless
@@ -3817,6 +3833,10 @@ int run(int argc, char* argv[])
             "Write contour polygons of --contour_metric at the --cmin/--cmax/--cstep levels, with "
             "their areas, as GeoJSON (WGS84). Needs the observer grid and a frame (--origin, or a "
             "geodetic track).");
+    app.add_option("--raster_file", raster_file,
+            "Write every gridded level this run writes (SEL for one trajectory, the day and period "
+            "levels, LAmax, NAx, TA, the unmeasured share) to one CF netCDF, with WGS84 latitude "
+            "and longitude when the run has a frame. Needs the observer grid.");
     app.add_option("--contour_metric", contour_metric,
             "What --contour_file contours: sel (default; one trajectory), dnl, lden, cnel, lday, "
             "levening, lnight, laeq or lamax, whose own output must be asked for too.")
@@ -4546,6 +4566,8 @@ int run(int argc, char* argv[])
             input_error("--contour_metric sel contours one trajectory's SEL; with several, contour a "
                         "metric that sums them (dnl, lden, cnel, a period level or lamax).");
     }
+    if (!raster_file.empty() && !observer_file.empty())
+        input_error("--raster_file writes the observer grid; scattered observers (-b) have none.");
     if (latlon && !frame)
     {
         input_error("--latlon has no frame to invert: give --origin <latitude> <longitude> "
@@ -5299,6 +5321,54 @@ int run(int argc, char* argv[])
             summary << (k ? ", " : "") << levels[k] << " dB: " << areas[k] / (unit.to_meters * unit.to_meters)
                     << " " << unit.name << "^2";
         log("Wrote ", contour_metric, " contours to ", contour_file, "; areas at or above ", summary.str(), ".");
+    }
+
+    if (!raster_file.empty())
+    {
+        // Each field as the run writes it to its own file.
+        std::vector<RasterField> fields;
+        if (path_count == 1)
+            fields.push_back({"sel", "sound exposure level (SEL), A-weighted", "dB", &integrated_levels});
+        static const char* const day_keys[] = {"dnl", "lden", "cnel", "lday", "levening", "lnight", "laeq"};
+        static_assert(sizeof(day_keys) / sizeof(day_keys[0]) == day_metric_count);
+        for (std::size_t m = 0; m < day_metric_count; m++)
+        {
+            if (want_day_metric[m])
+                fields.push_back({day_keys[m], day_metric_name(static_cast<DayMetric>(m)), "dB", &day_levels[m]});
+        }
+        if (want_lamax)
+            fields.push_back({"lamax", std::string("LAmax, ") + maximum_name(level_weighting), "dB", &totals.lamax});
+        if (want_nax)
+        {
+            std::ostringstream name;
+            name << "operations with " << maximum_name(level_weighting) << " at or above " << nax_threshold << " dB";
+            fields.push_back({"nax", name.str(), "1", &totals.nax});
+        }
+        if (want_ta)
+        {
+            std::ostringstream name;
+            name << "time above " << ta_threshold << " dB (" << to_string(level_weighting)
+                 << " weighting, reception time)";
+            fields.push_back({"time_above", name.str(), "s", &totals.time_above});
+        }
+        std::vector<double> share;
+        if (want_coverage)
+        {
+            share.resize(totals.coverage.size());
+            for (std::size_t i = 0; i < share.size(); i++)
+                share[i] = totals.coverage[i][1] > 0.0 ? totals.coverage[i][0] / totals.coverage[i][1]
+                                                       : std::numeric_limits<double>::quiet_NaN();
+            fields.push_back({"unmeasured_share", "energy share of the level from cells the database did not "
+                    "measure", "1", &share});
+        }
+        if (fields.empty())
+        {
+            warn("--raster_file ", raster_file, " has no gridded level to hold: SEL goes in it for one "
+                    "trajectory, and a day or period level, LAmax, NAx, TA or coverage for several.");
+        }
+        log("Writing ", fields.size(), fields.size() == 1 ? " gridded level" : " gridded levels", " to ",
+                raster_file, frame ? ", with WGS84 positions." : " (no frame: local x/y only).");
+        write_raster(raster_file, x_obs, y_obs, fields, frame ? &*frame : nullptr, frame_bearing);
     }
 
     if (path_count > 1 && want_plots)
