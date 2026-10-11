@@ -521,13 +521,40 @@ edge. The interpolant is a convex combination of exact values, so it never leave
 bounds. `--exact_ground` evaluates the model directly. The accuracy of the table is in
 [FIDELITY](FIDELITY.md#ground-and-plate-tables).
 
+### 5.5 Ground classes
+
+`--ground_classes` gives a few surfaces $c$, each with its own impedance model, flow resistance,
+porosity rate, layer depth and roughness, and an observer file names the class each microphone
+stands on. A microphone on class $c$ takes $\beta_c(f) = 1/Z_c(f)$ (§5.1) and its roughness in
+§5.2–§5.3, with every other term unchanged. Turbulence is a property of the air and stays the
+same for every class. Each table of §5.4 holds one receiver height over one class.
+
+The class is taken as the whole ground under every path to that microphone: a locally reacting
+uniform plane. That is right when the patch around the microphone covers the specular point and
+its first Fresnel zone. Over flat ground the specular point lies
+
+$$
+x_s = \frac{d\,h_r}{h_s + h_r}
+$$
+
+from the microphone: about 8 m for a 1.2 m pole with the source 150 m up and 1 km away, and
+38 m with the source 30 m up, while the Fresnel zone reaches well past $x_s$ at grazing
+incidence and low frequency. A flush plate microphone ($h_r = 0$) reflects at the microphone, so
+a patch larger than the plate qualifies. Weighting the surfaces over the Fresnel zone, as
+Nord2000 and CNOSSOS-EU do [59, 32, 33], is not done.
+
+For the peak search (§1) the point receiver's bound, $(1 + \max|Q|)^2$ per band, is the
+largest over the classes the run's point receivers stand on. It does not depend on the receiver
+height, so one bound still serves every observer.
+
 ## 6. Receivers and terrain
 
 ### 6.1 The point receiver
 
 The default receiver is a point `--receiver_height` above the ground (1.2 m, as 14 CFR 36
 prescribes [17]), or each microphone's own height from an observer file. It is §5's model
-with $h_r$ set to that height.
+with $h_r$ set to that height, over the run's ground or over the microphone's ground class
+(§5.5).
 
 ### 6.2 Ground-plane microphones
 
@@ -1347,3 +1374,4 @@ than for SEL.
 56. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
 57. "Report on Standard Method of Computing Noise Contours around Civil Airports, Volume 2: Technical Guide," ECAC.CEAC Doc 29, 4th ed., European Civil Aviation Conference, Neuilly-sur-Seine, France, December 2016.
 58. "Procedure for the Calculation of Airplane Noise in the Vicinity of Airports," SAE AIR1845A, SAE International, Warrendale, PA, 2012.
+59. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 1: Propagation in an Atmosphere without Significant Refraction," DELTA Acoustics & Vibration Report AV 1849/00 (revised), Hørsholm, Denmark, 2006.

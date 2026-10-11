@@ -1216,17 +1216,72 @@ set_tests_properties(mixed_receivers_windowed_is_exact PROPERTIES FIXTURES_REQUI
 # --ground_classes (src/ground_classes.hpp) and the observer file's sixth column
 # (id,x,y,z,height,ground) name each other; the reader's own refusals are unit
 # tests ([ground_classes]).
-set(GROUND_CLASS_DEMO -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --impedance_model variable_porosity --flow_resistance 200 -L warn)
-add_test(NAME ground_classes_column_needs_file COMMAND niceops ${GROUND_CLASS_DEMO} -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set(GROUND_CLASS_DEMO -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -L warn)
+set(GROUND_CLASS_GRASS --impedance_model variable_porosity --flow_resistance 200)
+add_test(NAME ground_classes_column_needs_file COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(ground_classes_column_needs_file PROPERTIES PASS_REGULAR_EXPRESSION "gives each microphone a ground class .* and there is no --ground_classes")
-add_test(NAME ground_classes_refuses_grid COMMAND niceops ${GROUND_CLASS_DEMO} --ground_classes tests/data/ground_classes_two.csv --gridstep 4000 -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_refuses_grid COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv --gridstep 4000 -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(ground_classes_refuses_grid PROPERTIES PASS_REGULAR_EXPRESSION "grid observers have none")
-add_test(NAME ground_classes_need_column COMMAND niceops ${GROUND_CLASS_DEMO} --ground_classes tests/data/ground_classes_two.csv -b tests/data/mixed_receivers.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_need_column COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/mixed_receivers.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(ground_classes_need_column PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes needs the observer file to name each microphone's class in a sixth column")
-add_test(NAME ground_classes_refuse_undefined_class COMMAND niceops ${GROUND_CLASS_DEMO} --ground_classes tests/data/ground_classes_one.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_refuse_undefined_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_one.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(ground_classes_refuse_undefined_class PROPERTIES PASS_REGULAR_EXPRESSION "data row 1 stands on ground class 0, which --ground_classes tests/data/ground_classes_one.csv does not define \\(it defines 7\\)")
-add_test(NAME ground_classes_refuse_fractional_class COMMAND niceops ${GROUND_CLASS_DEMO} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_bad_id.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_refuse_fractional_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_bad_id.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(ground_classes_refuse_fractional_class PROPERTIES PASS_REGULAR_EXPRESSION "data row 2 gives the ground class 2.5; a class is an integer")
+# Each microphone over its class.  One class repeating the command line's ground is the run
+# without classes, byte for byte: inherited (ground_classes_one.csv) and given in full with
+# integer-valued numbers (ground_classes_one_explicit.csv), for point receivers with their tables,
+# for plates, and over the hills.
+add_test(NAME ground_class_scalar_point COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} -b tests/data/mixed_receivers.csv -o integrated/ground_class_scalar_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_single_point COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_one.csv -b tests/data/mixed_receivers_class7.csv -o integrated/ground_class_single_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_explicit_point COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_one_explicit.csv -b tests/data/mixed_receivers_class7.csv -o integrated/ground_class_explicit_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_scalar_plate COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc -b tests/data/mixed_receivers.csv -o integrated/ground_class_scalar_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_single_plate COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_one.csv -b tests/data/mixed_receivers_class7.csv -o integrated/ground_class_single_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_class_scalar_point ground_class_single_point ground_class_explicit_point ground_class_scalar_plate ground_class_single_plate PROPERTIES FIXTURES_SETUP ground_class_single_runs)
+add_test(NAME ground_class_single_is_scalar_point COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ground_class_single_point.csv integrated/ground_class_scalar_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_explicit_is_scalar_point COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ground_class_explicit_point.csv integrated/ground_class_scalar_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_single_is_scalar_plate COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ground_class_single_plate.csv integrated/ground_class_scalar_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_class_single_is_scalar_point ground_class_explicit_is_scalar_point ground_class_single_is_scalar_plate PROPERTIES FIXTURES_REQUIRED ground_class_single_runs)
+# A grass and concrete array (ground_classes_two.csv: class 0 inherits the command line's grass,
+# class 1 is Delany-Bazley at 10000): plates and 4 ft poles on grass, then 4 ft and 10 ft poles
+# on concrete, so one height stands on both classes.  With --exact_ground it has to equal a grass
+# run over the grass rows and a concrete run over the concrete rows; with its tables it has to
+# agree with that to the tables' accuracy, which a table looked up by height alone would miss by
+# decibels at the concrete 4 ft poles.  It must differ from the all-grass run first at the first
+# concrete microphone's level (value 35), which an admittance taken from the wrong class would
+# not.  And its peak search, bounded over both classes, must equal the march, flat and over hills.
+add_test(NAME ground_classes_mixed COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_mixed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_mixed_marched COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -D integrated/ground_classes_mixed_dnl.csv -o integrated/ground_classes_mixed_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_mixed_exact COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --exact_ground --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_mixed_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_grass_only COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --exact_ground --plate_table plates/gr1425_vp200.nc -b tests/data/ground_classes_grass.csv -o integrated/ground_classes_grass.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_concrete_only COMMAND niceops ${GROUND_CLASS_DEMO} --flow_resistance 10000 --exact_ground -b tests/data/ground_classes_concrete.csv -o integrated/ground_classes_concrete.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_mixed ground_classes_mixed_marched ground_classes_mixed_exact ground_classes_grass_only ground_classes_concrete_only PROPERTIES FIXTURES_SETUP ground_classes_runs)
+add_test(NAME ground_classes_expected COMMAND ${CMAKE_COMMAND} -DOUT=integrated/ground_classes_expected.csv "-DINPUTS=integrated/ground_classes_grass.csv;integrated/ground_classes_concrete.csv" -P tests/concatenate.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_expected PROPERTIES FIXTURES_REQUIRED ground_classes_runs FIXTURES_SETUP ground_classes_expected_file)
+add_test(NAME ground_classes_mixed_are_their_subsets COMMAND golden_compare integrated/ground_classes_mixed_exact.csv integrated/ground_classes_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_mixed_are_their_subsets PROPERTIES FIXTURES_REQUIRED "ground_classes_runs;ground_classes_expected_file")
+add_test(NAME ground_classes_tabled_matches_exact COMMAND golden_compare integrated/ground_classes_mixed.csv integrated/ground_classes_mixed_exact.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_windowed_is_exact COMMAND golden_compare integrated/ground_classes_mixed.csv integrated/ground_classes_mixed_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_tabled_matches_exact ground_classes_windowed_is_exact PROPERTIES FIXTURES_REQUIRED ground_classes_runs)
+add_test(NAME ground_classes_impedance_is_the_observers COMMAND golden_compare integrated/ground_classes_mixed_exact.csv integrated/mixed_receivers.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_impedance_is_the_observers PROPERTIES FIXTURES_REQUIRED "ground_classes_runs;mixed_runs" PASS_REGULAR_EXPRESSION "mismatch at value 35:")
+# What the classes cannot serve, each refused with its reason.
+add_test(NAME ground_classes_refuse_refraction COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv --atmosphere atmospheres/B407_uniform.csv --refraction linear -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_refraction PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes does not combine with --refraction")
+add_test(NAME ground_classes_refuse_table COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv --propagation_table tables/absent.nc -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_table PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes does not combine with --propagation_table: a table was solved over one ground")
+add_test(NAME ground_classes_refuse_broadband COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv --no-spectral -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_broadband PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes needs the spectral path")
+add_test(NAME ground_classes_refuse_no_ground COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv --no-ground_effect -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_no_ground PROPERTIES PASS_REGULAR_EXPRESSION "--no-ground_effect turns it off")
+add_test(NAME ground_classes_need_spectra COMMAND niceops --humidity 20 --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -L warn -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_need_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes needs a database carrying per-band spectra")
+add_test(NAME ground_classes_plates_on_one_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_two_plates.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_plates_on_one_class PROPERTIES PASS_REGULAR_EXPRESSION "the flush microphones stand on ground classes 0 \\(grass\\) and 1 \\(concrete\\)")
+add_test(NAME ground_classes_plate_matches_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_db225.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_plate_matches_class PROPERTIES PASS_REGULAR_EXPRESSION "--plate_table over ground class 0 \\(grass\\), which the flush microphones stand on: Plate table plates/gr1425_db225.nc was computed over")
+add_test(NAME ground_classes_refuse_not_passive COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_not_passive.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_not_passive PROPERTIES PASS_REGULAR_EXPRESSION "Ground class 1 \\(thin, tests/data/ground_classes_not_passive.csv line 3\\): The ground impedance model is not passive")
 # --band_history over flush plate microphones.  Writing the bands forces a
 # march, and must leave the footprint equal to the peak search's; a refracted
 # path through uniform air must record the straight one's geometry and bands.
@@ -1496,6 +1551,22 @@ add_test(NAME terrain_hills_scattered_placed COMMAND niceops ${TERRAIN_DEMO} --g
 add_test(NAME terrain_hills_bare COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --no-ground_effect -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_hills_bare.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME terrain_hills_bare_placed COMMAND niceops ${TERRAIN_DEMO} --no-ground_effect -b integrated/terrain_hills_observers.csv -o integrated/terrain_hills_bare_placed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_hills_scattered terrain_hills_scattered_placed terrain_hills_bare terrain_hills_bare_placed PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_placed_runs)
+# Ground classes over the hills (each point receiver's model at its path's own height, over its
+# class): one class repeating the command line is the run without classes, byte for byte, and
+# a grass and concrete array's peak search equals the march.
+set(TERRAIN_CLASSES ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --observers_on_terrain)
+add_test(NAME terrain_class_scalar COMMAND niceops ${TERRAIN_CLASSES} -b tests/data/coyle_heights.csv -o integrated/terrain_class_scalar.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_class_single COMMAND niceops ${TERRAIN_CLASSES} --ground_classes tests/data/ground_classes_one.csv -b tests/data/coyle_heights_class7.csv -o integrated/terrain_class_single.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_classes COMMAND niceops ${TERRAIN_CLASSES} --ground_classes tests/data/ground_classes_two.csv -b tests/data/coyle_heights_classes.csv -o integrated/terrain_classes.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_classes_marched COMMAND niceops ${TERRAIN_CLASSES} --ground_classes tests/data/ground_classes_two.csv -b tests/data/coyle_heights_classes.csv -D integrated/terrain_classes_dnl.csv -o integrated/terrain_classes_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_class_scalar terrain_class_single terrain_classes terrain_classes_marched PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_class_runs)
+add_test(NAME ground_class_single_is_scalar_terrain COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_class_single.csv integrated/terrain_class_scalar.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_terrain_windowed_is_exact COMMAND golden_compare integrated/terrain_classes.csv integrated/terrain_classes_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_class_single_is_scalar_terrain ground_classes_terrain_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_class_runs)
+# The array's first concrete microphone is on a pole (value 5): it must differ from the all-grass run
+# there first, which an admittance taken from the wrong class along a terrain path would not.
+add_test(NAME ground_classes_terrain_impedance_is_the_observers COMMAND golden_compare integrated/terrain_classes.csv integrated/terrain_class_scalar.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_terrain_impedance_is_the_observers PROPERTIES FIXTURES_REQUIRED terrain_class_runs PASS_REGULAR_EXPRESSION "mismatch at value 5:")
 add_test(NAME terrain_reaches_the_ground_model COMMAND golden_compare integrated/terrain_hills_scattered.csv integrated/terrain_hills_scattered_placed.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_reaches_the_ground_model PROPERTIES FIXTURES_REQUIRED terrain_placed_runs PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME terrain_without_ground_places_observers COMMAND golden_compare integrated/terrain_hills_bare.csv integrated/terrain_hills_bare_placed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

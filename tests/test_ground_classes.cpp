@@ -6,10 +6,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <cmath>
+#include <complex>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 #include "ground_classes.hpp"
@@ -212,4 +215,40 @@ TEST_CASE("a ground classes file keeps ids as land-cover codes, in file order", 
     REQUIRE(file.rows[0].id == 71);
     REQUIRE(file.rows[1].id == 21);
     REQUIRE(file.rows[2].id == 2147483647);
+}
+
+TEST_CASE("the point receiver's ground bound over several classes is their elementwise maximum", "[ground_classes]")
+{
+    // Grass (variable porosity) and concrete: concrete's surface wave bounds
+    // higher in some bands and grass's in others, so neither alone covers both.
+    std::vector<double> bands;
+    for (int i = 0; i < 31; i++)
+        bands.push_back(10.0 * std::pow(10.0, i / 10.0));
+    GroundModel grass;
+    grass.impedance_model = ImpedanceModel::variable_porosity;
+    grass.flow_resistance = 200.0;
+    GroundModel concrete;
+    concrete.flow_resistance = 10000.0;
+    const std::vector<GroundModel> models {grass, concrete};
+    const std::vector<std::vector<std::complex<double>>> impedances {
+            ground_impedance(grass, bands, 340.0), ground_impedance(concrete, bands, 340.0)};
+    const std::size_t first = 3, last = 28;
+    const auto alone_grass = ground_gain_bounds(grass, impedances[0], first, last);
+    const auto alone_concrete = ground_gain_bounds(concrete, impedances[1], first, last);
+    // One class is that class's bound, bit for bit.
+    REQUIRE(point_ground_gain_bounds(models, impedances, {0}, first, last) == alone_grass);
+    REQUIRE(point_ground_gain_bounds(models, impedances, {1}, first, last) == alone_concrete);
+    bool concrete_higher = false;
+    for (const auto& classes : {std::vector<std::size_t> {0, 1}, std::vector<std::size_t> {1, 0}})
+    {
+        const auto both = point_ground_gain_bounds(models, impedances, classes, first, last);
+        REQUIRE(both.size() == alone_grass.size());
+        for (std::size_t band = first; band < last; band++)
+        {
+            REQUIRE(both[band] == std::max(alone_grass[band], alone_concrete[band]));
+            concrete_higher = concrete_higher || alone_concrete[band] > alone_grass[band];
+        }
+    }
+    // Else the first class alone would pass the test above.
+    REQUIRE(concrete_higher);
 }

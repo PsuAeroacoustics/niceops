@@ -1,8 +1,10 @@
 #include "ground_classes.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <fstream>
 #include <map>
@@ -257,6 +259,21 @@ std::vector<GroundClass> niceops::ground_classes_from(const GroundClassFile& fil
         classes.push_back(surface);
     }
     return classes;
+}
+
+std::vector<double> niceops::point_ground_gain_bounds(const std::vector<GroundModel>& models,
+        const std::vector<std::vector<std::complex<double>>>& impedances, const std::vector<std::size_t>& classes,
+        std::size_t first_band, std::size_t last_band)
+{
+    assert(!classes.empty());
+    auto gains = ground_gain_bounds(models[classes[0]], impedances[classes[0]], first_band, last_band);
+    for (std::size_t k = 1; k < classes.size(); k++)
+    {
+        const auto more = ground_gain_bounds(models[classes[k]], impedances[classes[k]], first_band, last_band);
+        for (std::size_t band = 0; band < gains.size(); band++)
+            gains[band] = std::max(gains[band], more[band]);
+    }
+    return gains;
 }
 
 const GroundClass* niceops::find_ground_class(const std::vector<GroundClass>& classes, std::int64_t id)

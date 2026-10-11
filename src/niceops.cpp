@@ -689,6 +689,11 @@ struct RunOptions
     // by more than 2 percent.
     bool accept_vehicle_mismatch = false;
     GroundModel ground;
+    // --ground_classes: the surfaces an observer file's sixth column picks per
+    // microphone, each `ground` with the file's overrides (ground_classes.hpp),
+    // in file order.  Empty: every microphone is over `ground`.
+    std::vector<GroundClass> ground_classes;
+    std::string ground_classes_path;
     // Evaluate the point-receiver ground effect directly, not from GroundTable.
     bool exact_ground = false;
     // A flush microphone on a ground plate (--plate_table), read once and
@@ -1144,7 +1149,8 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
 // in here condemns this trajectory alone; the caller catches and moves on.
 Trajectory process_trajectory(const Database& database, const PathJob& job,
         const RunOptions& options, const std::vector<Vec3>& observers,
-        const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
+        const std::vector<double>& microphone_heights, const std::vector<std::int64_t>& ground_class_ids,
+        const std::vector<double>& x_obs,
         const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
         RunTotals& totals)
 {
@@ -1606,9 +1612,28 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<double> microphone_height(observer_count, 0.0);
     std::vector<char> on_plate(observer_count, 0);
     // The ground classes, each a surface with its own ground model, and the
-    // class each observer stands on.  There is one, the run's own ground.
-    const std::vector<GroundModel> class_models {options.ground};
-    const std::vector<std::size_t> class_of(observer_count, 0);
+    // class each observer stands on: --ground_classes in file order, or one,
+    // the run's own ground.  run() has checked that every id is defined.
+    std::vector<GroundModel> class_models;
+    std::vector<std::size_t> class_of(observer_count, 0);
+    if (options.ground_classes.empty())
+        class_models.push_back(options.ground);
+    else
+    {
+        for (const auto& surface : options.ground_classes)
+            class_models.push_back(surface.model);
+        assert(ground_class_ids.size() == observer_count);
+        for (std::size_t i = 0; i < observer_count; i++)
+        {
+            const auto found = std::find_if(options.ground_classes.begin(), options.ground_classes.end(),
+                    [&](const GroundClass& surface) { return surface.id == ground_class_ids[i]; });
+            assert(found != options.ground_classes.end());
+            class_of[i] = static_cast<std::size_t>(found - options.ground_classes.begin());
+        }
+    }
+    const auto class_name = [&](std::size_t c) {
+        return options.ground_classes.empty() ? std::string() : options.ground_classes[c].name;
+    };
     // Point receivers, by distinct (height, class): each needs its own ground
     // table.  Keys are kept in the order they are first met, so one class gives
     // the distinct heights in observer order.  point_heights is their heights,
@@ -1646,6 +1671,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
     const bool any_plate = std::any_of(on_plate.begin(), on_plate.end(), [](char c) { return c != 0; });
     const bool any_point = !point_keys.empty();
+    // The class flush microphones stand on, which the plate table is bound
+    // over: run() has refused plates on more than one class.
+    std::size_t plate_class = 0;
+    if (any_plate)
+        plate_class = class_of[static_cast<std::size_t>(
+                std::find(on_plate.begin(), on_plate.end(), char(1)) - on_plate.begin())];
     if (ground_effect || !microphone_heights.empty())
     {
         std::vector<std::size_t> at_height(point_heights.size(), 0);
@@ -1668,8 +1699,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         };
         if (flush_count > 0)
             item(flush_count, " flush on plates");
+        if (flush_count > 0 && !options.ground_classes.empty())
+            summary << " (" << class_name(plate_class) << ")";
         for (std::size_t k = 0; k < point_heights.size(); k++)
+        {
             item(at_height[k], " at ", point_heights[k] / options.unit.to_meters, " ", options.unit.name);
+            if (!options.ground_classes.empty())
+                summary << " over " << class_name(point_keys[k].second);
+        }
         if (bare_count > 0)
             item(bare_count, " with no ground model");
         log("Receivers: ", summary.str(), "; each level is evaluated at its microphone.");
@@ -1936,17 +1973,19 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (spectral && !database.has_spectra())
     {
         if (options.spectral_explicit || options.ground_effect_given || atmosphere
-                || options.propagation_table)
+                || options.propagation_table || !options.ground_classes.empty())
         {
             const std::string profile_option = options.surface_wind ? "--wind" : "--atmosphere";
             const std::string asked = options.propagation_table ? "--propagation_table"
+                    : !options.ground_classes.empty()           ? "--ground_classes"
                     : options.ground_effect_given               ? "--ground_effect"
                     : atmosphere                                ? profile_option
                                                                 : "--spectral";
             input_error(asked
                     + " needs a database carrying per-band spectra; this one has none. Rebuild "
                       "it with spectra, or propagate the broadband level with --no-spectral"
-                    + (options.ground_effect_given ? std::string(" and no ground effect.")
+                    + (options.ground_effect_given || !options.ground_classes.empty()
+                                    ? std::string(" and no ground effect.")
                                     : atmosphere ? " and no " + profile_option + "."
                                                  : std::string(".")));
         }
@@ -2163,9 +2202,26 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
         if (ground_effect)
         {
-            ground_model = &class_models[0];
+            // The plate is bound over its class's ground; with one class that
+            // is the run's.
+            ground_model = &class_models[plate_class];
             for (std::size_t c = 0; c < class_models.size(); c++)
-                class_impedance[c] = ground_impedance(class_models[c], bands, sound_speed);
+            {
+                try
+                {
+                    class_impedance[c] = ground_impedance(class_models[c], bands, sound_speed);
+                }
+                catch (const InputError& problem)
+                {
+                    if (options.ground_classes.empty())
+                        throw;
+                    const GroundClass& surface = options.ground_classes[c];
+                    const std::string context = "Ground class " + std::to_string(surface.id) + " (" + surface.name
+                            + ", " + options.ground_classes_path + " line " + std::to_string(surface.line) + "): ";
+                    report_again(problem, context);
+                    throw InputError(context + problem.what());
+                }
+            }
             log("  ground effect on: impedance model ", static_cast<int>(options.ground.impedance_model),
                     ", flow resistance ", options.ground.flow_resistance,
                     " kPa s/m^2, receiver ", options.ground.receiver_height, " m up, turbulence ",
@@ -2174,6 +2230,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     options.ground.turbulence_model == TurbulenceModel::chessell ? " (Chessell)"
                                                                                  : " (HARMONOISE gamma_T)",
                     ", roughness ", options.ground.roughness, " m, sound speed ", sound_speed, " m/s.");
+            for (std::size_t c = 0; c < options.ground_classes.size(); c++)
+            {
+                const GroundModel& model = class_models[c];
+                log("  ground class ", options.ground_classes[c].id, " (", options.ground_classes[c].name,
+                        "): impedance model ", static_cast<int>(model.impedance_model), ", flow resistance ",
+                        model.flow_resistance, " kPa s/m^2, porosity rate ", model.porosity_rate, " 1/m, layer ",
+                        model.layer_depth, " m, roughness ", model.roughness, " m.");
+            }
             // Farthest any observer is from any state: how far the ground
             // tables must reach.
             auto reach = [&]() {
@@ -2225,12 +2289,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     point_tables.emplace_back(model, class_impedance[ground_class], sound_speed, bands,
                             first_band, last_band, 1.0, r_max);
                     log("  ground effect for microphones ", height / options.unit.to_meters, " ",
-                            options.unit.name, " up tabulated to ", r_max, " m in ",
+                            options.unit.name, " up",
+                            options.ground_classes.empty() ? std::string() : " over " + class_name(ground_class),
+                            " tabulated to ", r_max, " m in ",
                             std::chrono::duration<double>(std::chrono::steady_clock::now() - table_start)
                                     .count(),
                             " s (--exact_ground to evaluate it directly).");
                 }
             }
+            // Each table is float [range][angle][band], about 9 MB on the demo.
+            // Many heights over many classes add up without a word otherwise.
+            constexpr std::size_t many_tables = 16;
+            if (!options.ground_classes.empty() && point_tables.size() > many_tables)
+                warn("--ground_classes: ", point_tables.size(), " ground tables, one per microphone height and "
+                        "class, about ", point_tables.size() * point_tables.front().memory_bytes() / 1e6,
+                        " MB. --exact_ground evaluates the model directly instead, at a cost in time.");
             if (any_plate)
             {
                 plate = options.plate->bound(bands, *ground_model, sound_speed, first_band,
@@ -2396,6 +2469,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const double bearing = std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing;
         effective_sound_speed = EffectiveSoundSpeed(*profile, bearing, z_low,
                 z_high + EffectiveSoundSpeed::min_fit_span);
+        // The ray models' bounce and shadow terms take ground_impedance_bands,
+        // the first class's, which is every microphone's only because run()
+        // refuses --ground_classes with --refraction.
+        assert(class_models.size() <= 1 || !effective_sound_speed);
         // The layered solve follows flat air at a path's fastest height only
         // as far as the highest band evaluated resolves it (stratified.hpp).
         if (options.stratified)
@@ -2583,22 +2660,6 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // What the path can add above spherical spreading, a power ratio
             // per band.
             std::vector<double> path_gains(bound_gains.size(), 1.0);
-            // The loudest the ground can make a point receiver over any of
-            // the given classes: each class's bound, which does not depend on
-            // the receiver's height, and their elementwise maximum.
-            auto point_ground_gain_bounds = [&](const std::vector<std::size_t>& classes) {
-                assert(!classes.empty());
-                auto gains = ground_gain_bounds(class_models[classes[0]], class_impedance[classes[0]],
-                        first_band, last_band);
-                for (std::size_t k = 1; k < classes.size(); k++)
-                {
-                    const auto more = ground_gain_bounds(class_models[classes[k]], class_impedance[classes[k]],
-                            first_band, last_band);
-                    for (std::size_t band = 0; band < gains.size(); band++)
-                        gains[band] = std::max(gains[band], more[band]);
-                }
-                return gains;
-            };
             if (ground_model != nullptr)
             {
                 // The loudest the ground can make any observer: a plate's, a
@@ -2615,7 +2676,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 if (any_point)
                 {
-                    const auto point_gains = point_ground_gain_bounds(point_classes);
+                    // Over every class a point receiver stands on.
+                    const auto point_gains = point_ground_gain_bounds(class_models, class_impedance, point_classes,
+                            first_band, last_band);
                     for (std::size_t band = 0; band < ground_gains.size(); band++)
                         ground_gains[band] = std::max(ground_gains[band], point_gains[band]);
                     // Near a shadow boundary the transition's field stands in
@@ -5139,6 +5202,23 @@ int run(int argc, char* argv[])
         if (observer_set.ground_class_ids.empty())
             input_error("--ground_classes needs the observer file to name each microphone's class in a sixth "
                     "column (id,x,y,z,height,ground); ", observer_file, " has none.");
+        // Each class is a ground for the point receiver's model, taken as the
+        // whole half-space under every path to its microphones.  The models
+        // that need the ground along a path, or one ground for the run, are
+        // refused rather than given the first class.
+        if (refraction != "none")
+            input_error("--ground_classes does not combine with --refraction: the curved rays' creeping-wave, "
+                    "bounce and shadow-boundary terms belong to the ground along each path, not under its "
+                    "microphone.");
+        if (!propagation_table.empty())
+            input_error("--ground_classes does not combine with --propagation_table: a table was solved over "
+                    "one ground.");
+        if (!spectral)
+            input_error("--ground_classes needs the spectral path: the ground effect is a function of frequency, "
+                    "and the broadband path (--no-spectral) has none to apply it to.");
+        if (!ground_effect)
+            input_error("--ground_classes sets the ground --ground_effect evaluates, and --no-ground_effect "
+                    "turns it off.");
         ground_class_file = read_ground_classes(ground_classes_file);
         std::string defined;
         for (const auto& row : ground_class_file->rows)
@@ -5472,15 +5552,6 @@ int run(int argc, char* argv[])
     options.ground.turbulence_model = parse_turbulence_model(turbulence_model);
     options.ground.gamma_t = gamma_t;
     options.ground.roughness = roughness;
-    if (ground_class_file)
-    {
-        // The file's lengths are in --units, as the command line's are, and
-        // what it leaves out is the command line's ground.
-        const std::vector<GroundClass> classes = ground_classes_from(*ground_class_file, options.ground, unit);
-        (void)classes;
-        input_error("--ground_classes ", ground_classes_file, " is read and checked, but evaluating each "
-                "microphone over its own ground class is not built yet.");
-    }
     options.exact_ground = exact_ground;
     options.terrain = terrain;
     options.terrain_path = terrain_file;
@@ -5519,6 +5590,54 @@ int run(int argc, char* argv[])
                         plate_mic_azimuth, "'.");
             }
         }
+    }
+    if (ground_class_file)
+    {
+        // The file's lengths are in --units, as the command line's are, and
+        // what it leaves out is the command line's ground.
+        options.ground_classes = ground_classes_from(*ground_class_file, options.ground, unit);
+        options.ground_classes_path = ground_classes_file;
+        const auto& ids = observer_set.ground_class_ids;
+        const auto& heights = observer_set.microphone_heights;
+        // Flush microphones are on one class, and the plate table was solved
+        // over its ground: P_d and P_r depend on it.
+        if (options.plate)
+        {
+            const GroundClass* plate_class = nullptr;
+            for (std::size_t i = 0; i < ids.size(); i++)
+            {
+                if (heights[i] != 0.0)
+                    continue;
+                const GroundClass* here = find_ground_class(options.ground_classes, ids[i]);
+                if (plate_class == nullptr)
+                    plate_class = here;
+                else if (here != plate_class)
+                    input_error("--plate_table: the flush microphones stand on ground classes ", plate_class->id,
+                            " (", plate_class->name, ") and ", here->id, " (", here->name, ") (observer file ",
+                            observer_file, " data row ", i + 1, "). One plate table is solved over one ground: "
+                            "put every flush microphone on one class.");
+            }
+            if (plate_class != nullptr)
+            {
+                const std::string mismatch = options.plate->ground_mismatch(plate_class->model);
+                if (!mismatch.empty())
+                    input_error("--plate_table over ground class ", plate_class->id, " (", plate_class->name,
+                            "), which the flush microphones stand on: ", mismatch);
+            }
+        }
+        std::string used;
+        std::string unused;
+        for (const auto& surface : options.ground_classes)
+        {
+            const auto on = static_cast<std::size_t>(std::count(ids.begin(), ids.end(), surface.id));
+            if (on > 0)
+                used += (used.empty() ? "" : ", ") + std::to_string(surface.id) + " (" + surface.name + ") "
+                        + std::to_string(on);
+            else
+                unused += (unused.empty() ? "" : ", ") + std::to_string(surface.id) + " (" + surface.name + ")";
+        }
+        log("Ground classes from ", ground_classes_file, ": microphones on ", used,
+                unused.empty() ? std::string(".") : "; not used: " + unused + ".");
     }
     // Each trajectory's air (--atmosphere, --wind, --humidity, --temperature,
     // --pressure, --start_utc) goes into its own copy of the options, in the
@@ -5698,7 +5817,7 @@ int run(int argc, char* argv[])
                             " s UTC, in place of any clock its track carries.");
             }
             trajectory_holder = process_trajectory(cached->second, job, path_options, observers,
-                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
+                    observer_set.microphone_heights, observer_set.ground_class_ids, x_obs, y_obs, integrated_levels, totals);
             operations_run += job.weight;
         }
         catch (const std::exception& problem)

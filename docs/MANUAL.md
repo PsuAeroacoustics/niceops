@@ -23,7 +23,7 @@ the code, start with the [README](../README.md); developers start at
 - [Propagation](#propagation): [Broadband and spectral paths](#broadband-and-spectral-paths) ·
   [Stratified atmosphere](#stratified-atmosphere) · [A profile from the surface
   wind](#a-profile-from-the-surface-wind) · [Ground effect](#ground-effect) ·
-  [Receivers](#receivers) · [Ground-plane microphones](#ground-plane-microphones) ·
+  [Mixed ground](#mixed-ground) · [Receivers](#receivers) · [Ground-plane microphones](#ground-plane-microphones) ·
   [Terrain](#terrain) · [Refraction](#refraction) · [Refraction through the profile's
   layers](#refraction-through-the-profiles-layers) · [Low sources near grazing: the resolved
   shadow](#low-sources-near-grazing-the-resolved-shadow) · [Micro-shadows and skip
@@ -176,6 +176,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--turbulence` | Chessell's turbulence parameter, rad·s/√m, typically 0 to 16e-4. Default 0. |
 | `--gamma_t` | HARMONOISE turbulence strength γ<sub>T</sub>, m<sup>−2/3</sup>: about 1e-6 moderate, 1e-5 strong. Default 0. |
 | `--receiver_height` | Height of a point receiver's microphone. Default 1.2 m (3.937 ft). An observer file's fifth column overrides it per observer. Also places the microphone for `--propagation_table`. |
+| `--ground_classes` | A CSV of ground surfaces keyed by an integer id, which an observer file's sixth column picks per microphone ([Mixed ground](#mixed-ground)). Needs `-b` with that column. Not with `--refraction` or `--propagation_table`. |
 | `--plate_table` | Observers are flush microphones on a ground plate: a netCDF table built for the run's ground ([Ground-plane microphones](#ground-plane-microphones)). Needs the ground effect. |
 | `--plate_mic_azimuth` | Which way the microphone is offset on its plate: `outboard` (default, away from the track) or degrees in the local frame from +x toward +y. |
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state rather than from per-trajectory tables. Slower; for checking the tables. |
@@ -295,6 +296,8 @@ The main ones:
 | `--tunneling`, `--skip_fill` without `--refraction stratified` | They are stratified-ray corrections. |
 | `--terrain` with `--refraction`, or without a frame | The ray models are built over flat ground; terrain needs to know where x/y lie. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
+| `--ground_classes` with grid observers, without an observer file's ground column, or naming a class the file does not define; the column without `--ground_classes` | Each names the other. |
+| `--ground_classes` with `--refraction`, `--propagation_table`, `--no-ground_effect`, `--no-spectral` or a database without spectra; flush microphones on more than one class, or on one the plate table was not built for | The ray models need the ground along the path, a table and a plate table each hold one ground, and the classes are a ground for the ground effect. |
 | `--latlon`, `--contour_file`, `--nose heading` without a frame; `--contour_file` or `--raster_file` with `-b`; `--contour_file` with `--contour_metric sel` over several trajectories | Nothing to turn compass directions or invert positions with; scattered observers have no grid to contour; one SEL per trajectory. |
 | `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock, unless an operations file gives period counts | Day or night would be made up. |
 | `--laeq_file` without `--laeq_window`, or an empty window | There is no default period. |
@@ -409,9 +412,10 @@ databases need one you supply.
 
 Without `-b` the observers are a grid, by default −1500 … 1475 m in 25 m steps on each axis (120
 values, 14,400 observers), set by `--grid` and `--gridstep`. Grid observers stand at z = 0, or on
-the terrain. `-b FILE` reads scattered observers instead, in `--units`: `x,y,z`, `id,x,y,z`, or
-`id,x,y,z,height`, the fifth column being each microphone's height above the ground
-([Receivers](#receivers)). The first line is always a header, and is discarded even when it
+the terrain. `-b FILE` reads scattered observers instead, in `--units`: `x,y,z`, `id,x,y,z`,
+`id,x,y,z,height` or `id,x,y,z,height,ground`, the fifth column being each microphone's height
+above the ground ([Receivers](#receivers)) and the sixth the ground class it stands on
+([Mixed ground](#mixed-ground)). The first line is always a header, and is discarded even when it
 holds numbers. `tests/data/mixed_receivers.csv` is an example (coordinates shortened here):
 
 ```csv
@@ -700,6 +704,38 @@ the answer is sensitive to it, so name the surface rather than guessing.
 - **Tables.** The ground gain is interpolated from a per-trajectory table, within about 0.001 dB
   of the exact model; `--exact_ground` evaluates it directly, several times slower.
 
+### Mixed ground
+
+When microphones stand on different surfaces, for example a concrete pad among grass,
+`--ground_classes FILE` gives each surface as a row of a CSV, and an observer file's sixth column
+(`id,x,y,z,height,ground`) names the class of each microphone:
+
+```csv
+class,name,impedance_model,flow_resistance
+0,grass,,
+21,pad,delany_bazley,10000
+```
+
+- **Columns.** `class` is required: an integer id from 0 to 2147483647, in any order (land-cover
+  codes work). The others are optional: `name` (for the log), `impedance_model`,
+  `flow_resistance` (kPa·s/m²), `porosity_rate` (1/m), `layer_depth` and `roughness` (in
+  `--units`). A column left out, or a cell left empty, takes the command line's value, so a file
+  lists only what differs; above, class 0 is whatever the command line says.
+- **Turbulence is the air's**, so it stays run-wide (`--turbulence`, `--gamma_t`), and a
+  turbulence column is refused. The receiver height comes from the observer file.
+- **Flush microphones** on a plate (`--plate_table`) must all be on one class, the ground the
+  plate table was built for.
+- **The limit.** Each microphone is evaluated as if the whole ground were its class. Use a class
+  where the patch extends well beyond the microphone toward the aircraft: tens of meters for a
+  1.2 m pole at grazing incidence, less for a high source. A flush plate needs only a patch
+  larger than the plate. A small pad under a pole microphone is given the full effect of a
+  concrete plain, which overstates it at long range.
+- **What it does not combine with.** `--refraction` (its terms depend on the ground along the
+  path), `--propagation_table` (a table holds one ground), grid observers (they have no class
+  column), `--no-ground_effect` and the broadband path. `--terrain` works.
+- **Cost.** One ground table per microphone height and class, about 9 MB each; above 16 the run
+  warns and `--exact_ground` is the alternative. Classes defined but not used are only logged.
+
 ### Receivers
 
 Each observer's level is evaluated at its microphone, the observer's point raised by the
@@ -713,7 +749,8 @@ microphone's height. What the microphone is decides the ground model:
 
 With a four-column observer file every observer takes the run's receiver. A fifth column gives
 each microphone's own height, so one run can hold flush microphones with a few on poles: under
-`--plate_table`, height 0 is a plate and anything else a point receiver. The log reports how many
+`--plate_table`, height 0 is a plate and anything else a point receiver. A sixth column puts each
+microphone over its own ground class ([Mixed ground](#mixed-ground)). The log reports how many
 observers took each.
 
 ### Ground-plane microphones

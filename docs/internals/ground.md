@@ -16,13 +16,49 @@ Every level is evaluated at the microphone, the observer's point raised by its h
 ground (`process_trajectory`). Which receiver a microphone gets is a user rule, given in the
 manual. What to keep:
 
-- **One ground model and one `GroundTable` per distinct receiver height**, built once per
-  trajectory, not per observer. An observer file's fifth column lets one run mix plates and poles.
+- **One ground model and one `GroundTable` per distinct (receiver height, ground class)**, built
+  once per trajectory, not per observer. An observer file's fifth column lets one run mix plates
+  and poles, and its sixth puts each microphone over a `--ground_classes` class. Keys are kept in
+  the order first met, so with one class the tables, logs and the refraction setup's
+  `point_heights` are what they were with heights alone.
 - **The peak search's ground bound is the larger of the plate's and the point receiver's**, which
-  does not depend on height, so a mixed run needs no per-observer bound.
+  does not depend on height, so a mixed run needs no per-observer bound. The point receiver's is
+  `point_ground_gain_bounds` over every class point receivers stand on, the elementwise maximum
+  of each class's `ground_gain_bounds`.
 - **`mixed_receivers_are_their_subsets`** checks a mixed run (`tests/data/mixed_receivers.csv`)
   against runs over each kind. It runs with `--exact_ground`, because a table's extent follows its
   own run's observers, so tables built for different observer sets differ at the last digits.
+- **Ground classes** (`src/ground_classes.{hpp,cpp}`, read as in
+  [inputs.md](inputs.md#the-ground-classes-file)). Each class is the run's `GroundModel` with
+  the file's overrides, and each has its admittance (`class_impedance`, one `ground_impedance()`
+  call per class per trajectory). The hot loop picks the observer's admittance once per observer
+  (`impedance_here`) and passes it where the run's was passed, on flat ground and over terrain, so
+  an evaluation costs nothing more. What to keep:
+  - **One class is the run without classes, byte for byte**: `class_models` is
+    `{options.ground}`, `class_impedance[0]` is the one call made without classes, and
+    `ground_class_single_is_scalar_{point,plate,terrain}` (and the explicit-columns twin) compare
+    the files. A class file's numbers in those tests are whole, so the reader's and CLI11's
+    parsing cannot differ by an ULP.
+  - **`ground_impedance_bands` is the first class's**, and the refraction models and a table's
+    plate offset take it. That is right only because `--refraction` and `--propagation_table`
+    are refused with classes (an assert in the refraction setup says so). Per-class shadow
+    transitions and bounce losses belong with ground along the path, not under the microphone.
+  - **Flush microphones are on one class**, refused otherwise, and the plate is bound over it
+    (`ground_model` points at it). The check is `PlateReceiver::ground_mismatch`, so `bound()`'s
+    message on a run without classes is unchanged.
+  - **Rejected:** a `DirectionBounds` table per class (more cache traffic for a bound that moves
+    little, since each class's bound is (1 + max|Q|)² and |Q| nears 1 at grazing for every
+    surface; revisit only if the measured evaluated fraction moves); scaling the bound per
+    observer (impossible, since the ground gain is folded into the A-weighted direction table);
+    substituting a lone class for `options.ground` (it would enable refraction over a ground the
+    user did not name); ids as row indexes (they move when rows are reordered, and do not match
+    land-cover codes).
+  - **A later blend over surfaces** (Fresnel-zone weighting along each path) stays under the same
+    bound only if it blends power ratios convexly; otherwise the bound must be re-derived.
+  - Tests: `ground_classes_mixed_are_their_subsets` (`--exact_ground`, as
+    `mixed_receivers_are_their_subsets`), `ground_classes_tabled_matches_exact`,
+    `ground_classes{,_terrain}_impedance_is_the_observers`,
+    `ground_classes{,_terrain}_windowed_is_exact`, and the refusals.
 - The direct path ends at the microphone, not on the ground. Moving it there changed
   point-receiver results; see [HISTORY](../HISTORY.md#changes-that-affect-results).
 

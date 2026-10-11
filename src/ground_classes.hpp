@@ -11,6 +11,7 @@
 // file's syntax and converts nothing.  ground_classes_from applies --units and
 // the inheritance.
 
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -75,6 +76,15 @@ struct GroundClass
 // declaring another unit is refused, since nothing converts it.
 std::vector<GroundClass> ground_classes_from(const GroundClassFile& file, const GroundModel& ground,
         LengthUnit unit);
+
+// The loudest the ground can make a point receiver standing on any of
+// `classes` (indexes into `models` and `impedances`), a power ratio per band
+// in [first_band, last_band): each class's ground_gain_bounds, which does not
+// depend on the receiver's height, and their elementwise maximum.  With one
+// class it is that class's bound, the same call.
+std::vector<double> point_ground_gain_bounds(const std::vector<GroundModel>& models,
+        const std::vector<std::vector<std::complex<double>>>& impedances, const std::vector<std::size_t>& classes,
+        std::size_t first_band, std::size_t last_band);
 
 // The class with `id`, or nullptr.
 const GroundClass* find_ground_class(const std::vector<GroundClass>& classes, std::int64_t id);

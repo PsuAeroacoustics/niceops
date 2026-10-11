@@ -221,6 +221,11 @@ public:
     {
         return last_band_;
     }
+    // What the values hold, bytes.
+    std::size_t memory_bytes() const
+    {
+        return values_.size() * sizeof(float);
+    }
 
 private:
     std::size_t first_band_ = 0;
