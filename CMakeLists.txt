@@ -429,6 +429,24 @@ add_test(NAME provenance_refuses_ambient COMMAND niceops -a 40 --provenance_file
 set_tests_properties(provenance_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with -a")
 add_test(NAME provenance_refuses_two_databases COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -d databases/S-76D_M4.nod -o integrated/provenance_two.csv --provenance_file integrated/provenance_two_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_refuses_two_databases PROPERTIES PASS_REGULAR_EXPRESSION "run it once per database")
+# The database cache: each distinct database loads once, however its trajectories are interleaved
+# (A B A B: the front one is held throughout, the other until its last trajectory) and however its
+# path is spelled.  Every load opens the file ("Opening netCDF file"), and info lines
+# reach only the log, so each run writes a fresh log of its own and the check reads it back.
+add_test(NAME database_cache_run COMMAND sh -c "rm -f integrated/database_cache.log && $<TARGET_FILE:niceops> --no-spectral --no-ground_effect --gridstep 2000 -L info -l integrated/database_cache.log -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197422AC.csv -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197422AC.csv -d databases/S-76D_M3.nod -d databases/B407_fixed_load_factor.nod -d databases/S-76D_M3.nod -d databases/B407_fixed_load_factor.nod -v databases/S-76D.json -v databases/B407.json -v databases/S-76D.json -v databases/B407.json -o integrated/database_cache_a1.csv -o integrated/database_cache_b1.csv -o integrated/database_cache_a2.csv -o integrated/database_cache_b2.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_cache_run PROPERTIES FIXTURES_SETUP database_cache_run)
+add_test(NAME database_cache_loads_each_once COMMAND ${CMAKE_COMMAND} -E cat integrated/database_cache.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_cache_loads_each_once PROPERTIES FIXTURES_REQUIRED database_cache_run PASS_REGULAR_EXPRESSION "Loading database databases/B407_fixed_load_factor\\.nod for tracks/S-76D/197422AC\\.csv" FAIL_REGULAR_EXPRESSION "Opening netCDF file: databases/S-76D_M3\\.nod.*Opening netCDF file: databases/S-76D_M3\\.nod;Opening netCDF file: databases/B407_fixed_load_factor\\.nod.*Opening netCDF file: databases/B407_fixed_load_factor\\.nod")
+# A held database gives a trajectory what it gave the same trajectory before.
+add_test(NAME database_cache_reuse_is_identical COMMAND ${CMAKE_COMMAND} -E compare_files integrated/database_cache_a1.csv integrated/database_cache_a2.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_cache_reuse_is_identical PROPERTIES FIXTURES_REQUIRED database_cache_run)
+add_test(NAME database_cache_reuse_is_identical_second COMMAND ${CMAKE_COMMAND} -E compare_files integrated/database_cache_b1.csv integrated/database_cache_b2.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_cache_reuse_is_identical_second PROPERTIES FIXTURES_REQUIRED database_cache_run)
+# Two spellings of one database are one database: loaded once, and the provenance takes them.
+add_test(NAME database_spellings_run COMMAND sh -c "rm -f integrated/database_spellings.log && $<TARGET_FILE:niceops> --no-spectral --no-ground_effect --gridstep 2000 -L info -l integrated/database_spellings.log -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197422AC.csv -d databases/S-76D_M3.nod -d databases/../databases/S-76D_M3.nod -o integrated/database_spellings.csv --provenance_file integrated/database_spellings_provenance.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_spellings_run PROPERTIES FIXTURES_SETUP database_spellings_run)
+add_test(NAME database_spellings_load_once COMMAND ${CMAKE_COMMAND} -E cat integrated/database_spellings.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_spellings_load_once PROPERTIES FIXTURES_REQUIRED database_spellings_run PASS_REGULAR_EXPRESSION "Opening netCDF file: databases/S-76D_M3\\.nod" FAIL_REGULAR_EXPRESSION "Loading database;Opening netCDF file: databases/\\.\\./")
 add_test(NAME version_names_the_build COMMAND niceops --version WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(version_names_the_build PROPERTIES PASS_REGULAR_EXPRESSION "^[^ \n]+\n$")
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

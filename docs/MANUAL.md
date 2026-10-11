@@ -1030,7 +1030,8 @@ The profile's shape (`--roughness_length`, `--stability`, `--surface_layer_depth
 `--profile_levels`) is the run's. One output name for
 several tracks becomes one per track (`<track>_state.csv`, `<track>_LCE.csv`, `<track>_EPNL.csv`,
 `<track>_band_frames.nc`, `<track>_atmosphere.csv`), and `-i` and `--band_history` files are
-named for their track. Plotting is skipped.
+named for their track. Plotting is skipped. Each distinct database is loaded once, however its
+trajectories are ordered, and two spellings of one path are one database.
 
 ```sh
 ./build/niceops -t morning.csv -t evening.csv -t night.csv -D integrated/dnl.csv

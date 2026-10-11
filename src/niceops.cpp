@@ -170,6 +170,16 @@ void write_geodetic_levels(const std::vector<double>& x_obs, const std::vector<d
     }
 }
 
+// The name a database is cached and compared under: its canonical path, so
+// two spellings of one file are one database.  A path that cannot be resolved
+// keys as given; loading it then fails and names it.
+std::string database_key(const std::string& path)
+{
+    std::error_code ec;
+    const auto canonical = std::filesystem::weakly_canonical(path, ec);
+    return ec ? path : canonical.string();
+}
+
 // Where a level file's WGS84 companion goes: alongside it, under the same name
 // with "_latlon" on the end.  Derived rather than asked for, so --latlon needs
 // no second output name per trajectory and cannot fall out of step with -o.
@@ -774,6 +784,10 @@ struct PathJob
     // --epnl_file and --band_frames for this trajectory; empty for none.
     std::string epnl;
     std::string band_frames;
+    // The run's name for this trajectory, which its per-track files are named
+    // after: the track's stem.
+    std::string name;
+    // How many trajectories the run has (for naming only).
     std::size_t count = 1;
 };
 
@@ -1453,9 +1467,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         {
             const auto name = job.count == 1
                     ? options.power_file
-                    : (std::filesystem::path(options.power_file).parent_path()
-                              / (std::filesystem::path(job.trajectory).stem().string() + "_power.csv"))
-                              .string();
+                    : (std::filesystem::path(options.power_file).parent_path() / (job.name + "_power.csv")).string();
             auto file = open_output(name);
             info("Writing shaft power to ", name);
             file << "t(s),advance_ratio,flight_path_angle(deg),CT,shaft_power\n";
@@ -1508,7 +1520,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // file is named for its track as well (run() has checked the stems differ).
     const std::string history_infix = job.count == 1
             ? std::string()
-            : "_" + std::filesystem::path(job.trajectory).stem().string();
+            : "_" + job.name;
 
     // Each observer's receiver, and where its level is evaluated: at the
     // microphone, the observer's point raised by the microphone's height above
@@ -3435,8 +3447,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
     if (!options.metric_file.empty())
     {
-        auto casename = std::filesystem::path(job.trajectory).stem().string();
-        append_metrics_file(options.metric_file, casename, x_obs, y_obs, options.scattered, options.unit,
+        append_metrics_file(options.metric_file, job.name, x_obs, y_obs, options.scattered, options.unit,
                 integrated_levels);
     }
 
@@ -4249,17 +4260,19 @@ int run(int argc, char* argv[])
         input_error("Got ", list.size(), " ", what, " for ", path_count,
                 " trajectories; give one, or one per trajectory.");
     };
+    // Each trajectory's name in the run, which its per-track files are named
+    // after: the track's stem.
+    std::vector<std::string> run_names;
+    for (const auto& path : path_files)
+        run_names.push_back(std::filesystem::path(path).stem().string());
     if (out_files.size() == 1 && path_count > 1)
     {
         // A single output name cannot serve several tracks, so name each after
         // its own, next to where the given name pointed.
         const auto directory = std::filesystem::path(out_files.front()).parent_path();
         out_files.clear();
-        for (const auto& path : path_files)
-        {
-            const auto stem = std::filesystem::path(path).stem().string();
-            out_files.push_back((directory / (stem + "_LAE.csv")).string());
-        }
+        for (const auto& name : run_names)
+            out_files.push_back((directory / (name + "_LAE.csv")).string());
     }
     std::vector<std::string> atmosphere_out_files;
     if (!write_atmosphere.empty())
@@ -4270,11 +4283,8 @@ int run(int argc, char* argv[])
         {
             // As the state file: one name for several tracks would hold only the last profile.
             const auto directory = std::filesystem::path(write_atmosphere).parent_path();
-            for (const auto& path : path_files)
-            {
-                const auto stem = std::filesystem::path(path).stem().string();
-                atmosphere_out_files.push_back((directory / (stem + "_atmosphere.csv")).string());
-            }
+            for (const auto& name : run_names)
+                atmosphere_out_files.push_back((directory / (name + "_atmosphere.csv")).string());
         }
     }
     if (state_files.size() == 1 && path_count > 1)
@@ -4283,11 +4293,8 @@ int run(int argc, char* argv[])
         // be rewritten by each in turn, leaving only the last one's.
         const auto directory = std::filesystem::path(state_files.front()).parent_path();
         state_files.clear();
-        for (const auto& path : path_files)
-        {
-            const auto stem = std::filesystem::path(path).stem().string();
-            state_files.push_back((directory / (stem + "_state.csv")).string());
-        }
+        for (const auto& name : run_names)
+            state_files.push_back((directory / (name + "_state.csv")).string());
     }
     // --csel_file, --epnl_file and --band_frames are per operation, as -S is:
     // one name for several tracks is split into one per track, beside it.
@@ -4296,8 +4303,8 @@ int run(int argc, char* argv[])
             return;
         const auto directory = std::filesystem::path(names.front()).parent_path();
         names.clear();
-        for (const auto& path : path_files)
-            names.push_back((directory / (std::filesystem::path(path).stem().string() + suffix)).string());
+        for (const auto& name : run_names)
+            names.push_back((directory / (name + suffix)).string());
     };
     name_per_track(csel_files, "_LCE.csv");
     name_per_track(epnl_files, "_EPNL.csv");
@@ -4321,8 +4328,14 @@ int run(int argc, char* argv[])
     if (!provenance_file.empty() && !std::isnan(ambient_level))
         input_error("--provenance_file attributes the aircraft's energy to the states and spheres "
                 "it came from: it does not combine with -a, whose energy came from neither.");
-    const bool several_databases = std::any_of(database_files.begin(), database_files.end(),
-            [&](const std::string& f) { return f != database_files.front(); });
+    // Each trajectory's database by its canonical path: two spellings of one
+    // file are one database, loaded once.
+    std::vector<std::string> database_keys;
+    for (const auto& f : database_files)
+        database_keys.push_back(database_key(f));
+    const std::string front_key = database_keys.front();
+    const bool several_databases = std::any_of(database_keys.begin(), database_keys.end(),
+            [&](const std::string& key) { return key != front_key; });
     // The provenance names spheres by their index in one database.
     if (!provenance_file.empty() && several_databases)
         input_error("--provenance_file names spheres of one database: run it once per database.");
@@ -4370,12 +4383,7 @@ int run(int argc, char* argv[])
         if (!band_frames_files.empty())
             require_distinct(band_frames_files, "--band_frames file");
         if (!time_history_prefix.empty() || !band_history_prefix.empty())
-        {
-            std::vector<std::string> stems;
-            for (const auto& path : path_files)
-                stems.push_back(std::filesystem::path(path).stem().string());
-            require_distinct(stems, "history file name (their tracks share a file name)");
-        }
+            require_distinct(run_names, "history file name (their tracks share a file name)");
     }
 
     if (grid_bounds.empty())
@@ -4509,23 +4517,31 @@ int run(int argc, char* argv[])
 
     // Start stopwatch
     auto watch_start = std::chrono::steady_clock::now();
-    // Each Database owns its own triangulation, so several can be live at once;
-    // they are still loaded one at a time and reused across consecutive paths
-    // that name the same file, which for the usual case of one database shared
-    // by every path means loading once.
-    std::string loaded_database = database_files.front();
+    // Each distinct database is loaded once, on first use, and held until the
+    // last trajectory that names it; the front one is loaded here, for the
+    // standalone jobs below as well, and held to the end, where the provenance
+    // reads it.  Each Database owns its own triangulation, so several can be
+    // live at once.  Keyed by database_key().
+    std::map<std::string, Database> databases;
+    std::map<std::string, std::size_t> last_use;
+    for (std::size_t i = 0; i < path_count; i++)
+        last_use[database_keys[i]] = i;
+    const std::string& front_database = database_files.front();
     // The screen writes its list while the database loads, with a truncating
     // open: `-d X --screen_database X` would replace the database with it.
+    // Checked against every database, since any of them could be the one read
+    // when it is written.
     if (!database_load.screen_file.empty())
     {
-        if (same_file(database_load.screen_file, database_files.front()))
-            input_error("--screen_database would overwrite the database it reads, ", database_files.front(),
-                    ". Give another file name.");
+        for (const auto& f : database_files)
+            if (same_file(database_load.screen_file, f))
+                input_error("--screen_database would overwrite the database it reads, ", f,
+                        ". Give another file name.");
     }
     if (self_test && mask_suspect_option->count() > 0)
         input_error("--self_test checks the database as the file holds it; it does not combine "
                 "with --mask_suspect_cells.");
-    auto database = Database(loaded_database, database_load);
+    Database& database = databases.try_emplace(front_key, front_database, database_load).first->second;
     auto t1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
             - watch_start)
                         .count();
@@ -4558,7 +4574,7 @@ int run(int argc, char* argv[])
                 && !database.fixed_load_factor())
         {
             input_error("--load_factor_correction two_sided applies a fixed_load_factor database's "
-                    "law, and ", loaded_database, " is not one: its load factors are spheres.");
+                    "law, and ", front_database, " is not one: its load factors are spheres.");
         }
         const auto sphere = database.interpolate_sphere(
                 sphere_condition[0], sphere_condition[1], sphere_condition[2], export_blend);
@@ -4585,7 +4601,7 @@ int run(int argc, char* argv[])
         // one sample disagreeing by ~1.7 dB.  The cause was legacy hover
         // directivity (see repair_legacy_hover_directivity); with that repaired
         // the self test passes on every shipped database.
-        database.self_test(loaded_database);
+        database.self_test(front_database);
         // And stop: the rest of main is the demo case, whose output file the
         // golden tests read, so a self test that ran it too rewrote that file
         // under any test running beside it.
@@ -5116,21 +5132,25 @@ int run(int argc, char* argv[])
     {
         try
         {
-        if (database_files[path_index] != loaded_database)
-        {
-            log("Loading database ", database_files[path_index], " for ",
-                    path_files[path_index]);
-            database = Database(database_files[path_index], database_load);
-            // Only once it loaded.  Recording the name first would leave the cache
-            // claiming a database that failed to open, so a later trajectory naming
-            // the same file would skip the reload and quietly use the previous one.
-            loaded_database = database_files[path_index];
-            if (auto& request = manifest_request())
-                request->manifest.set_database_attributes(loaded_database, database.root_attributes());
-        }
+            const std::string& key = database_keys[path_index];
+            auto cached = databases.find(key);
+            if (cached == databases.end())
+            {
+                log("Loading database ", database_files[path_index], " for ", path_files[path_index]);
+                // try_emplace enters it only once it has loaded.  An entry for a
+                // database that failed to open would let a later trajectory naming
+                // the same file skip the load and run on nothing.
+                cached = databases.try_emplace(key, database_files[path_index], database_load).first;
+                if (databases.size() > 1)
+                    info(databases.size(), " databases held in memory.");
+                if (auto& request = manifest_request())
+                    request->manifest.set_database_attributes(database_files[path_index],
+                            cached->second.root_attributes());
+            }
             PathJob job;
             job.trajectory = path_files[path_index];
             job.database = database_files[path_index];
+            job.name = run_names[path_index];
             job.epnl = epnl_files.empty() ? std::string() : epnl_files[path_index];
             job.band_frames = band_frames_files.empty() ? std::string() : band_frames_files[path_index];
             job.vehicle = vehicle_files[path_index];
@@ -5147,7 +5167,7 @@ int run(int argc, char* argv[])
             path_options.temperature_override = value_for(temperature_overrides, path_index);
             path_options.pressure_override = value_for(pressure_overrides, path_index);
             path_options.geodetic.start_utc = value_for(start_utcs, path_index);
-            trajectory_holder = process_trajectory(database, job, path_options, observers,
+            trajectory_holder = process_trajectory(cached->second, job, path_options, observers,
                     observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
         }
         catch (const std::exception& problem)
@@ -5155,6 +5175,10 @@ int run(int argc, char* argv[])
             failed_paths++;
             report_again(problem, "Skipping " + path_files[path_index] + ": ");
         }
+        // Done with it once no later trajectory names it; the front one stays.
+        const std::string& key = database_keys[path_index];
+        if (last_use.at(key) == path_index && key != front_key)
+            databases.erase(key);
     }
 
     if (failed_paths > 0)
@@ -5218,6 +5242,8 @@ int run(int argc, char* argv[])
     {
         log("Writing where each observer's energy came from, over ", path_count,
                 path_count == 1 ? " operation, to " : " operations, to ", provenance_file);
+        // The front database: the provenance refuses a run of several.
+        assert(!several_databases);
         write_provenance(observers, totals, database, provenance_file, unit);
         if (!provenance_spheres_file.empty())
         {

@@ -223,6 +223,10 @@ old and new results only with them in mind.
   tip speed, weight, rotor radius or C_T differs from the database's by more than 2 percent is
   refused unless `--accept_vehicle_mismatch` is given
   ([Errors and refusals](MANUAL.md#errors-and-refusals)).
+- **Databases are compared by canonical path.** `-d databases/X.nod -d ./databases/X.nod` used
+  to count as two databases, so `--provenance_file` and `--screen_database` refused the run; they
+  now accept it, and the file loads once. A run that returns to a database after another one
+  used to reload it, and now holds it until its last trajectory. Results are unchanged.
 
 ## The 2017 Noise Abatement databases
 
