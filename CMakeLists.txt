@@ -754,6 +754,19 @@ add_test(NAME nose_database_heading_needs_a_frame COMMAND niceops -d integrated/
 set_tests_properties(nose_database_heading_needs_a_frame PROPERTIES PASS_REGULAR_EXPRESSION "azimuth_reference \\(heading\\) turns each state's compass heading.*or --nose velocity" FIXTURES_REQUIRED heading_tracks)
 add_test(NAME nose_heading_needs_a_heading COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --nose heading -L warn -o integrated/nose_heading_no_heading.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(nose_heading_needs_a_heading PROPERTIES PASS_REGULAR_EXPRESSION "--nose heading needs the nose's compass heading, and tests/data/demo_geodetic_noclock.csv carries none")
+# A WGS84 track with a heading column: the geodetic demo track with its own ground-track bearing
+# (central differences of its positions) and that turned 15 degrees.  Along the track, heading
+# mode is the default nose to within the finite-difference bearing (median 0.04 dB, 0.55 at worst
+# on this grid); crabbed, it moves the footprint by up to 2.9 dB.
+set(GEODETIC_FRAME --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 328 -L warn)
+add_test(NAME geodetic_heading_default COMMAND niceops -t tests/data/demo_geodetic_heading.csv ${GEODETIC_FRAME} -o integrated/geodetic_heading_default.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME geodetic_heading_on_track COMMAND niceops -t tests/data/demo_geodetic_heading.csv ${GEODETIC_FRAME} --nose heading -o integrated/geodetic_heading_on_track.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME geodetic_heading_crabbed COMMAND niceops -t tests/data/demo_geodetic_heading_crabbed.csv ${GEODETIC_FRAME} --nose heading -o integrated/geodetic_heading_crabbed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(geodetic_heading_default geodetic_heading_on_track geodetic_heading_crabbed PROPERTIES FIXTURES_SETUP geodetic_heading_runs)
+add_test(NAME geodetic_heading_on_track_is_velocity COMMAND golden_compare integrated/geodetic_heading_on_track.csv integrated/geodetic_heading_default.csv 0.6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME geodetic_heading_crabbed_differs COMMAND golden_compare integrated/geodetic_heading_crabbed.csv integrated/geodetic_heading_default.csv 0.6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(geodetic_heading_crabbed_differs PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(geodetic_heading_on_track_is_velocity geodetic_heading_crabbed_differs PROPERTIES FIXTURES_REQUIRED geodetic_heading_runs)
 # A database implying heading mode on a track with no heading falls back to the
 # velocity, with a warning, and runs.
 add_test(NAME nose_database_heading_without_heading COMMAND niceops -d integrated/heading_sphere.nod -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -L warn -o integrated/nose_database_no_heading.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

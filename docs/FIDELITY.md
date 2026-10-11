@@ -983,7 +983,7 @@ range-dependent source fit would confound descent state drift with path loss.
 - **EPNL** is compared only to 5 kHz, where the measured frames stop, with no pseudo-tone
   exclusion; predicted spectra carry less tone correction than measured.
 - **Terrain** is a plane fitted over the whole path, with no screening.
-- **The nose.** No shipped database records a heading-filed azimuth, and WGS84 tracks carry no
-  heading.
+- **The nose.** No shipped database records a heading-filed azimuth, and a WGS84 track's
+  heading has to be given as a column.
 - **Source coverage.** Every aircraft over-predicts at low elevation; the B407 hover between 3°
   and 17° below the horizon, and under the aircraft, is an interpolation.

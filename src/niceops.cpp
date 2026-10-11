@@ -955,12 +955,11 @@ NoseSetup settle_nose(const Trajectory& trajectory, const Database& database,
         if (options.nose)
         {
             input_error("--nose heading needs the nose's compass heading, and ", trajectory_file,
-                    " carries none: a WGS84 track has no heading column (the AC format's "
-                    "column 9 and a static operation's heading column are read). Use --nose "
-                    "velocity.");
+                    " carries none (the AC format's column 9, a WGS84 track's heading column "
+                    "and a static operation's heading column are read). Use --nose velocity.");
         }
         warn("The database measures its sphere azimuth from the heading, and ", trajectory_file,
-                " carries none (a WGS84 track has no heading column): the nose follows the "
+                " carries none (a WGS84 track needs a heading column): the nose follows the "
                 "velocity instead, as if the aircraft flew with no crab. Give --nose velocity "
                 "to say so.");
         setup.source = NoseSource::velocity;

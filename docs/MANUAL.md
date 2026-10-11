@@ -329,6 +329,7 @@ column.
 | `lat`, `lon` | Degrees. |
 | `alt` | Altitude in `--units`, on the datum of `--ground_elevation`; z is the altitude less `--ground_elevation`. |
 | `vE`, `vN`, `vUp` | Optional velocity, `--units` per second, used when all three are present. |
+| `heading` | Optional compass heading of the nose, degrees from true north (`hdg` serves too); a unit other than degrees is refused. It sets the hover nose and `--nose heading` ([The sphere's nose](#the-spheres-nose)). Resampled linearly, through north the short way. |
 
 Names are matched case-insensitively, ignoring punctuation and a parenthesized unit (`Latitude`,
 `LAT` and `lat (deg)` are one column), in any order. `alt_ft` is read under `--units ft` and
@@ -536,8 +537,8 @@ record it, as `track`); any other value is refused. An explicit
 `--nose` wins, with a warning when the file records the other; `--export_sphere` carries the
 attribute on. **The frame must be known; it is never inferred**: with no frame (an AC track
 without `--frame_bearing`, and no `--origin`) `--nose heading` is refused. A track with no heading
-column (a WGS84 track) is refused under `--nose heading`, and falls back to the velocity with a
-warning when only the database asks for heading mode; a state without a heading is refused,
+(a WGS84 track without a `heading` column) is refused under `--nose heading`, and falls back to the
+velocity with a warning when only the database asks for heading mode; a state without a heading is refused,
 naming its time. The log gives the mean crab (heading less ground track, positive with the nose
 right of the track) and its rms above 8 kt, and warns past 45°, which is a frame turned the wrong
 way rather than a crosswind.

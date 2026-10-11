@@ -46,6 +46,8 @@ struct GeodeticColumns
     std::size_t east_speed = LabeledCsv::npos;
     std::size_t north_speed = LabeledCsv::npos;
     std::size_t up_speed = LabeledCsv::npos;
+    // Optional: the nose's compass heading, degrees from true north.
+    std::size_t heading = LabeledCsv::npos;
 
     // A file is a WGS84 track when it says where the aircraft is.  Time can
     // come from either of two columns and velocity is optional, so neither of
@@ -71,7 +73,7 @@ struct GeodeticColumns
     {
         std::size_t widest = 0;
         for (std::size_t index : {time, utc, latitude, longitude, altitude, east_speed,
-                     north_speed, up_speed})
+                     north_speed, up_speed, heading})
         {
             if (index != LabeledCsv::npos)
                 widest = std::max(widest, index + 1);
@@ -130,6 +132,10 @@ void check_declared_units(const std::string& filename, const LabeledCsv& csv,
     for (std::size_t index : {columns.east_speed, columns.north_speed, columns.up_speed})
         if (index != LabeledCsv::npos)
             check(index, "velocity", speed_conflicts(csv.unit_token(index)), speed_unit);
+    if (columns.heading != LabeledCsv::npos)
+        check(columns.heading, "heading",
+                in(csv.unit_token(columns.heading), {"rad", "rads", "radian", "radians", "mil", "mils", "grad"}),
+                "degrees");
 }
 
 GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
@@ -158,6 +164,7 @@ GeodeticColumns find_geodetic_columns(const LabeledCsv& csv, LengthUnit unit)
     columns.east_speed = csv.column({"ve", "v east", "veast", "east velocity"});
     columns.north_speed = csv.column({"vn", "v north", "vnorth", "north velocity"});
     columns.up_speed = csv.column({"vu", "vup", "v up", "up velocity", "climb rate", "climb"});
+    columns.heading = csv.column({"heading", "hdg", "true heading", "heading true", "heading deg"});
     return columns;
 }
 
@@ -227,6 +234,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
     std::vector<double> vx;
     std::vector<double> vy;
     std::vector<double> vz;
+    std::vector<double> heading;
     time.reserve(rows);
     x.reserve(rows);
     y.reserve(rows);
@@ -264,7 +272,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         // what is read is not, and one NaN then ran through the spline fit into
         // every footprint cell.
         for (std::size_t index : {time_column, columns.altitude, columns.east_speed,
-                     columns.north_speed, columns.up_speed})
+                     columns.north_speed, columns.up_speed, columns.heading})
         {
             if (index != LabeledCsv::npos && !std::isfinite(data[index]))
             {
@@ -287,6 +295,16 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         y.push_back(local(1));
         z.push_back(local(2));
 
+        if (columns.heading != LabeledCsv::npos)
+        {
+            // Unwrapped as it is read, so that interpolating between two rows
+            // either side of north turns through north rather than the long
+            // way round through south.
+            double h = data[columns.heading];
+            if (!heading.empty())
+                h = heading.back() + std::remainder(h - heading.back(), 360.0);
+            heading.push_back(h);
+        }
         if (velocity_given)
         {
             // East/north/up in ft/s, turned onto the frame's axes.  A velocity
@@ -427,6 +445,20 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
             now.nx = fit_x.derivative(t, 2) * mps2g;
             now.ny = fit_y.derivative(t, 2) * mps2g;
             now.nz = fit_z.derivative(t, 2) * mps2g + 1.0;
+        }
+        if (!heading.empty())
+        {
+            // Linear between rows, never a spline: a heading is a measured
+            // angle, and a spline through a sharp turn overshoots it.
+            const auto above = std::upper_bound(time.begin(), time.end(), t);
+            const std::size_t hi = std::min<std::size_t>(
+                    static_cast<std::size_t>(above - time.begin()), time.size() - 1);
+            const std::size_t lo = hi == 0 ? 0 : hi - 1;
+            const double fraction = hi == lo ? 0.0 : (t - time[lo]) / (time[hi] - time[lo]);
+            double h = std::fmod(heading[lo] + fraction * (heading[hi] - heading[lo]), 360.0);
+            if (h < 0.0)
+                h += 360.0;
+            now.heading = h;
         }
         derive_flight_parameters(now, vehicle);
         states.push_back(now);

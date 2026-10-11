@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -1243,4 +1244,50 @@ TEST_CASE("write the heading tracks and database for the --nose CTests", "[.head
     auto sphere = source.interpolate_sphere(0.15, -4.0, 0.006);
     sphere.azimuth_reference = AzimuthReference::heading;
     write_sphere(sphere, "integrated/heading_sphere.nod");
+}
+
+TEST_CASE("A WGS84 track's heading column is the nose's compass heading", "[trajectory][geodetic]")
+{
+    // The AC file's column 9 is the heading; written beside its lat/lon/alt, the
+    // WGS84 reader has to hand back the same heading at every state (0.02 s
+    // samples, already uniform, so nothing is resampled).
+    const auto records = read_numeric_csv("tracks/S-76D/197421AC.csv", /*skip_first_record=*/true);
+    std::ostringstream out;
+    out << "time,lat,lon,alt,heading (deg)\n" << std::setprecision(17);
+    for (const auto& r : records)
+        out << r[1] << "," << r[2] << "," << r[3] << "," << r[4] << "," << r[8] << "\n";
+    const TempCsv track(out.str());
+    const Trajectory geodetic(track.path, "databases/S-76D.json", demo_frame(0.02));
+    const Trajectory reference("tracks/S-76D/197421AC.csv", "databases/S-76D.json");
+    REQUIRE(geodetic.states.size() == reference.states.size());
+    double worst = 0.0;
+    for (std::size_t i = 0; i < geodetic.states.size(); i++)
+        worst = std::max(worst, std::fabs(std::remainder(
+                                        geodetic.states[i].heading - reference.states[i].heading, 360.0)));
+    REQUIRE(worst < 1e-9);
+}
+
+TEST_CASE("A WGS84 heading is interpolated through north, not around through south",
+        "[trajectory][geodetic]")
+{
+    // 350 then 10 degrees a second apart: halfway is north.  Interpolated as
+    // plain numbers it would be 180, the aircraft facing backward.
+    const TempCsv track("time,lat,lon,alt,heading\n0,39.8,-74.4,1000,350\n1,39.8001,-74.4,1000,10\n"
+                        "2,39.8002,-74.4,1000,30\n");
+    GeodeticInput input = demo_frame();
+    input.resample_dt = 0.5;
+    const Trajectory trajectory(track.path, "databases/S-76D.json", input);
+    REQUIRE(trajectory.states.size() == 5);
+    REQUIRE(std::fabs(std::remainder(trajectory.states[1].heading, 360.0)) < 1e-9);
+    REQUIRE(trajectory.states[1].heading >= 0.0);
+    REQUIRE(trajectory.states[1].heading < 360.0);
+    REQUIRE(std::fabs(trajectory.states[3].heading - 20.0) < 1e-9);
+}
+
+TEST_CASE("A WGS84 heading in radians is refused", "[trajectory][geodetic]")
+{
+    const TempCsv radians("time,lat,lon,alt,heading (rad)\n0,39.8,-74.4,1000,3.1\n1,39.8001,-74.4,1000,3.1\n"
+                          "2,39.8002,-74.4,1000,3.1\n");
+    REQUIRE_THROWS_WITH(Trajectory(radians.path, "databases/S-76D.json", demo_frame()),
+            Catch::Matchers::ContainsSubstring("declares its heading in rad"));
 }

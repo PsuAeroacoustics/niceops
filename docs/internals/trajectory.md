@@ -121,12 +121,17 @@ descent has a constant dz/dt with no variance to correlate, and must still decid
   turns from the heading to the velocity on a smoothstep weight, the horizontal angle the short
   way round, so there is no step. A hard switch at 5 kt stepped the level by 2.2–4.4 dB for a
   nose rotated 30–90 degrees.
-- The AC format's column 9 (`State::heading`, compass, NaN for the geodetic formats) is turned
+- The AC format's column 9 (`State::heading`, compass; a WGS84 track's `heading` column, NaN
+  without one) is turned
   into the local frame by `--frame_bearing` (or east under a settled geodetic frame) whenever
   the run knows one. Only otherwise is it turned by an offset inferred from the track's states
   over 20 kt: the circular mean of the velocity's angle plus the heading, which folds in the INS
   heading's few degrees off the ground track and the mean crab (see below for why the frame
   wins). With neither, the nose follows the drift, with a warning.
+- **A WGS84 heading is unwrapped as it is read and interpolated linearly**, never by spline (a
+  heading through a sharp turn would overshoot), and wrapped back into [0, 360). Unwrapping as it
+  is read is what sends 350 → 10 through north. Its round trip from the AC file's column 9 is
+  exact ("A WGS84 track's heading column is the nose's compass heading").
 - No shipped track goes under 12 kt (AW139 `192217AC.csv` reaches 12.5 kt, column 21, `VGk`) and
   no 2017 B407 flight track other than the day-283 hovers under 13, so neither the goldens nor
   the approaches depend on this; the 2017 hover runs (H1-H12) do.
