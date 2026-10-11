@@ -1246,14 +1246,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // operation count, or, with day, evening and night counts, each period's
     // count times the period's weighting (period_count_weight).  It multiplies
     // the exposure after it is formed, never the levels, the window or the
-    // bound.
-    std::array<double, day_metric_count> day_weight;
+    // bound.  A metric not asked for keeps a weight of 0 (no pass), and so
+    // does LAeq, which has no period weighting: period counts with
+    // --laeq_file are refused before any job runs.
+    std::array<double, day_metric_count> day_weight {};
     for (std::size_t m = 0; m < day_metric_count; m++)
     {
-        day_weight[m] = job.period_counts
-                ? period_count_weight(static_cast<DayMetric>(m), (*job.period_counts)[0], (*job.period_counts)[1],
-                          (*job.period_counts)[2])
-                : job.weight;
+        if (!options.want_day_metric[m])
+            continue;
+        const auto metric = static_cast<DayMetric>(m);
+        if (!job.period_counts)
+            day_weight[m] = job.weight;
+        else if (metric != DayMetric::laeq)
+            day_weight[m] = period_count_weight(metric, (*job.period_counts)[0], (*job.period_counts)[1],
+                    (*job.period_counts)[2]);
     }
 
     // The day-evening-night penalties (-D, --lden_file, --cnel_file), per
