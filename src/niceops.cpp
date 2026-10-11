@@ -4328,7 +4328,8 @@ int run(int argc, char* argv[])
     app.add_option("--start_utc", start_utcs,
             "Seconds since UTC midnight at t = 0 of a geodetic track or static hold, for the "
             "day-night periods. Required with -D, --lden_file, --cnel_file or a period level when the "
-            "track has no utcsec column; ignored when it has one. Once, or once per trajectory.");
+            "track has no utcsec column, unless an operations file gives period counts; ignored "
+            "when it has one. Once, or once per trajectory.");
     auto* path_smoothing_option = app.add_option("--path_smoothing", path_smoothing,
             "How far, RMS in --units, the path fitted through a geodetic track may sit from "
             "the given positions, per axis. Default 10 ft. Zero flies through them exactly, "

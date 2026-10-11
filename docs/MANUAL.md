@@ -111,7 +111,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--path_smoothing` | How far, rms per axis, the path fitted through a WGS84 track may sit from its positions. Default 10 ft (3.048 m). Zero interpolates exactly. |
 | `-s`, `--step` | Resampling step, s (default 0.5), for a WGS84 track whose sampling is uneven or coarser than this. A finer track is never coarsened, and an AC track is used as sampled. Not the SEL integration step. |
 | `--trim` | Crop each trajectory from this x to its lowest or slowest point. Off by default; it changes which part of the flight is integrated. |
-| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track or static operation, for the day-night periods. Required with `-D`, `--lden_file`, `--cnel_file` or a period level when the track has no `utcsec` column, and always for a static operation. Once, or once per trajectory. |
+| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track or static operation, for the day-night periods. Required with `-D`, `--lden_file`, `--cnel_file` or a period level when the track has no `utcsec` column, and always for a static operation, unless an operations file gives period counts. Once, or once per trajectory. |
 | `--units` | `ft` (default) or `m`: the length unit of the command line and of every file ([Units](#units)). |
 | `-l`, `--logfile` | Log file. Default `log/niceops.log`. |
 | `--manifest` | Write a JSON record of the run ([Run records and option files](#run-records-and-option-files)). |
@@ -296,7 +296,7 @@ The main ones:
 | `--terrain` with `--refraction` or `--propagation_table`, or without a frame | Those models are built over flat ground; terrain needs to know where x/y lie. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
 | `--latlon`, `--contour_file`, `--nose heading` without a frame; `--contour_file` or `--raster_file` with `-b`; `--contour_file` with `--contour_metric sel` over several trajectories | Nothing to turn compass directions or invert positions with; scattered observers have no grid to contour; one SEL per trajectory. |
-| `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock | Day or night would be made up. |
+| `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock, unless an operations file gives period counts | Day or night would be made up. |
 | `--laeq_file` without `--laeq_window`, or an empty window | There is no default period. |
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
 | `--speed_reference air` without a wind | Calm air is not assumed. |
@@ -1062,7 +1062,7 @@ guideline. Samples outside the period carry no energy, and an operation's 10 dB-
 found among those inside. An observer that heard nothing in the period is written as `-inf`.
 Lden is its three periods recombined as the directive writes it, exactly for operations that
 lie wholly in one period, and under `--full_history` for any. The clock is the track's `utcsec` column (column 0 of an AC track) or
-`--start_utc` (a static operation's only clock), shifted by `--utc_offset`, and a track without one is refused. By default each operation contributes its own
+`--start_utc` (a static operation's only clock), shifted by `--utc_offset`, and a track without one is refused unless an operations file gives period counts ([Period counts](#an-operations-file)). By default each operation contributes its own
 penalized 10 dB-down window; `--full_history` integrates its whole history, as AAM and NORAH2 do,
 which reads a few tenths of a dB higher ([FIDELITY](FIDELITY.md#day-night-window-choice)). Use it
 for a DNL meant to sit beside their contours.
