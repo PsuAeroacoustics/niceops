@@ -466,6 +466,25 @@ set_tests_properties(duplicate_output_names_rejected PROPERTIES PASS_REGULAR_EXP
 add_test(NAME dnl_needs_a_clock COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -D integrated/noclock_dnl.csv -o integrated/noclock_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(dnl_needs_a_clock PROPERTIES PASS_REGULAR_EXPRESSION "-D needs the time of day")
 add_test(NAME dnl_with_start_utc COMMAND niceops -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --start_utc 43200 -D integrated/dated_dnl.csv -o integrated/dated_levels.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The period levels.  A noon flight lies wholly in the day: LAeq over the whole day is then Lden,
+# whose day carries no penalty, and Lday is LAeq over 07:00-19:00.  A 01:00 flight lies in the
+# night: Lnight is LAeq over 23:00-07:00, and Lday has no energy at all.
+set(PERIOD_RUN -t tests/data/demo_geodetic_noclock.csv --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -L warn)
+add_test(NAME period_noon COMMAND niceops ${PERIOD_RUN} --start_utc 43200 --lden_file integrated/period_noon_lden.csv --lday_file integrated/period_noon_lday.csv --laeq_file integrated/period_noon_laeq24.csv --laeq_window 0 24 -o integrated/period_noon.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME period_noon_day_window COMMAND niceops ${PERIOD_RUN} --start_utc 43200 --laeq_file integrated/period_noon_laeq_day.csv --laeq_window 7 19 -o integrated/period_noon_b.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME period_night COMMAND niceops ${PERIOD_RUN} --start_utc 3600 --lnight_file integrated/period_night_lnight.csv --laeq_file integrated/period_night_laeq.csv --laeq_window 23 7 --lday_file integrated/period_night_lday.csv -o integrated/period_night.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(period_noon period_noon_day_window period_night PROPERTIES FIXTURES_SETUP period_runs)
+add_test(NAME period_laeq_whole_day_is_lden_by_day COMMAND golden_compare integrated/period_noon_laeq24.csv integrated/period_noon_lden.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME period_lday_is_laeq_07_19 COMMAND golden_compare integrated/period_noon_lday.csv integrated/period_noon_laeq_day.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME period_lnight_is_laeq_23_07 COMMAND golden_compare integrated/period_night_lnight.csv integrated/period_night_laeq.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME period_lday_empty_at_night COMMAND ${CMAKE_COMMAND} -E cat integrated/period_night_lday.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(period_laeq_whole_day_is_lden_by_day period_lday_is_laeq_07_19 period_lnight_is_laeq_23_07 period_lday_empty_at_night PROPERTIES FIXTURES_REQUIRED period_runs)
+# All seven rows of the 7 x 7 grid.
+set_tests_properties(period_lday_empty_at_night PROPERTIES PASS_REGULAR_EXPRESSION "\n-inf,-inf,-inf,-inf,-inf,-inf,-inf\n-inf,-inf,-inf,-inf,-inf,-inf,-inf\n-inf,-inf,-inf,-inf,-inf,-inf,-inf\n-inf,-inf,-inf,-inf,-inf,-inf,-inf\n-inf,-inf,-inf,-inf,-inf,-inf,-inf\n-inf,-inf,-inf,-inf,-inf,-inf,-inf\n-inf,-inf,-inf,-inf,-inf,-inf,-inf\n")
+add_test(NAME laeq_needs_a_window COMMAND niceops ${PERIOD_RUN} --start_utc 43200 --laeq_file integrated/laeq_no_window.csv -o integrated/laeq_no_window_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(laeq_needs_a_window PROPERTIES PASS_REGULAR_EXPRESSION "--laeq_file needs --laeq_window")
+add_test(NAME laeq_window_refuses_empty COMMAND niceops ${PERIOD_RUN} --start_utc 43200 --laeq_file integrated/laeq_empty.csv --laeq_window 7 7 -o integrated/laeq_empty_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(laeq_window_refuses_empty PROPERTIES PASS_REGULAR_EXPRESSION "is empty; for a whole day give 0 24")
 # An observer exactly at a source position: spherical spreading diverges at r = 0.
 # The level was +inf in the CSV, and with the asserts live the run aborted.  The
 # case passes only if the run finishes.

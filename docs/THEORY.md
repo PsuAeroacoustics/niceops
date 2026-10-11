@@ -1072,6 +1072,19 @@ with each $L$ the equivalent level over its own period, is the same number as th
 energies summed over 86 400 s. Title 21's weighting of each evening operation three times and
 each night operation ten times is the same again.
 
+The period levels (`--lday_file`, `--levening_file`, `--lnight_file`) are those $L_d$, $L_e$ and
+$L_n$, and `--laeq_file` is the same over a clock window $[t_1, t_2)$ of length $T_w$:
+
+$$
+L_{\mathrm{Aeq},T} = 10\lg\left(\frac{1}{T_w} \sum_\mathrm{ops} t_\mathrm{ref}\, 10^{\mathrm{SEL}_w/10}\right),
+$$
+
+where $\mathrm{SEL}_w$ is the operation's exposure over its samples inside the window (its 10 dB-down
+window found among them), $T_w$ is 12 h, 4 h and 8 h for the three periods, and no penalty
+applies. An operation lying wholly in its periods recombines into $L_\mathrm{den}$ exactly; one
+that straddles a period's edge does so exactly under `--full_history`, and to the difference of
+the windows otherwise.
+
 ### 10.5 Effective perceived noise level
 
 EPNL follows 14 CFR 36, Appendix A, §A36.4 [17], which is identical to ICAO Annex 16

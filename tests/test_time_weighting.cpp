@@ -354,3 +354,73 @@ TEST_CASE("--full_history governs the penalized exposure", "[sel]")
     REQUIRE(day_night_level(levels, T, night, scratch, {}, 0.0, true)
             == penalized_exposure_level(levels, T, ten, scratch, {}, 0.0, true));
 }
+
+TEST_CASE("the period levels count their own period's samples, over its own length", "[sel]")
+{
+    const double hour = 3600.0;
+    const double outside = -std::numeric_limits<double>::infinity();
+    struct Probe
+    {
+        double local_hour;
+        double day, evening, night;
+    };
+    // Each boundary belongs to the period it opens.
+    for (const Probe p : {Probe {0.0, outside, outside, 0}, Probe {6.999, outside, outside, 0},
+                 Probe {7.0, 0, outside, outside}, Probe {18.999, 0, outside, outside},
+                 Probe {19.0, outside, 0, outside}, Probe {22.999, outside, 0, outside},
+                 Probe {23.0, outside, outside, 0}})
+    {
+        const double utc = p.local_hour * hour;
+        REQUIRE(schedule_penalty(utc, 0.0, DayMetric::lday) == p.day);
+        REQUIRE(schedule_penalty(utc, 0.0, DayMetric::levening) == p.evening);
+        REQUIRE(schedule_penalty(utc, 0.0, DayMetric::lnight) == p.night);
+    }
+    const ClockWindow sixteen {7.0, 23.0};
+    REQUIRE(schedule_penalty(6.5 * hour, 0.0, DayMetric::laeq, sixteen) == outside);
+    REQUIRE(schedule_penalty(7.0 * hour, 0.0, DayMetric::laeq, sixteen) == 0.0);
+    REQUIRE(schedule_penalty(23.0 * hour, 0.0, DayMetric::laeq, sixteen) == outside);
+    // A window through midnight.
+    const ClockWindow late {22.0, 6.0};
+    REQUIRE(schedule_penalty(23.5 * hour, 0.0, DayMetric::laeq, late) == 0.0);
+    REQUIRE(schedule_penalty(5.5 * hour, 0.0, DayMetric::laeq, late) == 0.0);
+    REQUIRE(schedule_penalty(12.0 * hour, 0.0, DayMetric::laeq, late) == outside);
+
+    REQUIRE(averaging_seconds(DayMetric::lday) == 12.0 * hour);
+    REQUIRE(averaging_seconds(DayMetric::levening) == 4.0 * hour);
+    REQUIRE(averaging_seconds(DayMetric::lnight) == 8.0 * hour);
+    REQUIRE(averaging_seconds(DayMetric::laeq, sixteen) == 16.0 * hour);
+    REQUIRE(averaging_seconds(DayMetric::laeq, late) == 8.0 * hour);
+    REQUIRE(averaging_seconds(DayMetric::laeq, ClockWindow {0.0, 24.0}) == 24.0 * hour);
+    REQUIRE(averaging_seconds(DayMetric::lden) == 24.0 * hour);
+}
+
+TEST_CASE("Lden is its period levels recombined", "[sel]")
+{
+    // EU Directive 2002/49/EC Annex I: Lden = 10 lg[(12 10^(Ld/10) + 4 10^((Le+5)/10)
+    // + 8 10^((Ln+10)/10)) / 24].  One level history per period, a sample each
+    // hour of the day with a different level, so every period has energy.
+    std::vector<double> levels, lden_penalty, day, evening, night;
+    for (int h = 0; h < 24; h++)
+    {
+        levels.push_back(60.0 + h);
+        const double utc = (h + 0.5) * 3600.0;
+        lden_penalty.push_back(schedule_penalty(utc, 0.0, DayMetric::lden));
+        day.push_back(schedule_penalty(utc, 0.0, DayMetric::lday));
+        evening.push_back(schedule_penalty(utc, 0.0, DayMetric::levening));
+        night.push_back(schedule_penalty(utc, 0.0, DayMetric::lnight));
+    }
+    std::vector<double> scratch;
+    const double T = 3600.0;
+    const auto level = [&](const std::vector<double>& penalty, DayMetric metric) {
+        return 10.0 * std::log10(std::pow(10.0, 0.1 * penalized_exposure_level(levels, T, penalty, scratch, {}, 0.0, true))
+                / averaging_seconds(metric));
+    };
+    const double lden = level(lden_penalty, DayMetric::lden);
+    const double ld = level(day, DayMetric::lday);
+    const double le = level(evening, DayMetric::levening);
+    const double ln = level(night, DayMetric::lnight);
+    const double recombined = 10.0 * std::log10((12.0 * std::pow(10.0, 0.1 * ld) + 4.0 * std::pow(10.0, 0.1 * (le + 5.0))
+                                                        + 8.0 * std::pow(10.0, 0.1 * (ln + 10.0)))
+            / 24.0);
+    REQUIRE(std::fabs(lden - recombined) < 1e-9);
+}

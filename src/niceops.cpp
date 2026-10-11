@@ -702,8 +702,9 @@ struct RunOptions
     // Meters, after the --units conversion; NaN means the trim is off.
     double trim_start = 0.0;
     double utc_offset = 0.0;
+    ClockWindow laeq_window;
     bool scattered = false;
-    // -D, --lden_file, --cnel_file, indexed by DayMetric.
+    // -D, --lden_file, --cnel_file and the period levels, indexed by DayMetric.
     std::array<bool, day_metric_count> want_day_metric {};
     bool want_lamax = false;
     bool want_nax = false;
@@ -1245,7 +1246,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         " does not carry one: it has no utcsec column. Give --start_utc <seconds since UTC "
                         "midnight at t = 0>.");
             }
-            day_penalty[m][it] = schedule_penalty(trajectory.states[it].utcsec, options.utc_offset, metric);
+            day_penalty[m][it] = schedule_penalty(trajectory.states[it].utcsec, options.utc_offset, metric,
+                    options.laeq_window);
         }
     }
 
@@ -3621,6 +3623,8 @@ int run(int argc, char* argv[])
     bool full_history = false;
     bool epnl_masking = true;
     double utc_offset = 0.0;
+    std::string lday_file, levening_file, lnight_file, laeq_file;
+    std::vector<double> laeq_window_hours;
     double trim_start = std::numeric_limits<double>::quiet_NaN();
     // Lengths on this command line are in whatever --units selects, feet by
     // default, and are converted to meters at one seam below.  A *default* is a
@@ -3814,6 +3818,22 @@ int run(int argc, char* argv[])
             "Write the community noise equivalent level (CNEL, California Title 21: 19:00-22:00 "
             "evening +4.77 dB, 22:00-07:00 night +10 dB, over 24 hours), summed over every "
             "trajectory, to this file.");
+    app.add_option("--lday_file", lday_file,
+            "Write the day level (Lday, EU Directive 2002/49/EC: the energy heard 07:00-19:00 over "
+            "those 12 hours), summed over every trajectory, to this file.");
+    app.add_option("--levening_file", levening_file,
+            "Write the evening level (Levening: 19:00-23:00 over 4 hours), summed over every "
+            "trajectory, to this file.");
+    app.add_option("--lnight_file", lnight_file,
+            "Write the night level (Lnight: 23:00-07:00 over 8 hours), summed over every "
+            "trajectory, to this file.");
+    app.add_option("--laeq_file", laeq_file,
+            "Write the equivalent level LAeq,T over the local clock window --laeq_window, summed "
+            "over every trajectory, to this file.");
+    app.add_option("--laeq_window", laeq_window_hours,
+            "Local clock window of --laeq_file, hours: START END, END not included; START > END "
+            "wraps through midnight (\"7 23\" is LAeq,16h).")
+            ->expected(2);
     app.add_option("--lamax_file", lamax_file,
             "Write each observer's LAmax, the highest A-weighted level over every operation, "
             "time-weighted per --lamax_weighting (LAFmax by default), dB, to this file.");
@@ -4554,7 +4574,21 @@ int run(int argc, char* argv[])
     std::vector<double> integrated_levels(observers.size());
     // DNL, Lden and CNEL are properties of the whole set of operations, not of
     // one flight: each trajectory's penalized exposure is an energy, and they sum.
-    const std::array<const std::string*, day_metric_count> day_files = {&dnl_file, &lden_file, &cnel_file};
+    const std::array<const std::string*, day_metric_count> day_files = {&dnl_file, &lden_file, &cnel_file,
+            &lday_file, &levening_file, &lnight_file, &laeq_file};
+    if (laeq_file.empty() != laeq_window_hours.empty())
+        input_error(laeq_file.empty() ? "--laeq_window is for --laeq_file, which is not given."
+                                      : "--laeq_file needs --laeq_window START END, local clock hours: there "
+                                        "is no default period.");
+    if (!laeq_window_hours.empty())
+    {
+        const double start = laeq_window_hours[0], end = laeq_window_hours[1];
+        if (!(start >= 0.0 && start < 24.0) || !(end > 0.0 && end <= 24.0))
+            input_error("--laeq_window takes local clock hours, a start in [0, 24) and an end in (0, 24]; ",
+                    start, " ", end, " is not one.");
+        if (start == end)
+            input_error("--laeq_window ", start, " ", end, " is empty; for a whole day give 0 24.");
+    }
     std::array<bool, day_metric_count> want_day_metric {};
     RunTotals totals;
     for (std::size_t m = 0; m < day_metric_count; m++)
@@ -4951,6 +4985,8 @@ int run(int argc, char* argv[])
     }
     options.trim_start = trim_start;
     options.utc_offset = utc_offset;
+    if (!laeq_window_hours.empty())
+        options.laeq_window = {laeq_window_hours[0], laeq_window_hours[1]};
     options.scattered = scattered;
     options.want_day_metric = want_day_metric;
     options.want_lamax = want_lamax;
@@ -5027,14 +5063,17 @@ int run(int argc, char* argv[])
     {
         if (!want_day_metric[m])
             continue;
-        // Each is the energy average over a 24-hour day: the summed event
-        // energies over 86 400 s, not their raw sum (which reads 49.37 dB high).
-        constexpr double seconds_per_day = 86400.0;
+        // Each is an energy average: over a 24-hour day for the penalized
+        // levels, the summed event energies over 86 400 s, not their raw sum
+        // (which reads 49.37 dB high); over its own period for a period level.
+        const double seconds = averaging_seconds(static_cast<DayMetric>(m),
+                laeq_window_hours.empty() ? ClockWindow {}
+                                          : ClockWindow {laeq_window_hours[0], laeq_window_hours[1]});
         const auto& energy = totals.day_energy[m];
         const std::string& file = *day_files[m];
         std::vector<double> level(energy.size());
         for (std::size_t i = 0; i < energy.size(); i++)
-            level[i] = 10.0 * std::log10(energy[i] / seconds_per_day);
+            level[i] = 10.0 * std::log10(energy[i] / seconds);
         log("Writing the ", day_metric_name(static_cast<DayMetric>(m)), " over ", path_count,
                 path_count == 1 ? " operation" : " operations",
                 full_history ? ", each integrated over its whole history," : ", each over its own 10 dB-down window,",

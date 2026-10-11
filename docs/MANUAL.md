@@ -109,7 +109,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--path_smoothing` | How far, rms per axis, the path fitted through a WGS84 track may sit from its positions. Default 10 ft (3.048 m). Zero interpolates exactly. |
 | `-s`, `--step` | Resampling step, s (default 0.5), for a WGS84 track whose sampling is uneven or coarser than this. A finer track is never coarsened, and an AC track is used as sampled. Not the SEL integration step. |
 | `--trim` | Crop each trajectory from this x to its lowest or slowest point. Off by default; it changes which part of the flight is integrated. |
-| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night periods. Required with `-D`, `--lden_file` or `--cnel_file` when the track has no `utcsec` column. |
+| `--start_utc` | Seconds since UTC midnight at *t* = 0 of a WGS84 track, for the day-night periods. Required with `-D`, `--lden_file`, `--cnel_file` or a period level when the track has no `utcsec` column. |
 | `--units` | `ft` (default) or `m`: the length unit of the command line and of every file ([Units](#units)). |
 | `-l`, `--logfile` | Log file. Default `log/niceops.log`. |
 | `--manifest` | Write a JSON record of the run ([Run records and option files](#run-records-and-option-files)). |
@@ -191,6 +191,8 @@ is a physical quantity, given here in meters with its value in feet.
 | `--full_history` | Integrate every exposure (SEL, C-SEL, and each operation's share of DNL, Lden and CNEL) over the whole history rather than the 10 dB-down window. |
 | `-D`, `--dnlfile` | Write the day-night level, summed over every trajectory ([Several trajectories](#several-trajectories-and-the-day-night-level)). |
 | `--lden_file` | Write the day-evening-night level (EU Directive 2002/49/EC). |
+| `--lday_file`, `--levening_file`, `--lnight_file` | Write Lden's period levels: the energy heard 07:00–19:00, 19:00–23:00 or 23:00–07:00, over that period's length ([Several trajectories, and the day-night level](#several-trajectories-and-the-day-night-level)). |
+| `--laeq_file` | Write LAeq,T over the local clock window `--laeq_window START END` (hours; `7 23` is LAeq,16h, `23 7` wraps). Needs the window, which has no default. |
 | `--cnel_file` | Write the community noise equivalent level (California Title 21). |
 | `--utc_offset` | Hours from UTC to local time, for the day-night periods. Default 0. |
 | `--lamax_file` | Write each observer's LAmax over every operation, time-weighted per `--lamax_weighting`. |
@@ -284,7 +286,8 @@ The main ones:
 | `--terrain` with `--refraction` or `--propagation_table`, or without a frame | Those models are built over flat ground; terrain needs to know where x/y lie. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
 | `--latlon`, `--nose heading` without a frame | Nothing to turn compass directions or invert positions with. |
-| `-D`, `--lden_file`, `--cnel_file` on a track with no clock | Day or night would be made up. |
+| `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock | Day or night would be made up. |
+| `--laeq_file` without `--laeq_window`, or an empty window | There is no default period. |
 | A `--lamax_weighting` on a track sampled coarser than half its time constant | The "maximum" would be the largest sample. |
 | `--speed_reference air` without a wind | Calm air is not assumed. |
 | Two trajectories writing one file; a list of `-d`, `-v`, `-o` that is neither one nor one per track | Outputs would overwrite one another. |
@@ -1002,7 +1005,15 @@ its period, local time (the propagation delay is not added):
 | CNEL | `--cnel_file` | 19:00–22:00, +10 lg 3 = 4.77 dB | 22:00–07:00, +10 dB | California Code of Regulations, Title 21, §5001 |
 
 A period's opening hour belongs to it (07:00 is day, 19:00 evening); a member state's shifted
-evening is not offered. The clock is the track's `utcsec` column (column 0 of an AC track) or
+evening is not offered.
+
+**The period levels** (`--lday_file`, `--levening_file`, `--lnight_file`, and `--laeq_file` over
+`--laeq_window`) are each the energy heard in one period over that period's length, with no
+penalty: Lnight, for example, is the EU's night indicator and the basis of the WHO's 2018 night
+guideline. Samples outside the period carry no energy, and an operation's 10 dB-down window is
+found among those inside. An observer that heard nothing in the period is written as `-inf`.
+Lden is its three periods recombined as the directive writes it, exactly for operations that
+lie wholly in one period, and under `--full_history` for any. The clock is the track's `utcsec` column (column 0 of an AC track) or
 `--start_utc`, shifted by `--utc_offset`, and a track without one is refused. By default each operation contributes its own
 penalized 10 dB-down window; `--full_history` integrates its whole history, as AAM and NORAH2 do,
 which reads a few tenths of a dB higher ([FIDELITY](FIDELITY.md#day-night-window-choice)). Use it

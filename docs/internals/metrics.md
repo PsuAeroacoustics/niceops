@@ -119,6 +119,15 @@ cases, the frames' energy and timing, and the end-to-end `epnl_*` CTests) are de
 
 ## Time weighting, day metrics, C-SEL
 
+**The period levels** (`DayMetric::lday` … `laeq` in `util/sel.hpp`) reuse the penalized-exposure
+path: a sample outside the period takes a penalty of −∞, so it carries no energy and the 10 dB-down
+window is found among the samples inside, and the energy is averaged over the period's length
+(`averaging_seconds`). An operation wholly outside gives −∞, not NaN (`peak_range` of an all −∞
+history takes every sample, whose sum is 0). The CTests pin them against each other on the
+geodetic demo track: LAeq 0–24 equals Lden by day, Lday equals LAeq 7–19, Lnight equals LAeq 23–7,
+and a night flight leaves Lday −∞; "Lden is its period levels recombined" pins the arithmetic.
+
+
 `--lamax_weighting`, `--nax_file`, `--ta_file`, `--lden_file`, `--cnel_file` and `--csel_file`
 (`src/util/time_weighting.hpp`; the day schedules are in `src/util/sel.hpp`). What to keep:
 

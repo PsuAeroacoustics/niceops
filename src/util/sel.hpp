@@ -201,14 +201,40 @@ inline double full_sound_exposure_level(const std::vector<double>& levels, doubl
 // which is the same number as the penalized energies summed and divided by
 // 86 400 s; DNL and CNEL likewise.  The period boundaries belong to the period
 // they open: 07:00 is day, 19:00 evening, 22:00 (23:00 for Lden) night.
+//
+// The period levels (--lday_file, --levening_file, --lnight_file, --laeq_file)
+// are those Ld, Le and Ln, and LAeq over a clock window: the energy heard in
+// the period over the period's own length, with no penalty.  A sample outside
+// the period takes a penalty of -infinity, so it carries no energy and the
+// 10 dB-down window is found among the samples inside.
 enum class DayMetric
 {
     dnl,
     lden,
     cnel,
+    lday,
+    levening,
+    lnight,
+    laeq,
 };
 
-inline constexpr std::size_t day_metric_count = 3;
+inline constexpr std::size_t day_metric_count = 7;
+
+// --laeq_window: local clock hours [start, end); start > end wraps through
+// midnight.
+struct ClockWindow
+{
+    double start_hour = 0.0;
+    double end_hour = 0.0;
+};
+
+// Whether a metric is a period level (energy inside its period only) rather
+// than a penalized whole-day level.
+inline bool is_period_level(DayMetric metric)
+{
+    return metric == DayMetric::lday || metric == DayMetric::levening || metric == DayMetric::lnight
+            || metric == DayMetric::laeq;
+}
 
 // A penalized stretch of the local day, hours, [start, end); start > end wraps
 // through midnight.
@@ -219,7 +245,8 @@ struct PenaltyPeriod
     double penalty_db;
 };
 
-inline std::vector<PenaltyPeriod> penalty_periods(DayMetric metric)
+// For a period level, the one period whose samples count, at no penalty.
+inline std::vector<PenaltyPeriod> penalty_periods(DayMetric metric, ClockWindow window = {})
 {
     // 10 lg 3, spelled so the constant is visibly the weighting by three.
     const double cnel_evening = 10.0 * std::log10(3.0);
@@ -229,10 +256,31 @@ inline std::vector<PenaltyPeriod> penalty_periods(DayMetric metric)
         return {{19.0, 23.0, 5.0}, {23.0, 7.0, 10.0}};
     case DayMetric::cnel:
         return {{19.0, 22.0, cnel_evening}, {22.0, 7.0, 10.0}};
+    case DayMetric::lday:
+        return {{7.0, 19.0, 0.0}};
+    case DayMetric::levening:
+        return {{19.0, 23.0, 0.0}};
+    case DayMetric::lnight:
+        return {{23.0, 7.0, 0.0}};
+    case DayMetric::laeq:
+        return {{window.start_hour, window.end_hour, 0.0}};
     case DayMetric::dnl:
         break;
     }
     return {{22.0, 7.0, 10.0}};
+}
+
+// The time the metric's energy is averaged over, s: the whole day for the
+// penalized levels, the period's own length for a period level.
+inline double averaging_seconds(DayMetric metric, ClockWindow window = {})
+{
+    if (!is_period_level(metric))
+        return 86400.0;
+    const auto period = penalty_periods(metric, window).front();
+    double hours = period.end_hour - period.start_hour;
+    if (hours <= 0.0)
+        hours += 24.0;
+    return hours * 3600.0;
 }
 
 // The option that asks for a metric, for messages.
@@ -244,6 +292,14 @@ inline const char* day_metric_option(DayMetric metric)
         return "--lden_file";
     case DayMetric::cnel:
         return "--cnel_file";
+    case DayMetric::lday:
+        return "--lday_file";
+    case DayMetric::levening:
+        return "--levening_file";
+    case DayMetric::lnight:
+        return "--lnight_file";
+    case DayMetric::laeq:
+        return "--laeq_file";
     case DayMetric::dnl:
         break;
     }
@@ -258,6 +314,14 @@ inline const char* day_metric_name(DayMetric metric)
         return "day-evening-night level (Lden)";
     case DayMetric::cnel:
         return "community noise equivalent level (CNEL)";
+    case DayMetric::lday:
+        return "day level (Lday, 07:00-19:00)";
+    case DayMetric::levening:
+        return "evening level (Levening, 19:00-23:00)";
+    case DayMetric::lnight:
+        return "night level (Lnight, 23:00-07:00)";
+    case DayMetric::laeq:
+        return "equivalent level over --laeq_window (LAeq,T)";
     case DayMetric::dnl:
         break;
     }
@@ -282,11 +346,13 @@ inline bool is_night(double utcsec, double utc_offset_hours)
     return local < 7.0 * 3600.0 || local >= 22.0 * 3600.0;
 }
 
-// The penalty, dB, a sample heard at `utcsec` takes under `metric`.
-inline double schedule_penalty(double utcsec, double utc_offset_hours, DayMetric metric)
+// The penalty, dB, a sample heard at `utcsec` takes under `metric`: outside
+// every period, 0 for a penalized level and -infinity for a period level.
+inline double schedule_penalty(double utcsec, double utc_offset_hours, DayMetric metric,
+        ClockWindow window = {})
 {
     const double local = local_seconds_of_day(utcsec, utc_offset_hours);
-    for (const auto& period : penalty_periods(metric))
+    for (const auto& period : penalty_periods(metric, window))
     {
         const double start = period.start_hour * 3600.0;
         const double end = period.end_hour * 3600.0;
@@ -295,7 +361,7 @@ inline double schedule_penalty(double utcsec, double utc_offset_hours, DayMetric
         if (inside)
             return period.penalty_db;
     }
-    return 0.0;
+    return is_period_level(metric) ? -std::numeric_limits<double>::infinity() : 0.0;
 }
 
 // One operation's penalized exposure: the sound exposure level of the history
