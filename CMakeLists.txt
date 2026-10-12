@@ -334,6 +334,9 @@ target_link_libraries(niceops_propagation_table niceops_core CLI11::CLI11)
 # from wind profiles (tools/build_atmosphere.cpp).
 add_executable(niceops_build_atmosphere tools/build_atmosphere.cpp)
 target_link_libraries(niceops_build_atmosphere niceops_core CLI11::CLI11)
+
+add_executable(niceops_urban_table tools/urban_table.cpp)
+target_link_libraries(niceops_urban_table niceops_core CLI11::CLI11)
 # The Attenborough et al. (1995) benchmark cases by the PE and the exact
 # solutions (tools/benchmark.cpp); tools/plot_benchmark.py draws them.
 add_executable(niceops_benchmark tools/benchmark.cpp)
