@@ -190,6 +190,7 @@ add_library(niceops_core STATIC
   src/plate_receiver.cpp
   src/geodetic.cpp
   src/terrain.cpp
+  src/screening.cpp
   src/predicates.cpp
   src/delaunay.cpp
   # interpolator.cpp was its own library in the D era, to wall off CGAL's heavy
@@ -269,6 +270,7 @@ add_executable(niceops_unit_tests
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
   tests/test_terrain.cpp
+  tests/test_screening.cpp
   tests/test_atmosphere.cpp
   tests/test_atmosphere_profile.cpp
   tests/test_atmosphere_builder.cpp
