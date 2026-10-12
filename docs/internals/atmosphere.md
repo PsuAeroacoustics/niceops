@@ -118,6 +118,43 @@ preserve:
   ([FIDELITY](../FIDELITY.md#wind-profile-and-stability)). Do not make a class a default without
   measurements of the class.
 
+## The profile builder (`niceops_build_atmosphere`)
+
+`src/atmosphere_builder.{hpp,cpp}` builds an `--atmosphere` profile from measured columns
+(`read_column_source`, `build_profile`). Its front end is `tools/build_atmosphere.cpp`. The
+equations are in [THEORY.md](../THEORY.md) §7. The things to preserve:
+
+- **It writes through `write_atmosphere_profile` and reads its output back through
+  `read_atmosphere_profile`**, so anything the run would refuse is refused when the profile is
+  built, and the file replays to the bit.
+- **The fill below the lowest wind level is `SurfaceWind`'s law, not a copy.** A `SurfaceWind` is
+  built on that level and `speed_at` evaluated. When the lowest level is the station's
+  (`--surface_wind`), the law takes the station's own speed and bearing, so a build from one
+  observation is `synthetic_profile` to the bit. The Catch2 case compares every double with `==`
+  over the classes, roughness lengths and anemometers below and above 10 z₀. Arithmetic that
+  departs from `synthetic_profile`'s order fails it, including the temperature's spelling
+  (`T0 + Γ min(z, δ) + lapse max(z − δ, 0)`) and the `+ 0.0` on the wind.
+- **`geometric_levels` is shared with `synthetic_profile`**, so a change there moves both.
+  `find_profile_columns` is shared with `read_atmosphere_profile`, so the two accept the same
+  headers. The tool's reader adds only the dew point and specific humidity.
+- **No level in (0, first level).** The geometric levels start at min(10 z₀, z_g), for the same
+  reason as `--wind`'s. An explicit level at or below z₀ under the log fill would be calm and is
+  refused. A measured calm level is refused, or dropped with `--calm_levels drop`. A column calm
+  at every level gives a profile without wind columns.
+- **The explicit level list exists because the stratified search follows the layers.** Grid cells
+  1500 m downwind move ±0.2 dB under any re-layering (see the discretization bullet below), so
+  reproducing a profile someone else ran needs their levels, not only their values.
+- **z₀ has no default.** Nothing measures it, and a factor of 3 either way spans −6 to +6 dB in
+  the PE on the validation harness's unstable paths (harness `paper/notes/surface_layer.md`,
+  section 4), so a profile never carries a silent one.
+- **No Monin–Obukhov fill.** It failed the harness's do-no-harm gate on the R44 approaches
+  (rms +0.44 [+0.14, +0.71] dB against the log law) and on day 284's mean window (same note,
+  section 3). Keep it out unless a new fill passes that gate first.
+- **Pressure outside its measurements is hydrostatic from the end measurement**, through
+  `with_hydrostatic_pressure`'s ratios at the profile's levels. A measured level is always a
+  level, so the end knot has an exact ratio. Pressure from a surface value alone is
+  `with_hydrostatic_pressure` itself.
+
 ## Wind-profile tests
 
 - **The law, the air and the conventions**, in `tests/test_atmosphere_profile.cpp`: the profile
@@ -145,3 +182,9 @@ preserve:
   layering and do not settle from 8 levels a decade to 100. That is the stratified arrival search,
   whose samples follow the layers, not the profile. Do not tighten the tolerance onto that floor,
   or chase it here.
+- **The builder** is pinned in `tests/test_atmosphere_builder.cpp`: one observation is
+  `synthetic_profile` with `==`; the fill is the law through the lowest gate; no level above the
+  ground is calm for random gates and roughness lengths; ground levels from the station, across
+  the ground, or held; the explicit level list; the column reader's wind convention against
+  `read_atmosphere_profile`, the dew point and specific humidity against closed forms, and fill
+  values; and a built profile reads back as itself.

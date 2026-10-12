@@ -680,6 +680,28 @@ Guide 1.23 [40]:
 
 How the scheme scores is in [FIDELITY](FIDELITY.md#wind-profile-and-stability).
 
+**A profile from measured columns** (`niceops_build_atmosphere build`). Each variable is taken
+from its own measurements: temperature and relative humidity linear in height, the wind linear
+in its east and north components, and pressure linear in $\ln p$, as the run interpolates them.
+The ground level, $z = 0$, takes a surface station's value where one is given, otherwise the
+measurements interpolated to $z = 0$ (levels below the ground serve only for that), otherwise
+the lowest measurement held. The wind there is calm. Below the lowest wind level
+$z_g$, with wind $\mathbf{w}_g$, the wind follows the law above through that level:
+
+$$
+\mathbf{w}(z) = \mathbf{w}_g\,\frac{\ln(z/z_0)}{\ln(z_g/z_0)}, \qquad z_0 < z < z_g,
+$$
+
+with $z_0$ given, never defaulted, and the first level above the ground at
+$\min(10 z_0, z_g)$, so no level above the ground is calm. The alternatives hold
+$\mathbf{w}_g$ down to the first level, or take the wind linearly from zero at the ground to
+$\mathbf{w}_g$. Above each variable's highest measurement its value is held, or the temperature
+lapses dry-adiabatically. Optionally the relative humidity above its highest measurement keeps
+the molar concentration of water vapor there, as `--wind` keeps the surface's. Pressure outside
+its measurements, or from a surface pressure alone, is hydrostatic (§4.3). With a single surface
+observation and the `--wind` choices (the law continued to $\delta$, the lapse, the held
+concentration), the profile is the `--wind` profile.
+
 ## 8. Refraction
 
 ### 8.1 Linear sound-speed profile: circular rays

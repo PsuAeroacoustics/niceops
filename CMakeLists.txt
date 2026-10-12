@@ -172,6 +172,7 @@ add_library(niceops_core STATIC
   src/sphere_database.cpp
   src/atmosphere.cpp
   src/atmosphere_profile.cpp
+  src/atmosphere_builder.cpp
   src/refraction.cpp
   src/stratified.cpp
   src/pade_propagator.cpp
@@ -270,6 +271,7 @@ add_executable(niceops_unit_tests
   tests/test_terrain.cpp
   tests/test_atmosphere.cpp
   tests/test_atmosphere_profile.cpp
+  tests/test_atmosphere_builder.cpp
   tests/test_refraction.cpp
   tests/test_stratified.cpp
   tests/test_pade_propagator.cpp

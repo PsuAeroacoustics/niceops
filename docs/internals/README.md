@@ -42,7 +42,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | --- | --- | --- |
 | Command line, the observer loop, metrics; hot loop, SEL window, windowed peak search, load time, rejected optimizations | `niceops.cpp`, `sphere_database.cpp`, `util/sel.hpp`, `util/parallel.hpp` | [performance.md](performance.md) |
 | Sphere database, Delaunay and exact predicates, the sphere lookup, `--blend` (including `nearest`/`aam`), legacy repair, broadband vs spectral | `sphere_database`, `predicates`, `delaunay`, `interpolator`, `condition_selection` | [database.md](database.md) |
-| ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind` | `atmosphere`, `propagation.hpp`, `atmosphere_profile` | [atmosphere.md](atmosphere.md) |
+| ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind`, the profile builder | `atmosphere`, `propagation.hpp`, `atmosphere_profile`, `atmosphere_builder` | [atmosphere.md](atmosphere.md) |
 | `--refraction linear` / `stratified`, shadow zones, `ShadowTransition`, ducts, `--tunneling` | `refraction`, `stratified`, `airy` | [refraction.md](refraction.md) |
 | Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `tools/` | [pe.md](pe.md) |
 | Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `plate_receiver`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
