@@ -249,7 +249,47 @@ TEST_CASE("a measured calm gate is refused, or dropped; a calm column is still a
     measured.wind = gates({14.0}, {5.0}, {0.0});
     rules.levels = {0.02, 1.0};
     CHECK_THROWS_WITH(build_profile(measured, surface, rules, meters, report),
-            ContainsSubstring("would be calm"));
+            ContainsSubstring("from --levels would be calm"));
+}
+
+TEST_CASE("a measurement at or below the roughness length sets values without being a level",
+        "[atmosphere_builder]")
+{
+    // A screen-height sensor and a barometer under a forest's roughness length.
+    MeasuredColumns measured;
+    measured.temperature = series({1.5, 10.0}, {288.0, 287.5});
+    measured.pressure = series({1.0, 300.0}, {100.0, 96.6});
+    measured.wind = gates({14.0, 38.0}, {5.0, 6.0}, {0.0, 0.0});
+    SurfaceAir surface;
+    surface.humidity = 50.0;
+    BuildRules rules = rules_with(1.5, 1500.0);
+    BuildReport report;
+    const auto profile = build_profile(measured, surface, rules, meters, report);
+    REQUIRE(profile.height.size() > 2);
+    CHECK(profile.height[1] == 10.0);
+    for (std::size_t i = 1; i < profile.height.size(); i++)
+        CHECK(std::hypot(profile.wind_east[i], profile.wind_north[i]) > 0.0);
+    REQUIRE(report.warnings.size() == 2);
+    CHECK_THAT(report.warnings.back(),
+            ContainsSubstring("at or below the roughness length (1.5 m), where the log law is "
+                              "calm, is not a level: 2 left out"));
+    // Still the ground's values: the temperature held down from 1.5 m, the
+    // pressure hydrostatic down from 1 m (to the humidity's 1e-7 in the gas
+    // constant; 1 m of air is 1.2e-4) and log-linear up to 300 m.
+    CHECK(profile.temperature.front() == 288.0);
+    CHECK(profile.pressure.front()
+            == Catch::Approx(100.0 * std::exp(standard_gravity / (287.05 * 288.0))).epsilon(1e-6));
+    const auto top = std::find(profile.height.begin(), profile.height.end(), 300.0);
+    REQUIRE(top != profile.height.end());
+    CHECK(profile.pressure[static_cast<std::size_t>(top - profile.height.begin())] == 96.6);
+
+    // The other fills leave no level calm there, so the measurements are levels.
+    rules.fill = BuildRules::Fill::hold;
+    BuildReport held;
+    const auto with_hold = build_profile(measured, surface, rules, meters, held);
+    CHECK(with_hold.height[1] == 1.0);
+    CHECK(std::find(with_hold.height.begin(), with_hold.height.end(), 1.5) != with_hold.height.end());
+    CHECK(held.warnings.size() == 1);
 }
 
 TEST_CASE("the ground level comes from the station, the measurements across it, or the lowest held",

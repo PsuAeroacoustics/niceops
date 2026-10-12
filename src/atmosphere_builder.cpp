@@ -783,19 +783,36 @@ AtmosphereProfile build_profile(const MeasuredColumns& measured, const SurfaceAi
     const bool law_continues = has_wind && rules.surface_layer_depth.has_value();
 
     // --- Levels. -----------------------------------------------------------
+    // A temperature, humidity or pressure measured at or below the roughness
+    // length (a screen-height sensor under a forest's or a city's z0) is not
+    // a level where the law would leave the wind calm: it still sets the
+    // values about it, as a level below the ground sets the ground's.
+    const double calm_below
+            = has_wind && (rules.fill == BuildRules::Fill::log || law_continues)
+            ? law.roughness_length : 0.0;
     std::vector<double> measured_levels;
-    auto add_measured = [&](const std::vector<double>& z) {
+    std::size_t calm_left_out = 0;
+    auto add_measured = [&](const std::vector<double>& z, double above) {
         for (const double level : z)
         {
-            if (level > 0.0 && level < top)
+            if (level > 0.0 && level <= above)
+                calm_left_out++;
+            else if (level > 0.0 && level < top)
                 measured_levels.push_back(level);
         }
     };
-    add_measured(temperature.z);
-    add_measured(humidity.z);
+    add_measured(temperature.z, calm_below);
+    add_measured(humidity.z, calm_below);
     if (measured.pressure)
-        add_measured(measured.pressure->z);
-    add_measured(wind_z);
+        add_measured(measured.pressure->z, calm_below);
+    add_measured(wind_z, 0.0);
+    if (calm_left_out > 0)
+    {
+        note(report, "A measurement at or below the roughness length ("
+                        + length_text(law.roughness_length, unit) + "), where the log law is "
+                        "calm, is not a level: " + std::to_string(calm_left_out) + " left out. "
+                        "Their values still enter the interpolation.");
+    }
 
     AtmosphereProfile profile;
     profile.source = "niceops_build_atmosphere";
@@ -884,9 +901,9 @@ AtmosphereProfile build_profile(const MeasuredColumns& measured, const SurfaceAi
         if (z > 0.0 && east == 0.0 && north == 0.0)
         {
             input_error("niceops_build_atmosphere: the level at ", length_text(z, unit),
-                    " would be calm: it is at or below the roughness length (",
+                    " from --levels would be calm: it is at or below the roughness length (",
                     length_text(law.roughness_length, unit), "), where the log law is zero. "
-                    "List no level there.");
+                    "Leave it out of --levels.");
         }
         // + 0.0 turns the ground level's -0 into 0 in the written profile.
         profile.wind_east.push_back(east + 0.0);
@@ -950,16 +967,25 @@ AtmosphereProfile build_profile(const MeasuredColumns& measured, const SurfaceAi
                 i--;
             return i;
         };
-        const std::size_t front = level_of(z.front());
-        const std::size_t back = level_of(std::min(z.back(), top));
+        // A knot is a level, to the levels' 1e-9, unless it was left out at
+        // or below the roughness length; between levels the hydrostatic ratio
+        // is log-linear, as the run takes pressure.
+        auto relative_at = [&](double height) {
+            const std::size_t i = level_of(height);
+            if (std::abs(profile.height[i] - height) <= 1e-9 * height)
+                return relative[i];
+            return interpolate_log(profile.height, relative, height);
+        };
+        const double front = relative_at(z.front());
+        const double back = relative_at(std::min(z.back(), top));
         profile.pressure.resize(profile.height.size());
         for (std::size_t i = 0; i < profile.height.size(); i++)
         {
             const double h = profile.height[i];
             if (h < z.front())
-                profile.pressure[i] = p.front() * relative[i] / relative[front];
+                profile.pressure[i] = p.front() * relative[i] / front;
             else if (h > z.back())
-                profile.pressure[i] = p.back() * relative[i] / relative[back];
+                profile.pressure[i] = p.back() * relative[i] / back;
             else
                 profile.pressure[i] = interpolate_log(z, p, h);
         }

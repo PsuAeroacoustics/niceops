@@ -692,8 +692,9 @@ $$
 \mathbf{w}(z) = \mathbf{w}_g\,\frac{\ln(z/z_0)}{\ln(z_g/z_0)}, \qquad z_0 < z < z_g,
 $$
 
-with $z_0$ given, never defaulted, and the first level above the ground at
-$\min(10 z_0, z_g)$, so no level above the ground is calm. The alternatives hold
+with $z_0$ given, never defaulted, and the fill's levels starting at $\min(10 z_0, z_g)$. A
+measurement at or below $z_0$ enters the interpolation but is not a level, so no level above the
+ground is calm. The alternatives hold
 $\mathbf{w}_g$ down to the first level, or take the wind linearly from zero at the ground to
 $\mathbf{w}_g$. Above each variable's highest measurement its value is held, or the temperature
 lapses dry-adiabatically. Optionally the relative humidity above its highest measurement keeps

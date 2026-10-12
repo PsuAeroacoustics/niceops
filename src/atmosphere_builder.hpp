@@ -177,7 +177,9 @@ std::string build_rules_problem(const BuildRules& rules, LengthUnit unit);
 // surface pressure alone, is hydrostatic (with_hydrostatic_pressure).
 //
 // No level above the ground is calm: a measured calm level is refused or
-// dropped, a level the fill would leave calm is refused, and a column calm at
+// dropped, a temperature, humidity or pressure measured where the log law is
+// calm (at or below z0) sets the values about it without being a level, a
+// --levels height the fill would leave calm is refused, and a column calm at
 // every level gives a profile with no wind.  The profile is checked as
 // read_atmosphere_profile would check it.  Throws input_error.
 AtmosphereProfile build_profile(const MeasuredColumns& measured, const SurfaceAir& surface,

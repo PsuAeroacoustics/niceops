@@ -137,9 +137,11 @@ equations are in [THEORY.md](../THEORY.md) §7. The things to preserve:
 - **`geometric_levels` is shared with `synthetic_profile`**, so a change there moves both.
   `find_profile_columns` is shared with `read_atmosphere_profile`, so the two accept the same
   headers. The tool's reader adds only the dew point and specific humidity.
-- **No level in (0, first level).** The geometric levels start at min(10 z₀, z_g), for the same
-  reason as `--wind`'s. An explicit level at or below z₀ under the log fill would be calm and is
-  refused. A measured calm level is refused, or dropped with `--calm_levels drop`. A column calm
+- **No fill level in (0, first level).** The geometric levels start at min(10 z₀, z_g), for the
+  same reason as `--wind`'s; measured levels below that stay levels. A temperature, humidity or
+  pressure measured at or below z₀ under the log law (a screen-height sensor at a forest or urban
+  site) is left out of the levels with a warning, not refused: its value still enters the
+  interpolation. An explicit `--levels` height there would be calm and is refused. A measured calm level is refused, or dropped with `--calm_levels drop`. A column calm
   at every level gives a profile without wind columns.
 - **The explicit level list exists because the stratified search follows the layers.** Grid cells
   1500 m downwind move ±0.2 dB under any re-layering (see the discretization bullet below), so
@@ -151,8 +153,9 @@ equations are in [THEORY.md](../THEORY.md) §7. The things to preserve:
   (rms +0.44 [+0.14, +0.71] dB against the log law) and on day 284's mean window (same note,
   section 3). Keep it out unless a new fill passes that gate first.
 - **Pressure outside its measurements is hydrostatic from the end measurement**, through
-  `with_hydrostatic_pressure`'s ratios at the profile's levels. A measured level is always a
-  level, so the end knot has an exact ratio. Pressure from a surface value alone is
+  `with_hydrostatic_pressure`'s ratios at the profile's levels. A measured level is a level, so
+  the end knot has an exact ratio, unless it was left out at or below z₀; there the ratio is
+  log-linear between the levels about it. Pressure from a surface value alone is
   `with_hydrostatic_pressure` itself.
 - **The roughness-length fit solves dS/dℓ = 0 by bisection**, after a scan in ln z₀ brackets the
   minimum, so exact log-law runs give z₀ back to 1e-9. A minimizer's tolerance (Brent's
@@ -192,7 +195,9 @@ equations are in [THEORY.md](../THEORY.md) §7. The things to preserve:
   or chase it here.
 - **The builder** is pinned in `tests/test_atmosphere_builder.cpp`: one observation is
   `synthetic_profile` with `==`; the fill is the law through the lowest gate; no level above the
-  ground is calm for random gates and roughness lengths; ground levels from the station, across
+  ground is calm for random gates and roughness lengths, nor for a temperature and pressure
+  measured below z₀ (left out as levels, and still setting the ground's values); ground levels
+  from the station, across
   the ground, or held; the explicit level list; the column reader's wind convention against
   `read_atmosphere_profile`, the dew point and specific humidity against closed forms, and fill
   values; and a built profile reads back as itself.

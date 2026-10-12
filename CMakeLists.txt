@@ -1534,6 +1534,14 @@ add_test(NAME fit_z0_known COMMAND niceops_build_atmosphere fit_z0 ${BUILD_ATMOS
 set_tests_properties(fit_z0_known PROPERTIES FIXTURES_SETUP fit_z0_runs PASS_REGULAR_EXPRESSION "excluded fit_run6: light wind")
 add_test(NAME fit_z0_recovers_known COMMAND golden_compare integrated/fit_z0_known.csv ${BUILD_ATMOSPHERE_DATA}/fit_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(fit_z0_recovers_known PROPERTIES FIXTURES_REQUIRED fit_z0_runs)
+# --z0_from takes the fit's z0_m in meters whatever --units says: the harness build in feet from
+# that fit (0.1 ft to 2e-13) is the harness profile.
+add_test(NAME build_atmosphere_z0_from COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --column ${BUILD_ATMOSPHERE_DATA}/string_ft.csv --missing 9999 --humidity 62.5 --levels 0,1,3,10,20 --z0_from integrated/fit_z0_known.json --top 5000 -o integrated/build_atmosphere_z0_from.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_from PROPERTIES FIXTURES_SETUP build_atmosphere_z0_from_runs FIXTURES_REQUIRED fit_z0_runs)
+add_test(NAME build_atmosphere_z0_from_is_harness_profile COMMAND golden_compare integrated/build_atmosphere_z0_from.csv tests/data/atmosphere_builder_expected_ft.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_from_is_harness_profile PROPERTIES FIXTURES_REQUIRED build_atmosphere_z0_from_runs)
+add_test(NAME build_atmosphere_z0_twice_refused COMMAND niceops_build_atmosphere ${BUILD_ATMOSPHERE_HARNESS} --z0_from integrated/fit_z0_known.json -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_twice_refused PROPERTIES PASS_REGULAR_EXPRESSION "give --z0 or --z0_from, not both")
 # What the builder refuses, by message.
 add_test(NAME build_atmosphere_z0_missing_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --humidity 50 --temperature 288 --top 5000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(build_atmosphere_z0_missing_refused PROPERTIES PASS_REGULAR_EXPRESSION "give the roughness length, --z0 or --z0_from")

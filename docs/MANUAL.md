@@ -1480,8 +1480,10 @@ anemometer. Lengths are in `--units`, feet by default, on the command line and i
 - **Below the lowest wind level**, `--fill log` (the default) carries that level's wind down by
   the `--wind` log law, which makes the roughness length the only thing the fill adds. `--fill
   hold` holds the level's wind down; `--fill none` takes it linearly to calm at the ground. The
-  first level above the ground is at ten roughness lengths (or the lowest wind level, if lower),
-  so no level above the ground is calm.
+  fill's levels start at ten roughness lengths (or the lowest wind level, if lower), so no level
+  above the ground is calm. A temperature, humidity or pressure measured lower is a level too,
+  except at or below the roughness length, where the law is calm: there it sets the values
+  around it without being a level, with a warning.
 - **`--z0` or `--z0_from` is required.** Nothing measures the roughness length, and the wind
   near the ground depends on it, so a profile never carries a default. A weather model's z0 is a
   grid cell's, not the site's.
@@ -1501,7 +1503,8 @@ anemometer. Lengths are in `--units`, feet by default, on the command line and i
   `--pressure`, hydrostatically. Otherwise the file has none and the run integrates its own.
 
 **What it refuses**, naming the cause: a calm wind measured above the ground (`--calm_levels
-drop` drops it), a roughness length at or above the lowest wind level, pressure rising with
+drop` drops it), a roughness length at or above the lowest wind level, a `--levels` height at or
+below the roughness length under the log fill, pressure rising with
 height, a relative humidity above 100 (`--clip_humidity` clips it), two levels of one variable at
 one height, a variable two files offer, a speed without its unit, and any output `--atmosphere`
 would refuse. The written file is read back through `--atmosphere`'s reader before the tool exits.

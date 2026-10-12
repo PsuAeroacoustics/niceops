@@ -329,7 +329,9 @@ plane, the climb's fade at hover, and the frame's precedence over the fit. CTest
   `build_atmosphere_stratified_windowed_is_exact`: a built profile runs under stratified
   refraction, and the peak search over it equals a march. `fit_z0_recovers_known`: exact log-law
   runs (`tests/data/atmosphere_builder/fit_runs.py`) give z0 back, with the light-wind run left
-  out. The refusals pass on their messages. The Catch2 cases are listed in
+  out. `build_atmosphere_z0_from_is_harness_profile`: the harness build taking z0 from that fit's
+  JSON is the harness profile, so a meter-valued `z0_m` scaled by `--units`, or a renamed key,
+  fails. The refusals pass on their messages. The Catch2 cases are listed in
   [atmosphere.md](atmosphere.md#wind-profile-tests).
 - **The run's warnings on a profile**: `atmosphere_warns_no_ground_level`,
   `atmosphere_warns_calm_floor`, and `atmosphere_still_does_not_warn` (a profile calm throughout,
