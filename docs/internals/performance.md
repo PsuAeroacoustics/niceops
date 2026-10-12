@@ -377,15 +377,14 @@ matter how many terms are taken, so it cannot hold the 1e-9 dB pinning against p
 cutoff in range. Roughly 9% of the ground path, for the loss of the property that proves the
 port. Not worth it; do not re-derive it.
 
-### Terrain, ground classes and screening
+### Terrain and ground classes
 
-Ground classes (the maximum over the classes present) and screening (`screen_gain_bound`) each
-add a term to the peak search's bound, so each stays exact and evaluates a little more; a table
-read over terrain adds none, since its term is the table's largest value whatever the geometry.
-None adds a march condition. The terrain runs (tables over terrain, screening) are timed
-in [ground.md](ground.md#how-the-plane-is-found-groundplanecache). What the bound costs there,
-in evaluated fraction on the full demo grid: a table over the hills nothing (98.89% against
-98.90%), screening 0.7 points on the hills, where nothing is screened, and 0.8 behind the ridge.
+Ground classes (the maximum over the classes present) add a term to the peak search's bound, so
+the search stays exact and evaluates a little more; a table read over terrain adds none, since
+its term is the table's largest value whatever the geometry. Neither adds a march condition.
+Tables over terrain are timed in [ground.md](ground.md#how-the-plane-is-found-groundplanecache);
+what the bound costs there, in evaluated fraction on the full demo grid, is nothing (98.89%
+against 98.90%).
 
 **Ground classes**, on 14,400 1.2 m pole microphones at the demo grid's points (an observer file,
 since grid observers have no class), variable-porosity grass of 200 kPa·s/m², and Delany–Bazley

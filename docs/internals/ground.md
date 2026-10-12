@@ -49,7 +49,7 @@ manual. What to keep:
   - **Rejected:** a `DirectionBounds` table per class (more cache traffic for a bound that moves
     little, since each class's bound is (1 + max|Q|)² and |Q| nears 1 at grazing for every
     surface; revisit only if the measured evaluated fraction moves: half concrete moved it from
-    98.48% to 98.57%, [performance.md](performance.md#terrain-ground-classes-and-screening));
+    98.48% to 98.57%, [performance.md](performance.md#terrain-and-ground-classes));
     scaling the bound per observer (impossible, since the ground gain is folded into the
     A-weighted direction table); substituting a lone class for `options.ground` (it would enable
     refraction over a ground the user did not name); ids as row indexes (they move when rows are
@@ -312,7 +312,7 @@ so the model is evaluated exactly. On level terrain the height is the pole's and
 Plates keep their table either way. For the 2017 arrays (about 40 microphones) none of this is
 noticeable.
 
-With propagation tables and screening, on the same grid at 8 threads on an M4 Pro (asserts on,
+With propagation tables, on the same grid at 8 threads on an M4 Pro (asserts on,
 variable-porosity ground of 200 kPa·s/m², best of three; the machine was shared, load 10 to 31,
 so read the ratios rather than the seconds). The table is the five-row ground-model test table
 (`tables/ground_model_terrain_test.nc`: rows 0, 1.2 m, 8, 16 and 25 ft, source heights and ranges
@@ -325,28 +325,12 @@ every 20 ft):
 | hills, point receivers, `--propagation_table` | 34.2 s | 4.32 s | 98.89% | 311 MiB |
 | hills, `--plate_table` | 61.3 s | 7.72 s | 98.91% | 275 MiB |
 | hills, `--plate_table --propagation_table` | 35.4 s | 4.46 s | 98.92% | 343 MiB |
-| hills, point receivers, `--terrain_screening cnossos` | 98.4 s | 12.4 s | 99.63% | 249 MiB |
-| ridge, point receivers | 61.8 s | 7.84 s | 98.44% | 240 MiB |
-| ridge, point receivers, `--terrain_screening cnossos` | 80.0 s | 10.2 s | 99.26% | 250 MiB |
 
 - **A table over terrain is cheaper than the ground model it replaces**: the point receivers'
   exact evaluation (4.0x the level run) becomes a lookup at their height above the plane (1.5x).
   The table covered 99.999% of the evaluations; the rest took the ground model. The extra 70 MiB
   is the table itself. Its accuracy at this row spacing is in
   [FIDELITY](../FIDELITY.md#propagation-tables).
-- **Screening with nothing to screen** (the hills, byte-identical to the unscreened run) cost
-  5% in CPU: the quick test per pair, and the bound's screened term, up to 4.1 dB above the
-  ground term in 28 of 31 bands, which evaluated 0.7 points more of the pairs.
-- **Behind the ridge** 9.27 million evaluations were screened (9.9% of those made, at 6057 of
-  14,400 observers), 3.51 million of them (38%) reached the 25 dB cap in some band, and F was
-  held at 1 on neither side. The 18 s of extra CPU, the pairs the looser bound adds included, is
-  about 2 µs per screened evaluation, as at one thread on the 441-observer grid (0.55 s for
-  289,159).
-- **The screening cache** holds about 16 bytes more per sample per ray. At these fixtures' 42.8 m
-  step a path of 4.4 km is about 100 samples, about 2.3 MB per thread with every ray sampled:
-  the peak footprint rose 3.4 MiB at one thread and 7.5 MiB at eight (441 observers), and 7.1
-  MiB at eight on the full grid. At a 5 m step and 3 km, 600 samples, it is about 14 MB per
-  thread.
 
 ### Terrain tests
 

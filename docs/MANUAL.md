@@ -823,8 +823,8 @@ observers. A `--propagation_table` is read over each path's mean plane
 **Cost and effect.** Plates keep their tables over terrain; point receivers over real terrain are
 evaluated exactly, about 4 times the CPU, which a test array of tens of microphones does not
 notice; a ground-model `--propagation_table` with rows spanning their heights above the planes
-reads them instead, at about 1.5 times. At Amedee terrain moves flush-plate SEL by hundredths of a dB; at a sloped site it can
-move it by a dB at low elevation ([FIDELITY](FIDELITY.md#terrain-at-amedee),
+reads them instead, at about 1.5 times. At Amedee terrain moves flush-plate SEL by hundredths of
+a dB; at a sloped site it can move it by a dB at low elevation ([FIDELITY](FIDELITY.md#terrain-at-amedee),
 [sensitivity](FIDELITY.md#sensitivity-studies)).
 
 ### Refraction
