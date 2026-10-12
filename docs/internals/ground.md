@@ -119,6 +119,41 @@ What to keep:
   windowed against marched for canyons, plates and the +25 dB bump table, the pinned goldens and
   the refusals).
 
+### The canyon wave solver (`src/canyon_wave`)
+
+A 2-D staggered pressure-velocity FDTD of a flush-roof canyon, run by reciprocity, for the urban
+tables' low band (THEORY §6.6). What to keep:
+
+- **The far field comes from the opening, and that needs the roofs rigid and flush.** The
+  Neumann Green's function of z > H turns the opening's vertical velocity into the exact far field
+  only because dp/dz vanishes on the rest of the plane. Unequal walls, or absorbing roofs, need
+  another transform (a closed contour, or the half-space representation over the roofs too).
+- **The recording is the vertical velocity on the face row at z = H**, the opening's columns
+  only, and is divided by the source's own transform bin by bin (`V/Q`), so the pulse's shape and
+  amplitude drop out. Bin 0 is left at zero: the pulse has no mean, so there is nothing to divide
+  by. The transform's sign is exp(+i w t), the ground model's convention.
+- **Normalization is checked over open ground**, not assumed: the same run and transform over a
+  long recording line reproduce 4 cos^2(k z sin phi) within 0.1 dB from 45 to 135 degrees. That
+  test is what would catch a lost factor of 2 in the Green's function or the source.
+- **Walls absorb by default (0.05).** A rigid canyon rings for seconds in its cross modes
+  (n c / 2W), which leak out of the opening only weakly; the bands were still moving by 0.8 dB
+  between 1 and 4 s of a rigid run, and settle by 2 s at 0.05. The wall boundary is
+  semi-implicit over the half cell (stable for any Z >= 0); an explicit v = p/Z there is not.
+- **Runs stop at 30 dB of decay or 4 s.** Bands moved by under 0.01 dB beyond about -28 dB.
+- **Cost** (M4 Pro): a 20 m canyon to 630 Hz at 10 points per wavelength is 275,000 cells and
+  40,000 steps, 15 s on one thread and 8 s on eight. Threading per half step costs a thread
+  start each time, so the table builder runs receivers in parallel instead. Each doubling of
+  the top frequency costs eight times as much.
+- **15 points per wavelength for tables**: 15 against 20 agree within 0.3 dB, 10 within 1.4.
+- **The far-field sum steps its phase by recurrence** over the evenly spaced points: one complex
+  multiply per point instead of a sine and a cosine. It is the table build's inner loop.
+- **Oblique incidence is the reduced frequency f |u_perp|** (`canyon_wave_ratio`), exact for rigid
+  walls; a reduced band under 5 Hz is open ground.
+- Tests: `[canyon_wave]` (open ground against the image solution, independence of the grid's
+  margins), and the hidden studies `[.canyon_wave_study]` (convergence, the geometric limit) and
+  `[.canyon_tone_study]` (rotor tones against band tables, the stage-2 gate), whose results are
+  in FIDELITY under Canyon wave solver.
+
 ## Weighting
 
 `src/weighting.{hpp,cpp}` holds A-weighting and band-limited energy integration.

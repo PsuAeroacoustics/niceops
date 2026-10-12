@@ -727,6 +727,59 @@ and the walls block the direct sound but not all of the floor's. Nothing here is
 against measurements in streets; none of the measured data sets ([Data sets](#data-sets)) has
 buildings near the microphones.
 
+### Canyon wave solver
+
+The solver, its normalization and the far-field transform together, over flat rigid ground: a
+recording line 3 m up transformed as the canyon's opening is, against the image solution
+4 cos^2(k z sin phi) for a source 1.5 m up, band by band from 40 to 160 Hz
+(`the open-ground far field from a recording line is the image solution`,
+`tests/test_canyon_wave.cpp`). From 45 to 135 degrees the bands agree within 0.1 dB at 12 points
+per wavelength and 0.03 dB at 20; at 15 to 30 degrees the line's own truncation errs by 0.2 to
+0.8 dB whatever its length, which the canyon, whose transform runs over the opening alone between
+rigid roofs, does not share. Moving the grid's edges (roof and sky margins of 4 and 10 m) moves a
+canyon's bands by under 0.1 dB.
+
+Convergence, a 20 m by 20 m canyon, the microphone 6 m from wall A at 1.5 m, walls absorbing 0.05
+(the hidden case `[.canyon_wave_study]`): 15 against 20 points per wavelength agree within 0.3 dB
+in every band and direction tried, 10 within 1.4 dB (at 500 Hz, 15 degrees). Each run went the
+full 4 s and ended 28-29 dB down.
+
+Against the ideal canyon's geometric table at 500 Hz (kW = 183), with the floor's rays, the same
+walls and the first-order reflection the run adds:
+
+| Direction from +y | 15° | 30° | 45° | 60° | 75° | 90° | 120° (shadow) | 150° |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Wave, dB | −2.39 | −3.65 | 0.13 | 2.32 | 0.06 | 0.04 | −10.86 | 0.25 |
+| Geometric, dB | −3.86 | −3.37 | 0.06 | 2.90 | 0.00 | 0.00 | −14.46 | 1.40 |
+
+The lit directions agree within 0.6 dB, the shadow differs by 3.6 dB (the geometric table's
+diffraction is still the CNOSSOS placeholder), and at 63-250 Hz the two differ by up to 8 dB, the
+canyon's resonances, which is the band the wave tables are for. Before the geometric table traced
+the floor's rays it read −24.6 and −20.4 dB at 15 and 30 degrees.
+
+**Rotor tones against band tables** (the stage-2 gate; the hidden case `[.canyon_tone_study]`).
+Canyons 20 m wide with H/W = 0.5, 1 and 2, microphones at the centerline and at W/4, 1.5 m up,
+walls absorbing 0.05, solved to 600 Hz at 12 points per wavelength. Main-rotor (27.5 Hz) and
+tail-rotor (79.3 Hz) harmonics to 460 Hz, B407-like, each Doppler-swept (M = 0.175) over 18
+level passes (60, 150 and 300 m up; along, oblique to and across the street; overhead and 150 m
+aside). The error is in each harmonic's SEL change against open ground, the band table read as
+the run reads it (bilinear on the builder's 72 by 33 grid) against the coherent canyon field:
+
+| H/W | Microphone | Per harmonic and pass: median / p90 / max, dB | A-weighted, equal harmonics: median / max, dB |
+| --- | --- | --- | --- |
+| 0.5 | centerline | 0.17 / 0.68 / 3.9 | 0.05 / 0.15 |
+| 0.5 | W/4 | 0.24 / 0.85 / 2.3 | 0.08 / 0.35 |
+| 1 | centerline | 0.19 / 0.77 / 3.3 | 0.04 / 0.49 |
+| 1 | W/4 | 0.26 / 1.03 / 2.0 | 0.06 / 0.43 |
+| 2 | centerline | 0.19 / 0.71 / 2.6 | 0.07 / 0.80 |
+| 2 | W/4 | 0.36 / 1.12 / 3.3 | 0.12 / 0.47 |
+
+Band energy is therefore adequate for SEL: under 1 dB for the A-weighted level everywhere,
+under about 1 dB for nine harmonics in ten. A single low harmonic can be off by 2-4 dB, which
+matters for narrowband or tonal metrics and not for SEL. Without the Doppler sweep the p90
+changes by −0.1 to +0.5 dB. Most of the error is the table's band averaging: with the coherent
+open ground in place of the run's band-averaged one, the p90 moves by at most 0.2 dB.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and

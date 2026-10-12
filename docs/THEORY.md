@@ -842,8 +842,8 @@ $$
 in the canyon's cross-section. This diffraction is a placeholder for a wedge model. Left out:
 diffraction of the reflected paths, diffuse reflection, the canyon's ends, turbulent scattering
 into the shielded directions, and every wave effect below the frequencies where the street is
-several wavelengths wide. A microphone above both walls, or a direction
-along the axis, gives $T = 1$.
+several wavelengths wide, which the wave solution supplies (§6.6). A microphone above both walls,
+or a direction along the axis, gives $T = 1$.
 
 **Separating the paths.** A table keyed on the arrival direction alone assumes every path leaves
 the rotor in the direct path's direction at the direct path's range. Close to the buildings a
@@ -855,6 +855,61 @@ on top of the ground's, for every pair. The direct path and each valid reflectio
 their own direction's numerator $n_i$ over their own squared range, so their sum is bounded by
 $\max_i n_i / \left(\sum_i r_i^{-2}\right)^{-1}$, as for several eigenrays (§8.2); a reflection
 loses $\rho \le 1$ and needs nothing more.
+
+### 6.6 The canyon's wave solution
+
+Below a few hundred hertz a street is a few wavelengths wide and rays stop describing it.
+`src/canyon_wave` solves the canyon of §6.5 with flush roofs ($H_A = H_B = H$) by the linear
+acoustic equations in its cross-section,
+
+$$
+\frac{\partial p}{\partial t} = -\rho c^2\,\nabla\cdot\mathbf{v} + \rho c^2\,q(t)\,\delta(\mathbf{r} - \mathbf{r}_m),
+\qquad \rho\,\frac{\partial \mathbf{v}}{\partial t} = -\nabla p,
+$$
+
+on a staggered grid (pressure at cell centers, each velocity component on the faces normal to it)
+with a split-field PML of quadratic profile on the sides and top, by reciprocity: the line source
+$q$ stands at the microphone $\mathbf{r}_m$ and radiates a pulse, $q \propto (t - t_0)\,e^{-(t-t_0)^2/2\tau^2}$,
+which has no mean. Roofs and floor are rigid; each wall is rigid or locally reacting with a real
+impedance $Z = \zeta\rho c$, $\zeta = (1 + \sqrt{1-\alpha})/(1 - \sqrt{1-\alpha})$ for a
+normal-incidence absorption $\alpha$, imposed over the half cell between the wall and the cell
+center with the wall's pressure averaged over the step:
+
+$$
+v^{n+1/2}\left(\frac{\rho}{\Delta t} + \frac{Z}{h}\right) = v^{n-1/2}\left(\frac{\rho}{\Delta t} - \frac{Z}{h}\right) \mp \frac{2}{h}\,p_\mathrm{cell},
+$$
+
+which is stable for any $Z \ge 0$. A rigid canyon rings for seconds in its cross modes, at
+$n c / 2W$, which leak out of the opening only weakly; real facades damp them.
+
+**The far field from the opening.** With $V(y', \omega)$ and $Q(\omega)$ the time transforms of the
+vertical velocity across the opening and of the source ($P(\omega) = \int p\,e^{i\omega t}\,dt$),
+the Neumann Green's function of the half-space $z > H$ gives, because $\partial p/\partial z$
+vanishes on the rigid roofs,
+
+$$
+p(\mathbf{r}) = \frac{i}{2}\int_0^W H_0^{(1)}(k|\mathbf{r} - \mathbf{r}'|)\left(-\frac{\partial p}{\partial z'}\right)dy'
+$$
+
+exactly, and in the far field toward the angle $\phi$ from the $+y$ axis, relative to the line
+source's own free field $\tfrac{i}{4}H_0^{(1)}$,
+
+$$
+G(\omega, \phi) = 4\left|\sum_{y'} h\,\frac{V(y', \omega)}{Q(\omega)}\,e^{-iky'\cos\phi}\right|^2,
+\qquad G_\mathrm{open} = 4\cos^2(k z_m \sin\phi),
+$$
+
+the second for the microphone $z_m$ over flat rigid ground. A band's table entry is
+$\sum G / \sum G_\mathrm{open}$ over the frequencies of the band.
+
+**Oblique incidence.** A plane wave with a component $u_a$ along the street varies as
+$e^{iku_a x}$ there, so in the cross-section it obeys the two-dimensional Helmholtz equation at
+$k_\perp = k|\mathbf{u}_\perp|$, $|\mathbf{u}_\perp| = \sqrt{u_c^2 + u_z^2}$, arriving from
+$\phi = \operatorname{atan2}(u_z, u_c)$; rigid walls do not mix the two, and open ground's
+$\cos^2(k z_m u_z)$ is the same either way. A three-dimensional band $[f_1, f_2]$ toward
+$(u_c, u_a, u_z)$ is therefore the two-dimensional band $[f_1, f_2]\,|\mathbf{u}_\perp|$ toward $\phi$, and one
+run covers every direction. A reduced band below a floor frequency (5 Hz) is taken as open ground.
+For an impedance wall the reduction is approximate, the admittance's $k$ being the full one.
 
 ## 7. The stratified, moving atmosphere
 
