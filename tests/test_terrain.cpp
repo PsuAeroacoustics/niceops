@@ -18,6 +18,7 @@
 #include "propagation.hpp"
 #include "propagation_table.hpp"
 #include "terrain.hpp"
+#include "util/constants.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace)
 
@@ -385,6 +386,207 @@ TEST_CASE("The cached mean ground line is the direct least-squares fit", "[terra
         }
     }
     CHECK(worst < 0.15);
+}
+
+TEST_CASE("line_from(locate) is line_to, and screening leaves the lines alone", "[terrain]")
+{
+    const TerrainRaster raster = raster_of(rolling, 2500.0, 10.0);
+    GroundPlaneCache plain(raster);
+    GroundPlaneCache screening(raster, true);
+    std::mt19937 random(11);
+    std::uniform_real_distribution<double> where(-1500.0, 1500.0);
+    for (int observer = 0; observer < 10; observer++)
+    {
+        const double x0 = where(random), y0 = where(random);
+        plain.set_observer(x0, y0);
+        screening.set_observer(x0, y0, 1.2);
+        for (int pair = 0; pair < 50; pair++)
+        {
+            const double dx = where(random) - x0, dy = where(random) - y0;
+            const double distance = std::hypot(dx, dy);
+            const GroundLine line = plain.line_to(dx, dy, distance);
+            // Screening samples the rays in another order (blocked() before
+            // line_to()), which must not change a bit of the sums.
+            GroundPlaneCache::Profile profile;
+            const auto where_ = screening.locate(dx, dy, distance);
+            screening.blocked(where_, 30.0 + screening.ground_z(), profile);
+            const GroundLine from = screening.line_from(where_);
+            CHECK(from.intercept == line.intercept);
+            CHECK(from.slope == line.slope);
+        }
+    }
+}
+
+namespace {
+
+// The brute-force screening scan the cache's is checked against: each ray's
+// heights read straight from the raster, blended in bearing, and every
+// interior sample's slope from the microphone against the line of sight's.
+struct ScanResult
+{
+    bool any_ray_above = false; // what may_block() must say
+    bool blended_above = false; // what blocked() must say
+    double source_height = 0.0;
+};
+
+ScanResult brute_force_scan(const TerrainRaster& raster, double x0, double y0, double microphone,
+        double dx, double dy, double distance, double source_z)
+{
+    const double step = raster.step();
+    double angle = std::atan2(dy, dx);
+    if (angle < 0.0)
+        angle += 2.0 * pi;
+    const double u = angle * (GroundPlaneCache::bearings / (2.0 * pi));
+    const int ray = std::min(static_cast<int>(u), GroundPlaneCache::bearings - 1);
+    const double turn = std::clamp(u - ray, 0.0, 1.0);
+    const int next = ray + 1 == GroundPlaneCache::bearings ? 0 : ray + 1;
+    const double z0 = raster.height(x0, y0);
+    const auto height = [&](int r, std::size_t k) {
+        const double a = 2.0 * pi * r / GroundPlaneCache::bearings;
+        const double s = static_cast<double>(k);
+        return raster.height(x0 + s * (step * std::cos(a)), y0 + s * (step * std::sin(a))) - z0;
+    };
+    const auto blend = [&](std::size_t k) {
+        return turn > 0.0 ? (1.0 - turn) * height(ray, k) + turn * height(next, k) : height(ray, k);
+    };
+    ScanResult result;
+    const double v = distance / step;
+    const std::size_t n = static_cast<std::size_t>(v);
+    const double fraction = v - static_cast<double>(n);
+    double foot = blend(n);
+    if (fraction > 0.0)
+        foot = (1.0 - fraction) * foot + fraction * blend(n + 1);
+    result.source_height = std::max(source_z - z0, foot);
+    if (!(v > 1.0))
+        return result;
+    const std::size_t interior = static_cast<std::size_t>(std::ceil(v)) - 1;
+    const double sight = (result.source_height - microphone) / distance;
+    for (std::size_t k = 1; k <= interior; k++)
+    {
+        const double s = static_cast<double>(k) * step;
+        result.blended_above = result.blended_above || (blend(k) - microphone) / s > sight;
+        result.any_ray_above = result.any_ray_above || (height(ray, k) - microphone) / s > sight
+                || (turn > 0.0 && (height(next, k) - microphone) / s > sight);
+    }
+    return result;
+}
+
+double tilted_plane(double x, double)
+{
+    return 0.25 * x;
+}
+
+} // namespace
+
+TEST_CASE("the screening gate is the brute-force scan of the blended profile", "[terrain]")
+{
+    const TerrainRaster raster = raster_of(rolling, 2500.0, 10.0);
+    GroundPlaneCache cache(raster, true);
+    std::mt19937 random(5);
+    std::uniform_real_distribution<double> where(-1500.0, 1500.0);
+    std::uniform_real_distribution<double> up(-2.0, 40.0);
+    std::uniform_int_distribution<int> whole(1, 120);
+    std::uniform_int_distribution<int> bearing(0, GroundPlaneCache::bearings - 1);
+    int blocked_count = 0, quick_only = 0, clear = 0;
+    for (int observer = 0; observer < 40; observer++)
+    {
+        const double x0 = where(random), y0 = where(random);
+        const double microphone = observer % 4 == 0 ? 0.0 : 1.2 + observer % 3;
+        cache.set_observer(x0, y0, microphone);
+        for (int pair = 0; pair < 200; pair++)
+        {
+            double dx, dy, distance;
+            if (pair % 3 == 0)
+            {
+                // A whole number of steps out, between two rays: the sample at
+                // the footprint is a ray's own, and must not count as interior.
+                const double angle = 2.0 * pi * (bearing(random) + 0.5) / GroundPlaneCache::bearings;
+                distance = 10.0 * whole(random);
+                dx = distance * std::cos(angle);
+                dy = distance * std::sin(angle);
+            }
+            else
+            {
+                dx = where(random) - x0;
+                dy = where(random) - y0;
+                distance = std::hypot(dx, dy);
+            }
+            const double source_z = raster.height(x0 + dx, y0 + dy) + up(random);
+            const ScanResult expected = brute_force_scan(raster, x0, y0, microphone, dx, dy, distance, source_z);
+            const auto located = cache.locate(dx, dy, distance);
+            GroundPlaneCache::Profile profile;
+            const bool quick = cache.may_block(located, source_z);
+            const bool blocked = cache.blocked(located, source_z, profile);
+            REQUIRE(quick == expected.any_ray_above);
+            REQUIRE(blocked == expected.blended_above);
+            if (blocked)
+            {
+                blocked_count++;
+                CHECK(profile.source_height == expected.source_height);
+                CHECK(profile.interior + 2 == profile.heights.size());
+                CHECK(profile.heights[0] == 0.0);
+            }
+            else if (quick)
+                quick_only++;
+            else
+                clear++;
+        }
+    }
+    // Every branch is reached.
+    CHECK(blocked_count > 100);
+    CHECK(quick_only > 0);
+    CHECK(clear > 100);
+}
+
+TEST_CASE("a profile exactly on the line of sight does not block", "[terrain]")
+{
+    // z = x / 4, sampled every 10 m from the origin along +x: every sample's
+    // slope from a flush microphone is exactly 1/4, and so is the line of sight
+    // to a source on the plane's extension.  A strict test leaves it unblocked;
+    // >= would screen every path down a uniform slope.
+    const TerrainRaster raster = raster_of(tilted_plane, 500.0, 10.0);
+    GroundPlaneCache cache(raster, true);
+    cache.set_observer(0.0, 0.0, 0.0);
+    GroundPlaneCache::Profile profile;
+    for (const double distance : {105.0, 200.0, 333.0})
+    {
+        const auto located = cache.locate(distance, 0.0, distance);
+        REQUIRE(located.turn == 0.0);
+        CHECK(!cache.may_block(located, 0.25 * distance));
+        CHECK(!cache.blocked(located, 0.25 * distance, profile));
+    }
+    // Seen from a centimeter under the plane the near samples rise above the
+    // line of sight, and the same profile screens.
+    cache.set_observer(0.0, 0.0, -0.01);
+    for (const double distance : {105.0, 200.0, 333.0})
+        CHECK(cache.blocked(cache.locate(distance, 0.0, distance), 0.25 * distance, profile));
+}
+
+TEST_CASE("fit_range is the direct least-squares fit over the same samples", "[terrain]")
+{
+    const TerrainRaster raster = raster_of(rolling, 2500.0, 10.0);
+    GroundPlaneCache cache(raster, true);
+    const double ox = -137.0, oy = 211.0;
+    cache.set_observer(ox, oy, 1.2);
+    for (const int ray : {0, 1, 359, 720, 1000, 1439})
+    {
+        const double angle = 2.0 * pi * ray / GroundPlaneCache::bearings;
+        const double c = std::cos(angle), s = std::sin(angle);
+        const auto located = cache.locate(1500.0 * c, 1500.0 * s, 1500.0);
+        cache.line_from(located);
+        for (const auto& [k0, k1] : {std::pair<std::size_t, std::size_t> {0, 1}, {0, 40}, {3, 4}, {17, 120},
+                     {90, 150}})
+        {
+            const GroundLine range = cache.fit_range(located, k0, k1);
+            const double x0 = ox + static_cast<double>(k0) * (10.0 * c), y0 = oy + static_cast<double>(k0) * (10.0 * s);
+            const double x1 = ox + static_cast<double>(k1) * (10.0 * c), y1 = oy + static_cast<double>(k1) * (10.0 * s);
+            const GroundLine direct = fit_ground_line(raster, x0, y0, x1, y1, k1 - k0);
+            CHECK(range.slope == Catch::Approx(direct.slope).margin(1e-9));
+            // direct's intercept is at sample k0, on the frame's own z.
+            CHECK(range.intercept + range.slope * (10.0 * static_cast<double>(k0)) + cache.ground_z()
+                    == Catch::Approx(direct.intercept).margin(1e-7));
+        }
+    }
 }
 
 TEST_CASE("Over a uniformly tilted plane the ground models get the plane's own geometry", "[terrain]")
