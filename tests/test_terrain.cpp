@@ -564,6 +564,41 @@ TEST_CASE("a profile exactly on the line of sight does not block", "[terrain]")
         CHECK(cache.blocked(cache.locate(distance, 0.0, distance), 0.25 * distance, profile));
 }
 
+TEST_CASE("a blended profile touching the line of sight does not block", "[terrain]")
+{
+    // Level ground, except a stripe 400 < x < 600 that rises across the line
+    // halfway between rays 0 and 1, so ray 1 there is above a level line of
+    // sight and ray 0 below it.  A pair a quarter of the way from ray 0 to ray
+    // 1 passes the quick test (ray 1's horizon), but its blended profile is
+    // below the line in the stripe and exactly on it (zero) everywhere else.
+    // >= in blocked()'s own scan would screen it.  The stripe's edge nodes are
+    // below the line, so ray 1, a little short of each node, never reads its
+    // rising half where ray 0 reads level ground.
+    const double half_turn = std::tan(pi / GroundPlaneCache::bearings);
+    const auto stripe = [half_turn](double x, double y) {
+        if (x == 400.0 || x == 600.0)
+            return -10.0;
+        return x > 400.0 && x < 600.0 ? 10.0 * (y - x * half_turn) : 0.0;
+    };
+    const TerrainRaster raster = raster_of(stripe, 1000.0, 10.0);
+    GroundPlaneCache cache(raster, true);
+    cache.set_observer(0.0, 0.0, 0.0);
+    const double angle = 2.0 * pi * 0.25 / GroundPlaneCache::bearings;
+    for (const double distance : {700.0, 805.0, 950.0})
+    {
+        const double dx = distance * std::cos(angle), dy = distance * std::sin(angle);
+        const auto located = cache.locate(dx, dy, distance);
+        REQUIRE(located.ray == 0);
+        REQUIRE(located.turn == Catch::Approx(0.25));
+        const ScanResult expected = brute_force_scan(raster, 0.0, 0.0, 0.0, dx, dy, distance, 0.0);
+        REQUIRE(expected.any_ray_above);
+        REQUIRE(!expected.blended_above);
+        GroundPlaneCache::Profile profile;
+        CHECK(cache.may_block(located, 0.0));
+        CHECK(!cache.blocked(located, 0.0, profile));
+    }
+}
+
 TEST_CASE("fit_range is the direct least-squares fit over the same samples", "[terrain]")
 {
     const TerrainRaster raster = raster_of(rolling, 2500.0, 10.0);

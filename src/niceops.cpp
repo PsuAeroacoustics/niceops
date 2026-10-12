@@ -2745,9 +2745,24 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     for (std::size_t band = 0; band < receiver_side.size(); band++)
                         receiver_side[band] = std::max(receiver_side[band], plate_gains[band]);
                 }
+                const std::vector<double> ground_term = path_gains;
                 for (std::size_t band = 0; band < path_gains.size(); band++)
                     path_gains[band] = std::max(path_gains[band],
                             screen_gain_bound(source_side[band], receiver_side[band]));
+                // Logged from the bound as built, so a CTest sees the term
+                // reach it: the windowed-is-exact tests pass without it.
+                std::size_t raised = 0;
+                double largest_raise = 1.0;
+                for (std::size_t band = 0; band < path_gains.size(); band++)
+                    if (path_gains[band] > ground_term[band])
+                    {
+                        raised++;
+                        if (ground_term[band] > 0.0)
+                            largest_raise = std::max(largest_raise, path_gains[band] / ground_term[band]);
+                    }
+                log("--terrain_screening: the peak-search bound's screened term is above its ground term in ",
+                        raised, " of ", path_gains.size(), " bands, by up to ", 10.0 * std::log10(largest_raise),
+                        " dB.");
             }
             for (std::size_t band = 0; band < bound_gains.size(); band++)
                 bound_gains[band] *= path_gains[band];

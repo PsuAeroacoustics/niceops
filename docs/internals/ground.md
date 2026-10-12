@@ -305,7 +305,9 @@ in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
   `screen_gain_bound(G_S, G_R)` = max(1, G_S) max(1, G_R)/3, with G_S over every class in use,
   a plate's included (the source side is always the point model), and G_R the point and plate
   bounds. Without a ground model it is 1/3 and changes nothing. The 3 is `cnossos_floor`,
-  written once.
+  written once. The run logs how many bands the term raises above the ground term: the
+  windowed-is-exact tests pass without it, so that line is what `terrain_ridge_screened_bound`
+  checks.
 - **Side lines come from the running sums** (`fit_range`, re-based to k0), so a screened pair
   fits nothing sample by sample; raw heights and the horizon cost about 16 bytes per sample per
   ray per thread, only with the option.

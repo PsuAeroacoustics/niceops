@@ -1774,11 +1774,15 @@ set_tests_properties(terrain_steep_table_plate PROPERTIES FIXTURES_REQUIRED "ter
 add_test(NAME terrain_steep_table_plate_golden COMMAND golden_compare integrated/terrain_steep_table_plate.csv golden/terrain_steep_table_plate.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_steep_table_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_steep_table_plate_run)
 # --terrain_screening cnossos (src/screening.hpp; THEORY 6.4).  A run whose info log the test
-# matches on goes through tests/run_logged.cmake, which gives it its own log and prints it.
+# matches on goes through tests/run_logged.cmake, which gives it its own log and prints it.  A
+# PASS_REGULAR_EXPRESSION makes CTest ignore the exit status, so a run that exits nonzero fails on
+# the line run_logged prints for it: a FAIL_REGULAR_EXPRESSION set later must keep it.
+set(LOGGED_RUN_FAILED "run_logged: the command exited with")
 function(add_logged_run name)
   add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DLOG=integrated/${name}.log
       "-DCOMMAND=$<TARGET_FILE:niceops>;${ARGN};-L;info;-l;integrated/${name}.log" -P tests/run_logged.cmake
       WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(${name} PROPERTIES FAIL_REGULAR_EXPRESSION "${LOGGED_RUN_FAILED}")
 endfunction()
 set(SCREENING --terrain_screening cnossos)
 set(TERRAIN_RIDGE --terrain integrated/terrain_ridge.nc --terrain_offset -1250 --ground_elevation 54.2651)
@@ -1799,7 +1803,8 @@ set_tests_properties(terrain_flat_point_screened terrain_flat_plate_screened ter
     PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_unscreened_runs)
 set_tests_properties(terrain_flat_point_screened terrain_flat_plate_screened terrain_flat_scattered_screened
     terrain_tilted_point_screened terrain_tilted_plate_screened terrain_hills_point_screened
-    PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: 0 evaluations were screened" FAIL_REGULAR_EXPRESSION "--terrain_screening: [1-9]")
+    PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: 0 evaluations were screened"
+    FAIL_REGULAR_EXPRESSION "--terrain_screening: [1-9];${LOGGED_RUN_FAILED}")
 add_test(NAME terrain_flat_point_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_point_screened.csv integrated/terrain_flat_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME terrain_flat_plate_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_plate_screened.csv integrated/terrain_flat_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME terrain_flat_scattered_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_scattered_screened.csv integrated/terrain_flat_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1833,6 +1838,11 @@ foreach(kind point plate noground classes table)
   add_test(NAME terrain_ridge_screened_${kind}_windowed_is_exact COMMAND golden_compare integrated/terrain_ridge_screened_${kind}.csv integrated/terrain_ridge_screened_${kind}_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(terrain_ridge_screened_${kind}_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_ridge_runs)
 endforeach()
+# The windowed/marched pairs pass with the screening term left out of the bound, so a coarse
+# ridge run checks, from its log, that the term raises the bound in some band.
+add_logged_run(terrain_ridge_screened_bound ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} --gridstep 1968 -o integrated/terrain_ridge_screened_bound.csv)
+set_tests_properties(terrain_ridge_screened_bound PROPERTIES FIXTURES_REQUIRED terrain_file
+    PASS_REGULAR_EXPRESSION "bound's screened term is above its ground term in [1-9][0-9]* of [0-9]+ bands")
 # The windowed/marched pairs compare one binary with itself, so the ridge runs are pinned (made by
 # the build that added --terrain_screening; regenerate only with a deliberate change).
 add_test(NAME terrain_ridge_screened_point_golden COMMAND golden_compare integrated/terrain_ridge_screened_point.csv golden/terrain_ridge_screened_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
