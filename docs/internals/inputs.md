@@ -170,6 +170,26 @@ impedance model names. Beyond those rules:
   `--ground_classes`, `--ground_classes` without one (or with grid observers), and a microphone
   on an id the file does not define are each refused with the row named.
 
+### The profile builder's column reader
+
+`niceops_build_atmosphere` reads its columns with `read_column_source`
+(`src/atmosphere_builder.cpp`), which finds them with `find_profile_columns`, the same names and
+unit rules as `--atmosphere`, so a header one accepts the other does. Beyond `--atmosphere`'s
+rules (non-finite cells, text after data, a height unit that disagrees with `--units`, a wind
+without its unit, two levels at one height):
+
+- **Fill values are explicit.** A cell equal to a `--missing` value is dropped for its variable
+  at its level and counted in the log and the provenance. The reader never guesses a sentinel
+  from its size.
+- **Any other implausible value is refused** with the file and data row, unless
+  `--drop_implausible`, which drops and counts it. The ranges are `--atmosphere`'s, except that a
+  relative humidity up to 110 is read and left to the build, which refuses one above 100 or clips
+  it (`--clip_humidity`).
+- **Every variable is optional**, so a file carrying only wind or only temperature reads; one
+  carrying none of them is refused. A variable two files carry is refused unless one is named.
+- **Lengths given on the command line** (`--z0`, `--top`, `--levels`, `--surface_layer_depth`,
+  `--ground_elevation`, `--gates`) are converted once, in the tool's `main`, when given.
+
 ### Tests
 
 - **CTests of refusals and warnings pass on the message text** (`PASS_REGULAR_EXPRESSION`),

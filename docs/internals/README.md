@@ -94,9 +94,11 @@ The C++ tools in `tools/` are built alongside `niceops` and link `niceops_core`:
 | `niceops_pe_field` | `tools/pe_field.cpp` | The PE's whole field on one vertical plane, for plotting. |
 | `niceops_ray_geometry` | `tools/ray_geometry.cpp` | The refracted ray's geometry for a batch of source–receiver pairs, so ground models outside `niceops` can be evaluated on the same rays. |
 | `niceops_benchmark` | `tools/benchmark.cpp` | The Attenborough et al. (1995) benchmark cases by the PE and, where one exists, the exact solution. |
+| `niceops_build_atmosphere` | `tools/build_atmosphere.cpp` | `--atmosphere` profiles from measured columns (`build`), and a site roughness length from wind profiles (`fit_z0`); see [atmosphere.md](atmosphere.md#the-profile-builder-niceops_build_atmosphere). |
 
-The manual covers the three that users run:
+The manual covers the four that users run:
 [niceops_propagation_table](../MANUAL.md#niceops_propagation_table),
+[niceops_build_atmosphere](../MANUAL.md#niceops_build_atmosphere),
 [niceops_pe_compare](../MANUAL.md#niceops_pe_compare),
 [niceops_benchmark](../MANUAL.md#niceops_benchmark).
 

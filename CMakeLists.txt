@@ -326,6 +326,10 @@ add_executable(niceops_procedure tools/procedure.cpp)
 target_link_libraries(niceops_procedure niceops_core CLI11::CLI11)
 add_executable(niceops_propagation_table tools/propagation_table.cpp)
 target_link_libraries(niceops_propagation_table niceops_core CLI11::CLI11)
+# An --atmosphere profile from measured columns, and a site roughness length
+# from wind profiles (tools/build_atmosphere.cpp).
+add_executable(niceops_build_atmosphere tools/build_atmosphere.cpp)
+target_link_libraries(niceops_build_atmosphere niceops_core CLI11::CLI11)
 # The Attenborough et al. (1995) benchmark cases by the PE and the exact
 # solutions (tools/benchmark.cpp); tools/plot_benchmark.py draws them.
 add_executable(niceops_benchmark tools/benchmark.cpp)
@@ -1488,6 +1492,56 @@ add_test(NAME wind_needs_humidity COMMAND niceops -d databases/B407_fixed_load_f
 set_tests_properties(wind_needs_humidity PROPERTIES PASS_REGULAR_EXPRESSION "--wind builds the humidity profile from the surface humidity, and none is set")
 add_test(NAME wind_stability_class_warns COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 30 -t tracks/S-76D/197421AC.csv --wind 10kt,270 --stability II --gridstep 1640 -o integrated/wind_stability_class.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(wind_stability_class_warns PROPERTIES PASS_REGULAR_EXPRESSION "The stability classes are unvalidated")
+# niceops_build_atmosphere (tools/build_atmosphere.cpp).  One surface observation with --wind's
+# choices is the profile wind_profile_written writes, byte for byte.  The harness layout (seven
+# LIDAR gates, one a fill value, a string every 10 ft, a station humidity, the harness's level list)
+# is the validation harness's own Weather.profile, run by tests/data/atmosphere_builder_expected.py;
+# the same build in meters is the same profile.  A built profile runs, and the peak search over it
+# is exact.
+set(BUILD_ATMOSPHERE_DATA tests/data/atmosphere_builder)
+set(BUILD_ATMOSPHERE_HARNESS build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --column ${BUILD_ATMOSPHERE_DATA}/string_ft.csv --missing 9999 --humidity 62.5 --levels 0,1,3,10,20 --z0 0.1 --top 5000)
+add_test(NAME build_atmosphere_surface COMMAND niceops_build_atmosphere --units ft build --wind 12kt,250,6.5 --z0 0.1 --surface_layer_depth 3000 --levels_per_decade 10 --temperature 288.15 --humidity 40 --pressure 100 --above lapse --humidity_aloft held_concentration --top 3000 -o integrated/build_atmosphere_surface.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME build_atmosphere_harness COMMAND niceops_build_atmosphere ${BUILD_ATMOSPHERE_HARNESS} -o integrated/build_atmosphere_harness.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME build_atmosphere_harness_m COMMAND niceops_build_atmosphere --units m build --column ${BUILD_ATMOSPHERE_DATA}/lidar_m.csv --column ${BUILD_ATMOSPHERE_DATA}/string_m.csv --missing 9999 --humidity 62.5 --levels 0,0.3048,0.9144000000000001,3.048,6.096 --z0 0.030480000000000004 --top 1524 -o integrated/build_atmosphere_harness_m.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_surface build_atmosphere_harness build_atmosphere_harness_m PROPERTIES FIXTURES_SETUP build_atmosphere_runs)
+add_test(NAME build_atmosphere_surface_is_wind COMMAND ${CMAKE_COMMAND} -E compare_files integrated/build_atmosphere_surface.csv integrated/wind_profile_law.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_surface_is_wind PROPERTIES FIXTURES_REQUIRED "build_atmosphere_runs;wind_law_runs")
+add_test(NAME build_atmosphere_is_harness_profile COMMAND golden_compare integrated/build_atmosphere_harness.csv tests/data/atmosphere_builder_expected_ft.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME build_atmosphere_units_agree COMMAND golden_compare integrated/build_atmosphere_harness_m.csv tests/data/atmosphere_builder_expected_m.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set(BUILD_ATMOSPHERE_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere integrated/build_atmosphere_harness.csv --refraction stratified --frame_bearing 210 --ground_effect --gridstep 984 -L warn)
+add_test(NAME build_atmosphere_stratified COMMAND niceops ${BUILD_ATMOSPHERE_RUN} -o integrated/build_atmosphere_stratified.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME build_atmosphere_stratified_marched COMMAND niceops ${BUILD_ATMOSPHERE_RUN} -D integrated/build_atmosphere_stratified_dnl.csv -o integrated/build_atmosphere_stratified_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_stratified build_atmosphere_stratified_marched PROPERTIES FIXTURES_SETUP build_atmosphere_stratified_runs FIXTURES_REQUIRED build_atmosphere_runs)
+add_test(NAME build_atmosphere_stratified_windowed_is_exact COMMAND golden_compare integrated/build_atmosphere_stratified.csv integrated/build_atmosphere_stratified_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_is_harness_profile build_atmosphere_units_agree PROPERTIES FIXTURES_REQUIRED build_atmosphere_runs)
+set_tests_properties(build_atmosphere_stratified_windowed_is_exact PROPERTIES FIXTURES_REQUIRED build_atmosphere_stratified_runs)
+# fit_z0 gives back the roughness length of runs that follow the log law exactly (written by
+# tests/data/atmosphere_builder/fit_runs.py), leaving out the one in light wind.
+add_test(NAME fit_z0_known COMMAND niceops_build_atmosphere fit_z0 ${BUILD_ATMOSPHERE_DATA}/fit_run1.csv ${BUILD_ATMOSPHERE_DATA}/fit_run2.csv ${BUILD_ATMOSPHERE_DATA}/fit_run3.csv ${BUILD_ATMOSPHERE_DATA}/fit_run4.csv ${BUILD_ATMOSPHERE_DATA}/fit_run5.csv ${BUILD_ATMOSPHERE_DATA}/fit_run6.csv --missing 9999 --draws 200 --table integrated/fit_z0_known.csv -o integrated/fit_z0_known.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(fit_z0_known PROPERTIES FIXTURES_SETUP fit_z0_runs PASS_REGULAR_EXPRESSION "excluded fit_run6: light wind")
+add_test(NAME fit_z0_recovers_known COMMAND golden_compare integrated/fit_z0_known.csv ${BUILD_ATMOSPHERE_DATA}/fit_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(fit_z0_recovers_known PROPERTIES FIXTURES_REQUIRED fit_z0_runs)
+# What the builder refuses, by message.
+add_test(NAME build_atmosphere_z0_missing_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --humidity 50 --temperature 288 --top 5000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_missing_refused PROPERTIES PASS_REGULAR_EXPRESSION "give the roughness length, --z0 or --z0_from")
+add_test(NAME build_atmosphere_top_missing_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --humidity 50 --temperature 288 --z0 0.1 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_top_missing_refused PROPERTIES PASS_REGULAR_EXPRESSION "give --top")
+add_test(NAME build_atmosphere_bare_speed_refused COMMAND niceops_build_atmosphere build --wind 10,270 --humidity 50 --temperature 288 --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_bare_speed_refused PROPERTIES PASS_REGULAR_EXPRESSION "--wind: name the speed's unit")
+add_test(NAME build_atmosphere_calm_gate_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/calm_gate_ft.csv --humidity 50 --temperature 288 --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_calm_gate_refused PROPERTIES PASS_REGULAR_EXPRESSION "gives a calm wind at 125 ft, above the ground")
+add_test(NAME build_atmosphere_z0_above_gate_refused COMMAND niceops_build_atmosphere build --wind 10kt,270,5 --humidity 50 --temperature 288 --z0 8 --top 5000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_above_gate_refused PROPERTIES PASS_REGULAR_EXPRESSION "the lowest wind level \\(5 ft\\) has to stand above the roughness length \\(8 ft\\)")
+add_test(NAME build_atmosphere_pressure_rises_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/pressure_rises_ft.csv --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_pressure_rises_refused PROPERTIES PASS_REGULAR_EXPRESSION "pressure from .*pressure_rises_ft.csv rises with height")
+add_test(NAME build_atmosphere_duplicate_source_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/string_ft.csv --column ${BUILD_ATMOSPHERE_DATA}/pressure_rises_ft.csv --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_duplicate_source_refused PROPERTIES PASS_REGULAR_EXPRESSION "the temperature comes from both .* name the one to take with --temperature_from")
+add_test(NAME build_atmosphere_depth_with_gates_refused COMMAND niceops_build_atmosphere ${BUILD_ATMOSPHERE_HARNESS} --surface_layer_depth 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_depth_with_gates_refused PROPERTIES PASS_REGULAR_EXPRESSION "--surface_layer_depth carries the law above a single wind level")
+add_test(NAME build_atmosphere_humidity_over_100_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/humid_ft.csv --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_humidity_over_100_refused PROPERTIES PASS_REGULAR_EXPRESSION "relative humidity of 103 percent at 100 ft, above saturation")
+add_test(NAME build_atmosphere_fill_value_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --humidity 50 --temperature 288 --z0 0.1 --top 5000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_fill_value_refused PROPERTIES PASS_REGULAR_EXPRESSION "data row 5 gives a wind speed of 5143.93 m/s, which is not plausible. List a fill value with --missing")
 # --scattering fills shadows with scattered energy, a gain the peak search's bound has to allow: the
 # creeping-wave and scattering caps were the survivors of mutation testing, with no CTest running the option.
 add_test(NAME scattering_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --scattering 3e-6 --gridstep 492 -L warn -o integrated/scattering_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

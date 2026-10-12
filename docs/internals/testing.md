@@ -319,6 +319,18 @@ plane, the climb's fade at hover, and the frame's precedence over the fit. CTest
   0.1 dB.
 - **Calm air**, `wind_calm_air_is_ground`; and the refusals (`wind_speed_needs_unit`,
   `wind_with_atmosphere_refused`, `wind_options_need_wind`, and others), on their messages.
+- **The profile builder** (`niceops_build_atmosphere`). `build_atmosphere_surface_is_wind`: one
+  surface observation with `--wind`'s choices writes the file `wind_profile_written` writes, byte
+  for byte. `build_atmosphere_is_harness_profile`: the 2017 layout (seven LIDAR gates, one a fill
+  value, a string every 10 ft, a station humidity, the harness's level list) equals the
+  validation harness's own `Weather.profile`, which `tests/data/atmosphere_builder_expected.py`
+  runs on the same synthetic run. Regenerate that CSV from the script with the harness checked
+  out, never from the tool. `build_atmosphere_units_agree`: the same build in meters.
+  `build_atmosphere_stratified_windowed_is_exact`: a built profile runs under stratified
+  refraction, and the peak search over it equals a march. `fit_z0_recovers_known`: exact log-law
+  runs (`tests/data/atmosphere_builder/fit_runs.py`) give z0 back, with the light-wind run left
+  out. The refusals pass on their messages. The Catch2 cases are listed in
+  [atmosphere.md](atmosphere.md#wind-profile-tests).
 
 ## The plotting gap
 

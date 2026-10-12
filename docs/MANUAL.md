@@ -35,6 +35,7 @@ the code, start with the [README](../README.md); developers start at
   above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel) · [EPNL and reception-time
   frames](#epnl-and-reception-time-frames)
 - [Companion tools](#companion-tools): [`niceops_procedure`](#niceops_procedure) · [`niceops_propagation_table`](#niceops_propagation_table) ·
+  [`niceops_build_atmosphere`](#niceops_build_atmosphere) ·
   [`niceops_pe_compare`](#niceops_pe_compare) · [`niceops_benchmark`](#niceops_benchmark) · [Plot
   scripts](#plot-scripts)
 - [Performance](#performance): [How much gets evaluated](#how-much-gets-evaluated) ·
@@ -628,7 +629,8 @@ z_ft,T_K,RH,p_kPa
 - **Pressure.** Without a column, it is integrated hydrostatically up from the surface pressure
   (the vehicle file's or `--pressure`'s). A single row is a uniform atmosphere.
 - **The profile has to reach the aircraft.** A trajectory above the top level is refused. Below
-  the lowest level that level is held to the ground, so give the profile a level at the ground.
+  the lowest level that level is held to the ground, so give the profile a level at the ground
+  ([`niceops_build_atmosphere`](#niceops_build_atmosphere) always writes one).
 - **Surface properties stay at the surface**: the ground level supplies the sound speed for the
   reception time and the ground impedance.
 - **Not with `--temperature` or `--humidity`**; `--pressure` only when the file has no pressure.
@@ -1324,8 +1326,8 @@ to the run; `--band_frames` more than doubles it and holds about 0.9 GB.
 
 ## Companion tools
 
-The build also makes three tools for checking the propagation models and building tables, and
-one for building tracks. They share the `--units` convention (feet by default) and the profile
+The build also makes three tools for checking the propagation models and building tables, one
+for building tracks, and one for building profiles. They share the `--units` convention (feet by default) and the profile
 format.
 
 ### `niceops_procedure`
@@ -1433,6 +1435,92 @@ limit are reported but not scored. The error includes the reference's own resolu
 bounds neither the error everywhere nor the hand-over to the run's own model. Use the failing
 coordinates to add height nodes, shorten the range step or add bearings. Measured table errors
 are in [FIDELITY](FIDELITY.md#propagation-tables).
+
+### `niceops_build_atmosphere`
+
+Builds an `--atmosphere` profile from measured columns, and fits a site's roughness length to
+wind profiles. Use `build` for anything measured or modeled in height: a met tower, a sodar or
+LIDAR, a temperature string or tethered balloon, a radiosonde, or a weather model's column already
+extracted to CSV. Use `fit_z0` for a site with a LIDAR or tower whose roughness length nobody
+measured.
+
+```sh
+niceops_build_atmosphere build --column lidar.csv --column string.csv --missing 9999 \
+    --humidity 62.5 --z0 0.1 --top 5000 -o atmospheres/run.csv
+niceops --atmosphere atmospheres/run.csv --pressure 101.2 --refraction stratified ...
+
+niceops_build_atmosphere fit_z0 runs/*.csv --missing 9999 -o site_z0.json
+niceops_build_atmosphere build ... --z0_from site_z0.json -o atmospheres/run.csv
+```
+
+**Inputs to `build`.** Each `--column FILE` gives every variable it carries, under the column
+names of [Stratified atmosphere](#stratified-atmosphere). Any variable may be missing, and the
+humidity may also be a dew point (`Td_C`, `Td_K`) or a specific humidity (`q_kgkg`, `q_gkg`, with
+the pressure in the same rows). A variable two files carry is refused; `--wind_from`,
+`--temperature_from`, `--humidity_from` and `--pressure_from` name the file to take it from.
+`--temperature`, `--humidity`, `--pressure` and `--wind SPEED,DIRECTION[,HEIGHT]` (as niceops's
+`--wind`) are a surface station: its air is the ground level's, and its wind a level at the
+anemometer. Lengths are in `--units`, feet by default, on the command line and in the files.
+
+- **`--missing V ...`** lists cell values that are fill, not data (9999, 99999, a LIDAR's
+  1.944e4). They are dropped for their variable at their level, and counted. Any other
+  implausible value is refused with its file and row; `--drop_implausible` drops those too.
+- **Instrument cleaning stays with the caller**: a LIDAR's 180° direction ambiguity, a balloon
+  that was not aloft, or a GRIB2 file. The tool takes clean columns.
+
+**The profile.**
+
+- **The ground level** takes the station's value where one is given. Otherwise it takes the
+  measurements interpolated to the ground; levels below it (an instrument standing lower than
+  the microphones) count only for that. Otherwise the lowest value is held down, with a warning.
+  The wind at the ground is calm.
+- **Below the lowest wind level**, `--fill log` (the default) carries that level's wind down by
+  the `--wind` log law, which makes the roughness length the only thing the fill adds. `--fill
+  hold` holds the level's wind down; `--fill none` takes it linearly to calm at the ground. The
+  first level above the ground is at ten roughness lengths (or the lowest wind level, if lower),
+  so no level above the ground is calm.
+- **`--z0` or `--z0_from` is required.** Nothing measures the roughness length, and the wind
+  near the ground depends on it, so a profile never carries a default. A weather model's z0 is a
+  grid cell's, not the site's.
+- **Between measurements** temperature and humidity are linear in height, the wind linear in its
+  components, and pressure in its logarithm. **Above** each variable's highest measurement it is
+  held; `--above lapse` lapses the temperature dry-adiabatically instead, and `--humidity_aloft
+  held_concentration` keeps the water vapor and lets the relative humidity follow the cooling air.
+  `--surface_layer_depth` carries the law up from a single wind level, as `--wind` does; with
+  several levels it is refused. `--stability` applies only to a temperature measured at the ground
+  alone, with `--above lapse`.
+- **Levels.** By default they are geometric, `--levels_per_decade` (16) a decade, through every
+  measured level. `--levels 0,1,3,10,20` instead gives the levels to use, to which every
+  measured level, the ground and the top are added. Give the levels a profile was run with when
+  reproducing it: the stratified ray search follows the layers.
+- **`--top` is required**: a run refuses a track above the profile.
+- **Pressure** is written when measured, or with `--write_pressure` or `held_concentration` from
+  `--pressure`, hydrostatically. Otherwise the file has none and the run integrates its own.
+
+**What it refuses**, naming the cause: a calm wind measured above the ground (`--calm_levels
+drop` drops it), a roughness length at or above the lowest wind level, pressure rising with
+height, a relative humidity above 100 (`--clip_humidity` clips it), two levels of one variable at
+one height, a variable two files offer, a speed without its unit, and any output `--atmosphere`
+would refuse. The written file is read back through `--atmosphere`'s reader before the tool exits.
+
+**Provenance.** Beside the profile, `OUT.provenance.json` (or `--provenance`) records the build,
+the command line, each input's digest, the rules, the roughness length and where it came from,
+which heights each variable was measured over and which stretches of wind were filled, the counts
+of dropped values, and every warning. The CSV itself stays plain.
+
+**`fit_z0`** takes one column file per run, named for the run, and fits one roughness length to
+every run's gates between `--gates LOW,HIGH` (default 46,197 ft), with the log law's slope free
+per run ([THEORY §7](THEORY.md#7-the-stratified-moving-atmosphere)). A run enters only if it is
+near neutral: `--max_richardson` (0.05) on the bulk Richardson number from the temperatures in the
+same file, at least `--min_speed` (3mps) at the highest gate, and at most `--max_veer` (20°) of
+turning. A run without temperatures at both gate heights is left out unless `--assume_neutral`.
+The output JSON holds z0 with its 95% bootstrap interval over runs (`--draws`, `--seed`), the runs
+used and each one left out with its reason; `--table` writes a one-row CSV. Fewer than
+`--min_runs` (5) runs are refused. The fit is ill-conditioned (a 1% error in the speed ratio
+moves z0 by a factor of about 1.4), so pool runs, and quote the interval with z0. A low gate
+biased by its probe volume would bias z0.
+
+Both commands take milliseconds to a second.
 
 ### `niceops_pe_compare`
 
