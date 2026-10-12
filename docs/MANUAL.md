@@ -27,7 +27,8 @@ the code, start with the [README](../README.md); developers start at
   [Terrain](#terrain) · [Refraction](#refraction) · [Refraction through the profile's
   layers](#refraction-through-the-profiles-layers) · [Low sources near grazing: the resolved
   shadow](#low-sources-near-grazing-the-resolved-shadow) · [Micro-shadows and skip
-  zones](#micro-shadows-and-skip-zones) · [Propagation loss tables](#propagation-loss-tables)
+  zones](#micro-shadows-and-skip-zones) · [Propagation loss tables](#propagation-loss-tables) ·
+  [Urban receivers](#urban-receivers)
 - [Metrics and output files](#metrics-and-output-files): [Output files](#output-files) · [Run records and option files](#run-records-and-option-files) · [Exposure
   (SEL) and the 10 dB-down window](#exposure-sel-and-the-10-db-down-window) · [Several trajectories,
   and the day-night level](#several-trajectories-and-the-day-night-level) · [An operations
@@ -36,6 +37,7 @@ the code, start with the [README](../README.md); developers start at
   frames](#epnl-and-reception-time-frames)
 - [Companion tools](#companion-tools): [`niceops_procedure`](#niceops_procedure) · [`niceops_propagation_table`](#niceops_propagation_table) ·
   [`niceops_build_atmosphere`](#niceops_build_atmosphere) ·
+  [`niceops_urban_table`](#niceops_urban_table) ·
   [`niceops_pe_compare`](#niceops_pe_compare) · [`niceops_benchmark`](#niceops_benchmark) · [Plot
   scripts](#plot-scripts)
 - [Performance](#performance): [How much gets evaluated](#how-much-gets-evaluated) ·
@@ -183,6 +185,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--plate_mic_azimuth` | Which way the microphone is offset on its plate: `outboard` (default, away from the track) or degrees in the local frame from +x toward +y. |
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state rather than from per-trajectory tables. Slower; for checking the tables. |
 | `--propagation_table` | A propagation loss table (netCDF) that replaces the ground and ray models wherever it covers a pair ([Propagation loss tables](#propagation-loss-tables)). Spectral path only. |
+| `--urban_table` | Urban receivers: for each microphone it holds, what the street around it does to the direct path, and its facades' first-order reflections ([Urban receivers](#urban-receivers)). Built by `niceops_urban_table`. Spectral path only; not with `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`. |
 | `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
@@ -1031,6 +1034,37 @@ Interpolating between source heights is where a table's error is: build tables a
 apart at the highest band, or densely at the lowest heights, and check them with
 `--validation_csv`. Reading a table costs little.
 
+### Urban receivers
+
+`--urban_table` puts microphones in streets. For each microphone it holds, the table gives what
+the buildings around it do to the sound arriving from each direction, and the facades that
+reflect it ([THEORY §6.5](THEORY.md#65-urban-receivers)). The run evaluates the direct path as it
+always does and adds the table's gain, in dB per band, at the source's compass bearing and
+elevation from the microphone. That gain carries the shielding where buildings block the direct
+path and the street's further reflections. Each first-order facade reflection is evaluated as a
+path of its own, with the sphere read in the direction the reflected sound leaves the rotor, and
+the paths are summed in energy. Microphones without a table are evaluated as without one.
+
+- **Building one.** [`niceops_urban_table`](#niceops_urban_table) builds tables for microphones in
+  ideal street canyons: two long parallel walls, by the street's bearing, width, the microphone's
+  offset and the walls' heights. A row of width 0 is an open microphone, 0 dB with no facades.
+- **Receivers are matched by position**, to a millimeter: a receiver is a microphone (an
+  observer raised by its height) in the run's local frame. Build the table from the run's own
+  observer file. A table none of whose receivers is in the run is refused; receivers the run does
+  not have are warned about.
+- **The frame.** Azimuths are compass bearings and the geometry is local, so the run's
+  `--frame_bearing` must be the one the table was built with (east when neither gives one).
+- **Coverage.** A direction outside the table's elevations, or a NaN, takes the open-ground model
+  with no urban terms at all; the log counts these.
+- **Interpolation** is bilinear in dB, which smooths the steps at shadow edges over one cell.
+- **What the canyon model leaves out.** The walls reflect specularly; diffraction is a
+  placeholder over the blocking wall's top; diffuse reflection, the street's ends, turbulence in
+  the shadows and low-frequency wave effects are not modeled. Treat the tables' detail at low
+  elevations, where specular reflection switches paths on and off, with caution.
+- **Not with** `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`.
+
+A microphone in a street costs about one extra evaluation per reflecting facade.
+
 ## Metrics and output files
 
 ### Output files
@@ -1593,6 +1627,39 @@ moves z0 by a factor of about 1.4), so pool runs, and quote the interval with z0
 biased by its probe volume would bias z0.
 
 Both commands take milliseconds to a second.
+
+### `niceops_urban_table`
+
+Builds an `--urban_table` ([Urban receivers](#urban-receivers)) for microphones in ideal street
+canyons, one per row of a CSV read by column name. Lengths are in `--units`; a column may name
+its unit (`x_ft`, `height_m`), which must then be `--units`.
+
+```sh
+niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_factor.nod \
+    --frame_bearing 210 -o tables/streets.nc
+```
+
+| Column | Meaning |
+| --- | --- |
+| `x`, `y`, `z`, `height` | The observer and its microphone height, as the run's observer file gives them. An `id` column is ignored. |
+| `axis` | Compass bearing of the street, degrees, either way along it. |
+| `width` | Between the walls; 0 for an open microphone, when the rest of the row is not read. |
+| `offset` | The microphone's distance from wall A, the wall on the left looking along `axis`. |
+| `height_a`, `height_b` | The walls' tops above the ground. |
+| `absorption_a`, `absorption_b` | Optional: each wall's energy absorption coefficient, every band. |
+
+| Option | Meaning |
+| --- | --- |
+| `--canyons` | The CSV above. Required. |
+| `--database`, `--bands` | Band centers from a database, or given. |
+| `--azimuths` | Azimuths evenly over 360°. Default 72. |
+| `--elevations` | Elevations, degrees. Default 0 to 30 by 1.5, then 35 to 90 by 5. |
+| `--frame_bearing` | The compass bearing of the run's local +x axis. Default 90 (east). |
+| `--absorption` | The walls' absorption where a row gives none. Default 0, rigid. |
+| `--facade_length` | Each wall's length for the run's reflections, centered on the microphone. Default 10 km, effectively infinite. |
+| `--sound_speed` | For the diffracted path's wavelengths, m/s. Default 343.2. |
+| `--no_diffraction` | Leave out the diffracted path over a blocking wall. |
+| `--units`, `-o` | `ft` (default) or `m`; the table to write (SI). |
 
 ### `niceops_pe_compare`
 

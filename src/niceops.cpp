@@ -50,6 +50,7 @@
 #include "operations.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
+#include "urban.hpp"
 #include "raster.hpp"
 #include "terrain.hpp"
 #include "weighting.hpp"
@@ -740,6 +741,11 @@ struct RunOptions
     // (propagation_table.hpp).
     std::shared_ptr<const PropagationTable> propagation_table;
     std::string propagation_table_path;
+    // Urban receivers (--urban_table), read once for the run: per microphone,
+    // a table of what the buildings do to the direct path and the facades of
+    // its first-order reflections (urban.hpp).
+    std::shared_ptr<const UrbanTable> urban_table;
+    std::string urban_table_path;
     // --terrain, read once for the run: the ground models take each path's
     // mean ground line from it (terrain_ray), resampled per trajectory onto the
     // local frame every terrain_step meters with terrain_offset (m) added.
@@ -1974,6 +1980,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<double> table_plate_offset;
     double table_plate_step = 0.0;
     std::size_t table_plate_elevations = 0;
+    // --urban_table: where the run's bands sit in it; each observer's receiver
+    // in it (no_urban_receiver for one without); and each receiver's facades'
+    // reflection as a loss per run band, dB, laid out from
+    // urban_facade_first[receiver] in [facade * bands + band].
+    constexpr std::size_t no_urban_receiver = static_cast<std::size_t>(-1);
+    UrbanTable::BandMap urban_bands;
+    std::vector<std::size_t> urban_of;
+    std::vector<std::size_t> urban_facade_first;
+    std::vector<double> urban_reflection_loss;
+    std::size_t urban_observers = 0;
     // Whether the table refracts: anything but a ground-model table, unless
     // its provenance records that it was built with no atmosphere.  Over
     // terrain such a table is read by height above each path's mean plane,
@@ -2029,10 +2045,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             input_error("--terrain_screening is per band, and ", job.database, " carries no per-band "
                         "spectra. Rebuild it with spectra, or leave out --terrain_screening.");
         if (options.spectral_explicit || options.ground_effect_given || atmosphere
-                || options.propagation_table || !options.ground_classes.empty())
+                || options.propagation_table || options.urban_table || !options.ground_classes.empty())
         {
             const std::string profile_option = options.surface_wind ? "--wind" : "--atmosphere";
             const std::string asked = options.propagation_table ? "--propagation_table"
+                    : options.urban_table                       ? "--urban_table"
                     : !options.ground_classes.empty()           ? "--ground_classes"
                     : options.ground_effect_given               ? "--ground_effect"
                     : atmosphere                                ? profile_option
@@ -2503,6 +2520,67 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     warn(note);
             }
         }
+
+        // --urban_table: each microphone with a receiver in the table takes
+        // its urban terms; the rest are evaluated as without it.  A receiver
+        // is matched by position, to a millimeter: the builder takes the same
+        // observer file's coordinates.
+        if (options.urban_table)
+        {
+            const UrbanTable& urban = *options.urban_table;
+            try
+            {
+                urban_bands = urban.match_bands(bands, first_band, last_band);
+            }
+            catch (const std::runtime_error& e)
+            {
+                input_error("--urban_table ", options.urban_table_path, ": ", e.what(), ".");
+            }
+            constexpr double match_tolerance = 1e-3;
+            urban_of.assign(observer_count, no_urban_receiver);
+            std::vector<char> used(urban.receivers().size(), 0);
+            for (std::size_t i = 0; i < observer_count; i++)
+            {
+                const std::size_t r = urban.find_receiver(microphones[i], match_tolerance);
+                if (r == urban.receivers().size())
+                    continue;
+                urban_of[i] = r;
+                used[r] = 1;
+                urban_observers++;
+            }
+            if (urban_observers == 0)
+                input_error("--urban_table ", options.urban_table_path, ": none of its ", urban.receivers().size(),
+                        " receivers stands within 1 mm of one of this run's ", observer_count,
+                        " microphones. A receiver is a microphone -- an observer raised by its height -- in the "
+                        "run's local frame; build the table from this run's observer file.");
+            const auto unused = static_cast<std::size_t>(std::count(used.begin(), used.end(), char(0)));
+            if (unused > 0)
+                warn("--urban_table ", options.urban_table_path, ": ", unused, " of its ", urban.receivers().size(),
+                        " receivers stand at none of this run's microphones and are not used.");
+            const std::size_t table_bands_count = urban.axes().bands.size();
+            urban_facade_first.assign(urban.receivers().size() + 1, 0);
+            for (std::size_t r = 0; r < urban.receivers().size(); r++)
+                urban_facade_first[r + 1] = urban_facade_first[r] + urban.receivers()[r].facades.size();
+            urban_reflection_loss.assign(urban_facade_first.back() * bands.size(), 0.0);
+            for (std::size_t r = 0; r < urban.receivers().size(); r++)
+            {
+                const auto& receiver = urban.receivers()[r];
+                for (std::size_t k = 0; k < receiver.facades.size(); k++)
+                    for (std::size_t band = first_band; band < last_band; band++)
+                    {
+                        // A facade that reflects nothing in a band takes a
+                        // loss no level survives, rather than infinity.
+                        const double reflection = receiver.reflection[k * table_bands_count + urban_bands.column[band]];
+                        urban_reflection_loss[(urban_facade_first[r] + k) * bands.size() + band]
+                                = -10.0 * std::log10(std::max(reflection, 1e-30));
+                    }
+            }
+            log("  urban table ", options.urban_table_path, ": ", urban.method(), "; ", urban_observers, " of ",
+                    observer_count, " microphones have a receiver in it, with ", urban_facade_first.back(),
+                    " facades among its ", urban.receivers().size(), " receivers; ", urban.axes().azimuths.size(),
+                    " azimuths, elevations ", urban.axes().elevations.front(), " to ",
+                    urban.axes().elevations.back(), " degrees.");
+        }
     }
 
     // --refraction linear: the effective sound speed tabulated for the
@@ -2766,6 +2844,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 for (std::size_t band = 0; band < path_gains.size(); band++)
                     path_gains[band] = std::max(path_gains[band], table_gains[band]);
             }
+            // --urban_table: a covered direct path gains at most the table's
+            // largest value on top of its ground term.  Each first-order image
+            // is bounded in its own direction (urban_bound_geometry) and loses
+            // its facade's reflection, so it takes nothing more.
+            if (options.urban_table)
+            {
+                const auto urban_gains = options.urban_table->max_power_ratio(urban_bands);
+                for (std::size_t band = 0; band < path_gains.size(); band++)
+                    path_gains[band] *= urban_gains[band];
+            }
             // --terrain_screening: a blocked pair, table or no table, is the
             // free field less Delta_dif >= 10 lg 3, times each side's ground
             // factor, at most max(1, G) for that side (screen_gain_bound).  The
@@ -2933,6 +3021,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::atomic<std::size_t> shadowed_samples {0};
     std::atomic<std::size_t> table_samples {0};
     std::atomic<std::size_t> fallback_samples {0};
+    // --urban_table: the evaluations at urban microphones that read their
+    // table, those it did not cover, and the first-order reflections taken.
+    std::atomic<std::size_t> urban_samples {0};
+    std::atomic<std::size_t> urban_fallback_samples {0};
+    std::atomic<std::size_t> urban_image_samples {0};
     std::atomic<std::size_t> terrain_samples {0};
     std::atomic<std::size_t> terrain_raised {0};
     // Which observers had a height raised onto their path's mean ground plane
@@ -3111,6 +3204,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> shadow(effective_sound_speed ? database.band_centers().size() : 0, 0.0);
         std::vector<double> table_loss(options.propagation_table ? database.band_centers().size() : 0, 0.0);
         std::size_t tabled_here = 0, fallback_here = 0;
+        // --urban_table's scratch: the direct path's loss, an image's bands,
+        // and the counts.
+        std::vector<double> urban_loss(options.urban_table ? database.band_centers().size() : 0, 0.0);
+        std::vector<double> urban_image_bands(urban_loss.size(), 0.0);
+        std::size_t urban_here_count = 0, urban_fallback_here = 0, urban_image_here = 0;
         // --terrain: each observer's mean ground lines (GroundPlaneCache), and
         // how many pairs took one, and how many had a height raised to zero.
         std::optional<GroundPlaneCache> planes;
@@ -3399,6 +3497,112 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, bands_out);
             };
+            // --urban_table, a microphone with a receiver in it: the direct
+            // path as straight_level takes it, less the table's loss in the
+            // direction of the source, plus each first-order reflection as a
+            // path of its own -- the microphone mirrored in the facade, with
+            // its own sphere lookup, spreading, absorption and ground term --
+            // less the facade's reflection loss, summed in energy.  The image
+            // arrives at a plate crossing it from the mirrored side, so its
+            // separation is mirrored back; its ground model is evaluated
+            // exactly, since the ground table's extent follows the observers.
+            // A direction the table does not cover takes straight_level, with
+            // no urban terms at all.  With no reflection the level is the
+            // direct path's as returned, which is what keeps a table of 0 dB
+            // and no facades to the bit.
+            const std::size_t urban_receiver = urban_of.empty() ? no_urban_receiver : urban_of[index];
+            const UrbanTable::Receiver* urban_here = urban_receiver == no_urban_receiver
+                    ? nullptr
+                    : &options.urban_table->receivers()[urban_receiver];
+            const double* urban_reflection_here = urban_here == nullptr
+                    ? nullptr
+                    : urban_reflection_loss.data() + urban_facade_first[urban_receiver] * database.band_centers().size();
+            auto urban_level = [&](std::size_t it, double* bands_out) {
+                const Vec3& source = source_states[it].position;
+                const Vec3 toward = source - observer;
+                const auto east_north = compass.east_north({toward.x, toward.y});
+                const double azimuth = std::atan2(east_north[0], east_north[1]) * 180.0 / pi;
+                const double elevation = std::atan2(toward.z, toward.horizontal_norm()) * 180.0 / pi;
+                if (!options.urban_table->lookup(urban_receiver, azimuth, elevation, urban_bands, urban_loss.data()))
+                {
+                    urban_fallback_here++;
+                    return straight_level(it, bands_out);
+                }
+                urban_here_count++;
+                for (std::size_t band = first_band; band < last_band; band++)
+                    urban_loss[band] = -urban_loss[band];
+                const double* pair_absorption = absorption_for(it, observer);
+                const double level = database.spectral_level_along(straight_ray(source, observer), source_states[it],
+                        pair_absorption, band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
+                        packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, urban_loss.data(), nullptr,
+                        bands_out);
+                double energy = 0.0;
+                bool reflected = false;
+                const auto& facades = urban_here->facades;
+                for (std::size_t k = 0; k < facades.size(); k++)
+                {
+                    Vec3 image;
+                    if (!first_order_image(facades, k, source, observer, image))
+                        continue;
+                    if (!reflected)
+                        energy = std::pow(10.0, 0.1 * level);
+                    reflected = true;
+                    urban_image_here++;
+                    RayPath path = straight_ray(source, image);
+                    path.separation = mirror_direction(facades[k], path.separation);
+                    const double here = database.spectral_level_along(path, source_states[it], pair_absorption,
+                            band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
+                            packed_of_state[it], plate_receiver, plate_mic_azimuth, nullptr,
+                            urban_reflection_here + k * database.band_centers().size(), nullptr,
+                            bands_out != nullptr ? urban_image_bands.data() : nullptr);
+                    energy += std::pow(10.0, 0.1 * here);
+                    if (bands_out != nullptr)
+                        for (std::size_t band = first_band; band < last_band; band++)
+                            bands_out[band] = 10.0 * std::log10(std::pow(10.0, 0.1 * bands_out[band])
+                                    + std::pow(10.0, 0.1 * urban_image_bands[band]));
+                }
+                return reflected ? 10.0 * std::log10(energy) : level;
+            };
+            // The peak search's geometry for an urban microphone: the direct
+            // path and each first-order image, each bounded by its own
+            // direction's numerator over its own squared range, so the largest
+            // numerator over the harmonic sum of the squared ranges bounds
+            // their sum (as bound_geometry does for several eigenrays).
+            auto urban_bound_geometry = [&](std::size_t it) {
+                const auto& state = source_states[it];
+                const Vec3& source = state.position;
+                auto geometry = [&](const Vec3& delta) {
+                    return StateGeometry {delta.squaredNorm(), state.frame.nose.dot(delta), state.frame.normal.dot(delta),
+                            state.frame.starboard.dot(delta)};
+                };
+                const StateGeometry primary = geometry(observer - source);
+                StateGeometry pick = primary;
+                double inverse = 1.0 / primary.squared_range;
+                double best = direction_bounds.numerator(it,
+                        DirectionBounds::bin(primary.along, primary.up, primary.across, primary.squared_range));
+                bool reflected = false;
+                const auto& facades = urban_here->facades;
+                for (std::size_t k = 0; k < facades.size(); k++)
+                {
+                    Vec3 image;
+                    if (!first_order_image(facades, k, source, observer, image))
+                        continue;
+                    reflected = true;
+                    const StateGeometry g = geometry(image - source);
+                    inverse += 1.0 / g.squared_range;
+                    const double n = direction_bounds.numerator(it, DirectionBounds::bin(g.along, g.up, g.across,
+                            g.squared_range));
+                    if (n > best)
+                    {
+                        best = n;
+                        pick = g;
+                    }
+                }
+                if (!reflected)
+                    return primary;
+                const double scale = std::sqrt(1.0 / (inverse * pick.squared_range));
+                return StateGeometry {1.0 / inverse, pick.along * scale, pick.up * scale, pick.across * scale};
+            };
             const GroundGeometry ray_ground = ground_model == nullptr ? GroundGeometry::none
                     : flush                                           ? GroundGeometry::plate
                                                                       : GroundGeometry::point;
@@ -3561,6 +3765,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                                 return sound_speed * form_ray(it, observer, at_receiver).travel_time;
                             });
                 }
+                else if (urban_here != nullptr)
+                {
+                    integrated_levels[index] = windowed_exposure(nt, direction_bounds, sphere_radius_squared,
+                            integration_step, sound_speed, levels, visited, skipped_numerator,
+                            skipped_squared_range, generation, evaluated_here,
+                            [&](std::size_t it) { return urban_bound_geometry(it); },
+                            [&](std::size_t it, StateGeometry&&) { return urban_level(it, nullptr); },
+                            [&](std::size_t it) { return (observer - source_states[it].position).norm(); });
+                }
                 else
                 {
                     // expand_from_peak holds only when the spectral bound was built.
@@ -3613,7 +3826,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     double* bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
-                    double level = spectral ? straight_level(it, bands_out)
+                    double level = spectral ? (urban_here != nullptr ? urban_level(it, bands_out)
+                                                                     : straight_level(it, bands_out))
                                             : database.level_at_observer(observer, source_states[it]);
                     if (add_ambient)
                     {
@@ -3856,6 +4070,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         shadowed_samples += shadowed_here;
         table_samples += tabled_here;
         fallback_samples += fallback_here;
+        urban_samples += urban_here_count;
+        urban_fallback_samples += urban_fallback_here;
+        urban_image_samples += urban_image_here;
         terrain_samples += terrain_here;
         terrain_raised += raised_here;
         terrain_table_samples += terrain_table_here;
@@ -3936,6 +4153,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
     }
 
+    if (options.urban_table)
+    {
+        log("--urban_table: at its ", urban_observers, " urban microphones, ", urban_samples.load(),
+                " evaluations read their table and took ", urban_image_samples.load(),
+                " first-order reflections between them; ", urban_fallback_samples.load(),
+                " lay in directions it does not cover and took the open-ground model.");
+    }
     if (options.propagation_table)
     {
         const auto looked_up = table_samples.load() + fallback_samples.load();
@@ -4461,6 +4685,7 @@ int run(int argc, char* argv[])
     std::string ground_classes_file;
     std::string plate_table;
     std::string propagation_table;
+    std::string urban_table;
     std::string terrain_file;
     double terrain_offset = 0.0;  // meters
     double terrain_step = 0.0;    // meters; 0 follows the terrain's own spacing
@@ -4925,6 +5150,13 @@ int run(int argc, char* argv[])
             "height and range, for one stratified atmosphere over uniform ground. It replaces the "
             "ground and ray models wherever it covers a pair; elsewhere --ground_effect (or free "
             "field) applies. Spectral path only.");
+    app.add_option("--urban_table", urban_table,
+            "Urban receivers (netCDF; tools/urban_table.cpp builds one): for each microphone it holds, "
+            "what the buildings around it do to the direct path, by the source's direction, and the "
+            "facades of its first-order reflections, which are evaluated as paths of their own. "
+            "Receivers are matched to the run's microphones by position; the rest are evaluated as "
+            "without it. Spectral path only; not with --terrain, --refraction, --propagation_table "
+            "or --db_cutoff.");
     app.add_option("--terrain", terrain_file,
             "A bare-earth elevation grid (netCDF: latitude, longitude, elevation(latitude, "
             "longitude) in meters, e.g. USGS 3DEP). Grid observers stand on it, and the ground "
@@ -5619,6 +5851,23 @@ int run(int argc, char* argv[])
     }
     if (!propagation_table.empty() && !spectral)
         input_error("--propagation_table needs the spectral path.");
+    if (!urban_table.empty())
+    {
+        if (!spectral)
+            input_error("--urban_table needs the spectral path: its losses are per band.");
+        if (!terrain_file.empty())
+            input_error("--urban_table does not combine with --terrain: its facades and canyon floors stand on "
+                        "the plane z = 0 the tables were built over.");
+        if (refraction != "none")
+            input_error("--urban_table does not combine with --refraction yet: the table is read along the "
+                        "straight line to the source, not along an eigenray's arrival direction.");
+        if (!propagation_table.empty())
+            input_error("--urban_table does not combine with --propagation_table: each is defined against "
+                        "the open-ground model the other replaces.");
+        if (!std::isnan(db_cutoff))
+            input_error("--urban_table does not combine with --db_cutoff: the cutoff's bound covers the direct "
+                        "path alone, and not the first-order reflections.");
+    }
     for (const auto& [names, option] : {std::pair {&epnl_files, "--epnl_file"},
                  std::pair {&band_frames_files, "--band_frames"}})
     {
@@ -5892,6 +6141,22 @@ int run(int argc, char* argv[])
                     "run's settings (niceops_propagation_table --turbulence, --gamma_t, --roughness), or give "
                     "the run the table's.");
         }
+    }
+    if (!urban_table.empty())
+    {
+        options.urban_table = std::make_shared<const UrbanTable>(UrbanTable::load(urban_table));
+        options.urban_table_path = urban_table;
+        // Its receivers and facades are in a local frame, and its azimuths
+        // compass bearings: the run turns the one into the other with its own
+        // frame bearing, which has to be the table's (east, 90, when the run
+        // is given none).
+        const double run_frame = std::isnan(frame_bearing) ? 90.0 : frame_bearing;
+        const double table_frame = options.urban_table->frame_bearing();
+        if (std::abs(std::remainder(run_frame - table_frame, 360.0)) > 1e-9)
+            input_error("--urban_table ", urban_table, " was built with local +x along ", table_frame,
+                    " degrees, and this run's +x is along ", run_frame, " degrees",
+                    std::isnan(frame_bearing) ? " (east, as no --frame_bearing was given)" : "",
+                    ". Give --frame_bearing ", table_frame, ", or rebuild the table with the run's.");
     }
     if (!plate_table.empty())
     {

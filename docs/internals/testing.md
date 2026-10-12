@@ -67,6 +67,8 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `terrain_ridge_kirchhoff_plate.csv` | C++ build | `terrain_ridge_kirchhoff_plate_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_plate` | copy the run's output |
 | `terrain_ridge_kirchhoff_noground.csv` | C++ build | `terrain_ridge_kirchhoff_noground_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_noground` | copy the run's output |
 | `terrain_ridge_kirchhoff_table.csv` | C++ build | `terrain_ridge_kirchhoff_table_golden` (1e-5 dB abs.) | `terrain_ridge_kirchhoff_table` | copy the run's output |
+| `urban_canyon.csv` | C++ build | `urban_table_canyon_golden` (1e-6 dB abs.) | `urban_table_canyon` | copy the run's output |
+| `urban_plate.csv` | C++ build | `urban_table_plate_golden` (1e-6 dB abs.) | `urban_table_plate` | copy the run's output |
 
 All files are in `golden/`; each producing run writes `integrated/<name>.csv` unless the table
 says otherwise. To regenerate a C++ golden, run its comparison with the build that carries the
@@ -136,6 +138,10 @@ Notes on each:
   knife edge's four call sites: the ground model over the plane, the plate, the free field with no
   ground model, and the table (looser, as the table is built by the test run). Dropping the loss
   from the free field's or the table's call passed every other test.
+- **`urban_{canyon,plate}.csv`** were made by the build that added `--urban_table`: seven
+  microphones in ideal canyons on the demo track, poles and plates. They pin the call site: an
+  image path whose separation is not mirrored back before the plate reads its azimuth fails the
+  plate's, with every windowed/marched pair green.
 
 ## `self_test`
 
@@ -197,6 +203,8 @@ CTests are defined in `CMakeLists.txt`.
 | `terrain_ridge_screened_point_golden`, `terrain_ridge_screened_plate_golden` | CTest | the screened pair's call given the whole path's ground, plate and table besides its side terms; the plate's microphone side evaluated with the point model |
 | `a screened pair never exceeds the bound's screened term` | `test_screening.cpp` | F's clamp to 1 dropped; `screen_gain_bound` without G_S, or without the 1/3 (it must come within 3% of the bound, which rigid ground near grazing does). The call site's screening term removed from the bound passes every `terrain_ridge_screened_*_windowed_is_exact`, although the term raises the bound in most bands, so the run logs how many bands it raises and `terrain_ridge_screened_bound` requires at least one. Which classes the term's source side takes is guarded by reading |
 | `the point receiver's ground bound over several classes is their elementwise maximum` | `test_ground_classes.cpp` | the bound over the first class only, inside `point_ground_gain_bounds`. No CTest kills it: each class's bound is within about 3 dB of the others' in the bands A-weighting keeps, and `ground_classes{,_terrain}_windowed_is_exact` passed with it for grass, concrete, snow, water and passive thin layers. The call site passing every class (`point_classes`) is therefore guarded only by reading |
+| `urban_table_bump_windowed_is_exact` | CTest | the urban table's largest gain left out of `path_gains`. The canyon tables' own gains, at most +3 dB, sit inside the bound's slack, so the canyon and plate pairs pass with it; the bump table adds +25 dB at 3 to 20 degrees of elevation. The first-order images left out of `urban_bound_geometry` pass every CTest, including 150 random tall canyons near the end of the approach, with and without the ground: the table's own gain and the slack cover reflections leaving 10 to 40 degrees from the direct path on this database. It is kept for directional spheres and guarded by reading |
+| `urban_table_plate_golden` | CTest | an image path's separation not mirrored back before the plate reads its azimuth |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.

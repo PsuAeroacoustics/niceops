@@ -457,3 +457,28 @@ TEST_CASE("compass_direction inverts the local unit vector", "[urban]")
                 REQUIRE(d.elevation == Catch::Approx(elevation).margin(1e-9));
             }
 }
+
+// Not run by default: writes tables/urban_bump_test.nc for the CTest
+// urban_table_bump_windowed_is_exact, from the canyon table the CTests build
+// (tables/urban_canyon_test.nc): +25 dB at elevations 3 to 20 degrees, where
+// the demo track's states are otherwise quiet, so a peak search whose bound
+// left out the table's gain would skip the loudest states.
+TEST_CASE("write the urban bump table", "[.urban_bump_table]")
+{
+    const UrbanTable canyon = UrbanTable::load("tables/urban_canyon_test.nc");
+    const auto& axes = canyon.axes();
+    std::vector<double> gains;
+    for (std::size_t r = 0; r < canyon.receivers().size(); r++)
+        for (std::size_t a = 0; a < axes.azimuths.size(); a++)
+            for (std::size_t e = 0; e < axes.elevations.size(); e++)
+                for (std::size_t b = 0; b < axes.bands.size(); b++)
+                {
+                    const double elevation = axes.elevations[e];
+                    const double bump = elevation >= 3.0 && elevation <= 20.0 ? 25.0 : 0.0;
+                    gains.push_back(canyon.gain(r, a, e, b) + bump);
+                }
+    const UrbanTable bump(axes, canyon.receivers(), gains, canyon.frame_bearing(), "ideal_canyon_bump",
+            canyon.provenance());
+    bump.save("tables/urban_bump_test.nc");
+    REQUIRE(UrbanTable::load("tables/urban_bump_test.nc").receivers().size() == canyon.receivers().size());
+}

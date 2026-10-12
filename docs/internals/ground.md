@@ -63,6 +63,49 @@ manual. What to keep:
 - The direct path ends at the microphone, not on the ground. Moving it there changed
   point-receiver results; see [HISTORY](../HISTORY.md#changes-that-affect-results).
 
+## Urban receivers (`--urban_table`)
+
+`src/urban.{hpp,cpp}` holds the facades, the first-order image test, the ideal canyon under
+plane-wave incidence, and `UrbanTable`; `tools/urban_table.cpp` builds tables; `urban_level` and
+`urban_bound_geometry` in `process_trajectory` are the run's side. The design and its staged plan
+are the Claude Doc "NICEOPS: Urban Propagation Plan"; the literature behind it is in
+`reports/Urban canyon propagation methods.md` and `reports/Urban propagation survey 2026-10-11.md`.
+What to keep:
+
+- **A table of 0 dB with no facades is the run without one, byte for byte.** The direct path goes
+  through `spectral_level_along` with the table's loss as `extra_loss`, and subtracting 0.0 is
+  exact; with no valid reflection `urban_level` returns that level as it came, without an
+  energy round trip; the bound multiplies by `max(1, ...)`. `urban_table{,_plate}_open_is_open_ground`
+  compare the files with `compare_files`.
+- **First-order reflections are paths, not table entries.** Each is
+  `straight_ray(source, mirrored microphone)`: the sphere is read along the line leaving the
+  source, so it gets its own directivity. Putting them in the table, keyed on the arrival
+  direction alone, roughly doubles the error at 30 to 120 m (FIDELITY, Urban receivers).
+- **An image's ground model is evaluated exactly** (no `GroundTable`): a table's extent follows
+  the run's observers, and a mirrored microphone lies outside it. The vertical mirror keeps
+  heights, so the ground geometry of the unfolded path is exact.
+- **An image's separation is mirrored back** before the plate reads its azimuth: the sound
+  crosses the plate travelling the mirrored way. `urban_table_plate_golden` fails without it.
+- **The bound** multiplies `path_gains` by the table's largest gain, and the direct path and the
+  images share one bound geometry, built by the eigenray rule (largest numerator over the
+  harmonic sum of squared ranges). The image term has no CTest that fails without it (see
+  [testing.md](testing.md#mutation-guarded-tests)); keep it, since a strongly directional sphere
+  can make a reflection louder than the direct path's bin bound.
+- **The canyon table's specular part comes from two traces, not a lattice sum.** A plane wave
+  reaches a point by at most one ray per cross-canyon direction, so `canyon_ratio` traces two
+  rays back from the microphone; `specular_paths` (brute force) is the test reference only.
+- **Receivers are matched by position** (1 mm), because the observer reader keeps no ids. The
+  table records its frame bearing, and the run refuses another: azimuths are compass bearings
+  and the geometry is local.
+- **Stage-1 refusals**: `--terrain`, `--refraction`, `--propagation_table`, `--db_cutoff`.
+  Lifting refraction means looking the table up along each eigenray's arrival direction;
+  `--db_cutoff` needs `urban_bound_geometry` in `is_culled`.
+- Tests: `[urban]` in `tests/test_urban.cpp` (two-family count and first-order images against
+  `specular_paths`, the Keller-cone path difference, the table's lookup, bound and file), the
+  hidden `[.urban_separability]` study, and the `urban_table_*` CTests (open-sky identity,
+  windowed against marched for canyons, plates and the +25 dB bump table, the pinned goldens and
+  the refusals).
+
 ## Weighting
 
 `src/weighting.{hpp,cpp}` holds A-weighting and band-limited energy integration.

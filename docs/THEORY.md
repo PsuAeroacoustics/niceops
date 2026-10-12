@@ -771,6 +771,79 @@ only to the sampling step, which rounds a sharp crest slightly. $\Delta_\mathrm{
 $|F(v)|^2$ are compared with Sommerfeld's exact solution for a rigid half-plane [64] in
 [FIDELITY](FIDELITY.md#terrain-screening).
 
+### 6.5 Urban receivers
+
+A microphone with a receiver in `--urban_table` takes, per band $b$,
+
+$$
+L_b = 10\lg\left(10^{(L_{d,b} + G_b(\beta, \varepsilon))/10} + \sum_k 10^{(L_{k,b} + 10\lg\rho_{k,b})/10}\right),
+$$
+
+where $L_{d,b}$ is the direct path's band level as the run takes it without buildings (§4.2 with
+§5 or §6.2), $G_b(\beta, \varepsilon)$ is the receiver's table at the compass bearing $\beta$ and
+elevation $\varepsilon$ of the source seen from the microphone, interpolated bilinearly in dB, and
+the sum runs over the receiver's facades $k$ with a valid first-order reflection, $\rho_{k,b}$
+being the facade's energy reflection coefficient. With no valid reflection the level is
+$L_{d,b} + G_b$ exactly, so a table of 0 dB with no facades is the run without one.
+
+**First-order reflections.** A facade is a vertical rectangle: a base segment with unit left
+normal $\hat n$ and two heights. The reflected path is the straight line from the source $S$ to
+the microphone $M$ mirrored in the facade's plane,
+$M' = M - 2\,((M - P_0)\cdot\hat n)\,\hat n$, valid when $S$ and $M$ stand strictly on the same
+side of the plane, the point where $SM'$ crosses it lies within the rectangle, and no other facade
+of the receiver crosses either leg. It takes its own sphere direction (the line's, leaving the
+source), spherical spreading and absorption over its unfolded length $|SM'|$, and the ground term
+at $M'$: the mirror keeps heights, so the source height and horizontal distance the ground model
+takes are those of the unfolded path. A plate microphone (§6.2) takes the azimuth of the arrival
+as it reaches the microphone, the line's horizontal direction mirrored back.
+
+**The ideal canyon.** The tables `niceops_urban_table` builds are those of an ideal street canyon
+[67]: two parallel walls of infinite length a width $W$ apart, with heights $H_A$ and $H_B$ above
+the floor, and the microphone $y_r$ from wall A at height $z_r$. Each entry is for a plane wave,
+the source being far compared with the street. Let the arrival direction (toward the source) have
+components $u_c$ across the canyon, positive toward wall B, and $u_z$ upward. A ray traced back
+from the microphone with horizontal component $v_c = \pm u_c$ climbs $u_z/|v_c|$ per unit of
+travel across the canyon and reflects at each wall it meets below the wall's top, until it passes
+over one. The ray leaving along $v_c = u_c$ arrives back along the source's direction after an
+even number $k_1$ of reflections, and the one leaving along $v_c = -u_c$ after an odd number
+$k_2$; each ray reflects exactly as often as the walls make it, so each family holds at most one
+path, and a plane wave reaches the microphone by at most two specular paths. With the first-order
+path ($k_2 = 1$) the run's to evaluate, the table holds
+
+$$
+T = [k_1 = 0] + [k_1\ \text{even},\ k_1 \ge 2]\,\rho_A^{a_1}\rho_B^{b_1} + [k_2\ \text{odd},\ k_2 \ge 3]\,\rho_A^{a_2}\rho_B^{b_2} + [k_1 \ne 0]\,10^{-\Delta_\mathrm{dif}/10},
+$$
+
+$G = 10\lg T$ (floored at $-300$ dB), where $a_i$ and $b_i$ count each family's reflections off
+each wall. Where a wall X blocks the direct path, a diffracted path over its top stands in for it,
+with the CNOSSOS-EU $\Delta_\mathrm{dif} = \min(10\lg(3 + 40\delta/\lambda),\ 25)$ dB [32, 33] at
+the plane wave's path difference over an infinite edge parallel to the axis. Minimized along the
+edge, which is Keller's cone of diffracted rays [68],
+
+$$
+\delta = |\mathbf{u}_\perp|\,|\mathbf{D}| - \mathbf{u}_\perp\cdot\mathbf{D},
+\qquad \mathbf{u}_\perp = (u_c, u_z),\quad \mathbf{D} = (y_X - y_r,\ H_X - z_r),
+$$
+
+in the canyon's cross-section. This diffraction is a placeholder for a wedge model. Every image of
+the two walls reaches the floor at the direct path's grazing angle, so a plane-wave ground factor
+would be the same on each path, and the ratio is taken against the open-ground direct path. Left
+out: the floor's own effect on which paths are open (the floor reflection shares its path's
+shielding), diffraction of the reflected paths, diffuse reflection, the canyon's ends, turbulent
+scattering into the shielded directions, and every wave effect below the frequencies where the
+street is several wavelengths wide.
+
+**Separating the paths.** A table keyed on the arrival direction alone assumes every path leaves
+the rotor in the direct path's direction at the direct path's range. Close to the buildings a
+reflection leaves 10 to 40 degrees away, which is why the first-order reflections are evaluated
+explicitly; the error that remains is in [FIDELITY](FIDELITY.md#urban-receivers).
+
+**The peak search's bound** (§10.2) takes the table's largest gain per band, $\max(1, 10^{G_{\max}/10})$,
+on top of the ground's, for every pair. The direct path and each valid reflection are bounded by
+their own direction's numerator $n_i$ over their own squared range, so their sum is bounded by
+$\max_i n_i / \left(\sum_i r_i^{-2}\right)^{-1}$, as for several eigenrays (§8.2); a reflection
+loses $\rho \le 1$ and needs nothing more.
+
 ## 7. The stratified, moving atmosphere
 
 An `--atmosphere` profile gives temperature, relative humidity and optionally pressure and wind
@@ -1516,9 +1589,11 @@ than for SEL.
 - **Doppler frequency shift.** The spheres carry the measured, Doppler-shifted spectra, and
   NICEOPS applies no shift. A database whose spheres have had the shift removed is refused. The
   source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
-- **Diffraction and screening by buildings**, and by terrain without `--terrain_screening`,
-  when terrain enters only through each path's mean ground plane (§6.3). Screening by terrain
-  (§6.4) takes the vertical plane only, with no lateral paths.
+- **Buildings**, except at microphones with an urban table (§6.5), which describes ideal
+  street canyons with a placeholder diffraction.
+- **Diffraction and screening by terrain** without `--terrain_screening`, when terrain enters
+  only through each path's mean ground plane (§6.3). Screening by terrain (§6.4) takes the
+  vertical plane only, with no lateral paths.
 - **Refraction over terrain.** The ray models assume flat ground, so `--terrain` is refused
   with `--refraction`. A propagation table is read over each path's mean plane (§9.3), which
   for a refracting table assumes a stratification that follows the ground.
@@ -1600,3 +1675,5 @@ than for SEL.
 64. Sommerfeld, A., "Mathematische Theorie der Diffraction," *Mathematische Annalen*, Vol. 47, Nos. 2–3, 1896, pp. 317–374. https://doi.org/10.1007/BF01447273
 65. "Propagation by Diffraction," Recommendation ITU-R P.526-16, International Telecommunication Union, Geneva, November 2025.
 66. Press, W. H., Teukolsky, S. A., Vetterling, W. T., and Flannery, B. P., *Numerical Recipes in C: The Art of Scientific Computing*, 2nd ed., Cambridge University Press, Cambridge, 1992, Sec. 6.9.
+67. Li, K. M., and Lai, C. Y. C., "A Note on Noise Propagation in Street Canyons," *Journal of the Acoustical Society of America*, Vol. 126, No. 2, 2009, pp. 644–655. https://doi.org/10.1121/1.3158599
+68. Keller, J. B., "Geometrical Theory of Diffraction," *Journal of the Optical Society of America*, Vol. 52, No. 2, 1962, pp. 116–130. https://doi.org/10.1364/JOSA.52.000116

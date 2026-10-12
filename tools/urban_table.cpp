@@ -5,12 +5,16 @@
 //
 // Each row of --canyons is one microphone standing in an ideal street canyon,
 // by column name, lengths in --units:
-//   x, y, z          the observer, as the run's observer file gives it
+//   x, y, z          the observer, as the run's observer file gives it (a
+//                    length column may name its unit, x_ft or x_m, which must
+//                    then be --units; an id column is ignored)
 //   height           the microphone above the ground there (the observer
 //                    file's fifth column; the run's microphone is z + height)
 //   axis             compass bearing of the street's axis, degrees (either way
 //                    along it)
-//   width            between the two walls
+//   width            between the two walls; 0 for an open microphone, with no
+//                    street around it (0 dB and no facades; the rest of the
+//                    row but its position is not read)
 //   offset           from wall A, the wall on the left looking along `axis`
 //   height_a,        the walls' tops above the ground
 //   height_b
@@ -108,17 +112,32 @@ int main(int argc, char** argv)
                     + " is not a row of numbers");
         if (csv.rows.empty())
             throw std::runtime_error(canyons_file + " holds no receivers");
-        auto column = [&](const char* name, bool required) {
-            const std::size_t c = csv.column({name});
-            if (c == LabeledCsv::npos && required)
-                throw std::runtime_error(canyons_file + " has no '" + name + "' column");
+        // A length column may name its unit, as an observer file's do (x_ft,
+        // height_m, "width (ft)"): it must then be --units.
+        auto column = [&](const std::string& name, bool required, bool length) {
+            const std::string ft = name + "_ft", m = name + "_m";
+            const std::size_t c = length ? csv.column({name.c_str(), ft.c_str(), m.c_str()}) : csv.column({name.c_str()});
+            if (c == LabeledCsv::npos)
+            {
+                if (required)
+                    throw std::runtime_error(canyons_file + " has no '" + name + "' column");
+                return c;
+            }
+            std::string declared = csv.unit_token(c);
+            if (declared.empty() && csv.column_matches(c, {ft.c_str()}))
+                declared = "ft";
+            if (declared.empty() && csv.column_matches(c, {m.c_str()}))
+                declared = "m";
+            if (length && !declared.empty() && declared != units)
+                throw std::runtime_error(canyons_file + ": column '" + csv.header[c] + "' is in " + declared
+                        + ", and --units is " + units);
             return c;
         };
-        const std::size_t cx = column("x", true), cy = column("y", true), cz = column("z", true);
-        const std::size_t ch = column("height", true), axis_c = column("axis", true);
-        const std::size_t cw = column("width", true), co = column("offset", true);
-        const std::size_t cha = column("height_a", true), chb = column("height_b", true);
-        const std::size_t caa = column("absorption_a", false), cab = column("absorption_b", false);
+        const std::size_t cx = column("x", true, true), cy = column("y", true, true), cz = column("z", true, true);
+        const std::size_t ch = column("height", true, true), axis_c = column("axis", true, false);
+        const std::size_t cw = column("width", true, true), co = column("offset", true, true);
+        const std::size_t cha = column("height_a", true, true), chb = column("height_b", true, true);
+        const std::size_t caa = column("absorption_a", false, false), cab = column("absorption_b", false, false);
 
         const std::size_t nb = bands.size();
         std::vector<UrbanTable::Receiver> receivers;
@@ -130,6 +149,19 @@ int main(int argc, char** argv)
                 throw std::runtime_error(canyons_file + ": row " + std::to_string(row + 1) + " has "
                         + std::to_string(r.size()) + " fields where the header names "
                         + std::to_string(csv.header.size()));
+            const std::string where = canyons_file + " row " + std::to_string(row + 1) + ": ";
+            const double floor = r[cz] * to_meters;
+            if (r[cw] == 0.0)
+            {
+                // No street: an open microphone, 0 dB everywhere and no facades.
+                if (!(r[ch] >= 0.0))
+                    throw std::runtime_error(where + "the microphone's height must not be negative");
+                UrbanTable::Receiver open;
+                open.microphone = Vec3(r[cx] * to_meters, r[cy] * to_meters, floor + r[ch] * to_meters);
+                gains.insert(gains.end(), axes.azimuths.size() * axes.elevations.size() * nb, 0.0);
+                receivers.push_back(std::move(open));
+                continue;
+            }
             IdealCanyon canyon;
             canyon.width = r[cw] * to_meters;
             canyon.offset = r[co] * to_meters;
@@ -138,7 +170,6 @@ int main(int argc, char** argv)
             canyon.microphone_height = r[ch] * to_meters;
             const double alpha_a = caa == LabeledCsv::npos ? absorption : r[caa];
             const double alpha_b = cab == LabeledCsv::npos ? absorption : r[cab];
-            const std::string where = canyons_file + " row " + std::to_string(row + 1) + ": ";
             if (!(canyon.width > 0.0 && canyon.offset > 0.0 && canyon.offset < canyon.width))
                 throw std::runtime_error(where + "the offset must lie strictly between the walls");
             if (!(canyon.height_a > 0.0 && canyon.height_b > 0.0 && canyon.microphone_height >= 0.0))
@@ -150,7 +181,6 @@ int main(int argc, char** argv)
                 throw std::runtime_error(where + "the axis bearing is not finite");
 
             UrbanTable::Receiver receiver;
-            const double floor = r[cz] * to_meters;
             receiver.microphone = Vec3(r[cx] * to_meters, r[cy] * to_meters, floor + canyon.microphone_height);
             receiver.facades = ideal_canyon_facades(canyon, receiver.microphone, floor, axis, frame_bearing,
                     facade_length * to_meters);

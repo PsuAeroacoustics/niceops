@@ -1052,6 +1052,62 @@ add_test(NAME propagation_table_plate_is_the_plate_model COMMAND golden_compare 
 set_tests_properties(propagation_table_plate_windowed_is_exact propagation_table_plate_is_the_plate_model PROPERTIES FIXTURES_REQUIRED propagation_table_plate_runs)
 add_test(NAME propagation_table_plate_warns_raised_row COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc --propagation_table tables/ground_model_test.nc --gridstep 4000 -L warn -o integrated/propagation_table_plate_warns.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(propagation_table_plate_warns_raised_row PROPERTIES FIXTURES_REQUIRED propagation_table_file PASS_REGULAR_EXPRESSION "at its lowest receiver height, 3\\.937.*Give the table a receiver height of 0")
+# --urban_table (urban.hpp), end to end: the demo track on the B407 database, at seven microphones
+# (tests/data/urban_observers.csv), poles and flush plates, in ideal canyons built by
+# niceops_urban_table (tests/data/urban_canyons.csv).  A table of open microphones -- 0 dB and no
+# facades -- is the run without one, byte for byte.  The peak search's bound takes the table's
+# largest gain and each first-order image in its own direction, so a windowed run equals its march
+# (-D forces it), for the canyons, on plates, and for a table with +25 dB at 3 to 20 degrees of
+# elevation, which kills a bound that leaves the table's gain out.  The image term of the bound has
+# no CTest that fails without it: on this database the table's own largest gain and the bound's
+# slack already cover the images (docs/internals/testing.md).
+set(URBAN_RUN niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn)
+set(URBAN_PLATE --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc)
+add_test(NAME urban_table_build COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 -o tables/urban_canyon_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_open_build COMMAND niceops_urban_table --canyons tests/data/urban_open.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 -o tables/urban_open_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_build urban_table_open_build PROPERTIES FIXTURES_SETUP urban_table_files)
+add_test(NAME urban_table_bump_build COMMAND niceops_unit_tests "[.urban_bump_table]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_bump_build PROPERTIES FIXTURES_REQUIRED urban_table_files FIXTURES_SETUP urban_table_bump_file)
+add_test(NAME urban_table_reference COMMAND ${URBAN_RUN} --ground_effect -o integrated/urban_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_plate_reference COMMAND ${URBAN_RUN} ${URBAN_PLATE} -o integrated/urban_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_reference urban_table_plate_reference PROPERTIES FIXTURES_SETUP urban_table_runs)
+add_test(NAME urban_table_open COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_open_test.nc -o integrated/urban_open.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_canyon COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_canyon_test.nc -o integrated/urban_canyon.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_canyon_marched COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_canyon_test.nc -D integrated/urban_canyon_dnl.csv -o integrated/urban_canyon_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_plate_open COMMAND ${URBAN_RUN} ${URBAN_PLATE} --urban_table tables/urban_open_test.nc -o integrated/urban_plate_open.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_plate COMMAND ${URBAN_RUN} ${URBAN_PLATE} --urban_table tables/urban_canyon_test.nc -o integrated/urban_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_plate_marched COMMAND ${URBAN_RUN} ${URBAN_PLATE} --urban_table tables/urban_canyon_test.nc -D integrated/urban_plate_dnl.csv -o integrated/urban_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_open urban_table_canyon urban_table_canyon_marched urban_table_plate_open urban_table_plate urban_table_plate_marched PROPERTIES FIXTURES_REQUIRED urban_table_files FIXTURES_SETUP urban_table_runs)
+add_test(NAME urban_table_bump COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_bump_test.nc -o integrated/urban_bump.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_bump_marched COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_bump_test.nc -D integrated/urban_bump_dnl.csv -o integrated/urban_bump_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_bump urban_table_bump_marched PROPERTIES FIXTURES_REQUIRED urban_table_bump_file FIXTURES_SETUP urban_table_runs)
+add_test(NAME urban_table_open_is_open_ground COMMAND ${CMAKE_COMMAND} -E compare_files integrated/urban_open.csv integrated/urban_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_plate_open_is_open_ground COMMAND ${CMAKE_COMMAND} -E compare_files integrated/urban_plate_open.csv integrated/urban_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_windowed_is_exact COMMAND golden_compare integrated/urban_canyon.csv integrated/urban_canyon_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_plate_windowed_is_exact COMMAND golden_compare integrated/urban_plate.csv integrated/urban_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_bump_windowed_is_exact COMMAND golden_compare integrated/urban_bump.csv integrated/urban_bump_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The canyons move the footprint: by -3.7 to +2.0 dB at these seven microphones.
+add_test(NAME urban_table_changes_the_footprint COMMAND golden_compare integrated/urban_canyon.csv integrated/urban_reference.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_open_is_open_ground urban_table_plate_open_is_open_ground urban_table_windowed_is_exact urban_table_plate_windowed_is_exact urban_table_bump_windowed_is_exact urban_table_changes_the_footprint PROPERTIES FIXTURES_REQUIRED urban_table_runs)
+set_tests_properties(urban_table_changes_the_footprint PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+# The windowed/marched pairs compare a run with itself, so the canyon and plate runs are pinned
+# (golden/urban_canyon.csv, golden/urban_plate.csv, made by the build that added --urban_table):
+# an image path whose plate azimuth is not mirrored back moves the plate microphones.
+add_test(NAME urban_table_canyon_golden COMMAND golden_compare integrated/urban_canyon.csv golden/urban_canyon.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_plate_golden COMMAND golden_compare integrated/urban_plate.csv golden/urban_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_canyon_golden urban_table_plate_golden PROPERTIES FIXTURES_REQUIRED urban_table_runs)
+# Refusals: a frame other than the table's, a run none of whose microphones it holds, the options
+# stage 1 does not combine with, and a builder column in the wrong unit.
+add_test(NAME urban_table_refuses_another_frame COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/urban_observers.csv --urban_table tables/urban_open_test.nc -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_refuses_another_frame PROPERTIES FIXTURES_REQUIRED urban_table_files PASS_REGULAR_EXPRESSION "was built with local \\+x along 210 degrees, and this run's \\+x is along 90 degrees \\(east, as no --frame_bearing was given\\)")
+add_test(NAME urban_table_refuses_no_receivers COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --frame_bearing 210 --gridstep 4000 --urban_table tables/urban_open_test.nc -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_refuses_no_receivers PROPERTIES FIXTURES_REQUIRED urban_table_files PASS_REGULAR_EXPRESSION "none of its 7 receivers stands within 1 mm")
+add_test(NAME urban_table_refuses_refraction COMMAND ${URBAN_RUN} --urban_table tables/urban_open_test.nc --refraction linear -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_refuses_refraction PROPERTIES PASS_REGULAR_EXPRESSION "--urban_table does not combine with --refraction yet")
+add_test(NAME urban_table_refuses_db_cutoff COMMAND ${URBAN_RUN} --urban_table tables/urban_open_test.nc --db_cutoff 60 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_refuses_db_cutoff PROPERTIES PASS_REGULAR_EXPRESSION "--urban_table does not combine with --db_cutoff")
+add_test(NAME urban_table_builder_checks_units COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --bands 1000 --units m -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_builder_checks_units PROPERTIES PASS_REGULAR_EXPRESSION "column 'x_ft' is in ft, and --units is m")
 # --atmosphere through a single-level profile holding the vehicle file's own
 # atmosphere has to reproduce the homogeneous run: the whole layered-absorption
 # path (the table, the per-state and per-observer integrals, the per-path mean)

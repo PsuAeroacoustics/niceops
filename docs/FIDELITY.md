@@ -686,6 +686,43 @@ turbulent scattering into the shadow; which of them fills the shadow here is not
 same runs found the 1 m grid's texture 3–5 m from a flush board screening paths at 1–2°
 elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m) now leaves those unscreened.
 
+### Urban receivers
+
+The ideal canyon's claim that a plane wave reaches a point by at most two specular paths, and
+which two, holds against a brute-force image-source search over 3,000 random canyons (widths 8 to
+38 m, walls 3 to 43 m, sources 10^8 m away; `tests/test_urban.cpp`): the paths agree in number and
+order every time, with two paths in over 100 cases and the direct path blocked in over 100. The
+first-order reflections the run evaluates agree with the same search in all 4,000 cases tried.
+
+What evaluating the first-order reflections explicitly buys, for an omnidirectional source over a
+20 m canyon with 15 and 18 m walls, a microphone 6 m from one wall at 1.5 m and walls reflecting
+0.8 (specular paths only, 1 kHz; the hidden Catch2 case `[.urban_separability]`). The error is
+in the total energy at the microphone against every specular path of the point source, as the
+absolute level difference over 4,000 random directions above 5 degrees:
+
+| Range | Explicit reflections + table: median / p95 / max, dB | Everything in the table: median / p95 / max, dB |
+| --- | --- | --- |
+| 30 m | 0.41 / 3.1 / 40 | 1.95 / 7.9 / 43 |
+| 60 m | 0.00 / 3.6 / 36 | 0.38 / 6.7 / 37 |
+| 120 m | 0.00 / 2.4 / 35 | 0.00 / 3.8 / 35 |
+| 300 m | 0.00 / 2.3 / 10 | 0.00 / 2.5 / 10 |
+| 1 km | 0.00 / 0.53 / 4.1 | 0.00 / 0.77 / 4.1 |
+| 3 km | 0.00 / 0.13 / 3.7 | 0.00 / 0.13 / 3.7 |
+| 10 km | 0.00 / 0.04 / 3.6 | 0.00 / 0.04 / 3.6 |
+
+The largest errors are directions near a wall's top, where the plane wave and the point source
+disagree on whether a path is open; with the diffraction left out, as here, that is a step of
+tens of dB. A directional source would widen the gap between the two columns, since each
+reflection reads the sphere in its own direction; that is not measured yet.
+
+On the demo track (B407 database), seven microphones in ideal canyons
+(`tests/data/urban_canyons.csv`) move by −3.7 to +2.0 dB in SEL against open ground. Two streets
+along the track give both ends: +2.0 dB where the helicopter passes about 550 ft up, reflections
+adding to an open direct path, and −3.7 dB near the end of the approach, where it is under 100 ft
+and the walls block it. Nothing here is
+validated against measurements in streets; none of the measured data sets
+([Data sets](#data-sets)) has buildings near the microphones.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and
