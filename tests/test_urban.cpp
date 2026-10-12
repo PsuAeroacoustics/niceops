@@ -55,6 +55,29 @@ double top_margin(const IdealCanyon& c, double v_c, double u_z)
     return margin;
 }
 
+// The same facades extended far below the floor: the walls' images in it,
+// through which a floor-reflected path runs when unfolded.
+std::vector<Facade> mirrored_below(std::vector<Facade> facades)
+{
+    for (auto& f : facades)
+        f.bottom = -1e9;
+    return facades;
+}
+
+// Every specular path's energy, spherically spread, from `source` to `mic`
+// and, off a floor at z = 0 reflecting `floor`, to its image in the floor.
+double lattice_energy(const std::vector<Facade>& facades, const Vec3& source, const Vec3& mic, double reflect,
+        double floor, std::size_t max_order)
+{
+    double energy = 0.0;
+    for (const auto& p : specular_paths(facades, source, mic, max_order))
+        energy += std::pow(reflect, static_cast<double>(p.facades.size())) / (p.length * p.length);
+    const Vec3 image(mic.x, mic.y, -mic.z);
+    for (const auto& p : specular_paths(mirrored_below(facades), source, image, max_order))
+        energy += floor * std::pow(reflect, static_cast<double>(p.facades.size())) / (p.length * p.length);
+    return energy;
+}
+
 } // namespace
 
 TEST_CASE("facade mirror, side and blocking", "[urban]")
@@ -126,14 +149,16 @@ TEST_CASE("first_order_image agrees with the image-source reference", "[urban]")
 }
 
 // The claim the table rests on: under plane-wave incidence an ideal canyon
-// delivers at most two specular paths to a point, one per cross-canyon
-// direction, and trace_canyon says which.  Checked against the brute-force
-// image-source search, with the source far enough to be a plane wave.
-TEST_CASE("a far source reaches a canyon microphone by at most two specular paths", "[urban]")
+// delivers at most four specular paths to a point -- from above and off the
+// floor, each with the plane wave's horizontal direction or its mirror -- and
+// trace_canyon says which.  Checked against the brute-force image-source
+// search, with the source far enough to be a plane wave; the floor's paths are
+// those to the microphone's image in it, through the walls' images below.
+TEST_CASE("a far source reaches a canyon microphone by at most four specular paths", "[urban]")
 {
     std::mt19937 rng(7);
     std::uniform_real_distribution<double> unit(0.0, 1.0);
-    int checked = 0, two = 0, shielded = 0;
+    int checked = 0, several = 0, shielded = 0, floor_only = 0;
     for (int trial = 0; trial < 3000; trial++)
     {
         IdealCanyon c;
@@ -142,6 +167,8 @@ TEST_CASE("a far source reaches a canyon microphone by at most two specular path
         c.height_a = 3.0 + 40.0 * unit(rng);
         c.height_b = 3.0 + 40.0 * unit(rng);
         c.microphone_height = 0.5 + 4.0 * unit(rng);
+        IdealCanyon below = c;
+        below.microphone_height = -c.microphone_height;
         const double axis = 360.0 * unit(rng);
         const double frame = 360.0 * unit(rng);
         const Direction d {360.0 * unit(rng), 2.0 + 85.0 * unit(rng)};
@@ -150,38 +177,54 @@ TEST_CASE("a far source reaches a canyon microphone by at most two specular path
         const double u_z = std::sin(e);
         // Off-axis enough that every reflection lands well inside the long
         // walls, and clear of the walls' tops.
-        if (std::abs(u_c) < 0.08 || top_margin(c, u_c, u_z) < 1e-3 || top_margin(c, -u_c, u_z) < 1e-3)
+        if (std::abs(u_c) < 0.08 || top_margin(c, u_c, u_z) < 1e-3 || top_margin(c, -u_c, u_z) < 1e-3
+                || top_margin(below, u_c, u_z) < 1e-3 || top_margin(below, -u_c, u_z) < 1e-3)
             continue;
         const Vec3 mic(0.0, 0.0, c.microphone_height);
         const auto facades = ideal_canyon_facades(c, mic, 0.0, axis, frame, 4.0e5);
         const Vec3 source = mic + local_unit(d, frame) * 1.0e8;
 
-        const CanyonTrace direct = trace_canyon(c, u_c, u_z);
-        const CanyonTrace mirror = trace_canyon(c, -u_c, u_z);
-        const int max_order = std::max(direct.bounces, mirror.bounces) + 3;
+        const CanyonTrace traces[4] = {trace_canyon(c, u_c, u_z), trace_canyon(c, -u_c, u_z),
+                trace_canyon(below, u_c, u_z), trace_canyon(below, -u_c, u_z)};
+        int max_order = 0;
+        for (const auto& t : traces)
+            max_order = std::max(max_order, t.bounces + 3);
         if (max_order > 40)
             continue;
-        const auto paths = specular_paths(facades, source, mic, static_cast<std::size_t>(max_order));
-        REQUIRE(paths.size() <= 2);
-
-        std::vector<std::size_t> expected;
-        if (direct.escaped && direct.bounces % 2 == 0)
-            expected.push_back(static_cast<std::size_t>(direct.bounces));
-        if (mirror.escaped && mirror.bounces % 2 == 1)
-            expected.push_back(static_cast<std::size_t>(mirror.bounces));
-        std::vector<std::size_t> orders;
-        for (const auto& p : paths)
-            orders.push_back(p.facades.size());
-        std::sort(expected.begin(), expected.end());
-        std::sort(orders.begin(), orders.end());
-        REQUIRE(orders == expected);
+        auto expected_orders = [&](const CanyonTrace& direct, const CanyonTrace& mirror) {
+            std::vector<std::size_t> orders;
+            if (direct.escaped && direct.bounces % 2 == 0)
+                orders.push_back(static_cast<std::size_t>(direct.bounces));
+            if (mirror.escaped && mirror.bounces % 2 == 1)
+                orders.push_back(static_cast<std::size_t>(mirror.bounces));
+            std::sort(orders.begin(), orders.end());
+            return orders;
+        };
+        auto found_orders = [&](const std::vector<SpecularPath>& paths) {
+            std::vector<std::size_t> orders;
+            for (const auto& p : paths)
+                orders.push_back(p.facades.size());
+            std::sort(orders.begin(), orders.end());
+            return orders;
+        };
+        const auto from_above = specular_paths(facades, source, mic, static_cast<std::size_t>(max_order));
+        const auto off_floor = specular_paths(mirrored_below(facades), source, Vec3(mic.x, mic.y, -mic.z),
+                static_cast<std::size_t>(max_order));
+        REQUIRE(from_above.size() <= 2);
+        REQUIRE(off_floor.size() <= 2);
+        REQUIRE(found_orders(from_above) == expected_orders(traces[0], traces[1]));
+        REQUIRE(found_orders(off_floor) == expected_orders(traces[2], traces[3]));
         checked++;
-        two += paths.size() == 2;
-        shielded += !(direct.escaped && direct.bounces == 0);
+        several += from_above.size() + off_floor.size() >= 3;
+        const bool open = traces[0].escaped && traces[0].bounces == 0;
+        shielded += !open;
+        floor_only += from_above.empty() && !off_floor.empty();
     }
     REQUIRE(checked > 1500);
-    REQUIRE(two > 100);
+    REQUIRE(several > 100);
     REQUIRE(shielded > 100);
+    // The floor's rays reach microphones the rays from above do not.
+    REQUIRE(floor_only > 50);
 }
 
 TEST_CASE("edge_path_difference is the minimum over the edge", "[urban]")
@@ -212,29 +255,38 @@ TEST_CASE("canyon_ratio's limits", "[urban]")
 {
     const std::vector<double> bands {125.0, 1000.0, 4000.0};
     const std::vector<double> rigid(3, 1.0), soft(3, 0.5);
-    std::vector<double> out(3);
+    std::vector<double> out(3), other(3);
     IdealCanyon c {20.0, 6.0, 15.0, 15.0, 1.5};
 
-    // Along the axis, or above both walls, the direct path is open and alone.
-    canyon_ratio(c, 0.0, 0.3, rigid.data(), rigid.data(), bands, 343.0, true, out.data());
+    // Along the axis, or above both walls, open ground.
+    canyon_ratio(c, 0.0, 0.3, rigid.data(), rigid.data(), 1.0, bands, 343.0, true, out.data());
     REQUIRE(out == std::vector<double>(3, 1.0));
     IdealCanyon roof = c;
     roof.microphone_height = 16.0;
-    canyon_ratio(roof, 0.7, 0.2, rigid.data(), rigid.data(), bands, 343.0, true, out.data());
+    canyon_ratio(roof, 0.7, 0.2, rigid.data(), rigid.data(), 1.0, bands, 343.0, true, out.data());
     REQUIRE(out == std::vector<double>(3, 1.0));
 
-    // Overhead-ish from B's side, rigid walls: the direct path is open and its
-    // mirror's family reflects once, which the run evaluates itself.
-    const double e = 70.0 * pi / 180.0;
-    canyon_ratio(c, std::cos(e), std::sin(e), rigid.data(), rigid.data(), bands, 343.0, true, out.data());
-    REQUIRE(out == std::vector<double>(3, 1.0));
+    // A flush microphone is its own image in the floor: the floor's rays are
+    // the rays from above, and the floor's reflection cancels from the ratio.
+    IdealCanyon flush = c;
+    flush.microphone_height = 0.0;
+    for (double degrees : {10.0, 25.0, 40.0, 70.0, 110.0, 160.0})
+    {
+        const double e = degrees * pi / 180.0;
+        canyon_ratio(flush, std::cos(e), std::sin(e), soft.data(), rigid.data(), 1.0, bands, 343.0, true, out.data());
+        canyon_ratio(flush, std::cos(e), std::sin(e), soft.data(), rigid.data(), 0.3, bands, 343.0, true,
+                other.data());
+        for (std::size_t k = 0; k < 3; k++)
+            REQUIRE(out[k] == Catch::Approx(other[k]).epsilon(1e-12));
+    }
 
-    // Low over B: the direct path is blocked, so the diffracted path stands in,
+    // Low over B: the direct ray is blocked, so the diffracted path stands in,
     // falling with frequency, below 10 lg 3 and never under the 25 dB cap.
     const double low = 10.0 * pi / 180.0;
-    canyon_ratio(c, std::cos(low), std::sin(low), soft.data(), soft.data(), bands, 343.0, true, out.data());
+    canyon_ratio(c, std::cos(low), std::sin(low), soft.data(), soft.data(), 1.0, bands, 343.0, true, out.data());
     std::vector<double> specular(3);
-    canyon_ratio(c, std::cos(low), std::sin(low), soft.data(), soft.data(), bands, 343.0, false, specular.data());
+    canyon_ratio(c, std::cos(low), std::sin(low), soft.data(), soft.data(), 1.0, bands, 343.0, false,
+            specular.data());
     for (std::size_t k = 0; k < 3; k++)
     {
         const double diffracted = out[k] - specular[k];
@@ -268,20 +320,26 @@ TEST_CASE("explicit images plus the plane-wave table converge on the image latti
             const Direction d {360.0 * unit(rng), 20.0 + 65.0 * unit(rng)};
             const double a = d.azimuth * pi / 180.0, e = d.elevation * pi / 180.0, x = axis * pi / 180.0;
             const double u_c = std::cos(e) * std::sin(a - x), u_z = std::sin(e);
-            if (std::abs(u_c) < 0.1 || top_margin(c, u_c, u_z) < 0.5 || top_margin(c, -u_c, u_z) < 0.5)
+            IdealCanyon below = c;
+            below.microphone_height = -c.microphone_height;
+            if (std::abs(u_c) < 0.1 || top_margin(c, u_c, u_z) < 0.5 || top_margin(c, -u_c, u_z) < 0.5
+                    || top_margin(below, u_c, u_z) < 0.5 || top_margin(below, -u_c, u_z) < 0.5)
                 continue;
             const Vec3 source = mic + local_unit(d, frame) * range;
-            double lattice = 0.0;
-            for (const auto& p : specular_paths(facades, source, mic, 30))
-                lattice += std::pow(reflect, static_cast<double>(p.facades.size())) / (p.length * p.length);
+            const double lattice = lattice_energy(facades, source, mic, reflect, 1.0, 30);
             double ratio = 0.0;
-            canyon_ratio(c, u_c, u_z, r.data(), r.data(), bands, 343.0, false, &ratio);
-            double split = ratio / (range * range);
+            canyon_ratio(c, u_c, u_z, r.data(), r.data(), 1.0, bands, 343.0, false, &ratio);
+            // The run: the table times open ground's two rays, and each
+            // first-order reflection with its floor partner, through the
+            // ground model.
+            double split = 2.0 * ratio / (range * range);
+            const auto carried = walls_below(facades);
             for (std::size_t k = 0; k < facades.size(); k++)
             {
                 Vec3 image;
                 if (first_order_image(facades, k, source, mic, image))
-                    split += reflect / (image - source).squaredNorm();
+                    split += (first_order_floor_partner(carried, k, source, mic, 0.0) ? 2.0 : 1.0) * reflect
+                            / (image - source).squaredNorm();
             }
             if (lattice == 0.0)
             {
@@ -319,21 +377,28 @@ TEST_CASE("explicit images plus the table against the lattice by range", "[.urba
             const double a = d.azimuth * pi / 180.0, e = d.elevation * pi / 180.0, x = axis * pi / 180.0;
             const double u_c = std::cos(e) * std::sin(a - x), u_z = std::sin(e);
             const Vec3 source = mic + local_unit(d, frame) * range;
-            double lattice = 0.0;
-            for (const auto& p : specular_paths(facades, source, mic, 24))
-                lattice += std::pow(reflect, static_cast<double>(p.facades.size())) / (p.length * p.length);
+            const double lattice = lattice_energy(facades, source, mic, reflect, 1.0, 24);
             double ratio = 0.0;
-            canyon_ratio(c, u_c, u_z, r.data(), r.data(), bands, 343.0, false, &ratio);
-            double split = ratio / (range * range);
+            canyon_ratio(c, u_c, u_z, r.data(), r.data(), 1.0, bands, 343.0, false, &ratio);
+            double split = 2.0 * ratio / (range * range);
+            const auto carried = walls_below(facades);
             for (std::size_t k = 0; k < facades.size(); k++)
             {
                 Vec3 image;
                 if (first_order_image(facades, k, source, mic, image))
-                    split += reflect / (image - source).squaredNorm();
+                    split += (first_order_floor_partner(carried, k, source, mic, 0.0) ? 2.0 : 1.0) * reflect
+                            / (image - source).squaredNorm();
             }
+            // Everything in the table: the first-order reflection's two rays
+            // back in it, as the table would hold them.
+            IdealCanyon floor_image = c;
+            floor_image.microphone_height = -c.microphone_height;
             const CanyonTrace mirror = trace_canyon(c, -u_c, u_z);
-            const double first_order = u_c != 0.0 && mirror.escaped && mirror.bounces == 1 ? reflect : 0.0;
-            const double table_only = (ratio + first_order) / (range * range);
+            const CanyonTrace mirror_floor = trace_canyon(floor_image, -u_c, u_z);
+            const bool up = u_c != 0.0 && mirror.escaped && mirror.bounces == 1;
+            const bool both = up && mirror_floor.escaped && mirror_floor.bounces == 1;
+            const double first_order = (up ? reflect : 0.0) + (both ? reflect : 0.0);
+            const double table_only = (2.0 * ratio + first_order) / (range * range);
             if (lattice > 0.0 && split > 0.0)
                 errors.push_back(std::abs(10.0 * std::log10(split / lattice)));
             if (lattice > 0.0 && table_only > 0.0)

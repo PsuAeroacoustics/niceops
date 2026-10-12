@@ -21,11 +21,13 @@
 //
 // The table is built under plane-wave incidence (a source far away compared
 // with the buildings), by reciprocity: for each direction, what reaches the
-// microphone from a plane wave arriving from there.  For a vertical facade the
-// mirror leaves heights alone, so every image path reaches the ground at the
-// direct path's grazing angle and the ground model's geometry stays exact on
-// the unfolded path; that is why the ratio can be taken against the open-ground
-// direct path.
+// microphone from a plane wave arriving from there, as a ratio to what open
+// ground delivers.  For a vertical facade the mirror leaves heights alone, so
+// the ground model's geometry stays exact on an unfolded image path.  The floor
+// is not left to the ground model inside a canyon, though: its reflection
+// clears the roofs after a different number of wall reflections from the
+// direct ray's, and is often open where the direct ray is blocked, so the
+// table traces it (canyon_ratio).
 //
 // This header is independent of Database, so the same geometry can serve the
 // table builder (tools/urban_table.cpp) and, later, panam.
@@ -79,6 +81,19 @@ bool blocks(const Facade& facade, const Vec3& a, const Vec3& b);
 bool first_order_image(const std::vector<Facade>& facades, std::size_t self, const Vec3& source,
         const Vec3& microphone, Vec3& image);
 
+// The facades with their walls carried down without end: their images in a
+// floor, through which a floor-reflected path runs once unfolded.
+std::vector<Facade> walls_below(std::vector<Facade> facades);
+
+// Whether the first-order reflection in below[self] also reaches the
+// microphone off the floor at height `floor`: the same test as
+// first_order_image, for the microphone's image in the floor, among the walls
+// carried below it (walls_below).  The run evaluates a reflection with the
+// ground model's floor partner only when this holds, and in free field
+// otherwise; a flush microphone is its own image.
+bool first_order_floor_partner(const std::vector<Facade>& below, std::size_t self, const Vec3& source,
+        const Vec3& microphone, double floor);
+
 // A specular path from a source to a receiver by the image-source method: the
 // facades it reflects in, in order from the source, and its unfolded length.
 struct SpecularPath
@@ -130,23 +145,31 @@ CanyonTrace trace_canyon(const IdealCanyon& canyon, double v_c, double u_z, int 
 
 // The canyon's table entry for a plane wave arriving from the unit direction
 // whose cross-canyon component is `u_c` (toward wall B positive) and vertical
-// component `u_z`, per band, as an energy ratio to the open-ground direct path:
+// component `u_z`, per band, as an energy ratio to open ground, whose direct ray
+// and floor reflection carry 1 + floor_reflection:
 //
-//   - the direct path where it is open (1), or, where wall X blocks it, the
-//     diffracted path over X's top: the CNOSSOS-EU Delta_dif (screening.hpp) at
-//     the plane wave's path difference over that edge, a placeholder until a
-//     wedge diffraction model replaces it (`diffraction` false leaves it out);
-//   - every other specular path but the first-order ones, which the run
-//     evaluates itself: under plane-wave incidence at most one more, because
-//     a point is reached by at most one ray of each of the two cross-canyon
-//     directions, +u_c and -u_c (the families of the direct path and of its
-//     mirror).
+//   - the rays that reach the microphone specularly.  Under plane-wave
+//     incidence each of four families holds at most one: arriving from above or
+//     off the floor, with the plane wave's horizontal direction (an even number
+//     of wall reflections) or its mirror (an odd number).  The floor-reflected
+//     rays start from the microphone's image in the floor, lower by twice its
+//     height, so they clear the roofs after a different number of reflections
+//     and are often open where the direct ray is not;
+//   - the first-order reflection is left out whenever it is open from above,
+//     and its floor partner whenever both are: the run evaluates them as a
+//     path of its own, with the ground model (first_order_floor_partner);
+//   - where a wall X blocks the direct ray, the diffracted path over X's top,
+//     with its floor reflection: the CNOSSOS-EU Delta_dif (screening.hpp) at the
+//     plane wave's path difference over that edge, a placeholder until a wedge
+//     diffraction model replaces it (`diffraction` false leaves it out).
 //
 // `reflection_a` and `reflection_b` are the walls' energy reflection
-// coefficients for bands [0, bands.size()); `out` gets the ratio for each.
+// coefficients for bands [0, bands.size()), `floor_reflection` the floor's (1
+// for rigid pavement); `out` gets the ratio for each band.  A microphone above
+// both walls, or a direction along the axis, gives 1.
 void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const double* reflection_a,
-        const double* reflection_b, const std::vector<double>& bands, double sound_speed, bool diffraction,
-        double* out);
+        const double* reflection_b, double floor_reflection, const std::vector<double>& bands, double sound_speed,
+        bool diffraction, double* out);
 
 // The plane wave's path difference over an infinite edge parallel to the canyon
 // axis, from the microphone at (0, 0) to the edge at (dy, dz) in the canyon's
@@ -293,6 +316,6 @@ std::vector<Facade> ideal_canyon_facades(const IdealCanyon& canyon, const Vec3& 
 // `reflection_b` are per table band.
 std::vector<double> ideal_canyon_gains(const IdealCanyon& canyon, double axis_bearing,
         const UrbanTable::Axes& axes, const std::vector<double>& reflection_a,
-        const std::vector<double>& reflection_b, double sound_speed, bool diffraction);
+        const std::vector<double>& reflection_b, double floor_reflection, double sound_speed, bool diffraction);
 
 } // namespace niceops

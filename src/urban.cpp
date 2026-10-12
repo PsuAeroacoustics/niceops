@@ -198,6 +198,21 @@ bool first_order_image(const std::vector<Facade>& facades, std::size_t self, con
     return true;
 }
 
+bool first_order_floor_partner(const std::vector<Facade>& below, std::size_t self, const Vec3& source,
+        const Vec3& microphone, double floor)
+{
+    Vec3 image;
+    return first_order_image(below, self, source, Vec3(microphone.x, microphone.y, 2.0 * floor - microphone.z),
+            image);
+}
+
+std::vector<Facade> walls_below(std::vector<Facade> facades)
+{
+    for (auto& f : facades)
+        f.bottom = -std::numeric_limits<double>::infinity();
+    return facades;
+}
+
 std::vector<SpecularPath> specular_paths(const std::vector<Facade>& facades, const Vec3& source,
         const Vec3& receiver, std::size_t max_order)
 {
@@ -246,29 +261,41 @@ double edge_path_difference(double dy, double dz, double u_c, double u_z)
 }
 
 void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const double* reflection_a,
-        const double* reflection_b, const std::vector<double>& bands, double sound_speed, bool diffraction,
-        double* out)
+        const double* reflection_b, double floor_reflection, const std::vector<double>& bands, double sound_speed,
+        bool diffraction, double* out)
 {
     const std::size_t n = bands.size();
-    if (u_c == 0.0)
+    // Along the axis the walls are never reached, and above both of them they
+    // are not in the way: open ground.
+    if (u_c == 0.0 || canyon.microphone_height > std::max(canyon.height_a, canyon.height_b))
     {
-        // Along the axis the walls are never reached: the open direct path.
         std::fill(out, out + n, 1.0);
         return;
     }
-    // The direct path's family (leaving toward the source) and its mirror's:
-    // the first reaches the source after an even number of reflections, the
-    // second after an odd one, and each ray reflects as often as the walls
-    // make it, so each family holds one path at most.
+    // Four families of rays reach the microphone: arriving from above or off
+    // the floor, each with the plane wave's horizontal direction or its mirror.
+    // Traced back, a ray off the floor leaves the microphone's image in the
+    // floor; the direct families reach the source after an even number of
+    // wall reflections and the mirrored ones after an odd number, and each ray
+    // reflects as often as the walls make it, so each family holds one path at
+    // most.  Open ground has two of them, the direct ray and the floor's.
+    IdealCanyon below = canyon;
+    below.microphone_height = -canyon.microphone_height;
     const CanyonTrace direct = trace_canyon(canyon, u_c, u_z);
     const CanyonTrace mirror = trace_canyon(canyon, -u_c, u_z);
+    const CanyonTrace direct_floor = trace_canyon(below, u_c, u_z);
+    const CanyonTrace mirror_floor = trace_canyon(below, -u_c, u_z);
     const bool open = direct.escaped && direct.bounces == 0;
-    const bool direct_even = !open && direct.escaped && direct.bounces % 2 == 0;
-    // The first-order path is the run's to evaluate; only odd orders from 3 on
-    // are the table's.
-    const bool mirror_higher = mirror.escaped && mirror.bounces % 2 == 1 && mirror.bounces >= 3;
+    auto direct_valid = [](const CanyonTrace& t) { return t.escaped && t.bounces % 2 == 0; };
+    auto mirror_valid = [](const CanyonTrace& t) { return t.escaped && t.bounces % 2 == 1; };
+    // The first-order reflection is the run's to evaluate whenever it is open
+    // from above, and its floor partner, through the ground model, whenever
+    // that is open too (first_order_floor_partner); whatever the run does not
+    // evaluate is the table's.
+    const bool run_reflects = mirror_valid(mirror) && mirror.bounces == 1;
+    const bool run_reflects_floor = run_reflects && mirror_valid(mirror_floor) && mirror_floor.bounces == 1;
     // The blocking edge, for the diffracted path: the top of the first wall the
-    // direct path reaches, in the cross-section from the microphone.
+    // direct ray reaches, in the cross-section from the microphone.
     double delta = 0.0;
     if (!open && diffraction)
     {
@@ -277,19 +304,29 @@ void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const doubl
         const double dz = (b ? canyon.height_b : canyon.height_a) - canyon.microphone_height;
         delta = edge_path_difference(dy, dz, u_c, u_z);
     }
+    const double open_ground = 1.0 + floor_reflection;
     for (std::size_t band = 0; band < n; band++)
     {
-        double ratio = open ? 1.0 : 0.0;
-        if (direct_even)
-            ratio += std::pow(reflection_a[band], direct.hits_a) * std::pow(reflection_b[band], direct.hits_b);
-        if (mirror_higher)
-            ratio += std::pow(reflection_a[band], mirror.hits_a) * std::pow(reflection_b[band], mirror.hits_b);
+        auto energy = [&](const CanyonTrace& t) {
+            return std::pow(reflection_a[band], t.hits_a) * std::pow(reflection_b[band], t.hits_b);
+        };
+        double sum = 0.0;
+        if (direct_valid(direct))
+            sum += energy(direct);
+        if (direct_valid(direct_floor))
+            sum += floor_reflection * energy(direct_floor);
+        if (!run_reflects && mirror_valid(mirror))
+            sum += energy(mirror);
+        if (!run_reflects_floor && mirror_valid(mirror_floor))
+            sum += floor_reflection * energy(mirror_floor);
+        // Where the walls block the direct ray, the diffracted path over the
+        // blocking edge, with its own floor reflection.
         if (!open && diffraction)
         {
             const double loss = std::min(cnossos_dif(delta, 0.0, 1, sound_speed / bands[band]), cnossos_cap);
-            ratio += std::pow(10.0, -0.1 * loss);
+            sum += open_ground * std::pow(10.0, -0.1 * loss);
         }
-        out[band] = ratio;
+        out[band] = sum / open_ground;
     }
 }
 
@@ -714,7 +751,7 @@ std::vector<Facade> ideal_canyon_facades(const IdealCanyon& canyon, const Vec3& 
 
 std::vector<double> ideal_canyon_gains(const IdealCanyon& canyon, double axis_bearing,
         const UrbanTable::Axes& axes, const std::vector<double>& reflection_a,
-        const std::vector<double>& reflection_b, double sound_speed, bool diffraction)
+        const std::vector<double>& reflection_b, double floor_reflection, double sound_speed, bool diffraction)
 {
     const std::size_t nb = axes.bands.size();
     std::vector<double> gains(axes.azimuths.size() * axes.elevations.size() * nb);
@@ -729,7 +766,7 @@ std::vector<double> ideal_canyon_gains(const IdealCanyon& canyon, double axis_be
             // The arrival direction's component across the canyon, toward B:
             // cos(e) sin(azimuth - axis).
             const double u_c = std::cos(e) * std::sin(azimuth - a);
-            canyon_ratio(canyon, u_c, std::sin(e), reflection_a.data(), reflection_b.data(), axes.bands,
+            canyon_ratio(canyon, u_c, std::sin(e), reflection_a.data(), reflection_b.data(), floor_reflection, axes.bands,
                     sound_speed, diffraction, ratio.data());
             for (std::size_t band = 0; band < nb; band++)
                 gains[(i * axes.elevations.size() + j) * nb + band]

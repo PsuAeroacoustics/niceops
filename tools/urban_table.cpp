@@ -21,10 +21,10 @@
 //   absorption_a,    optional: each wall's energy absorption coefficient,
 //   absorption_b     every band (default --absorption)
 // The table is the canyon's under plane-wave incidence (canyon_ratio): the
-// specular paths beyond the first-order ones and, where a wall blocks the
-// direct path, the diffracted path over its top; the run adds the first-order
-// reflections itself, from the two walls written beside the table, each
-// --facade_length long.  The file is SI and records --frame_bearing, the
+// specular rays from above and off the floor, but the first-order reflections,
+// and, where a wall blocks the direct ray, the diffracted path over its top,
+// relative to open ground; the run adds the first-order reflections itself,
+// from the two walls written beside the table, each --facade_length long.  The file is SI and records --frame_bearing, the
 // compass bearing of the local +x axis, which the run checks against its own.
 
 #include <CLI/CLI.hpp>
@@ -55,6 +55,7 @@ int main(int argc, char** argv)
     int azimuths = 72;
     double frame_bearing = 90.0;
     double absorption = 0.0;
+    double floor_absorption = 0.0;
     double facade_length = 10000.0;
     double sound_speed = 343.2;
     bool no_diffraction = false;
@@ -69,6 +70,10 @@ int main(int argc, char** argv)
             "Compass bearing of the run's local +x axis, degrees (default 90, +x east).");
     app.add_option("--absorption", absorption, "Walls' energy absorption coefficient where a row gives none "
                                                "(default 0, rigid).")
+            ->check(CLI::Range(0.0, 1.0));
+    app.add_option("--floor_absorption", floor_absorption,
+            "The street's energy absorption coefficient, for the rays the floor reflects (default 0, rigid "
+            "pavement).")
             ->check(CLI::Range(0.0, 1.0));
     app.add_option("--facade_length", facade_length,
             "Length of each wall written for the run's first-order images, in --units (default 10 km).")
@@ -187,8 +192,8 @@ int main(int argc, char** argv)
             const std::vector<double> reflect_a(nb, 1.0 - alpha_a), reflect_b(nb, 1.0 - alpha_b);
             receiver.reflection = reflect_a;
             receiver.reflection.insert(receiver.reflection.end(), reflect_b.begin(), reflect_b.end());
-            const auto row_gains = ideal_canyon_gains(canyon, axis, axes, reflect_a, reflect_b, sound_speed,
-                    !no_diffraction);
+            const auto row_gains = ideal_canyon_gains(canyon, axis, axes, reflect_a, reflect_b, 1.0 - floor_absorption,
+                    sound_speed, !no_diffraction);
             gains.insert(gains.end(), row_gains.begin(), row_gains.end());
             receivers.push_back(std::move(receiver));
         }
@@ -197,6 +202,7 @@ int main(int argc, char** argv)
                 {"diffraction", no_diffraction ? "none" : "cnossos_dif placeholder over the blocking wall"},
                 {"sound_speed_mps", exact_text(sound_speed)},
                 {"facade_length_m", exact_text(facade_length * to_meters)},
+                {"floor_absorption", exact_text(floor_absorption)},
         };
         const UrbanTable table(axes, std::move(receivers), std::move(gains), frame_bearing, "ideal_canyon",
                 provenance);

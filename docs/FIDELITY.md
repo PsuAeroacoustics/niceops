@@ -688,26 +688,30 @@ elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m) now leaves those u
 
 ### Urban receivers
 
-The ideal canyon's claim that a plane wave reaches a point by at most two specular paths, and
-which two, holds against a brute-force image-source search over 3,000 random canyons (widths 8 to
-38 m, walls 3 to 43 m, sources 10^8 m away; `tests/test_urban.cpp`): the paths agree in number and
-order every time, with two paths in over 100 cases and the direct path blocked in over 100. The
-first-order reflections the run evaluates agree with the same search in all 4,000 cases tried.
+The ideal canyon's claim that a plane wave reaches a point by at most four specular paths -- from
+above and off the floor, each with the wave's horizontal direction or its mirror -- and which
+ones, holds against a brute-force image-source search over 3,000 random canyons (widths 8 to
+38 m, walls 3 to 43 m, sources 10^8 m away; the floor's paths are those to the microphone's floor
+image through the walls' images below it; `tests/test_urban.cpp`). The paths agree in number and
+order every time; three or four arrive in over 100 cases, the direct ray is blocked in over 100,
+and only the floor's rays arrive in over 50. The first-order reflections the run evaluates agree
+with the same search in all 4,000 cases tried.
 
 What evaluating the first-order reflections explicitly buys, for an omnidirectional source over a
-20 m canyon with 15 and 18 m walls, a microphone 6 m from one wall at 1.5 m and walls reflecting
-0.8 (specular paths only, 1 kHz; the hidden Catch2 case `[.urban_separability]`). The error is
-in the total energy at the microphone against every specular path of the point source, as the
-absolute level difference over 4,000 random directions above 5 degrees:
+20 m canyon with 15 and 18 m walls, a microphone 6 m from one wall at 1.5 m, walls reflecting 0.8
+and a rigid floor (specular paths only, 1 kHz; the hidden Catch2 case `[.urban_separability]`).
+The error is in the total energy at the microphone against every specular path of the point
+source, from above and off the floor, as the absolute level difference over 4,000 random
+directions above 5 degrees:
 
 | Range | Explicit reflections + table: median / p95 / max, dB | Everything in the table: median / p95 / max, dB |
 | --- | --- | --- |
-| 30 m | 0.41 / 3.1 / 40 | 1.95 / 7.9 / 43 |
-| 60 m | 0.00 / 3.6 / 36 | 0.38 / 6.7 / 37 |
-| 120 m | 0.00 / 2.4 / 35 | 0.00 / 3.8 / 35 |
-| 300 m | 0.00 / 2.3 / 10 | 0.00 / 2.5 / 10 |
-| 1 km | 0.00 / 0.53 / 4.1 | 0.00 / 0.77 / 4.1 |
-| 3 km | 0.00 / 0.13 / 3.7 | 0.00 / 0.13 / 3.7 |
+| 30 m | 0.36 / 4.2 / 43 | 1.82 / 9.1 / 46 |
+| 60 m | 0.21 / 3.9 / 40 | 0.71 / 7.1 / 40 |
+| 120 m | 0.10 / 4.2 / 37 | 0.25 / 5.0 / 37 |
+| 300 m | 0.04 / 2.2 / 10 | 0.07 / 2.7 / 10 |
+| 1 km | 0.01 / 1.4 / 4.0 | 0.01 / 1.4 / 4.0 |
+| 3 km | 0.00 / 0.21 / 3.7 | 0.00 / 0.28 / 3.7 |
 | 10 km | 0.00 / 0.04 / 3.6 | 0.00 / 0.04 / 3.6 |
 
 The largest errors are directions near a wall's top, where the plane wave and the point source
@@ -716,12 +720,12 @@ tens of dB. A directional source would widen the gap between the two columns, si
 reflection reads the sphere in its own direction; that is not measured yet.
 
 On the demo track (B407 database), seven microphones in ideal canyons
-(`tests/data/urban_canyons.csv`) move by −3.7 to +2.0 dB in SEL against open ground. Two streets
-along the track give both ends: +2.0 dB where the helicopter passes about 550 ft up, reflections
-adding to an open direct path, and −3.7 dB near the end of the approach, where it is under 100 ft
-and the walls block it. Nothing here is
-validated against measurements in streets; none of the measured data sets
-([Data sets](#data-sets)) has buildings near the microphones.
+(`tests/data/urban_canyons.csv`) move by −2.1 to +2.1 dB in SEL against open ground. Two streets
+along the track give both ends: +2.1 dB where the helicopter passes about 550 ft up, reflections
+adding to an open direct path, and −2.1 dB near the end of the approach, where it is under 100 ft
+and the walls block the direct sound but not all of the floor's. Nothing here is validated
+against measurements in streets; none of the measured data sets ([Data sets](#data-sets)) has
+buildings near the microphones.
 
 ### Trajectory smoothing
 

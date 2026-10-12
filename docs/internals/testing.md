@@ -138,10 +138,13 @@ Notes on each:
   knife edge's four call sites: the ground model over the plane, the plate, the free field with no
   ground model, and the table (looser, as the table is built by the test run). Dropping the loss
   from the free field's or the table's call passed every other test.
-- **`urban_{canyon,plate}.csv`** were made by the build that added `--urban_table`: seven
-  microphones in ideal canyons on the demo track, poles and plates. They pin the call site: an
-  image path whose separation is not mirrored back before the plate reads its azimuth fails the
-  plate's, with every windowed/marched pair green.
+- **`urban_{canyon,plate}.csv`** were made by the build that added `--urban_table`, and
+  regenerated when the ideal canyon learned the floor's rays (the low-pass microphone moved from
+  -3.7 to -2.1 dB against open ground; flush microphones, their own floor images, did not move).
+  Seven microphones in ideal canyons on the demo track, poles and plates. They pin the call site:
+  an image path whose separation is not mirrored back before the plate reads its azimuth fails
+  the plate's, and a reflection evaluated with the ground model whatever its floor partner fails
+  both, with every windowed/marched pair green.
 
 ## `self_test`
 
@@ -205,6 +208,7 @@ CTests are defined in `CMakeLists.txt`.
 | `the point receiver's ground bound over several classes is their elementwise maximum` | `test_ground_classes.cpp` | the bound over the first class only, inside `point_ground_gain_bounds`. No CTest kills it: each class's bound is within about 3 dB of the others' in the bands A-weighting keeps, and `ground_classes{,_terrain}_windowed_is_exact` passed with it for grass, concrete, snow, water and passive thin layers. The call site passing every class (`point_classes`) is therefore guarded only by reading |
 | `urban_table_bump_windowed_is_exact` | CTest | the urban table's largest gain left out of `path_gains`. The canyon tables' own gains, at most +3 dB, sit inside the bound's slack, so the canyon and plate pairs pass with it; the bump table adds +25 dB at 3 to 20 degrees of elevation. The first-order images left out of `urban_bound_geometry` pass every CTest, including 150 random tall canyons near the end of the approach, with and without the ground: the table's own gain and the slack cover reflections leaving 10 to 40 degrees from the direct path on this database. It is kept for directional spheres and guarded by reading |
 | `urban_table_plate_golden` | CTest | an image path's separation not mirrored back before the plate reads its azimuth |
+| `urban_table_canyon_golden`, `urban_table_plate_golden` | CTest | a first-order reflection evaluated with the ground model whatever its floor partner (`first_order_floor_partner` skipped) |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.

@@ -1057,6 +1057,10 @@ the paths are summed in energy. Microphones without a table are evaluated as wit
 - **Coverage.** A direction outside the table's elevations, or a NaN, takes the open-ground model
   with no urban terms at all; the log counts these.
 - **Interpolation** is bilinear in dB, which smooths the steps at shadow edges over one cell.
+- **The street's floor** is the table's, not the ground model's: inside a canyon the floor's
+  reflection often arrives where the direct sound is blocked. The table assumes hard pavement
+  unless built with `--floor_absorption`; put urban microphones on a hard ground class
+  ([Mixed ground](#mixed-ground)) so the open-ground prediction it scales is a street's.
 - **What the canyon model leaves out.** The walls reflect specularly; diffraction is a
   placeholder over the blocking wall's top; diffuse reflection, the street's ends, turbulence in
   the shadows and low-frequency wave effects are not modeled. Treat the tables' detail at low
@@ -1656,6 +1660,7 @@ niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_f
 | `--elevations` | Elevations, degrees. Default 0 to 30 by 1.5, then 35 to 90 by 5. |
 | `--frame_bearing` | The compass bearing of the run's local +x axis. Default 90 (east). |
 | `--absorption` | The walls' absorption where a row gives none. Default 0, rigid. |
+| `--floor_absorption` | The street's absorption, for the rays its floor reflects. Default 0, rigid pavement. |
 | `--facade_length` | Each wall's length for the run's reflections, centered on the microphone. Default 10 km, effectively infinite. |
 | `--sound_speed` | For the diffracted path's wavelengths, m/s. Default 343.2. |
 | `--no_diffraction` | Leave out the diffracted path over a blocking wall. |

@@ -1989,6 +1989,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<std::size_t> urban_of;
     std::vector<std::size_t> urban_facade_first;
     std::vector<double> urban_reflection_loss;
+    // Each receiver's facades carried below the floor, for the floor partner
+    // of a first-order reflection (first_order_floor_partner).
+    std::vector<std::vector<Facade>> urban_walls_below;
     std::size_t urban_observers = 0;
     // Whether the table refracts: anything but a ground-model table, unless
     // its provenance records that it was built with no atmosphere.  Over
@@ -2562,6 +2565,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             for (std::size_t r = 0; r < urban.receivers().size(); r++)
                 urban_facade_first[r + 1] = urban_facade_first[r] + urban.receivers()[r].facades.size();
             urban_reflection_loss.assign(urban_facade_first.back() * bands.size(), 0.0);
+            for (const auto& receiver : urban.receivers())
+                urban_walls_below.push_back(walls_below(receiver.facades));
             for (std::size_t r = 0; r < urban.receivers().size(); r++)
             {
                 const auto& receiver = urban.receivers()[r];
@@ -3505,7 +3510,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // less the facade's reflection loss, summed in energy.  The image
             // arrives at a plate crossing it from the mirrored side, so its
             // separation is mirrored back; its ground model is evaluated
-            // exactly, since the ground table's extent follows the observers.
+            // exactly, since the ground table's extent follows the observers,
+            // and only when the reflection's floor partner is open too
+            // (first_order_floor_partner): otherwise the table holds that ray,
+            // and the image is taken in free field.
             // A direction the table does not cover takes straight_level, with
             // no urban terms at all.  With no reflection the level is the
             // direct path's as returned, which is what keeps a table of 0 dB
@@ -3550,8 +3558,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     urban_image_here++;
                     RayPath path = straight_ray(source, image);
                     path.separation = mirror_direction(facades[k], path.separation);
+                    const bool partner = first_order_floor_partner(urban_walls_below[urban_receiver], k, source,
+                            observer, observer.z - microphone_height[index]);
                     const double here = database.spectral_level_along(path, source_states[it], pair_absorption,
-                            band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
+                            band_gains, partner ? ground_here : nullptr, impedance_here, sound_speed, first_band, last_band,
                             packed_of_state[it], plate_receiver, plate_mic_azimuth, nullptr,
                             urban_reflection_here + k * database.band_centers().size(), nullptr,
                             bands_out != nullptr ? urban_image_bands.data() : nullptr);

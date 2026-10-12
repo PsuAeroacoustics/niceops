@@ -91,9 +91,22 @@ What to keep:
   harmonic sum of squared ranges). The image term has no CTest that fails without it (see
   [testing.md](testing.md#mutation-guarded-tests)); keep it, since a strongly directional sphere
   can make a reflection louder than the direct path's bin bound.
-- **The canyon table's specular part comes from two traces, not a lattice sum.** A plane wave
-  reaches a point by at most one ray per cross-canyon direction, so `canyon_ratio` traces two
-  rays back from the microphone; `specular_paths` (brute force) is the test reference only.
+- **The canyon table's specular part comes from four traces, not a lattice sum.** A plane wave
+  reaches a point by at most one ray per cross-canyon direction and per way of arriving, from
+  above or off the floor, so `canyon_ratio` traces four rays back from the microphone and its
+  floor image; `specular_paths` (brute force, with the walls carried below the floor for the
+  floor's rays) is the test reference only.
+- **The floor is the table's, not the ground model's, inside a canyon.** The first version left
+  the floor reflection to the ground model, as if it shared the direct ray's fate. The wave
+  solver showed otherwise: from the floor image, 2 z_r lower, a ray clears the roofs after a
+  different number of reflections, and at low elevations it is often the only one open. At 15
+  and 30 degrees over a 20 m canyon the table read 20-25 dB of shielding where the wave solution
+  has 2-4 dB. The table is therefore relative to open ground's two rays, 1 + rho_f.
+- **A first-order reflection's floor partner is checked at run time**
+  (`first_order_floor_partner`, against `urban_walls_below`): the reflection is evaluated with
+  the ground model only when its partner is open too, and in free field otherwise, and the
+  table holds the partner exactly when the run does not. Leaving the check out overcounts by
+  3 dB in the directions where the two differ; both pinned goldens fail without it.
 - **Receivers are matched by position** (1 mm), because the observer reader keeps no ids. The
   table records its frame bearing, and the run refuses another: azimuths are compass bearings
   and the geometry is local.

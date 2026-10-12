@@ -783,8 +783,10 @@ where $L_{d,b}$ is the direct path's band level as the run takes it without buil
 §5 or §6.2), $G_b(\beta, \varepsilon)$ is the receiver's table at the compass bearing $\beta$ and
 elevation $\varepsilon$ of the source seen from the microphone, interpolated bilinearly in dB, and
 the sum runs over the receiver's facades $k$ with a valid first-order reflection, $\rho_{k,b}$
-being the facade's energy reflection coefficient. With no valid reflection the level is
-$L_{d,b} + G_b$ exactly, so a table of 0 dB with no facades is the run without one.
+being the facade's energy reflection coefficient. $G$ is relative to open ground: $L_{d,b}$
+already carries the ground's reflection, and $G$ says what the street makes of the two rays open
+ground has. With no valid reflection the level is $L_{d,b} + G_b$ exactly, so a table of 0 dB
+with no facades is the run without one.
 
 **First-order reflections.** A facade is a vertical rectangle: a base segment with unit left
 normal $\hat n$ and two heights. The reflected path is the straight line from the source $S$ to
@@ -794,8 +796,12 @@ side of the plane, the point where $SM'$ crosses it lies within the rectangle, a
 of the receiver crosses either leg. It takes its own sphere direction (the line's, leaving the
 source), spherical spreading and absorption over its unfolded length $|SM'|$, and the ground term
 at $M'$: the mirror keeps heights, so the source height and horizontal distance the ground model
-takes are those of the unfolded path. A plate microphone (§6.2) takes the azimuth of the arrival
-as it reaches the microphone, the line's horizontal direction mirrored back.
+takes are those of the unfolded path. The ground term carries the reflection's floor partner,
+which is open only if the same reflection reaches the microphone's image in the floor, $M_f$, among
+the walls carried below the floor; when it does not, the reflection is taken in free field and the
+partner, if it arrives some other way, is the table's. A plate microphone (§6.2) is its own image
+and takes the azimuth of the arrival as it reaches the microphone, the line's horizontal direction
+mirrored back.
 
 **The ideal canyon.** The tables `niceops_urban_table` builds are those of an ideal street canyon
 [67]: two parallel walls of infinite length a width $W$ apart, with heights $H_A$ and $H_B$ above
@@ -804,18 +810,26 @@ the source being far compared with the street. Let the arrival direction (toward
 components $u_c$ across the canyon, positive toward wall B, and $u_z$ upward. A ray traced back
 from the microphone with horizontal component $v_c = \pm u_c$ climbs $u_z/|v_c|$ per unit of
 travel across the canyon and reflects at each wall it meets below the wall's top, until it passes
-over one. The ray leaving along $v_c = u_c$ arrives back along the source's direction after an
-even number $k_1$ of reflections, and the one leaving along $v_c = -u_c$ after an odd number
-$k_2$; each ray reflects exactly as often as the walls make it, so each family holds at most one
-path, and a plane wave reaches the microphone by at most two specular paths. With the first-order
-path ($k_2 = 1$) the run's to evaluate, the table holds
+over one. The ray leaving along $v_c = u_c$ arrives back along the source's direction after an even
+number of reflections, and the one leaving along $v_c = -u_c$ after an odd number; each ray
+reflects exactly as often as the walls make it, so each family holds at most one path. A ray off
+the floor is traced the same way from the microphone's image in it, $2 z_r$ lower: it clears the
+roofs after a different number of reflections, and is often open where the direct ray is blocked.
+Four families, then, at most one path each: from above or off the floor, direct ($d$, $d_f$) or
+mirrored ($m$, $m_f$). Against open ground's direct ray and floor reflection, $1 + \rho_f$ with
+$\rho_f$ the floor's energy reflection, the table holds
 
 $$
-T = [k_1 = 0] + [k_1\ \text{even},\ k_1 \ge 2]\,\rho_A^{a_1}\rho_B^{b_1} + [k_2\ \text{odd},\ k_2 \ge 3]\,\rho_A^{a_2}\rho_B^{b_2} + [k_1 \ne 0]\,10^{-\Delta_\mathrm{dif}/10},
+T = \frac{[d]\,P_d + \rho_f\,[d_f]\,P_{d_f} + [m]'\,P_m + \rho_f\,[m_f]'\,P_{m_f}
+      + (1 + \rho_f)\,[k_d \ne 0]\,10^{-\Delta_\mathrm{dif}/10}}{1 + \rho_f},
 $$
 
-$G = 10\lg T$ (floored at $-300$ dB), where $a_i$ and $b_i$ count each family's reflections off
-each wall. Where a wall X blocks the direct path, a diffracted path over its top stands in for it,
+where $[\cdot]$ is 1 for a family that reaches the source (even reflections for $d$ and $d_f$, odd for
+$m$ and $m_f$), $P = \rho_A^{a}\rho_B^{b}$ for its $a$ and $b$ reflections off each wall, and the
+primes leave out what the run evaluates itself: $m$ when it reflects once, and $m_f$ when both $m$
+and $m_f$ do.
+$G = 10\lg T$ (floored at $-300$ dB). Where a wall X blocks the direct ray ($k_d \ne 0$), a
+diffracted path over its top, with its floor reflection, stands in for it,
 with the CNOSSOS-EU $\Delta_\mathrm{dif} = \min(10\lg(3 + 40\delta/\lambda),\ 25)$ dB [32, 33] at
 the plane wave's path difference over an infinite edge parallel to the axis. Minimized along the
 edge, which is Keller's cone of diffracted rays [68],
@@ -825,13 +839,11 @@ $$
 \qquad \mathbf{u}_\perp = (u_c, u_z),\quad \mathbf{D} = (y_X - y_r,\ H_X - z_r),
 $$
 
-in the canyon's cross-section. This diffraction is a placeholder for a wedge model. Every image of
-the two walls reaches the floor at the direct path's grazing angle, so a plane-wave ground factor
-would be the same on each path, and the ratio is taken against the open-ground direct path. Left
-out: the floor's own effect on which paths are open (the floor reflection shares its path's
-shielding), diffraction of the reflected paths, diffuse reflection, the canyon's ends, turbulent
-scattering into the shielded directions, and every wave effect below the frequencies where the
-street is several wavelengths wide.
+in the canyon's cross-section. This diffraction is a placeholder for a wedge model. Left out:
+diffraction of the reflected paths, diffuse reflection, the canyon's ends, turbulent scattering
+into the shielded directions, and every wave effect below the frequencies where the street is
+several wavelengths wide. A microphone above both walls, or a direction
+along the axis, gives $T = 1$.
 
 **Separating the paths.** A table keyed on the arrival direction alone assumes every path leaves
 the rotor in the direct path's direction at the direct path's range. Close to the buildings a
