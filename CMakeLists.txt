@@ -1229,8 +1229,9 @@ set_tests_properties(ground_classes_refuse_undefined_class PROPERTIES PASS_REGUL
 add_test(NAME ground_classes_refuse_fractional_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_bad_id.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(ground_classes_refuse_fractional_class PROPERTIES PASS_REGULAR_EXPRESSION "data row 2 gives the ground class 2.5; a class is an integer")
 # Each microphone over its class.  One class repeating the command line's ground is the run
-# without classes, byte for byte: inherited (ground_classes_one.csv) and given in full with
-# integer-valued numbers (ground_classes_one_explicit.csv), for point receivers with their tables,
+# without classes, byte for byte: inherited (ground_classes_one.csv) and with every column given
+# at the command line's values in meters (ground_classes_one_explicit.csv; under --units ft the
+# two lengths go through x * 0.3048 and need not be), for point receivers with their tables,
 # for plates, and over the hills.
 add_test(NAME ground_class_scalar_point COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} -b tests/data/mixed_receivers.csv -o integrated/ground_class_scalar_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME ground_class_single_point COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_one.csv -b tests/data/mixed_receivers_class7.csv -o integrated/ground_class_single_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

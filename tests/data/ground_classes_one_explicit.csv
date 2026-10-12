@@ -1,2 +1,2 @@
-class,name,impedance_model,flow_resistance
-7,grass,variable_porosity,200
+class,name,impedance_model,flow_resistance,porosity_rate,layer_depth,roughness
+7,grass,variable_porosity,200,0,0.05,0
