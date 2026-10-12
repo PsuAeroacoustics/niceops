@@ -317,7 +317,8 @@ in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
   (breaks the direction bounds' bins); a fade-in below δ = 0 (breaks the level-terrain identity).
 - Tests: `terrain_ridge_screened_{point,plate,noground,classes,table}_windowed_is_exact` behind
   the ridge fixture (`integrated/terrain_ridge.nc`, 25 m high, 250 m to the track's side), each
-  with a log check that pairs were screened; the refusals; and the Catch2 `[screening]` cases,
+  with a log check that pairs were screened; the point and plate runs pinned at 1e-6
+  (`terrain_ridge_screened_{point,plate}_golden`); the refusals; and the Catch2 `[screening]` cases,
   including the bound sweep and the half-plane comparison.
 
 ### How the plane is found (`GroundPlaneCache`)

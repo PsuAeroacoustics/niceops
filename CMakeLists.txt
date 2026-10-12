@@ -1833,6 +1833,11 @@ foreach(kind point plate noground classes table)
   add_test(NAME terrain_ridge_screened_${kind}_windowed_is_exact COMMAND golden_compare integrated/terrain_ridge_screened_${kind}.csv integrated/terrain_ridge_screened_${kind}_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(terrain_ridge_screened_${kind}_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_ridge_runs)
 endforeach()
+# The windowed/marched pairs compare one binary with itself, so the ridge runs are pinned (made by
+# the build that added --terrain_screening; regenerate only with a deliberate change).
+add_test(NAME terrain_ridge_screened_point_golden COMMAND golden_compare integrated/terrain_ridge_screened_point.csv golden/terrain_ridge_screened_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_ridge_screened_plate_golden COMMAND golden_compare integrated/terrain_ridge_screened_plate.csv golden/terrain_ridge_screened_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_screened_point_golden terrain_ridge_screened_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_ridge_runs)
 # Refusals.
 add_test(NAME terrain_screening_needs_terrain COMMAND niceops ${TERRAIN_DEMO} ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_screening_needs_terrain PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening needs --terrain")
