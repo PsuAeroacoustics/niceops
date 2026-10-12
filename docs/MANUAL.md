@@ -629,8 +629,11 @@ z_ft,T_K,RH,p_kPa
 - **Pressure.** Without a column, it is integrated hydrostatically up from the surface pressure
   (the vehicle file's or `--pressure`'s). A single row is a uniform atmosphere.
 - **The profile has to reach the aircraft.** A trajectory above the top level is refused. Below
-  the lowest level that level is held to the ground, so give the profile a level at the ground
-  ([`niceops_build_atmosphere`](#niceops_build_atmosphere) always writes one).
+  the lowest level that level is held to the ground, with a warning, so give the profile a level
+  at the ground ([`niceops_build_atmosphere`](#niceops_build_atmosphere) always writes one).
+- **No calm level above the ground under wind.** `--refraction stratified` takes one as a thin
+  layer that can put levels 20 dB or more low, and the run warns of it. A profile calm at every
+  level is still air and does not warn.
 - **Surface properties stay at the surface**: the ground level supplies the sound speed for the
   reception time and the ground impedance.
 - **Not with `--temperature` or `--humidity`**; `--pressure` only when the file has no pressure.

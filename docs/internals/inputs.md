@@ -92,6 +92,14 @@ with exit status 0. Know these before adding a reader, and follow the same rules
 - **The operations file** (`read_operations`, `src/operations.cpp`) has its own reader, because
   `read_labeled_csv` drops every row that is not wholly numeric and a row here holds paths and
   clock times. It is described below.
+- **`--atmosphere` warns, and does not refuse,** when a profile of several levels has none at or
+  below the ground (its lowest is held down), and when a level above the ground is calm in a
+  profile that has wind elsewhere: the thin layer of
+  [atmosphere.md](atmosphere.md#the-surface-wind-profile---wind). Refusing would be wrong, because
+  `atmospheres/example_windy_calm_floor.csv` exists to run that case. A profile calm throughout
+  (`example_inversion.csv`) is still air and does not warn. When `<file>.provenance.json` (the
+  builder's sidecar) sits beside an `--atmosphere`, the run manifest lists it as
+  `atmosphere_provenance`.
 - **`--terrain` checks the datum and the frame against the track** where the track can say (an
   AC file's lat/lon and alt beside its x/y/z), refuses states under the ground and grids that
   miss the scene, and warns when scattered observers' z disagrees with the terrain; see the

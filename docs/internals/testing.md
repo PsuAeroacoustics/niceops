@@ -331,6 +331,10 @@ plane, the climb's fade at hover, and the frame's precedence over the fit. CTest
   runs (`tests/data/atmosphere_builder/fit_runs.py`) give z0 back, with the light-wind run left
   out. The refusals pass on their messages. The Catch2 cases are listed in
   [atmosphere.md](atmosphere.md#wind-profile-tests).
+- **The run's warnings on a profile**: `atmosphere_warns_no_ground_level`,
+  `atmosphere_warns_calm_floor`, and `atmosphere_still_does_not_warn` (a profile calm throughout,
+  with `FAIL_REGULAR_EXPRESSION`); `build_atmosphere_manifest` runs a built profile without either
+  warning, and `build_atmosphere_manifest_records_provenance` finds its sidecar in the manifest.
 
 ## The plotting gap
 

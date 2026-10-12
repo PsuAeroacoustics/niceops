@@ -1515,6 +1515,19 @@ set_tests_properties(build_atmosphere_stratified build_atmosphere_stratified_mar
 add_test(NAME build_atmosphere_stratified_windowed_is_exact COMMAND golden_compare integrated/build_atmosphere_stratified.csv integrated/build_atmosphere_stratified_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(build_atmosphere_is_harness_profile build_atmosphere_units_agree PROPERTIES FIXTURES_REQUIRED build_atmosphere_runs)
 set_tests_properties(build_atmosphere_stratified_windowed_is_exact PROPERTIES FIXTURES_REQUIRED build_atmosphere_stratified_runs)
+# --atmosphere warns, without refusing, on what it takes on trust: no level at the ground (the
+# lowest is held down), and a calm level above the ground under wind.  A built profile has
+# neither; its sidecar is recorded in the run manifest.
+add_test(NAME atmosphere_warns_no_ground_level COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere tests/data/atmosphere_no_ground_ft.csv --gridstep 1640 -L warn -o integrated/atmosphere_no_ground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_warns_no_ground_level PROPERTIES PASS_REGULAR_EXPRESSION "has no level at or below the ground: its lowest, at 50 ft, is held down to it")
+add_test(NAME atmosphere_warns_calm_floor COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --gridstep 1640 -L warn -o integrated/atmosphere_calm_floor.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_warns_calm_floor PROPERTIES PASS_REGULAR_EXPRESSION "example_windy_calm_floor.csv is calm at 0.1 ft, above the ground")
+add_test(NAME atmosphere_still_does_not_warn COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --gridstep 1640 -L warn -o integrated/atmosphere_still.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_still_does_not_warn PROPERTIES FAIL_REGULAR_EXPRESSION "is calm at;no level at or below the ground")
+add_test(NAME build_atmosphere_manifest COMMAND niceops ${BUILD_ATMOSPHERE_RUN} --manifest integrated/build_atmosphere_manifest.json -o integrated/build_atmosphere_manifest_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_manifest PROPERTIES FIXTURES_SETUP build_atmosphere_manifest_runs FIXTURES_REQUIRED build_atmosphere_runs FAIL_REGULAR_EXPRESSION "is calm at;no level at or below the ground")
+add_test(NAME build_atmosphere_manifest_records_provenance COMMAND ${CMAKE_COMMAND} -E cat integrated/build_atmosphere_manifest.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_manifest_records_provenance PROPERTIES FIXTURES_REQUIRED build_atmosphere_manifest_runs PASS_REGULAR_EXPRESSION "\"atmosphere_provenance\"")
 # fit_z0 gives back the roughness length of runs that follow the log law exactly (written by
 # tests/data/atmosphere_builder/fit_runs.py), leaving out the one in light wind.
 add_test(NAME fit_z0_known COMMAND niceops_build_atmosphere fit_z0 ${BUILD_ATMOSPHERE_DATA}/fit_run1.csv ${BUILD_ATMOSPHERE_DATA}/fit_run2.csv ${BUILD_ATMOSPHERE_DATA}/fit_run3.csv ${BUILD_ATMOSPHERE_DATA}/fit_run4.csv ${BUILD_ATMOSPHERE_DATA}/fit_run5.csv ${BUILD_ATMOSPHERE_DATA}/fit_run6.csv --missing 9999 --draws 200 --table integrated/fit_z0_known.csv -o integrated/fit_z0_known.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

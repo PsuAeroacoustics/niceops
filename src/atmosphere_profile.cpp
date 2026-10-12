@@ -492,6 +492,45 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
         }
     }
 
+    // What the run takes on trust, said once per file: below the lowest level
+    // that level is held to the ground, and a calm level above the ground is
+    // the thin layer that --refraction stratified reads 20 dB or more low.
+    // Warnings, not refusals: example_windy_calm_floor.csv is calm at 0.1 ft
+    // on purpose, and a profile from a sounding may start above the ground.
+    // Calm at every level is still air (example_inversion.csv), not a layer.
+    if (profile.height.size() > 1 && profile.bottom() > 0.0)
+    {
+        warn("--atmosphere ", path, " has no level at or below the ground: its lowest, at ",
+                profile.bottom() / unit.to_meters, " ", unit.name, ", is held down to it. "
+                "niceops_build_atmosphere writes a ground level.");
+    }
+    if (profile.has_wind())
+    {
+        std::size_t calm = 0;
+        double lowest = 0.0;
+        for (std::size_t i = 0; i < profile.height.size(); i++)
+        {
+            if (profile.height[i] > 0.0 && profile.wind_east[i] == 0.0
+                    && profile.wind_north[i] == 0.0)
+            {
+                if (calm++ == 0)
+                    lowest = profile.height[i];
+            }
+        }
+        const bool still = std::all_of(profile.wind_east.begin(), profile.wind_east.end(),
+                                   [](double u) { return u == 0.0; })
+                && std::all_of(profile.wind_north.begin(), profile.wind_north.end(),
+                        [](double v) { return v == 0.0; });
+        if (calm > 0 && !still)
+        {
+            warn("--atmosphere ", path, " is calm at ", lowest / unit.to_meters, " ", unit.name,
+                    calm > 1 ? " (and " + std::to_string(calm - 1) + " more levels)" : std::string(),
+                    ", above the ground. --refraction stratified takes a calm level there as a "
+                    "thin layer, which can put levels 20 dB or more low; niceops_build_atmosphere "
+                    "refuses or drops one.");
+        }
+    }
+
     std::ostringstream ignored;
     for (std::size_t i = 0; i < csv.header.size(); i++)
     {

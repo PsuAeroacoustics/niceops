@@ -4740,7 +4740,12 @@ int run(int argc, char* argv[])
             request.manifest.add_input("vehicle", f);
         request.manifest.add_input("observers", observer_file);
         for (const auto& f : atmosphere_files)
+        {
             request.manifest.add_input("atmosphere", f);
+            // niceops_build_atmosphere's sidecar: how the profile was made.
+            if (std::filesystem::exists(f + ".provenance.json"))
+                request.manifest.add_input("atmosphere_provenance", f + ".provenance.json");
+        }
         request.manifest.add_input("terrain", terrain_file);
         request.manifest.add_input("ground_classes", ground_classes_file);
         request.manifest.add_input("plate_table", plate_table);
