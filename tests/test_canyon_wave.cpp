@@ -298,3 +298,24 @@ TEST_CASE("rotor tones through a canyon against the band table", "[.canyon_tone_
             }
         }
 }
+
+TEST_CASE("each wall takes its own absorption", "[canyon_wave]")
+{
+    CanyonWaveSetup s;
+    s.width = 6.0;
+    s.depth = 6.0;
+    s.offset = 2.0;
+    s.max_frequency = 120.0;
+    s.points_per_wavelength = 8.0;
+    s.roof_margin = 3.0;
+    s.sky_margin = 3.0;
+    s.max_duration = 0.5;
+    s.wall_absorption = 0.1;
+    const ApertureSpectrum both = solve_canyon(s);
+    s.wall_absorption_b = 0.1;
+    const ApertureSpectrum same = solve_canyon(s);
+    s.wall_absorption_b = 0.3;
+    const ApertureSpectrum other = solve_canyon(s);
+    REQUIRE(both.spectrum == same.spectrum);
+    REQUIRE(both.spectrum != other.spectrum);
+}

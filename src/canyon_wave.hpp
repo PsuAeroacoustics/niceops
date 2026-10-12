@@ -35,6 +35,7 @@
 // covers every direction of the three-dimensional table (canyon_wave_ratio).
 
 #include <complex>
+#include <limits>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -54,6 +55,8 @@ struct CanyonWaveSetup
     // reference is taken.  Zero is rigid; a rigid canyon rings for seconds in
     // its cross modes (n c / 2W), which real facades damp.
     double wall_absorption = 0.05;
+    // Wall B's, when it differs from wall A's (wall_absorption); NaN takes A's.
+    double wall_absorption_b = std::numeric_limits<double>::quiet_NaN();
     double max_frequency = 500.0;     // the highest frequency the spectrum must resolve, Hz
     double points_per_wavelength = 15.0;
     double roof_margin = 8.0;         // roof inside the grid each side before the PML, m

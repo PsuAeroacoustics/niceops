@@ -149,6 +149,11 @@ tables' low band (THEORY §6.6). What to keep:
   multiply per point instead of a sine and a cosine. It is the table build's inner loop.
 - **Oblique incidence is the reduced frequency f |u_perp|** (`canyon_wave_ratio`), exact for rigid
   walls; a reduced band under 5 Hz is open ground.
+- **The builder's wave band** (`--wave_below`): each distinct canyon is solved once, canyons in
+  parallel on one thread each, to the top of the last blended band. `blend_wave_band` mixes in
+  energy and scales each facade's reflection by 1 - w: the wave solution holds the first-order
+  reflections, so leaving them in would count them twice. Canyons with unequal walls are warned
+  about and left geometric (the far-field transform needs flush roofs).
 - Tests: `[canyon_wave]` (open ground against the image solution, independence of the grid's
   margins), and the hidden studies `[.canyon_wave_study]` (convergence, the geometric limit) and
   `[.canyon_tone_study]` (rotor tones against band tables, the stage-2 gate), whose results are

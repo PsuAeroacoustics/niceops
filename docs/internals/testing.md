@@ -69,6 +69,7 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `terrain_ridge_kirchhoff_table.csv` | C++ build | `terrain_ridge_kirchhoff_table_golden` (1e-5 dB abs.) | `terrain_ridge_kirchhoff_table` | copy the run's output |
 | `urban_canyon.csv` | C++ build | `urban_table_canyon_golden` (1e-6 dB abs.) | `urban_table_canyon` | copy the run's output |
 | `urban_plate.csv` | C++ build | `urban_table_plate_golden` (1e-6 dB abs.) | `urban_table_plate` | copy the run's output |
+| `urban_wave.csv` | C++ build | `urban_table_wave_golden` (1e-5 dB abs.) | `urban_table_wave` | copy the run's output |
 
 All files are in `golden/`; each producing run writes `integrated/<name>.csv` unless the table
 says otherwise. To regenerate a C++ golden, run its comparison with the build that carries the
@@ -145,6 +146,9 @@ Notes on each:
   an image path whose separation is not mirrored back before the plate reads its azimuth fails
   the plate's, and a reflection evaluated with the ground model whatever its floor partner fails
   both, with every windowed/marched pair green.
+- **`urban_wave.csv`** was made by the build that added `--wave_below`: the same microphones with
+  the flush canyons' bands below 80 Hz from the wave solver (10 points per wavelength), blended
+  through 125 Hz. Its tolerance is looser, the FDTD's round-off being compiler-dependent.
 
 ## `self_test`
 

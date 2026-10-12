@@ -318,4 +318,19 @@ std::vector<double> ideal_canyon_gains(const IdealCanyon& canyon, double axis_be
         const UrbanTable::Axes& axes, const std::vector<double>& reflection_a,
         const std::vector<double>& reflection_b, double floor_reflection, double sound_speed, bool diffraction);
 
+// The wave band's weight in each table band (the low band, solved by
+// src/canyon_wave): 1 for every band centered at or below `wave_below` Hz,
+// falling in equal steps to 0 over the next `blend` bands, 0 above; all 0
+// when wave_below is 0.
+std::vector<double> wave_band_weights(const std::vector<double>& bands, double wave_below, std::size_t blend);
+
+// Blend a receiver's wave table into its geometric one: per band, in energy,
+// T = w T_wave + (1 - w) T_geometric.  The wave solution holds everything the
+// street does, its first-order reflections included, so each facade's
+// reflection in a band is scaled by 1 - w and the run's explicit reflections
+// fade out as the wave table fades in.  `gains` and `wave` are one
+// receiver's [direction][band] in dB; `reflection` is its [facade][band].
+void blend_wave_band(std::vector<double>& gains, std::vector<double>& reflection, const std::vector<double>& wave,
+        const std::vector<double>& weight);
+
 } // namespace niceops

@@ -547,3 +547,35 @@ TEST_CASE("write the urban bump table", "[.urban_bump_table]")
     bump.save("tables/urban_bump_test.nc");
     REQUIRE(UrbanTable::load("tables/urban_bump_test.nc").receivers().size() == canyon.receivers().size());
 }
+
+TEST_CASE("the wave band's weights and blend", "[urban]")
+{
+    const std::vector<double> bands {50.0, 63.0, 80.0, 100.0, 125.0, 160.0};
+    REQUIRE(wave_band_weights(bands, 0.0, 2) == std::vector<double>(6, 0.0));
+    REQUIRE(wave_band_weights(bands, 40.0, 2) == std::vector<double>(6, 0.0));
+    const auto w = wave_band_weights(bands, 63.0, 2);
+    REQUIRE(w[0] == 1.0);
+    REQUIRE(w[1] == 1.0);
+    REQUIRE(w[2] == Catch::Approx(2.0 / 3.0));
+    REQUIRE(w[3] == Catch::Approx(1.0 / 3.0));
+    REQUIRE(w[4] == 0.0);
+    REQUIRE(w[5] == 0.0);
+    REQUIRE(wave_band_weights(bands, 160.0, 2) == std::vector<double>(6, 1.0));
+
+    // Two directions, three bands; two facades.
+    const std::vector<double> weight {1.0, 0.5, 0.0};
+    std::vector<double> gains {-10.0, -10.0, -10.0, 3.0, 3.0, 3.0};
+    const std::vector<double> wave {2.0, 0.0, 7.0, -6.0, -6.0, -6.0};
+    std::vector<double> reflection {0.9, 0.9, 0.9, 0.5, 0.5, 0.5};
+    blend_wave_band(gains, reflection, wave, weight);
+    // The wave band takes the wave table, the blend band the energy mean, and
+    // above it the geometric table stands; the facades fade out in step.
+    REQUIRE(gains[0] == Catch::Approx(2.0));
+    REQUIRE(gains[1] == Catch::Approx(10.0 * std::log10(0.5 * 1.0 + 0.5 * 0.1)));
+    REQUIRE(gains[2] == -10.0);
+    REQUIRE(gains[3] == Catch::Approx(-6.0));
+    REQUIRE(gains[5] == 3.0);
+    REQUIRE(reflection == std::vector<double> {0.0, 0.45, 0.9, 0.0, 0.25, 0.5});
+    std::vector<double> short_wave(5, 0.0);
+    REQUIRE_THROWS_AS(blend_wave_band(gains, reflection, short_wave, weight), std::invalid_argument);
+}

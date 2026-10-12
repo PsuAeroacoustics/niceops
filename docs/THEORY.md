@@ -911,6 +911,12 @@ $(u_c, u_a, u_z)$ is therefore the two-dimensional band $[f_1, f_2]\,|\mathbf{u}
 run covers every direction. A reduced band below a floor frequency (5 Hz) is taken as open ground.
 For an impedance wall the reduction is approximate, the admittance's $k$ being the full one.
 
+**The blend.** `niceops_urban_table --wave_below` takes the wave table in the bands centered at or
+below the crossover and fades into the geometric one over the next bands in energy,
+$T = w\,T_\mathrm{wave} + (1 - w)\,T_\mathrm{geometric}$, $w$ falling in equal steps. The wave
+solution already holds the first-order reflections, so each facade's $\rho_{k,b}$ is scaled by
+$1 - w$ and the run's explicit reflections fade out as the wave table fades in.
+
 ## 7. The stratified, moving atmosphere
 
 An `--atmosphere` profile gives temperature, relative humidity and optionally pressure and wind

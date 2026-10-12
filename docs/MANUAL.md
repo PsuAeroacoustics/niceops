@@ -1048,6 +1048,8 @@ the paths are summed in energy. Microphones without a table are evaluated as wit
 - **Building one.** [`niceops_urban_table`](#niceops_urban_table) builds tables for microphones in
   ideal street canyons: two long parallel walls, by the street's bearing, width, the microphone's
   offset and the walls' heights. A row of width 0 is an open microphone, 0 dB with no facades.
+  Above a few hundred hertz the table comes from rays; below, with `--wave_below`, from the wave
+  equation, which a street only a few wavelengths wide needs.
 - **Receivers are matched by position**, to a millimeter: a receiver is a microphone (an
   observer raised by its height) in the run's local frame. Build the table from the run's own
   observer file. A table none of whose receivers is in the run is refused; receivers the run does
@@ -1664,7 +1666,22 @@ niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_f
 | `--facade_length` | Each wall's length for the run's reflections, centered on the microphone. Default 10 km, effectively infinite. |
 | `--sound_speed` | For the diffracted path's wavelengths, m/s. Default 343.2. |
 | `--no_diffraction` | Leave out the diffracted path over a blocking wall. |
+| `--wave_below` | Solve each canyon with walls of equal height by the wave equation and use its table for the bands centered at or below this frequency, Hz. Default 0, none. |
+| `--wave_blend` | Bands above `--wave_below` over which the wave table fades into the geometric one. Default 2. |
+| `--wave_ppw` | The wave solver's grid points per wavelength. Default 15. |
+| `-j`, `--threads` | Canyons solved at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`; the table to write (SI). |
+
+**The wave band.** Below a few hundred hertz a street is a few wavelengths wide, and its
+resonances and diffraction are not rays. `--wave_below` solves each canyon whose walls are of
+equal height by the wave equation in its cross-section, once per distinct canyon, and takes that
+solution for the low bands, which already hold the first-order reflections, so the run's own
+reflections fade out of those bands as the wave table fades in. Canyons with walls of unequal
+height keep the geometric table, with a warning naming the row. Give the walls a little
+absorption: a rigid canyon rings for seconds, and a warning says when a canyon had not decayed
+when its solution stopped. Each doubling of the frequency costs about eight times as much: with
+the default blend, `--wave_below 400` solves each canyon to 707 Hz, about a minute at 15 points per
+wavelength, and canyons are solved several at a time.
 
 ### `niceops_pe_compare`
 

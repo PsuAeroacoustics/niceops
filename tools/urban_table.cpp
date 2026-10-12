@@ -29,17 +29,22 @@
 
 #include <CLI/CLI.hpp>
 
+#include <algorithm>
+#include <chrono>
+#include <limits>
 #include <cmath>
 #include <iostream>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "canyon_wave.hpp"
 #include "propagation_table.hpp"
 #include "sphere_database.hpp"
 #include "urban.hpp"
 #include "util/constants.hpp"
 #include "util/csv.hpp"
+#include "util/parallel.hpp"
 
 using namespace niceops; // NOLINT
 
@@ -59,6 +64,10 @@ int main(int argc, char** argv)
     double facade_length = 10000.0;
     double sound_speed = 343.2;
     bool no_diffraction = false;
+    double wave_below = 0.0;
+    std::size_t wave_blend = 2;
+    double wave_ppw = 15.0;
+    int threads = 0;
     app.add_option("--canyons", canyons_file, "Receivers in ideal canyons, one per row (see the header).")->required();
     app.add_option("--database", database_file, "Take the band centers from this database.");
     app.add_option("--bands", bands, "Band centers, Hz, instead of --database's.");
@@ -81,6 +90,16 @@ int main(int argc, char** argv)
     app.add_option("--sound_speed", sound_speed, "For the diffracted path's wavelengths, m/s (default 343.2).")
             ->check(CLI::PositiveNumber);
     app.add_flag("--no_diffraction", no_diffraction, "Leave out the diffracted path over a blocking wall.");
+    app.add_option("--wave_below", wave_below,
+            "Solve each flush-roof canyon by the wave equation (src/canyon_wave) and take its table for the "
+            "bands centered at or below this, Hz (default 0, none).")
+            ->check(CLI::NonNegativeNumber);
+    app.add_option("--wave_blend", wave_blend,
+            "Bands above --wave_below over which the wave table fades into the geometric one (default 2).");
+    app.add_option("--wave_ppw", wave_ppw, "The wave solver's grid points per wavelength (default 15).")
+            ->check(CLI::Range(6.0, 40.0));
+    app.add_option("-j,--threads", threads,
+            "Canyons solved at once (default: NICEOPS_THREADS when set, else one per hardware thread).");
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("-o,--output", output, "The table file to write.")->required();
     CLI11_PARSE(app, argc, argv);
@@ -147,6 +166,19 @@ int main(int argc, char** argv)
         const std::size_t nb = bands.size();
         std::vector<UrbanTable::Receiver> receivers;
         std::vector<double> gains;
+        // The wave band: its weight per band, and the canyons to solve.
+        const std::vector<double> weight = wave_band_weights(bands, wave_below, wave_blend);
+        std::size_t wave_bands = 0;
+        for (std::size_t b = 0; b < nb; b++)
+            if (weight[b] > 0.0)
+                wave_bands = b + 1;
+        struct WaveJob
+        {
+            std::size_t receiver;
+            IdealCanyon canyon;
+            double axis, alpha_a, alpha_b;
+        };
+        std::vector<WaveJob> jobs;
         for (std::size_t row = 0; row < csv.rows.size(); row++)
         {
             const auto& r = csv.rows[row];
@@ -195,7 +227,82 @@ int main(int argc, char** argv)
             const auto row_gains = ideal_canyon_gains(canyon, axis, axes, reflect_a, reflect_b, 1.0 - floor_absorption,
                     sound_speed, !no_diffraction);
             gains.insert(gains.end(), row_gains.begin(), row_gains.end());
+            if (wave_bands > 0)
+            {
+                // The wave solver needs flush roofs, and a microphone below them.
+                if (std::abs(canyon.height_a - canyon.height_b) > 1e-3)
+                    std::cerr << "niceops_urban_table: warning: " << where << "walls of unequal height ("
+                              << r[cha] << " and " << r[chb] << " " << units
+                              << "); the wave solver needs flush roofs, so its wave band is left geometric."
+                              << std::endl;
+                else if (canyon.microphone_height < canyon.height_a)
+                    jobs.push_back({receivers.size(), canyon, axis, alpha_a, alpha_b});
+            }
             receivers.push_back(std::move(receiver));
+        }
+        // Each distinct canyon once, several at a time, each on one thread.
+        double worst_residual = -std::numeric_limits<double>::infinity();
+        if (!jobs.empty())
+        {
+            const auto start = std::chrono::steady_clock::now();
+            auto same = [](const WaveJob& a, const WaveJob& b) {
+                return a.canyon.width == b.canyon.width && a.canyon.offset == b.canyon.offset
+                        && a.canyon.height_a == b.canyon.height_a
+                        && a.canyon.microphone_height == b.canyon.microphone_height && a.alpha_a == b.alpha_a
+                        && a.alpha_b == b.alpha_b;
+            };
+            std::vector<std::size_t> solve_of(jobs.size());
+            std::vector<std::size_t> distinct;
+            for (std::size_t k = 0; k < jobs.size(); k++)
+            {
+                std::size_t d = 0;
+                while (d < distinct.size() && !same(jobs[distinct[d]], jobs[k]))
+                    d++;
+                if (d == distinct.size())
+                    distinct.push_back(k);
+                solve_of[k] = d;
+            }
+            const double top = bands[wave_bands - 1] * std::pow(2.0, 1.0 / 6.0);
+            std::vector<ApertureSpectrum> spectra(distinct.size());
+            parallel_chunks(distinct.size(), tool_thread_count(threads), [&](std::size_t begin, std::size_t end) {
+                for (std::size_t d = begin; d < end; d++)
+                {
+                    const WaveJob& job = jobs[distinct[d]];
+                    CanyonWaveSetup setup;
+                    setup.width = job.canyon.width;
+                    setup.depth = job.canyon.height_a;
+                    setup.offset = job.canyon.offset;
+                    setup.microphone_height = job.canyon.microphone_height;
+                    setup.max_frequency = top;
+                    setup.points_per_wavelength = wave_ppw;
+                    setup.sound_speed = sound_speed;
+                    setup.wall_absorption = job.alpha_a;
+                    setup.wall_absorption_b = job.alpha_b;
+                    spectra[d] = solve_canyon(setup);
+                }
+            });
+            for (const auto& a : spectra)
+                worst_residual = std::max(worst_residual, a.residual_db);
+            const std::size_t cells = axes.azimuths.size() * axes.elevations.size();
+            for (std::size_t k = 0; k < jobs.size(); k++)
+            {
+                const WaveJob& job = jobs[k];
+                const auto wave = canyon_wave_gains(spectra[solve_of[k]], job.axis, axes.azimuths, axes.elevations,
+                        bands, wave_bands, 5.0);
+                std::vector<double> slice(gains.begin() + static_cast<std::ptrdiff_t>(job.receiver * cells * nb),
+                        gains.begin() + static_cast<std::ptrdiff_t>((job.receiver + 1) * cells * nb));
+                blend_wave_band(slice, receivers[job.receiver].reflection, wave, weight);
+                std::copy(slice.begin(), slice.end(),
+                        gains.begin() + static_cast<std::ptrdiff_t>(job.receiver * cells * nb));
+            }
+            std::cerr << "Solved " << distinct.size() << " canyons by the wave equation to " << top << " Hz in "
+                      << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
+                      << " s; the slowest to decay ended " << -worst_residual << " dB down." << std::endl;
+            if (worst_residual > -25.0)
+                std::cerr << "niceops_urban_table: warning: a canyon's field had fallen only " << -worst_residual
+                          << " dB after 4 s, so its wave band is short of its tail; rigid walls ring longest -- "
+                             "give them a little absorption."
+                          << std::endl;
         }
         std::map<std::string, std::string> provenance {
                 {"canyons", canyons_file},
@@ -204,8 +311,15 @@ int main(int argc, char** argv)
                 {"facade_length_m", exact_text(facade_length * to_meters)},
                 {"floor_absorption", exact_text(floor_absorption)},
         };
-        const UrbanTable table(axes, std::move(receivers), std::move(gains), frame_bearing, "ideal_canyon",
-                provenance);
+        if (!jobs.empty())
+        {
+            provenance["wave_below_hz"] = exact_text(wave_below);
+            provenance["wave_blend_bands"] = std::to_string(wave_blend);
+            provenance["wave_points_per_wavelength"] = exact_text(wave_ppw);
+            provenance["wave_receivers"] = std::to_string(jobs.size());
+        }
+        const UrbanTable table(axes, std::move(receivers), std::move(gains), frame_bearing,
+                jobs.empty() ? "ideal_canyon" : "ideal_canyon+wave", provenance);
         table.save(output);
         std::cerr << "Wrote " << output << " (" << table.receivers().size() << " receivers x "
                   << axes.azimuths.size() << " azimuths x " << axes.elevations.size() << " elevations x " << nb

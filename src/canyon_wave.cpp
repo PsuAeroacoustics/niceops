@@ -66,10 +66,12 @@ struct Grid
     // The region whose energy decides when to stop: rows below `energy_top`
     // outside the PML.
     std::size_t energy_top = 0;
-    // Rows below `wall_rows` have impedance walls at the faces lo[j] and
-    // hi[j] (the canyon's), of normalized impedance `zeta`; 0 is rigid.
+    // Rows below `wall_rows` have impedance walls at the faces lo[j] (wall A)
+    // and hi[j] (wall B), of normalized impedance zeta_a and zeta_b; 0 is
+    // rigid.
     std::size_t wall_rows = 0;
-    double zeta = 0.0;
+    double zeta_a = 0.0;
+    double zeta_b = 0.0;
 };
 
 struct Recording
@@ -156,9 +158,13 @@ Recording run(const Grid& g, const CanyonWaveSetup& s)
     // pressure Z v (v into the wall) averaged over the step, which makes it
     // stable for any Z >= 0:
     //   v+ (rho/dt + Z/h) = v- (rho/dt - Z/h) -/+ (2/h) p_cell.
-    const double impedance = g.zeta * rho * c;
-    const double wall_keep = (rho / dt - impedance / h) / (rho / dt + impedance / h);
-    const double wall_push = (2.0 / h) / (rho / dt + impedance / h);
+    auto keep = [&](double zeta) {
+        const double z = zeta * rho * c;
+        return (rho / dt - z / h) / (rho / dt + z / h);
+    };
+    auto push = [&](double zeta) { return (2.0 / h) / (rho / dt + zeta * rho * c / h); };
+    const double keep_a = keep(g.zeta_a), push_a = push(g.zeta_a);
+    const double keep_b = keep(g.zeta_b), push_b = push(g.zeta_b);
     auto update_velocity = [&](std::size_t row_begin, std::size_t row_end) {
         for (std::size_t j = row_begin; j < row_end; j++)
         {
@@ -168,12 +174,14 @@ Recording run(const Grid& g, const CanyonWaveSetup& s)
             double* vyr = &vy[j * (nx + 1)];
             for (std::size_t i = lo + 1; i < hi; i++)
                 vyr[i] = ay_f[i] * vyr[i] - by_f[i] * inv_rho_h * ((pyr[i] + pzr[i]) - (pyr[i - 1] + pzr[i - 1]));
-            if (j < g.wall_rows && g.zeta > 0.0)
+            if (j < g.wall_rows)
             {
                 // Wall A on the left of cell lo, into it is -y; wall B on the
                 // right of cell hi - 1, into it is +y.
-                vyr[lo] = wall_keep * vyr[lo] - wall_push * (pyr[lo] + pzr[lo]);
-                vyr[hi] = wall_keep * vyr[hi] + wall_push * (pyr[hi - 1] + pzr[hi - 1]);
+                if (g.zeta_a > 0.0)
+                    vyr[lo] = keep_a * vyr[lo] - push_a * (pyr[lo] + pzr[lo]);
+                if (g.zeta_b > 0.0)
+                    vyr[hi] = keep_b * vyr[hi] + push_b * (pyr[hi - 1] + pzr[hi - 1]);
             }
             if (j == 0)
                 continue;
@@ -349,7 +357,8 @@ ApertureSpectrum solve_canyon(const CanyonWaveSetup& s)
                 && s.microphone_height < s.depth))
         throw std::invalid_argument("canyon wave: the microphone must stand inside a canyon of positive width "
                                     "and depth, below the roofs");
-    if (!(s.wall_absorption >= 0.0 && s.wall_absorption < 1.0))
+    if (!(s.wall_absorption >= 0.0 && s.wall_absorption < 1.0)
+            || !(std::isnan(s.wall_absorption_b) || (s.wall_absorption_b >= 0.0 && s.wall_absorption_b < 1.0)))
         throw std::invalid_argument("canyon wave: wall absorption must lie within [0, 1)");
     if (!(s.max_frequency > 0.0 && s.points_per_wavelength >= 6.0 && s.pml_cells >= 8))
         throw std::invalid_argument("canyon wave: give a positive frequency, at least 6 points per wavelength "
@@ -378,12 +387,13 @@ ApertureSpectrum solve_canyon(const CanyonWaveSetup& s)
     g.record_lo = wall_a;
     g.record_hi = wall_a + n_w;
     g.energy_top = g.nz - g.pml;
-    if (s.wall_absorption > 0.0)
-    {
-        const double r = std::sqrt(1.0 - s.wall_absorption);
-        g.zeta = (1.0 + r) / (1.0 - r);
-        g.wall_rows = n_h;
-    }
+    auto zeta = [](double alpha) {
+        const double r = std::sqrt(1.0 - alpha);
+        return alpha > 0.0 ? (1.0 + r) / (1.0 - r) : 0.0;
+    };
+    g.zeta_a = zeta(s.wall_absorption);
+    g.zeta_b = zeta(std::isnan(s.wall_absorption_b) ? s.wall_absorption : s.wall_absorption_b);
+    g.wall_rows = n_h;
 
     const Recording r = run(g, s);
     ApertureSpectrum a = spectra(r, g, s);

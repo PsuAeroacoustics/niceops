@@ -780,6 +780,11 @@ matters for narrowband or tonal metrics and not for SEL. Without the Doppler swe
 changes by −0.1 to +0.5 dB. Most of the error is the table's band averaging: with the coherent
 open ground in place of the run's band-averaged one, the p90 moves by at most 0.2 dB.
 
+On the demo track the wave band moves the seven test canyons' SEL changes against open ground by
+up to 1.1 dB with `--wave_below 400` (the low-pass microphone's from −2.1 to −1.05 dB, the wave
+solution filling a shadow the placeholder diffraction makes too deep) and by under 0.03 dB with
+`--wave_below 80`, where A-weighting leaves little.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and

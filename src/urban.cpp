@@ -776,4 +776,44 @@ std::vector<double> ideal_canyon_gains(const IdealCanyon& canyon, double axis_be
     return gains;
 }
 
+std::vector<double> wave_band_weights(const std::vector<double>& bands, double wave_below, std::size_t blend)
+{
+    std::vector<double> weight(bands.size(), 0.0);
+    if (!(wave_below > 0.0))
+        return weight;
+    std::size_t last = bands.size();
+    for (std::size_t b = 0; b < bands.size(); b++)
+        if (bands[b] <= wave_below * (1.0 + 1e-9))
+        {
+            weight[b] = 1.0;
+            last = b;
+        }
+    if (last == bands.size())
+        return weight;
+    for (std::size_t j = 1; j <= blend && last + j < bands.size(); j++)
+        weight[last + j] = 1.0 - static_cast<double>(j) / static_cast<double>(blend + 1);
+    return weight;
+}
+
+void blend_wave_band(std::vector<double>& gains, std::vector<double>& reflection, const std::vector<double>& wave,
+        const std::vector<double>& weight)
+{
+    const std::size_t nb = weight.size();
+    if (gains.size() != wave.size() || nb == 0 || gains.size() % nb != 0 || reflection.size() % nb != 0)
+        throw std::invalid_argument("blend_wave_band: the tables and weights do not match");
+    for (std::size_t cell = 0; cell < gains.size() / nb; cell++)
+        for (std::size_t b = 0; b < nb; b++)
+        {
+            const double w = weight[b];
+            if (w == 0.0)
+                continue;
+            double& g = gains[cell * nb + b];
+            const double ratio = w * std::pow(10.0, 0.1 * wave[cell * nb + b]) + (1.0 - w) * std::pow(10.0, 0.1 * g);
+            g = std::max(10.0 * std::log10(ratio), urban_gain_floor_db);
+        }
+    for (std::size_t f = 0; f < reflection.size() / nb; f++)
+        for (std::size_t b = 0; b < nb; b++)
+            reflection[f * nb + b] *= 1.0 - weight[b];
+}
+
 } // namespace niceops

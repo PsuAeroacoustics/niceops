@@ -1098,6 +1098,22 @@ set_tests_properties(urban_table_changes_the_footprint PROPERTIES PASS_REGULAR_E
 add_test(NAME urban_table_canyon_golden COMMAND golden_compare integrated/urban_canyon.csv golden/urban_canyon.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME urban_table_plate_golden COMMAND golden_compare integrated/urban_plate.csv golden/urban_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_table_canyon_golden urban_table_plate_golden PROPERTIES FIXTURES_REQUIRED urban_table_runs)
+# The wave band (--wave_below, src/canyon_wave): the flush canyons of the same file solved by the wave
+# equation below 80 Hz and blended through 125 Hz (coarse, 10 points per wavelength, so it takes a
+# second), the rest warned about and left geometric.  The windowed run equals its march, and the run
+# is pinned (golden/urban_wave.csv).  Leaving the facades' reflections unscaled in the wave band
+# moves the A-weighted SEL by under 1e-5 dB below 125 Hz, so the Catch2 case "the wave band's
+# weights and blend" is what guards that.
+add_test(NAME urban_table_wave_build COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 --wave_below 80 --wave_ppw 10 -j 2 -o tables/urban_wave_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_wave_build PROPERTIES FIXTURES_SETUP urban_table_wave_file)
+add_test(NAME urban_table_wave_warns_unequal_walls COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --bands 50 63 80 100 --frame_bearing 210 --wave_below 63 --wave_ppw 8 -o tables/urban_wave_warn_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_wave_warns_unequal_walls PROPERTIES PASS_REGULAR_EXPRESSION "row 2: walls of unequal height \\(40 and 60 ft\\); the wave solver needs flush roofs")
+add_test(NAME urban_table_wave COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_wave_test.nc -o integrated/urban_wave.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_wave_marched COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_wave_test.nc -D integrated/urban_wave_dnl.csv -o integrated/urban_wave_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_wave urban_table_wave_marched PROPERTIES FIXTURES_REQUIRED urban_table_wave_file FIXTURES_SETUP urban_table_wave_runs)
+add_test(NAME urban_table_wave_windowed_is_exact COMMAND golden_compare integrated/urban_wave.csv integrated/urban_wave_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_wave_golden COMMAND golden_compare integrated/urban_wave.csv golden/urban_wave.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_table_wave_windowed_is_exact urban_table_wave_golden PROPERTIES FIXTURES_REQUIRED urban_table_wave_runs)
 # Refusals: a frame other than the table's, a run none of whose microphones it holds, the options
 # stage 1 does not combine with, and a builder column in the wrong unit.
 add_test(NAME urban_table_refuses_another_frame COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/urban_observers.csv --urban_table tables/urban_open_test.nc -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
