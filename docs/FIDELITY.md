@@ -493,8 +493,30 @@ None moves the SEL: the exposure within 10 dB of each microphone's measured peak
     0.39 dB rms and 2.27 dB at worst, plates 0.003 dB rms and 0.17 dB at worst, with 8 cells
     over 0.05 dB.
 
-  This checks the geometry and the plumbing only. No measured data set tests a table over
-  terrain.
+  This checks the geometry and the plumbing.
+- **Over measured terrain**, at Sweetwater in the altitude-variation test ([Data sets](#data-sets)):
+  eight runs chosen to span its weather (three upwind, two with shadowing profiles, a calm
+  inversion, two downwind), one PE table per run from its own LIDAR and balloon profile (44.7 Hz
+  to 2.2 kHz, straight rays above), the 1 m 3DEP grid, flush boards on variable-porosity ground
+  of 200 kPa·s/m². SEL, predicted minus measured:
+
+  | | flat datum, layered rays | flat datum, PE table | terrain, PE table | terrain, straight rays |
+  | --- | --- | --- | --- | --- |
+  | mic 1 − mic 21 on the 3.4° slope (measured −2.54 dB), error | −2.09 | −0.70 | −0.70 | −0.28 |
+  | mics 1–21, mean / rms | +1.40 / 1.66 | +1.49 / 1.77 | +1.55 / 1.85 | +1.55 / 1.84 |
+  | mics 27–29, 300 ft below the datum: mean (MAE), 24 mic-runs | −8.76 (12.20) | −2.43 (5.97) | −0.32 (5.26) | +4.11 (4.49) |
+  | the same, three upwind runs | −19.49 | −0.23 | +2.04 | +4.65 |
+  | the same, the two shadowing profiles | −12.66 | −14.62 | −10.77 | +2.58 |
+
+  Read over terrain, the PE table puts the off-datum microphones' source 280–310 ft above
+  their paths' planes rather than 250 ft above the datum, a shallower shadow: 1–4 dB louder
+  there, the best mean of the four. It cannot remove a shadow the table itself predicts and the
+  measurements do not show (the two shadowing profiles, still 8–14 dB low). On the slope it
+  changes nothing beyond what terrain does to straight rays: a flush board reads the table at
+  the source's height above its plane, about the same as above the datum. No path's plane tilts
+  past 3.7°, so the refracting-table warning stays silent, as it should. A ground-model table
+  over the same terrain is the ground model to 0.04 dB. Eight runs; the run-to-run spread is
+  large.
 - **Turbulence and roughness built into a ground-model table** reproduce `--ground_effect
   --exact_ground` with the same settings on the plumbing check's grid: Chessell's 4e-4 rad·s/√m
   with a 0.3 ft roughness to 0.0001 dB mean and 0.021 dB at worst, HARMONOISE's γ<sub>T</sub>
@@ -539,8 +561,42 @@ variable-porosity grass (200 kPa·s/m²), against the same microphones all on gr
 
   Each microphone is evaluated as if the whole ground were its class, so this is the effect of
   a concrete plain. A pad of a few meters under a pole has less, most of all far from the track,
-  where the reflection lands tens of meters out on whatever surrounds it. No measured data set
-  has microphones on different surfaces, so none of this is validated.
+  where the reflection lands tens of meters out on whatever surrounds it.
+
+**Against measurements**, two data sets with microphones on different surfaces:
+
+- **The R66 static ring at Eglin** (2017, day 231, 18 hovers): boards 1 and 13 stand on cells the
+  2021 ESA WorldCover land cover calls built-up along their whole path to the hover point, 3–11
+  on grass. In ground effect (heard 0–2° below the horizon), relative to the median of boards
+  4–11, boards 1 and 13 measure +9 to +11 dB louder than the grass plate predicts at 500 Hz to
+  1 kHz (+6 to +8 at 1.6 kHz), at every heading. Taken as point receivers at the board's top over
+  a hard class:
+
+  | class for boards 1 and 13 | 500 Hz | 1 kHz | 1.6 kHz | 2.5 kHz | SEL, predicted − measured |
+  | --- | --- | --- | --- | --- | --- |
+  | measured excess, board 1 / 13 | +10.4 / +9.1 | +9.1 / +9.9 | +7.6 / +7.9 | +6.1 / +3.5 | |
+  | grass plate (the model without classes) | 0 | 0 | 0 | 0 | −3.4 / −1.6 |
+  | Delany–Bazley 20,000 kPa·s/m² (concrete) | +15.9 | +19.0 | +17.8 | +16.7 | +6.0 / +7.9 |
+  | Delany–Bazley 2000 | +13.9 | +12.6 | +7.4 | +5.2 | +3.3 / +5.2 |
+  | variable porosity 1000, α 100 | +11.9 | +9.9 | +6.2 | +4.7 | +2.0 / +3.9 |
+
+  A hard class is right in kind and a class of about 1000–2000 kPa·s/m² fits 500 Hz–2.5 kHz to
+  about 1.5 dB, but concrete overpredicts by 8–10 dB: "built-up" there is not a concrete plain.
+  No uniform hard class fits 125–250 Hz (measured −5 to +1 dB, every hard class +4 to +7), and
+  board 12, grass for its first 20 m and built-up beyond, measures soft: at grazing the ground
+  next to the board and the mixed path decide, which a uniform class cannot represent. Out of
+  ground effect (31–80° down) every class is within 2 dB in the bands and 1 dB in SEL, and the
+  measurements cannot tell them apart. A ±5 ft error in the hover height moves the concrete
+  prediction at 1 kHz by ±5 dB and the best-fitting class from about 1000 to 2000.
+- **The T-38A runway test at Wallops** (NASA TP-1747): pairs of microphones on a concrete runway's
+  centerline and on grass beside it, at 0, 1.2 and 9.14 m, five reference runs transcribed from
+  its appendix C (100 Hz–2 kHz). Each pair's concrete-minus-grass difference against NICE-OPS's,
+  source spectrum cancelled, variable porosity 200 for grass and Delany–Bazley 20,000 for
+  concrete, rms over bands: 1.2 m pairs near the track 3.3 dB (5.0 predicting no difference),
+  far 7.2 dB (10.4), flush pairs 5.1 dB, 9.14 m pairs 5.9 dB. Willshire's own fits (62.5 and
+  750) score worse in every group. About 6 dB of the scatter is not ground effect: the 9.14 m
+  pairs, which should differ by under 1.5 dB, differ by −12 to +7 dB from run to run, so these
+  data show the classes help at 1.2 m but cannot place the uniform class's limit.
 
 ### Trajectory smoothing
 
@@ -570,8 +626,11 @@ Fitting a dense track's ends freely (over a 10 s quadratic extension) takes the 
 
 ### Data sets
 
-All measured comparisons use the 2017 Noise Abatement flight test (data report
-NASA/TM-2019-220264).
+The measured comparisons use the 2017 Noise Abatement flight test (data report
+NASA/TM-2019-220264) unless they say otherwise. The others are the 2014–15 altitude-variation
+test (NASA/TM-2016-219354: an AS350 SD1 over inverted ground boards at Amedee, Salton Sea and
+Sweetwater, where microphones 27–29 stand behind a hill and 1–21 on a 3.4° slope) and the
+1978 T-38A runway test at Wallops (NASA TP-1747, microphones on concrete and grass).
 
 - **Aircraft and sites.** The B407 flew at Amedee, where the ground is flat to within about a
   meter over the test range. The R44 (database RO-44) and R66 (RO-66) flew at Eglin, along a
@@ -771,6 +830,29 @@ direction turned by the 13.6° declination, taken as 2 m high. Station winds wer
   cannot choose a class.
 - **No veer with height.** An Ekman veer, turning the wind's direction with height, added
   nothing on the 2017 windy day, so `--wind` holds the direction at every height.
+
+**`niceops_build_atmosphere` on the measured weather.** Built from the same measured columns
+(LIDAR, balloon string, station air) with the matching settings, it reproduces the validation
+study's own profiles for all 819 runs with measured tables (2017 and altitude-variation): 6e-14 K,
+4e-14 % and 3e-14 kt at worst, pressure to 4e-13. Writing a profile to 3 decimals, as the study's
+files do, moves 12 of 1796 mic-run SELs by more than 0.1 dB under `--refraction stratified`
+(1.15 dB at most, at 5.6°): the stratified arrival search is that sensitive to perturbations of
+1e-3.
+
+`fit_z0` on the 46–197 ft gates, near-neutral runs only (|Ri| ≤ 0.05, 3 m/s at the top gate,
+under 20° of veer):
+
+- **Eglin**: z₀ = 0.34 m [0.10, 0.91] from 11 runs, rough to very rough by Wieringa's classes
+  where forest stands within the gates' footprint; |Ri| ≤ 0.25 gives 0.42 [0.19, 0.80] from 72.
+  Gates above 125 ft reach the search's bound, likely the forest's internal boundary layer. Carried
+  down the log law, it predicts the station cups (2 m, near-neutral runs) to +0.03 m/s (rms 0.37)
+  where the study's 0.1 ft gives +0.54 (0.59); the cups alone imply 0.47 m. With it, the R44's
+  `stratified_plate` SEL rms at 0–5° falls 4.60 → 4.13 dB [−0.63, −0.31], and over all its
+  mic-runs 1.77 → 1.66 (straight rays: 1.27).
+- **Amedee, Salton Sea, Sweetwater**: no run meets the screen (the bulk Richardson number's
+  median is +2.0 at Amedee), so the fit is refused. Relaxed screens give values the stability
+  decides, not the surface: at Eglin the apparent z₀ runs from the search's lower bound (Ri < −1)
+  to 2.3 m (weakly stable).
 
 ### Refraction against flight data
 
@@ -1031,8 +1113,9 @@ range-dependent source fit would confound descent state drift with path loss.
 - **EPNL** is compared only to 5 kHz, where the measured frames stop, with no pseudo-tone
   exclusion; predicted spectra carry less tone correction than measured.
 - **Terrain** is a plane fitted over the whole path, with no screening.
-- **Ground classes** treat each microphone's ground as a uniform half-space, which overstates a
-  small pad, and have no measured validation ([Ground classes](#ground-classes)).
+- **Ground classes** treat each microphone's ground as a uniform half-space. At grazing a
+  built-up patch measured like ground of about 1000–2000 kPa·s/m², not concrete, and the ground
+  next to the microphone and along the path decides ([Ground classes](#ground-classes)).
 - **The nose.** No shipped database records a heading-filed azimuth, and a WGS84 track's
   heading has to be given as a column.
 - **Source coverage.** Every aircraft over-predicts at low elevation; the B407 hover between 3°

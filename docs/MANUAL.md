@@ -735,6 +735,11 @@ class,name,impedance_model,flow_resistance
   1.2 m pole at grazing incidence, less for a high source. A flush plate needs only a patch
   larger than the plate. A small pad under a pole microphone is given the full effect of a
   concrete plain, which overstates it at long range.
+- **A land-cover class is not an impedance.** Ground mapped as built-up or paved is seldom a
+  concrete plain: measured at grazing, such a patch behaved like ground of about 1000–2000
+  kPa·s/m², and concrete's 10,000 or more overstated it by several dB
+  ([FIDELITY](FIDELITY.md#ground-classes)). Give a hard class a moderate flow resistance unless
+  the surface is known to be sealed pavement.
 - **What it does not combine with.** `--refraction` (its terms depend on the ground along the
   path), `--propagation_table` (a table holds one ground), grid observers (they have no class
   column), `--no-ground_effect` and the broadband path. `--terrain` works.
