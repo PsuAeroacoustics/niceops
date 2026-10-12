@@ -488,6 +488,10 @@ None moves the SEL: the exposure within 10 dB of each microphone's measured peak
     0.37, 0.28 and 0.18 dB): the worst does not fall at these spacings, because the ground's
     interference fringes are λ/(2 sin ε) apart in receiver height, finer than the rows in the
     mid bands at steep elevations ε.
+  - **On the full demo grid** (14,400 cells), through the five-row table the cost measurements
+    use (rows 0, 1.2 m, 8, 16 and 25 ft, source heights and ranges every 20 ft): point receivers
+    0.39 dB rms and 2.27 dB at worst, plates 0.003 dB rms and 0.17 dB at worst, with 8 cells
+    over 0.05 dB.
 
   This checks the geometry and the plumbing only. No measured data set tests a table over
   terrain.
@@ -514,6 +518,29 @@ it does not bound the error everywhere, and its reference is not a measurement.
   −15 dB re free field, and up to about 1.5 dB off in deep near-grazing nulls 30–70 dB down.
 - **Faddeeva fast paths.** The asymptotic series and the Taylor table agree with Weideman's
   series within 1e-11.
+
+### Ground classes
+
+`--ground_classes` on the demo track, over 14,400 1.2 m pole microphones at the demo grid's
+points, every other one on Delany–Bazley concrete (10,000 kPa·s/m²) and the rest on
+variable-porosity grass (200 kPa·s/m²), against the same microphones all on grass:
+
+- **The grass microphones are unchanged to the bit**, tabled and exact, so a microphone's level
+  depends only on its own class.
+- **The tables against `--exact_ground`**, mixed classes: 0.009 dB at worst (0.003 dB on the
+  concrete microphones), the same as with grass alone.
+- **What concrete under a pole does**, SEL on concrete minus SEL on grass at the same
+  microphone, exact, by horizontal distance from the ground track:
+
+  | distance | under 500 ft | 500–1000 | 1000–2000 | 2000–3000 | 3000–5000 | over 5000 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | median | +0.74 dB | +1.28 | +2.41 | +4.11 | +5.13 | +6.33 |
+  | range | +0.49 to +1.93 | +0.54 to +3.83 | +0.76 to +6.87 | +0.84 to +8.49 | +1.13 to +7.95 | +1.74 to +7.89 |
+
+  Each microphone is evaluated as if the whole ground were its class, so this is the effect of
+  a concrete plain. A pad of a few meters under a pole has less, most of all far from the track,
+  where the reflection lands tens of meters out on whatever surrounds it. No measured data set
+  has microphones on different surfaces, so none of this is validated.
 
 ### Trajectory smoothing
 
@@ -1004,6 +1031,8 @@ range-dependent source fit would confound descent state drift with path loss.
 - **EPNL** is compared only to 5 kHz, where the measured frames stop, with no pseudo-tone
   exclusion; predicted spectra carry less tone correction than measured.
 - **Terrain** is a plane fitted over the whole path, with no screening.
+- **Ground classes** treat each microphone's ground as a uniform half-space, which overstates a
+  small pad, and have no measured validation ([Ground classes](#ground-classes)).
 - **The nose.** No shipped database records a heading-filed azimuth, and a WGS84 track's
   heading has to be given as a column.
 - **Source coverage.** Every aircraft over-predicts at low elevation; the B407 hover between 3°

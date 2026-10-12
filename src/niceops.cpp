@@ -2297,7 +2297,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             " s (--exact_ground to evaluate it directly).");
                 }
             }
-            // Each table is float [range][angle][band], about 9 MB on the demo.
+            // Each table is float [range][angle][band], about 10 MB on the demo.
             // Many heights over many classes add up without a word otherwise.
             constexpr std::size_t many_tables = 16;
             if (!options.ground_classes.empty() && point_tables.size() > many_tables)

@@ -377,6 +377,35 @@ matter how many terms are taken, so it cannot hold the 1e-9 dB pinning against p
 cutoff in range. Roughly 9% of the ground path, for the loss of the property that proves the
 port. Not worth it; do not re-derive it.
 
+### Terrain, ground classes and screening
+
+Each of these adds a term to the peak search's bound, so each stays exact and evaluates a little
+more; none adds a march condition. The terrain runs (tables over terrain, screening) are timed
+in [ground.md](ground.md#how-the-plane-is-found-groundplanecache). What the bound costs there,
+in evaluated fraction on the full demo grid: a table over the hills nothing (98.89% against
+98.90%), screening 0.7 points on the hills, where nothing is screened, and 0.8 behind the ridge.
+
+**Ground classes**, on 14,400 1.2 m pole microphones at the demo grid's points (an observer file,
+since grid observers have no class), variable-porosity grass of 200 kPa·s/m², and Delany–Bazley
+concrete of 10,000 at every other microphone. 8 threads on an M4 Pro, asserts on, best of three,
+on a shared machine (load 10 to 31):
+
+| run | CPU | acoustic loop | evaluated | peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| all grass | 24.9 s | 3.10 s | 98.48% | 231 MiB |
+| half concrete | 24.9 s | 3.10 s | 98.57% | 242 MiB |
+| all grass, `--exact_ground` | 96.2 s | 12.0 s | 98.48% | 221 MiB |
+| half concrete, `--exact_ground` | 96.2 s | 12.0 s | 98.57% | 221 MiB |
+
+- **The per-observer admittance costs nothing measurable**: the loop time does not move.
+- **The bound over both classes** evaluates 0.09 points more, which is why one
+  `DirectionBounds` table serves every class ([ground.md](ground.md#receivers)).
+- **Each further table** is 641 angles × 147 ranges × 28 bands of floats, 10.6 MB, built in
+  0.07 s; peak RSS rose by 10.3 MiB. The run warns above 16 tables.
+- Grass microphones give the same bits in both runs, tabled or exact, as the windowed search's
+  exactness requires. The tables' accuracy is in
+  [FIDELITY](../FIDELITY.md#ground-classes).
+
 ## Measured and rejected optimizations
 
 ### Rejected
