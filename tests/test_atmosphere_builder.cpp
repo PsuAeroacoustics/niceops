@@ -465,3 +465,219 @@ TEST_CASE("a built profile reads back through --atmosphere as itself", "[atmosph
     CHECK(read.wind_east == built.wind_east);
     CHECK(read.wind_north == built.wind_north);
 }
+
+namespace {
+
+// A run whose gates follow the log law exactly, from `direction`, with a
+// neutral temperature column (theta constant) from the ground to 500 ft.
+ColumnSource log_law_run(double z0, double friction, double direction_deg,
+        const std::vector<double>& gates_ft = {46.0, 125.0, 197.0, 348.0})
+{
+    ColumnSource run;
+    run.path = "run.csv";
+    WindSeries wind;
+    wind.source = run.path;
+    const double from = direction_deg * pi / 180.0;
+    for (const double ft : gates_ft)
+    {
+        const double z = ft * ft2m;
+        const double speed = friction / 0.4 * std::log(z / z0);
+        wind.z.push_back(z);
+        wind.east.push_back(-speed * std::sin(from));
+        wind.north.push_back(-speed * std::cos(from));
+    }
+    run.wind = wind;
+    ColumnSeries temperature;
+    temperature.source = run.path;
+    for (double ft = 0.0; ft <= 500.0; ft += 10.0)
+    {
+        temperature.z.push_back(ft * ft2m);
+        temperature.value.push_back(290.0 + dry_adiabatic_lapse * ft * ft2m);
+    }
+    run.temperature = temperature;
+    return run;
+}
+
+// 1% Gaussian speed errors, the same on every standard library
+// (std::normal_distribution is not): Box-Muller on the engine's own bits.
+std::vector<ColumnSource> noisy_runs(std::uint64_t seed, int count)
+{
+    std::mt19937_64 noise(seed);
+    auto uniform = [&noise] { return (static_cast<double>(noise() >> 11) + 0.5) * 0x1p-53; };
+    std::vector<ColumnSource> runs;
+    for (int j = 0; j < count; j++)
+    {
+        auto run = log_law_run(0.03, 0.2 + 0.3 * j / count, 230.0 + 40.0 * j / count);
+        for (std::size_t i = 0; i < run.wind->z.size(); i++)
+        {
+            const double gaussian = std::sqrt(-2.0 * std::log(uniform())) * std::cos(2.0 * pi * uniform());
+            const double factor = 1.0 + 0.01 * gaussian;
+            run.wind->east[i] *= factor;
+            run.wind->north[i] *= factor;
+        }
+        runs.push_back(run);
+    }
+    return runs;
+}
+
+std::vector<std::string> labels_for(std::size_t n)
+{
+    std::vector<std::string> labels;
+    for (std::size_t j = 0; j < n; j++)
+        labels.push_back("run" + std::to_string(j));
+    return labels;
+}
+
+} // namespace
+
+TEST_CASE("fit_roughness_length recovers the roughness length of exact log-law runs",
+        "[atmosphere_builder][fit]")
+{
+    for (const double z0 : {0.01, 0.03, 0.1})
+    {
+        std::vector<ColumnSource> runs;
+        for (int j = 0; j < 6; j++)
+            runs.push_back(log_law_run(z0, 0.25 + 0.07 * j, 200.0 + 15.0 * j));
+        FitRules rules;
+        rules.draws = 200;
+        const auto fit = fit_roughness_length(runs, labels_for(runs.size()), rules);
+        CAPTURE(z0);
+        CHECK(fit.z0 == Catch::Approx(z0).epsilon(1e-9));
+        CHECK(fit.used.size() == 6);
+        CHECK(fit.excluded.empty());
+        CHECK_FALSE(fit.at_bound);
+        CHECK(fit.residual_rms < 1e-12);
+        CHECK(fit.median_run_z0 == Catch::Approx(z0).epsilon(1e-9));
+        CHECK(fit.z0_low == Catch::Approx(z0).epsilon(1e-9));
+        CHECK(fit.z0_high == Catch::Approx(z0).epsilon(1e-9));
+
+        // Scaling every speed leaves z0 alone, and so does the gates' order.
+        std::vector<ColumnSource> scaled = runs, reversed = runs;
+        for (auto& run : scaled)
+        {
+            for (auto& v : run.wind->east)
+                v *= 1.7;
+            for (auto& v : run.wind->north)
+                v *= 1.7;
+        }
+        for (auto& run : reversed)
+        {
+            std::reverse(run.wind->z.begin(), run.wind->z.end());
+            std::reverse(run.wind->east.begin(), run.wind->east.end());
+            std::reverse(run.wind->north.begin(), run.wind->north.end());
+        }
+        CHECK(fit_roughness_length(scaled, labels_for(6), rules).z0 == Catch::Approx(z0).epsilon(1e-9));
+        CHECK(fit_roughness_length(reversed, labels_for(6), rules).z0 == fit.z0);
+    }
+}
+
+TEST_CASE("fit_roughness_length screens out stable, veering and light-wind runs",
+        "[atmosphere_builder][fit]")
+{
+    std::vector<ColumnSource> runs;
+    for (int j = 0; j < 5; j++)
+        runs.push_back(log_law_run(0.03, 0.3, 250.0));
+    // Stable: theta rising 2 K over the gates.
+    ColumnSource stable = log_law_run(0.03, 0.3, 250.0);
+    for (std::size_t i = 0; i < stable.temperature->z.size(); i++)
+        stable.temperature->value[i] += 0.04 * stable.temperature->z[i];
+    // Veering: the top gate turned 40 degrees.
+    ColumnSource veering = log_law_run(0.03, 0.3, 250.0);
+    {
+        auto& wind = *veering.wind;
+        const double turn = 40.0 * pi / 180.0;
+        const double e = wind.east[2], n = wind.north[2];
+        wind.east[2] = e * std::cos(turn) - n * std::sin(turn);
+        wind.north[2] = e * std::sin(turn) + n * std::cos(turn);
+    }
+    ColumnSource light = log_law_run(0.03, 0.05, 250.0);
+    ColumnSource unscreened = log_law_run(0.03, 0.3, 250.0);
+    unscreened.temperature.reset();
+    for (const auto* run : {&stable, &veering, &light, &unscreened})
+        runs.push_back(*run);
+    FitRules rules;
+    rules.draws = 100;
+    const auto fit = fit_roughness_length(runs, labels_for(runs.size()), rules);
+    REQUIRE(fit.excluded.size() == 4);
+    CHECK_THAT(fit.excluded[0].second, ContainsSubstring("not neutral"));
+    CHECK_THAT(fit.excluded[1].second, ContainsSubstring("turns"));
+    CHECK_THAT(fit.excluded[2].second, ContainsSubstring("light wind"));
+    CHECK_THAT(fit.excluded[3].second, ContainsSubstring("no temperature"));
+    CHECK(fit.excluded[0].first == "run5");
+    rules.assume_neutral = true;
+    CHECK(fit_roughness_length(runs, labels_for(runs.size()), rules).used.size() == 6);
+    rules.min_runs = 7;
+    CHECK_THROWS_WITH(fit_roughness_length(runs, labels_for(runs.size()), rules),
+            ContainsSubstring("fewer than the 7 a fit needs"));
+}
+
+TEST_CASE("the bootstrap's index draw is the same on every standard library",
+        "[atmosphere_builder][fit]")
+{
+    // The engine's sequence is the standard's ([rand.predef]: the 10000th
+    // value of a default-constructed mt19937_64).
+    std::mt19937_64 standard;
+    standard.discard(9999);
+    CHECK(standard() == 9981545732273789042ull);
+
+    // Rejection: for n = 3, 2^64 - 1 is the one value thrown back.
+    struct Scripted
+    {
+        using result_type = std::uint64_t;
+        static constexpr result_type min()
+        {
+            return 0;
+        }
+        static constexpr result_type max()
+        {
+            return std::numeric_limits<std::uint64_t>::max();
+        }
+        std::vector<result_type> values;
+        std::size_t next = 0;
+        result_type operator()()
+        {
+            return values[next++];
+        }
+    };
+    Scripted scripted {{std::numeric_limits<std::uint64_t>::max(), 5}};
+    CHECK(portable_index(scripted, 3) == 2);
+    CHECK(scripted.next == 2);
+    Scripted power {{std::numeric_limits<std::uint64_t>::max()}};
+    CHECK(portable_index(power, 8) == 7);
+
+    // A known sequence, pinned so that a build on another library that drew
+    // differently would fail here rather than move an interval.
+    std::mt19937_64 engine(1);
+    std::vector<std::size_t> drawn;
+    for (int k = 0; k < 10; k++)
+        drawn.push_back(portable_index(engine, 10));
+    CHECK(drawn == std::vector<std::size_t> {8, 2, 0, 6, 4, 9, 8, 5, 8, 4});
+}
+
+TEST_CASE("the bootstrap interval covers the roughness length of noisy runs",
+        "[atmosphere_builder][fit]")
+{
+    const auto runs = noisy_runs(1, 20);
+    FitRules rules;
+    rules.draws = 1000;
+    const auto fit = fit_roughness_length(runs, labels_for(runs.size()), rules);
+    CHECK(fit.z0_low < fit.z0);
+    CHECK(fit.z0 < fit.z0_high);
+    CHECK(fit.z0_low <= 0.03);
+    CHECK(0.03 <= fit.z0_high);
+}
+
+TEST_CASE("the bootstrap interval covers the truth in at least 90 of 100 seeds",
+        "[.slow][atmosphere_builder][fit]")
+{
+    int hits = 0;
+    for (std::uint64_t seed = 1; seed <= 100; seed++)
+    {
+        const auto runs = noisy_runs(seed, 20);
+        FitRules rules;
+        rules.seed = seed;
+        const auto fit = fit_roughness_length(runs, labels_for(runs.size()), rules);
+        hits += fit.z0_low <= 0.03 && 0.03 <= fit.z0_high;
+    }
+    CHECK(hits >= 90);
+}

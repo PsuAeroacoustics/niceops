@@ -1050,4 +1050,286 @@ AtmosphereProfile build_profile(const MeasuredColumns& measured, const SurfaceAi
     return profile;
 }
 
+namespace {
+
+// One run's gates: ln z and the speed there.
+struct RunProfile
+{
+    std::vector<double> log_z;
+    std::vector<double> speed;
+};
+
+// The slope A_j and the residual sum for one run at ln z0 = ell.
+struct RunTerms
+{
+    double slope;
+    double squares;
+    double gradient; // A_j * sum_i (U_ij - A_j x_i): half of dS_j/d ell
+};
+
+RunTerms run_terms(const RunProfile& run, double ell)
+{
+    double xu = 0.0, xx = 0.0;
+    for (std::size_t i = 0; i < run.log_z.size(); i++)
+    {
+        const double x = run.log_z[i] - ell;
+        xu += x * run.speed[i];
+        xx += x * x;
+    }
+    const double slope = xu / xx;
+    double squares = 0.0, residual_sum = 0.0;
+    for (std::size_t i = 0; i < run.log_z.size(); i++)
+    {
+        const double r = run.speed[i] - slope * (run.log_z[i] - ell);
+        squares += r * r;
+        residual_sum += r;
+    }
+    return {slope, squares, slope * residual_sum};
+}
+
+constexpr double fit_low = -9.210340371976182; // ln 1e-4 m
+const double fit_high = std::log(3.0); // ln 3 m
+
+// ln z0 minimizing the pooled squares over `runs` (indices into `profiles`),
+// and whether it came to an end of the search.  A scan brackets the minimum;
+// bisection on dS/d ell = 0 (by the envelope theorem, 2 sum_j A_j sum_i r_ij)
+// then takes it to the last bit, so exact profiles give z0 back to rounding.
+std::pair<double, bool> fit_log_z0(const std::vector<RunProfile>& profiles,
+        const std::vector<std::size_t>& runs)
+{
+    auto squares = [&](double ell) {
+        double sum = 0.0;
+        for (const std::size_t j : runs)
+            sum += run_terms(profiles[j], ell).squares;
+        return sum;
+    };
+    auto gradient = [&](double ell) {
+        double sum = 0.0;
+        for (const std::size_t j : runs)
+            sum += run_terms(profiles[j], ell).gradient;
+        return sum;
+    };
+    constexpr int scan = 240;
+    int best = 0;
+    double best_value = std::numeric_limits<double>::infinity();
+    for (int k = 0; k <= scan; k++)
+    {
+        const double ell = fit_low + (fit_high - fit_low) * k / scan;
+        const double value = squares(ell);
+        if (value < best_value)
+        {
+            best_value = value;
+            best = k;
+        }
+    }
+    double lo = fit_low + (fit_high - fit_low) * std::max(best - 1, 0) / scan;
+    double hi = fit_low + (fit_high - fit_low) * std::min(best + 1, scan) / scan;
+    // The squares fall while the gradient is negative (dS/d ell = 2 g).  At
+    // an end of the search there is no sign change to bisect.
+    if (!(gradient(lo) < 0.0) || !(gradient(hi) > 0.0))
+        return {fit_low + (fit_high - fit_low) * best / scan, best == 0 || best == scan};
+    for (int iteration = 0; iteration < 200; iteration++)
+    {
+        const double mid = 0.5 * (lo + hi);
+        if (mid == lo || mid == hi)
+            break;
+        if (gradient(mid) < 0.0)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    return {0.5 * (lo + hi), false};
+}
+
+double percentile(std::vector<double> values, double q)
+{
+    std::sort(values.begin(), values.end());
+    const double position = q * static_cast<double>(values.size() - 1);
+    const auto below = static_cast<std::size_t>(std::floor(position));
+    const std::size_t above = std::min(below + 1, values.size() - 1);
+    const double t = position - static_cast<double>(below);
+    return values[below] + t * (values[above] - values[below]);
+}
+
+} // namespace
+
+RoughnessFit fit_roughness_length(const std::vector<ColumnSource>& runs,
+        const std::vector<std::string>& labels, const FitRules& rules)
+{
+    if (runs.size() != labels.size())
+        throw std::logic_error("fit_roughness_length needs one label per run");
+    if (!(rules.gate_low > 0.0) || !(rules.gate_high > rules.gate_low))
+        input_error("fit_z0: the gates run from a height above the ground to a higher one.");
+    if (rules.draws < 100)
+        input_error("fit_z0: a bootstrap needs at least 100 draws, not ", rules.draws, ".");
+
+    RoughnessFit fit;
+    std::vector<RunProfile> profiles;
+    for (std::size_t j = 0; j < runs.size(); j++)
+    {
+        const ColumnSource& run = runs[j];
+        auto exclude = [&](const std::string& why) { fit.excluded.emplace_back(labels[j], why); };
+        if (!run.wind)
+        {
+            exclude("no wind");
+            continue;
+        }
+        // Gates in the band, in height order.
+        std::vector<std::size_t> gates;
+        for (std::size_t i = 0; i < run.wind->z.size(); i++)
+        {
+            const double z = run.wind->z[i];
+            if (z >= rules.gate_low * (1.0 - 1e-9) && z <= rules.gate_high * (1.0 + 1e-9))
+                gates.push_back(i);
+        }
+        std::sort(gates.begin(), gates.end(),
+                [&](std::size_t a, std::size_t b) { return run.wind->z[a] < run.wind->z[b]; });
+        if (gates.size() < 2)
+        {
+            exclude("fewer than two wind gates between the gate heights");
+            continue;
+        }
+        const std::size_t low = gates.front();
+        const std::size_t high = gates.back();
+        const double z_low = run.wind->z[low];
+        const double z_high = run.wind->z[high];
+        const double u_low = std::hypot(run.wind->east[low], run.wind->north[low]);
+        const double u_high = std::hypot(run.wind->east[high], run.wind->north[high]);
+        if (u_high < rules.min_speed)
+        {
+            std::ostringstream why;
+            why << "light wind: " << u_high << " m/s at the highest gate, under " << rules.min_speed;
+            exclude(why.str());
+            continue;
+        }
+        double veer = 0.0;
+        for (const std::size_t i : gates)
+        {
+            const double cross = run.wind->east[low] * run.wind->north[i]
+                    - run.wind->north[low] * run.wind->east[i];
+            const double dot = run.wind->east[low] * run.wind->east[i]
+                    + run.wind->north[low] * run.wind->north[i];
+            veer = std::max(veer, std::fabs(std::atan2(cross, dot)) * 180.0 / pi);
+        }
+        if (veer > rules.max_veer)
+        {
+            std::ostringstream why;
+            why << "the wind turns " << veer << " degrees across the gates, more than "
+                << rules.max_veer;
+            exclude(why.str());
+            continue;
+        }
+        // The bulk Richardson number between the lowest and highest gate:
+        // (g / theta) (d theta / dz) / (dU / dz)^2, theta = T + 0.0098 z.
+        const auto& temperature = run.temperature;
+        const bool screened = temperature && !temperature->z.empty()
+                && temperature->z.front() <= z_low && temperature->z.back() >= z_high;
+        if (screened)
+        {
+            const double t_low = interpolate(temperature->z, temperature->value, z_low);
+            const double t_high = interpolate(temperature->z, temperature->value, z_high);
+            const double theta_low = t_low - dry_adiabatic_lapse * z_low;
+            const double theta_high = t_high - dry_adiabatic_lapse * z_high;
+            const double dz = z_high - z_low;
+            const double shear = (u_high - u_low) / dz;
+            if (!(shear > 0.0))
+            {
+                exclude("the speed does not grow with height across the gates");
+                continue;
+            }
+            const double richardson = standard_gravity / (0.5 * (theta_low + theta_high))
+                    * ((theta_high - theta_low) / dz) / (shear * shear);
+            if (std::fabs(richardson) > rules.max_richardson)
+            {
+                std::ostringstream why;
+                why << "not neutral: bulk Richardson number " << richardson << ", beyond "
+                    << rules.max_richardson;
+                exclude(why.str());
+                continue;
+            }
+        }
+        else if (!rules.assume_neutral)
+        {
+            exclude("no temperature at both gate heights to screen it (--assume_neutral keeps "
+                    "it)");
+            continue;
+        }
+        else
+        {
+            warn("fit_z0: ", labels[j], " has no temperature at both gate heights; kept as "
+                    "neutral (--assume_neutral).");
+        }
+
+        RunProfile profile;
+        for (const std::size_t i : gates)
+        {
+            profile.log_z.push_back(std::log(run.wind->z[i]));
+            profile.speed.push_back(std::hypot(run.wind->east[i], run.wind->north[i]));
+        }
+        profiles.push_back(profile);
+        fit.used.push_back(labels[j]);
+        // The run alone: U = a + b ln z, so ln z0 = -a / b.
+        double mx = 0.0, mu = 0.0;
+        for (std::size_t i = 0; i < profile.log_z.size(); i++)
+        {
+            mx += profile.log_z[i];
+            mu += profile.speed[i];
+        }
+        mx /= static_cast<double>(profile.log_z.size());
+        mu /= static_cast<double>(profile.log_z.size());
+        double sxy = 0.0, sxx = 0.0;
+        for (std::size_t i = 0; i < profile.log_z.size(); i++)
+        {
+            sxy += (profile.log_z[i] - mx) * (profile.speed[i] - mu);
+            sxx += (profile.log_z[i] - mx) * (profile.log_z[i] - mx);
+        }
+        const double b = sxy / sxx;
+        fit.per_run_z0.push_back(b > 0.0 ? std::exp(mx - mu / b)
+                                         : std::numeric_limits<double>::quiet_NaN());
+    }
+    if (fit.used.size() < rules.min_runs)
+    {
+        input_error("fit_z0: ", fit.used.size(), " runs pass the screen, fewer than the ",
+                rules.min_runs, " a fit needs (--min_runs); ", fit.excluded.size(),
+                " were left out.");
+    }
+
+    std::vector<std::size_t> all(profiles.size());
+    std::iota(all.begin(), all.end(), 0);
+    const auto [ell, at_bound] = fit_log_z0(profiles, all);
+    fit.z0 = std::exp(ell);
+    fit.at_bound = at_bound;
+    double squares = 0.0;
+    std::size_t points = 0;
+    for (const auto& profile : profiles)
+    {
+        squares += run_terms(profile, ell).squares;
+        points += profile.log_z.size();
+    }
+    fit.residual_rms = std::sqrt(squares / static_cast<double>(points));
+    std::vector<double> finite;
+    for (const double z0 : fit.per_run_z0)
+    {
+        if (std::isfinite(z0))
+            finite.push_back(z0);
+    }
+    fit.median_run_z0 = finite.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                       : percentile(finite, 0.5);
+
+    // The interval: runs drawn with replacement, the fit repeated.
+    std::mt19937_64 engine(rules.seed);
+    std::vector<double> draws;
+    draws.reserve(static_cast<std::size_t>(rules.draws));
+    std::vector<std::size_t> sample(profiles.size());
+    for (int draw = 0; draw < rules.draws; draw++)
+    {
+        for (auto& index : sample)
+            index = portable_index(engine, profiles.size());
+        draws.push_back(std::exp(fit_log_z0(profiles, sample).first));
+    }
+    fit.z0_low = percentile(draws, 0.025);
+    fit.z0_high = percentile(draws, 0.975);
+    return fit;
+}
+
 } // namespace niceops

@@ -702,6 +702,30 @@ its measurements, or from a surface pressure alone, is hydrostatic (§4.3). With
 observation and the `--wind` choices (the law continued to $\delta$, the lapse, the held
 concentration), the profile is the `--wind` profile.
 
+**A site roughness length from wind profiles** (`niceops_build_atmosphere fit_z0`). Over runs
+$j$ and gates $z_i$ between two heights (46–197 ft by default), with speeds $U_{ij}$, the model
+is the log law with one roughness length for the site and a slope per run [36, 60]:
+
+$$
+U_{ij} = A_j\,(\ln z_i - \ell), \qquad \ell = \ln z_0, \quad A_j = u_{*j}/\kappa .
+$$
+
+For a given $\ell$ each $A_j = \sum_i U_{ij} x_i / \sum_i x_i^2$ with $x_i = \ln z_i - \ell$, so
+the least-squares fit is a search in $\ell$ alone, over $z_0$ from $10^{-4}$ to 3 m. Its minimum
+is where $dS/d\ell = 2\sum_j A_j \sum_i (U_{ij} - A_j x_i)$ vanishes. A run enters only if it is
+near neutral, by the bulk Richardson number between the lowest and highest gate [36],
+
+$$
+\mathrm{Ri}_b = \frac{g}{\bar\theta}\,\frac{\Delta\theta/\Delta z}{(\Delta U/\Delta z)^2},
+\qquad \theta = T + 0.0098\,z,
+$$
+
+with $|\mathrm{Ri}_b| \le 0.05$, at least 3 m/s at the highest gate, and at most 20° of turning
+across the gates (the law has none). The interval is the 2.5 and 97.5 percentiles of the fit
+repeated over runs drawn with replacement [61]. The fit is ill-conditioned: with gates at 46 and
+197 ft and $z_0$ near 0.03 m, a 1% error in the ratio of their speeds moves $z_0$ by a factor of
+about 1.4, so runs are pooled and the interval is reported with $z_0$.
+
 ## 8. Refraction
 
 ### 8.1 Linear sound-speed profile: circular rays
@@ -1397,3 +1421,5 @@ than for SEL.
 57. "Report on Standard Method of Computing Noise Contours around Civil Airports, Volume 2: Technical Guide," ECAC.CEAC Doc 29, 4th ed., European Civil Aviation Conference, Neuilly-sur-Seine, France, December 2016.
 58. "Procedure for the Calculation of Airplane Noise in the Vicinity of Airports," SAE AIR1845A, SAE International, Warrendale, PA, 2012.
 59. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 1: Propagation in an Atmosphere without Significant Refraction," DELTA Acoustics & Vibration Report AV 1849/00 (revised), Hørsholm, Denmark, 2006.
+60. Wieringa, J., "Representative Roughness Parameters for Homogeneous Terrain," *Boundary-Layer Meteorology*, Vol. 63, No. 4, 1993, pp. 323–363. https://doi.org/10.1007/BF00705357
+61. Efron, B., and Tibshirani, R. J., *An Introduction to the Bootstrap*, Chapman & Hall, New York, 1993. https://doi.org/10.1201/9780429246593

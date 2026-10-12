@@ -16,8 +16,11 @@
 // AtmosphereProfile.
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -179,5 +182,73 @@ std::string build_rules_problem(const BuildRules& rules, LengthUnit unit);
 // read_atmosphere_profile would check it.  Throws input_error.
 AtmosphereProfile build_profile(const MeasuredColumns& measured, const SurfaceAir& surface,
         const BuildRules& rules, LengthUnit unit, BuildReport& report);
+
+// A site's roughness length from wind profiles: the log law
+// U_ij = A_j (ln z_i - ln z0) fitted to every run j's gates z_i between
+// gate_low and gate_high, one z0 for the site and a slope A_j = u*_j / kappa
+// per run.  For a given ln z0 each slope is closed-form, so the fit is a
+// one-dimensional search on ln z0 (separable least squares).  The interval is
+// a bootstrap over runs.
+struct FitRules
+{
+    // m: the ZephIR's 46, 125 and 197 ft gates by default.
+    double gate_low = 46.0 * ft2m;
+    double gate_high = 197.0 * ft2m;
+    // The neutral screen: |bulk Richardson number| between the lowest and
+    // highest gate, the speed at the highest gate (m/s), and the turning
+    // across the gates (degrees).
+    double max_richardson = 0.05;
+    double min_speed = 3.0;
+    double max_veer = 20.0;
+    // Keep a run without the temperature to screen it, with a warning.
+    bool assume_neutral = false;
+    std::uint64_t seed = 1;
+    int draws = 2000;
+    std::size_t min_runs = 5;
+};
+
+struct RoughnessFit
+{
+    double z0 = 0.0; // m
+    // The bootstrap's 2.5 and 97.5 percentiles, m.
+    double z0_low = 0.0;
+    double z0_high = 0.0;
+    // m/s, over every gate of every run used.
+    double residual_rms = 0.0;
+    // The fit came to an end of the search, 1e-4 m or 3 m: the profiles are
+    // not the log law's.
+    bool at_bound = false;
+    std::vector<std::string> used;
+    // Each run's own z0 from a two-parameter regression, m, and their median.
+    std::vector<double> per_run_z0;
+    double median_run_z0 = 0.0;
+    // Each run left out, and why.
+    std::vector<std::pair<std::string, std::string>> excluded;
+};
+
+// Fit `runs` (labeled by `labels`, one each).  Throws input_error with fewer
+// than min_runs runs left after the screen.
+RoughnessFit fit_roughness_length(const std::vector<ColumnSource>& runs,
+        const std::vector<std::string>& labels, const FitRules& rules);
+
+// An index in [0, n) from `engine`, the same on every standard library:
+// std::uniform_int_distribution's algorithm is the implementation's, and the
+// bootstrap would otherwise give a different interval under GCC than under
+// Clang.  Rejection keeps it unbiased: draws at or above the largest multiple
+// of n are thrown back.
+template <typename Engine>
+std::size_t portable_index(Engine& engine, std::size_t n)
+{
+    static_assert(Engine::min() == 0 && Engine::max() == std::numeric_limits<std::uint64_t>::max(),
+            "portable_index takes a full 64-bit engine");
+    const std::uint64_t count = n;
+    // 2^64 mod n, computed without 2^64.
+    const std::uint64_t excess = (std::numeric_limits<std::uint64_t>::max() % count + 1) % count;
+    const std::uint64_t limit = std::numeric_limits<std::uint64_t>::max() - excess;
+    std::uint64_t draw = engine();
+    while (excess != 0 && draw > limit)
+        draw = engine();
+    return static_cast<std::size_t>(draw % count);
+}
 
 } // namespace niceops

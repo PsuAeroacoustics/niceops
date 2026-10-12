@@ -154,6 +154,14 @@ equations are in [THEORY.md](../THEORY.md) §7. The things to preserve:
   `with_hydrostatic_pressure`'s ratios at the profile's levels. A measured level is always a
   level, so the end knot has an exact ratio. Pressure from a surface value alone is
   `with_hydrostatic_pressure` itself.
+- **The roughness-length fit solves dS/dℓ = 0 by bisection**, after a scan in ln z₀ brackets the
+  minimum, so exact log-law runs give z₀ back to 1e-9. A minimizer's tolerance (Brent's
+  √ε) would not. The bootstrap draws its indices with `portable_index`, rejection on
+  `mt19937_64`'s own bits. `std::uniform_int_distribution` is implementation-defined, and the
+  interval would differ between libstdc++ and libc++. A Catch2 case pins a sequence.
+- **The percentile interval undercovers slightly.** Over 100 seeds of 20 runs with 1% speed noise
+  it covers the true z₀ in 90 (the hidden `[.slow]` case, at its floor). Do not tighten that case
+  without changing the interval's method.
 
 ## Wind-profile tests
 
