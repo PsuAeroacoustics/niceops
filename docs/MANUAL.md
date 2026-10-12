@@ -1468,7 +1468,9 @@ anemometer. Lengths are in `--units`, feet by default, on the command line and i
 
 - **`--missing V ...`** lists cell values that are fill, not data (9999, 99999, a LIDAR's
   1.944e4). They are dropped for their variable at their level, and counted. Any other
-  implausible value is refused with its file and row; `--drop_implausible` drops those too.
+  implausible value is refused with its file and row; `--drop_implausible` drops those too. A
+  wind column left with no value is refused, since it would build still air; a temperature,
+  humidity or pressure column left with none is warned of and ignored.
 - **Instrument cleaning stays with the caller**: a LIDAR's 180° direction ambiguity, a balloon
   that was not aloft, or a GRIB2 file. The tool takes clean columns.
 

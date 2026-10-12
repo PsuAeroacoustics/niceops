@@ -477,6 +477,19 @@ TEST_CASE("read_column_source reads the run's names, the humidity's other forms 
     }
 }
 
+TEST_CASE("a column of fill values measured nothing", "[atmosphere_builder]")
+{
+    // Every wind value missing would build still air and credit this file
+    // with it; a quantity with nothing left is only warned of, and dropped.
+    const TempCsv no_wind("z_ft,wind_speed_kt,wind_direction\n46,99999,99999\n125,99999,99999\n");
+    CHECK_THROWS_WITH(read_column_source(no_wind.path, feet, 0.0, {99999.0}, false),
+            ContainsSubstring("every wind value is a fill value"));
+    const TempCsv no_temperature("z_ft,wind_speed_kt,wind_direction,T_K\n46,8,262,9999\n125,11,268,9999\n");
+    const ColumnSource source = read_column_source(no_temperature.path, feet, 0.0, {9999.0}, false);
+    CHECK(source.wind.has_value());
+    CHECK(!source.temperature.has_value());
+}
+
 TEST_CASE("a built profile reads back through --atmosphere as itself", "[atmosphere_builder]")
 {
     MeasuredColumns measured;
@@ -646,9 +659,24 @@ TEST_CASE("fit_roughness_length screens out stable, veering and light-wind runs"
     CHECK(fit.excluded[0].first == "run5");
     rules.assume_neutral = true;
     CHECK(fit_roughness_length(runs, labels_for(runs.size()), rules).used.size() == 6);
+    // Assumed neutral or not, a run whose speed falls with height is no log law.
+    ColumnSource falling = unscreened;
+    std::reverse(falling.wind->east.begin(), falling.wind->east.end());
+    std::reverse(falling.wind->north.begin(), falling.wind->north.end());
+    auto with_falling = runs;
+    with_falling.push_back(falling);
+    const auto neutral_fit = fit_roughness_length(with_falling, labels_for(with_falling.size()), rules);
+    CHECK(neutral_fit.used.size() == 6);
+    REQUIRE(!neutral_fit.excluded.empty());
+    CHECK_THAT(neutral_fit.excluded.back().second, ContainsSubstring("does not grow with height"));
+    // A refused fit says why its runs were left out.
     rules.min_runs = 7;
     CHECK_THROWS_WITH(fit_roughness_length(runs, labels_for(runs.size()), rules),
             ContainsSubstring("fewer than the 7 a fit needs"));
+    rules.assume_neutral = false;
+    CHECK_THROWS_WITH(fit_roughness_length(runs, labels_for(runs.size()), rules),
+            ContainsSubstring("4 were left out (1 light wind; 1 no temperature at both gate heights to screen it "
+                              "(--assume_neutral keeps it); 1 not neutral; 1 the wind turns)"));
 }
 
 TEST_CASE("the bootstrap's index draw is the same on every standard library",

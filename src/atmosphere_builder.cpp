@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -461,6 +462,24 @@ ColumnSource read_column_source(const std::string& path, LengthUnit unit,
         source.wind = WindSeries {path, e.z, e.value, n.value};
     }
 
+    // A column that holds only fill values (or values dropped as implausible)
+    // measured nothing.  For the wind that would build still air and say the
+    // wind came from this file, so it is refused; the others are warned of.
+    if (source.wind && source.wind->z.empty())
+    {
+        input_error("--column ", path, ": every wind value is a fill value (--missing) or was dropped, so it "
+                "measured no wind. Leave the file out, or give the wind another way (--wind).");
+    }
+    for (const auto& [series, what] : {std::pair {&source.temperature, "temperature"},
+                 {&source.humidity, "humidity"}, {&source.pressure, "pressure"}})
+    {
+        if (*series && (*series)->z.empty())
+        {
+            warn("--column ", path, ": every ", what, " value is a fill value (--missing) or was dropped; "
+                    "it gives no ", what, ".");
+            series->reset();
+        }
+    }
     if (source.temperature)
         refuse_duplicates(*source.temperature, "temperature", unit);
     if (source.humidity)
@@ -1191,10 +1210,16 @@ RoughnessFit fit_roughness_length(const std::vector<ColumnSource>& runs,
 
     RoughnessFit fit;
     std::vector<RunProfile> profiles;
+    std::map<std::string, std::size_t> reasons;
     for (std::size_t j = 0; j < runs.size(); j++)
     {
         const ColumnSource& run = runs[j];
-        auto exclude = [&](const std::string& why) { fit.excluded.emplace_back(labels[j], why); };
+        auto exclude = [&](const std::string& why) {
+            fit.excluded.emplace_back(labels[j], why);
+            // Its kind, for a refusal's summary: the reason up to its detail.
+            const auto cut = why.find_first_of(":0123456789");
+            reasons[why.substr(0, cut == std::string::npos ? why.size() : cut)]++;
+        };
         if (!run.wind)
         {
             exclude("no wind");
@@ -1245,6 +1270,14 @@ RoughnessFit fit_roughness_length(const std::vector<ColumnSource>& runs,
             exclude(why.str());
             continue;
         }
+        // A log law's speed grows with height, screened by temperature or
+        // assumed neutral alike.
+        const double shear = (u_high - u_low) / (z_high - z_low);
+        if (!(shear > 0.0))
+        {
+            exclude("the speed does not grow with height across the gates");
+            continue;
+        }
         // The bulk Richardson number between the lowest and highest gate:
         // (g / theta) (d theta / dz) / (dU / dz)^2, theta = T + 0.0098 z.
         const auto& temperature = run.temperature;
@@ -1257,12 +1290,6 @@ RoughnessFit fit_roughness_length(const std::vector<ColumnSource>& runs,
             const double theta_low = t_low - dry_adiabatic_lapse * z_low;
             const double theta_high = t_high - dry_adiabatic_lapse * z_high;
             const double dz = z_high - z_low;
-            const double shear = (u_high - u_low) / dz;
-            if (!(shear > 0.0))
-            {
-                exclude("the speed does not grow with height across the gates");
-                continue;
-            }
             const double richardson = standard_gravity / (0.5 * (theta_low + theta_high))
                     * ((theta_high - theta_low) / dz) / (shear * shear);
             if (std::fabs(richardson) > rules.max_richardson)
@@ -1315,9 +1342,17 @@ RoughnessFit fit_roughness_length(const std::vector<ColumnSource>& runs,
     }
     if (fit.used.size() < rules.min_runs)
     {
+        std::ostringstream why;
+        for (const auto& [reason, count] : reasons)
+        {
+            std::string kind = reason;
+            while (!kind.empty() && (kind.back() == ' ' || kind.back() == ','))
+                kind.pop_back();
+            why << (why.tellp() > 0 ? "; " : "") << count << " " << kind;
+        }
         input_error("fit_z0: ", fit.used.size(), " runs pass the screen, fewer than the ",
-                rules.min_runs, " a fit needs (--min_runs); ", fit.excluded.size(),
-                " were left out.");
+                rules.min_runs, " a fit needs (--min_runs); ", fit.excluded.size(), " were left out",
+                fit.excluded.empty() ? std::string(".") : " (" + why.str() + ").");
     }
 
     std::vector<std::size_t> all(profiles.size());
