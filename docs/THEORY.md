@@ -631,10 +631,11 @@ source is $S = (D, z_S)$, raised onto the profile at its footprint if it lies be
 profile is the one the mean plane is fitted to (§6.3), blended linearly in bearing between the
 two rays around the path.
 
-**Which paths.** A path is screened when some sample lies strictly above the line of sight:
+**Which paths.** A path is screened when some sample lies above the line of sight by more than
+$h_{\min}$ (`--screening_min_height`, 0.5 m by default):
 
 $$
-\max_k \frac{z_k - h_m}{k\Delta} > \frac{z_S - h_m}{D} .
+\max_k \left[ z_k - h_m - \frac{z_S - h_m}{D}\, k\Delta \right] > h_{\min} .
 $$
 
 Every other path, including one that grazes the profile, is evaluated as in §6.3, unchanged.

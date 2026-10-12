@@ -206,7 +206,10 @@ public:
     // 0.25 degrees: rays 13 m apart at 3 km, about a 3DEP 1/3 arc-second cell.
     static constexpr int bearings = 1440;
 
-    explicit GroundPlaneCache(const TerrainRaster& raster, bool screening = false);
+    // `min_protrusion` (m, screening only): how far a sample must rise above
+    // the line of sight to block it, so a raster's texture next to a
+    // microphone does not screen a path that only grazes it.
+    explicit GroundPlaneCache(const TerrainRaster& raster, bool screening = false, double min_protrusion = 0.0);
 
     // Start on a new observer, whose ground point is (x, y).
     void set_observer(double x, double y);
@@ -259,8 +262,8 @@ public:
     // local z `source_z`, which proves the blended profile does not either.
     bool may_block(const RayPair& pair, double source_z);
     // Whether some interior sample of the blended profile lies strictly above
-    // the line of sight; `profile` is filled when it does.  A sample exactly on
-    // it does not block.
+    // the line of sight, by more than the minimum protrusion; `profile` is
+    // filled when it does.  A sample exactly on it does not block.
     bool blocked(const RayPair& pair, double source_z, Profile& profile);
 
     // Screening only: the least-squares line through the blended profile's
@@ -300,6 +303,7 @@ private:
     const TerrainRaster* raster_;
     double step_;
     bool screening_ = false;
+    double min_protrusion_ = 0.0;
     double x_ = 0.0;
     double y_ = 0.0;
     double z_ = 0.0;

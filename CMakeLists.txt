@@ -1858,6 +1858,8 @@ set_tests_properties(terrain_ridge_screened_point_golden terrain_ridge_screened_
 # Refusals.
 add_test(NAME terrain_screening_needs_terrain COMMAND niceops ${TERRAIN_DEMO} ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_screening_needs_terrain PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening needs --terrain")
+add_test(NAME screening_min_height_needs_screening COMMAND niceops --screening_min_height 1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(screening_min_height_needs_screening PROPERTIES PASS_REGULAR_EXPRESSION "--screening_min_height is for --terrain_screening")
 add_test(NAME terrain_screening_needs_spectral COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-spectral --no-ground_effect ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_screening_needs_spectral PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "--terrain_screening is per band, and the broadband path")
 add_test(NAME terrain_screening_needs_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 ${TERRAIN_RIDGE} ${SCREENING} --gridstep 4000 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

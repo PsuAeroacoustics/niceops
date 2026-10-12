@@ -292,6 +292,13 @@ in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
   Directive also asks δ > λ/4 − δ′, δ′ by the ground images, which keeps the low bands out; the
   conformance case TC06, a path clearing a plateau's edge by 0.67 m, is diffracted at 500 Hz
   and 1 kHz in the TR and unscreened here, `ISO/TR 17534-4 TC06` in `tests/test_screening.cpp`.)
+- **A minimum protrusion** (`--screening_min_height`, 0.5 m): a sample blocks only when it is
+  that far above the line of sight. At Sweetwater the 1 m lidar grid's texture 3–5 m from a
+  flush board, 0.03–0.14 m above a path at 1–2° elevation, screened it, and the screened level came
+  out up to 1.1 dB above the unscreened one: with δ near zero the 4.77 dB floor and the two side
+  ground terms beat the whole path's plate term. The threshold leaves the quick test (a necessary
+  condition) as it was; it moved the ridge goldens by up to 0.9 dB (points) and 1.6 dB (plates)
+  in about 90 of 441 cells, all at the shadow's edge, where it was regenerated.
 - **One spelling of the slope** (`sight_slope`, (z − h_m)/s) for the horizon, the line of sight
   and the scan. The quick test reads each ray's horizon at the last sample strictly inside the
   path (ceil(D/Δ) − 1, never the footprint's), and with no turn reads ray a only, as `line_from`

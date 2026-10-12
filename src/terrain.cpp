@@ -435,10 +435,11 @@ GroundLine niceops::fit_ground_line(const TerrainRaster& raster, double x0, doub
     return line_from_sums(sum_z, sum_kz, n, length / static_cast<double>(n), base);
 }
 
-GroundPlaneCache::GroundPlaneCache(const TerrainRaster& raster, bool screening)
+GroundPlaneCache::GroundPlaneCache(const TerrainRaster& raster, bool screening, double min_protrusion)
     : raster_(&raster)
     , step_(raster.step())
     , screening_(screening)
+    , min_protrusion_(min_protrusion)
     , cos_(bearings)
     , sin_(bearings)
     , stamp_(bearings, 0u)
@@ -638,7 +639,8 @@ bool GroundPlaneCache::blocked(const RayPair& pair, double source_z, Profile& pr
     for (std::size_t k = 1; k <= interior && !above; k++)
     {
         const double z = turned ? (1.0 - turn) * a[k] + turn * b[k] : a[k];
-        above = sight_slope(z, static_cast<double>(k) * step_) > sight;
+        const double s = static_cast<double>(k) * step_;
+        above = sight_slope(z, s) > sight && (min_protrusion_ == 0.0 || z - (microphone_ + sight * s) > min_protrusion_);
     }
     if (!above)
         return false;

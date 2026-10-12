@@ -564,6 +564,26 @@ TEST_CASE("a profile exactly on the line of sight does not block", "[terrain]")
         CHECK(cache.blocked(cache.locate(distance, 0.0, distance), 0.25 * distance, profile));
 }
 
+TEST_CASE("a sample under the minimum protrusion does not block", "[terrain]")
+{
+    // A microphone 1.2 m up, a source 0.6 m up 400 m out on level ground: the
+    // line of sight is 0.9 m up at 200 m.  A bump there 0.3 m above it blocks
+    // with no minimum, and not with 0.5 m, which one 2.1 m above it still
+    // exceeds.
+    for (const auto& [top, blocks_at_half_metre] : {std::pair {1.2, false}, {3.0, true}})
+    {
+        const auto bump = [top = top](double x, double) { return std::fabs(x - 200.0) < 1.0 ? top : 0.0; };
+        const TerrainRaster raster = raster_of(bump, 1000.0, 1.0);
+        GroundPlaneCache::Profile profile;
+        GroundPlaneCache none(raster, true);
+        none.set_observer(0.0, 0.0, 1.2);
+        CHECK(none.blocked(none.locate(400.0, 0.0, 400.0), 0.6, profile));
+        GroundPlaneCache half_metre(raster, true, 0.5);
+        half_metre.set_observer(0.0, 0.0, 1.2);
+        CHECK(half_metre.blocked(half_metre.locate(400.0, 0.0, 400.0), 0.6, profile) == blocks_at_half_metre);
+    }
+}
+
 TEST_CASE("a blended profile touching the line of sight does not block", "[terrain]")
 {
     // Level ground, except a stripe 400 < x < 600 that rises across the line

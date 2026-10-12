@@ -718,6 +718,9 @@ struct RunOptions
     // its line of sight takes the CNOSSOS-EU diffraction over it
     // (screening.hpp) in place of its mean-plane ground term.
     bool terrain_screening = false;
+    // --screening_min_height, m: how far terrain must rise above a path's line
+    // of sight to screen it.
+    double screening_min_height = 0.5;
     // An observer file's z kept over --terrain (no --observers_on_terrain):
     // the microphones need not stand on the raster's ground.
     bool observers_keep_file_z = false;
@@ -3072,7 +3075,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // how many pairs took one, and how many had a height raised to zero.
         std::optional<GroundPlaneCache> planes;
         if (terrain_raster)
-            planes.emplace(*terrain_raster, screening);
+            planes.emplace(*terrain_raster, screening, options.screening_min_height);
         std::size_t terrain_here = 0, raised_here = 0;
         // --terrain_screening's scratch: a blocked pair's profile, its rubber
         // band, each side's ground gain and the loss; and its counts.
@@ -4378,6 +4381,7 @@ int run(int argc, char* argv[])
     double terrain_offset = 0.0;  // meters
     double terrain_step = 0.0;    // meters; 0 follows the terrain's own spacing
     std::string terrain_screening = "none";
+    double screening_min_height = 0.5; // meters
     bool observers_on_terrain = false;
     std::string plate_mic_azimuth = "outboard";
     bool exact_ground = false;
@@ -4844,6 +4848,11 @@ int run(int argc, char* argv[])
             "side of it, capped at 25 dB. Spectral path only. With --propagation_table a blocked "
             "path leaves the table for the ground model, which it then needs.")
             ->check(CLI::IsMember({"none", "cnossos"}));
+    auto* screening_min_height_option = app.add_option("--screening_min_height", screening_min_height,
+            "With --terrain_screening: how far the terrain must rise above a path's line of sight to "
+            "screen it, in --units (default 0.5 m), so a terrain grid's texture beside a microphone does "
+            "not screen a path that only grazes it.")
+            ->check(CLI::NonNegativeNumber);
     auto* terrain_offset_option = app.add_option("--terrain_offset", terrain_offset,
             "Added to every --terrain height, in --units, to put it on the trajectory's vertical "
             "datum (default 0). At Amedee 3DEP is NAVD88 and the 2017 tracks are ellipsoidal: "
@@ -5368,6 +5377,7 @@ int run(int argc, char* argv[])
     to_meters(surface_layer_option, surface_layer_depth);
     to_meters(terrain_offset_option, terrain_offset);
     to_meters(terrain_step_option, terrain_step);
+    to_meters(screening_min_height_option, screening_min_height);
     // An operations file's offsets are lengths the user wrote, in --units.
     if (operations)
     {
@@ -5598,6 +5608,8 @@ int run(int argc, char* argv[])
                     "and --humidity would contradict it.");
     }
 
+    if (screening_min_height_option->count() > 0 && terrain_screening == "none")
+        input_error("--screening_min_height is for --terrain_screening, which is not given.");
     // --terrain, and what it does to the observers.
     std::shared_ptr<const Terrain> terrain;
     if (terrain_file.empty())
@@ -5766,6 +5778,7 @@ int run(int argc, char* argv[])
     options.terrain_offset = terrain_offset;
     options.terrain_step = terrain_step;
     options.terrain_screening = terrain_screening == "cnossos";
+    options.screening_min_height = screening_min_height;
     options.observers_keep_file_z = terrain && scattered && !observers_on_terrain;
     if (!propagation_table.empty())
     {

@@ -638,14 +638,28 @@ raised none. 9.9% of the evaluations were screened, 38% of those reached the 25 
 band, and the ground weight F never needed clamping. Over the hills fixture the full grid
 screened nothing and was the unscreened run byte for byte.
 
-**Not yet scored against measurements.** None of the data sets scored here
-([Data sets](#data-sets)) has terrain between the aircraft and the microphones. The AS350
-altitude-variation test at Sweetwater (NASA/TM-2016-219354) does: over the 1 m 3DEP grid the
-straight path to its microphone 28, behind a hill, passes 18–78 ft under the terrain through
-the start of 152 of its 166 runs, and the paths to microphones 27 and 29 clear it by only
-5–12 ft. Until that is scored, the screening is checked only against the exact half-plane above, by its degenerate cases (level and
-uniformly tilted terrain, and the hills fixture, screen nothing and are the unscreened runs byte
-for byte), and by the peak search's exactness behind the ridge.
+**At Sweetwater**, behind an isolated hill, in the AS350 altitude-variation test
+([Data sets](#data-sets)): all 166 runs (4088 mic-runs after the study's exclusions), SD1
+database, flush boards on variable-porosity ground of 200 kPa·s/m², the 1 m 3DEP grid, run with
+no minimum protrusion. Only microphone 28 is screened behind the hill (20,465 evaluations in 121
+runs: from the record's start to x ≈ −3190 ft), and the blocked states drop by a median 12.5 dBA;
+27 and 29 graze but are never screened, and the on-datum array's scores are unchanged. SEL and
+LAmax, predicted minus measured, mean [95%] / rms:
+
+| microphone 28 | terrain, unscreened | terrain, screened | change |
+| --- | --- | --- | --- |
+| SEL | +3.28 [2.72, 3.81] / 4.79 | +2.75 [2.18, 3.32] / 4.42 | −0.53 [−0.60, −0.46] |
+| LAmax | −1.75 [−2.36, −1.13] / 4.19 | −2.06 [−2.68, −1.48] / 4.33 | −0.31, rms +0.15 |
+
+The SEL improves only because the model reads high at every off-datum microphone there (the
+blocked runs are the low ones, over-predicted at 27, 29 and 11 too). Inside the blocked segment,
+against the rest of the window, the measured level is +0.3 dB, the unscreened prediction +2.3
+and the screened one −9.8: the measurement shows no shielding. Stephenson et al. (AHS Forum 73,
+2017) found microphone 28 in the hill's three-dimensional bright spot, which sound around the
+hill's sides fills and a vertical-plane method cannot. So behind an isolated hill the screening
+overstates the shielding by about 10 dB; it has no measured case of a long ridge, where it
+applies. The same runs found the 1 m grid's texture 3–5 m from a flush board screening paths at
+1–2° elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m) now leaves those unscreened.
 
 ### Trajectory smoothing
 

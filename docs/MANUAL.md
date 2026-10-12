@@ -187,6 +187,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
 | `--observers_on_terrain` | With `--terrain` and `-b`: take each observer's ground height from the terrain rather than the file's z. |
 | `--terrain_screening` | With `--terrain`: `none` (default) or `cnossos`, which screens a path the terrain rises above ([Terrain](#terrain)). Spectral path only. |
+| `--screening_min_height` | With `--terrain_screening`: how far the terrain must rise above a path's line of sight to screen it, in `--units`. Default 0.5 m, above a terrain grid's texture. |
 
 #### Metrics
 
@@ -830,7 +831,9 @@ it, so level ground, a uniform slope, or hills no path crosses give the unscreen
 Use it where ridges, bluffs or berms stand between low flight and the receivers.
 
 - Only the vertical plane through source and microphone is taken: no paths around the ends of an
-  obstacle, and no buildings or vegetation. The rays are straight.
+  obstacle, and no buildings or vegetation. The rays are straight. Behind an isolated hill, which
+  sound also reaches around its sides, this overstates the shielding by about 10 dB
+  ([FIDELITY](FIDELITY.md#terrain-screening)); use it for long ridges, bluffs and berms.
 - Crests are found at `--terrain_step`, so a sharp ridge is slightly under-screened at the
   default step; a finer step costs about proportionally more.
 - As a source drops behind a crest the diffraction term switches on at 4.8 dB, not from zero,
