@@ -4,6 +4,19 @@ How NICE-OPS got to its current form, and why old results differ from new ones. 
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Lateral-offset validation fixes (October 2026)
+
+The fold check for WGS84 tracks with velocity columns mixed recorded velocity with
+acceleration from fitted positions. Changing only the recorded speed could therefore admit
+an offset beyond a turn's radius or refuse a valid offset. Both derivatives now come from
+the fitted positions; recorded velocity still sets the offset direction.
+
+Across a slow interval, choosing the nearest faster sample's direction could switch the
+offset sideways when the aircraft stopped and departed in another direction. Those offsets
+are now refused rather than fitted into a path with artificial speed and acceleration.
+Leading and trailing slow intervals still hold the available direction, and zero offsets
+retain the original path.
+
 ## Origins (2020–2021)
 
 Eric Greenwood and Rob Rau developed NICE-OPS in D, starting in January 2020. It used a

@@ -107,10 +107,19 @@ left of travel; converted at the `--units` seam). The equations are in
   path would be the rejected design again. The log says so. `a geodetic track's velocity
   columns orient the offset and are then dropped` gives columns that disagree with the path, so
   using them fails it.
+  **Curvature uses both derivatives of the fitted position**, even with velocity columns.
+  `the fold radius does not depend on a geodetic track's recorded speed` checks low and high
+  recorded speeds on a turn, including a valid offset and an offset beyond the radius.
 - **Slow samples hold their direction** (`lateral_normals`). Below `heading_nose_speed` (3 kt) a
   velocity's direction is drift, so the normal is held from the nearest faster sample (the
   earlier on a tie), and the curvature there is not tested. A track never faster than 3 kt is
-  refused. An instant stop is not a fair test of this: the exact interpolant rings past the stop
+  refused. A slow interval bounded by different normals is also refused: the nearest-sample
+  switch would jump sideways, while blending would invent a maneuver. Normals agree within
+  `1e-6` in Euclidean norm (about a microradian) to allow rounding. Leading and trailing slow
+  segments still hold their one available direction. `a lateral offset refuses changing
+  direction across a stop` checks reversal and a right-angle departure, both offset signs,
+  interpolation and default smoothing, and continued travel in the same direction.
+  An instant stop is not a fair test of this: the exact interpolant rings past the stop
   at more than 3 kt backward, which flips the normal, so the test brakes at 2 m/s².
 - **The fold criterion is 1 − dκ ≤ 0.1**, the subtrack's speed ratio, refused naming t and the
   turn's radius in `--units`. It is a criterion on the path, not on the noise: an offset toward the

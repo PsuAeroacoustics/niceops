@@ -1600,6 +1600,80 @@ TEST_CASE("a geodetic track's velocity columns orient the offset and are then dr
     }
 }
 
+TEST_CASE("the fold radius does not depend on a geodetic track's recorded speed", "[lateral_offset]")
+{
+    const auto points = left_turn();
+    for (const double scale : {0.5, 1.0, 2.0})
+    {
+        INFO("recorded speed scale " << scale);
+        std::vector<std::array<double, 3>> velocities;
+        for (const auto& p : points)
+        {
+            const double angle = -pi / 2.0 + turn_speed * p[0] / turn_radius;
+            velocities.push_back({-scale * turn_speed * std::sin(angle),
+                    scale * turn_speed * std::cos(angle), 0.0});
+        }
+        const TempCsv track(local_track_as_geodetic(offset_frame(), points, velocities));
+        for (const double smoothing : {0.0, 3.048})
+        {
+            INFO("smoothing " << smoothing);
+            // Both false refusals (low recorded speed) and missed folds (high
+            // recorded speed) expose mixing measured v with fitted a.
+            CHECK_NOTHROW(Trajectory(track.path, "databases/S-76D.json", offset_input(200.0, smoothing), meters));
+            CHECK_THAT(refusal([&] {
+                Trajectory(track.path, "databases/S-76D.json", offset_input(1100.0, smoothing), meters);
+            }), Catch::Matchers::ContainsSubstring("folds the path"));
+        }
+    }
+}
+
+TEST_CASE("a lateral offset refuses changing direction across a stop", "[lateral_offset]")
+{
+    // Brake eastward at 2 m/s^2, hold for ten seconds, then accelerate away.
+    // Recorded velocities isolate the held-normal rule from spline ringing.
+    for (const double angle : {0.0, pi / 2.0, pi})
+    {
+        INFO("departure angle " << angle);
+        std::vector<std::array<double, 4>> points;
+        std::vector<std::array<double, 3>> velocities;
+        for (int k = 0; k <= 100; k++)
+        {
+            const double t = 0.5 * k;
+            const double braking = std::min(t, 20.0);
+            const double departure = std::max(t - 30.0, 0.0);
+            points.push_back({t, 40.0 * braking - braking * braking + departure * departure * std::cos(angle),
+                    departure * departure * std::sin(angle), 150.0});
+            velocities.push_back({40.0 - 2.0 * braking + 2.0 * departure * std::cos(angle),
+                    2.0 * departure * std::sin(angle), 0.0});
+        }
+        const TempCsv track(local_track_as_geodetic(offset_frame(), points, velocities));
+        for (const double smoothing : {0.0, 3.048})
+        {
+            INFO("smoothing " << smoothing);
+            CHECK_NOTHROW(Trajectory(track.path, "databases/S-76D.json", offset_input(0.0, smoothing), meters));
+            // Keep the right-angle case inside its smoothed turn's radius so
+            // it reaches the held-normal check rather than the fold check.
+            const double magnitude = angle == pi / 2.0 ? 10.0 : 100.0;
+            for (const double offset : {-magnitude, magnitude})
+            {
+                INFO("offset " << offset);
+                if (angle == 0.0)
+                {
+                    const Trajectory shifted(track.path, "databases/S-76D.json", offset_input(offset, smoothing), meters);
+                    for (const auto& s : shifted.states)
+                        CHECK(s.y == Catch::Approx(offset).margin(1e-6));
+                }
+                else
+                {
+                    CHECK_THAT(refusal([&] {
+                        Trajectory(track.path, "databases/S-76D.json", offset_input(offset, smoothing), meters);
+                    }), Catch::Matchers::ContainsSubstring("would jump across a slow interval"));
+                }
+            }
+        }
+    }
+}
+
 TEST_CASE("an AC track is translated rigidly, its recorded kinematics kept", "[lateral_offset]")
 {
     const Trajectory center("tracks/S-76D/197421AC.csv", "databases/S-76D.json");

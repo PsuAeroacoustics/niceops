@@ -1160,8 +1160,10 @@ turn the subtrack flies a tighter turn on the inside and a wider one on the outs
 - An AC track is moved sideways state by state, keeping the speeds and accelerations it
   recorded, which is right on a straight leg and approximate in a turn.
 - Where the track is slower than 3 kt (a hover's drift) the direction is held from the nearest
-  faster point. A track that is never faster than 3 kt is refused, and so is an offset on a
-  static operation: move the hold's x and y instead.
+  faster point. If the directions before and after a slow interval differ, the offset is
+  refused: switching sides would make the displaced path jump. Give that subtrack's path
+  explicitly or use zero offset. A track that is never faster than 3 kt is refused, and so is
+  an offset on a static operation: move the hold's x and y instead.
 - An offset toward the inside of a turn must be under 90% of the turn's radius; one that is not
   would fold the path back on itself, and is refused naming the time.
 - `--trim` applies to the displaced track, and the outputs, the `-S` state included, are the

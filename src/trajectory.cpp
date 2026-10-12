@@ -258,7 +258,9 @@ SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>
 // times the original's, kappa (given per sample, from a fitted path) the signed
 // horizontal curvature (vx ay - vy ax)/|v|^3 (+ turning left), so an offset at or past 90% of the turn radius on
 // the inside, 1 - d kappa <= 0.1, folds the path or nearly so, and is refused
-// naming the time.  Held samples are not tested: their curvature is noise.
+// naming the time. Held samples are not tested for curvature: it is noise.
+// A slow interval bounded by different travel directions is refused: switching
+// held normals would jump sideways, and interpolating would invent a maneuver.
 std::vector<std::array<double, 2>> lateral_normals(const std::vector<double>& t, const std::vector<double>& vx,
         const std::vector<double>& vy, const std::vector<double>& kappa, double d, LengthUnit unit,
         const std::string& filename)
@@ -307,6 +309,18 @@ std::vector<std::array<double, 2>> lateral_normals(const std::vector<double>& t,
         if (valid[i])
             continue;
         const std::size_t b = before[i], a = after[i];
+        // Only roundoff-sized differences count as the same direction. This
+        // dimensionless tolerance is about one microradian; compare vectors
+        // directly to avoid losing precision in acos near parallel headings.
+        constexpr double normal_tolerance = 1e-6;
+        if (b != n && a != n
+                && std::hypot(normals[b][0] - normals[a][0], normals[b][1] - normals[a][1]) > normal_tolerance)
+        {
+            input_error("Trajectory ", filename, ": a lateral offset of ", d / unit.to_meters, " ", unit.name,
+                    " would jump across a slow interval between t = ", t[b], " and ", t[a],
+                    " s: the direction of travel changes while below 3 kt. Give the displaced path explicitly "
+                    "or use an offset of zero.");
+        }
         const std::size_t source = a == n || (b != n && t[i] - t[b] <= t[a] - t[i]) ? b : a;
         normals[i] = normals[source];
     }
@@ -331,11 +345,18 @@ void offset_raw_samples(const std::vector<double>& time, std::vector<double>& x,
     std::vector<double> ux(n), uy(n), kappa(n);
     for (std::size_t i = 0; i < n; i++)
     {
-        ux[i] = vx.empty() ? fit_x.derivative(time[i], 1) : vx[i];
-        uy[i] = vy.empty() ? fit_y.derivative(time[i], 1) : vy[i];
-        const double speed = std::hypot(ux[i], uy[i]);
-        kappa[i] = (ux[i] * fit_y.derivative(time[i], 2) - uy[i] * fit_x.derivative(time[i], 2))
-                / (speed * speed * speed);
+        const double fitted_vx = fit_x.derivative(time[i], 1);
+        const double fitted_vy = fit_y.derivative(time[i], 1);
+        ux[i] = vx.empty() ? fitted_vx : vx[i];
+        uy[i] = vy.empty() ? fitted_vy : vy[i];
+        // Recorded velocities orient the offset only. Curvature must use
+        // derivatives of one path: mixing recorded speed with fitted
+        // acceleration would change the fold radius when only speed changes.
+        const double speed = std::hypot(fitted_vx, fitted_vy);
+        kappa[i] = speed > 0.0
+                ? (fitted_vx * fit_y.derivative(time[i], 2) - fitted_vy * fit_x.derivative(time[i], 2))
+                        / (speed * speed * speed)
+                : 0.0;
     }
     const auto normals = lateral_normals(time, ux, uy, kappa, d, unit, filename);
     for (std::size_t i = 0; i < n; i++)

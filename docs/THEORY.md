@@ -301,10 +301,14 @@ and the displaced path $\mathbf r + d\,\hat{\mathbf n}$ moves at $(1 - d\kappa)$
 original's speed, on a radius $1/\kappa - d$. An offset with $1 - d\kappa \le 0.1$ at any
 point, 90% of the radius or more toward the inside of a turn, is refused. Where
 $|\mathbf v|$ is below 3 kt, $\hat{\mathbf n}$ is taken from the nearest point that is faster.
+A slow interval bounded by different travel directions is refused: switching held normals
+would introduce a discontinuity in the displaced path. Normals within $10^{-6}$ in Euclidean
+norm are treated as the same direction to allow numerical roundoff.
 
-- **WGS84 tracks.** $\mathbf v$ and $\mathbf a$ come from a preliminary fit of the raw samples
-  at the same $\sigma$, or $\mathbf v$ from the file's velocity columns when it has them; each
-  raw sample is moved by $d\,\hat{\mathbf n}$, and the displaced samples are fitted as above.
+- **WGS84 tracks.** Both derivatives used to calculate $\kappa$ come from a preliminary fit
+  of the raw samples at the same $\sigma$. The file's velocity columns, when present, set
+  only $\hat{\mathbf n}$ and the 3 kt threshold, not the curvature. Each raw sample is moved
+  by $d\,\hat{\mathbf n}$, and the displaced samples are fitted as above.
   The velocity and load factor are the displaced path's, and the file's velocities are not
   used for them.
 - **AC tracks.** Each state is moved by $d\,\hat{\mathbf n}$ from its own recorded velocity,

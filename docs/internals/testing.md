@@ -255,7 +255,10 @@ The reader's side of the offset is in the `[lateral_offset]` cases (`test_trajec
 straight track moves by exactly d with v and n unchanged, a turn has radius R − d and that
 radius's load factor, zero is bit for bit, slow samples hold their direction, given velocities
 are dropped, an AC track keeps `recorded` and its kinematics, and the fold, hover and static
-refusals.
+refusals. Curved tracks with low and high recorded speeds must have the same fold radius.
+Stops followed by a different travel direction refuse nonzero offsets; continuing in the
+same direction retains the held offset. Both cases cover exact interpolation and default
+smoothing.
 
 ### C-weighted SEL
 
