@@ -295,7 +295,11 @@ in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
   does.
 - **The profile is one per pair**, blended in bearing with `line_from`'s own turn fraction, and
   the microphone is at its height above the raster's ground at its foot, the base of the running
-  sums, so a flush microphone is never under its own profile. A source under the profile at its
+  sums, so a flush microphone is never under its own profile. An observer file's z kept without
+  `--observers_on_terrain` is where the microphone is evaluated, so the horizon is taken from it
+  (`set_observer_at`), held no lower than the ground at the foot; taking the height above the
+  raster instead screened such a microphone from where it is not (`terrain_ridge_screened_file_z`:
+  3000 ft up, nothing is screened). A source under the profile at its
   footprint (states down to 10 m under the terrain are let through) is raised onto it.
 - **No ground for the whole path on a screened pair** (`ground = nullptr`, `table = nullptr`):
   the ground enters only through the two side terms, so it counts once. A propagation table's

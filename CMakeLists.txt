@@ -1840,6 +1840,13 @@ foreach(kind point plate noground classes table)
 endforeach()
 # The windowed/marched pairs pass with the screening term left out of the bound, so a coarse
 # ridge run checks, from its log, that the term raises the bound in some band.
+# An observer file's own z, kept without --observers_on_terrain, is where the
+# microphone is evaluated, and so where its horizon is taken from: the same
+# observers 3000 ft above their surveyed ground see over the ridge, which on
+# the terrain screens 9 of them.
+add_logged_run(terrain_ridge_screened_file_z ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} -b tests/data/coyle_heights_aloft.csv -o integrated/terrain_ridge_screened_file_z.csv)
+set_tests_properties(terrain_ridge_screened_file_z PROPERTIES FIXTURES_REQUIRED terrain_file
+    PASS_REGULAR_EXPRESSION "--terrain_screening: 0 evaluations were screened")
 add_logged_run(terrain_ridge_screened_bound ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} --gridstep 1968 -o integrated/terrain_ridge_screened_bound.csv)
 set_tests_properties(terrain_ridge_screened_bound PROPERTIES FIXTURES_REQUIRED terrain_file
     PASS_REGULAR_EXPRESSION "bound's screened term is above its ground term in [1-9][0-9]* of [0-9]+ bands")

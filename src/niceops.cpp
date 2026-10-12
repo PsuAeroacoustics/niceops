@@ -718,6 +718,9 @@ struct RunOptions
     // its line of sight takes the CNOSSOS-EU diffraction over it
     // (screening.hpp) in place of its mean-plane ground term.
     bool terrain_screening = false;
+    // An observer file's z kept over --terrain (no --observers_on_terrain):
+    // the microphones need not stand on the raster's ground.
+    bool observers_keep_file_z = false;
     // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
     // whatever the file said".
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -3118,7 +3121,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const bool on_planes = planes.has_value() && (ground_here != nullptr || options.propagation_table);
             // Screening takes the horizon from the microphone, its height above
             // the ground at its foot (a flush one's is 0).
-            if (screening)
+            // An observer file's own z puts it where it is evaluated, which
+            // need not be on the raster's ground.
+            if (screening && options.observers_keep_file_z)
+                planes->set_observer_at(observers[index].x, observers[index].y, observer.z);
+            else if (screening)
                 planes->set_observer(observers[index].x, observers[index].y, microphone_height[index]);
             else if (on_planes)
                 planes->set_observer(observers[index].x, observers[index].y);
@@ -5759,6 +5766,7 @@ int run(int argc, char* argv[])
     options.terrain_offset = terrain_offset;
     options.terrain_step = terrain_step;
     options.terrain_screening = terrain_screening == "cnossos";
+    options.observers_keep_file_z = terrain && scattered && !observers_on_terrain;
     if (!propagation_table.empty())
     {
         options.propagation_table = std::make_shared<const PropagationTable>(PropagationTable::load(propagation_table));

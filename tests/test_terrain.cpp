@@ -599,6 +599,30 @@ TEST_CASE("a blended profile touching the line of sight does not block", "[terra
     }
 }
 
+TEST_CASE("an observer file's z sets the screening horizon where the microphone is", "[terrain]")
+{
+    // A 20 m wall 500-510 m east on level ground at 3 m; a source 5 m up
+    // (local z 8), 1000 m east.  A microphone 1.2 m above the ground is behind the wall;
+    // one the observer file puts 50 m up (no --observers_on_terrain) sees over it.
+    const auto wall = [](double x, double) { return x >= 500.0 && x <= 510.0 ? 23.0 : 3.0; };
+    const TerrainRaster raster = raster_of(wall, 1500.0, 5.0);
+    GroundPlaneCache cache(raster, true);
+    GroundPlaneCache::Profile profile;
+    const auto blocked_from = [&](auto&& place) {
+        place();
+        const auto located = cache.locate(1000.0, 0.0, 1000.0);
+        return cache.may_block(located, 8.0) && cache.blocked(located, 8.0, profile);
+    };
+    const bool on_ground = blocked_from([&] { cache.set_observer(0.0, 0.0, 1.2); });
+    CHECK(on_ground);
+    // At the raster's own height plus 1.2 m, the same microphone.
+    CHECK(blocked_from([&] { cache.set_observer_at(0.0, 0.0, 3.0 + 1.2); }) == on_ground);
+    CHECK(!blocked_from([&] { cache.set_observer_at(0.0, 0.0, 50.0); }));
+    // Below the raster's ground it is taken at the ground, not under it.
+    CHECK(blocked_from([&] { cache.set_observer_at(0.0, 0.0, -10.0); })
+            == blocked_from([&] { cache.set_observer(0.0, 0.0, 0.0); }));
+}
+
 TEST_CASE("fit_range is the direct least-squares fit over the same samples", "[terrain]")
 {
     const TerrainRaster raster = raster_of(rolling, 2500.0, 10.0);

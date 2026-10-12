@@ -213,6 +213,9 @@ public:
     // The same, with the microphone `microphone_height` above the raster's
     // ground at (x, y), which the horizon is taken from (screening only).
     void set_observer(double x, double y, double microphone_height);
+    // The same, with the microphone at `microphone_z` in the raster's frame
+    // (an observer file's own z), held no lower than the ground at its foot.
+    void set_observer_at(double x, double y, double microphone_z);
 
     // Where a path to the footprint (dx, dy) away horizontally falls among the
     // rays: the ray at or counterclockwise below its bearing, the next one,

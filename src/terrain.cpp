@@ -476,6 +476,14 @@ void GroundPlaneCache::set_observer(double x, double y, double microphone_height
     set_observer(x, y);
 }
 
+void GroundPlaneCache::set_observer_at(double x, double y, double microphone_z)
+{
+    set_observer(x, y);
+    // A microphone the file puts below the raster's ground would sit under its
+    // own profile and see every path blocked; it is taken at the ground.
+    microphone_ = std::max(0.0, microphone_z - z_);
+}
+
 void GroundPlaneCache::ensure(int ray, std::size_t n)
 {
     auto& sum_z = sum_z_[ray];
