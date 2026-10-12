@@ -9,6 +9,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <random>
@@ -423,4 +425,33 @@ TEST_CASE("Lden is its period levels recombined", "[sel]")
                                                         + 8.0 * std::pow(10.0, 0.1 * (ln + 10.0)))
             / 24.0);
     REQUIRE(std::fabs(lden - recombined) < 1e-9);
+}
+
+TEST_CASE("period counts weight each period as the clock's penalty does", "[sel][period_count_weight]")
+{
+    // An operation at 13:00, 21:00 and 03:00 local is in Lden's day, evening
+    // and night; its weight under a count of one in that period is the energy
+    // factor its clocked penalty gives, 10^(penalty/10) (0 outside a period
+    // level's period).  21:00 is DNL's day, so DNL counts an evening as day.
+    const double hour = 3600.0;
+    const std::array<double, 3> at {13.0 * hour, 21.0 * hour, 3.0 * hour};
+    for (const auto metric : {DayMetric::dnl, DayMetric::lden, DayMetric::cnel, DayMetric::lday,
+                 DayMetric::levening, DayMetric::lnight})
+    {
+        for (std::size_t period = 0; period < 3; period++)
+        {
+            std::array<double, 3> counts {0.0, 0.0, 0.0};
+            counts[period] = 1.0;
+            const double weight = period_count_weight(metric, counts[0], counts[1], counts[2]);
+            const double clocked = std::pow(10.0, 0.1 * schedule_penalty(at[period], 0.0, metric));
+            INFO(day_metric_key(metric) << " period " << period);
+            REQUIRE(std::fabs(weight - clocked) <= 1e-12 * std::max(1.0, clocked));
+        }
+    }
+    // The table as spelled, and the counts adding linearly.
+    REQUIRE(period_count_weight(DayMetric::dnl, 2.0, 3.0, 0.5) == 2.0 + 3.0 + 5.0);
+    REQUIRE(period_count_weight(DayMetric::cnel, 0.0, 1.0, 0.0) == 3.0);
+    REQUIRE(period_count_weight(DayMetric::lden, 0.0, 1.0, 0.0) == std::sqrt(10.0));
+    REQUIRE(period_count_weight(DayMetric::lden, 2.0, 1.0, 1.0) == 2.0 + std::sqrt(10.0) + 10.0);
+    REQUIRE(period_count_weight(DayMetric::lnight, 4.0, 4.0, 0.25) == 0.25);
 }

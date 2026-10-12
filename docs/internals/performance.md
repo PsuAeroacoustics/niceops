@@ -37,6 +37,36 @@ The real fix is in the database builder (panam): the same data in one group with
 `(condition, channel)` arrays would load in a fraction of the time. Do not go looking for it in
 `sphere_database.cpp`.
 
+## Several databases in one run
+
+`run()` holds its databases in a `std::map<std::string, Database>` keyed by `database_key`, the
+weakly canonical path, so two spellings of one file are one database (and one database to the
+`--provenance_file` and `--screen_database` refusals). The policy:
+
+- **Each distinct database is loaded once, on its first trajectory, and erased after its last.**
+  `last_use` is computed from the expanded `-d` list before the loop. The erase sits outside the
+  trajectory's `try`, so a trajectory that fails still releases its database.
+- **The front database is loaded before the loop and pinned.** `--export_sphere`,
+  `--export_aam` and `--self_test` read it and stop. After the loop `--provenance_file` and
+  `--provenance_spheres` read it, which is sound only because the provenance refuses several
+  databases (asserted there).
+- **An entry is made only once its load succeeds** (`try_emplace`, which inserts nothing when the
+  constructor throws). An entry for a database that failed to open would let a later trajectory
+  naming the same file skip the load. The manifest's attributes for a database are taken at
+  that moment, while it is open; the front one's are read when the manifest is written.
+- **Trajectories are never reordered by database.** The run totals are summed in `-t` order, and
+  reordering would change them in the last bit.
+
+What it costs, measured with `/usr/bin/time -l` on a coarse grid (`--gridstep 2000`): a
+database held after its load is tens of megabytes (B407_fixed_load_factor about 33 MB), while
+the load itself peaks far higher and returns most of it: about 540 MB for `S-76D_M3.nod` and
+180 MB for `B407_fixed_load_factor.nod`. So holding a database until its last use is cheap
+against loading it twice, and the peak is set by the largest single load, not by the number
+held. Holding one database and reloading on every change would load A twice in
+`-d A -d B -d A` (0.6 s each for the S-76D). There is no least-recently-used cap: with the
+retained sizes above, a run would need hundreds of distinct databases before the held ones
+rivaled one load's peak.
+
 ## The hot path
 
 A default run evaluates 14,400 observers × 6,551 states = 94.3 M times, so anything left in

@@ -13,8 +13,8 @@ conversion happens once, in `run()`, where the command line is parsed, and nothi
 that seam sees anything else. The seam converts exactly these options, each only when given:
 `--grid`, `--gridstep`, `--trim`, `--ground_elevation`, `--receiver_height`, `--path_smoothing`,
 `--roughness`, `--layer_depth`, `--roughness_length`, `--surface_layer_depth`,
-`--terrain_offset` and `--terrain_step`. The anemometer height in `--wind` is a length in
-`--units` too. Speeds are not lengths: `--wind`'s speed names its unit (`12kt`, `6.2mps`,
+`--terrain_offset` and `--terrain_step`, and an operations file's `offset` column. The anemometer
+height in `--wind` is a length in `--units` too. Speeds are not lengths: `--wind`'s speed names its unit (`12kt`, `6.2mps`,
 `14mph`), as an `--atmosphere` file's wind columns must, and a bare number is refused rather than
 read in `--units`. A new length option joins the list above, or `--units m` silently reads it as
 feet.
@@ -86,10 +86,60 @@ with exit status 0. Know these before adding a reader, and follow the same rules
 - **Several trajectories in one run** derive their output names as `-o` does, and two
   trajectories asked to write one file are refused. The naming is in the manual's
   [Several trajectories](../MANUAL.md#several-trajectories-and-the-day-night-level).
+- **The operations file** (`read_operations`, `src/operations.cpp`) has its own reader, because
+  `read_labeled_csv` drops every row that is not wholly numeric and a row here holds paths and
+  clock times. It is described below.
 - **`--terrain` checks the datum and the frame against the track** where the track can say (an
   AC file's lat/lon and alt beside its x/y/z), refuses states under the ground and grids that
   miss the scene, and warns when scattered observers' z disagrees with the terrain; see the
   terrain section of [ground.md](ground.md). The grid's heights must be meters.
+
+### The operations file
+
+`--operations` is read by `read_operations` and turned into the per-trajectory lists by
+`expand_operations` (`niceops.cpp`), which runs right after the command line is parsed, before
+the manifest and every check that reads those lists. Things to keep:
+
+- **The reader is pure.** It checks syntax and that the named files exist, and converts nothing:
+  lengths stay in `--units` (the offset and `wind_height` header units are checked against
+  `--units` in `run()`, where the unit is settled), and the clock stays local seconds until
+  `expand_operations` shifts it by `--utc_offset`.
+- **Every refusal names the line** (`<file> line N`), and a missing file names the row's name
+  and the path as resolved. The reader keeps line numbers for that, and the run's skip message is
+  `Skipping operation <name> (<file> line N): ...`.
+- **Rows are never dropped.** A blank line or a `#` line is skipped anywhere; every other line
+  after the header is a row, must have the header's field count (a trailing comma is one more,
+  empty, field), and is parsed in full: `6.2 ops` is refused, not read as 6.2. A quote is refused
+  rather than half-supported.
+- **Columns are matched by `LabeledCsv::normalize`**, so `local_time` is `localtime`. An unknown
+  column is refused with the known names listed, so a misspelled `cnt` cannot be a file of counts
+  of 1. A `start_utc` column is refused with a pointer to `local_time`.
+- **Every header unit is checked**, since normalize drops it from the name. Humidity,
+  temperature and pressure name their fixed units, the offset and `wind_height` are checked
+  against `--units`, `wind_direction` may say degrees, and any label on another column is
+  refused: `count (per year)` read as daily counts would be 25.6 dB high and exit 0.
+- **Paths resolve against the operations file's folder** and are made `lexically_normal`, so
+  the log, the `Loading database` line, the manifest's deduplication (on role and path) and the
+  database cache's keys see one spelling. Absolute paths stand.
+- **Names are file names**: `[A-Za-z0-9_.-]`, not starting with a dot, and unique ignoring case
+  (some file systems ignore it). Two rows with one name are refused, never suffixed, so a name
+  never moves when a row is inserted.
+- **Per-trajectory options are defaults, not lists.** `expand_operations` refuses more than one
+  `-d`, `-v`, `-o`, `-S`, `--atmosphere`, `--wind`, `--humidity`, `--temperature`, `--pressure`,
+  `--start_utc`, `--csel_file`, `--epnl_file` or `--band_frames`. A database or vehicle comes from
+  the row or from an explicit `-d`/`-v` (`count() > 0`), never from the demo default. An air
+  column that is present must be filled in every row unless its option was given once; the
+  list-level air checks then run unchanged on the filled lists.
+- **`local_time` goes through the clock**, not a weight: `GeodeticInput::clock_replaces_track`
+  makes `start_utc + (t - t0)` the clock of an AC, WGS84 or static track whatever clock it
+  carries, so the penalties, the period levels and a flight across 22:00 are all exact.
+- **Period counts never touch the clock.** `expand_operations` passes them through
+  `OperationRun::periods` to `PathJob::period_counts`; the reader refuses them beside `count` or
+  `local_time`, and `run()` refuses them with `--laeq_file`. The weighting is in
+  [metrics.md](metrics.md).
+- **Lateral offsets stay in `--units` until the seam**, which scales `OperationRun::offsets`
+  with the other lengths; the job hands each to `GeodeticInput::lateral_offset`. What the reader
+  does with it is in [trajectory.md](trajectory.md#lateral-subtracks).
 
 ### Tests
 

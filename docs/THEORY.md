@@ -286,6 +286,37 @@ The same rotation, without the translation, turns velocities and compass bearing
 directions, headings) into the local frame. Without `--frame_bearing` the axes are east and
 north ($b = 90°$).
 
+**Lateral subtracks.** An operations file's `offset` $d$ (positive to the left) moves a track
+square to its horizontal direction of travel, as dispersed subtracks do in airport noise models
+[57, 58]. With $\mathbf v = (v_x, v_y)$ the horizontal velocity and $\mathbf a = (a_x, a_y)$
+the horizontal acceleration, the left normal and the signed curvature (positive turning left)
+are
+
+$$
+\hat{\mathbf n} = \frac{(-v_y,\ v_x)}{|\mathbf v|}, \qquad
+\kappa = \frac{v_x a_y - v_y a_x}{|\mathbf v|^3},
+$$
+
+and the displaced path $\mathbf r + d\,\hat{\mathbf n}$ moves at $(1 - d\kappa)$ times the
+original's speed, on a radius $1/\kappa - d$. An offset with $1 - d\kappa \le 0.1$ at any
+point, 90% of the radius or more toward the inside of a turn, is refused. Where
+$|\mathbf v|$ is below 3 kt, $\hat{\mathbf n}$ is taken from the nearest point that is faster.
+A slow interval bounded by different travel directions is refused: switching held normals
+would introduce a discontinuity in the displaced path. Normals within $10^{-6}$ in Euclidean
+norm are treated as the same direction to allow numerical roundoff.
+
+- **WGS84 tracks.** Both derivatives used to calculate $\kappa$ come from a preliminary fit
+  of the raw samples at the same $\sigma$. The file's velocity columns, when present, set
+  only $\hat{\mathbf n}$ and the 3 kt threshold, not the curvature. Each raw sample is moved
+  by $d\,\hat{\mathbf n}$, and the displaced samples are fitted as above.
+  The velocity and load factor are the displaced path's, and the file's velocities are not
+  used for them.
+- **AC tracks.** Each state is moved by $d\,\hat{\mathbf n}$ from its own recorded velocity,
+  and keeps its recorded velocity and acceleration: exact on a straight leg, while in a turn
+  the speed and load factor stay the centerline's. The $\kappa$ of the fold test comes from a
+  fit of the recorded $x$ and $y$ at $\sigma = 10$ ft, not from the recorded acceleration,
+  whose sample-to-sample scatter exceeds a turn's centripetal term.
+
 ## 4. Spreading and atmospheric absorption
 
 ### 4.1 The broadband path
@@ -1058,6 +1089,17 @@ Time above a threshold (TA) is the reception time during which the weighted leve
 exceeds it, solved for analytically within each sample (each sample counts whole under
 `instantaneous`). The number of events above (NAx) counts the operations whose maximum reaches
 the threshold. Over several operations, the maximum level is the largest of theirs and TA adds.
+A trajectory $j$ standing for $N_j$ operations (an operations file's count, or its period
+counts added up as in §10.4; 1 otherwise) is counted that many times:
+
+$$
+\mathrm{NA}x = \sum_j N_j \left[L_{\mathrm{max},j} \ge x\right], \qquad
+\mathrm{TA} = \sum_j N_j\, \mathrm{TA}_j, \qquad
+L_\mathrm{max} = \max_j L_{\mathrm{max},j} .
+$$
+
+The coverage report's two energies and the provenance's per-state energies are weighted by
+$N_j$ in the same way, so their shares are $N_j$-weighted ratios over the trajectories.
 
 ### 10.4 Day–night metrics
 
@@ -1067,8 +1109,12 @@ window is found on the penalized history, or the whole history is summed under
 `--full_history`. The operations are then summed and normalized to a 24-hour day:
 
 $$
-L_\mathrm{dn} = 10\lg\left(\frac{1}{86\,400\ \mathrm{s}} \sum_\mathrm{ops} t_\mathrm{ref}\, 10^{\mathrm{SEL}_P/10}\right).
+L_\mathrm{dn} = 10\lg\left(\frac{1}{86\,400\ \mathrm{s}} \sum_j N_j\, t_\mathrm{ref}\, 10^{\mathrm{SEL}_{P,j}/10}\right),
 $$
+
+where trajectory $j$ stands for $N_j$ operations: an operations file's count, or 1. The count
+multiplies the energy after the exposure is formed; it does not enter the levels, the window
+or the penalty. An operations file's `local_time` sets the clock the penalties are read from.
 
 | Metric | Evening | Night | Definition |
 | --- | --- | --- | --- |
@@ -1090,7 +1136,7 @@ The period levels (`--lday_file`, `--levening_file`, `--lnight_file`) are those 
 $L_n$, and `--laeq_file` is the same over a clock window $[t_1, t_2)$ of length $T_w$:
 
 $$
-L_{\mathrm{Aeq},T} = 10\lg\left(\frac{1}{T_w} \sum_\mathrm{ops} t_\mathrm{ref}\, 10^{\mathrm{SEL}_w/10}\right),
+L_{\mathrm{Aeq},T} = 10\lg\left(\frac{1}{T_w} \sum_j N_j\, t_\mathrm{ref}\, 10^{\mathrm{SEL}_{w,j}/10}\right),
 $$
 
 where $\mathrm{SEL}_w$ is the operation's exposure over its samples inside the window (its 10 dB-down
@@ -1098,6 +1144,32 @@ window found among them), $T_w$ is 12 h, 4 h and 8 h for the three periods, and 
 applies. An operation lying wholly in one period recombines into $L_\mathrm{den}$ exactly; one
 that straddles a period's edge does so exactly under `--full_history`, and to the difference of
 the windows otherwise.
+
+Period counts replace the clock. A trajectory given $N_{d,j}$, $N_{e,j}$ and $N_{n,j}$
+operations by day (07:00–19:00), evening (19:00–23:00) and night (23:00–07:00) contributes, to
+metric $m$,
+
+$$
+w_{m,j}\, t_\mathrm{ref}\, 10^{\mathrm{SEL}_j/10}, \qquad
+w_{m,j} = a_{m,d} N_{d,j} + a_{m,e} N_{e,j} + a_{m,n} N_{n,j},
+$$
+
+with the unpenalized $\mathrm{SEL}_j$ and $a_{m,p} = 10^{P_{m,p}/10}$ the weighting of an
+operation flown in period $p$ (1 inside a period level's period, 0 outside):
+
+| Metric | $a_d$ | $a_e$ | $a_n$ |
+| --- | --- | --- | --- |
+| DNL | 1 | 1 | 10 |
+| Lden | 1 | $\sqrt{10}$ | 10 |
+| CNEL | 1 | 3 | 10 |
+| $L_d$ | 1 | 0 | 0 |
+| $L_e$ | 0 | 1 | 0 |
+| $L_n$ | 0 | 0 | 1 |
+
+DNL and CNEL weight an evening operation as one flown 19:00–22:00, so DNL counts it as day, the
+AEDT and INM convention; by the clock, 22:00–23:00 is night in both. The entries are each
+metric's weighting at 13:00, 21:00 and 03:00. $L_{\mathrm{Aeq},T}$ has no periods to count. In
+§10.3 (number above, time above, coverage and provenance), $N_j = N_{d,j} + N_{e,j} + N_{n,j}$.
 
 ### 10.5 Effective perceived noise level
 
@@ -1255,3 +1327,5 @@ than for SEL.
 54. "Noise Standards: Definitions," California Code of Regulations, Title 21, Sec. 5001.
 55. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
 56. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
+57. "Report on Standard Method of Computing Noise Contours around Civil Airports, Volume 2: Technical Guide," ECAC.CEAC Doc 29, 4th ed., European Civil Aviation Conference, Neuilly-sur-Seine, France, December 2016.
+58. "Procedure for the Calculation of Airplane Noise in the Vicinity of Airports," SAE AIR1845A, SAE International, Warrendale, PA, 2012.

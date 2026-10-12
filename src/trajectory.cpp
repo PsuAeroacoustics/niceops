@@ -250,6 +250,122 @@ SmoothingSpline fit_path(const std::vector<double>& t, const std::vector<double>
             t, f, rms_meters * rms_meters * static_cast<double>(t.size()));
 }
 
+// The unit left normal (-vy, vx)/|v| of each sample's horizontal velocity, for
+// a lateral offset of d meters (+ left).  Below heading_nose_speed a velocity's
+// direction is drift, so a sample that slow takes the normal of the nearest
+// faster one (the earlier on a tie); a track that is never faster has no
+// direction of travel and is refused.  The offset path's speed is (1 - d kappa)
+// times the original's, kappa (given per sample, from a fitted path) the signed
+// horizontal curvature (vx ay - vy ax)/|v|^3 (+ turning left), so an offset at or past 90% of the turn radius on
+// the inside, 1 - d kappa <= 0.1, folds the path or nearly so, and is refused
+// naming the time. Held samples are not tested for curvature: it is noise.
+// A slow interval bounded by different travel directions is refused: switching
+// held normals would jump sideways, and interpolating would invent a maneuver.
+std::vector<std::array<double, 2>> lateral_normals(const std::vector<double>& t, const std::vector<double>& vx,
+        const std::vector<double>& vy, const std::vector<double>& kappa, double d, LengthUnit unit,
+        const std::string& filename)
+{
+    const std::size_t n = t.size();
+    std::vector<std::array<double, 2>> normals(n);
+    std::vector<char> valid(n, 0);
+    bool any = false;
+    for (std::size_t i = 0; i < n; i++)
+    {
+        const double speed = std::hypot(vx[i], vy[i]);
+        if (!(speed >= heading_nose_speed))
+            continue;
+        valid[i] = 1;
+        any = true;
+        normals[i] = {-vy[i] / speed, vx[i] / speed};
+        if (1.0 - d * kappa[i] <= 0.1)
+        {
+            input_error("Trajectory ", filename, ": a lateral offset of ", d / unit.to_meters, " ", unit.name,
+                    " folds the path at t = ", t[i], " s, where it turns ", kappa[i] > 0.0 ? "left" : "right",
+                    " on a radius of ", 1.0 / std::fabs(kappa[i]) / unit.to_meters, " ", unit.name,
+                    ". An offset toward the inside of a turn must stay under 90% of its radius.");
+        }
+    }
+    if (!any)
+    {
+        input_error("Trajectory ", filename, " never moves faster than 3 kt over the ground, so it has no "
+                "direction of travel to offset it across. Move a hover's position instead.");
+    }
+    // Hold each slow sample's normal from the nearest valid one.
+    std::vector<std::size_t> before(n, n), after(n, n);
+    for (std::size_t i = 0, last = n; i < n; i++)
+    {
+        if (valid[i])
+            last = i;
+        before[i] = last;
+    }
+    for (std::size_t i = n, next = n; i-- > 0;)
+    {
+        if (valid[i])
+            next = i;
+        after[i] = next;
+    }
+    for (std::size_t i = 0; i < n; i++)
+    {
+        if (valid[i])
+            continue;
+        const std::size_t b = before[i], a = after[i];
+        // Only roundoff-sized differences count as the same direction. This
+        // dimensionless tolerance is about one microradian; compare vectors
+        // directly to avoid losing precision in acos near parallel headings.
+        constexpr double normal_tolerance = 1e-6;
+        if (b != n && a != n
+                && std::hypot(normals[b][0] - normals[a][0], normals[b][1] - normals[a][1]) > normal_tolerance)
+        {
+            input_error("Trajectory ", filename, ": a lateral offset of ", d / unit.to_meters, " ", unit.name,
+                    " would jump across a slow interval between t = ", t[b], " and ", t[a],
+                    " s: the direction of travel changes while below 3 kt. Give the displaced path explicitly "
+                    "or use an offset of zero.");
+        }
+        const std::size_t source = a == n || (b != n && t[i] - t[b] <= t[a] - t[i]) ? b : a;
+        normals[i] = normals[source];
+    }
+    return normals;
+}
+
+// The smoothing of the fit an AC track's fold test takes its curvature from:
+// the --path_smoothing default, which that option does not otherwise reach.
+constexpr double ac_fold_smoothing = 10.0 * ft2m;
+
+// Displace a geodetic track's raw samples d meters along the left normal of a
+// preliminary fit at the same smoothing, oriented by the file's own velocity
+// columns when it has them (vx, vy non-empty), so the path fitted afterward is
+// the subtrack itself and its velocity and load factor are the subtrack's.
+void offset_raw_samples(const std::vector<double>& time, std::vector<double>& x, std::vector<double>& y,
+        const std::vector<double>& vx, const std::vector<double>& vy, double d, double smoothing, LengthUnit unit,
+        const std::string& filename)
+{
+    const auto fit_x = fit_path(time, x, smoothing);
+    const auto fit_y = fit_path(time, y, smoothing);
+    const std::size_t n = time.size();
+    std::vector<double> ux(n), uy(n), kappa(n);
+    for (std::size_t i = 0; i < n; i++)
+    {
+        const double fitted_vx = fit_x.derivative(time[i], 1);
+        const double fitted_vy = fit_y.derivative(time[i], 1);
+        ux[i] = vx.empty() ? fitted_vx : vx[i];
+        uy[i] = vy.empty() ? fitted_vy : vy[i];
+        // Recorded velocities orient the offset only. Curvature must use
+        // derivatives of one path: mixing recorded speed with fitted
+        // acceleration would change the fold radius when only speed changes.
+        const double speed = std::hypot(fitted_vx, fitted_vy);
+        kappa[i] = speed > 0.0
+                ? (fitted_vx * fit_y.derivative(time[i], 2) - fitted_vy * fit_x.derivative(time[i], 2))
+                        / (speed * speed * speed)
+                : 0.0;
+    }
+    const auto normals = lateral_normals(time, ux, uy, kappa, d, unit, filename);
+    for (std::size_t i = 0; i < n; i++)
+    {
+        x[i] += d * normals[i][0];
+        y[i] += d * normals[i][1];
+    }
+}
+
 // Read a labeled WGS84 trajectory into local Cartesian states.  The file gives
 // position against time; the velocity and the load factor that sets CT come
 // from differentiating the fitted path, unless the file carries velocity
@@ -382,6 +498,24 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         }
     }
 
+    // A lateral subtrack is displaced here, on the raw samples, so that the fit
+    // below smooths the subtrack and differentiates it: an offset applied to
+    // the fitted states would keep the centerline's speed and load factor.
+    // Given velocity columns are the centerline's, so they orient the shift
+    // and are then dropped for the displaced path's own derivatives.
+    const bool use_given_velocity = velocity_given && input.lateral_offset == 0.0;
+    if (input.lateral_offset != 0.0)
+    {
+        offset_raw_samples(time, x, y, vx, vy, input.lateral_offset, input.path_smoothing, unit, filename);
+        info("Offsetting ", filename, " by ", input.lateral_offset / unit.to_meters, " ", unit.name,
+                " to the left of travel, before it is fitted.");
+        if (velocity_given)
+        {
+            log("Geodetic trajectory ", filename, ": its velocity columns are the centerline's, so with a "
+                    "lateral offset the velocity and load factor come from the displaced path instead.");
+        }
+    }
+
     const double span = time.back() - time.front();
     const double mean_step = span / static_cast<double>(rows - 1);
     double worst = 0.0;
@@ -411,7 +545,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
                 " s grid of ", count, " states.");
     }
 
-    if (!velocity_given && input.path_smoothing <= 0.0 && mean_step < 0.5)
+    if (!use_given_velocity && input.path_smoothing <= 0.0 && mean_step < 0.5)
     {
         // Differentiating an interpolant twice amplifies whatever resolution the
         // coordinates were written at by 1/step^2, and the load factor is that
@@ -427,7 +561,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
                 "expect the footprint to be badly wrong. Drop the flag to use the 10 ft "
                 "default.");
     }
-    if (!velocity_given && mean_step > 1.0)
+    if (!use_given_velocity && mean_step > 1.0)
     {
         log("Geodetic trajectory ", filename, " is sampled every ", mean_step,
                 " s on average. Velocity and load factor are the first and second derivatives "
@@ -449,7 +583,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
     // Empty, or the three velocity components; a vector rather than three
     // optionals because either all of them are fitted or none is.
     std::vector<SmoothingSpline> fit_velocity;
-    if (velocity_given)
+    if (use_given_velocity)
     {
         // Velocity gets its own tolerance, not path_smoothing.  That parameter
         // is a distance, and passing it here silently reused the same number as
@@ -465,9 +599,11 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         fit_velocity.push_back(fit_path(time, vz, velocity_tolerance));
     }
 
-    // A file with its own utcsec column dates the flight itself; otherwise the
-    // run says when t = 0 was, and the default of zero puts it at UTC midnight.
-    const double utc_at_start = have_utc ? csv.rows.front()[columns.utc] : input.start_utc;
+    // A file with its own utcsec column dates the flight itself, unless an
+    // operations file's local_time replaces it; otherwise the run says when
+    // t = 0 was, and without that the states have no clock (NaN).
+    const double utc_at_start = have_utc && !input.clock_replaces_track ? csv.rows.front()[columns.utc]
+                                                                         : input.start_utc;
 
     states.clear();
     states.reserve(sample_times.size());
@@ -479,7 +615,7 @@ void read_geodetic_states(const std::string& filename, const LabeledCsv& csv,
         now.x = fit_x(t);
         now.y = fit_y(t);
         now.z = fit_z(t);
-        if (velocity_given)
+        if (use_given_velocity)
         {
             now.vx = fit_velocity[0](t);
             now.vy = fit_velocity[1](t);
@@ -724,8 +860,11 @@ namespace {
 // neither.  Sampled at 50 Hz, like the AC tracks.  The rotor is at 1 g with zero
 // velocity, so mu, both flight path angles and CT come from the same derivation
 // as a flown state, and the sphere is read at hover (its nose is the heading).
+// A hold has no clock of its own: its UTC seconds are start_utc + t, NaN when
+// --start_utc gave none, so the day-night metrics refuse it rather than date it.
 void read_static_states(const std::string& filename, const LabeledCsv& csv,
-        const dimensional_data& vehicle, LengthUnit unit, std::vector<State>& states)
+        const dimensional_data& vehicle, LengthUnit unit, double start_utc,
+        std::vector<State>& states)
 {
     const auto duration_column = csv.column({"duration"});
     const auto x_column = csv.column({"x"});
@@ -774,6 +913,7 @@ void read_static_states(const std::string& filename, const LabeledCsv& csv,
         {
             State now{};
             now.t = t + static_cast<double>(k) * dt;
+            now.utcsec = start_utc + now.t;
             now.x = x;
             now.y = y;
             now.z = z;
@@ -916,10 +1056,67 @@ Trajectory::Trajectory(const std::string& filename, const std::string& vehicle_f
                 }
             }
             correct_vertical_speed_sign(states, filename);
+            // A lateral subtrack of an AC track is the track translated
+            // rigidly, state by state, along its left normal: the file's
+            // velocities and accelerations are measurements and are kept, so
+            // this is exact on a straight leg only.  `recorded` stays where
+            // the file put it, since it is what the frame is checked against.
+            if (geodetic.lateral_offset != 0.0)
+            {
+                const double d = geodetic.lateral_offset;
+                const std::size_t n = states.size();
+                std::vector<double> t(n), x(n), y(n), vx(n), vy(n), kappa(n);
+                for (std::size_t i = 0; i < n; i++)
+                {
+                    t[i] = states[i].t;
+                    x[i] = states[i].x;
+                    y[i] = states[i].y;
+                    vx[i] = states[i].vx;
+                    vy[i] = states[i].vy;
+                }
+                // The fold test needs the path's curvature, and the recorded
+                // acceleration is not it: sampled every 0.02 s, it jumps by
+                // more than the turn's own centripetal term within a few
+                // samples, and one such spike refused offsets well inside the
+                // radius the heading turns through.  So kappa is taken from a
+                // fit of the recorded x and y, as a WGS84 track's is, at the
+                // --path_smoothing default; the normals stay on the recorded
+                // velocity.
+                const auto fit_x = fit_path(t, x, ac_fold_smoothing);
+                const auto fit_y = fit_path(t, y, ac_fold_smoothing);
+                for (std::size_t i = 0; i < n; i++)
+                {
+                    const double ux = fit_x.derivative(t[i], 1), uy = fit_y.derivative(t[i], 1);
+                    const double speed = std::hypot(ux, uy);
+                    kappa[i] = (ux * fit_y.derivative(t[i], 2) - uy * fit_x.derivative(t[i], 2))
+                            / (speed * speed * speed);
+                }
+                const auto normals = lateral_normals(t, vx, vy, kappa, d, unit, filename);
+                for (std::size_t i = 0; i < n; i++)
+                {
+                    states[i].x += d * normals[i][0];
+                    states[i].y += d * normals[i][1];
+                }
+                info("Offsetting ", filename, " by ", d / unit.to_meters, " ", unit.name,
+                        " to the left of travel, translating each state and keeping its recorded kinematics.");
+            }
+            // An operations file's local_time dates the flight in place of
+            // the file's own UTC column.
+            if (geodetic.clock_replaces_track)
+            {
+                const double t0 = states.front().t;
+                for (auto& state : states)
+                    state.utcsec = geodetic.start_utc + (state.t - t0);
+            }
         }
         else if (csv.column({"duration"}) != LabeledCsv::npos)
         {
-            read_static_states(filename, csv, vehicle, unit, states);
+            if (geodetic.lateral_offset != 0.0)
+            {
+                input_error(filename, " is a static operation, which has no direction of travel for a lateral "
+                        "offset to be measured from. Move the hold's x and y instead.");
+            }
+            read_static_states(filename, csv, vehicle, unit, geodetic.start_utc, states);
         }
         else
         {

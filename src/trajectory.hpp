@@ -36,9 +36,12 @@ constexpr double fps2g = mps2g * ft2m;
 struct State
 {
     double t;
-    // Seconds since UTC midnight, straight from the AC format's first column.
-    // Only the day/night classification behind the DNL metric uses it, so it is
-    // deliberately absent from write_state's column list.
+    // Seconds since UTC midnight: the AC format's first column, a geodetic
+    // track's utcsec column or --start_utc + t, and for a static hold
+    // --start_utc + t.  NaN when none of those gives one (a clockless geodetic
+    // track or static hold), which the day-night metrics refuse.  Only the
+    // day/night classification behind them uses it, so it is deliberately
+    // absent from write_state's column list.
     double utcsec = 0.0;
     double x;
     double y;
@@ -189,13 +192,25 @@ struct GeodeticInput
     // flight.  Leaving it at zero reads altitudes as height above the
     // observers, which is what a planner working in AGL already means.
     double ground_elevation = 0.0; // meters
-    // Seconds since UTC midnight at t = 0.  Only the day-night window reads it,
-    // and a file carrying its own utcsec column supplies it instead.  NaN means
+    // Seconds since UTC midnight at t = 0, for a geodetic track or a static
+    // hold.  Only the day-night window reads it, and a file carrying its own
+    // utcsec column supplies it instead.  NaN means
     // neither did: the states then have no clock and -D refuses them.  It
     // defaulted to 0, which dates the flight at UTC midnight -- night in every
     // timezone but the one a few hours west -- so a clockless track got the 10 dB
     // night penalty silently.
     double start_utc = std::numeric_limits<double>::quiet_NaN();
+    // An operations file's local_time: start_utc then dates the track whatever
+    // clock it carries (an AC file's first column, a geodetic utcsec column),
+    // as start_utc + (t - t0).
+    bool clock_replaces_track = false;
+    // An operations file's lateral subtrack, in METERS, + to the left of
+    // travel.  A geodetic track's raw samples are displaced along the left
+    // normal of a preliminary fit before the path is fitted, so the velocity
+    // and load factor come from the displaced path; an AC track is translated
+    // rigidly, its recorded kinematics kept; a static hold refuses it.  Zero
+    // leaves every path as it was, bit for bit.
+    double lateral_offset = 0.0;
     // Resampling step in seconds, used when the samples are unevenly spaced or
     // coarser than this.  It never coarsens -- a 50 Hz file keeps its own
     // sample times -- because the sound exposure integral is a Riemann sum over

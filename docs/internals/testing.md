@@ -148,6 +148,11 @@ CTests are defined in `CMakeLists.txt`.
 | `epnl_frames_are_consistent` | CTest | the reception factor dropped from the frames' weights; the frames' band offset; the run not passing `--epnl_masking` on |
 | `epnl_frames_follow_reception_time` | CTest | states filed at t − r/c, or at their emission time: the energy check is blind to *when* |
 | `terrain_hills_point_golden`, `terrain_hills_plate_golden` | CTest | the plate's receiver passed as a point receiver at its call site |
+| `database_cache_loads_each_once`, `database_spellings_run`, `database_spellings_load_once` | CTest | a one-entry database cache (the front database reloaded in `-d A -d B -d A -d B`); a database erased before its last trajectory; databases compared by the path as typed. Output cannot see any of them, so the check reads the run's own log for a second "Opening netCDF file". The front database erased after its last trajectory, which leaves the provenance a dangling reference, trips an assert after the loop instead, so this and every other run aborts with asserts on |
+| `operations_count_three_equals_repeated_t` | CTest | the day-metric weight folded into the exponent (`pow(10, 0.1 L + lg w)`), which a count of 1 and the 1e-9 count-10 checks both pass; NAx adding 1 rather than the weight; the weight dropped from one coverage energy |
+| `operations_count_three_provenance` | CTest | the weight dropped from the provenance's per-state energy |
+| `operations_offset_mirror_left`, `operations_offset_mirror_right` | CTest; the hidden Catch case `[.offset_tracks]` in `test_trajectory.cpp` writes the tracks | the offset left unconverted at the `--units` seam (500 ft read as 500 m), or not handed to the job; the normal's sign. The `[lateral_offset]` cases build `Trajectory` directly and cannot see the seam |
+| `an AC track's fold test reads the path's curvature, not its recorded acceleration` | `test_trajectory.cpp` | an AC track's κ taken from its recorded acceleration (`n * LF * g`), whose single-sample spikes refuse offsets well inside the turn, or from an exact (unsmoothed) fit of x and y |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.
@@ -205,6 +210,55 @@ The unit test `a day of steady noise gives each metric's period weighting`
 at 23:30 local, and check which metrics coincide there (`lden_by_day_is_dnl`,
 `cnel_by_day_is_dnl`, `cnel_at_22h30_is_dnl`, `lden_at_23h30_is_dnl`) and which must not
 (`lden_at_22h30_is_not_dnl`, `dnl_full_history_is_not_windowed`).
+
+### The operations file
+
+The reader's unit tests (tag `[operations]`, `test_operations.cpp`) cover the column matching,
+comments, defaults, path resolution, the wind columns, the period counts, the clock (00:00 and
+23:59:59 accepted, 24:00 and `7pm` refused) and every refusal by its message;
+`an operations file's local_time replaces the clock a track carries` (`test_trajectory.cpp`)
+covers the clock on AC and WGS84 tracks. The CTests `operations_*` run the fixtures in
+`tests/data/operations/`, which name their files relative to that folder:
+
+- a count of 1 is `regression_default`'s output byte for byte and the golden at 1e-9
+  (`operations_count_one_is_bit_identical`, `operations_count_one_is_golden`), and every run
+  total of a `-t` run byte for byte (`operations_count_one_totals_are_t`);
+- a count of 10 is +10 dB on DNL, Lden and CNEL at 1e-9 and leaves the SEL file and LAmax
+  alone; a count of 3 is three repeated `-t` byte for byte on the day metrics, NAx, TA, LAmax and
+  the coverage, and at 1e-9 on the provenance;
+- `local_time` at 23:30 is +10 dB of DNL on 12:00, 12:00 is the track's own daytime clock, and a
+  static hold at 12:00 is the hold dated by `--start_utc 43200`;
+- a fleet of rows A, B, A on two databases is `-t A -t B -t A` byte for byte, loads each
+  database once (read from the run's log, as `database_cache_loads_each_once` does), and names
+  each row's SEL file after it;
+- day, evening and night counts of 1, 0, 0 are the demo track flown by day byte for byte on DNL,
+  Lden and CNEL (`operations_period_day_is_clocked_day`), 0, 0, 1 is it flown at 23:30 at 1e-9
+  (`operations_period_night_matches_clock_*`), 2, 1, 1 is 1, 0, 0 plus 10 lg(2 + 10^0.5 + 10)
+  on Lden, 10 lg 13 on DNL and 10 lg 15 on CNEL (`operations_period_lden_recombines`,
+  `operations_period_dnl_counts_evening_as_day`, `operations_period_cnel_recombines`), the log
+  says the track's clock is not read, and a track with no clock runs under `-D`
+  (`operations_period_clockless_runs`);
+- an offset of 0 is `regression_default`'s output byte for byte, and a WGS84 track's `-t` run
+  byte for byte (`operations_offset_zero_is_bit_identical`,
+  `operations_offset_zero_geodetic_is_bit_identical`); a straight eastbound track offset 500 ft
+  left or right is the same track written 500 ft north or south, at 1e-9, on a grid asymmetric in
+  y (`operations_offset_mirror_*`); a subtrack through the spectral peak search is its marched run
+  (`operations_windowed_is_exact_with_offset`) and differs from the centerline;
+- the manifest records the operations file;
+- each refusal that needs a run (`-t` with the file, two `-d`, a row without a database, a missing
+  track, shared names, a bare wind speed, an empty air cell, a mismatched offset unit, `count`
+  or `local_time` beside period counts, `--laeq_file` with period counts, an offset on a static
+  hold, an offset that folds the path, an offset on a track never faster than 3 kt, provenance
+  over two databases, a clockless row under `-D`), by its message.
+
+The reader's side of the offset is in the `[lateral_offset]` cases (`test_trajectory.cpp`): a
+straight track moves by exactly d with v and n unchanged, a turn has radius R − d and that
+radius's load factor, zero is bit for bit, slow samples hold their direction, given velocities
+are dropped, an AC track keeps `recorded` and its kinematics, and the fold, hover and static
+refusals. Curved tracks with low and high recorded speeds must have the same fold radius.
+Stops followed by a different travel direction refuse nonzero offsets; continuing in the
+same direction retains the held offset. Both cases cover exact interpolation and default
+smoothing.
 
 ### C-weighted SEL
 

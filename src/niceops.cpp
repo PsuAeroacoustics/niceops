@@ -22,6 +22,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -42,6 +43,7 @@
 #include "stratified.hpp"
 #include "ground_effect.hpp"
 #include "manifest.hpp"
+#include "operations.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
 #include "raster.hpp"
@@ -168,6 +170,16 @@ void write_geodetic_levels(const std::vector<double>& x_obs, const std::vector<d
             for (std::size_t ix = 0; ix < nx; ix++)
                 write_observer(x_obs[ix], y_obs[iy], levels[ix + iy * nx]);
     }
+}
+
+// The name a database is cached and compared under: its canonical path, so
+// two spellings of one file are one database.  A path that cannot be resolved
+// keys as given; loading it then fails and names it.
+std::string database_key(const std::string& path)
+{
+    std::error_code ec;
+    const auto canonical = std::filesystem::weakly_canonical(path, ec);
+    return ec ? path : canonical.string();
 }
 
 // Where a level file's WGS84 companion goes: alongside it, under the same name
@@ -774,13 +786,27 @@ struct PathJob
     // --epnl_file and --band_frames for this trajectory; empty for none.
     std::string epnl;
     std::string band_frames;
+    // The run's name for this trajectory, which its per-track files are named
+    // after: the track's stem.
+    std::string name;
+    // How many trajectories the run has (for naming only).
     std::size_t count = 1;
+    // How many operations this trajectory stands for: what its contribution
+    // to the run totals is multiplied by, after its own SEL is formed.
+    double weight = 1.0;
+    // Whether it came from an operations file (for the messages).
+    bool operations = false;
+    // Day, evening and night counts, in place of the track's clock: each day
+    // metric then weights the plain SEL by period_count_weight (util/sel.hpp).
+    std::optional<std::array<double, 3>> period_counts;
 };
 
 // What every trajectory of a run adds to, per observer: each day-evening-night
 // metric's penalized energy (summed, normalized to the day at the end), the
 // largest weighted level, the NAx count, the time above, and the coverage
-// report's two energies.  A metric not asked for keeps an empty vector.
+// report's two energies.  Each trajectory's share is multiplied by its
+// operations' weight, except the largest level, which no count raises.  A
+// metric not asked for keeps an empty vector.
 struct RunTotals
 {
     std::array<std::vector<double>, day_metric_count> day_energy;
@@ -817,7 +843,7 @@ void write_provenance(const std::vector<Vec3>& observers, const RunTotals& total
         const double x = observers[i].x, y = observers[i].y;
         const auto& p = totals.provenance[i];
         // The exposure shared out: the SEL itself for one operation, the
-        // energy sum of the operations' SELs for several.
+        // weighted energy sum of the operations' SELs for several.
         file << x / unit.to_meters << "," << y / unit.to_meters << "," << 10.0 * std::log10(p[0]);
         for (int axis = 1; axis < 6; axis++)
             file << "," << (p[0] > 0.0 ? p[axis] / p[0] : nan);
@@ -1220,13 +1246,38 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 "takes any step.");
     }
 
-    // The day-evening-night penalties (-D, --lden_file, --cnel_file), per
-    // state, from the track's UTC seconds shifted into local time.  Each is a
-    // level added to the sample (0 outside its periods).
-    std::array<std::vector<double>, day_metric_count> day_penalty;
+    // What this trajectory's energy counts for in each day metric: its
+    // operation count, or, with day, evening and night counts, each period's
+    // count times the period's weighting (period_count_weight).  It multiplies
+    // the exposure after it is formed, never the levels, the window or the
+    // bound.  A metric not asked for keeps a weight of 0 (no pass), and so
+    // does LAeq, which has no period weighting: period counts with
+    // --laeq_file are refused before any job runs.
+    std::array<double, day_metric_count> day_weight {};
     for (std::size_t m = 0; m < day_metric_count; m++)
     {
         if (!options.want_day_metric[m])
+            continue;
+        const auto metric = static_cast<DayMetric>(m);
+        if (!job.period_counts)
+            day_weight[m] = job.weight;
+        else if (metric != DayMetric::laeq)
+            day_weight[m] = period_count_weight(metric, (*job.period_counts)[0], (*job.period_counts)[1],
+                    (*job.period_counts)[2]);
+    }
+
+    // The day-evening-night penalties (-D, --lden_file, --cnel_file), per
+    // state, from the track's UTC seconds shifted into local time.  Each is a
+    // level added to the sample (0 outside its periods).  Period counts take
+    // the clock's place, so they need none.
+    std::array<std::vector<double>, day_metric_count> day_penalty;
+    if (job.period_counts && nt > 0 && !std::isnan(trajectory.states.front().utcsec)
+            && std::any_of(options.want_day_metric.begin(), options.want_day_metric.end(), [](bool m) { return m; }))
+        info(job.name, ": its day, evening and night counts weight the day metrics, so the clock of ",
+                job.trajectory, " is not read for them.");
+    for (std::size_t m = 0; m < day_metric_count; m++)
+    {
+        if (!options.want_day_metric[m] || job.period_counts)
             continue;
         const auto metric = static_cast<DayMetric>(m);
         day_penalty[m].resize(nt);
@@ -1239,8 +1290,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // defaulted to zero, as UTC midnight, i.e. night: +10 dB on the
                 // whole footprint, silently.  Either way the answer was made up.
                 input_error(day_metric_option(metric), " needs the time of day, and ", job.trajectory,
-                        " does not carry one: it has no utcsec column. Give --start_utc <seconds since UTC "
-                        "midnight at t = 0>.");
+                        " does not carry one (a geodetic track without a utcsec column, or a static hold). ",
+                        job.operations ? "Give --start_utc, or local_time in the operations file."
+                                       : "Give --start_utc <seconds since UTC midnight at t = 0>.");
             }
             day_penalty[m][it] = schedule_penalty(trajectory.states[it].utcsec, options.utc_offset, metric,
                     options.laeq_window);
@@ -1254,6 +1306,12 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::array<DayPass, day_metric_count> day_pass {};
     for (std::size_t m = 0; m < day_metric_count; m++)
     {
+        if (job.period_counts)
+        {
+            // Every period's energy is the plain SEL, weighted by its count.
+            day_pass[m] = day_weight[m] > 0.0 ? DayPass::the_sel : DayPass::none;
+            continue;
+        }
         const auto& penalty = day_penalty[m];
         if (std::all_of(penalty.begin(), penalty.end(), [](double p) { return p == 0.0; }))
             day_pass[m] = DayPass::the_sel;
@@ -1453,9 +1511,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         {
             const auto name = job.count == 1
                     ? options.power_file
-                    : (std::filesystem::path(options.power_file).parent_path()
-                              / (std::filesystem::path(job.trajectory).stem().string() + "_power.csv"))
-                              .string();
+                    : (std::filesystem::path(options.power_file).parent_path() / (job.name + "_power.csv")).string();
             auto file = open_output(name);
             info("Writing shaft power to ", name);
             file << "t(s),advance_ratio,flight_path_angle(deg),CT,shaft_power\n";
@@ -1508,7 +1564,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // file is named for its track as well (run() has checked the stems differ).
     const std::string history_infix = job.count == 1
             ? std::string()
-            : "_" + std::filesystem::path(job.trajectory).stem().string();
+            : "_" + job.name;
 
     // Each observer's receiver, and where its level is evaluated: at the
     // microphone, the observer's point raised by the microphone's height above
@@ -3166,13 +3222,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         options.want_ta ? options.ta_threshold : std::numeric_limits<double>::infinity());
                 if (options.want_lamax)
                     lamax[index] = std::max(lamax[index], weighted.maximum);
-                // NAx: operations whose own peak reaches the threshold.  Each
-                // trajectory is one operation, so the count adds per trajectory.
+                // NAx: operations whose own peak reaches the threshold.  A
+                // trajectory stands for job.weight operations, so the count
+                // adds by its weight (a fractional count gives a fractional NAx).
                 if (options.want_nax && weighted.maximum >= options.nax_threshold)
-                    nax[index] += 1.0;
+                    nax[index] += job.weight;
                 // Time above: seconds, adding across operations.
                 if (options.want_ta)
-                    totals.time_above[index] += weighted.time_above;
+                    totals.time_above[index] += job.weight * weighted.time_above;
             }
             if (options.want_coverage)
             {
@@ -3194,8 +3251,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     unmeasured_energy += weight
                             * database.unmeasured_share(angles, source_states[it].blend);
                 }
-                coverage[index][0] += unmeasured_energy;
-                coverage[index][1] += energy;
+                // Scaled at the add, so a count of N sums as N repeats would.
+                coverage[index][0] += job.weight * unmeasured_energy;
+                coverage[index][1] += job.weight * energy;
             }
             if (options.want_provenance)
             {
@@ -3209,7 +3267,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 auto& totals_here = totals.provenance[index];
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    const double weight = sel_weight[it];
+                    // The state's SEL energy, times the operations it stands
+                    // for, so the totals and the spheres' shares stay one sum.
+                    const double weight = sel_weight[it] * job.weight;
                     if (weight == 0.0)
                         continue;
                     totals_here[0] += weight;
@@ -3252,7 +3312,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     continue;
                 if (day_pass[m] == DayPass::the_sel)
                 {
-                    totals.day_energy[m][index] += std::pow(10.0, 0.1 * integrated_levels[index]);
+                    totals.day_energy[m][index] += day_weight[m] * std::pow(10.0, 0.1 * integrated_levels[index]);
                     continue;
                 }
                 // Energies add across operations; the logarithm comes at the
@@ -3260,8 +3320,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 // index belongs to exactly one worker, and the trajectories run
                 // one after another, so this needs no synchronization.  The
                 // operation's window is its own penalized 10 dB-down window, or
-                // the whole history under --full_history.
-                totals.day_energy[m][index] += std::pow(10.0,
+                // the whole history under --full_history.  The weight
+                // multiplies the energy; folded into the exponent it would
+                // round differently.
+                totals.day_energy[m][index] += day_weight[m] * std::pow(10.0,
                         0.1 * penalized_exposure_level(levels, integration_step, day_penalty[m], penalized,
                                       ranges, sound_speed, options.full_history));
             }
@@ -3435,8 +3497,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
     if (!options.metric_file.empty())
     {
-        auto casename = std::filesystem::path(job.trajectory).stem().string();
-        append_metrics_file(options.metric_file, casename, x_obs, y_obs, options.scattered, options.unit,
+        append_metrics_file(options.metric_file, job.name, x_obs, y_obs, options.scattered, options.unit,
                 integrated_levels);
     }
 
@@ -3596,6 +3657,177 @@ void draw_figures(const Trajectory& trajectory, const std::vector<double>& integ
     plt::clear();
 }
 
+// What an operations file adds to a run beyond the per-trajectory lists it
+// fills: each row's name, how its failures are reported, its weight, its
+// period counts, whether its clock replaces the track's, and its lateral
+// offset (in --units; converted at the seam).
+struct OperationRun
+{
+    OperationsFile file;
+    std::vector<std::string> names;
+    std::vector<std::string> labels;
+    std::vector<double> weights;
+    std::vector<std::optional<std::array<double, 3>>> periods;
+    std::vector<char> clock_replaces_track;
+    std::vector<double> offsets;
+};
+
+// The per-trajectory lists -t and its companions fill on the command line.
+struct PerPathLists
+{
+    std::vector<std::string>& path_files;
+    std::vector<std::string>& database_files;
+    std::vector<std::string>& vehicle_files;
+    std::vector<std::string>& out_files;
+    std::vector<std::string>& atmosphere_files;
+    std::vector<std::string>& wind_texts;
+    std::vector<double>& humidity_overrides;
+    std::vector<double>& temperature_overrides;
+    std::vector<double>& pressure_overrides;
+    std::vector<double>& start_utcs;
+    std::vector<std::string>& state_files;
+    std::vector<std::string>& csel_files;
+    std::vector<std::string>& epnl_files;
+    std::vector<std::string>& band_frames_files;
+};
+
+// Reads --operations and fills the per-trajectory lists from it, one entry per
+// row, so everything after (the naming, the distinctness checks, the manifest,
+// the list-level air checks, the job loop) runs as it does for several -t.
+// A per-trajectory option given once fills the rows' empty cells; given more
+// than once it is refused, since the file is where per-operation values go.
+OperationRun expand_operations(const std::string& operations_file, PerPathLists lists, bool trajectories_given,
+        bool database_given, bool vehicle_given, bool output_given, double utc_offset_hours)
+{
+    if (trajectories_given)
+        input_error("--operations names the trajectories; give them in its track column, not with -t.");
+    OperationRun run;
+    run.file = read_operations(operations_file);
+    const auto& rows = run.file.rows;
+    const auto where = [&](const Operation& row) {
+        return "operation " + row.name + " (" + operations_file + " line " + std::to_string(row.line) + ")";
+    };
+    const auto at_most_one = [](std::size_t given, const char* option, const char* column) {
+        if (given > 1)
+            input_error("With --operations, give per-operation ", option, " in the file's ", column, " column.");
+    };
+    for (const auto& [list, option] : {std::pair{&lists.state_files, "-S"}, {&lists.csel_files, "--csel_file"},
+                 {&lists.epnl_files, "--epnl_file"}, {&lists.band_frames_files, "--band_frames"}})
+        if (list->size() > 1)
+            input_error("With --operations, give ", option, " once: each operation's file is named after its row.");
+    if (output_given)
+        at_most_one(lists.out_files.size(), "-o", "output");
+    if (database_given)
+        at_most_one(lists.database_files.size(), "-d", "database");
+    if (vehicle_given)
+        at_most_one(lists.vehicle_files.size(), "-v", "vehicle");
+
+    // The files each row names, or the one -d/-v for the rows that name none.
+    // The demo's S-76D defaults never fill an operations file: a row without a
+    // database would otherwise run the demo aircraft without a word.
+    const auto file_for = [&](const Operation& row, const std::string& cell, bool given,
+                                  const std::vector<std::string>& list, const char* column, const char* option) {
+        if (!cell.empty())
+            return cell;
+        if (!given)
+            input_error(where(row), " names no ", column, ": fill the file's ", column, " column, or give ", option,
+                    " once for the rows that leave it empty.");
+        return list.front();
+    };
+    std::vector<std::string> databases, vehicles, outputs;
+    const auto output_folder = std::filesystem::path(lists.out_files.front()).parent_path();
+    for (const auto& row : rows)
+    {
+        databases.push_back(file_for(row, row.database, database_given, lists.database_files, "database", "-d"));
+        vehicles.push_back(file_for(row, row.vehicle, vehicle_given, lists.vehicle_files, "vehicle", "-v"));
+        // A row's output cell beats -o; one row keeps -o as given, and
+        // several are named after their rows, beside it.
+        if (!row.output.empty())
+            outputs.push_back(row.output);
+        else if (rows.size() == 1 && output_given)
+            outputs.push_back(lists.out_files.front());
+        else
+            outputs.push_back((output_folder / (row.name + "_LAE.csv")).string());
+    }
+
+    // The air: a column present must be filled in every row, unless its option
+    // was given once, which then fills the empty cells.  The list-level checks
+    // (wind with --atmosphere, --atmosphere with --humidity, ...) then see the
+    // filled lists, as they would see the command line's.
+    const auto fill = [&](auto& list, const char* option, const char* column, bool has_column, auto value_of) {
+        at_most_one(list.size(), option, column);
+        if (!has_column)
+            return;
+        std::remove_reference_t<decltype(list)> filled;
+        for (const auto& row : rows)
+        {
+            if (const auto value = value_of(row))
+                filled.push_back(*value);
+            else if (list.size() == 1)
+                filled.push_back(list.front());
+            else
+                input_error(where(row), ": the ", column, " column is empty. Fill it in every row, or give ", option,
+                        " once for the empty cells.");
+        }
+        list = std::move(filled);
+    };
+    const auto text = [](const std::string& value) {
+        return value.empty() ? std::optional<std::string>() : std::optional<std::string>(value);
+    };
+    fill(lists.atmosphere_files, "--atmosphere", "atmosphere", run.file.has("atmosphere"),
+            [&](const Operation& row) { return text(row.atmosphere); });
+    fill(lists.wind_texts, "--wind", "wind_speed and wind_direction", run.file.has("windspeed"),
+            [&](const Operation& row) { return text(row.wind_text); });
+    fill(lists.humidity_overrides, "--humidity", "humidity", run.file.has("humidity"),
+            [](const Operation& row) { return row.humidity; });
+    fill(lists.temperature_overrides, "--temperature", "temperature", run.file.has("temperature"),
+            [](const Operation& row) { return row.temperature; });
+    fill(lists.pressure_overrides, "--pressure", "pressure", run.file.has("pressure"),
+            [](const Operation& row) { return row.pressure; });
+
+    // The clock: a row's local_time replaces whatever clock its track carries,
+    // dating t = 0; a row without one keeps the track's own clock, or the one
+    // --start_utc.
+    at_most_one(lists.start_utcs.size(), "--start_utc", "local_time");
+    std::vector<double> start_utcs;
+    for (const auto& row : rows)
+    {
+        run.clock_replaces_track.push_back(row.local_time.has_value());
+        if (row.local_time)
+        {
+            double utc = std::fmod(*row.local_time - utc_offset_hours * 3600.0, 86400.0);
+            if (utc < 0.0)
+                utc += 86400.0;
+            start_utcs.push_back(utc);
+        }
+        else
+            start_utcs.push_back(lists.start_utcs.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                                          : lists.start_utcs.front());
+    }
+    if (run.file.has("localtime") || !lists.start_utcs.empty())
+        lists.start_utcs = std::move(start_utcs);
+
+    lists.path_files.clear();
+    for (const auto& row : rows)
+    {
+        lists.path_files.push_back(row.track);
+        run.names.push_back(row.name);
+        run.labels.push_back(where(row));
+        run.weights.push_back(operation_count(row));
+        run.periods.push_back(row.periods);
+        run.offsets.push_back(row.offset.value_or(0.0));
+    }
+    lists.database_files = std::move(databases);
+    lists.vehicle_files = std::move(vehicles);
+    lists.out_files = std::move(outputs);
+    // The SEL files are single events whatever a row's count: the count
+    // weights only the run totals.
+    if (rows.size() == 1 && run.weights.front() != 1.0)
+        info("The SEL file ", lists.out_files.front(), " is one operation's; its count of ", run.weights.front(),
+                " weights only the run totals.");
+    return run;
+}
+
 } // namespace
 
 // Everything after the command line is parsed.  Wrapped by main below, which
@@ -3745,16 +3977,20 @@ int run(int argc, char* argv[])
     bool latlon = false;
 
     CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
-    app.add_option("-d,--database", database_files,
+    auto* database_option = app.add_option("-d,--database", database_files,
             "netCDF noise database file. Once, or once per trajectory.");
     app.add_option("-l,--logfile", log_file, "Output log file.");
     app.add_option("-L,--loglevel", log_level, "Log verbosity: trace, info, warn, error, fatal.")
             ->check(CLI::IsMember({"trace", "info", "warn", "error", "fatal"}));
-    app.add_option("-t,--trajectoryfile", path_files,
+    auto* trajectory_option = app.add_option("-t,--trajectoryfile", path_files,
             "CSV trajectory input file. Repeat for several flight paths.");
-    app.add_option("-v,--vehicle", vehicle_files,
+    std::string operations_file;
+    app.add_option("--operations", operations_file,
+            "CSV of operations: per row a track, its count, and optionally its database, vehicle, clock, "
+            "lateral offset and air. Replaces -t.");
+    auto* vehicle_option = app.add_option("-v,--vehicle", vehicle_files,
             "JSON vehicle definition file. Once, or once per trajectory.");
-    app.add_option("-o,--output", out_files,
+    auto* output_option = app.add_option("-o,--output", out_files,
             "Output file name, once per trajectory. Default integrated/197421_LAE.csv; with several "
             "trajectories and one name (or the default), each is named after its track.");
     app.add_flag("-p,--plotting", plotting, "Enable plotting.");
@@ -4090,9 +4326,10 @@ int run(int argc, char* argv[])
             "(default 0). With --terrain it places the local z = 0 against the terrain's heights; "
             "an AC track's own alt - z must match it.");
     app.add_option("--start_utc", start_utcs,
-            "Seconds since UTC midnight at t = 0 of a geodetic track, for the day-night "
-            "periods. Required with -D, --lden_file, --cnel_file or a period level when the "
-            "track has no utcsec column; ignored when it has one. Once, or once per trajectory.");
+            "Seconds since UTC midnight at t = 0 of a geodetic track or static hold, for the "
+            "day-night periods. Required with -D, --lden_file, --cnel_file or a period level when the "
+            "track has no utcsec column, unless an operations file gives period counts; ignored "
+            "when it has one. Once, or once per trajectory.");
     auto* path_smoothing_option = app.add_option("--path_smoothing", path_smoothing,
             "How far, RMS in --units, the path fitted through a geodetic track may sit from "
             "the given positions, per axis. Default 10 ft. Zero flies through them exactly, "
@@ -4183,6 +4420,37 @@ int run(int argc, char* argv[])
         return app.exit(e);
     }
 
+    // The log is set up before any input is read, so that a refusal of the
+    // operations file, and the paths its rows resolve to, reach -l under -L
+    // like the rest of the run.
+    Logger::instance().set_file(log_file);
+    // The eval loop's trace() calls are gated so they cost nothing at info, but
+    // they are there to be turned on when something needs explaining.
+    const std::map<std::string, LogLevel> levels {{"trace", LogLevel::trace},
+            {"info", LogLevel::info}, {"warn", LogLevel::warn}, {"error", LogLevel::error},
+            {"fatal", LogLevel::fatal}};
+    Logger::instance().set_level(levels.at(log_level));
+
+    // --operations fills the per-trajectory lists, one entry per row, before
+    // anything reads them.
+    std::optional<OperationRun> operations;
+    if (!operations_file.empty())
+    {
+        operations = expand_operations(operations_file,
+                PerPathLists {path_files, database_files, vehicle_files, out_files, atmosphere_files, wind_texts,
+                        humidity_overrides, temperature_overrides, pressure_overrides, start_utcs, state_files,
+                        csel_files, epnl_files, band_frames_files},
+                trajectory_option->count() > 0, database_option->count() > 0, vehicle_option->count() > 0,
+                output_option->count() > 0, utc_offset);
+        // Day, evening and night counts weight each period without a clock,
+        // and LAeq's window is a clock window with no period to count.
+        if (!laeq_file.empty()
+                && (operations->file.has("day") || operations->file.has("evening") || operations->file.has("night")))
+            input_error("--laeq_file is the level over a clock window, and ", operations_file, " gives day, evening "
+                    "and night counts, which carry no clock. Give count and local_time instead, or leave out "
+                    "--laeq_file.");
+    }
+
     if (!manifest_file.empty())
     {
         // Handed to main() only once it passes its checks: a refused one
@@ -4196,6 +4464,7 @@ int run(int argc, char* argv[])
             input_error("--manifest would overwrite the log file ", log_file, ". Give another file name.");
         if (config_option->count() > 0)
             request.manifest.add_input("config", config_option->as<std::string>());
+        request.manifest.add_input("operations", operations_file);
         for (const auto& f : path_files)
             request.manifest.add_input("trajectory", f);
         for (const auto& f : database_files)
@@ -4249,17 +4518,22 @@ int run(int argc, char* argv[])
         input_error("Got ", list.size(), " ", what, " for ", path_count,
                 " trajectories; give one, or one per trajectory.");
     };
+    // Each trajectory's name in the run, which its per-track files are named
+    // after: the track's stem, or an operations file's row name.
+    std::vector<std::string> run_names;
+    if (operations)
+        run_names = operations->names;
+    else
+        for (const auto& path : path_files)
+            run_names.push_back(std::filesystem::path(path).stem().string());
     if (out_files.size() == 1 && path_count > 1)
     {
         // A single output name cannot serve several tracks, so name each after
         // its own, next to where the given name pointed.
         const auto directory = std::filesystem::path(out_files.front()).parent_path();
         out_files.clear();
-        for (const auto& path : path_files)
-        {
-            const auto stem = std::filesystem::path(path).stem().string();
-            out_files.push_back((directory / (stem + "_LAE.csv")).string());
-        }
+        for (const auto& name : run_names)
+            out_files.push_back((directory / (name + "_LAE.csv")).string());
     }
     std::vector<std::string> atmosphere_out_files;
     if (!write_atmosphere.empty())
@@ -4270,11 +4544,8 @@ int run(int argc, char* argv[])
         {
             // As the state file: one name for several tracks would hold only the last profile.
             const auto directory = std::filesystem::path(write_atmosphere).parent_path();
-            for (const auto& path : path_files)
-            {
-                const auto stem = std::filesystem::path(path).stem().string();
-                atmosphere_out_files.push_back((directory / (stem + "_atmosphere.csv")).string());
-            }
+            for (const auto& name : run_names)
+                atmosphere_out_files.push_back((directory / (name + "_atmosphere.csv")).string());
         }
     }
     if (state_files.size() == 1 && path_count > 1)
@@ -4283,11 +4554,8 @@ int run(int argc, char* argv[])
         // be rewritten by each in turn, leaving only the last one's.
         const auto directory = std::filesystem::path(state_files.front()).parent_path();
         state_files.clear();
-        for (const auto& path : path_files)
-        {
-            const auto stem = std::filesystem::path(path).stem().string();
-            state_files.push_back((directory / (stem + "_state.csv")).string());
-        }
+        for (const auto& name : run_names)
+            state_files.push_back((directory / (name + "_state.csv")).string());
     }
     // --csel_file, --epnl_file and --band_frames are per operation, as -S is:
     // one name for several tracks is split into one per track, beside it.
@@ -4296,8 +4564,8 @@ int run(int argc, char* argv[])
             return;
         const auto directory = std::filesystem::path(names.front()).parent_path();
         names.clear();
-        for (const auto& path : path_files)
-            names.push_back((directory / (std::filesystem::path(path).stem().string() + suffix)).string());
+        for (const auto& name : run_names)
+            names.push_back((directory / (name + suffix)).string());
     };
     name_per_track(csel_files, "_LCE.csv");
     name_per_track(epnl_files, "_EPNL.csv");
@@ -4321,8 +4589,14 @@ int run(int argc, char* argv[])
     if (!provenance_file.empty() && !std::isnan(ambient_level))
         input_error("--provenance_file attributes the aircraft's energy to the states and spheres "
                 "it came from: it does not combine with -a, whose energy came from neither.");
-    const bool several_databases = std::any_of(database_files.begin(), database_files.end(),
-            [&](const std::string& f) { return f != database_files.front(); });
+    // Each trajectory's database by its canonical path: two spellings of one
+    // file are one database, loaded once.
+    std::vector<std::string> database_keys;
+    for (const auto& f : database_files)
+        database_keys.push_back(database_key(f));
+    const std::string front_key = database_keys.front();
+    const bool several_databases = std::any_of(database_keys.begin(), database_keys.end(),
+            [&](const std::string& key) { return key != front_key; });
     // The provenance names spheres by their index in one database.
     if (!provenance_file.empty() && several_databases)
         input_error("--provenance_file names spheres of one database: run it once per database.");
@@ -4370,12 +4644,7 @@ int run(int argc, char* argv[])
         if (!band_frames_files.empty())
             require_distinct(band_frames_files, "--band_frames file");
         if (!time_history_prefix.empty() || !band_history_prefix.empty())
-        {
-            std::vector<std::string> stems;
-            for (const auto& path : path_files)
-                stems.push_back(std::filesystem::path(path).stem().string());
-            require_distinct(stems, "history file name (their tracks share a file name)");
-        }
+            require_distinct(run_names, "history file name (their tracks share a file name)");
     }
 
     if (grid_bounds.empty())
@@ -4423,15 +4692,6 @@ int run(int argc, char* argv[])
         write_state = true;
     }
 
-    // Set default logging to file
-    Logger::instance().set_file(log_file);
-    // The eval loop's trace() calls are gated so they cost nothing at info, but
-    // they are there to be turned on when something needs explaining.
-    const std::map<std::string, LogLevel> levels {{"trace", LogLevel::trace},
-            {"info", LogLevel::info}, {"warn", LogLevel::warn}, {"error", LogLevel::error},
-            {"fatal", LogLevel::fatal}};
-    Logger::instance().set_level(levels.at(log_level));
-
     // Settle the local frame before anything is loaded.  Every trajectory in a
     // run shares the observers, so a position in one has to mean the same place
     // as the same position in another; one frame for the whole run is what
@@ -4445,6 +4705,21 @@ int run(int argc, char* argv[])
     // a metric track headed alt_m looked unpositioned, the frame was never
     // settled, and --frame_bearing was silently dropped.
     const LengthUnit unit = unit_name == "m" ? meters : feet;
+    // An operations file's lengths (offset, wind_height) are in --units, as the
+    // command line's are.  A header naming another unit means a file in it,
+    // which nothing converts.
+    if (operations)
+    {
+        const std::set<std::string> spellings = unit.to_meters == 1.0
+                ? std::set<std::string> {"m", "meter", "meters", "metre", "metres"}
+                : std::set<std::string> {"ft", "feet", "foot"};
+        for (const auto& [token, column] : {std::pair {operations->file.offset_unit, "offset"},
+                     std::pair {operations->file.wind_height_unit, "wind_height"}})
+            if (!token.empty() && spellings.count(token) == 0)
+                input_error(operations_file, ": the ", column, " column declares ", token, ", and this run reads "
+                        "lengths in ", unit.name, " (--units). Nothing is converted: give the column in ", unit.name,
+                        ", or change --units.");
+    }
     std::optional<LocalFrame> frame;
     std::optional<Geodetic> reference;
     if (!origin.empty())
@@ -4509,23 +4784,31 @@ int run(int argc, char* argv[])
 
     // Start stopwatch
     auto watch_start = std::chrono::steady_clock::now();
-    // Each Database owns its own triangulation, so several can be live at once;
-    // they are still loaded one at a time and reused across consecutive paths
-    // that name the same file, which for the usual case of one database shared
-    // by every path means loading once.
-    std::string loaded_database = database_files.front();
+    // Each distinct database is loaded once, on first use, and held until the
+    // last trajectory that names it; the front one is loaded here, for the
+    // standalone jobs below as well, and held to the end, where the provenance
+    // reads it.  Each Database owns its own triangulation, so several can be
+    // live at once.  Keyed by database_key().
+    std::map<std::string, Database> databases;
+    std::map<std::string, std::size_t> last_use;
+    for (std::size_t i = 0; i < path_count; i++)
+        last_use[database_keys[i]] = i;
+    const std::string& front_database = database_files.front();
     // The screen writes its list while the database loads, with a truncating
     // open: `-d X --screen_database X` would replace the database with it.
+    // Checked against every database, since any of them could be the one read
+    // when it is written.
     if (!database_load.screen_file.empty())
     {
-        if (same_file(database_load.screen_file, database_files.front()))
-            input_error("--screen_database would overwrite the database it reads, ", database_files.front(),
-                    ". Give another file name.");
+        for (const auto& f : database_files)
+            if (same_file(database_load.screen_file, f))
+                input_error("--screen_database would overwrite the database it reads, ", f,
+                        ". Give another file name.");
     }
     if (self_test && mask_suspect_option->count() > 0)
         input_error("--self_test checks the database as the file holds it; it does not combine "
                 "with --mask_suspect_cells.");
-    auto database = Database(loaded_database, database_load);
+    Database& database = databases.try_emplace(front_key, front_database, database_load).first->second;
     auto t1 = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()
             - watch_start)
                         .count();
@@ -4558,7 +4841,7 @@ int run(int argc, char* argv[])
                 && !database.fixed_load_factor())
         {
             input_error("--load_factor_correction two_sided applies a fixed_load_factor database's "
-                    "law, and ", loaded_database, " is not one: its load factors are spheres.");
+                    "law, and ", front_database, " is not one: its load factors are spheres.");
         }
         const auto sphere = database.interpolate_sphere(
                 sphere_condition[0], sphere_condition[1], sphere_condition[2], export_blend);
@@ -4585,7 +4868,7 @@ int run(int argc, char* argv[])
         // one sample disagreeing by ~1.7 dB.  The cause was legacy hover
         // directivity (see repair_legacy_hover_directivity); with that repaired
         // the self test passes on every shipped database.
-        database.self_test(loaded_database);
+        database.self_test(front_database);
         // And stop: the rest of main is the demo case, whose output file the
         // golden tests read, so a self test that ran it too rewrote that file
         // under any test running beside it.
@@ -4620,6 +4903,12 @@ int run(int argc, char* argv[])
     to_meters(surface_layer_option, surface_layer_depth);
     to_meters(terrain_offset_option, terrain_offset);
     to_meters(terrain_step_option, terrain_step);
+    // An operations file's offsets are lengths the user wrote, in --units.
+    if (operations)
+    {
+        for (double& offset : operations->offsets)
+            offset *= unit.to_meters;
+    }
 
     ObserverSet observer_set = scattered
             ? scattered_observers(observer_file, unit)
@@ -5111,26 +5400,33 @@ int run(int argc, char* argv[])
     options.geodetic.path_smoothing = path_smoothing;
 
     std::size_t failed_paths = 0;
+    // The operations the run totals stand for: each finished trajectory's
+    // weight, summed.
+    double operations_run = 0.0;
 
     for (std::size_t path_index = 0; path_index < path_count; path_index++)
     {
         try
         {
-        if (database_files[path_index] != loaded_database)
-        {
-            log("Loading database ", database_files[path_index], " for ",
-                    path_files[path_index]);
-            database = Database(database_files[path_index], database_load);
-            // Only once it loaded.  Recording the name first would leave the cache
-            // claiming a database that failed to open, so a later trajectory naming
-            // the same file would skip the reload and quietly use the previous one.
-            loaded_database = database_files[path_index];
-            if (auto& request = manifest_request())
-                request->manifest.set_database_attributes(loaded_database, database.root_attributes());
-        }
+            const std::string& key = database_keys[path_index];
+            auto cached = databases.find(key);
+            if (cached == databases.end())
+            {
+                log("Loading database ", database_files[path_index], " for ", path_files[path_index]);
+                // try_emplace enters it only once it has loaded.  An entry for a
+                // database that failed to open would let a later trajectory naming
+                // the same file skip the load and run on nothing.
+                cached = databases.try_emplace(key, database_files[path_index], database_load).first;
+                if (databases.size() > 1)
+                    info(databases.size(), " databases held in memory.");
+                if (auto& request = manifest_request())
+                    request->manifest.set_database_attributes(database_files[path_index],
+                            cached->second.root_attributes());
+            }
             PathJob job;
             job.trajectory = path_files[path_index];
             job.database = database_files[path_index];
+            job.name = run_names[path_index];
             job.epnl = epnl_files.empty() ? std::string() : epnl_files[path_index];
             job.band_frames = band_frames_files.empty() ? std::string() : band_frames_files[path_index];
             job.vehicle = vehicle_files[path_index];
@@ -5147,20 +5443,52 @@ int run(int argc, char* argv[])
             path_options.temperature_override = value_for(temperature_overrides, path_index);
             path_options.pressure_override = value_for(pressure_overrides, path_index);
             path_options.geodetic.start_utc = value_for(start_utcs, path_index);
-            trajectory_holder = process_trajectory(database, job, path_options, observers,
+            if (operations)
+            {
+                job.weight = operations->weights[path_index];
+                job.period_counts = operations->periods[path_index];
+                job.operations = true;
+                path_options.geodetic.clock_replaces_track = operations->clock_replaces_track[path_index] != 0;
+                path_options.geodetic.lateral_offset = operations->offsets[path_index];
+                if (path_options.geodetic.clock_replaces_track)
+                    info("local_time dates ", job.name, " at ", path_options.geodetic.start_utc,
+                            " s UTC, in place of any clock its track carries.");
+            }
+            trajectory_holder = process_trajectory(cached->second, job, path_options, observers,
                     observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
+            operations_run += job.weight;
         }
         catch (const std::exception& problem)
         {
             failed_paths++;
-            report_again(problem, "Skipping " + path_files[path_index] + ": ");
+            report_again(problem, "Skipping " + (operations ? operations->labels[path_index]
+                                                            : path_files[path_index]) + ": ");
         }
+        // Done with it once no later trajectory names it; the front one stays.
+        const std::string& key = database_keys[path_index];
+        if (last_use.at(key) == path_index && key != front_key)
+            databases.erase(key);
     }
+    // `database` refers to the front entry, which the provenance reads below;
+    // erasing it would leave a dangling reference that no output shows.
+    assert(databases.count(front_key) == 1 && &databases.find(front_key)->second == &database);
 
     if (failed_paths > 0)
     {
         log(failed_paths, " of ", path_count, " trajectories could not be processed.");
     }
+
+    // "over 3 operations" in the logs below: the weighted count, with the
+    // runs it came from when the two differ.
+    const std::size_t runs_finished = path_count - failed_paths;
+    const auto operations_phrase = [&](const char* after) {
+        std::ostringstream phrase;
+        phrase << operations_run << (operations_run == 1.0 ? " operation" : " operations");
+        if (operations_run != static_cast<double>(runs_finished))
+            phrase << " (" << runs_finished << (runs_finished == 1 ? " run)" : " runs)");
+        phrase << after;
+        return phrase.str();
+    };
 
     std::array<std::vector<double>, day_metric_count> day_levels;
     for (std::size_t m = 0; m < day_metric_count; m++)
@@ -5177,8 +5505,7 @@ int run(int argc, char* argv[])
         for (std::size_t i = 0; i < energy.size(); i++)
             level[i] = 10.0 * std::log10(energy[i] / seconds);
         day_levels[m] = level;
-        log("Writing the ", day_metric_name(static_cast<DayMetric>(m)), " over ", path_count,
-                path_count == 1 ? " operation" : " operations",
+        log("Writing the ", day_metric_name(static_cast<DayMetric>(m)), " over ", operations_phrase(""),
                 full_history ? ", each integrated over its whole history," : ", each over its own 10 dB-down window,",
                 " to ", file);
         write_levels(x_obs, y_obs, level, file, scattered, unit);
@@ -5188,8 +5515,7 @@ int run(int argc, char* argv[])
 
     if (want_lamax)
     {
-        log("Writing LAmax (", maximum_name(level_weighting), ") over ", path_count,
-                path_count == 1 ? " operation to " : " operations to ", lamax_file);
+        log("Writing LAmax (", maximum_name(level_weighting), ") over ", operations_phrase(" to "), lamax_file);
         write_levels(x_obs, y_obs, totals.lamax, lamax_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, totals.lamax, *frame, latlon_companion(lamax_file), scattered);
@@ -5198,7 +5524,7 @@ int run(int argc, char* argv[])
     if (want_nax)
     {
         log("Writing NAx (operations with ", maximum_name(level_weighting), " at or above ", nax_threshold,
-                " dBA) over ", path_count, path_count == 1 ? " operation to " : " operations to ", nax_file);
+                " dBA) over ", operations_phrase(" to "), nax_file);
         write_levels(x_obs, y_obs, totals.nax, nax_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, totals.nax, *frame, latlon_companion(nax_file), scattered);
@@ -5207,8 +5533,7 @@ int run(int argc, char* argv[])
     if (want_ta)
     {
         log("Writing the time above ", ta_threshold, " dBA (", to_string(level_weighting),
-                " weighting, seconds of reception time) over ", path_count,
-                path_count == 1 ? " operation to " : " operations to ", ta_file);
+                " weighting, seconds of reception time) over ", operations_phrase(" to "), ta_file);
         write_levels(x_obs, y_obs, totals.time_above, ta_file, scattered, unit);
         if (latlon)
             write_geodetic_levels(x_obs, y_obs, totals.time_above, *frame, latlon_companion(ta_file), scattered);
@@ -5216,8 +5541,9 @@ int run(int argc, char* argv[])
 
     if (want_provenance)
     {
-        log("Writing where each observer's energy came from, over ", path_count,
-                path_count == 1 ? " operation, to " : " operations, to ", provenance_file);
+        log("Writing where each observer's energy came from, over ", operations_phrase(", to "), provenance_file);
+        // The front database: the provenance refuses a run of several.
+        assert(!several_databases);
         write_provenance(observers, totals, database, provenance_file, unit);
         if (!provenance_spheres_file.empty())
         {
@@ -5250,8 +5576,7 @@ int run(int argc, char* argv[])
             unmeasured_share[i] = coverage[i][1] > 0.0 ? coverage[i][0] / coverage[i][1]
                                                        : std::numeric_limits<double>::quiet_NaN();
         }
-        log("Writing the unmeasured share of the levels over ", path_count,
-                path_count == 1 ? " operation to " : " operations to ", coverage_file);
+        log("Writing the unmeasured share of the levels over ", operations_phrase(" to "), coverage_file);
         write_levels(x_obs, y_obs, unmeasured_share, coverage_file, scattered, unit);
         if (latlon)
         {

@@ -207,6 +207,7 @@ add_library(niceops_core STATIC
   src/sphere_energy.cpp
   src/state_condition.cpp
   src/procedure.cpp
+  src/operations.cpp
 )
 target_include_directories(niceops_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -290,6 +291,7 @@ add_executable(niceops_unit_tests
   tests/test_condition_selection.cpp
   tests/test_trajectory.cpp
   tests/test_csv.cpp
+  tests/test_operations.cpp
   tests/test_legacy_repair.cpp
   tests/test_smoothing_spline.cpp
 )
@@ -429,6 +431,24 @@ add_test(NAME provenance_refuses_ambient COMMAND niceops -a 40 --provenance_file
 set_tests_properties(provenance_refuses_ambient PROPERTIES PASS_REGULAR_EXPRESSION "does not combine with -a")
 add_test(NAME provenance_refuses_two_databases COMMAND niceops -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -d databases/S-76D_M4.nod -o integrated/provenance_two.csv --provenance_file integrated/provenance_two_list.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(provenance_refuses_two_databases PROPERTIES PASS_REGULAR_EXPRESSION "run it once per database")
+# The database cache: each distinct database loads once, however its trajectories are interleaved
+# (A B A B: the front one is held throughout, the other until its last trajectory) and however its
+# path is spelled.  Every load opens the file ("Opening netCDF file"), and info lines
+# reach only the log, so each run writes a fresh log of its own and the check reads it back.
+add_test(NAME database_cache_run COMMAND sh -c "rm -f integrated/database_cache.log && $<TARGET_FILE:niceops> --no-spectral --no-ground_effect --gridstep 2000 -L info -l integrated/database_cache.log -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197422AC.csv -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197422AC.csv -d databases/S-76D_M3.nod -d databases/B407_fixed_load_factor.nod -d databases/S-76D_M3.nod -d databases/B407_fixed_load_factor.nod -v databases/S-76D.json -v databases/B407.json -v databases/S-76D.json -v databases/B407.json -o integrated/database_cache_a1.csv -o integrated/database_cache_b1.csv -o integrated/database_cache_a2.csv -o integrated/database_cache_b2.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_cache_run PROPERTIES FIXTURES_SETUP database_cache_run)
+add_test(NAME database_cache_loads_each_once COMMAND ${CMAKE_COMMAND} -E cat integrated/database_cache.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_cache_loads_each_once PROPERTIES FIXTURES_REQUIRED database_cache_run PASS_REGULAR_EXPRESSION "Loading database databases/B407_fixed_load_factor\\.nod for tracks/S-76D/197422AC\\.csv" FAIL_REGULAR_EXPRESSION "Opening netCDF file: databases/S-76D_M3\\.nod.*Opening netCDF file: databases/S-76D_M3\\.nod;Opening netCDF file: databases/B407_fixed_load_factor\\.nod.*Opening netCDF file: databases/B407_fixed_load_factor\\.nod")
+# A held database gives a trajectory what it gave the same trajectory before.
+add_test(NAME database_cache_reuse_is_identical COMMAND ${CMAKE_COMMAND} -E compare_files integrated/database_cache_a1.csv integrated/database_cache_a2.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_cache_reuse_is_identical PROPERTIES FIXTURES_REQUIRED database_cache_run)
+add_test(NAME database_cache_reuse_is_identical_second COMMAND ${CMAKE_COMMAND} -E compare_files integrated/database_cache_b1.csv integrated/database_cache_b2.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_cache_reuse_is_identical_second PROPERTIES FIXTURES_REQUIRED database_cache_run)
+# Two spellings of one database are one database: loaded once, and the provenance takes them.
+add_test(NAME database_spellings_run COMMAND sh -c "rm -f integrated/database_spellings.log && $<TARGET_FILE:niceops> --no-spectral --no-ground_effect --gridstep 2000 -L info -l integrated/database_spellings.log -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197422AC.csv -d databases/S-76D_M3.nod -d databases/../databases/S-76D_M3.nod -o integrated/database_spellings.csv --provenance_file integrated/database_spellings_provenance.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_spellings_run PROPERTIES FIXTURES_SETUP database_spellings_run)
+add_test(NAME database_spellings_load_once COMMAND ${CMAKE_COMMAND} -E cat integrated/database_spellings.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(database_spellings_load_once PROPERTIES FIXTURES_REQUIRED database_spellings_run PASS_REGULAR_EXPRESSION "Opening netCDF file: databases/S-76D_M3\\.nod" FAIL_REGULAR_EXPRESSION "Loading database;Opening netCDF file: databases/\\.\\./")
 add_test(NAME version_names_the_build COMMAND niceops --version WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(version_names_the_build PROPERTIES PASS_REGULAR_EXPRESSION "^[^ \n]+\n$")
 add_test(NAME regression_golden COMMAND golden_compare integrated/197421_LAE.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -636,6 +656,11 @@ add_test(NAME vehicle_weight_mismatch_refused COMMAND niceops ${B407_RUN} -v tes
 set_tests_properties(vehicle_weight_mismatch_refused PROPERTIES PASS_REGULAR_EXPRESSION "percent off")
 add_test(NAME lamax_file_is_written COMMAND sh -c "rm -f integrated/lamax.csv && $<TARGET_FILE:niceops> -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 --lamax_file integrated/lamax.csv -o integrated/lamax_run.csv && test -s integrated/lamax.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME static_hover_runs COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/static_hover.csv --gridstep 1640 -L warn -o integrated/static_hover.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# A static hold has no clock of its own.  Its states read UTC midnight, so -D gave every hold
+# the night penalty (+10 dB) without a word; it is refused now, and --start_utc dates it.
+add_test(NAME static_hold_dnl_needs_a_clock COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/static_hover.csv --gridstep 1640 -L warn -D integrated/static_hover_noclock_dnl.csv -o integrated/static_hover_noclock.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(static_hold_dnl_needs_a_clock PROPERTIES PASS_REGULAR_EXPRESSION "-D needs the time of day")
+add_test(NAME static_hold_dnl_with_start_utc COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/static_hover.csv --gridstep 1640 -L warn --start_utc 43200 -D integrated/static_hover_dated_dnl.csv -o integrated/static_hover_dated.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME nax_file_is_written COMMAND sh -c "rm -f integrated/nax.csv && $<TARGET_FILE:niceops> -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 --nax_file integrated/nax.csv --nax_threshold 90 -o integrated/nax_run.csv && test -s integrated/nax.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME nax_needs_a_threshold COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --gridstep 1640 --nax_file integrated/nax_unset.csv -o integrated/nax_unset_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(nax_needs_a_threshold PROPERTIES WILL_FAIL TRUE)
@@ -673,6 +698,175 @@ add_test(NAME dnl_full_history_is_not_windowed COMMAND golden_compare integrated
 add_test(NAME csel_is_not_sel COMMAND golden_compare integrated/metrics_csel.csv integrated/metrics_sel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME lafmax_is_not_the_peak COMMAND golden_compare integrated/metrics_lafmax.csv integrated/metrics_lamax_peak.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(lden_by_day_is_dnl cnel_by_day_is_dnl cnel_at_22h30_is_dnl lden_at_23h30_is_dnl csel_at_1khz_is_sel lden_at_22h30_is_not_dnl dnl_full_history_is_not_windowed csel_is_not_sel lafmax_is_not_the_peak PROPERTIES FIXTURES_REQUIRED metrics_runs)
+# --operations.  The fixtures in tests/data/operations/ name their files relative to that folder.
+# A count of 1 is the -t run bit for bit: the demo case against regression_default and its golden.
+add_test(NAME operations_count_one_run COMMAND niceops --no-spectral --no-ground_effect -d databases/S-76D_M3.nod -v databases/S-76D.json --operations tests/data/operations/count1.csv -o integrated/ops_count1.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_count_one_run PROPERTIES FIXTURES_SETUP ops_count1_run)
+add_test(NAME operations_count_one_is_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ops_count1.csv integrated/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_count_one_is_bit_identical PROPERTIES FIXTURES_REQUIRED "ops_count1_run;demo_run")
+add_test(NAME operations_count_one_is_golden COMMAND golden_compare integrated/ops_count1.csv golden/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_count_one_is_golden PROPERTIES FIXTURES_REQUIRED ops_count1_run)
+# The run totals of one track flown once by -t, and by operations files of count 1, 10 and 3, and
+# by three repeated -t.  Per observer a total starts at zero, so a count of 3 gives fl(3x), which
+# is what 0 + x + x + x gives: every total but the provenance is bit-identical to repeated runs.
+set(OPS_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --gridstep 1640 -L warn)
+foreach(case t c1 c10 c3 rep)
+  set(OPS_TOTALS_${case} -D integrated/ops_${case}_dnl.csv --lden_file integrated/ops_${case}_lden.csv --cnel_file integrated/ops_${case}_cnel.csv --lamax_file integrated/ops_${case}_lamax.csv --nax_file integrated/ops_${case}_nax.csv --nax_threshold 45 --ta_file integrated/ops_${case}_ta.csv --ta_threshold 40)
+endforeach()
+add_test(NAME operations_totals_t COMMAND niceops ${OPS_RUN} -t tracks/S-76D/197421AC.csv ${OPS_TOTALS_t} -o integrated/ops_t.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_totals_count1 COMMAND niceops ${OPS_RUN} --operations tests/data/operations/count1.csv ${OPS_TOTALS_c1} -o integrated/ops_c1.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_totals_count10 COMMAND niceops ${OPS_RUN} --operations tests/data/operations/count10.csv ${OPS_TOTALS_c10} -o integrated/ops_c10.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_totals_count3 COMMAND niceops ${OPS_RUN} --operations tests/data/operations/count3.csv ${OPS_TOTALS_c3} -o integrated/ops_c3.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_totals_repeated_t COMMAND niceops ${OPS_RUN} -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv ${OPS_TOTALS_rep} -o integrated/ops_rep_a.csv -o integrated/ops_rep_b.csv -o integrated/ops_rep_c.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# The coverage and provenance pair, on a gated database.
+set(OPS_GATED -d databases/B407_ambient_gated.nod -v databases/B407.json --gridstep 2000 -L error)
+add_test(NAME operations_gated_count3 COMMAND niceops ${OPS_GATED} --operations tests/data/operations/count3.csv --coverage_file integrated/ops_c3_coverage.csv --provenance_file integrated/ops_c3_provenance.csv -o integrated/ops_c3_gated.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_gated_repeated_t COMMAND niceops ${OPS_GATED} -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197421AC.csv --coverage_file integrated/ops_rep_coverage.csv --provenance_file integrated/ops_rep_provenance.csv -o integrated/ops_rep_ga.csv -o integrated/ops_rep_gb.csv -o integrated/ops_rep_gc.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_totals_t operations_totals_count1 operations_totals_count10 operations_totals_count3 operations_totals_repeated_t operations_gated_count3 operations_gated_repeated_t PROPERTIES FIXTURES_SETUP ops_totals_runs)
+add_test(NAME operations_count_one_totals_are_t COMMAND ${CMAKE_COMMAND} "-DPAIRS=integrated/ops_c1.csv;integrated/ops_t.csv;integrated/ops_c1_dnl.csv;integrated/ops_t_dnl.csv;integrated/ops_c1_lden.csv;integrated/ops_t_lden.csv;integrated/ops_c1_cnel.csv;integrated/ops_t_cnel.csv;integrated/ops_c1_nax.csv;integrated/ops_t_nax.csv;integrated/ops_c1_ta.csv;integrated/ops_t_ta.csv;integrated/ops_c1_lamax.csv;integrated/ops_t_lamax.csv" -P tests/compare_pairs.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# A count of 10 is +10 dB on the day metrics (at 1e-9: the multiply and the logarithm each
+# round), and leaves the SEL file (one operation's) and LAmax as they were.
+add_test(NAME operations_count_ten_adds_10_db_dnl COMMAND golden_compare integrated/ops_c10_dnl.csv integrated/ops_t_dnl.csv 0 10 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_count_ten_adds_10_db_lden COMMAND golden_compare integrated/ops_c10_lden.csv integrated/ops_t_lden.csv 0 10 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_count_ten_adds_10_db_cnel COMMAND golden_compare integrated/ops_c10_cnel.csv integrated/ops_t_cnel.csv 0 10 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_count_ten_leaves_sel_and_lamax COMMAND ${CMAKE_COMMAND} "-DPAIRS=integrated/ops_c10.csv;integrated/ops_t.csv;integrated/ops_c10_lamax.csv;integrated/ops_t_lamax.csv" -P tests/compare_pairs.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_count_three_equals_repeated_t COMMAND ${CMAKE_COMMAND} "-DPAIRS=integrated/ops_c3_dnl.csv;integrated/ops_rep_dnl.csv;integrated/ops_c3_lden.csv;integrated/ops_rep_lden.csv;integrated/ops_c3_cnel.csv;integrated/ops_rep_cnel.csv;integrated/ops_c3_nax.csv;integrated/ops_rep_nax.csv;integrated/ops_c3_ta.csv;integrated/ops_rep_ta.csv;integrated/ops_c3_lamax.csv;integrated/ops_rep_lamax.csv;integrated/ops_c3_coverage.csv;integrated/ops_rep_coverage.csv" -P tests/compare_pairs.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_count_three_provenance COMMAND golden_compare integrated/ops_c3_provenance.csv integrated/ops_rep_provenance.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_count_one_totals_are_t operations_count_ten_adds_10_db_dnl operations_count_ten_adds_10_db_lden operations_count_ten_adds_10_db_cnel operations_count_ten_leaves_sel_and_lamax operations_count_three_equals_repeated_t operations_count_three_provenance PROPERTIES FIXTURES_REQUIRED ops_totals_runs)
+# local_time dates each operation in place of its track's clock: 23:30 is DNL's night (+10 dB
+# on 12:00), 12:00 is the track's own daytime clock's DNL, and a static hold at 12:00 is the
+# hold dated by --start_utc 43200 (UTC is local here).
+add_test(NAME operations_local_noon COMMAND niceops ${OPS_RUN} --operations tests/data/operations/local_noon.csv -D integrated/ops_noon_dnl.csv -o integrated/ops_noon.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_local_night COMMAND niceops ${OPS_RUN} --operations tests/data/operations/local_night.csv -D integrated/ops_night_dnl.csv -o integrated/ops_night.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_local_hold COMMAND niceops ${OPS_RUN} --operations tests/data/operations/static_local.csv -D integrated/ops_hold_dnl.csv -o integrated/ops_hold.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_local_noon operations_local_night operations_local_hold PROPERTIES FIXTURES_SETUP ops_local_runs)
+add_test(NAME operations_local_time_night_adds_10 COMMAND golden_compare integrated/ops_night_dnl.csv integrated/ops_noon_dnl.csv 0 10 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_local_time_night_adds_10 PROPERTIES FIXTURES_REQUIRED ops_local_runs)
+add_test(NAME operations_local_time_replaces_clock COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ops_noon_dnl.csv integrated/ops_t_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_local_time_replaces_clock PROPERTIES FIXTURES_REQUIRED "ops_local_runs;ops_totals_runs")
+add_test(NAME operations_local_time_dates_a_static_hold COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ops_hold_dnl.csv integrated/static_hover_dated_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(static_hold_dnl_with_start_utc PROPERTIES FIXTURES_SETUP static_hold_dated_run)
+set_tests_properties(operations_local_time_dates_a_static_hold PROPERTIES FIXTURES_REQUIRED "ops_local_runs;static_hold_dated_run")
+# Day, evening and night counts weight the plain SEL in the clock's place: a day count of 1 is the
+# demo track flown by day byte for byte, a night count of 1 is it flown at 23:30 at 1e-9, and
+# 2, 1, 1 is 1, 0, 0 plus 10 lg(2 + 10^0.5 + 10) on Lden, 10 lg 13 on DNL (evening counted as day)
+# and 10 lg 15 on CNEL.  A track with no clock runs on counts.
+set(OPS_PERIODS_night -D integrated/ops_pnight_dnl.csv --lden_file integrated/ops_pnight_lden.csv --cnel_file integrated/ops_pnight_cnel.csv)
+set(OPS_PERIODS_mix -D integrated/ops_pmix_dnl.csv --lden_file integrated/ops_pmix_lden.csv --cnel_file integrated/ops_pmix_cnel.csv)
+add_test(NAME operations_period_day_run COMMAND sh -c "rm -f integrated/ops_pday.log && $<TARGET_FILE:niceops> -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --gridstep 1640 -L info -l integrated/ops_pday.log --operations tests/data/operations/period_day.csv -D integrated/ops_pday_dnl.csv --lden_file integrated/ops_pday_lden.csv --cnel_file integrated/ops_pday_cnel.csv -o integrated/ops_pday.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_period_ignores_the_track_clock COMMAND ${CMAKE_COMMAND} -E cat integrated/ops_pday.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_ignores_the_track_clock PROPERTIES FIXTURES_REQUIRED ops_period_runs PASS_REGULAR_EXPRESSION "\\[info\\] 197421AC: its day, evening and night counts weight the day metrics, so the clock of tracks/S-76D/197421AC\\.csv is not read for them")
+add_test(NAME operations_period_night_run COMMAND niceops ${OPS_RUN} --operations tests/data/operations/period_night.csv ${OPS_PERIODS_night} -o integrated/ops_pnight.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_period_mix_run COMMAND niceops ${OPS_RUN} --operations tests/data/operations/period_mix.csv ${OPS_PERIODS_mix} -o integrated/ops_pmix.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_day_run operations_period_night_run operations_period_mix_run PROPERTIES FIXTURES_SETUP ops_period_runs)
+add_test(NAME operations_period_day_is_clocked_day COMMAND ${CMAKE_COMMAND} "-DPAIRS=integrated/ops_pday_dnl.csv;integrated/metrics_day_dnl.csv;integrated/ops_pday_lden.csv;integrated/metrics_day_lden.csv;integrated/ops_pday_cnel.csv;integrated/metrics_day_cnel.csv" -P tests/compare_pairs.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_period_night_matches_clock_dnl COMMAND golden_compare integrated/ops_pnight_dnl.csv integrated/metrics_2330_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_period_night_matches_clock_lden COMMAND golden_compare integrated/ops_pnight_lden.csv integrated/metrics_2330_lden.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_period_night_matches_clock_cnel COMMAND golden_compare integrated/ops_pnight_cnel.csv integrated/metrics_2330_cnel.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_day_is_clocked_day operations_period_night_matches_clock_dnl operations_period_night_matches_clock_lden operations_period_night_matches_clock_cnel PROPERTIES FIXTURES_REQUIRED "ops_period_runs;metrics_runs")
+add_test(NAME operations_period_lden_recombines COMMAND golden_compare integrated/ops_pmix_lden.csv integrated/ops_pday_lden.csv 0 11.807644454215405 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_period_dnl_counts_evening_as_day COMMAND golden_compare integrated/ops_pmix_dnl.csv integrated/ops_pday_dnl.csv 0 11.139433523068368 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_period_cnel_recombines COMMAND golden_compare integrated/ops_pmix_cnel.csv integrated/ops_pday_cnel.csv 0 11.760912590556813 2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_lden_recombines operations_period_dnl_counts_evening_as_day operations_period_cnel_recombines PROPERTIES FIXTURES_REQUIRED ops_period_runs)
+add_test(NAME operations_period_clockless_runs COMMAND niceops --operations tests/data/operations/noclock_periods.csv -d databases/S-76D_M3.nod -v databases/S-76D.json --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -D integrated/ops_noclock_periods_dnl.csv -o integrated/ops_noclock_periods.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_clockless_runs PROPERTIES FAIL_REGULAR_EXPRESSION "needs the time of day;Skipping" FIXTURES_SETUP ops_noclock_period_run)
+# Its DNL is the night's, not an empty one: the same track dated 01:00 by --start_utc.
+add_test(NAME operations_period_clockless_night_run COMMAND niceops -t tests/data/demo_geodetic_noclock.csv -d databases/S-76D_M3.nod -v databases/S-76D.json --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 --start_utc 3600 -D integrated/ops_noclock_night_dnl.csv -o integrated/ops_noclock_night.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_clockless_night_run PROPERTIES FIXTURES_SETUP ops_noclock_period_run)
+add_test(NAME operations_period_clockless_is_the_night COMMAND golden_compare integrated/ops_noclock_periods_dnl.csv integrated/ops_noclock_night_dnl.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_period_clockless_is_the_night PROPERTIES FIXTURES_REQUIRED ops_noclock_period_run)
+# A fleet: rows A, B, A on two databases, against -t A -t B -t A with per-track -d and -v.  Each
+# database loads once, and each row's SEL file is named after it.
+add_test(NAME operations_fleet_run COMMAND sh -c "rm -f integrated/ops_fleet.log && $<TARGET_FILE:niceops> --no-spectral --no-ground_effect --gridstep 2000 -L info -l integrated/ops_fleet.log --operations tests/data/operations/fleet.csv -D integrated/ops_fleet_dnl.csv -o integrated/ops_fleet/sel.csv" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_fleet_repeated_t COMMAND niceops --no-spectral --no-ground_effect --gridstep 2000 -L error -t tracks/S-76D/197421AC.csv -t tracks/S-76D/197422AC.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -d databases/B407_fixed_load_factor.nod -d databases/S-76D_M3.nod -v databases/S-76D.json -v databases/B407.json -v databases/S-76D.json -D integrated/ops_fleet_rep_dnl.csv -o integrated/ops_fleet_rep_a1.csv -o integrated/ops_fleet_rep_b.csv -o integrated/ops_fleet_rep_a2.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_fleet_run operations_fleet_repeated_t PROPERTIES FIXTURES_SETUP ops_fleet_runs)
+add_test(NAME operations_fleet_mix COMMAND ${CMAKE_COMMAND} "-DPAIRS=integrated/ops_fleet_dnl.csv;integrated/ops_fleet_rep_dnl.csv;integrated/ops_fleet/a1_LAE.csv;integrated/ops_fleet_rep_a1.csv;integrated/ops_fleet/b_LAE.csv;integrated/ops_fleet_rep_b.csv;integrated/ops_fleet/a2_LAE.csv;integrated/ops_fleet_rep_a2.csv" -P tests/compare_pairs.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_fleet_loads_each_once COMMAND ${CMAKE_COMMAND} -E cat integrated/ops_fleet.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_fleet_mix operations_fleet_loads_each_once PROPERTIES FIXTURES_REQUIRED ops_fleet_runs)
+set_tests_properties(operations_fleet_loads_each_once PROPERTIES PASS_REGULAR_EXPRESSION "Loading database databases/B407_fixed_load_factor\\.nod for tracks/S-76D/197422AC\\.csv" FAIL_REGULAR_EXPRESSION "Opening netCDF file: databases/S-76D_M3\\.nod.*Opening netCDF file: databases/S-76D_M3\\.nod;Opening netCDF file: databases/B407_fixed_load_factor\\.nod.*Opening netCDF file: databases/B407_fixed_load_factor\\.nod")
+# The rows' resolved paths are read before the run starts, and still reach -l.
+add_test(NAME operations_fleet_logs_its_paths COMMAND ${CMAKE_COMMAND} -E cat integrated/ops_fleet.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_fleet_logs_its_paths PROPERTIES FIXTURES_REQUIRED ops_fleet_runs PASS_REGULAR_EXPRESSION "\\[info\\] Operation a1 \\(tests/data/operations/fleet\\.csv line 2\\): track tracks/S-76D/197421AC\\.csv")
+# The manifest records the operations file beside the tracks it names.
+add_test(NAME operations_manifest_run COMMAND niceops --no-spectral --no-ground_effect --gridstep 2000 -L error -d databases/S-76D_M3.nod -v databases/S-76D.json --operations tests/data/operations/count3.csv -o integrated/ops_manifest.csv --manifest integrated/ops_manifest.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_manifest_run PROPERTIES FIXTURES_SETUP ops_manifest_run)
+add_test(NAME operations_manifest_records_the_file COMMAND ${CMAKE_COMMAND} -E cat integrated/ops_manifest.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_manifest_records_the_file PROPERTIES FIXTURES_REQUIRED ops_manifest_run PASS_REGULAR_EXPRESSION "\"role\": \"operations\",[^}]*\"path\": \"tests/data/operations/count3\\.csv\",[^}]*\"sha256\": \"[0-9a-f]+\".*\"role\": \"trajectory\",[^}]*\"path\": \"tracks/S-76D/197421AC\\.csv\"")
+# Refusals, by their messages.
+set(OPS_DIR tests/data/operations)
+add_test(NAME operations_refuses_t COMMAND niceops --operations ${OPS_DIR}/count1.csv -t tracks/S-76D/197421AC.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_refuses_t PROPERTIES PASS_REGULAR_EXPRESSION "give them in its track column, not with -t")
+add_test(NAME operations_refuses_two_d COMMAND niceops --operations ${OPS_DIR}/count1.csv -d databases/S-76D_M3.nod -d databases/S-76D_M4.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_refuses_two_d PROPERTIES PASS_REGULAR_EXPRESSION "With --operations, give per-operation -d in the file's database column")
+add_test(NAME operations_needs_a_database COMMAND niceops --operations ${OPS_DIR}/no_database.csv -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_needs_a_database PROPERTIES PASS_REGULAR_EXPRESSION "operation 197421AC \\(tests/data/operations/no_database\\.csv line 2\\) names no database")
+add_test(NAME operations_missing_track COMMAND niceops --operations ${OPS_DIR}/missing_track.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_missing_track PROPERTIES PASS_REGULAR_EXPRESSION "line 2 \\(no_such_track\\): the track file tests/data/operations/no_such_track\\.csv does not exist")
+# A refusal of the operations file reaches -l, as every refusal does.
+add_test(NAME operations_refusal_run COMMAND sh -c "rm -f integrated/ops_refusal.log; $<TARGET_FILE:niceops> --operations ${OPS_DIR}/missing_track.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv -l integrated/ops_refusal.log; test -f integrated/ops_refusal.log" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_refusal_run PROPERTIES FIXTURES_SETUP ops_refusal_run)
+add_test(NAME operations_refusal_is_logged COMMAND ${CMAKE_COMMAND} -E cat integrated/ops_refusal.log WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_refusal_is_logged PROPERTIES FIXTURES_REQUIRED ops_refusal_run PASS_REGULAR_EXPRESSION "\\[error\\] [^\n]*the track file tests/data/operations/no_such_track\\.csv does not exist")
+add_test(NAME operations_duplicate_names COMMAND niceops --operations ${OPS_DIR}/duplicate_names.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_duplicate_names PROPERTIES PASS_REGULAR_EXPRESSION "the rows on lines 2 and 3 share the name 197421AC; add a name column")
+add_test(NAME operations_bare_wind_speed COMMAND niceops ${OPS_RUN} --operations ${OPS_DIR}/bare_wind.csv -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_bare_wind_speed PROPERTIES PASS_REGULAR_EXPRESSION "--wind: name the speed's unit")
+add_test(NAME operations_empty_air_cell COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json --operations ${OPS_DIR}/empty_air.csv -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_empty_air_cell PROPERTIES PASS_REGULAR_EXPRESSION "the humidity column is empty\\. Fill it in every row, or give --humidity once")
+add_test(NAME operations_offset_unit_mismatch COMMAND niceops --operations ${OPS_DIR}/offset_meters.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_unit_mismatch PROPERTIES PASS_REGULAR_EXPRESSION "the offset column declares m, and this run reads lengths in ft")
+add_test(NAME operations_count_with_periods COMMAND niceops --operations ${OPS_DIR}/count_and_day.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_count_with_periods PROPERTIES PASS_REGULAR_EXPRESSION "count_and_day\\.csv: give each row's operations as count or as day, evening and night counts, not both")
+add_test(NAME operations_local_time_with_periods COMMAND niceops --operations ${OPS_DIR}/local_time_periods.csv -d databases/S-76D_M3.nod -v databases/S-76D.json -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_local_time_with_periods PROPERTIES PASS_REGULAR_EXPRESSION "local_time_periods\\.csv: local_time dates an operation[^\n]*give one or the other")
+add_test(NAME operations_laeq_with_periods COMMAND niceops --operations ${OPS_DIR}/period_day.csv -d databases/S-76D_M3.nod -v databases/S-76D.json --laeq_file integrated/ops_refused_laeq.csv --laeq_window 7 19 -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_laeq_with_periods PROPERTIES PASS_REGULAR_EXPRESSION "--laeq_file is the level over a clock window, and tests/data/operations/period_day\\.csv gives day, evening and night counts")
+# Lateral subtracks.  An offset of 0 (here under a unit token that agrees with
+# --units) changes nothing, on an AC track and on a geodetic one.
+add_test(NAME operations_offset_zero_run COMMAND niceops --no-spectral --no-ground_effect -d databases/S-76D_M3.nod -v databases/S-76D.json --operations ${OPS_DIR}/offset_zero.csv -o integrated/ops_offset_zero.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_zero_run PROPERTIES FIXTURES_SETUP ops_offset_zero_run)
+add_test(NAME operations_offset_zero_is_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ops_offset_zero.csv integrated/197421_LAE.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_zero_is_bit_identical PROPERTIES FIXTURES_REQUIRED "ops_offset_zero_run;demo_run")
+set(OPS_GEODETIC -d databases/S-76D_M3.nod -v databases/S-76D.json --no-spectral --no-ground_effect --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -L warn)
+add_test(NAME operations_offset_zero_geodetic_run COMMAND niceops ${OPS_GEODETIC} --operations ${OPS_DIR}/offset_geodetic_zero.csv -o integrated/ops_offset_zero_geodetic.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_offset_zero_geodetic_t COMMAND niceops ${OPS_GEODETIC} -t tests/data/demo_geodetic_noclock.csv -o integrated/ops_offset_zero_geodetic_t.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_zero_geodetic_run operations_offset_zero_geodetic_t PROPERTIES FIXTURES_SETUP ops_offset_zero_geodetic_runs)
+add_test(NAME operations_offset_zero_geodetic_is_bit_identical COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ops_offset_zero_geodetic.csv integrated/ops_offset_zero_geodetic_t.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_zero_geodetic_is_bit_identical PROPERTIES FIXTURES_REQUIRED ops_offset_zero_geodetic_runs)
+# A straight eastbound geodetic track offset 500 ft left (and right) is the same
+# track flown 500 ft north (and south), on a grid asymmetric in y so that a sign
+# error shows.  The hidden Catch case [.offset_tracks] writes the three tracks.
+add_test(NAME operations_offset_tracks COMMAND niceops_unit_tests "[.offset_tracks]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_tracks PROPERTIES FIXTURES_SETUP offset_tracks)
+set(OPS_MIRROR -d databases/S-76D_M3.nod -v databases/S-76D.json --no-spectral --no-ground_effect --origin 40 -75 --grid -6000 6000 -2000 4000 --gridstep 500 -L warn)
+add_test(NAME operations_offset_left_run COMMAND niceops ${OPS_MIRROR} --operations ${OPS_DIR}/offset_left.csv -o integrated/ops_offset_left.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_offset_left_flown COMMAND niceops ${OPS_MIRROR} -t integrated/offset_left.csv -o integrated/ops_offset_left_flown.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_offset_right_run COMMAND niceops ${OPS_MIRROR} --operations ${OPS_DIR}/offset_right.csv -o integrated/ops_offset_right.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_offset_right_flown COMMAND niceops ${OPS_MIRROR} -t integrated/offset_right.csv -o integrated/ops_offset_right_flown.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_left_run operations_offset_left_flown operations_offset_right_run operations_offset_right_flown PROPERTIES FIXTURES_REQUIRED offset_tracks FIXTURES_SETUP ops_offset_mirror_runs)
+add_test(NAME operations_offset_mirror_left COMMAND golden_compare integrated/ops_offset_left.csv integrated/ops_offset_left_flown.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_offset_mirror_right COMMAND golden_compare integrated/ops_offset_right.csv integrated/ops_offset_right_flown.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_mirror_left operations_offset_mirror_right PROPERTIES FIXTURES_REQUIRED ops_offset_mirror_runs)
+# An offset adds no gain, so the peak search's bound needs nothing new; this
+# pins that a subtrack through the spectral peak search equals a full march.
+add_test(NAME operations_offset_windowed COMMAND niceops ${OPS_RUN} --operations ${OPS_DIR}/offset.csv -o integrated/ops_offset_windowed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME operations_offset_marched COMMAND niceops ${OPS_RUN} --operations ${OPS_DIR}/offset.csv -D integrated/ops_offset_dnl.csv -o integrated/ops_offset_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_windowed operations_offset_marched PROPERTIES FIXTURES_SETUP ops_offset_window_runs)
+add_test(NAME operations_windowed_is_exact_with_offset COMMAND golden_compare integrated/ops_offset_windowed.csv integrated/ops_offset_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_windowed_is_exact_with_offset PROPERTIES FIXTURES_REQUIRED ops_offset_window_runs)
+# And it moves the footprint: the subtrack is not the centerline.
+add_test(NAME operations_offset_moves_the_footprint COMMAND golden_compare integrated/ops_offset_windowed.csv integrated/ops_t.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_moves_the_footprint PROPERTIES FIXTURES_REQUIRED "ops_offset_window_runs;ops_totals_runs" WILL_FAIL TRUE)
+add_test(NAME operations_offset_on_a_static_hold COMMAND niceops ${OPS_RUN} --operations ${OPS_DIR}/offset_static.csv -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_on_a_static_hold PROPERTIES PASS_REGULAR_EXPRESSION "static_hover\\.csv is a static operation, which has no direction of travel for a lateral offset")
+add_test(NAME operations_offset_folds COMMAND niceops ${OPS_RUN} --operations ${OPS_DIR}/offset_fold.csv -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_folds PROPERTIES PASS_REGULAR_EXPRESSION "a lateral offset of 1e\\+06 ft folds the path at t = [^\n]*must stay under 90% of its radius")
+add_test(NAME operations_offset_needs_travel COMMAND niceops ${OPS_RUN} --operations ${OPS_DIR}/offset_hover.csv -o integrated/ops_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_offset_needs_travel PROPERTIES PASS_REGULAR_EXPRESSION "hover_geodetic\\.csv never moves faster than 3 kt over the ground")
+add_test(NAME operations_provenance_two_databases COMMAND niceops --operations ${OPS_DIR}/fleet.csv -o integrated/ops_refused.csv --provenance_file integrated/ops_refused_provenance.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_provenance_two_databases PROPERTIES PASS_REGULAR_EXPRESSION "run it once per database")
+add_test(NAME operations_clockless_needs_local_time COMMAND niceops --operations ${OPS_DIR}/noclock.csv -d databases/S-76D_M3.nod -v databases/S-76D.json --origin 39.82914323 -74.40996141 --frame_bearing 210 --ground_elevation 54.2651 --gridstep 1640 -D integrated/ops_noclock_dnl.csv -o integrated/ops_noclock.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(operations_clockless_needs_local_time PROPERTIES PASS_REGULAR_EXPRESSION "Skipping operation demo_geodetic_noclock \\(tests/data/operations/noclock\\.csv line 2\\): -D needs the time of day[^\n]*Give --start_utc, or local_time in the operations file")
 set_tests_properties(lden_at_22h30_is_not_dnl dnl_full_history_is_not_windowed csel_is_not_sel lafmax_is_not_the_peak PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
 # The call site: LAFmax, NA64 and TA70 on the demo case's broadband database (the
 # one regression_golden pins), against goldens checked independently -- a brute-

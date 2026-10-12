@@ -4,6 +4,19 @@ How NICE-OPS got to its current form, and why old results differ from new ones. 
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Lateral-offset validation fixes (October 2026)
+
+The fold check for WGS84 tracks with velocity columns mixed recorded velocity with
+acceleration from fitted positions. Changing only the recorded speed could therefore admit
+an offset beyond a turn's radius or refuse a valid offset. Both derivatives now come from
+the fitted positions; recorded velocity still sets the offset direction.
+
+Across a slow interval, choosing the nearest faster sample's direction could switch the
+offset sideways when the aircraft stopped and departed in another direction. Those offsets
+are now refused rather than fitted into a path with artificial speed and acceleration.
+Leading and trailing slow intervals still hold the available direction, and zero offsets
+retain the original path.
+
 ## Origins (2020–2021)
 
 Eric Greenwood and Rob Rau developed NICE-OPS in D, starting in January 2020. It used a
@@ -95,6 +108,11 @@ old and new results only with them in mind.
 - **`--start_utc` is required** with `-D`, `--lden_file` or `--cnel_file` for a WGS84 track
   without a `utcsec` column. It used to default to midnight, which is night, so the whole
   footprint took the 10 dB penalty.
+- **A static operation needs `--start_utc`** for the day-night metrics. Its states carried a
+  clock of zero, so `-D`, `--lden_file`, `--cnel_file` and the period levels dated every hold at
+  UTC midnight without a word, which is night for `-D` (+10 dB); `--start_utc` was ignored for it.
+  A hold now takes its clock from `--start_utc` and is refused without one. No golden or
+  validation result moved: no shipped test or harness run asked for a day metric on a hold.
 - **`--full_history` governs `-D` as well as SEL.** `-D` used to leave each operation on its own
   10 dB-down window whatever `--full_history` said. The default is unchanged; how far the two
   windows differ is in [FIDELITY](FIDELITY.md#day-night-window-choice).
@@ -218,6 +236,10 @@ old and new results only with them in mind.
   tip speed, weight, rotor radius or C_T differs from the database's by more than 2 percent is
   refused unless `--accept_vehicle_mismatch` is given
   ([Errors and refusals](MANUAL.md#errors-and-refusals)).
+- **Databases are compared by canonical path.** `-d databases/X.nod -d ./databases/X.nod` used
+  to count as two databases, so `--provenance_file` and `--screen_database` refused the run; they
+  now accept it, and the file loads once. A run that returns to a database after another one
+  used to reload it, and now holds it until its last trajectory. Results are unchanged.
 
 ## The 2017 Noise Abatement databases
 

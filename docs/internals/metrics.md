@@ -229,6 +229,44 @@ everywhere is the SEL itself, bit for bit (x + 0 = x), and −∞ everywhere is 
   `lden_at_22h30_is_not_dnl` and friends pin the period boundaries by which metrics coincide at
   22:30 and 23:30 local. The clock refusal names the option asked for (`dnl_needs_a_clock` matches
   "-D needs the time of day").
+- **A trajectory's weight (`PathJob::weight`, its operation count) multiplies its contribution
+  after its SEL or penalized exposure is formed**, never the levels, the window, the windowed
+  bound, `--db_cutoff` or culling. Day energy takes `day_weight[m] * std::pow(...)` with the
+  power left as it was: adding lg w inside the exponent instead rounds differently, and a count
+  would no longer equal repeated runs. NAx adds the weight, TA and the coverage energies
+  are scaled at the add, provenance scales each state's `sel_weight` (so the totals and the
+  per-sphere shares stay one sum and `write_provenance`'s assert holds), and LAmax is not
+  weighted. Per observer the totals start at zero, so a count of 3 gives fl(3x), which is what
+  0 + x + x + x gives; for everything but provenance a count equals repeated runs bit for bit.
+  Every weight is 1.0 unless an operations file gives one, and x · 1.0 = x, so the goldens do
+  not move.
+- **An operations file's count is that weight, and its `local_time` is a clock, not a
+  weight.** The count enters only through `PathJob::weight`; the clock replaces the track's
+  (`GeodeticInput::clock_replaces_track`), so `schedule_penalty` and the day passes run as for
+  any dated track and are exact for every metric, a flight across a period's edge included.
+  `operations_count_three_equals_repeated_t` holds a count of 3 to three `-t` byte for byte on
+  every total but the provenance (held at 1e-9, though it is bitwise today), and is what fails if
+  the weight is folded into the exponent: a count of 1 adds lg 1 = 0 and cannot see it, and a
+  count of 10 agrees with +10 dB at 1e-9 either way.
+- **Day, evening and night counts (`PathJob::period_counts`) take the clock's place.** Each
+  metric's weight is then `period_count_weight` (`util/sel.hpp`): each period's count times
+  10^(penalty/10), or 1 and 0 for a period level, applied to the plain SEL (`DayPass::the_sel`,
+  or `none` at weight 0), so no penalty is built and the clock refusal does not apply. The table
+  is spelled exactly (CNEL's 3, not 10^(lg 3)); `period counts weight each period as the clock's
+  penalty does` pins each entry to `schedule_penalty` at 13:00, 21:00 and 03:00 to 1e-12. DNL
+  counts an evening operation as day, as AEDT and INM do. LAeq has no periods to count, so
+  `--laeq_file` with period columns is refused right after `expand_operations`. NAx, TA, the
+  coverage and the provenance take `PathJob::weight`, the three counts added up. A track's own
+  clock is not read (an info line says so), so a clockless track runs.
+- **Why both routes exist.** `local_time` is exact for every metric, LAeq and a flight across
+  22:00 included, but it needs one row per hour flown. Period counts are what an AEDT or INM
+  study's fleet tables hold, and they cost one run per track however the day is split; their
+  price is that an operation is weighted wholly by one period, and that DNL's 22:00-23:00 (night
+  by the clock) is day under the evening count. The counts are not run as three clocked passes
+  at 13:00, 21:00 and 03:00: that would cost three runs, and CNEL's 10^(lg 3) is 3 only to
+  rounding. The two are refused together in one file, so a row never carries both a clock and a
+  period. `operations_period_day_is_clocked_day` (byte for byte) and
+  `operations_period_night_matches_clock` (1e-9) tie the routes together where they agree.
 - **C-SEL reuses `--band_history`'s per-band recording** (`record_bands`, `record_path`). Every path
   that writes `bands_out` for the band history (straight, table, refracted, each extra arrival)
   feeds it, so a new propagation branch that forgets `bands_out` breaks both. Bands outside
