@@ -522,7 +522,9 @@ TEST_CASE("the screening gate is the brute-force scan of the blended profile", "
             if (blocked)
             {
                 blocked_count++;
-                CHECK(profile.source_height == expected.source_height);
+                // Not to the bit: GCC fuses the blend's multiply-adds differently
+                // in the two spellings.
+                CHECK(profile.source_height == Catch::Approx(expected.source_height).margin(1e-11));
                 CHECK(profile.interior + 2 == profile.heights.size());
                 CHECK(profile.heights[0] == 0.0);
             }
