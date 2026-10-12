@@ -1542,6 +1542,12 @@ add_test(NAME build_atmosphere_z0_from_is_harness_profile COMMAND golden_compare
 set_tests_properties(build_atmosphere_z0_from_is_harness_profile PROPERTIES FIXTURES_REQUIRED build_atmosphere_z0_from_runs)
 add_test(NAME build_atmosphere_z0_twice_refused COMMAND niceops_build_atmosphere ${BUILD_ATMOSPHERE_HARNESS} --z0_from integrated/fit_z0_known.json -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(build_atmosphere_z0_twice_refused PROPERTIES PASS_REGULAR_EXPRESSION "give --z0 or --z0_from, not both")
+# A fit that reached an end of its search is a limit, and building from it says so; a fit
+# that would take no runs is refused.
+add_test(NAME build_atmosphere_z0_from_at_bound_warns COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --column ${BUILD_ATMOSPHERE_DATA}/string_ft.csv --missing 9999 --humidity 62.5 --levels 0,1,3,10,20 --z0_from ${BUILD_ATMOSPHERE_DATA}/fit_at_bound.json --top 5000 -o integrated/build_atmosphere_at_bound.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_from_at_bound_warns PROPERTIES PASS_REGULAR_EXPRESSION "that fit came to an end of its search")
+add_test(NAME fit_z0_needs_a_run COMMAND niceops_build_atmosphere fit_z0 ${BUILD_ATMOSPHERE_DATA}/fit_run6.csv --missing 9999 --min_runs 0 -o integrated/fit_z0_none.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(fit_z0_needs_a_run PROPERTIES PASS_REGULAR_EXPRESSION "--min_runs: Value 0 not in range")
 # What the builder refuses, by message.
 add_test(NAME build_atmosphere_z0_missing_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --humidity 50 --temperature 288 --top 5000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(build_atmosphere_z0_missing_refused PROPERTIES PASS_REGULAR_EXPRESSION "give the roughness length, --z0 or --z0_from")

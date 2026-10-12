@@ -129,7 +129,7 @@ equations are in [THEORY.md](../THEORY.md) §7. The things to preserve:
   built, and the file replays to the bit.
 - **The fill below the lowest wind level is `SurfaceWind`'s law, not a copy.** A `SurfaceWind` is
   built on that level and `speed_at` evaluated. When the lowest level is the station's
-  (`--surface_wind`), the law takes the station's own speed and bearing, so a build from one
+  (`--wind`), the law takes the station's own speed and bearing, so a build from one
   observation is `synthetic_profile` to the bit. The Catch2 case compares every double with `==`
   over the classes, roughness lengths and anemometers below and above 10 z₀. Arithmetic that
   departs from `synthetic_profile`'s order fails it, including the temperature's spelling

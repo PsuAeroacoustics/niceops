@@ -379,8 +379,10 @@ port. Not worth it; do not re-derive it.
 
 ### Terrain, ground classes and screening
 
-Each of these adds a term to the peak search's bound, so each stays exact and evaluates a little
-more; none adds a march condition. The terrain runs (tables over terrain, screening) are timed
+Ground classes (the maximum over the classes present) and screening (`screen_gain_bound`) each
+add a term to the peak search's bound, so each stays exact and evaluates a little more; a table
+read over terrain adds none, since its term is the table's largest value whatever the geometry.
+None adds a march condition. The terrain runs (tables over terrain, screening) are timed
 in [ground.md](ground.md#how-the-plane-is-found-groundplanecache). What the bound costs there,
 in evaluated fraction on the full demo grid: a table over the hills nothing (98.89% against
 98.90%), screening 0.7 points on the hills, where nothing is screened, and 0.8 behind the ridge.

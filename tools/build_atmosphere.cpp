@@ -258,7 +258,8 @@ int main(int argc, char** argv)
             "Keep runs without the temperature to screen them, with a warning.");
     fit_app->add_option("--seed", fit_rules.seed, "The bootstrap's seed (default 1).");
     fit_app->add_option("--draws", fit_rules.draws, "Bootstrap draws (default 2000).");
-    fit_app->add_option("--min_runs", fit_rules.min_runs, "Fewest runs a fit takes (default 5).");
+    fit_app->add_option("--min_runs", fit_rules.min_runs, "Fewest runs a fit takes (default 5).")
+            ->check(CLI::PositiveNumber);
     fit_app->add_option("--missing", fit_missing, "Cell values that are fill, not data.");
     fit_app->add_flag("--drop_implausible", fit_drop_implausible, "Drop implausible cells.");
     fit_app->add_option("--ground_elevation", fit_ground_elevation,
@@ -387,6 +388,12 @@ int main(int argc, char** argv)
             if (!fit.contains("z0_m") || !fit["z0_m"].is_number())
                 input_error("--z0_from ", z0_from, " holds no z0_m: is it a fit_z0 result?");
             rules.roughness_length = fit["z0_m"].get<double>();
+            // A fit at an end of its search found no roughness length, only a limit.
+            if (fit.contains("at_bound") && fit["at_bound"].is_boolean() && fit["at_bound"].get<bool>())
+            {
+                warn("--z0_from ", z0_from, ": that fit came to an end of its search (", rules.roughness_length,
+                        " m), so its profiles did not follow the log law and this z0 is a limit, not a fit.");
+            }
             z0_origin = file_entry("z0_from", z0_from);
             for (const char* key : {"z0_low_m", "z0_high_m", "runs_used"})
             {

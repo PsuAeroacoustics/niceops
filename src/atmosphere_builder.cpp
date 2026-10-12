@@ -680,7 +680,7 @@ AtmosphereProfile build_profile(const MeasuredColumns& measured, const SurfaceAi
             const double from = station.direction * pi / 180.0;
             levels.push_back({station.height, -station.speed * std::sin(from),
                     -station.speed * std::cos(from), true});
-            wind_source = wind_source.empty() ? "--surface_wind" : wind_source + " and --surface_wind";
+            wind_source = wind_source.empty() ? "--wind" : wind_source + " and --wind";
         }
         std::stable_sort(levels.begin(), levels.end(),
                 [](const WindLevel& a, const WindLevel& b) { return a.z < b.z; });
