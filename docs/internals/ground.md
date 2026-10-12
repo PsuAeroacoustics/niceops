@@ -288,7 +288,10 @@ in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
   `spectral_level_at_observer`'s.
 - **The onset is strict.** A sample exactly on the line of sight does not block. CNOSSOS's own
   rule screens down to δ = −λ/20, but over level ground a sample near a 1.2 m microphone has
-  δ ≈ h²/2s, about 0.14 m at 5 m, under λ/20 at 63 Hz, so it would screen level terrain.
+  δ ≈ h²/2s, about 0.14 m at 5 m, under λ/20 at 63 Hz, so it would screen level terrain. (The
+  Directive also asks δ > λ/4 − δ′, δ′ by the ground images, which keeps the low bands out; the
+  conformance case TC06, a path clearing a plateau's edge by 0.67 m, is diffracted at 500 Hz
+  and 1 kHz in the TR and unscreened here, `ISO/TR 17534-4 TC06` in `tests/test_screening.cpp`.)
 - **One spelling of the slope** (`sight_slope`, (z − h_m)/s) for the horizon, the line of sight
   and the scan. The quick test reads each ray's horizon at the last sample strictly inside the
   path (ceil(D/Δ) − 1, never the footprint's), and with no turn reads ray a only, as `line_from`

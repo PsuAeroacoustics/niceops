@@ -331,3 +331,225 @@ TEST_CASE("Delta_dif against the exact half-plane", "[screening]")
         CHECK(exact - cnossos < 2.8);
     }
 }
+
+// The CNOSSOS-EU conformance cases of ISO/TR 17534-4:2020 that a vertical-plane
+// terrain model can take: no buildings, barriers or reflections.  The expected
+// values are the TR's, as NoiseModelling's AttenuationComputeOutputCnossosTest
+// transcribes them, rounded to 0.01 dB or 0.01 m; homogeneous conditions only,
+// since NICE-OPS's screening is straight-ray.  Octave bands 63 Hz-8 kHz at the
+// TR's c = 340 m/s.  Each profile is the TR's polyline, sampled every 0.01 m
+// (which puts every vertex on a sample), seen from the receiver as NICE-OPS
+// sees a path: s from the microphone toward the source.
+namespace {
+
+const std::vector<double> tr_bands {63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0};
+constexpr double tr_sound_speed = 340.0;
+constexpr double tr_step = 0.01;
+
+struct TrCase
+{
+    std::vector<double> heights; // heights[k] at s = k tr_step, on the microphone's ground
+    TerrainRaster raster;        // the same profile along x, for the line fits
+    double distance = 0.0;       // s of the source
+};
+
+// `vertices` are the TR's (x from the source, z); the receiver stands at the
+// last x, its ground the profile's there.
+TrCase tr_case(const std::vector<ScreenPoint>& vertices)
+{
+    TrCase c;
+    const double length = vertices.back().s;
+    const double base = vertices.back().z;
+    const std::size_t n = static_cast<std::size_t>(std::llround(length / tr_step));
+    c.distance = length;
+    const auto z_at = [&](double x) {
+        for (std::size_t v = 1; v < vertices.size(); v++)
+        {
+            if (x <= vertices[v].s + 1e-9)
+            {
+                const double t = (x - vertices[v - 1].s) / (vertices[v].s - vertices[v - 1].s);
+                return vertices[v - 1].z + std::clamp(t, 0.0, 1.0) * (vertices[v].z - vertices[v - 1].z) - base;
+            }
+        }
+        return vertices.back().z - base;
+    };
+    c.heights.resize(n + 1);
+    for (std::size_t k = 0; k <= n; k++)
+        c.heights[k] = z_at(length - static_cast<double>(k) * tr_step);
+    // Three rows, so the bilinear reads along y = 0 are the profile itself.
+    std::vector<double> grid(3 * (n + 1));
+    for (std::size_t j = 0; j < 3; j++)
+        std::copy(c.heights.begin(), c.heights.end(), grid.begin() + static_cast<std::ptrdiff_t>(j * (n + 1)));
+    c.raster = TerrainRaster(0.0, -tr_step, tr_step, n + 1, 3, std::move(grid));
+    return c;
+}
+
+// The least-squares line over samples k0..k1 (fit_ground_line, as fit_range
+// approximates it), with its intercept moved to the microphone, s = 0.
+GroundLine tr_line(const TrCase& c, std::size_t k0, std::size_t k1)
+{
+    const double s0 = static_cast<double>(k0) * tr_step, s1 = static_cast<double>(k1) * tr_step;
+    GroundLine line = fit_ground_line(c.raster, s0, 0.0, s1, 0.0, k1 - k0);
+    line.intercept -= line.slope * s0;
+    return line;
+}
+
+// The TR's per-band values against ours, to `tolerance` dB.
+void check_bands(const char* what, const std::vector<double>& expected, const std::vector<double>& actual,
+        double tolerance)
+{
+    for (std::size_t b = 0; b < expected.size(); b++)
+    {
+        INFO(what << " at " << tr_bands[b] << " Hz");
+        CHECK(actual[b] == Catch::Approx(expected[b]).margin(tolerance));
+    }
+}
+
+} // namespace
+
+TEST_CASE("ISO/TR 17534-4 TC23: diffraction over an earth berm", "[screening][iso17534]")
+{
+    // TR tables 264 and 268-; the source 1 m and the receiver 4 m above level
+    // ground, a berm 5 m high between, ground G 0, 1, 0 along the path.
+    const TrCase c = tr_case({{0.0, 0.0}, {14.21, 0.0}, {22.64, 5.0}, {23.98, 5.0}, {32.30, 0.0}, {70.03, 0.0}});
+    std::vector<ScreenPoint> points, edges;
+    std::vector<std::size_t> hull;
+    Screen screen;
+    const std::size_t interior = c.heights.size() - 2;
+    REQUIRE(rubber_band(c.heights, interior, tr_step, c.distance, 4.0, 1.0, points, hull, edges, screen));
+    // The berm's two crest corners, 1.34 m apart.
+    CHECK(screen.edges == 2);
+    CHECK(screen.e == Catch::Approx(1.34).margin(1e-6));
+
+    std::vector<double> dif(tr_bands.size());
+    for (std::size_t b = 0; b < tr_bands.size(); b++)
+        dif[b] = cnossos_dif(screen.delta, screen.e, screen.edges, tr_sound_speed / tr_bands[b]);
+    // Uncapped: 29.05 dB at 8 kHz, which the cap below takes to 25.
+    check_bands("Delta_dif(S,R)", {7.17, 8.69, 10.78, 13.46, 16.98, 21.34, 25.53, 29.05}, dif, 0.02);
+
+    // Each side's mean line, as the TR's segment planes (table 268): the
+    // source's from its edge to the footprint, the receiver's from the
+    // microphone to its edge.
+    screen_sides(screen, edges, tr_line(c, screen.source_edge, interior + 1), tr_line(c, 0, screen.receiver_edge),
+            false);
+    // z_s, z_r and d_p of the source side (S over it, its edge O over it) ...
+    CHECK(screen.source_side.source_height == Catch::Approx(2.13).margin(0.01));
+    CHECK(screen.source_side.receiver_height == Catch::Approx(1.94).margin(0.01));
+    CHECK(screen.source_side.ground_distance == Catch::Approx(22.99).margin(0.01));
+    // ... and of the receiver side (its edge O', then R).
+    CHECK(screen.receiver_side.source_height == Catch::Approx(3.35).margin(0.01));
+    CHECK(screen.receiver_side.receiver_height == Catch::Approx(4.73).margin(0.01));
+    CHECK(screen.receiver_side.ground_distance == Catch::Approx(46.04).margin(0.01));
+    std::vector<double> source_image(tr_bands.size()), receiver_image(tr_bands.size());
+    for (std::size_t b = 0; b < tr_bands.size(); b++)
+    {
+        const double lambda = tr_sound_speed / tr_bands[b];
+        source_image[b] = cnossos_dif(screen.delta_source_image, screen.e, screen.edges, lambda);
+        receiver_image[b] = cnossos_dif(screen.delta_receiver_image, screen.e, screen.edges, lambda);
+    }
+    check_bands("Delta_dif(S',R)", {10.54, 12.93, 15.67, 18.78, 22.56, 27.04, 31.28, 34.81}, source_image, 0.03);
+    check_bands("Delta_dif(S,R')", {10.86, 13.28, 16.05, 19.18, 22.97, 27.46, 31.70, 35.22}, receiver_image, 0.03);
+
+    // With the TR's own A_ground on each side (its G-based ground, not
+    // NICE-OPS's model, injected as G = 10^(-A/10)), the combination gives the
+    // TR's Delta_ground terms and A_dif, the cap included.
+    const std::vector<double> a_ground_so {-1.02, -0.08, -0.73, -2.79, -2.79, -2.79, -2.79, -2.79};
+    const std::vector<double> a_ground_or {-0.28, -1.00, -2.46, -2.46, -2.46, -2.46, -2.46, -2.46};
+    std::vector<double> gain_so(tr_bands.size()), gain_or(tr_bands.size()), unity(tr_bands.size(), 1.0);
+    for (std::size_t b = 0; b < tr_bands.size(); b++)
+    {
+        gain_so[b] = std::pow(10.0, -a_ground_so[b] / 10.0);
+        gain_or[b] = std::pow(10.0, -a_ground_or[b] / 10.0);
+    }
+    std::vector<double> loss(tr_bands.size()), source_only(tr_bands.size()), receiver_only(tr_bands.size());
+    ScreenTally tally;
+    cnossos_screen_loss(screen, tr_bands, tr_sound_speed, gain_so.data(), gain_or.data(), 0, tr_bands.size(),
+            loss.data(), &tally);
+    CHECK(tally.capped);
+    CHECK(!tally.source_clamped);
+    CHECK(!tally.receiver_clamped);
+    cnossos_screen_loss(screen, tr_bands, tr_sound_speed, gain_so.data(), unity.data(), 0, tr_bands.size(),
+            source_only.data());
+    cnossos_screen_loss(screen, tr_bands, tr_sound_speed, unity.data(), gain_or.data(), 0, tr_bands.size(),
+            receiver_only.data());
+    std::vector<double> delta_ground_so(tr_bands.size()), delta_ground_or(tr_bands.size());
+    for (std::size_t b = 0; b < tr_bands.size(); b++)
+    {
+        const double capped = std::min(dif[b], cnossos_cap);
+        delta_ground_so[b] = source_only[b] - capped;
+        delta_ground_or[b] = receiver_only[b] - capped;
+    }
+    check_bands("Delta_ground(S,O)", {-0.71, -0.05, -0.42, -1.62, -1.58, -1.56, -1.55, -1.55}, delta_ground_so, 0.02);
+    check_bands("Delta_ground(O,R)", {-0.18, -0.60, -1.42, -1.36, -1.32, -1.30, -1.30, -1.29}, delta_ground_or, 0.02);
+    check_bands("A_dif", {6.28, 8.04, 8.93, 10.48, 14.09, 18.48, 22.15, 22.16}, loss, 0.03);
+}
+
+TEST_CASE("ISO/TR 17534-4 TC06: a path just over a crest is not screened", "[screening][iso17534]")
+{
+    // TR table 23: the source 1 m up, the receiver 1.5 m above a plateau 10 m
+    // up, whose edge the line of sight clears by 0.67 m.  The TR screens the
+    // 500 Hz and 1 kHz bands all the same (Delta_dif(S,R) 3.16 and 0.56 dB,
+    // A_dif 4.31 and -0.83 dB), by the Directive's -lambda/20 rule; NICE-OPS
+    // screens only a profile above the line of sight (ground.md, Screening),
+    // so this path is unscreened, and the difference is the documented one.
+    const TrCase c = tr_case({{0.0, 0.0}, {112.41, 0.0}, {178.84, 10.0}, {194.16, 10.0}});
+    std::vector<ScreenPoint> points, edges;
+    std::vector<std::size_t> hull;
+    Screen screen;
+    CHECK(!rubber_band(c.heights, c.heights.size() - 2, tr_step, c.distance, 1.5, 1.0 - 10.0, points, hull, edges,
+            screen));
+    // What the TR does there: a path clearing its edge (delta < 0) is
+    // diffracted in a band only if delta > -lambda/20 and delta > lambda/4 -
+    // delta', delta' the path difference by the ground images.  The second
+    // clause leaves 63-250 Hz to the ground alone; the first, 2-8 kHz.  In the
+    // two bands it diffracts, the term is the Directive's formula at the
+    // negative path difference.
+    const ScreenPoint receiver {0.0, 1.5}, source {c.distance, -9.0};
+    const ScreenPoint crest {194.16 - 178.84, 0.0};
+    const double delta = path_difference(receiver, &crest, 1, source);
+    REQUIRE(delta < 0.0);
+    const std::vector<double> tr_dif {0.0, 0.0, 0.0, 3.16, 0.56, 0.0, 0.0, 0.0};
+    for (std::size_t b = 0; b < tr_bands.size(); b++)
+    {
+        const double lambda = tr_sound_speed / tr_bands[b];
+        INFO(tr_bands[b] << " Hz");
+        if (tr_dif[b] > 0.0)
+            CHECK(cnossos_dif(delta, 0.0, 1, lambda) == Catch::Approx(tr_dif[b]).margin(0.02));
+        else if (tr_bands[b] > 1000.0)
+            CHECK(delta <= -lambda / 20.0);
+    }
+}
+
+TEST_CASE("ISO/TR 17534-4 TC05 and TC20: the mean plane over uneven ground", "[screening][iso17534]")
+{
+    // Unobstructed paths over a rise: the whole path's least-squares line
+    // gives the heights and distance a table over terrain reads (z_s, z_r,
+    // d_p).  The source 1 m and the receiver 4 m up.  Checked against the
+    // polyline's exact (continuous) least-squares plane to 2 mm, and against
+    // the TR's rounded values: TC05's (table 18) to 0.01 m; TC20's, which
+    // NoiseModelling takes from the table it labels TC21's and checks only to
+    // 0.1 m, sit 0.014 and 0.038 m from the exact plane, and are held to 0.05.
+    struct Expect
+    {
+        std::vector<ScreenPoint> profile;
+        double zs, zr, dp;          // the exact plane's
+        double tr_zs, tr_zr, tr_dp; // the TR's
+        double tr_margin;
+    };
+    for (const Expect& e : {Expect {{{0.0, 0.0}, {112.41, 0.0}, {178.84, 10.0}, {194.16, 10.0}}, 3.826, 6.159, 194.581,
+                                    3.83, 6.16, 194.59, 0.01},
+                 Expect {{{0.0, 0.0}, {110.34, 0.0}, {175.54, 10.0}, {190.59, 10.0}}, 3.827, 6.158, 191.019, 3.84, 6.12,
+                         191.02, 0.05}})
+    {
+        const TrCase c = tr_case(e.profile);
+        const GroundLine line = tr_line(c, 0, c.heights.size() - 1);
+        const PlaneGeometry g = plane_geometry(c.distance, 1.0 - 10.0, 4.0, line);
+        INFO("profile ending at x = " << c.distance);
+        CHECK(g.source_height == Catch::Approx(e.zs).margin(0.002));
+        CHECK(g.receiver_height == Catch::Approx(e.zr).margin(0.002));
+        CHECK(g.ground_distance == Catch::Approx(e.dp).margin(0.002));
+        CHECK(g.source_height == Catch::Approx(e.tr_zs).margin(e.tr_margin));
+        CHECK(g.receiver_height == Catch::Approx(e.tr_zr).margin(e.tr_margin));
+        CHECK(g.ground_distance == Catch::Approx(e.tr_dp).margin(e.tr_margin));
+    }
+}

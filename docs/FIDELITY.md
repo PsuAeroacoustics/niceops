@@ -609,11 +609,43 @@ difference (`Delta_dif against the exact half-plane`, `tests/test_screening.cpp`
 | Exact − CNOSSOS, dB | +1.25 | +2.39 | +2.67 | +2.52 | +2.27 | +1.96 | −0.67 |
 
 CNOSSOS-EU reads low by 1.25 dB at grazing and by up to 2.7 dB just inside the shadow, so a
-screened level errs high there. None of the measured data sets ([Data sets](#data-sets)) has
-terrain between the aircraft and the microphones, so the screening is checked only against this
-reference, by its degenerate cases
-(level and uniformly tilted terrain, and the hills fixture, screen nothing and are the unscreened
-runs byte for byte), and by the peak search's exactness behind a synthetic ridge.
+screened level errs high there.
+
+Against the CNOSSOS-EU conformance cases of ISO/TR 17534-4:2020 (`[iso17534]`,
+`tests/test_screening.cpp`), the three a vertical-plane terrain model can take, at the TR's
+c = 340 m/s and homogeneous conditions:
+
+- **TC23**, an earth berm 5 m high between a source 1 m and a receiver 4 m up, 70 m apart: the
+  rubber band's two edges, every diffraction term (Δdif(S,R) uncapped to 29.05 dB at 8 kHz,
+  Δdif(S′,R), Δdif(S,R′)), both side planes' heights and lengths, and, with the TR's own
+  A_ground injected for NICE-OPS's ground model, both Δground terms and A_dif (the 25 dB cap
+  included), all within 0.01–0.03 dB or 0.01 m of the TR.
+- **TC06**, a path clearing a plateau's edge by 0.67 m: unscreened here, where the TR diffracts
+  its 500 Hz and 1 kHz bands (A_dif 4.31 and −0.83 dB); that is NICE-OPS's strict onset, and the
+  Directive's term at those bands is reproduced to 0.01 dB.
+- **TC05 and TC20**, unobstructed paths over a 10 m rise: the whole path's mean plane (the
+  geometry a table read over terrain takes) is the polyline's exact least-squares plane to
+  1 mm. TC05's tabulated values agree to 0.01 m; TC20's, as NoiseModelling transcribes them,
+  differ from the exact plane by up to 0.04 m.
+
+The TR's sources are about 1 m up, so these test the method's arithmetic, not an elevated
+source.
+
+Behind the synthetic ridge (25 m high, 250 m to the track's side) on the full demo grid, with
+1.2 m pole microphones on variable-porosity ground, screening lowered 3065 of the 14,400 cells'
+SEL, 506 by more than 1 dB, 30 by more than 6 and two by more than 10 (12.0 dB at most), and
+raised none. 9.9% of the evaluations were screened, 38% of those reached the 25 dB cap in some
+band, and the ground weight F never needed clamping. Over the hills fixture the full grid
+screened nothing and was the unscreened run byte for byte.
+
+**Not yet scored against measurements.** None of the data sets scored here
+([Data sets](#data-sets)) has terrain between the aircraft and the microphones. The AS350
+altitude-variation test at Sweetwater (NASA/TM-2016-219354) does: over the 1 m 3DEP grid the
+straight path to its microphone 28, behind a hill, passes 18–78 ft under the terrain through
+the start of 152 of its 166 runs, and the paths to microphones 27 and 29 clear it by only
+5–12 ft. Until that is scored, the screening is checked only against the exact half-plane above, by its degenerate cases (level and
+uniformly tilted terrain, and the hills fixture, screen nothing and are the unscreened runs byte
+for byte), and by the peak search's exactness behind the ridge.
 
 ### Trajectory smoothing
 
