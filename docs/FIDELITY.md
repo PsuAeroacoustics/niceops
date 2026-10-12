@@ -719,13 +719,39 @@ disagree on whether a path is open; with the diffraction left out, as here, that
 tens of dB. A directional source would widen the gap between the two columns, since each
 reflection reads the sphere in its own direction; that is not measured yet.
 
+That table is the specular rays alone (`--no_diffraction`), so that the comparison is with a
+lattice of specular paths.
+
 On the demo track (B407 database), seven microphones in ideal canyons
-(`tests/data/urban_canyons.csv`) move by −2.1 to +2.1 dB in SEL against open ground. Two streets
-along the track give both ends: +2.1 dB where the helicopter passes about 550 ft up, reflections
-adding to an open direct path, and −2.1 dB near the end of the approach, where it is under 100 ft
-and the walls block the direct sound but not all of the floor's. Nothing here is validated
-against measurements in streets; none of the measured data sets ([Data sets](#data-sets)) has
-buildings near the microphones.
+(`tests/data/urban_canyons.csv`) move by −1.0 to +2.2 dB in SEL against open ground with the
+roof edges diffracting: +2.2 dB where the helicopter passes about 550 ft up along the street,
+reflections adding to an open direct path, and −1.0 dB at the most shielded. Nothing here is
+validated against
+measurements in streets; none of the measured data sets ([Data sets](#data-sets)) has buildings
+near the microphones.
+
+### Roof-edge diffraction
+
+The UTD wedge kernel (`src/wedge`, `tests/test_wedge.cpp`), a unit plane wave on a rigid wedge,
+geometrical optics plus the diffracted wave, against exact solutions, over every direction and
+four incidences:
+
+| Wedge | Reference | k r = 10 | k r = 40 | k r = 200 |
+| --- | --- | --- | --- | --- |
+| Half-plane (n = 2) | Sommerfeld's solution | 4e-7 dB | 2e-6 dB | 6e-6 dB |
+| Right angle (n = 3/2), a roof edge | Eigenfunction series, 40 digits | 0.016 dB | 0.005 dB | |
+
+For a half-plane under plane-wave incidence UTD's Fresnel form is the exact solution; the
+right-angle series was summed in Wolfram Language and reproduces a flat plane's incident and
+reflected waves exactly at n = 1, where the kernel diffracts nothing.
+
+In the canyon (`tests/test_urban.cpp`): swept across the direct ray's shadow boundary in 0.05
+degree steps at 1 kHz, the coherent field never steps by more than 0.1 dB, where the specular rays
+alone jump by an infinite amount. A metre clear of every boundary, at 2 and 4 kHz, it is the
+specular rays' energy to 0.23 dB on average over 106 direction-bands, 1.5 dB at worst: the
+interference a third-octave band leaves between equal rays a few metres apart. On a boundary it
+departs by more, rightly -- at 70 degrees over a 20 m canyon a floor-reflected ray strikes a wall
+2 cm below its top, and the diffracted ray halves it.
 
 ### Canyon wave solver
 
@@ -744,18 +770,21 @@ Convergence, a 20 m by 20 m canyon, the microphone 6 m from wall A at 1.5 m, wal
 in every band and direction tried, 10 within 1.4 dB (at 500 Hz, 15 degrees). Each run went the
 full 4 s and ended 28-29 dB down.
 
-Against the ideal canyon's geometric table at 500 Hz (kW = 183), with the floor's rays, the same
-walls and the first-order reflection the run adds:
+Against the ideal canyon's geometric table, with the floor's rays, the roof edges' diffraction,
+the same walls and the first-order reflection the run adds:
 
 | Direction from +y | 15° | 30° | 45° | 60° | 75° | 90° | 120° (shadow) | 150° |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Wave, dB | −2.39 | −3.65 | 0.13 | 2.32 | 0.06 | 0.04 | −10.86 | 0.25 |
-| Geometric, dB | −3.86 | −3.37 | 0.06 | 2.90 | 0.00 | 0.00 | −14.46 | 1.40 |
+| 500 Hz, wave, dB | −2.39 | −3.65 | 0.13 | 2.32 | 0.06 | 0.04 | −10.86 | 0.25 |
+| 500 Hz, geometric, dB | −2.11 | −3.53 | 0.16 | 2.35 | −0.18 | −0.08 | −10.81 | 0.73 |
+| 250 Hz, wave, dB | 5.75 | −4.32 | 0.93 | 2.72 | 0.45 | 0.01 | −9.44 | 1.45 |
+| 250 Hz, geometric, dB | 6.10 | −4.25 | 1.19 | 2.91 | 0.47 | −0.03 | −9.21 | 2.10 |
 
-The lit directions agree within 0.6 dB, the shadow differs by 3.6 dB (the geometric table's
-diffraction is still the CNOSSOS placeholder), and at 63-250 Hz the two differ by up to 8 dB, the
-canyon's resonances, which is the band the wave tables are for. Before the geometric table traced
-the floor's rays it read −24.6 and −20.4 dB at 15 and 30 degrees.
+At 250 and 500 Hz (kW = 92 and 183) the two agree within 0.65 dB in every direction, the shadow
+included. At 63 and 125 Hz they differ by up to 7.6 dB, the canyon's resonances, which is the
+band the wave tables are for. What each piece of the geometric table is worth: without the
+floor's rays it reads −24.6 and −20.4 dB at 15 and 30 degrees, and with the CNOSSOS-EU
+Delta_dif over the blocking edge in place of UTD, −14.46 dB in the shadow.
 
 **Rotor tones against band tables** (the stage-2 gate; the hidden case `[.canyon_tone_study]`).
 Canyons 20 m wide with H/W = 0.5, 1 and 2, microphones at the centerline and at W/4, 1.5 m up,
@@ -781,9 +810,9 @@ changes by −0.1 to +0.5 dB. Most of the error is the table's band averaging: w
 open ground in place of the run's band-averaged one, the p90 moves by at most 0.2 dB.
 
 On the demo track the wave band moves the seven test canyons' SEL changes against open ground by
-up to 1.1 dB with `--wave_below 400` (the low-pass microphone's from −2.1 to −1.05 dB, the wave
-solution filling a shadow the placeholder diffraction makes too deep) and by under 0.03 dB with
-`--wave_below 80`, where A-weighting leaves little.
+at most 0.08 dB with `--wave_below 400`, the wave solution and the diffracting geometric table
+agreeing across the crossover, and by under 0.03 dB with `--wave_below 80`, where A-weighting
+leaves little.
 
 ### Trajectory smoothing
 

@@ -8,10 +8,11 @@
 
 #include <netcdf.h>
 
-#include "screening.hpp"
+#include "wedge.hpp"
 #include "util/constants.hpp"
 #include "util/logger.hpp"
 #include "util/netcdf.hpp"
+#include "util/parallel.hpp"
 #include "util/paths.hpp"
 
 namespace niceops {
@@ -255,16 +256,12 @@ CanyonTrace trace_canyon(const IdealCanyon& canyon, double v_c, double u_z, int 
     }
 }
 
-double edge_path_difference(double dy, double dz, double u_c, double u_z)
-{
-    return std::hypot(u_c, u_z) * std::hypot(dy, dz) - (u_c * dy + u_z * dz);
-}
+namespace {
 
-void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const double* reflection_a,
-        const double* reflection_b, double floor_reflection, const std::vector<double>& bands, double sound_speed,
-        bool diffraction, double* out)
+// The specular rays alone, in energy: canyon_ratio without diffraction.
+void specular_ratio(const IdealCanyon& canyon, double u_c, double u_z, const double* reflection_a,
+        const double* reflection_b, double floor_reflection, std::size_t n, double* out)
 {
-    const std::size_t n = bands.size();
     // Along the axis the walls are never reached, and above both of them they
     // are not in the way: open ground.
     if (u_c == 0.0 || canyon.microphone_height > std::max(canyon.height_a, canyon.height_b))
@@ -285,7 +282,6 @@ void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const doubl
     const CanyonTrace mirror = trace_canyon(canyon, -u_c, u_z);
     const CanyonTrace direct_floor = trace_canyon(below, u_c, u_z);
     const CanyonTrace mirror_floor = trace_canyon(below, -u_c, u_z);
-    const bool open = direct.escaped && direct.bounces == 0;
     auto direct_valid = [](const CanyonTrace& t) { return t.escaped && t.bounces % 2 == 0; };
     auto mirror_valid = [](const CanyonTrace& t) { return t.escaped && t.bounces % 2 == 1; };
     // The first-order reflection is the run's to evaluate whenever it is open
@@ -294,16 +290,6 @@ void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const doubl
     // evaluate is the table's.
     const bool run_reflects = mirror_valid(mirror) && mirror.bounces == 1;
     const bool run_reflects_floor = run_reflects && mirror_valid(mirror_floor) && mirror_floor.bounces == 1;
-    // The blocking edge, for the diffracted path: the top of the first wall the
-    // direct ray reaches, in the cross-section from the microphone.
-    double delta = 0.0;
-    if (!open && diffraction)
-    {
-        const bool b = direct.first_wall == 'b';
-        const double dy = b ? canyon.width - canyon.offset : -canyon.offset;
-        const double dz = (b ? canyon.height_b : canyon.height_a) - canyon.microphone_height;
-        delta = edge_path_difference(dy, dz, u_c, u_z);
-    }
     const double open_ground = 1.0 + floor_reflection;
     for (std::size_t band = 0; band < n; band++)
     {
@@ -319,15 +305,261 @@ void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const doubl
             sum += energy(mirror);
         if (!run_reflects_floor && mirror_valid(mirror_floor))
             sum += floor_reflection * energy(mirror_floor);
-        // Where the walls block the direct ray, the diffracted path over the
-        // blocking edge, with its own floor reflection.
-        if (!open && diffraction)
-        {
-            const double loss = std::min(cnossos_dif(delta, 0.0, 1, sound_speed / bands[band]), cnossos_cap);
-            sum += open_ground * std::pow(10.0, -0.1 * loss);
-        }
         out[band] = sum / open_ground;
     }
+}
+
+// One ray of the coherent canyon field: its optical length (the plane wave's
+// phase at the microphone is k times it), its reflections, and, for a ray
+// diffracted at a roof edge, the edge's geometry.
+struct CanyonRay
+{
+    double length = 0.0;
+    int hits_a = 0;
+    int hits_b = 0;
+    bool floor = false;
+    bool diffracted = false;
+    double r = 0.0;        // edge to the (image) microphone
+    double theta = 0.0;    // departure, in the edge's own angle
+    double theta0 = 0.0;   // the source's direction, likewise
+    bool run_evaluates = false; // the first-order reflection and its partner
+};
+
+// A ray traced back across the cross-section from (y, z) along the unit
+// (dy, dz): its reflections, where it leaves over a wall, and how far it
+// went.  trace_canyon's rule, with the geometry kept.
+struct FullTrace
+{
+    bool escaped = false;
+    int bounces = 0, hits_a = 0, hits_b = 0;
+    double exit_y = 0.0, exit_z = 0.0, length = 0.0;
+};
+
+FullTrace trace_full(const IdealCanyon& c, double y, double z, double dy, double dz)
+{
+    FullTrace t;
+    t.exit_y = y;
+    t.exit_z = z;
+    if (dy == 0.0)
+    {
+        t.escaped = true;
+        return t;
+    }
+    for (int k = 0; k <= 400; k++)
+    {
+        const bool toward_b = dy > 0.0;
+        const double wall = toward_b ? c.width : 0.0;
+        const double s = std::abs(wall - y) / std::abs(dy);
+        y = wall;
+        z += dz * s;
+        t.length += s;
+        if (z > (toward_b ? c.height_b : c.height_a))
+        {
+            t.escaped = true;
+            t.exit_y = y;
+            t.exit_z = z;
+            return t;
+        }
+        t.bounces++;
+        (toward_b ? t.hits_b : t.hits_a)++;
+        dy = -dy;
+    }
+    return t;
+}
+
+// Every ray of the canyon's field for the cross-section direction (uy, uz)
+// (unit, toward the source): the four specular families and, from each roof
+// edge the plane wave lights, the diffracted rays to the microphone and its
+// images in the walls and the floor, to `max_images` wall reflections.
+std::vector<CanyonRay> canyon_rays(const IdealCanyon& c, double uy, double uz, int max_images)
+{
+    std::vector<CanyonRay> rays;
+    const double ym = c.offset, zm = c.microphone_height;
+    // The specular families: from the microphone or its floor image, leaving
+    // with the wave's horizontal direction (an even number of reflections to
+    // arrive back along it) or its mirror (odd).
+    for (int floor = 0; floor < 2; floor++)
+        for (int mirror = 0; mirror < 2; mirror++)
+        {
+            const double z0 = floor ? -zm : zm;
+            const FullTrace t = trace_full(c, ym, z0, mirror ? -uy : uy, uz);
+            if (!t.escaped || t.bounces % 2 != mirror)
+                continue;
+            CanyonRay ray;
+            ray.length = -(uy * t.exit_y + uz * t.exit_z) + t.length;
+            ray.hits_a = t.hits_a;
+            ray.hits_b = t.hits_b;
+            ray.floor = floor == 1;
+            ray.run_evaluates = mirror == 1 && t.bounces == 1;
+            rays.push_back(ray);
+        }
+    // The run's first-order reflection carries its floor partner only when
+    // that partner is open as the same reflection.
+    bool from_above = false, partner = false;
+    for (const auto& r : rays)
+        if (r.run_evaluates)
+            (r.floor ? partner : from_above) = true;
+    if (!from_above)
+        for (auto& r : rays)
+            r.run_evaluates = false;
+    (void)partner;
+
+    // The roof edges, A at (0, H_A) and B at (W, H_B), each a right-angle wedge
+    // whose faces are its roof (outward) and its wall (down into the street).
+    // In an edge's own angle the roof is 0 and the wall 3 pi / 2.
+    for (int edge = 0; edge < 2; edge++)
+    {
+        const bool a = edge == 0;
+        const double ey = a ? 0.0 : c.width;
+        const double ez = a ? c.height_a : c.height_b;
+        const double other = a ? c.height_b : c.height_a;
+        // Lit unless the other wall stands between the edge and the source.
+        const double toward = a ? uy : -uy;
+        if (toward > 0.0 && ez + c.width * uz / toward <= other)
+            continue;
+        auto angle = [&](double dy, double dz) {
+            double t = std::atan2(dz, a ? -dy : dy);
+            if (t < 0.0)
+                t += 2.0 * pi;
+            return t;
+        };
+        const double theta0 = angle(uy, uz);
+        for (int n = 0; n <= max_images; n++)
+            for (int floor = 0; floor < 2; floor++)
+            {
+                // The microphone's n-th image away from the edge's own wall:
+                // reflections alternate, the far wall first.
+                const double far = (n % 2 == 0) ? n * c.width + (a ? ym : c.width - ym)
+                                                : (n + 1) * c.width - (a ? ym : c.width - ym);
+                const double iy = a ? far : c.width - far;
+                const double iz = floor ? -zm : zm;
+                // Each wall the unfolded line crosses must stand above the
+                // crossing, or the ray leaves the street over it.
+                bool valid = true;
+                for (int j = 1; j <= n && valid; j++)
+                {
+                    const double s = j * c.width / far;
+                    const double z = ez + (iz - ez) * s;
+                    const bool wall_b = a ? (j % 2 == 1) : (j % 2 == 0);
+                    if (z > (wall_b ? c.height_b : c.height_a))
+                        valid = false;
+                }
+                if (!valid)
+                    continue;
+                CanyonRay ray;
+                ray.diffracted = true;
+                ray.r = std::hypot(iy - ey, iz - ez);
+                ray.theta = angle(iy - ey, iz - ez);
+                ray.theta0 = theta0;
+                ray.length = -(uy * ey + uz * ez) + ray.r;
+                ray.hits_b = a ? (n + 1) / 2 : n / 2;
+                ray.hits_a = a ? n / 2 : (n + 1) / 2;
+                ray.floor = floor == 1;
+                rays.push_back(ray);
+            }
+    }
+    return rays;
+}
+
+// The band average of |sum_i A_i exp(i k L_i)|^2 over k in [k1, k2], pair by
+// pair: Re(A_i conj(A_j) exp(i k_mid dL)) sin(h dL) / (h dL), h the half
+// width.  The rays come sorted by length, and a pair whose sinc has fallen
+// below 1/30 (h dL > 30) is left out: that far apart the band has averaged it
+// away, and the all-pairs sum was most of a table's build time.
+double band_energy(const std::vector<std::complex<double>>& amplitude, const std::vector<double>& length, double k1,
+        double k2)
+{
+    const double mid = 0.5 * (k1 + k2), half = 0.5 * (k2 - k1);
+    const double reach = half > 0.0 ? 30.0 / half : std::numeric_limits<double>::infinity();
+    thread_local std::vector<std::complex<double>> phasor;
+    phasor.resize(amplitude.size());
+    for (std::size_t i = 0; i < amplitude.size(); i++)
+        phasor[i] = amplitude[i] * std::polar(1.0, mid * length[i]);
+    double sum = 0.0;
+    for (std::size_t i = 0; i < amplitude.size(); i++)
+    {
+        sum += std::norm(amplitude[i]);
+        for (std::size_t j = i + 1; j < amplitude.size() && length[j] - length[i] < reach; j++)
+        {
+            const double x = half * (length[i] - length[j]);
+            const double sinc = std::abs(x) < 1e-8 ? 1.0 : std::sin(x) / x;
+            sum += 2.0 * std::real(phasor[i] * std::conj(phasor[j])) * sinc;
+        }
+    }
+    return sum;
+}
+
+// canyon_ratio with diffraction: the field of every ray the run does not
+// evaluate itself, summed coherently and band-averaged.  The run adds its own
+// first-order pair in energy, so the pair's interference with the rest is not
+// the table's to carry either.
+void coherent_ratio(const IdealCanyon& c, double u_c, double u_z, const double* reflection_a,
+        const double* reflection_b, double floor_reflection, const std::vector<double>& bands, double sound_speed,
+        double* out)
+{
+    // Grazing is a degenerate edge case for the wedge (incident and roof
+    // reflection merge); a hair above it stands in.
+    u_z = std::max(u_z, 1e-3);
+    const double perp = std::hypot(u_c, u_z);
+    // Straight overhead in floating point is cos(pi/2) = 6e-17 across: a ray
+    // that steep would leave its trace 1e17 m up, and its phase with it.
+    const double uy = std::abs(u_c / perp) < 1e-9 ? 0.0 : u_c / perp;
+    const double uz = u_z / perp;
+    auto rays = canyon_rays(c, uy, uz, 40);
+    std::sort(rays.begin(), rays.end(), [](const CanyonRay& a, const CanyonRay& b) { return a.length < b.length; });
+    const double half = std::pow(2.0, 1.0 / 6.0);
+    const double root_floor = std::sqrt(floor_reflection);
+    std::vector<std::complex<double>> rest;
+    std::vector<double> rest_length;
+    for (std::size_t band = 0; band < bands.size(); band++)
+    {
+        const double ra = std::sqrt(reflection_a[band]), rb = std::sqrt(reflection_b[band]);
+        const double f1 = bands[band] / half, f2 = bands[band] * half;
+        double total = 0.0, open = 0.0;
+        // Three sub-bands, each with the diffraction coefficients at its center.
+        for (int part = 0; part < 3; part++)
+        {
+            const double g1 = f1 * std::pow(f2 / f1, part / 3.0), g2 = f1 * std::pow(f2 / f1, (part + 1) / 3.0);
+            const double k1 = 2.0 * pi * g1 / sound_speed * perp, k2 = 2.0 * pi * g2 / sound_speed * perp;
+            const double kc = 0.5 * (k1 + k2);
+            rest.clear();
+            rest_length.clear();
+            for (const auto& ray : rays)
+            {
+                if (ray.run_evaluates)
+                    continue;
+                std::complex<double> amp = std::pow(ra, ray.hits_a) * std::pow(rb, ray.hits_b)
+                        * (ray.floor ? root_floor : 1.0);
+                if (ray.diffracted)
+                    amp *= hard_wedge_coefficient(1.5, ray.theta, ray.theta0, kc, ray.r) / std::sqrt(ray.r);
+                rest.push_back(amp);
+                rest_length.push_back(ray.length);
+            }
+            total += band_energy(rest, rest_length, k1, k2) * (g2 - g1);
+            // Open ground: the direct ray and the floor's, 2 z_m uz apart.
+            const std::vector<std::complex<double>> ground {1.0, root_floor};
+            const std::vector<double> ground_length {0.0, 2.0 * c.microphone_height * uz};
+            open += band_energy(ground, ground_length, k1, k2) * (g2 - g1);
+        }
+        out[band] = std::max(total / open, 1e-30);
+    }
+}
+
+} // namespace
+
+void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const double* reflection_a,
+        const double* reflection_b, double floor_reflection, const std::vector<double>& bands, double sound_speed,
+        bool diffraction, double* out)
+{
+    if (u_c == 0.0 || canyon.microphone_height > std::max(canyon.height_a, canyon.height_b))
+    {
+        std::fill(out, out + bands.size(), 1.0);
+        return;
+    }
+    if (diffraction)
+        coherent_ratio(canyon, u_c, u_z, reflection_a, reflection_b, floor_reflection, bands, sound_speed, out);
+    else
+        specular_ratio(canyon, u_c, u_z, reflection_a, reflection_b, floor_reflection, bands.size(), out);
 }
 
 CompassDirection compass_direction(const Vec3& local, double frame_bearing)
@@ -751,13 +983,15 @@ std::vector<Facade> ideal_canyon_facades(const IdealCanyon& canyon, const Vec3& 
 
 std::vector<double> ideal_canyon_gains(const IdealCanyon& canyon, double axis_bearing,
         const UrbanTable::Axes& axes, const std::vector<double>& reflection_a,
-        const std::vector<double>& reflection_b, double floor_reflection, double sound_speed, bool diffraction)
+        const std::vector<double>& reflection_b, double floor_reflection, double sound_speed, bool diffraction,
+        unsigned threads)
 {
     const std::size_t nb = axes.bands.size();
     std::vector<double> gains(axes.azimuths.size() * axes.elevations.size() * nb);
-    std::vector<double> ratio(nb);
     const double a = axis_bearing * pi / 180.0;
-    for (std::size_t i = 0; i < axes.azimuths.size(); i++)
+    parallel_chunks(axes.azimuths.size(), threads, [&](std::size_t begin, std::size_t end) {
+    std::vector<double> ratio(nb);
+    for (std::size_t i = begin; i < end; i++)
     {
         const double azimuth = axes.azimuths[i] * pi / 180.0;
         for (std::size_t j = 0; j < axes.elevations.size(); j++)
@@ -773,6 +1007,7 @@ std::vector<double> ideal_canyon_gains(const IdealCanyon& canyon, double axis_be
                         = std::max(10.0 * std::log10(ratio[band]), urban_gain_floor_db);
         }
     }
+    });
     return gains;
 }
 

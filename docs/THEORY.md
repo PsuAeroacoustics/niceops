@@ -816,34 +816,57 @@ reflects exactly as often as the walls make it, so each family holds at most one
 the floor is traced the same way from the microphone's image in it, $2 z_r$ lower: it clears the
 roofs after a different number of reflections, and is often open where the direct ray is blocked.
 Four families, then, at most one path each: from above or off the floor, direct ($d$, $d_f$) or
-mirrored ($m$, $m_f$). Against open ground's direct ray and floor reflection, $1 + \rho_f$ with
-$\rho_f$ the floor's energy reflection, the table holds
+mirrored ($m$, $m_f$).
+
+**Roof-edge diffraction.** Each roof edge is a rigid right-angle wedge ($n = 3/2$: its roof and its
+wall), lit unless the other wall stands between it and the source. The uniform theory of
+diffraction [69], which makes Keller's geometrical theory [68] uniform across the shadow and
+reflection boundaries, gives its diffracted wave, for the time convention $e^{-i\omega t}$, as
 
 $$
-T = \frac{[d]\,P_d + \rho_f\,[d_f]\,P_{d_f} + [m]'\,P_m + \rho_f\,[m_f]'\,P_{m_f}
-      + (1 + \rho_f)\,[k_d \ne 0]\,10^{-\Delta_\mathrm{dif}/10}}{1 + \rho_f},
+u_d = e^{-ik\,\hat{\mathbf{u}}\cdot\mathbf{E}}\,D(\theta, \theta_0)\,\frac{e^{ikr}}{\sqrt r},
+\qquad
+D = -\frac{e^{i\pi/4}}{2n\sqrt{2\pi k}}\sum_{\beta = \theta \mp \theta_0}\left[\cot\frac{\pi + \beta}{2n}\,F(kr\,a^+(\beta)) + \cot\frac{\pi - \beta}{2n}\,F(kr\,a^-(\beta))\right],
 $$
 
-where $[\cdot]$ is 1 for a family that reaches the source (even reflections for $d$ and $d_f$, odd for
-$m$ and $m_f$), $P = \rho_A^{a}\rho_B^{b}$ for its $a$ and $b$ reflections off each wall, and the
-primes leave out what the run evaluates itself: $m$ when it reflects once, and $m_f$ when both $m$
-and $m_f$ do.
-$G = 10\lg T$ (floored at $-300$ dB). Where a wall X blocks the direct ray ($k_d \ne 0$), a
-diffracted path over its top, with its floor reflection, stands in for it,
-with the CNOSSOS-EU $\Delta_\mathrm{dif} = \min(10\lg(3 + 40\delta/\lambda),\ 25)$ dB [32, 33] at
-the plane wave's path difference over an infinite edge parallel to the axis. Minimized along the
-edge, which is Keller's cone of diffracted rays [68],
+with $\theta$ and $\theta_0$ the departure and the source's direction in the edge's own angle (roof
+0, wall $3\pi/2$), $a^\pm(\beta) = 2\cos^2((2n\pi N^\pm - \beta)/2)$ for the integers $N^\pm$ nearest
+$(\beta \pm \pi)/2n\pi$, and the transition function
+$F(X) = -i\sqrt{\pi X}\,e^{i\pi/4}\,w(e^{i\pi/4}\sqrt X)$ through the Faddeeva function. $F \to 1$ away
+from the shadow and reflection boundaries, where the geometrical-optics field jumps, and keeps the
+total field continuous across them. For a half-plane this is Sommerfeld's exact solution [64]; for
+the right-angle wedge it is within 0.02 dB of the exact eigenfunction series [70] at $kr = 10$. The
+diffracted rays reach the microphone straight and through its images in the walls (to 40
+reflections) and the floor, an unfolded line valid while every wall it crosses stands above the
+crossing.
+
+**The table.** The rays sum coherently, because diffraction's continuity across a boundary is a
+matter of phase: with optical lengths $L_r$ (the plane wave's phase at the microphone being
+$kL_r$) and amplitudes $A_r = \prod\sqrt{\rho}$ over the ray's reflections, times $D/\sqrt r$ for a
+diffracted ray,
 
 $$
-\delta = |\mathbf{u}_\perp|\,|\mathbf{D}| - \mathbf{u}_\perp\cdot\mathbf{D},
-\qquad \mathbf{u}_\perp = (u_c, u_z),\quad \mathbf{D} = (y_X - y_r,\ H_X - z_r),
+T = \frac{\left\langle\left|\sum_{r \notin \text{run}} A_r\,e^{ikL_r}\right|^2\right\rangle_\text{band}}{\left\langle\left|1 + \sqrt{\rho_f}\,e^{2ikz_r u_z}\right|^2\right\rangle_\text{band}},
 $$
 
-in the canyon's cross-section. This diffraction is a placeholder for a wedge model. Left out:
-diffraction of the reflected paths, diffuse reflection, the canyon's ends, turbulent scattering
-into the shielded directions, and every wave effect below the frequencies where the street is
-several wavelengths wide, which the wave solution supplies (§6.6). A microphone above both walls,
-or a direction along the axis, gives $T = 1$.
+the denominator being open ground's direct ray and floor reflection. The band average is taken pair
+by pair, $\langle e^{ik\,\Delta L}\rangle = e^{i\bar k\,\Delta L}\,\operatorname{sinc}(h\,\Delta L)$ for
+half-width $h$, over three sub-bands each with its diffraction coefficients at its center; a pair
+whose sinc has fallen below 1/30 is left out. The rays the run evaluates itself -- the first-order
+reflection when it is open from above, and its floor partner when that is open too -- are left out
+of the sum, with their interference with the rest: the run adds them in energy. Without
+diffraction (`niceops_urban_table --no_diffraction`) the four families are summed in energy,
+
+$$
+T = \frac{[d]\,P_d + \rho_f\,[d_f]\,P_{d_f} + [m]'\,P_m + \rho_f\,[m_f]'\,P_{m_f}}{1 + \rho_f},
+$$
+
+where $[\cdot]$ is 1 for a family that reaches the source, $P = \rho_A^{a}\rho_B^{b}$ for its
+reflections off each wall, and the primes leave out the run's. $G = 10\lg T$, floored at $-300$ dB.
+Left out: diffraction from one edge to the other and of the reflected rays at a third, diffuse
+reflection, the canyon's ends, turbulent scattering into the shielded directions, and every wave
+effect below the frequencies where the street is several wavelengths wide, which the wave solution
+supplies (§6.6). A microphone above both walls, or a direction along the axis, gives $T = 1$.
 
 **Separating the paths.** A table keyed on the arrival direction alone assumes every path leaves
 the rotor in the direct path's direction at the direct path's range. Close to the buildings a
@@ -1663,7 +1686,7 @@ than for SEL.
   NICEOPS applies no shift. A database whose spheres have had the shift removed is refused. The
   source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
 - **Buildings**, except at microphones with an urban table (§6.5), which describes ideal
-  street canyons with a placeholder diffraction.
+  street canyons, their roof edges diffracting singly.
 - **Diffraction and screening by terrain** without `--terrain_screening`, when terrain enters
   only through each path's mean ground plane (§6.3). Screening by terrain (§6.4) takes the
   vertical plane only, with no lateral paths.
@@ -1750,3 +1773,5 @@ than for SEL.
 66. Press, W. H., Teukolsky, S. A., Vetterling, W. T., and Flannery, B. P., *Numerical Recipes in C: The Art of Scientific Computing*, 2nd ed., Cambridge University Press, Cambridge, 1992, Sec. 6.9.
 67. Li, K. M., and Lai, C. Y. C., "A Note on Noise Propagation in Street Canyons," *Journal of the Acoustical Society of America*, Vol. 126, No. 2, 2009, pp. 644–655. https://doi.org/10.1121/1.3158599
 68. Keller, J. B., "Geometrical Theory of Diffraction," *Journal of the Optical Society of America*, Vol. 52, No. 2, 1962, pp. 116–130. https://doi.org/10.1364/JOSA.52.000116
+69. Kouyoumjian, R. G., and Pathak, P. H., "A Uniform Geometrical Theory of Diffraction for an Edge in a Perfectly Conducting Surface," *Proceedings of the IEEE*, Vol. 62, No. 11, 1974, pp. 1448–1461. https://doi.org/10.1109/PROC.1974.9651
+70. Bowman, J. J., Senior, T. B. A., and Uslenghi, P. L. E. (eds.), *Electromagnetic and Acoustic Scattering by Simple Shapes*, North-Holland, Amsterdam, 1969, Ch. 6.

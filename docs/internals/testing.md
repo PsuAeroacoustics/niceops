@@ -141,7 +141,10 @@ Notes on each:
   from the free field's or the table's call passed every other test.
 - **`urban_{canyon,plate}.csv`** were made by the build that added `--urban_table`, and
   regenerated when the ideal canyon learned the floor's rays (the low-pass microphone moved from
-  -3.7 to -2.1 dB against open ground; flush microphones, their own floor images, did not move).
+  -3.7 to -2.1 dB against open ground; flush microphones, their own floor images, did not move),
+  and again, with `urban_wave.csv`, when UTD roof-edge diffraction replaced the CNOSSOS-EU
+  placeholder (the low-pass microphone to +0.4 dB, the placeholder having left shadows 2-4 dB too
+  deep).
   Seven microphones in ideal canyons on the demo track, poles and plates. They pin the call site:
   an image path whose separation is not mirrored back before the plate reads its azimuth fails
   the plate's, and a reflection evaluated with the ground model whatever its floor partner fails

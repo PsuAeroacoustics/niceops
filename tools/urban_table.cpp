@@ -21,8 +21,8 @@
 //   absorption_a,    optional: each wall's energy absorption coefficient,
 //   absorption_b     every band (default --absorption)
 // The table is the canyon's under plane-wave incidence (canyon_ratio): the
-// specular rays from above and off the floor, but the first-order reflections,
-// and, where a wall blocks the direct ray, the diffracted path over its top,
+// specular rays from above and off the floor and the roof edges' diffracted
+// rays, summed coherently and band-averaged, but the first-order reflections,
 // relative to open ground; the run adds the first-order reflections itself,
 // from the two walls written beside the table, each --facade_length long.  The file is SI and records --frame_bearing, the
 // compass bearing of the local +x axis, which the run checks against its own.
@@ -89,7 +89,8 @@ int main(int argc, char** argv)
             ->check(CLI::PositiveNumber);
     app.add_option("--sound_speed", sound_speed, "For the diffracted path's wavelengths, m/s (default 343.2).")
             ->check(CLI::PositiveNumber);
-    app.add_flag("--no_diffraction", no_diffraction, "Leave out the diffracted path over a blocking wall.");
+    app.add_flag("--no_diffraction", no_diffraction,
+            "Leave out the roof edges' diffraction and sum the specular rays in energy (for comparison).");
     app.add_option("--wave_below", wave_below,
             "Solve each flush-roof canyon by the wave equation (src/canyon_wave) and take its table for the "
             "bands centered at or below this, Hz (default 0, none).")
@@ -99,7 +100,9 @@ int main(int argc, char** argv)
     app.add_option("--wave_ppw", wave_ppw, "The wave solver's grid points per wavelength (default 15).")
             ->check(CLI::Range(6.0, 40.0));
     app.add_option("-j,--threads", threads,
-            "Canyons solved at once (default: NICEOPS_THREADS when set, else one per hardware thread).");
+            "Worker threads, for the geometric table's directions and the canyons the wave equation solves "
+            "(default: NICEOPS_THREADS when set, else one per hardware thread); the table is the same bits at "
+            "any count.");
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("-o,--output", output, "The table file to write.")->required();
     CLI11_PARSE(app, argc, argv);
@@ -225,7 +228,7 @@ int main(int argc, char** argv)
             receiver.reflection = reflect_a;
             receiver.reflection.insert(receiver.reflection.end(), reflect_b.begin(), reflect_b.end());
             const auto row_gains = ideal_canyon_gains(canyon, axis, axes, reflect_a, reflect_b, 1.0 - floor_absorption,
-                    sound_speed, !no_diffraction);
+                    sound_speed, !no_diffraction, tool_thread_count(threads));
             gains.insert(gains.end(), row_gains.begin(), row_gains.end());
             if (wave_bands > 0)
             {
@@ -306,7 +309,7 @@ int main(int argc, char** argv)
         }
         std::map<std::string, std::string> provenance {
                 {"canyons", canyons_file},
-                {"diffraction", no_diffraction ? "none" : "cnossos_dif placeholder over the blocking wall"},
+                {"diffraction", no_diffraction ? "none; specular rays in energy" : "UTD at the roof edges, coherent"},
                 {"sound_speed_mps", exact_text(sound_speed)},
                 {"facade_length_m", exact_text(facade_length * to_meters)},
                 {"floor_absorption", exact_text(floor_absorption)},

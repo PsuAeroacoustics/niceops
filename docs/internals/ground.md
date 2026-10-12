@@ -91,6 +91,29 @@ What to keep:
   harmonic sum of squared ranges). The image term has no CTest that fails without it (see
   [testing.md](testing.md#mutation-guarded-tests)); keep it, since a strongly directional sphere
   can make a reflection louder than the direct path's bin bound.
+- **The roof edges diffract by UTD, and the table sums every ray coherently** (`coherent_ratio`,
+  `canyon_rays`, `band_energy` in `urban.cpp`; the kernel is `src/wedge`). Continuity across a
+  shadow or reflection boundary is a matter of phase -- the diffracted ray makes up the jump of
+  the specular ray it shadows only when the two add as complex amplitudes -- so the specular
+  families and the diffracted rays share one sum, band-averaged pair by pair (the exact sinc of
+  each path difference) over three sub-bands. In energy the field jumped at every boundary. What
+  to keep:
+  - **The run's own rays are left out of the sum, not subtracted from it.** Subtracting their
+    band energy from the total left the cross terms with the rest, which went negative in
+    interference nulls; the run adds its reflections in energy, so their interference is not
+    the table's to carry.
+  - **Overhead is guarded:** cos(pi/2) is 6e-17 in floating point, and a ray that steep leaves
+    its trace 1e17 m up, taking its phase with it (13.8 dB wrong at 63 Hz before the guard).
+  - **Pairs whose sinc is below 1/30 are skipped**, the rays sorted by length; that and computing
+    each ray's phase once per sub-band took a seven-receiver build from 139 to 40 s of CPU,
+    and moved the specular-limit test's mean by 4e-5 dB. Directions are threaded.
+  - **The kernel's boundary tie:** on a shadow or reflection boundary the geometrical-optics test
+    and the coefficient's limit must take the same side (`hard_wedge_field` moves theta off a
+    boundary once); in floating point theta + theta0 can land a hair under pi.
+  - **The transition function's asymptotic series runs to its sixth term** past X = 50, meeting
+    the Faddeeva form within 1e-8.
+  - `--no_diffraction` keeps the specular rays in energy, which the separability study and the
+    four-family tests compare against specular lattices.
 - **The canyon table's specular part comes from four traces, not a lattice sum.** A plane wave
   reaches a point by at most one ray per cross-canyon direction and per way of arriving, from
   above or off the floor, so `canyon_ratio` traces four rays back from the microphone and its

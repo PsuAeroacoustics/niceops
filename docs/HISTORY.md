@@ -228,6 +228,18 @@ old and new results only with them in mind.
   study had reported that row as 0.196 dB, a figure that measured the bug
   ([FIDELITY](FIDELITY.md#trajectory-smoothing)).
 
+### Urban receivers
+
+- **The ideal canyon traces the floor's rays.** Its first tables left the floor to the ground
+  model, as though the floor's reflection shared the direct ray's fate; at 15 and 30 degrees over
+  a 20 m canyon they read 20-25 dB of shielding where the wave solution has 2-4 dB. Tracing them
+  moved the demo canyons' low-pass microphone from −3.7 to −2.1 dB against open ground.
+- **UTD replaced the CNOSSOS-EU placeholder at the roof edges**, and the table became coherent.
+  The placeholder left shadows 2-4 dB too deep (−14.5 dB against the wave solution's −10.9 in
+  one), and the energy sum jumped at every boundary. The demo canyons' range went from −2.1 to
+  +2.1 dB to −1.0 to +2.2 dB, and a 400 Hz wave band, which had moved them by up to 1.1 dB, now
+  moves them by 0.08.
+
 ### Inputs
 
 - **Four length options were meters before `--units` existed**: `--grid`, `--gridstep`,

@@ -10,7 +10,6 @@
 #include <stdexcept>
 #include <vector>
 
-#include "screening.hpp"
 #include "urban.hpp"
 #include "util/constants.hpp"
 
@@ -227,30 +226,6 @@ TEST_CASE("a far source reaches a canyon microphone by at most four specular pat
     REQUIRE(floor_only > 50);
 }
 
-TEST_CASE("edge_path_difference is the minimum over the edge", "[urban]")
-{
-    std::mt19937 rng(11);
-    std::uniform_real_distribution<double> unit(0.0, 1.0);
-    for (int trial = 0; trial < 200; trial++)
-    {
-        // Canyon coordinates: x across, y along the edge, z up.
-        const double dy = -30.0 + 60.0 * unit(rng);
-        const double dz = 1.0 + 30.0 * unit(rng);
-        const double e = (2.0 + 80.0 * unit(rng)) * pi / 180.0;
-        const double az = 2.0 * pi * unit(rng);
-        const double u_c = std::cos(e) * std::cos(az), u_a = std::cos(e) * std::sin(az), u_z = std::sin(e);
-        // f(t) = |E(t) - R| - u . (E(t) - R) along the edge, convex in t.
-        const auto f = [&](double t) { return std::sqrt(dy * dy + t * t + dz * dz) - (u_c * dy + u_a * t + u_z * dz); };
-        double lo = -1e6, hi = 1e6;
-        for (int k = 0; k < 400; k++)
-        {
-            const double m1 = lo + (hi - lo) / 3.0, m2 = hi - (hi - lo) / 3.0;
-            (f(m1) < f(m2) ? hi : lo) = f(m1) < f(m2) ? m2 : m1;
-        }
-        REQUIRE(edge_path_difference(dy, dz, u_c, u_z) == Catch::Approx(f(0.5 * (lo + hi))).margin(1e-7));
-    }
-}
-
 TEST_CASE("canyon_ratio's limits", "[urban]")
 {
     const std::vector<double> bands {125.0, 1000.0, 4000.0};
@@ -280,23 +255,105 @@ TEST_CASE("canyon_ratio's limits", "[urban]")
             REQUIRE(out[k] == Catch::Approx(other[k]).epsilon(1e-12));
     }
 
-    // Low over B: the direct ray is blocked, so the diffracted path stands in,
-    // falling with frequency, below 10 lg 3 and never under the 25 dB cap.
-    const double low = 10.0 * pi / 180.0;
-    canyon_ratio(c, std::cos(low), std::sin(low), soft.data(), soft.data(), 1.0, bands, 343.0, true, out.data());
-    std::vector<double> specular(3);
-    canyon_ratio(c, std::cos(low), std::sin(low), soft.data(), soft.data(), 1.0, bands, 343.0, false,
-            specular.data());
-    for (std::size_t k = 0; k < 3; k++)
+}
+
+// The roof edges' diffraction keeps the field continuous where a specular ray
+// switches on or off; the specular rays alone jump there.  Swept in 0.05
+// degree steps across the direct ray's shadow boundary over wall B (at
+// atan(13.5 / 14), 43.95 degrees), in the 1 kHz band.
+TEST_CASE("the canyon field is continuous across a shadow boundary", "[urban]")
+{
+    const IdealCanyon c {20.0, 6.0, 15.0, 15.0, 1.5};
+    const std::vector<double> band {1000.0};
+    const std::vector<double> walls(1, 0.9);
+    double previous_coherent = 0.0, previous_specular = 0.0;
+    double coherent_step = 0.0, specular_step = 0.0;
+    for (double degrees = 40.0; degrees <= 48.0; degrees += 0.05)
     {
-        const double diffracted = out[k] - specular[k];
-        REQUIRE(diffracted <= 1.0 / cnossos_floor + 1e-15);
-        REQUIRE(diffracted >= std::pow(10.0, -0.1 * cnossos_cap) - 1e-15);
-        if (k > 0)
-            REQUIRE(out[k] - specular[k] <= out[k - 1] - specular[k - 1]);
+        const double e = degrees * pi / 180.0;
+        double coherent = 0.0, specular = 0.0;
+        canyon_ratio(c, std::cos(e), std::sin(e), walls.data(), walls.data(), 1.0, band, 343.0, true, &coherent);
+        canyon_ratio(c, std::cos(e), std::sin(e), walls.data(), walls.data(), 1.0, band, 343.0, false, &specular);
+        coherent = 10.0 * std::log10(coherent);
+        specular = 10.0 * std::log10(specular);
+        if (degrees > 40.0)
+        {
+            coherent_step = std::max(coherent_step, std::abs(coherent - previous_coherent));
+            specular_step = std::max(specular_step, std::abs(specular - previous_specular));
+        }
+        previous_coherent = coherent;
+        previous_specular = specular;
     }
-    // The lowest band is above the cap, so the fall is not just the cap.
-    REQUIRE(out[0] - specular[0] > std::pow(10.0, -0.1 * cnossos_cap) * 1.5);
+    INFO("largest step: coherent " << coherent_step << " dB, specular " << specular_step << " dB");
+    REQUIRE(specular_step > 2.0);
+    REQUIRE(coherent_step < 0.5);
+}
+
+// Away from every boundary, at high frequency, the band averages most of the
+// interference out and the field is the specular rays' energy, on average.
+// What the band leaves -- equal rays a few metres apart keep a cross term of
+// a few percent in a third-octave at 2 kHz -- is the field's, and moves single
+// directions by up to 1.5 dB.  "Away" is a metre of clearance at every wall
+// top each family passes: at 70 degrees over this canyon, say, the floor's ray
+// off wall A strikes it 2 cm below its top, on the wall's reflection boundary,
+// where the edge's diffracted ray halves it and the specular energy is 1.1 dB
+// high.
+TEST_CASE("far from its boundaries the canyon field is the specular energy", "[urban]")
+{
+    const IdealCanyon c {20.0, 6.0, 15.0, 18.0, 1.5};
+    IdealCanyon below = c;
+    below.microphone_height = -c.microphone_height;
+    const std::vector<double> bands {2000.0, 4000.0};
+    const std::vector<double> walls(2, 0.8);
+    int compared = 0;
+    double sum = 0.0, worst = 0.0;
+    for (double degrees = 30.0; degrees <= 150.0; degrees += 1.0)
+    {
+        const double e = degrees * pi / 180.0;
+        const double uc = std::cos(e), uz = std::sin(e);
+        if (std::min({top_margin(c, uc, uz), top_margin(c, -uc, uz), top_margin(below, uc, uz),
+                    top_margin(below, -uc, uz)})
+                < 1.0)
+            continue;
+        double coherent[2], specular[2];
+        canyon_ratio(c, uc, uz, walls.data(), walls.data(), 1.0, bands, 343.0, true, coherent);
+        canyon_ratio(c, uc, uz, walls.data(), walls.data(), 1.0, bands, 343.0, false, specular);
+        for (int b = 0; b < 2; b++)
+        {
+            // Where no specular ray arrives, what is left is the edges'
+            // diffraction, far from its boundaries and under -10 dB.
+            if (specular[b] == 0.0)
+            {
+                REQUIRE(coherent[b] < 0.1);
+                continue;
+            }
+            const double d = std::abs(10.0 * std::log10(coherent[b] / specular[b]));
+            sum += d;
+            worst = std::max(worst, d);
+            compared++;
+        }
+    }
+    INFO("mean " << sum / compared << " dB, worst " << worst << " dB over " << compared);
+    REQUIRE(compared > 60);
+    REQUIRE(sum / compared < 0.3);
+    REQUIRE(worst < 1.6);
+}
+
+// Deep in the shadow of wall B (10 degrees up, the boundary near 44) the field
+// is the roof edges' diffraction, and falls with frequency: walls absorbing
+// everything that reaches them, and a flush microphone, so that only the
+// edges' rays straight to it remain, with no floor ray to interfere.
+TEST_CASE("deep in a canyon's shadow the field falls with frequency", "[urban]")
+{
+    const IdealCanyon c {20.0, 6.0, 15.0, 15.0, 0.0};
+    const std::vector<double> bands {125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0};
+    const std::vector<double> soaking(6, 0.0);
+    std::vector<double> out(6);
+    const double e = 10.0 * pi / 180.0;
+    canyon_ratio(c, std::cos(e), std::sin(e), soaking.data(), soaking.data(), 1.0, bands, 343.0, true, out.data());
+    for (std::size_t b = 1; b < bands.size(); b++)
+        REQUIRE(out[b] < out[b - 1]);
+    REQUIRE(10.0 * std::log10(out.back()) < -15.0);
 }
 
 // What separating the first-order paths from the table costs at short range:

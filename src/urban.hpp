@@ -145,8 +145,8 @@ CanyonTrace trace_canyon(const IdealCanyon& canyon, double v_c, double u_z, int 
 
 // The canyon's table entry for a plane wave arriving from the unit direction
 // whose cross-canyon component is `u_c` (toward wall B positive) and vertical
-// component `u_z`, per band, as an energy ratio to open ground, whose direct ray
-// and floor reflection carry 1 + floor_reflection:
+// component `u_z`, per band, as an energy ratio to open ground's direct ray and
+// floor reflection (THEORY 6.5):
 //
 //   - the rays that reach the microphone specularly.  Under plane-wave
 //     incidence each of four families holds at most one: arriving from above or
@@ -155,28 +155,24 @@ CanyonTrace trace_canyon(const IdealCanyon& canyon, double v_c, double u_z, int 
 //     rays start from the microphone's image in the floor, lower by twice its
 //     height, so they clear the roofs after a different number of reflections
 //     and are often open where the direct ray is not;
-//   - the first-order reflection is left out whenever it is open from above,
-//     and its floor partner whenever both are: the run evaluates them as a
-//     path of its own, with the ground model (first_order_floor_partner);
-//   - where a wall X blocks the direct ray, the diffracted path over X's top,
-//     with its floor reflection: the CNOSSOS-EU Delta_dif (screening.hpp) at the
-//     plane wave's path difference over that edge, a placeholder until a wedge
-//     diffraction model replaces it (`diffraction` false leaves it out).
+//   - with `diffraction`, each lit roof edge's diffracted rays (wedge.hpp, a
+//     right-angle wedge) to the microphone and its images in the walls and the
+//     floor, all of them summed with their phases and band-averaged pair by
+//     pair, which keeps the field continuous where a ray is cut off; without,
+//     the specular rays in energy;
+//   - but not the first-order reflection when it is open from above, nor its
+//     floor partner when both are: the run evaluates them as a path of its
+//     own, with the ground model (first_order_floor_partner), and adds it in
+//     energy, so their interference with the rest is left out too.
 //
 // `reflection_a` and `reflection_b` are the walls' energy reflection
-// coefficients for bands [0, bands.size()), `floor_reflection` the floor's (1
-// for rigid pavement); `out` gets the ratio for each band.  A microphone above
-// both walls, or a direction along the axis, gives 1.
+// coefficients for bands [0, bands.size()) (third-octave centers),
+// `floor_reflection` the floor's (1 for rigid pavement); `out` gets the ratio
+// for each band.  A microphone above both walls, or a direction along the
+// axis, gives 1.
 void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const double* reflection_a,
         const double* reflection_b, double floor_reflection, const std::vector<double>& bands, double sound_speed,
         bool diffraction, double* out);
-
-// The plane wave's path difference over an infinite edge parallel to the canyon
-// axis, from the microphone at (0, 0) to the edge at (dy, dz) in the canyon's
-// cross-section, for an arrival direction whose cross-section components are
-// (u_c, u_z): |u_perp| |D| - u_perp . D, the Keller-cone minimum over the edge
-// of the edge path's extra length.
-double edge_path_difference(double dy, double dz, double u_c, double u_z);
 
 // The compass bearing (degrees, toward) and elevation (degrees above the
 // horizontal) of a local-frame direction, for a run whose local +x points
@@ -316,7 +312,8 @@ std::vector<Facade> ideal_canyon_facades(const IdealCanyon& canyon, const Vec3& 
 // `reflection_b` are per table band.
 std::vector<double> ideal_canyon_gains(const IdealCanyon& canyon, double axis_bearing,
         const UrbanTable::Axes& axes, const std::vector<double>& reflection_a,
-        const std::vector<double>& reflection_b, double floor_reflection, double sound_speed, bool diffraction);
+        const std::vector<double>& reflection_b, double floor_reflection, double sound_speed, bool diffraction,
+        unsigned threads = 1);
 
 // The wave band's weight in each table band (the low band, solved by
 // src/canyon_wave): 1 for every band centered at or below `wave_below` Hz,

@@ -1063,10 +1063,11 @@ the paths are summed in energy. Microphones without a table are evaluated as wit
   reflection often arrives where the direct sound is blocked. The table assumes hard pavement
   unless built with `--floor_absorption`; put urban microphones on a hard ground class
   ([Mixed ground](#mixed-ground)) so the open-ground prediction it scales is a street's.
-- **What the canyon model leaves out.** The walls reflect specularly; diffraction is a
-  placeholder over the blocking wall's top; diffuse reflection, the street's ends, turbulence in
-  the shadows and low-frequency wave effects are not modeled. Treat the tables' detail at low
-  elevations, where specular reflection switches paths on and off, with caution.
+- **What the canyon model holds and leaves out.** The walls and floor reflect specularly and the
+  roof edges diffract, all summed with their phases so that the field stays continuous where a
+  reflection or the direct sound is cut off. Diffraction from one roof edge to the other,
+  diffuse reflection, the street's ends and turbulence in the shadows are not modeled, nor are
+  the low-frequency wave effects unless the table has a wave band.
 - **Not with** `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`.
 
 A microphone in a street costs about one extra evaluation per reflecting facade.
@@ -1665,7 +1666,7 @@ niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_f
 | `--floor_absorption` | The street's absorption, for the rays its floor reflects. Default 0, rigid pavement. |
 | `--facade_length` | Each wall's length for the run's reflections, centered on the microphone. Default 10 km, effectively infinite. |
 | `--sound_speed` | For the diffracted path's wavelengths, m/s. Default 343.2. |
-| `--no_diffraction` | Leave out the diffracted path over a blocking wall. |
+| `--no_diffraction` | Leave out the roof edges' diffraction and sum the specular rays in energy: the field then jumps wherever a ray is cut off. For comparison only. |
 | `--wave_below` | Solve each canyon with walls of equal height by the wave equation and use its table for the bands centered at or below this frequency, Hz. Default 0, none. |
 | `--wave_blend` | Bands above `--wave_below` over which the wave table fades into the geometric one. Default 2. |
 | `--wave_ppw` | The wave solver's grid points per wavelength. Default 15. |
