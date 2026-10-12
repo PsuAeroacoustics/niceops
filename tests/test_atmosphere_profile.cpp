@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -21,6 +22,7 @@
 #include <vector>
 
 #include "atmosphere_profile.hpp"
+#include "util/csv.hpp"
 
 using namespace niceops;
 
@@ -744,4 +746,47 @@ TEST_CASE("profile fields share a cell without changing knots or endpoint holds"
         CHECK(wind[0] == reference(p.wind_east, z, false));
         CHECK(wind[1] == reference(p.wind_north, z, false));
     }
+}
+
+TEST_CASE("find_profile_columns requires temperature and humidity only for a run's profile",
+        "[atmosphere_profile]")
+{
+    const TempCsv winds("z_ft,wind_speed_kt,wind_direction,extra\n46,10,270,1\n125,12,280,2\n");
+    const LabeledCsv csv = read_labeled_csv(winds.path);
+    const auto columns = find_profile_columns(csv, feet, winds.path, ProfileColumns::Require::none);
+    CHECK(columns.height == 0);
+    CHECK(columns.temperature == ProfileColumns::npos);
+    CHECK(columns.humidity == ProfileColumns::npos);
+    CHECK(columns.pressure == ProfileColumns::npos);
+    CHECK(columns.speed == 1);
+    CHECK(columns.direction == 2);
+    CHECK(columns.speed_to_mps == knot);
+    CHECK(columns.needed() == 3);
+    CHECK(columns.used == std::vector<bool> {true, true, true, false});
+    CHECK_THROWS_WITH(find_profile_columns(csv, feet, winds.path, ProfileColumns::Require::thermo),
+            Catch::Matchers::ContainsSubstring("names no temperature column"));
+    const TempCsv heightless("T_K,RH\n288,50\n");
+    CHECK_THROWS_WITH(find_profile_columns(read_labeled_csv(heightless.path), feet,
+                              heightless.path, ProfileColumns::Require::none, "--column"),
+            Catch::Matchers::StartsWith("--column " + heightless.path + " names no height column"));
+    CHECK_THROWS_WITH(read_atmosphere_profile(winds.path, feet, 0.0),
+            Catch::Matchers::ContainsSubstring("--atmosphere " + winds.path
+                    + " names no temperature column"));
+}
+
+TEST_CASE("geometric_levels is synthetic_profile's level placement", "[atmosphere_profile][wind]")
+{
+    SurfaceWind wind;
+    wind.speed = 5.0;
+    wind.height = 2.0;
+    wind.roughness_length = 0.05;
+    wind.surface_layer_depth = 150.0;
+    wind.levels_per_decade = 12;
+    Atmosphere surface;
+    const auto profile = synthetic_profile(wind, surface, 400.0);
+    auto levels = geometric_levels({420.0, 150.0, 2.0, 0.5}, 12);
+    levels.insert(levels.begin(), 0.0);
+    CHECK(levels == profile.height);
+    // Anchors within 1e-9 of each other are one level, the lower.
+    CHECK(geometric_levels({1.0, 10.0 * (1.0 + 1e-12), 10.0}, 1) == std::vector<double> {1.0, 10.0});
 }
