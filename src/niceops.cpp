@@ -45,6 +45,7 @@
 #include "ground_classes.hpp"
 #include "ground_effect.hpp"
 #include "manifest.hpp"
+#include "screening.hpp"
 #include "operations.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
@@ -713,6 +714,10 @@ struct RunOptions
     std::string terrain_path;
     double terrain_offset = 0.0;
     double terrain_step = 0.0;
+    // --terrain_screening cnossos: a pair whose terrain profile rises above
+    // its line of sight takes the CNOSSOS-EU diffraction over it
+    // (screening.hpp) in place of its mean-plane ground term.
+    bool terrain_screening = false;
     // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
     // whatever the file said".
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -1853,6 +1858,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
     }
 
+    // --terrain_screening: only over terrain (run() refuses it otherwise).
+    const bool screening = options.terrain_screening && terrain_raster.has_value();
+
     // With --db_cutoff, skip any (observer, state) pair whose level is provably
     // below the cutoff.  The bound is per state, from the loudest sphere the
     // state blends and spherical spreading alone, so it never discards a sample
@@ -1972,6 +1980,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     bool spectral = options.spectral;
     if (spectral && !database.has_spectra())
     {
+        if (options.terrain_screening)
+            input_error("--terrain_screening is per band, and ", job.database, " carries no per-band "
+                        "spectra. Rebuild it with spectra, or leave out --terrain_screening.");
         if (options.spectral_explicit || options.ground_effect_given || atmosphere
                 || options.propagation_table || !options.ground_classes.empty())
         {
@@ -2710,6 +2721,34 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 for (std::size_t band = 0; band < path_gains.size(); band++)
                     path_gains[band] = std::max(path_gains[band], table_gains[band]);
             }
+            // --terrain_screening: a blocked pair, table or no table, is the
+            // free field less Delta_dif >= 10 lg 3, times each side's ground
+            // factor, at most max(1, G) for that side (screen_gain_bound).  The
+            // source side is the point model over the observer's class, a
+            // plate's included; the receiver side is the point model or the
+            // plate.  Without a ground model the term is 1/3 and changes
+            // nothing.
+            if (screening && ground_model != nullptr)
+            {
+                std::vector<std::size_t> classes = point_classes;
+                if (any_plate && std::find(classes.begin(), classes.end(), plate_class) == classes.end())
+                    classes.push_back(plate_class);
+                const auto source_side = point_ground_gain_bounds(class_models, class_impedance, classes,
+                        first_band, last_band);
+                std::vector<double> receiver_side(bound_gains.size(), 0.0);
+                if (any_point)
+                    receiver_side = point_ground_gain_bounds(class_models, class_impedance, point_classes,
+                            first_band, last_band);
+                if (any_plate)
+                {
+                    const auto plate_gains = plate->gain_bounds(first_band, last_band);
+                    for (std::size_t band = 0; band < receiver_side.size(); band++)
+                        receiver_side[band] = std::max(receiver_side[band], plate_gains[band]);
+                }
+                for (std::size_t band = 0; band < path_gains.size(); band++)
+                    path_gains[band] = std::max(path_gains[band],
+                            screen_gain_bound(source_side[band], receiver_side[band]));
+            }
             for (std::size_t band = 0; band < bound_gains.size(); band++)
                 bound_gains[band] *= path_gains[band];
             direction_bounds = database.spectral_direction_bounds(source_states, bound_gains);
@@ -2852,6 +2891,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             -std::numeric_limits<double>::infinity());
     std::atomic<std::size_t> steep_table_samples {0};
     std::vector<double> steepest_at(table_refracts && table_over_terrain ? observers.size() : 0, 0.0);
+    // --terrain_screening: the pairs screened, and which observers had any;
+    // those that reached the 25 dB cap in some band, or had a side's ground
+    // weight F held at 1; and, with a table, the screened pairs that left it.
+    std::atomic<std::size_t> screened_samples {0};
+    std::atomic<std::size_t> screen_capped {0};
+    std::atomic<std::size_t> screen_source_clamped {0};
+    std::atomic<std::size_t> screen_receiver_clamped {0};
+    std::atomic<std::size_t> screen_table_bypassed {0};
+    std::vector<char> screened_at(screening ? observers.size() : 0, 0);
     // The table's bearings are compass bearings; the run's x/y are turned from
     // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
     const CompassToLocal compass(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
@@ -3006,8 +3054,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // how many pairs took one, and how many had a height raised to zero.
         std::optional<GroundPlaneCache> planes;
         if (terrain_raster)
-            planes.emplace(*terrain_raster);
+            planes.emplace(*terrain_raster, screening);
         std::size_t terrain_here = 0, raised_here = 0;
+        // --terrain_screening's scratch: a blocked pair's profile, its rubber
+        // band, each side's ground gain and the loss; and its counts.
+        GroundPlaneCache::Profile screen_profile;
+        std::vector<ScreenPoint> screen_points, screen_edges;
+        std::vector<std::size_t> screen_hull;
+        Screen screen;
+        const std::size_t screen_bands = screening ? database.band_centers().size() : 0;
+        std::vector<double> screen_loss(screen_bands, 0.0);
+        std::vector<double> screen_source_gain(screen_bands, 1.0);
+        std::vector<double> screen_receiver_gain(screen_bands, 1.0);
+        std::size_t screened_here = 0, capped_here = 0, source_clamped_here = 0, receiver_clamped_here = 0;
+        std::size_t table_bypassed_here = 0;
         std::size_t terrain_table_here = 0, terrain_table_point_here = 0, receiver_fallback_here = 0;
         std::size_t steep_table_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
@@ -3041,7 +3101,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // over each path's mean ground line, from this observer's foot
             // toward the source's.
             const bool on_planes = planes.has_value() && (ground_here != nullptr || options.propagation_table);
-            if (on_planes)
+            // Screening takes the horizon from the microphone, its height above
+            // the ground at its foot (a flush one's is 0).
+            if (screening)
+                planes->set_observer(observers[index].x, observers[index].y, microphone_height[index]);
+            else if (on_planes)
                 planes->set_observer(observers[index].x, observers[index].y);
             // The straight-ray spectral level: from --propagation_table where
             // it covers the pair, with the table's level in place of the ground
@@ -3125,7 +3189,77 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         nullptr, 0.0, nullptr, table_loss.data(), nullptr, bands_out);
                 return true;
             };
+            // --terrain_screening, a pair the terrain blocks (`screen`, over
+            // `screen_profile`): the straight line's spreading, absorption and
+            // sphere direction, less the CNOSSOS-EU loss, with each side's
+            // ground from this observer's model and class -- the point model on
+            // the source side, and the point model or the plate on the
+            // microphone's -- and no ground term for the whole path, so ground
+            // counts once.  A propagation table is not read: its ground is the
+            // whole path's.
+            auto screened_level = [&](std::size_t it, const GroundPlaneCache::RayPair& pair, double* bands_out) {
+                const Vec3& source = source_states[it].position;
+                screen_sides(screen, screen_edges, planes->fit_range(pair, screen.source_edge, screen_profile.interior + 1),
+                        planes->fit_range(pair, 0, screen.receiver_edge), flush);
+                const double* source_gain = nullptr;
+                const double* receiver_gain = nullptr;
+                if (ground_here != nullptr)
+                {
+                    const auto& frequencies = database.band_centers();
+                    // Each side's edge stands in for the microphone or the
+                    // source, the sphere_database idiom for a height of its own.
+                    GroundModel side = *ground_here;
+                    side.receiver_height = screen.source_side.receiver_height;
+                    excess_ground_attenuation(side, *impedance_here, screen.source_side.source_height,
+                            screen.source_side.ground_distance, sound_speed, frequencies, screen_source_gain.data(),
+                            first_band, last_band, true);
+                    if (flush)
+                    {
+                        plate_receiver->power_ratio(screen.receiver_side.source_height,
+                                screen.receiver_side.ground_distance,
+                                plate_frame_azimuth(observer - source, plate_mic_azimuth), screen_receiver_gain.data(),
+                                first_band, last_band);
+                    }
+                    else
+                    {
+                        side.receiver_height = screen.receiver_side.receiver_height;
+                        excess_ground_attenuation(side, *impedance_here, screen.receiver_side.source_height,
+                                screen.receiver_side.ground_distance, sound_speed, frequencies,
+                                screen_receiver_gain.data(), first_band, last_band, true);
+                    }
+                    source_gain = screen_source_gain.data();
+                    receiver_gain = screen_receiver_gain.data();
+                }
+                ScreenTally tally;
+                cnossos_screen_loss(screen, database.band_centers(), sound_speed, source_gain, receiver_gain,
+                        first_band, last_band, screen_loss.data(), &tally);
+                screened_here++;
+                screened_at[index] = 1;
+                capped_here += tally.capped;
+                source_clamped_here += tally.source_clamped;
+                receiver_clamped_here += tally.receiver_clamped;
+                if (options.propagation_table)
+                    table_bypassed_here++;
+                return database.spectral_level_along(straight_ray(source, observer), source_states[it],
+                        absorption_for(it, observer), band_gains, nullptr, nullptr, sound_speed, first_band, last_band,
+                        packed_of_state[it], nullptr, 0.0, nullptr, screen_loss.data(), nullptr, bands_out);
+            };
             auto straight_level = [&](std::size_t it, double* bands_out) {
+                // --terrain_screening: a pair whose profile rises above its line
+                // of sight is screened; every other pair goes on below, the
+                // same call as without it.
+                if (screening)
+                {
+                    const Vec3& source = source_states[it].position;
+                    const double dx = source.x - observer.x;
+                    const double dy = source.y - observer.y;
+                    const auto pair = planes->locate(dx, dy, std::sqrt(dx * dx + dy * dy));
+                    if (planes->blocked(pair, source.z, screen_profile)
+                            && rubber_band(screen_profile.heights, screen_profile.interior, screen_profile.step,
+                                    screen_profile.distance, screen_profile.microphone_height,
+                                    screen_profile.source_height, screen_points, screen_hull, screen_edges, screen))
+                        return screened_level(it, pair, bands_out);
+                }
                 double level = 0.0;
                 // Over terrain the pair's path over its mean ground line, found
                 // once for the table and the ground model alike.  It counts as
@@ -3637,13 +3771,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         terrain_table_point_samples += terrain_table_point_here;
         receiver_fallback_samples += receiver_fallback_here;
         steep_table_samples += steep_table_here;
+        screened_samples += screened_here;
+        screen_capped += capped_here;
+        screen_source_clamped += source_clamped_here;
+        screen_receiver_clamped += receiver_clamped_here;
+        screen_table_bypassed += table_bypassed_here;
     });
 
     if (terrain_raster)
     {
-        if (ground_model == nullptr && !options.propagation_table)
+        if (ground_model == nullptr && !options.propagation_table && !screening)
             log("--terrain: no ground model or propagation table runs, so the terrain sets only where the "
                 "observers stand.");
+        else if (ground_model == nullptr && !options.propagation_table)
+            log("--terrain: no ground model or propagation table runs, so the terrain sets where the "
+                "observers stand and screens the paths it blocks.");
         else if (terrain_raised.load() == 0)
             log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane",
                     options.propagation_table
@@ -3656,12 +3798,33 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // there: the level is too high, and the run used to say so only in
             // the log.  A receiver in a dip raises the same flag.
             const auto observers_raised = std::count(raised_at.begin(), raised_at.end(), char(1));
-            warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
-                    "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
-                    terrain_samples.load(), " evaluations), taken onto it. A source behind rising ground "
-                    "is not screened, so those observers' levels are too high there; a receiver in a dip "
-                    "is only approximate.");
+            if (screening)
+                warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
+                        "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
+                        terrain_samples.load(), " unscreened evaluations), taken onto it. Nothing on those "
+                        "paths rises above the line of sight, so --terrain_screening leaves them: a receiver "
+                        "in a dip, or a source under a plane that terrain beyond it lifts, is only "
+                        "approximate.");
+            else
+                warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
+                        "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
+                        terrain_samples.load(), " evaluations), taken onto it. A source behind rising ground "
+                        "is not screened, so those observers' levels are too high there; a receiver in a dip "
+                        "is only approximate.");
         }
+    }
+    if (screening)
+    {
+        const auto observers_screened = std::count(screened_at.begin(), screened_at.end(), char(1));
+        log("--terrain_screening: ", screened_samples.load(), " evaluations were screened by the terrain, at ",
+                observers_screened, " of ", observers.size(), " observers; ", screen_capped.load(),
+                " reached the 25 dB cap in some band, and the ground weight F was held at 1 on the source "
+                "side in ", screen_source_clamped.load(), " and on the microphone's in ",
+                screen_receiver_clamped.load(), ".");
+        if (options.propagation_table)
+            log("  ", screen_table_bypassed.load(), " of the screened evaluations were not read from the "
+                    "propagation table but took the screening with the ground model; the table's physics "
+                    "holds on the unblocked paths only.");
     }
 
     if (options.propagation_table)
@@ -4192,6 +4355,7 @@ int run(int argc, char* argv[])
     std::string terrain_file;
     double terrain_offset = 0.0;  // meters
     double terrain_step = 0.0;    // meters; 0 follows the terrain's own spacing
+    std::string terrain_screening = "none";
     bool observers_on_terrain = false;
     std::string plate_mic_azimuth = "outboard";
     bool exact_ground = false;
@@ -4649,9 +4813,15 @@ int run(int argc, char* argv[])
             "longitude) in meters, e.g. USGS 3DEP). Grid observers stand on it, and the ground "
             "model and plate take each path's least-squares mean ground plane (CNOSSOS-EU, "
             "NORAH2 / ECAC Doc 32) in place of the plane z = 0. Needs the run's frame (--origin, "
-            "and --frame_bearing for rotated x/y, or a geodetic track). No screening or "
-            "diffraction by terrain; not with --refraction. A --propagation_table is read at the "
-            "heights above, and range along, each path's mean ground plane.");
+            "and --frame_bearing for rotated x/y, or a geodetic track). No screening by terrain "
+            "unless --terrain_screening; not with --refraction. A --propagation_table is read at "
+            "the heights above, and range along, each path's mean ground plane.");
+    app.add_option("--terrain_screening", terrain_screening,
+            "With --terrain: none (default), or cnossos -- a path the terrain rises above takes "
+            "the CNOSSOS-EU diffraction over the profile's convex hull, with the ground on each "
+            "side of it, capped at 25 dB. Spectral path only. With --propagation_table a blocked "
+            "path leaves the table for the ground model, which it then needs.")
+            ->check(CLI::IsMember({"none", "cnossos"}));
     auto* terrain_offset_option = app.add_option("--terrain_offset", terrain_offset,
             "Added to every --terrain height, in --units, to put it on the trajectory's vertical "
             "datum (default 0). At Amedee 3DEP is NAVD88 and the 2017 tracks are ellipsoidal: "
@@ -5412,6 +5582,8 @@ int run(int argc, char* argv[])
     {
         if (terrain_offset_option->count() > 0 || terrain_step_option->count() > 0 || observers_on_terrain)
             input_error("--terrain_offset, --terrain_step and --observers_on_terrain need --terrain.");
+        if (terrain_screening != "none")
+            input_error("--terrain_screening needs --terrain: the screening edges are the terrain's.");
     }
     else
     {
@@ -5425,6 +5597,15 @@ int run(int argc, char* argv[])
                         "and cast their shadows onto, the flat ground z = 0. Use --terrain with "
                         "straight rays, or --refraction over flat ground.");
         }
+        if (terrain_screening != "none" && !spectral)
+            input_error("--terrain_screening is per band, and the broadband path (--no-spectral) has no "
+                        "bands.");
+        // A blocked pair leaves the table, whose ground runs the whole path,
+        // for the screening's ground on each side of the edge.
+        if (terrain_screening != "none" && !propagation_table.empty() && !ground_effect)
+            input_error("--terrain_screening with --propagation_table needs a ground model: a path the "
+                        "terrain blocks leaves the table for the ground on each side of the edge, and "
+                        "--no-ground_effect leaves it none.");
         if (observers_on_terrain && !scattered)
             input_error("--observers_on_terrain is for an observer file (-b); grid observers always "
                         "stand on the terrain.");
@@ -5562,6 +5743,7 @@ int run(int argc, char* argv[])
     options.terrain_path = terrain_file;
     options.terrain_offset = terrain_offset;
     options.terrain_step = terrain_step;
+    options.terrain_screening = terrain_screening == "cnossos";
     if (!propagation_table.empty())
     {
         options.propagation_table = std::make_shared<const PropagationTable>(PropagationTable::load(propagation_table));

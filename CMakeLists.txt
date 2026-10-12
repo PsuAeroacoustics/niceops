@@ -1591,7 +1591,8 @@ set_tests_properties(refraction_point_windowed_is_exact refraction_plate_windowe
 # approach's low end.  Level terrain must reproduce the run without it (point receivers, plates, and
 # scattered observers stood on it), byte for byte in fact; over the hills the peak search must still
 # equal the march, with the point receiver's ground model evaluated at each path's own height.
-set(TERRAIN_DEMO -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 -L warn)
+set(TERRAIN_BASE -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210)
+set(TERRAIN_DEMO ${TERRAIN_BASE} -L warn)
 set(TERRAIN_PLATE --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc)
 set(TERRAIN_FLAT --terrain integrated/terrain_flat.nc --terrain_offset -1250 --ground_elevation 54.2651)
 set(TERRAIN_HILLS --terrain integrated/terrain_hills.nc --ground_elevation 54.2651)
@@ -1772,3 +1773,72 @@ add_test(NAME terrain_steep_table_plate COMMAND niceops ${TERRAIN_DEMO} --terrai
 set_tests_properties(terrain_steep_table_plate PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" FIXTURES_SETUP terrain_steep_table_plate_run)
 add_test(NAME terrain_steep_table_plate_golden COMMAND golden_compare integrated/terrain_steep_table_plate.csv golden/terrain_steep_table_plate.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_steep_table_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_steep_table_plate_run)
+# --terrain_screening cnossos (src/screening.hpp; THEORY 6.4).  A run whose info log the test
+# matches on goes through tests/run_logged.cmake, which gives it its own log and prints it.
+function(add_logged_run name)
+  add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DLOG=integrated/${name}.log
+      "-DCOMMAND=$<TARGET_FILE:niceops>;${ARGN};-L;info;-l;integrated/${name}.log" -P tests/run_logged.cmake
+      WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+endfunction()
+set(SCREENING --terrain_screening cnossos)
+set(TERRAIN_RIDGE --terrain integrated/terrain_ridge.nc --terrain_offset -1250 --ground_elevation 54.2651)
+set(TERRAIN_TILTED --terrain integrated/terrain_tilted.nc --terrain_offset -1250 --ground_elevation 54.2651)
+# Level terrain screened is the run without terrain, byte for byte, with no pair screened; so is a
+# plane falling 4% under the approach, against itself unscreened; and so are the hills, where no
+# sample rises above any path's line of sight (the hills run is terrain_hills_point's).
+add_logged_run(terrain_flat_point_screened ${TERRAIN_BASE} ${TERRAIN_FLAT} --ground_effect ${SCREENING} --gridstep 492 -o integrated/terrain_flat_point_screened.csv)
+add_logged_run(terrain_flat_plate_screened ${TERRAIN_BASE} ${TERRAIN_FLAT} ${TERRAIN_PLATE} ${SCREENING} --gridstep 492 -o integrated/terrain_flat_plate_screened.csv)
+add_logged_run(terrain_flat_scattered_screened ${TERRAIN_BASE} ${TERRAIN_FLAT} ${TERRAIN_PLATE} ${SCREENING} -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_flat_scattered_screened.csv)
+add_test(NAME terrain_tilted_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_TILTED} --ground_effect --gridstep 984 -o integrated/terrain_tilted_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_tilted_point_screened ${TERRAIN_BASE} ${TERRAIN_TILTED} --ground_effect ${SCREENING} --gridstep 984 -o integrated/terrain_tilted_point_screened.csv)
+add_test(NAME terrain_tilted_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_TILTED} ${TERRAIN_PLATE} --gridstep 984 -o integrated/terrain_tilted_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_tilted_plate_screened ${TERRAIN_BASE} ${TERRAIN_TILTED} ${TERRAIN_PLATE} ${SCREENING} --gridstep 984 -o integrated/terrain_tilted_plate_screened.csv)
+add_logged_run(terrain_hills_point_screened ${TERRAIN_BASE} ${TERRAIN_HILLS} --ground_effect ${SCREENING} --gridstep 492 -o integrated/terrain_hills_point_screened.csv)
+set_tests_properties(terrain_flat_point_screened terrain_flat_plate_screened terrain_flat_scattered_screened
+    terrain_tilted_point terrain_tilted_point_screened terrain_tilted_plate terrain_tilted_plate_screened terrain_hills_point_screened
+    PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_unscreened_runs)
+set_tests_properties(terrain_flat_point_screened terrain_flat_plate_screened terrain_flat_scattered_screened
+    terrain_tilted_point_screened terrain_tilted_plate_screened terrain_hills_point_screened
+    PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: 0 evaluations were screened" FAIL_REGULAR_EXPRESSION "--terrain_screening: [1-9]")
+add_test(NAME terrain_flat_point_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_point_screened.csv integrated/terrain_flat_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_plate_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_plate_screened.csv integrated/terrain_flat_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_scattered_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_scattered_screened.csv integrated/terrain_flat_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_tilted_point_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_tilted_point_screened.csv integrated/terrain_tilted_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_tilted_plate_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_tilted_plate_screened.csv integrated/terrain_tilted_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_unblocked_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_hills_point_screened.csv integrated/terrain_hills_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_point_screened_is_flat terrain_flat_plate_screened_is_flat terrain_flat_scattered_screened_is_flat
+    terrain_tilted_point_is_unscreened terrain_tilted_plate_is_unscreened terrain_hills_unblocked_is_unscreened
+    PROPERTIES FIXTURES_REQUIRED "terrain_unscreened_runs;terrain_flat_runs;terrain_hills_runs")
+# Behind the ridge the peak search, with the screening's bound term, still equals the march: point
+# receivers, plates, no ground model, mixed ground classes, and a propagation table, which a
+# blocked pair leaves for the ground model (logged).
+add_logged_run(terrain_ridge_screened_point ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} --gridstep 492 -o integrated/terrain_ridge_screened_point.csv)
+add_test(NAME terrain_ridge_screened_point_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} --gridstep 492 -D integrated/terrain_ridge_screened_point_dnl.csv -o integrated/terrain_ridge_screened_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_screened_plate ${TERRAIN_BASE} ${TERRAIN_RIDGE} ${TERRAIN_PLATE} ${SCREENING} --gridstep 492 -o integrated/terrain_ridge_screened_plate.csv)
+add_test(NAME terrain_ridge_screened_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} ${TERRAIN_PLATE} ${SCREENING} --gridstep 492 -D integrated/terrain_ridge_screened_plate_dnl.csv -o integrated/terrain_ridge_screened_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_screened_noground ${TERRAIN_BASE} ${TERRAIN_RIDGE} --no-ground_effect ${SCREENING} --gridstep 492 -o integrated/terrain_ridge_screened_noground.csv)
+add_test(NAME terrain_ridge_screened_noground_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-ground_effect ${SCREENING} --gridstep 492 -D integrated/terrain_ridge_screened_noground_dnl.csv -o integrated/terrain_ridge_screened_noground_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_screened_classes ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --observers_on_terrain ${SCREENING} --ground_classes tests/data/ground_classes_two.csv -b tests/data/coyle_heights_classes.csv -o integrated/terrain_ridge_screened_classes.csv)
+add_test(NAME terrain_ridge_screened_classes_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --observers_on_terrain ${SCREENING} --ground_classes tests/data/ground_classes_two.csv -b tests/data/coyle_heights_classes.csv -D integrated/terrain_ridge_screened_classes_dnl.csv -o integrated/terrain_ridge_screened_classes_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_screened_point terrain_ridge_screened_plate terrain_ridge_screened_noground terrain_ridge_screened_classes
+    PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: [1-9][0-9]* evaluations were screened")
+set_tests_properties(terrain_ridge_screened_point terrain_ridge_screened_point_marched terrain_ridge_screened_plate terrain_ridge_screened_plate_marched
+    terrain_ridge_screened_noground terrain_ridge_screened_noground_marched terrain_ridge_screened_classes terrain_ridge_screened_classes_marched
+    PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_ridge_runs)
+add_logged_run(terrain_ridge_screened_table ${TERRAIN_BASE} ${TERRAIN_RIDGE} ${TERRAIN_TABLE_GROUND} ${SCREENING} --gridstep 492 -o integrated/terrain_ridge_screened_table.csv)
+add_test(NAME terrain_ridge_screened_table_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} ${TERRAIN_TABLE_GROUND} ${SCREENING} --gridstep 492 -D integrated/terrain_ridge_screened_table_dnl.csv -o integrated/terrain_ridge_screened_table_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_screened_table PROPERTIES PASS_REGULAR_EXPRESSION " [1-9][0-9]* of the screened evaluations were not read from the propagation table")
+set_tests_properties(terrain_ridge_screened_table terrain_ridge_screened_table_marched PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" FIXTURES_SETUP terrain_ridge_runs)
+foreach(kind point plate noground classes table)
+  add_test(NAME terrain_ridge_screened_${kind}_windowed_is_exact COMMAND golden_compare integrated/terrain_ridge_screened_${kind}.csv integrated/terrain_ridge_screened_${kind}_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(terrain_ridge_screened_${kind}_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_ridge_runs)
+endforeach()
+# Refusals.
+add_test(NAME terrain_screening_needs_terrain COMMAND niceops ${TERRAIN_DEMO} ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_needs_terrain PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening needs --terrain")
+add_test(NAME terrain_screening_needs_spectral COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-spectral --no-ground_effect ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_needs_spectral PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "--terrain_screening is per band, and the broadband path")
+add_test(NAME terrain_screening_needs_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 ${TERRAIN_RIDGE} ${SCREENING} --gridstep 4000 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_needs_spectra PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "--terrain_screening is per band, and databases/S-76D_M3.nod carries no per-band spectra")
+add_test(NAME terrain_screening_table_needs_ground COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-ground_effect --propagation_table tables/ground_model_test.nc ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_table_needs_ground PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "--terrain_screening with --propagation_table needs a ground model")

@@ -598,6 +598,23 @@ variable-porosity grass (200 kPa·s/m²), against the same microphones all on gr
   pairs, which should differ by under 1.5 dB, differ by −12 to +7 dB from run to run, so these
   data show the classes help at 1.2 m but cannot place the uniform class's limit.
 
+### Terrain screening
+
+`--terrain_screening`'s diffraction term, 10 lg(3 + 40δ/λ), against Sommerfeld's exact solution
+for a rigid half-plane lit by a plane wave, at kr = 2000 from the edge, at the same path
+difference (`Delta_dif against the exact half-plane`, `tests/test_screening.cpp`):
+
+| Angle into the shadow | 0° | 0.5° | 1° | 2° | 5° | 10° | 60° |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Exact − CNOSSOS, dB | +1.25 | +2.39 | +2.67 | +2.52 | +2.27 | +1.96 | −0.67 |
+
+CNOSSOS-EU reads low by 1.25 dB at grazing and by up to 2.7 dB just inside the shadow, so a
+screened level errs high there. None of the measured data sets ([Data sets](#data-sets)) has
+terrain between the aircraft and the microphones, so the screening is checked only against this
+reference, by its degenerate cases
+(level and uniformly tilted terrain, and the hills fixture, screen nothing and are the unscreened
+runs byte for byte), and by the peak search's exactness behind a synthetic ridge.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and
@@ -1112,7 +1129,8 @@ range-dependent source fit would confound descent state drift with path loss.
 - **Turbulent scattering** fitted to pole and board pairs is ten times what the SEL supports.
 - **EPNL** is compared only to 5 kHz, where the measured frames stop, with no pseudo-tone
   exclusion; predicted spectra carry less tone correction than measured.
-- **Terrain** is a plane fitted over the whole path, with no screening.
+- **Terrain** is a plane fitted over the whole path, screened only with `--terrain_screening`,
+  which has no measured validation ([Terrain screening](#terrain-screening)).
 - **Ground classes** treat each microphone's ground as a uniform half-space. At grazing a
   built-up patch measured like ground of about 1000–2000 kPa·s/m², not concrete, and the ground
   next to the microphone and along the path decides ([Ground classes](#ground-classes)).

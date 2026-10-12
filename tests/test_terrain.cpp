@@ -871,7 +871,8 @@ TEST_CASE("plane_geometry is a rotation, and the identity on level ground", "[te
 TEST_CASE("write the terrain files the --terrain CTests read", "[.terrain_files]")
 {
     // Not a test: CMakeLists.txt's terrain_files runs it (by its hidden tag) to
-    // write integrated/terrain_flat.nc, terrain_hills.nc and terrain_steep.nc around
+    // write integrated/terrain_flat.nc, terrain_hills.nc, terrain_steep.nc,
+    // terrain_ridge.nc and terrain_tilted.nc around
     // the demo track's frame (origin 39.81043 N 74.42631 W, +x along 210
     // degrees, which reproduces the track's own x/y to 0.85 ft rms; its z = 0 is at
     // altitude 54.2651 ft).  The flat one is level everywhere at the height
@@ -893,6 +894,27 @@ TEST_CASE("write the terrain files the --terrain CTests read", "[.terrain_files]
     write_terrain_file("integrated/terrain_steep.nc", lat, lon, [&](double la, double lo) {
         const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
         return -26.0 - 0.1 * p.x;
+    });
+    // For --terrain_screening: level ground at the flat file's height with a
+    // ridge 25 m high and 300 m across at its foot (150 m across at half
+    // height), parallel to the track 250 m to its -y side, from x = -2200 to
+    // 900 m with 200 m tapers -- every low state is screened from the
+    // observers behind it, and none stands over it; and a plane falling 4% along
+    // +x, whose profiles are their own lines, so nothing on it can screen.
+    write_terrain_file("integrated/terrain_ridge.nc", lat, lon, [&](double la, double lo) {
+        const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
+        const double across = (p.y + 250.0) / 150.0;
+        if (std::fabs(across) >= 1.0 || p.x < -2400.0 || p.x > 1100.0)
+            return flat;
+        const double along = p.x < -2200.0 ? std::sin(0.5 * pi * (p.x + 2400.0) / 200.0)
+                : p.x > 900.0              ? std::sin(0.5 * pi * (1100.0 - p.x) / 200.0)
+                                           : 1.0;
+        const double c = std::cos(0.5 * pi * across);
+        return flat + 25.0 * c * c * along * along;
+    });
+    write_terrain_file("integrated/terrain_tilted.nc", lat, lon, [&](double la, double lo) {
+        const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
+        return flat - 0.04 * p.x;
     });
     REQUIRE(Terrain("integrated/terrain_flat.nc").elevation(39.81043, -74.42631) == flat);
 

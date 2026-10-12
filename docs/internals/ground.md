@@ -229,7 +229,8 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
   and keeps its table (source height h_s − h_r). `a path's own receiver height is the ground
   model's, past its table` holds the branch.
 - **Heights below the line are raised to zero**, CNOSSOS-EU's rule: a receiver in a dip, or a
-  source behind rising ground, which is screening and not modeled. The log counts them.
+  source behind rising ground, which is screened only with `--terrain_screening` (below). The
+  run counts them and warns.
 - **A negative distance along the line is taken by its size, not clamped to zero.** A nearly
   overhead source over ground falling toward it has its foot behind the microphone's. The image
   construction depends on d², so |d| keeps the model's direct path equal to the real range (zero
@@ -241,8 +242,9 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
   with itself, so a call-site mutation that handed the plate's microphone to `terrain_ray` as a
   point receiver moved cells by 0.01 dB and passed every other terrain test. Regenerate them only
   with a deliberate change, and say so.
-- **The bounds need nothing new.** `ground_gain_bounds` and `PlateReceiver::gain_bounds` hold for
-  every geometry and receiver height, and the bound test's geometry is the true 3-D path, as the
+- **The bounds need nothing new** without screening (with it, see
+  [Screening](#screening---terrain_screening)). `ground_gain_bounds` and
+  `PlateReceiver::gain_bounds` hold for every geometry and receiver height, and the bound test's geometry is the true 3-D path, as the
   level's spreading is. `terrain_hills_point_windowed_is_exact` and
   `terrain_hills_plate_windowed_is_exact` hold it. The tables' reach (`reach()` in
   `process_trajectory`) extends below z = 0 under terrain; node placement does not depend on the
@@ -270,6 +272,53 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
     (`terrain_hills_table_*_windowed_is_exact`, the bump table among them).
 - **Observers' ground is read from the grid itself in `run()`**, once, not from the raster, which
   is a resampling of it.
+
+### Screening (`--terrain_screening`)
+
+`src/screening.{hpp,cpp}` is the CNOSSOS-EU kernel, `GroundPlaneCache::may_block`, `blocked` and
+`fit_range` its terrain, and `screened_level` in `process_trajectory` the call. The equations are
+in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
+
+- **An unblocked pair takes the untouched call.** `straight_level` asks `blocked()` first and
+  otherwise goes on exactly as without screening, so level ground, a uniform slope and the hills
+  (where nothing blocks) are the unscreened runs byte for byte
+  (`terrain_flat_*_screened_is_flat`, `terrain_tilted_*_is_unscreened`,
+  `terrain_hills_unblocked_is_unscreened`, each with a log check that nothing was screened). A
+  pair with no ground model and no table is never given a `terrain_ray` path: it stays
+  `spectral_level_at_observer`'s.
+- **The onset is strict.** A sample exactly on the line of sight does not block. CNOSSOS's own
+  rule screens down to δ = −λ/20, but over level ground a sample near a 1.2 m microphone has
+  δ ≈ h²/2s, about 0.14 m at 5 m, under λ/20 at 63 Hz, so it would screen level terrain.
+- **One spelling of the slope** (`sight_slope`, (z − h_m)/s) for the horizon, the line of sight
+  and the scan. The quick test reads each ray's horizon at the last sample strictly inside the
+  path (ceil(D/Δ) − 1, never the footprint's), and with no turn reads ray a only, as `line_from`
+  does.
+- **The profile is one per pair**, blended in bearing with `line_from`'s own turn fraction, and
+  the microphone is at its height above the raster's ground at its foot, the base of the running
+  sums, so a flush microphone is never under its own profile. A source under the profile at its
+  footprint (states down to 10 m under the terrain are let through) is raised onto it.
+- **No ground for the whole path on a screened pair** (`ground = nullptr`, `table = nullptr`):
+  the ground enters only through the two side terms, so it counts once. A propagation table's
+  level is not read either, since its ground is the whole path's; that is why the combination
+  needs a ground model (refused otherwise) and the log counts the pairs that left the table.
+- **F is clamped to 1** for the bound, and the run counts how often it binds. The bound's term is
+  `screen_gain_bound(G_S, G_R)` = max(1, G_S) max(1, G_R)/3, with G_S over every class in use,
+  a plate's included (the source side is always the point model), and G_R the point and plate
+  bounds. Without a ground model it is 1/3 and changes nothing. The 3 is `cnossos_floor`,
+  written once.
+- **Side lines come from the running sums** (`fit_range`, re-based to k0), so a screened pair
+  fits nothing sample by sample; raw heights and the horizon cost about 16 bytes per sample per
+  ray per thread, only with the option.
+- **Rejected:** Deygout on the resampled profile (every sample of a rounded crest is a hull
+  vertex, so a path just grazing it took about 13.6 dB, depending on `--terrain_step`); blending
+  the two rays' losses in dB (a pair partly screened by a profile not its own, and a duplicate of
+  the four-way ground selection on half-blocked pairs); a persistent per-ray hull (about 20 bytes
+  per sample, and only useful with the dB blend); the sphere looked up toward the first edge
+  (breaks the direction bounds' bins); a fade-in below δ = 0 (breaks the level-terrain identity).
+- Tests: `terrain_ridge_screened_{point,plate,noground,classes,table}_windowed_is_exact` behind
+  the ridge fixture (`integrated/terrain_ridge.nc`, 25 m high, 250 m to the track's side), each
+  with a log check that pairs were screened; the refusals; and the Catch2 `[screening]` cases,
+  including the bound sweep and the half-plane comparison.
 
 ### How the plane is found (`GroundPlaneCache`)
 

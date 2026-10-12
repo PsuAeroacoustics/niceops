@@ -186,6 +186,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
 | `--observers_on_terrain` | With `--terrain` and `-b`: take each observer's ground height from the terrain rather than the file's z. |
+| `--terrain_screening` | With `--terrain`: `none` (default) or `cnossos`, which screens a path the terrain rises above ([Terrain](#terrain)). Spectral path only. |
 
 #### Metrics
 
@@ -296,6 +297,7 @@ The main ones:
 | `--shadow_model resolved` without `--refraction stratified` and the ground effect; `--scattering` without `--refraction` and the ground effect | They act through the shadow transition, which needs a ground model. |
 | `--tunneling`, `--skip_fill` without `--refraction stratified` | They are stratified-ray corrections. |
 | `--terrain` with `--refraction`, or without a frame | The ray models are built over flat ground; terrain needs to know where x/y lie. |
+| `--terrain_screening` without `--terrain`, with `--no-spectral` or a database without spectra, or with `--propagation_table` and `--no-ground_effect` | The edges are the terrain's; the diffraction is per band; a screened path leaves the table for the ground model. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
 | `--ground_classes` with grid observers, without an observer file's ground column, or naming a class the file does not define; the column without `--ground_classes` | Each names the other. |
 | `--ground_classes` with `--refraction`, `--propagation_table`, `--no-ground_effect`, `--no-spectral` or a database without spectra; flush microphones on more than one class, or on one the plate table was not built for | The ray models need the ground along the path, a table and a plate table each hold one ground, and the classes are a ground for the ground effect. |
@@ -817,19 +819,39 @@ the terrain is refused as a datum mismatch; up to 10 m warns. Scattered observer
 file's z, with a warning where it differs from the terrain by more than 1 m;
 `--observers_on_terrain` stands them on the terrain instead.
 
-**What is not modeled.** Terrain does not screen or diffract: a ridge between source and receiver
-puts the source below the mean plane, and its height is set to zero, so the level there is too
-high. The run warns when it happens, with how many observers had such paths (a receiver in a dip
-raises the same flag). Each path's ground is one plane. `--refraction` is refused, because the
-ray models are built over flat ground, and on the broadband path `--terrain` only places the
-observers. A `--propagation_table` is read over each path's mean plane
+**Screening.** By default terrain does not screen or diffract: a ridge between source and
+receiver puts the source below the mean plane, and its height is set to zero, so the level there
+is too high. The run warns when it happens, with how many observers had such paths (a receiver in
+a dip raises the same flag). `--terrain_screening cnossos` screens instead: a path on which the
+terrain rises above the line of sight takes the CNOSSOS-EU diffraction over the terrain's convex
+outline between source and microphone, with the ground effect on each side of it, capped at
+25 dB ([THEORY §6.4](THEORY.md#64-terrain-screening)). Every other path is evaluated as without
+it, so level ground, a uniform slope, or hills no path crosses give the unscreened run exactly.
+Use it where ridges, bluffs or berms stand between low flight and the receivers.
+
+- Only the vertical plane through source and microphone is taken: no paths around the ends of an
+  obstacle, and no buildings or vegetation. The rays are straight.
+- Crests are found at `--terrain_step`, so a sharp ridge is slightly under-screened at the
+  default step; a finer step costs about proportionally more.
+- As a source drops behind a crest the diffraction term switches on at 4.8 dB, not from zero,
+  so the level steps; that shows in LAmax and time above more than in SEL.
+- With `--propagation_table`, a screened path is not read from the table but takes the screening
+  with the ground model, which must then be on; unblocked paths keep the table. The two physics
+  meet at the edge of the screened region, and the log counts the paths that left the table.
+- Its accuracy is in [FIDELITY](FIDELITY.md#terrain-screening); there is no measured validation.
+
+Each path's ground is otherwise one plane. `--refraction` is refused, because the ray models are
+built over flat ground, and on the broadband path `--terrain` only places the observers. A
+`--propagation_table` is read over each path's mean plane
 ([Propagation loss tables](#propagation-loss-tables)).
 
 **Cost and effect.** Plates keep their tables over terrain; point receivers over real terrain are
 evaluated exactly, about 4 times the CPU, which a test array of tens of microphones does not
 notice; a ground-model `--propagation_table` with rows spanning their heights above the planes
-reads them instead, at about 1.5 times. At Amedee terrain moves flush-plate SEL by hundredths of
-a dB; at a sloped site it can move it by a dB at low elevation ([FIDELITY](FIDELITY.md#terrain-at-amedee),
+reads them instead, at about 1.5 times. Screening adds a test per path and two exact ground
+evaluations per screened path, and keeps about twice the terrain samples in memory per thread. At
+Amedee terrain moves flush-plate SEL by hundredths of a dB; at a sloped site it can move it by a dB
+at low elevation ([FIDELITY](FIDELITY.md#terrain-at-amedee),
 [sensitivity](FIDELITY.md#sensitivity-studies)).
 
 ### Refraction
@@ -963,7 +985,8 @@ one value means every direction), `source_height` and `receiver_height` (above t
   practical row spacing above a few hundred hertz. A flush plate reads the lowest row, as on flat
   ground, which needs no extra rows. A table that refracts (a PE table, or any not built by the
   ground model with no atmosphere) is taken to have its atmosphere follow each path's mean plane;
-  the run warns when pairs read it over a plane tilted more than 5 degrees.
+  the run warns when pairs read it over a plane tilted more than 5 degrees. With `--terrain_screening`, a path the terrain blocks takes the screening and the ground
+  model instead of the table ([Terrain](#terrain)).
 - **The file** is netCDF, SI: `relative_level(bearing, source_height, receiver_height, range,
   band)`, a coordinate variable per axis, and the attributes `propagation_table_version` (1),
   `method`, `includes_absorption` and `provenance_*`. Anything that fills it can be read

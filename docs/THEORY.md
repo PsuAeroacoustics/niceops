@@ -617,7 +617,91 @@ whole path also weighs terrain the reflection never sees; that is the standard p
 smooth ground the two agree. Spreading, absorption and the sphere
 direction still use the true straight line. On level terrain at $z = 0$ every quantity reduces
 to the flat-ground geometry. A propagation table (§9.3) is read in the same rotated frame.
-Terrain screening and diffraction are not modeled (§11).
+With `--terrain_screening` a path the terrain blocks is screened instead (§6.4).
+
+### 6.4 Terrain screening
+
+`--terrain_screening cnossos` applies the CNOSSOS-EU diffraction over a path's terrain profile
+[32, 33], as amended [62, 63], in the vertical plane through the microphone's foot and the
+source's footprint. Heights are taken relative to the terrain at the microphone's foot, $s$ is
+the horizontal distance from it, and $\Delta$ is the terrain sampling step. The microphone is
+$R = (0, h_m)$, with $h_m$ its height above the ground (zero for a plate), the profile is
+$P_k = (k\Delta, z_k)$ for the samples strictly between the ends, $1 \le k < D/\Delta$, and the
+source is $S = (D, z_S)$, raised onto the profile at its footprint if it lies below it. The
+profile is the one the mean plane is fitted to (§6.3), blended linearly in bearing between the
+two rays around the path.
+
+**Which paths.** A path is screened when some sample lies strictly above the line of sight:
+
+$$
+\max_k \frac{z_k - h_m}{k\Delta} > \frac{z_S - h_m}{D} .
+$$
+
+Every other path, including one that grazes the profile, is evaluated as in §6.3, unchanged.
+
+**The path difference.** The diffracted path is the upper convex hull of $R$, the $P_k$ and $S$
+(the "rubber band"): its interior vertices $O_1, \dots, O_m$, from the microphone's side, are the
+diffracting edges, and
+
+$$
+\delta = |R O_1| + \sum_{i=1}^{m-1} |O_i O_{i+1}| + |O_m S| - |R S| > 0, \qquad
+e = \sum_{i=1}^{m-1} |O_i O_{i+1}| .
+$$
+
+**Diffraction.** At wavelength $\lambda = c/f_b$ for each band,
+
+$$
+\Delta_\mathrm{dif}(\delta) = \begin{cases} 10 \lg\!\left(3 + \dfrac{40}{\lambda} C'' \delta\right) &
+\dfrac{40}{\lambda} C'' \delta \ge -2 \\ 0 & \text{otherwise,} \end{cases} \qquad
+C'' = \frac{1 + (5\lambda/e)^2}{1/3 + (5\lambda/e)^2},
+$$
+
+with $C'' = 1$ for one edge, or for several with $e \le 0.3$ m. The frequency factor $C_h$ of
+the 2012 report is 1, as the Directive has it. The term for the direct path,
+$\Delta_\mathrm{dif}(S, R)$, is capped at 25 dB; the terms inside the ground corrections below
+are not. Since $\delta > 0$ on a screened path, $\Delta_\mathrm{dif}(S,R) \ge 10 \lg 3 = 4.77$
+dB, so screening switches on with a step of at least that size as a source drops behind a
+crest.
+
+**Ground on each side.** The source side's mean line is fitted to the profile from $O_m$ to the
+footprint, and the receiver side's from the microphone to $O_1$, as in §6.3. $S'$ and $R'$ are
+$S$ and $R$ mirrored in them, and $\Delta_\mathrm{dif}(S', R)$ and $\Delta_\mathrm{dif}(S, R')$
+are evaluated over the same edges, a path difference being negative when the line of sight
+between its ends passes over every edge. Then
+
+$$
+\Delta_\mathrm{ground}(S,O) = -20 \lg\!\left[1 + \left(\sqrt{G_S} - 1\right) F_S\right], \qquad
+F_S = \min\!\left(1, 10^{-[\Delta_\mathrm{dif}(S',R) - \Delta_\mathrm{dif}(S,R)]/20}\right),
+$$
+
+and $\Delta_\mathrm{ground}(O,R)$ likewise with $G_R$ and $R'$. $G_S$ is the ground power ratio
+of §5 for the source over the source side's line with $O_m$ as the receiver, and $G_R$ that for
+$O_1$ as the source with the microphone over the receiver side's line: the point receiver at its
+own height above the line, or the plate (§6.2) at the edge's height above the microphone, for
+which $R' = R$. Both sides take the microphone's ground class (§5.5), and heights below a line
+are raised to zero. The Directive writes $\sqrt{G}$ as $10^{-A_\mathrm{ground}/20}$ with its own
+ground model; §5's is used here. The clamp on $F$ departs from the Directive only where an
+image path is shorter than the real one, which only steeply tilted side lines give.
+
+**The level.** The screened path keeps the straight line's spreading, absorption and sphere
+direction (§4), and its band levels are lowered by
+
+$$
+A = \min\!\left[\Delta_\mathrm{dif}(S,R), 25\right] + \Delta_\mathrm{ground}(S,O) + \Delta_\mathrm{ground}(O,R),
+$$
+
+in place of the whole path's ground term of §5 or a propagation table's level (§9.3): the
+ground is counted once, on the two sides. Without a ground model $A = \Delta_\mathrm{dif}(S,R)$.
+
+**The peak search.** Each side's factor $|1 + (\sqrt{G} - 1)F|^2$ is at most $\max(1, G)$ for
+$F \in [0, 1]$, and $\Delta_\mathrm{dif}(S,R) \ge 10 \lg 3$, so a screened path is at most
+$\max(1, G_S^\mathrm{max}) \max(1, G_R^\mathrm{max})/3$ above free field, with
+$G^\mathrm{max}$ the bounds of §5 and §6.2. That term joins the bound per band.
+
+Lateral paths around obstacles are not modeled, the rays are straight, and an edge is resolved
+only to the sampling step, which rounds a sharp crest slightly. $\Delta_\mathrm{dif}$ is
+compared with Sommerfeld's exact solution for a rigid half-plane [64] in
+[FIDELITY](FIDELITY.md#terrain-screening).
 
 ## 7. The stratified, moving atmosphere
 
@@ -1346,8 +1430,9 @@ than for SEL.
 - **Doppler frequency shift.** The spheres carry the measured, Doppler-shifted spectra, and
   NICE-OPS applies no shift. A database whose spheres have had the shift removed is refused. The
   source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
-- **Diffraction and screening** by terrain or buildings (§6.3). Terrain enters only through
-  each path's mean ground plane.
+- **Diffraction and screening by buildings**, and by terrain without `--terrain_screening`,
+  when terrain enters only through each path's mean ground plane (§6.3). Screening by terrain
+  (§6.4) takes the vertical plane only, with no lateral paths.
 - **Refraction over terrain.** The ray models assume flat ground, so `--terrain` is refused
   with `--refraction`. A propagation table is read over each path's mean plane (§9.3), which
   for a refracting table assumes a stratification that follows the ground.
@@ -1424,3 +1509,6 @@ than for SEL.
 59. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 1: Propagation in an Atmosphere without Significant Refraction," DELTA Acoustics & Vibration Report AV 1849/00 (revised), Hørsholm, Denmark, 2006.
 60. Wieringa, J., "Representative Roughness Parameters for Homogeneous Terrain," *Boundary-Layer Meteorology*, Vol. 63, No. 4, 1993, pp. 323–363. https://doi.org/10.1007/BF00705357
 61. Efron, B., and Tibshirani, R. J., *An Introduction to the Bootstrap*, Chapman & Hall, New York, 1993. https://doi.org/10.1201/9780429246593
+62. "Commission Delegated Directive (EU) 2021/1226 of 21 December 2020 Amending, for the Purposes of Adapting to Scientific and Technical Progress, Annex II to Directive 2002/49/EC of the European Parliament and of the Council as Regards Common Noise Assessment Methods," *Official Journal of the European Union*, L 269, 28 July 2021, pp. 65–142.
+63. Kok, A., and van Beek, A., "Amendments for CNOSSOS-EU: Description of Issues and Proposed Solutions," RIVM Letter Report 2019-0023, National Institute for Public Health and the Environment, Bilthoven, Netherlands, 2019. https://doi.org/10.21945/RIVM-2019-0023
+64. Sommerfeld, A., "Mathematische Theorie der Diffraction," *Mathematische Annalen*, Vol. 47, Nos. 2–3, 1896, pp. 317–374. https://doi.org/10.1007/BF01447273
