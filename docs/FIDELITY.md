@@ -649,15 +649,15 @@ rms:
 
 | position 28 | terrain, unscreened | terrain, screened | change |
 | --- | --- | --- | --- |
-| SEL | +4.89 [4.28, 5.50] / 6.18 | +4.40 [3.78, 4.99] / 5.79 | −0.49 [−0.56, −0.42], rms −0.39 |
-| LAmax | +0.06 [−0.65, 0.76] / 4.20 | −0.24 [−0.91, 0.42] / 4.15 | −0.30, rms −0.05 |
+| SEL | +4.98 [4.35, 5.60] / 6.32 | +4.48 [3.85, 5.09] / 5.92 | −0.50 [−0.57, −0.44], rms −0.40 |
+| LAmax | +0.13 [−0.54, 0.84] / 4.31 | −0.17 [−0.91, 0.49] / 4.25 | −0.31, rms −0.06 |
 
 The blocked segment comes early in the pass, at long range, so screening moves SEL by half a
 decibel; the over-prediction left is shared by every off-datum microphone (27 and 29 read +2.6 and
-+4.0 dB). Inside the blocked segment, against the rest of the window, the measured level is
-−4.2 dB [−4.9, −3.1], the unscreened prediction +2.4 and the screened one −9.7 (27 and 29 measure
-−0.2 and +0.3): the hill does shield position 28, and the screening overstates it by about
-5.5 dBA. By band, the same contrast measured against the unscreened prediction, median over the
++3.9 dB). Inside the blocked segment, against the rest of the window, the measured level is
+−4.3 dB [−5.1, −3.3], the unscreened prediction +2.4 and the screened one −9.7 (27 and 29 measure
+−0.2 and +0.2): the hill does shield position 28, and the screening overstates it by about
+5.4 dBA. By band, the same contrast measured against the unscreened prediction, median over the
 119 runs:
 
 | band | 63 Hz | 125 Hz | 250 Hz | 500 Hz | 1 kHz | 2 kHz |
