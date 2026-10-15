@@ -504,7 +504,7 @@ None moves the SEL: the exposure within 10 dB of each microphone's measured peak
   | --- | --- | --- | --- | --- |
   | mic 1 − mic 21 on the 3.4° slope (measured −2.54 dB), error | −2.09 | −0.70 | −0.70 | −0.28 |
   | mics 1–21, mean / rms | +1.40 / 1.66 | +1.49 / 1.77 | +1.55 / 1.85 | +1.55 / 1.84 |
-  | mics 27–29, 300 ft below the datum: mean (MAE), 24 mic-runs | −8.76 (12.20) | −2.43 (5.97) | −0.32 (5.26) | +4.11 (4.49) |
+  | mics 27–29, 300 ft below the datum: mean (MAE), 24 mic-runs | −8.76 (12.30) | −2.43 (5.89) | −0.32 (5.26) | +4.11 (4.49) |
   | the same, three upwind runs | −19.49 | −0.23 | +2.04 | +4.65 |
   | the same, the two shadowing profiles | −12.66 | −14.62 | −10.77 | +2.58 |
 
@@ -639,27 +639,39 @@ band, and the ground weight F never needed clamping. Over the hills fixture the 
 screened nothing and was the unscreened run byte for byte.
 
 **At Sweetwater**, behind an isolated hill, in the AS350 altitude-variation test
-([Data sets](#data-sets)): all 166 runs (4088 mic-runs after the study's exclusions), SD1
-database, flush boards on variable-porosity ground of 200 kPa·s/m², the 1 m 3DEP grid, run with
-no minimum protrusion. Only microphone 28 is screened behind the hill (20,465 evaluations in 121
-runs: from the record's start to x ≈ −3190 ft), and the blocked states drop by a median 12.5 dBA;
-27 and 29 graze but are never screened, and the on-datum array's scores are unchanged. SEL and
-LAmax, predicted minus measured, mean [95%] / rms:
+([Data sets](#data-sets), with recordings 28 and 29 where they were made): all 166 runs (4088
+mic-runs after the study's exclusions), SD1 database, flush boards on variable-porosity ground of
+200 kPa·s/m², the 1 m 3DEP grid, the default minimum protrusion. Only position 28 is screened
+behind the hill (19,439 evaluations in 119 runs, from the record's start to x ≈ −3216 ft), and
+there the blocked states drop by a median 12.6 dBA; 27 and 29 graze but are never screened, and
+the on-datum array's scores are unchanged. SEL and LAmax, predicted minus measured, mean [95%] /
+rms:
 
-| microphone 28 | terrain, unscreened | terrain, screened | change |
+| position 28 | terrain, unscreened | terrain, screened | change |
 | --- | --- | --- | --- |
-| SEL | +3.28 [2.72, 3.81] / 4.79 | +2.75 [2.18, 3.32] / 4.42 | −0.53 [−0.60, −0.46] |
-| LAmax | −1.75 [−2.36, −1.13] / 4.19 | −2.06 [−2.68, −1.48] / 4.33 | −0.31, rms +0.15 |
+| SEL | +4.89 [4.28, 5.50] / 6.18 | +4.40 [3.78, 4.99] / 5.79 | −0.49 [−0.56, −0.42], rms −0.39 |
+| LAmax | +0.06 [−0.65, 0.76] / 4.20 | −0.24 [−0.91, 0.42] / 4.15 | −0.30, rms −0.05 |
 
-The SEL improves only because the model reads high at every off-datum microphone there (the
-blocked runs are the low ones, over-predicted at 27, 29 and 11 too). Inside the blocked segment,
-against the rest of the window, the measured level is +0.3 dB, the unscreened prediction +2.3
-and the screened one −9.8: the measurement shows no shielding. Stephenson et al. (AHS Forum 73,
-2017) found microphone 28 in the hill's three-dimensional bright spot, which sound around the
-hill's sides fills and a vertical-plane method cannot. So behind an isolated hill the screening
-overstates the shielding by about 10 dB; it has no measured case of a long ridge, where it
-applies. The same runs found the 1 m grid's texture 3–5 m from a flush board screening paths at
-1–2° elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m) now leaves those unscreened.
+The blocked segment comes early in the pass, at long range, so screening moves SEL by half a
+decibel; the over-prediction left is shared by every off-datum microphone (27 and 29 read +2.6 and
++4.0 dB). Inside the blocked segment, against the rest of the window, the measured level is
+−4.2 dB [−4.9, −3.1], the unscreened prediction +2.4 and the screened one −9.7 (27 and 29 measure
+−0.2 and +0.3): the hill does shield position 28, and the screening overstates it by about
+5.5 dBA. By band, the same contrast measured against the unscreened prediction, median over the
+119 runs:
+
+| band | 63 Hz | 125 Hz | 250 Hz | 500 Hz | 1 kHz | 2 kHz |
+| --- | --- | --- | --- | --- | --- | --- |
+| position 28, measured | −3.5 | −8.1 | −6.0 | −6.9 | −4.7 | −4.2 |
+| positions 27 / 29, measured (not screened) | −1.1 / −2.7 | −1.6 / −3.5 | −0.1 / −1.0 | −1.7 / −1.9 | −1.9 / −2.3 | −1.3 / −3.0 |
+| position 28, screened prediction | −4.7 | −4.9 | −9.9 | −25.2 | −37.2 | −38.2 |
+
+Net of the unscreened positions, the measured shielding is about 3–6 dB and nearly flat in
+frequency. The screening is right to within a few decibels up to about 200 Hz and too deep above
+it, by 20–30 dB at 1–2 kHz. Sound reaching the microphone around the hill's flanks, and
+turbulent scattering, both of which a vertical-plane method leaves out, are the likely reasons. The same runs found the 1 m grid's texture 3–5 m from a flush
+board screening paths at 1–2° elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m)
+now leaves those unscreened.
 
 ### Trajectory smoothing
 
@@ -693,7 +705,11 @@ The measured comparisons use the 2017 Noise Abatement flight test (data report
 NASA/TM-2019-220264) unless they say otherwise. The others are the 2014–15 altitude-variation
 test (NASA/TM-2016-219354: an AS350 SD1 over inverted ground boards at Amedee, Salton Sea and
 Sweetwater, where microphones 27–29 stand behind a hill and 1–21 on a 3.4° slope) and the
-1978 T-38A runway test at Wallops (NASA TP-1747, microphones on concrete and grass).
+1978 T-38A runway test at Wallops (NASA TP-1747, microphones on concrete and grass). At
+Sweetwater the recordings labeled 28 and 29 were made at each other's surveyed positions, in every
+run: their rotor tones de-Doppler only at the exchanged positions, and stationary sources heard with
+no aircraft flying give delays no source could produce with them where labeled. Every Sweetwater
+result here uses each recording where it was made.
 
 - **Aircraft and sites.** The B407 flew at Amedee, where the ground is flat to within about a
   meter over the test range. The R44 (database RO-44) and R66 (RO-66) flew at Eglin, along a
@@ -1175,8 +1191,9 @@ range-dependent source fit would confound descent state drift with path loss.
 - **Turbulent scattering** fitted to pole and board pairs is ten times what the SEL supports.
 - **EPNL** is compared only to 5 kHz, where the measured frames stop, with no pseudo-tone
   exclusion; predicted spectra carry less tone correction than measured.
-- **Terrain** is a plane fitted over the whole path, screened only with `--terrain_screening`,
-  which has no measured validation ([Terrain screening](#terrain-screening)).
+- **Terrain** is a plane fitted over the whole path, screened only with `--terrain_screening`.
+  Behind the one measured hill the screening is right to a few decibels below about 200 Hz and
+  too deep above it, by 20–30 dB at 1–2 kHz ([Terrain screening](#terrain-screening)).
 - **Ground classes** treat each microphone's ground as a uniform half-space. At grazing a
   built-up patch measured like ground of about 1000–2000 kPa·s/m², not concrete, and the ground
   next to the microphone and along the path decides ([Ground classes](#ground-classes)).

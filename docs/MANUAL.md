@@ -832,7 +832,7 @@ Use it where ridges, bluffs or berms stand between low flight and the receivers.
 
 - Only the vertical plane through source and microphone is taken: no paths around the ends of an
   obstacle, and no buildings or vegetation. The rays are straight. Behind an isolated hill, which
-  sound also reaches around its sides, this overstates the shielding by about 10 dB
+  sound also reaches around its sides, this overstates the shielding above the low bands
   ([FIDELITY](FIDELITY.md#terrain-screening)); use it for long ridges, bluffs and berms.
 - Crests are found at `--terrain_step`, so a sharp ridge is slightly under-screened at the
   default step; a finer step costs about proportionally more.
@@ -841,7 +841,8 @@ Use it where ridges, bluffs or berms stand between low flight and the receivers.
 - With `--propagation_table`, a screened path is not read from the table but takes the screening
   with the ground model, which must then be on; unblocked paths keep the table. The two physics
   meet at the edge of the screened region, and the log counts the paths that left the table.
-- Its accuracy is in [FIDELITY](FIDELITY.md#terrain-screening); there is no measured validation.
+- Its accuracy, against an exact solution and behind one measured hill, is in
+  [FIDELITY](FIDELITY.md#terrain-screening).
 
 Each path's ground is otherwise one plane. `--refraction` is refused, because the ray models are
 built over flat ground, and on the broadband path `--terrain` only places the observers. A
