@@ -662,8 +662,8 @@ decibel; the over-prediction left is shared by every off-datum microphone (27 an
 
 | band | 63 Hz | 125 Hz | 250 Hz | 500 Hz | 1 kHz | 2 kHz |
 | --- | --- | --- | --- | --- | --- | --- |
-| position 28, measured | −3.5 | −8.1 | −6.0 | −6.9 | −4.7 | −4.2 |
-| positions 27 / 29, measured (not screened) | −1.1 / −2.7 | −1.6 / −3.5 | −0.1 / −1.0 | −1.7 / −1.9 | −1.9 / −2.3 | −1.3 / −3.0 |
+| position 28, measured | −3.7 | −8.1 | −6.0 | −6.9 | −4.7 | −4.2 |
+| positions 27 / 29, measured (not screened) | −1.1 / −2.6 | −1.6 / −3.4 | −0.1 / −1.0 | −1.7 / −1.9 | −1.9 / −2.3 | −1.3 / −3.0 |
 | position 28, screened prediction | −4.7 | −4.9 | −9.9 | −25.2 | −37.2 | −38.2 |
 
 Net of the unscreened positions, the measured shielding is about 3–6 dB and nearly flat in
