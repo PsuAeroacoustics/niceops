@@ -57,6 +57,7 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `stratified_duct_point.csv` | C++ build | `stratified_duct_point_golden` (1e-4 dB abs.) | `stratified_duct_point` | copy the run's output |
 | `stratified_duct_plate.csv` | C++ build | `stratified_duct_plate_golden` (1e-4 dB abs.) | `stratified_duct_plate` | copy the run's output |
 | `stratified_calm_floor_plate_200hz.csv` | C++ build | `stratified_calm_floor_plate_200hz_golden` (1e-4 dB abs.) | `stratified_calm_floor_plate_200hz` | copy the run's output |
+| `stratified_{windy_point,duct_point,duct_plate,calm_floor_plate_200hz}_exact.csv` | C++ build | `*_exact_golden` (1e-4 dB abs.) | `*_exact` (`--ray_stride 1`) | copy the run's output |
 | `terrain_hills_point.csv` | C++ build | `terrain_hills_point_golden` (1e-6 dB abs.) | `terrain_hills_point` | copy the run's output |
 | `terrain_hills_plate.csv` | C++ build | `terrain_hills_plate_golden` (1e-6 dB abs.) | `terrain_hills_plate` | copy the run's output |
 | `terrain_steep_table_plate.csv` | C++ build | `terrain_steep_table_plate_golden` (1e-5 dB abs.) | `terrain_steep_table_plate` | copy the run's output |
@@ -125,6 +126,10 @@ Notes on each:
   pair the whole path's ground as well (ground counted twice) fails both, and giving a plate's
   microphone side the point model in place of the plate fails the plate's. The windowed/marched
   pairs compare a run with itself and pass with either.
+- **The four stratified goldens were regenerated when `--ray_stride 4` became the default**; the
+  files from before, every state solved, are kept as `*_exact.csv` and pinned by runs with
+  `--ray_stride 1`, which reproduce them to the bit. `stratified_stride_{windy,duct}_is_close`
+  holds the default within 0.005 and 0.02 dB of them.
 - **`terrain_ridge_kirchhoff_{point,plate,noground,table}.csv`** were made by the builds that
   added `--terrain_screening kirchhoff` (point, plate) and its band-loss table (the other two;
   the table moved the first two by under 10⁻⁸ dB), behind the ridge fixture, and pin the

@@ -786,7 +786,7 @@ struct RunOptions
     WaveOptions waves;
     // --ray_stride (stratified only): the layered solves at every ray_stride-th
     // state, the states between interpolated where the two agree (1: all solved).
-    std::size_t ray_stride = 1;
+    std::size_t ray_stride = 4;
     double shadow_floor = 20.0;
     // --shadow_model resolved (stratified only): each band's shadow boundary
     // from the near-ground profile it resolves at shadow_phase radians of
@@ -4594,7 +4594,7 @@ int run(int argc, char* argv[])
     double shadow_phase = default_resolved_phase;
     std::string cramped_ground = "series";
     bool tunneling = false;
-    std::size_t ray_stride = 1;
+    std::size_t ray_stride = 4;
     bool skip_fill = false;
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
@@ -4902,11 +4902,11 @@ int run(int argc, char* argv[])
             "--refraction stratified: also take the rays turned back from aloft that turn again just "
             "above the microphone, which the wave reaches through the layer below them (an Airy "
             "tail per band).  Off by default.");
-    app.add_option("--ray_stride", ray_stride,
+    auto* ray_stride_option = app.add_option("--ray_stride", ray_stride,
             "--refraction stratified: solve each path's layered rays only every this many trajectory "
-            "states, and interpolate the states between wherever the two solved ones agree -- the "
-            "same arrivals, lit or shadowed alike, angles within half a degree and ray tubes within "
-            "2% -- solving the rest. 1 (default) solves every state.")
+            "states (default 4), and interpolate the states between wherever the two solved ones "
+            "agree -- the same arrivals, lit or shadowed alike, angles within half a degree and ray "
+            "tubes within 2% -- solving the rest. 1 solves every state.")
         ->check(CLI::Range(std::size_t {1}, std::size_t {64}));
     app.add_flag("--skip_fill", skip_fill,
             "--refraction stratified: fill the skip zone short of where rays from aloft first land "
@@ -6074,7 +6074,7 @@ int run(int argc, char* argv[])
     options.stratified = refraction == "stratified";
     if ((tunneling || skip_fill) && !options.stratified)
         input_error("--tunneling and --skip_fill need --refraction stratified.");
-    if (ray_stride > 1 && !options.stratified)
+    if (ray_stride_option->count() > 0 && !options.stratified)
         input_error("--ray_stride needs --refraction stratified.");
     options.ray_stride = ray_stride;
     options.waves.tunneling = tunneling;

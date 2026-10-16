@@ -948,7 +948,9 @@ under 20° of veer):
 
 ### Interpolated rays (`--ray_stride`)
 
-`--ray_stride` against every state solved, the same build. On the AS350 approach 291261 at
+`--ray_stride` against every state solved (`--ray_stride 1`), the same build. Stride 4 is the
+default; the stratified results elsewhere in this file were made with every state solved, and
+the default moves them by about what the tables below show. On the AS350 approach 291261 at
 Amedee (46 flush plates, 4778 states, the day's measured profile, a history per microphone):
 
 | stride | SEL, largest change | LAmax | one history sample, largest | samples over 0.1 dB |

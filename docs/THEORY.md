@@ -1075,7 +1075,7 @@ exact slope every 1/128 from $-60$ to $64$, read by cubic Hermite interpolation)
 past $x = 72$, where every sub-frequency's $\mathrm{Ai}^2$ is below the $10^{-300}$ floor, and
 evaluated directly elsewhere.
 
-**Interpolated states.** With `--ray_stride` $K > 1$ the layered solves -- the direct eigenray,
+**Interpolated states.** With `--ray_stride` $K > 1$ (4 by default) the layered solves -- the direct eigenray,
 the arrivals and wave arrivals, and for a point receiver the reflected ray's grazing angle and
 the length its ground term takes -- are made at the anchor states $nK$ and the last state, and a
 state a fraction $t$ of the way between two anchors takes theirs interpolated, provided the two

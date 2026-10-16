@@ -162,7 +162,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--cramped_ground` | `resolved`: how a band whose boundary is within two diffraction lengths of the source is filled: `series` (default), `straight` or `ray`. |
 | `--tunneling` | `--refraction stratified`: add the rays that turn back just above the microphone, through an Airy tail per band. Off by default ([Micro-shadows](#micro-shadows-and-skip-zones)). |
 | `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail. Off by default. |
-| `--ray_stride` | `--refraction stratified`: solve each path's layered rays only every this many trajectory states and interpolate the states between where the two agree ([Refraction through the profile's layers](#refraction-through-the-profiles-layers)). Default 1, every state solved. |
+| `--ray_stride` | `--refraction stratified`: solve each path's layered rays only every this many trajectory states and interpolate the states between where the two agree ([Refraction through the profile's layers](#refraction-through-the-profiles-layers)). Default 4; 1 solves every state. |
 
 #### Ground, receivers and terrain
 
@@ -297,7 +297,7 @@ The main ones:
 | `--csel_file` with `--db_cutoff` | The cutoff is proven on the A-weighted level. |
 | `--refraction` without `--atmosphere` or `--wind`; `--atmosphere` with `--wind` | One profile, stated once. |
 | `--shadow_model resolved` without `--refraction stratified` and the ground effect; `--scattering` without `--refraction` and the ground effect | They act through the shadow transition, which needs a ground model. |
-| `--tunneling`, `--skip_fill` or `--ray_stride` above 1 without `--refraction stratified` | They are stratified-ray options. |
+| `--tunneling`, `--skip_fill` or `--ray_stride` without `--refraction stratified` | They are stratified-ray options. |
 | `--terrain` with `--refraction`, or without a frame | The ray models are built over flat ground; terrain needs to know where x/y lie. |
 | `--terrain_screening` without `--terrain`, or with `--no-spectral` or a database without spectra; `--terrain_screening cnossos` with `--propagation_table` and `--no-ground_effect` | The edges are the terrain's; the diffraction is per band; a path `cnossos` screens leaves the table for the ground model. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
@@ -937,16 +937,17 @@ model that agrees with the parabolic equation.
 - **Cost.** On the demo grid with a point receiver, about five times `linear`'s
   acoustic loop ([Relative cost](#relative-cost)), and more in a duct, where the arrivals
   multiply.
-- **Faster, approximately: `--ray_stride 4`.** The rays to a microphone change little from one
-  trajectory state to the next, so this solves them at every fourth state and interpolates the
-  states between. A state whose two solved neighbors differ in kind (lit and shadowed, a
+- **Interpolated states (`--ray_stride`, 4 by default).** The rays to a microphone change little
+  from one trajectory state to the next, so they are solved at every fourth state and the states
+  between are interpolated. A state whose two solved neighbors differ in kind (lit and shadowed, a
   different set of arrivals, a caustic or boundary passing between them) is solved itself, and
   the level at every state is still formed from its own geometry. It roughly halves a stratified
-  run. SEL and LAmax move by thousandths to hundredths of a decibel; a single sample of a time
-  history can move by up to a decibel where the solved history itself steps from one state to
-  the next ([FIDELITY](FIDELITY.md#interpolated-rays---ray_stride)). Use it for footprints and
-  validation runs; leave it at 1 to compare ray models state by state. Larger strides gain little
-  more, since what is left is the rest of the evaluation.
+  run against solving every state, for SEL and LAmax within thousandths to hundredths of a
+  decibel; a single sample of a time history can differ by up to a decibel where the solved
+  history itself steps from one state to the next
+  ([FIDELITY](FIDELITY.md#interpolated-rays---ray_stride)). `--ray_stride 1` solves every state:
+  to compare ray models state by state, or to reproduce a stratified result made before the
+  default. Larger strides gain little more, since what is left is the rest of the evaluation.
 
 ### Low sources near grazing: the resolved shadow
 
@@ -1688,7 +1689,7 @@ The acoustic loop on the full demo grid (S-76D track, 94.3 million observer–st
 | spectral with the ground effect (the default) | 2.9 s; 11.6 s with `--exact_ground` |
 | `--plate_table` | 7.1 s; 21.0 s with `--exact_ground` |
 | `--refraction linear` (`example_windy.csv`), ground effect | 7.8 s |
-| `--refraction stratified` (`example_windy.csv`), ground effect | 37 s, more in ducts |
+| `--refraction stratified` (`example_windy.csv`), ground effect | 18 s; 34 s with `--ray_stride 1`; more in ducts |
 
 A broadband run is several times cheaper than spectral. On top of these: `--shadow_model resolved`
 and the refraction models' shadow transitions build their tables only once a ray nears a shadow

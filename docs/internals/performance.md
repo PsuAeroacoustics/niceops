@@ -599,8 +599,8 @@ Tried and not taken:
 
 ### Interpolated rays
 
-`--ray_stride` (opt-in; [refraction.md](refraction.md#interpolated-states---ray_stride)) on the
-same suite, CPU against every state solved, same build, alternately:
+`--ray_stride` (4 by default; [refraction.md](refraction.md#interpolated-states---ray_stride)) on
+the same suite, CPU against every state solved, same build, alternately:
 
 | case | stride 1 | stride 4 | stride 8 |
 | --- | ---: | ---: | ---: |

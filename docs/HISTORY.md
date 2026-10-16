@@ -191,6 +191,16 @@ old and new results only with them in mind.
   0.01–0.05 dB; at grazing nothing moved by more than 0.001 dB
   ([Propagation loss tables](MANUAL.md#propagation-loss-tables)).
 
+- **`--refraction stratified` interpolates the layered rays between every fourth state** by
+  default (`--ray_stride 4`; October 2026). Each path's rays were solved at every trajectory
+  state; now at every fourth and the last, with the states between interpolated where the two
+  agree and solved where they do not. Against every state solved, SEL moves by up to 0.012 dB on
+  the windy demo profile and 0.057 dB in the inversion duct (99% of cells within 0.003 dB),
+  LAmax by up to 0.002 dB on a validation approach, and single history samples by up to about
+  1 dB where the solved history steps between states
+  ([FIDELITY](FIDELITY.md#interpolated-rays---ray_stride)). `--ray_stride 1` reproduces the old
+  results to the bit; the stratified goldens made before are kept as `*_exact.csv` and pin it.
+
 ### Trajectories and the source
 
 - **The hover nose is turned by the frame** whenever the run knows one. With a frame known, the

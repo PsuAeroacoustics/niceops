@@ -1387,21 +1387,6 @@ set_tests_properties(stratified_duct_point stratified_duct_point_marched stratif
 add_test(NAME stratified_duct_point_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME stratified_duct_plate_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_plate.csv integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_duct_point_windowed_is_exact stratified_duct_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
-# --ray_stride: the layered solves at every 4th state, the states between interpolated where the two
-# agree.  Close to every state solved (the stratified goldens, at the measured 0.001 and 0.005 dB, with
-# room), not equal to it (the option acts), and the windowed run equal to the marched one: anchors are
-# fixed states, whichever asks first.
-set(STRIDE_WINDY -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction stratified --frame_bearing 210 --ground_effect --gridstep 984 -L warn --ray_stride 4)
-add_test(NAME stratified_stride_windy_point COMMAND niceops ${STRIDE_WINDY} -o integrated/stratified_stride_windy_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME stratified_stride_windy_point_marched COMMAND niceops ${STRIDE_WINDY} -D integrated/stratified_stride_windy_point_dnl.csv -o integrated/stratified_stride_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME stratified_stride_duct_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --gridstep 984 -L warn --ray_stride 4 -o integrated/stratified_stride_duct_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(stratified_stride_windy_point stratified_stride_windy_point_marched stratified_stride_duct_point PROPERTIES FIXTURES_SETUP stratified_stride_runs)
-add_test(NAME stratified_stride_windowed_is_exact COMMAND golden_compare integrated/stratified_stride_windy_point.csv integrated/stratified_stride_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME stratified_stride_windy_is_close COMMAND golden_compare integrated/stratified_stride_windy_point.csv golden/stratified_windy_point.csv 0.005 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME stratified_stride_duct_is_close COMMAND golden_compare integrated/stratified_stride_duct_point.csv golden/stratified_duct_point.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME stratified_stride_is_not_exact COMMAND golden_compare integrated/stratified_stride_windy_point.csv golden/stratified_windy_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(stratified_stride_is_not_exact PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
-set_tests_properties(stratified_stride_windowed_is_exact stratified_stride_windy_is_close stratified_stride_duct_is_close stratified_stride_is_not_exact PROPERTIES FIXTURES_REQUIRED stratified_stride_runs)
 add_test(NAME ray_stride_needs_stratified COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --ray_stride 4 --gridstep 4000 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(ray_stride_needs_stratified PROPERTIES PASS_REGULAR_EXPRESSION "--ray_stride needs --refraction stratified")
 # --shadow_model resolved: each band's shadow boundary from the near-ground profile it resolves, and
@@ -1466,6 +1451,24 @@ add_test(NAME stratified_duct_point_golden COMMAND golden_compare integrated/str
 add_test(NAME stratified_duct_plate_golden COMMAND golden_compare integrated/stratified_duct_plate.csv golden/stratified_duct_plate.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_windy_point_golden PROPERTIES FIXTURES_REQUIRED stratified_runs)
 set_tests_properties(stratified_duct_point_golden stratified_duct_plate_golden PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# --ray_stride is 4 by default.  Every state solved (--ray_stride 1) stays pinned by the goldens made
+# before it was (*_exact.csv); the default is within 0.005 dB of it on the windy profile and 0.02 in the
+# duct (measured 0.001 and 0.005), and not equal to it.
+add_test(NAME stratified_windy_point_exact COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction stratified --frame_bearing 210 --ground_effect --gridstep 984 -L warn --ray_stride 1 -o integrated/stratified_windy_point_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_point_exact COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --gridstep 984 -L warn --ray_stride 1 -o integrated/stratified_duct_point_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate_exact COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 -L warn --ray_stride 1 -o integrated/stratified_duct_plate_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_plate_200hz_exact COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 --band_limits 20 224 -L warn --ray_stride 1 -o integrated/stratified_calm_floor_plate_200hz_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_windy_point_exact stratified_duct_point_exact stratified_duct_plate_exact stratified_calm_floor_plate_200hz_exact PROPERTIES FIXTURES_SETUP stratified_exact_runs)
+add_test(NAME stratified_windy_point_exact_golden COMMAND golden_compare integrated/stratified_windy_point_exact.csv golden/stratified_windy_point_exact.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_point_exact_golden COMMAND golden_compare integrated/stratified_duct_point_exact.csv golden/stratified_duct_point_exact.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate_exact_golden COMMAND golden_compare integrated/stratified_duct_plate_exact.csv golden/stratified_duct_plate_exact.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_plate_200hz_exact_golden COMMAND golden_compare integrated/stratified_calm_floor_plate_200hz_exact.csv golden/stratified_calm_floor_plate_200hz_exact.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_windy_is_close COMMAND golden_compare integrated/stratified_windy_point.csv integrated/stratified_windy_point_exact.csv 0.005 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_duct_is_close COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_exact.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_is_not_exact COMMAND golden_compare integrated/stratified_windy_point.csv integrated/stratified_windy_point_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_stride_is_not_exact PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(stratified_windy_point_exact_golden stratified_duct_point_exact_golden stratified_duct_plate_exact_golden stratified_calm_floor_plate_200hz_exact_golden stratified_stride_windy_is_close stratified_stride_duct_is_close stratified_stride_is_not_exact PROPERTIES FIXTURES_REQUIRED "stratified_exact_runs;stratified_runs;stratified_duct_runs")
+
 # --wind builds the profile in memory from one surface wind.  The run has to be exactly the one fed
 # that profile through --atmosphere (--write_atmosphere writes it), and refining its levels from 16
 # a decade to 64 must not move a plate microphone by 0.1 dB (it moves them 0.016).  The plate
