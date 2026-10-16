@@ -621,9 +621,11 @@ With `--terrain_screening` a path the terrain blocks is screened instead (§6.4)
 
 ### 6.4 Terrain screening
 
-`--terrain_screening cnossos` applies the CNOSSOS-EU diffraction over a path's terrain profile
-[32, 33], as amended [62, 63], in the vertical plane through the microphone's foot and the
-source's footprint. Heights are taken relative to the terrain at the microphone's foot, $s$ is
+`--terrain_screening` lowers the paths the terrain blocks, in the vertical plane through the
+microphone's foot and the source's footprint, by one of two models: `cnossos`, the CNOSSOS-EU
+diffraction over the path's terrain profile [32, 33], as amended [62, 63], with the ground on each
+side of its edges in place of the whole path's; or `kirchhoff`, the Fresnel-Kirchhoff loss of one
+equivalent knife edge [65], taken off the level the path would have unscreened. Heights are taken relative to the terrain at the microphone's foot, $s$ is
 the horizontal distance from it, and $\Delta$ is the terrain sampling step. The microphone is
 $R = (0, h_m)$, with $h_m$ its height above the ground (zero for a plate), the profile is
 $P_k = (k\Delta, z_k)$ for the samples strictly between the ends, $1 \le k < D/\Delta$, and the
@@ -638,7 +640,8 @@ $$
 \max_k \left[ z_k - h_m - \frac{z_S - h_m}{D}\, k\Delta \right] > h_{\min} .
 $$
 
-Every other path, including one that grazes the profile, is evaluated as in §6.3, unchanged.
+Every other path, including one that grazes the profile, is evaluated as in §6.3, unchanged. Both
+models screen the same paths.
 
 **The path difference.** The diffracted path is the upper convex hull of $R$, the $P_k$ and $S$
 (the "rubber band"): its interior vertices $O_1, \dots, O_m$, from the microphone's side, are the
@@ -649,7 +652,7 @@ $$
 e = \sum_{i=1}^{m-1} |O_i O_{i+1}| .
 $$
 
-**Diffraction.** At wavelength $\lambda = c/f_b$ for each band,
+**CNOSSOS-EU: diffraction.** At wavelength $\lambda = c/f_b$ for each band,
 
 $$
 \Delta_\mathrm{dif}(\delta) = \begin{cases} 10 \lg\!\left(3 + \dfrac{40}{\lambda} C'' \delta\right) &
@@ -664,7 +667,7 @@ are not. Since $\delta > 0$ on a screened path, $\Delta_\mathrm{dif}(S,R) \ge 10
 dB, so screening switches on with a step of at least that size as a source drops behind a
 crest.
 
-**Ground on each side.** The source side's mean line is fitted to the profile from $O_m$ to the
+**CNOSSOS-EU: ground on each side.** The source side's mean line is fitted to the profile from $O_m$ to the
 footprint, and the receiver side's from the microphone to $O_1$, as in §6.3. $S'$ and $R'$ are
 $S$ and $R$ mirrored in them, and $\Delta_\mathrm{dif}(S', R)$ and $\Delta_\mathrm{dif}(S, R')$
 are evaluated over the same edges, a path difference being negative when the line of sight
@@ -684,7 +687,7 @@ are raised to zero. The Directive writes $\sqrt{G}$ as $10^{-A_\mathrm{ground}/2
 ground model; §5's is used here. The clamp on $F$ departs from the Directive only where an
 image path is shorter than the real one, which only steeply tilted side lines give.
 
-**The level.** The screened path keeps the straight line's spreading, absorption and sphere
+**CNOSSOS-EU: the level.** The screened path keeps the straight line's spreading, absorption and sphere
 direction (§4), and its band levels are lowered by
 
 $$
@@ -694,14 +697,78 @@ $$
 in place of the whole path's ground term of §5 or a propagation table's level (§9.3): the
 ground is counted once, on the two sides. Without a ground model $A = \Delta_\mathrm{dif}(S,R)$.
 
-**The peak search.** Each side's factor $|1 + (\sqrt{G} - 1)F|^2$ is at most $\max(1, G)$ for
+**CNOSSOS-EU: the peak search.** Each side's factor $|1 + (\sqrt{G} - 1)F|^2$ is at most $\max(1, G)$ for
 $F \in [0, 1]$, and $\Delta_\mathrm{dif}(S,R) \ge 10 \lg 3$, so a screened path is at most
 $\max(1, G_S^\mathrm{max}) \max(1, G_R^\mathrm{max})/3$ above free field, with
 $G^\mathrm{max}$ the bounds of §5 and §6.2. That term joins the bound per band.
 
-Lateral paths around obstacles are not modeled, the rays are straight, and an edge is resolved
-only to the sampling step, which rounds a sharp crest slightly. $\Delta_\mathrm{dif}$ is
-compared with Sommerfeld's exact solution for a rigid half-plane [64] in
+**Kirchhoff: the equivalent edge.** Along the line of sight from $R$ to $S$, of length $L$, a
+point $P$ lies a distance $a(P)$ from $R$, measured along the line, and a height $h(P)$ above it,
+measured perpendicular to it. The aperture plane stands perpendicular to the line of sight through
+the sample that rises highest above it, $P_*$ (the nearest the microphone, on a tie), at
+$a_* = a(P_*)$. The edge is the lowest point of that plane both ends see over the terrain: the
+higher of the points where the microphone's horizon ray, through $O_1$, and the source's, through
+$O_m$, cross it,
+
+$$
+H = \max\!\left[\frac{h(O_1)\, a_*}{a(O_1)},\; \frac{h(O_m)\,(L - a_*)}{L - a(O_m)}\right], \qquad
+d_1 = L - a_*, \quad d_2 = a_*,
+$$
+
+with $d_1$ and $d_2$ the source's and the microphone's distances to the plane, and the path
+difference through it is taken exactly,
+
+$$
+\delta_K = \sqrt{d_1^2 + H^2} - d_1 + \sqrt{d_2^2 + H^2} - d_2 .
+$$
+
+Every sample lies on or below the lines through the hull's edges, so $H \ge h(P_*) > 0$. A single
+crest is its own edge, $\delta_K = \delta$; over several, the edge sits where the deepest
+protrusion is and is as high as the higher horizon there.
+
+**Kirchhoff: the loss.** Past a knife edge, the power relative to the free field in the
+Fresnel-Kirchhoff approximation [65] is
+
+$$
+|F(v)|^2 = \tfrac12\left(\left[\tfrac12 - C(v)\right]^2 + \left[\tfrac12 - S(v)\right]^2\right),
+\qquad v = 2\sqrt{\delta_K f / c},
+$$
+
+with $C(v) = \int_0^v \cos(\pi t^2/2)\,dt$ and $S(v) = \int_0^v \sin(\pi t^2/2)\,dt$ the
+Fresnel integrals [50], by power series to $v = 1.5$ and a continued fraction beyond [66]. It is
+1/4 on the shadow boundary and falls monotonically into the shadow, as $1/(2\pi^2 v^2)$ deep in
+it. A band's loss is its mean over the band, uniformly in frequency from $f_b 2^{-1/6}$ to
+$f_b 2^{1/6}$:
+
+$$
+A_K = -10 \lg \frac{1}{f_\mathrm{hi} - f_\mathrm{lo}} \int_{f_\mathrm{lo}}^{f_\mathrm{hi}} |F(v)|^2\, df ,
+$$
+
+by eight-point Gauss-Legendre quadrature. In $u = f/f_b$ the integrand is
+$|F(2\sqrt{x u})|^2$ with $x = \delta_K f_b / c$, so $A_K$ depends on the edge, the band and the
+sound speed only through $x$. It is tabulated once against $\ln x$, every 1/32 from
+$x = 10^{-8}$ to $10^6$, with its exact slope, from
+
+$$
+\frac{d|F|^2}{d\ln x} = -\frac{v}{2}\left(\left[\tfrac12 - C(v)\right]\cos\frac{\pi v^2}{2}
++ \left[\tfrac12 - S(v)\right]\sin\frac{\pi v^2}{2}\right)
+$$
+
+averaged over the band likewise, and read by cubic Hermite interpolation in $\ln x$; outside the
+table the quadrature is evaluated directly.
+
+**Kirchhoff: the level.** The blocked path keeps everything it would have unscreened: the ground
+model over its mean plane (§6.3), the plate (§6.2), a propagation table's level (§9.3), or the
+free field without any of them. Its band levels are lowered by $A_K$. Since
+$|F(v)|^2 \le 1/4$ for $v \ge 0$, $A_K \ge 10 \lg 4 = 6.02$ dB, so screening switches on with a
+step of at least that size as a source drops behind a crest.
+
+**Kirchhoff: the peak search.** A blocked path is at least 6.02 dB below its unscreened level,
+which the bounds of §5, §6.2 and §9.3 already cover, so the knife edge adds no term to the bound.
+
+Neither model has lateral paths around obstacles, the rays are straight, and an edge is resolved
+only to the sampling step, which rounds a sharp crest slightly. $\Delta_\mathrm{dif}$ and
+$|F(v)|^2$ are compared with Sommerfeld's exact solution for a rigid half-plane [64] in
 [FIDELITY](FIDELITY.md#terrain-screening).
 
 ## 7. The stratified, moving atmosphere
@@ -1513,3 +1580,5 @@ than for SEL.
 62. "Commission Delegated Directive (EU) 2021/1226 of 21 December 2020 Amending, for the Purposes of Adapting to Scientific and Technical Progress, Annex II to Directive 2002/49/EC of the European Parliament and of the Council as Regards Common Noise Assessment Methods," *Official Journal of the European Union*, L 269, 28 July 2021, pp. 65–142.
 63. Kok, A., and van Beek, A., "Amendments for CNOSSOS-EU: Description of Issues and Proposed Solutions," RIVM Letter Report 2019-0023, National Institute for Public Health and the Environment, Bilthoven, Netherlands, 2019. https://doi.org/10.21945/RIVM-2019-0023
 64. Sommerfeld, A., "Mathematische Theorie der Diffraction," *Mathematische Annalen*, Vol. 47, Nos. 2–3, 1896, pp. 317–374. https://doi.org/10.1007/BF01447273
+65. "Propagation by Diffraction," Recommendation ITU-R P.526-16, International Telecommunication Union, Geneva, November 2025.
+66. Press, W. H., Teukolsky, S. A., Vetterling, W. T., and Flannery, B. P., *Numerical Recipes in C: The Art of Scientific Computing*, 2nd ed., Cambridge University Press, Cambridge, 1992, Sec. 6.9.

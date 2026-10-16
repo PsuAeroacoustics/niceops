@@ -157,11 +157,21 @@ void fresnel_integrals(double x, double& c, double& s);
 // 1/4 at grazing (v = 0) and falling as 1/(2 pi^2 v^2) deep in the shadow.
 double knife_edge_power(double v);
 
-// The knife edge's loss, dB, into loss[band] for bands [first, last): -10 lg
-// of |F(v)|^2 averaged uniformly in frequency over each band, from
-// band_centers 2^(-1/6) to 2^(1/6), by eight-point Gauss-Legendre, with
-// v = 2 sqrt(delta f / sound_speed).  At least 10 lg 4 for an edge above the
-// line of sight, so a pair is never louder screened than unscreened.
+// The mean of |F(v)|^2 over a third-octave band, uniformly in frequency from
+// its center f_c 2^(-1/6) to 2^(1/6), at x = delta f_c / c: with u = f / f_c,
+// v = 2 sqrt(x u), by eight-point Gauss-Legendre in u.  It depends on the
+// edge, the band and the sound speed only through x.
+double knife_edge_band_power(double x);
+
+// -10 lg knife_edge_band_power(x), dB: by cubic Hermite interpolation in ln x
+// from a table of it and its exact slope, every 1/32 from x = 1e-8 to 1e6,
+// built on first use; evaluated directly outside that range.
+double knife_edge_band_loss(double x);
+
+// The knife edge's loss, dB, into loss[band] for bands [first, last):
+// knife_edge_band_loss(edge.delta band_centers[band] / sound_speed).  At
+// least 10 lg 4 for an edge above the line of sight, so a pair is never
+// louder screened than unscreened.
 void knife_edge_loss(const KnifeEdge& edge, const std::vector<double>& band_centers, double sound_speed,
         std::size_t first, std::size_t last, double* loss);
 

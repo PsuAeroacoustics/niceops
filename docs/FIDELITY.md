@@ -600,20 +600,26 @@ variable-porosity grass (200 kPa·s/m²), against the same microphones all on gr
 
 ### Terrain screening
 
-`--terrain_screening`'s diffraction term, 10 lg(3 + 40δ/λ), against Sommerfeld's exact solution
-for a rigid half-plane lit by a plane wave, at kr = 2000 from the edge, at the same path
-difference (`Delta_dif against the exact half-plane`, `tests/test_screening.cpp`):
+`--terrain_screening`'s two diffraction terms, CNOSSOS-EU's 10 lg(3 + 40δ/λ) and the knife
+edge's −10 lg |F(v)|², against Sommerfeld's exact solution for a rigid half-plane lit by a plane
+wave, at kr = 2000 from the edge, at the same path difference (`Delta_dif against the exact
+half-plane` and `the knife edge against the exact half-plane`, `tests/test_screening.cpp`):
 
 | Angle into the shadow | 0° | 0.5° | 1° | 2° | 5° | 10° | 60° |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Exact − CNOSSOS, dB | +1.25 | +2.39 | +2.67 | +2.52 | +2.27 | +1.96 | −0.67 |
+| Exact − CNOSSOS, dB | +1.17 | +2.39 | +2.67 | +2.52 | +2.27 | +1.96 | −0.67 |
+| Exact − knife edge, dB | −0.08 | −0.11 | −0.15 | −0.23 | −0.50 | −0.94 | −3.62 |
 
-CNOSSOS-EU reads low by 1.25 dB at grazing and by up to 2.7 dB just inside the shadow, so a
-screened level errs high there.
+CNOSSOS-EU reads low by about 1.2 dB at grazing and by up to 2.7 dB just inside the shadow, so a
+screened level errs high there. The knife edge is within 0.25 dB of the exact loss to 2° into the
+shadow and deeper beyond, by 0.9 dB at 10°: the Fresnel-Kirchhoff edge is black, where the rigid
+half-plane's faces also send sound into the shadow. Its band loss, read from its table, is within
+10⁻⁸ dB of the quadrature it tabulates for δf/c from 10⁻⁶ to 10³ and within 10⁻⁷ dB to the table's
+ends (`the knife edge's band loss table against direct quadrature`).
 
 Against the CNOSSOS-EU conformance cases of ISO/TR 17534-4:2020 (`[iso17534]`,
-`tests/test_screening.cpp`), the three a vertical-plane terrain model can take, at the TR's
-c = 340 m/s and homogeneous conditions:
+`tests/test_screening.cpp`), `cnossos` on the three a vertical-plane terrain model can take, at
+the TR's c = 340 m/s and homogeneous conditions:
 
 - **TC23**, an earth berm 5 m high between a source 1 m and a receiver 4 m up, 70 m apart: the
   rubber band's two edges, every diffraction term (Δdif(S,R) uncapped to 29.05 dB at 8 kHz,
@@ -632,46 +638,53 @@ The TR's sources are about 1 m up, so these test the method's arithmetic, not an
 source.
 
 Behind the synthetic ridge (25 m high, 250 m to the track's side) on the full demo grid, with
-1.2 m pole microphones on variable-porosity ground, screening lowered 3065 of the 14,400 cells'
-SEL, 506 by more than 1 dB, 30 by more than 6 and two by more than 10 (12.0 dB at most), and
-raised none. 9.9% of the evaluations were screened, 38% of those reached the 25 dB cap in some
-band, and the ground weight F never needed clamping. Over the hills fixture the full grid
-screened nothing and was the unscreened run byte for byte.
+1.2 m pole microphones on variable-porosity ground of 200 kPa·s/m², `cnossos` lowered 3044 of the
+14,400 cells' SEL, 470 by more than 1 dB, 21 by more than 6 and two by more than 10 (17.6 dB at
+most), and raised none. 9.6% of the evaluations were screened, 39% of those reached the 25 dB cap
+in some band, and the ground weight F never needed clamping. `kirchhoff` lowered the same 3044
+cells, 495 by more than 1 dB, 28 by more than 6 and two by more than 10 (14.1 dB at most), within
+−0.7 and +3.5 dB of `cnossos` (a median 0.07 dB deeper), and raised none. Over the hills fixture
+the full grid screened nothing and was the unscreened run byte for byte.
 
 **At Sweetwater**, behind an isolated hill, in the AS350 altitude-variation test
 ([Data sets](#data-sets), with recordings 28 and 29 where they were made): all 166 runs (4088
 mic-runs after the study's exclusions), SD1 database, flush boards on variable-porosity ground of
 200 kPa·s/m², the 1 m 3DEP grid, the default minimum protrusion. Only position 28 is screened
 behind the hill (19,439 evaluations in 119 runs, from the record's start to x ≈ −3216 ft), and
-there the blocked states drop by a median 12.6 dBA; 27 and 29 graze but are never screened, and
-the on-datum array's scores are unchanged. SEL and LAmax, predicted minus measured, mean [95%] /
-rms:
+there the blocked states drop by a median 12.6 dBA with `cnossos` and 10.8 dBA with `kirchhoff`;
+27 and 29 graze but are never screened, and the on-datum array's scores are unchanged. SEL and
+LAmax, predicted minus measured, mean [95%] / rms, and the change from the unscreened run:
 
-| position 28 | terrain, unscreened | terrain, screened | change |
+| position 28 | terrain, unscreened | `cnossos` | `kirchhoff` |
 | --- | --- | --- | --- |
-| SEL | +4.98 [4.35, 5.60] / 6.32 | +4.48 [3.85, 5.09] / 5.92 | −0.50 [−0.57, −0.44], rms −0.40 |
-| LAmax | +0.13 [−0.54, 0.84] / 4.31 | −0.17 [−0.91, 0.49] / 4.25 | −0.31, rms −0.06 |
+| SEL | +4.98 [4.35, 5.60] / 6.32 | +4.48 [3.85, 5.10] / 5.92 | +4.50 [3.84, 5.13] / 5.94 |
+| SEL change | | −0.50 [−0.57, −0.44], rms −0.40 | −0.48 [−0.54, −0.41], rms −0.38 |
+| LAmax | +0.13 [−0.59, 0.84] / 4.31 | −0.17 [−0.86, 0.51] / 4.25 | −0.17 [−0.87, 0.49] / 4.25 |
+| LAmax change | | −0.31, rms −0.06 | −0.31, rms −0.06 |
 
 The blocked segment comes early in the pass, at long range, so screening moves SEL by half a
 decibel; the over-prediction left is shared by every off-datum microphone (27 and 29 read +2.6 and
 +3.9 dB). Inside the blocked segment, against the rest of the window, the measured level is
-−4.3 dB [−5.1, −3.3], the unscreened prediction +2.4 and the screened one −9.7 (27 and 29 measure
-−0.2 and +0.2): the hill does shield position 28, and the screening overstates it by about
-5.4 dBA. By band, the same contrast measured against the unscreened prediction, median over the
-119 runs:
+−4.3 dB [−5.1, −3.3], the unscreened prediction +2.4, `cnossos` −9.7 and `kirchhoff` −7.7 (27
+and 29 measure −0.2 and +0.2): the hill does shield position 28, and the screening overstates it
+by about 5.4 dBA with `cnossos` and 3.4 dBA with `kirchhoff`. By band, the same contrast measured
+against the unscreened prediction, median over the 119 runs:
 
 | band | 63 Hz | 125 Hz | 250 Hz | 500 Hz | 1 kHz | 2 kHz |
 | --- | --- | --- | --- | --- | --- | --- |
-| position 28, measured | −3.7 | −8.1 | −6.0 | −6.9 | −4.7 | −4.2 |
-| positions 27 / 29, measured (not screened) | −1.1 / −2.6 | −1.6 / −3.4 | −0.1 / −1.0 | −1.7 / −1.9 | −1.9 / −2.3 | −1.3 / −3.0 |
-| position 28, screened prediction | −4.7 | −4.9 | −9.9 | −25.2 | −37.2 | −38.2 |
+| position 28, measured | −3.6 | −8.2 | −6.0 | −7.1 | −4.8 | −4.3 |
+| positions 27 / 29, measured (not screened) | −0.9 / −2.5 | −1.6 / −3.4 | −0.1 / −1.0 | −1.7 / −2.1 | −2.0 / −2.1 | −1.4 / −3.0 |
+| position 28, `cnossos` | −4.8 | −4.9 | −10.2 | −25.5 | −37.9 | −39.4 |
+| position 28, `kirchhoff` | −7.9 | −8.6 | −9.5 | −10.6 | −11.9 | −13.1 |
 
-Net of the unscreened positions, the measured shielding is about 3–6 dB and nearly flat in
-frequency. The screening is right to within a few decibels up to about 200 Hz and too deep above
-it, by 20–30 dB at 1–2 kHz. Sound reaching the microphone around the hill's flanks, and
-turbulent scattering, both of which a vertical-plane method leaves out, are the likely reasons. The same runs found the 1 m grid's texture 3–5 m from a flush
-board screening paths at 1–2° elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m)
-now leaves those unscreened.
+Net of the unscreened positions, the measured shielding is about 2–6 dB and nearly flat in
+frequency. `cnossos` is right to within a few decibels up to about 200 Hz and too deep above it,
+by more than 30 dB at 1–2 kHz. `kirchhoff` deepens by only about 1 dB per octave above 250 Hz;
+it is within 4.5 dB of position 28's measured row up to 500 Hz and 7–9 dB too deep at 1–2 kHz. A
+vertical-plane method leaves out both sound reaching the microphone around the hill's flanks and
+turbulent scattering into the shadow; which of them fills the shadow here is not settled. The
+same runs found the 1 m grid's texture 3–5 m from a flush board screening paths at 1–2°
+elevation, by 0.03–0.14 m: `--screening_min_height` (0.5 m) now leaves those unscreened.
 
 ### Trajectory smoothing
 
@@ -1192,8 +1205,9 @@ range-dependent source fit would confound descent state drift with path loss.
 - **EPNL** is compared only to 5 kHz, where the measured frames stop, with no pseudo-tone
   exclusion; predicted spectra carry less tone correction than measured.
 - **Terrain** is a plane fitted over the whole path, screened only with `--terrain_screening`.
-  Behind the one measured hill the screening is right to a few decibels below about 200 Hz and
-  too deep above it, by 20–30 dB at 1–2 kHz ([Terrain screening](#terrain-screening)).
+  Behind the one measured hill `cnossos` is right to a few decibels below about 200 Hz and too
+  deep above it, by more than 30 dB at 1–2 kHz; `kirchhoff` is within 4.5 dB to 500 Hz and 7–9 dB
+  too deep at 1–2 kHz ([Terrain screening](#terrain-screening)).
 - **Ground classes** treat each microphone's ground as a uniform half-space. At grazing a
   built-up patch measured like ground of about 1000–2000 kPa·s/m², not concrete, and the ground
   next to the microphone and along the path decides ([Ground classes](#ground-classes)).

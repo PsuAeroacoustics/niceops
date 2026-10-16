@@ -667,6 +667,55 @@ TEST_CASE("the knife edge's band loss is at least 10 lg 4 and rises with delta",
     }
 }
 
+TEST_CASE("the knife edge's band loss table against direct quadrature", "[screening][kirchhoff]")
+{
+    // The quadrature is the band's mean: against composite Simpson in
+    // frequency over the band, 4000 panels.
+    const double lo = std::pow(2.0, -1.0 / 6.0);
+    const double hi = std::pow(2.0, 1.0 / 6.0);
+    for (const double x : {1e-7, 1e-4, 0.01, 0.1, 0.5, 1.0, 3.0, 30.0, 1e3})
+    {
+        const int panels = 4000;
+        const double h = (hi - lo) / panels;
+        double sum = 0.0;
+        for (int i = 0; i <= panels; i++)
+        {
+            const double weight = i == 0 || i == panels ? 1.0 : i % 2 == 1 ? 4.0 : 2.0;
+            sum += weight * knife_edge_power(2.0 * std::sqrt(x * (lo + h * i)));
+        }
+        const double simpson = sum * h / 3.0 / (hi - lo);
+        INFO("x " << x);
+        CHECK(knife_edge_band_power(x) == Catch::Approx(simpson).epsilon(1e-10));
+    }
+    // The table is the quadrature: within 1e-8 dB over the range sound,
+    // terrain and distance give (x = delta f_c / c from 1e-6 to 1e3), within
+    // 1e-7 dB to its ends, and the quadrature itself past them.
+    std::mt19937_64 rng(5);
+    std::uniform_real_distribution<double> typical(std::log(1e-6), std::log(1e3));
+    std::uniform_real_distribution<double> whole(std::log(1e-9), std::log(1e7));
+    double worst_typical = 0.0, worst = 0.0;
+    for (int i = 0; i < 20000; i++)
+    {
+        const double a = std::exp(typical(rng));
+        worst_typical = std::max(worst_typical,
+                std::fabs(knife_edge_band_loss(a) + 10.0 * std::log10(knife_edge_band_power(a))));
+        const double b = std::exp(whole(rng));
+        worst = std::max(worst, std::fabs(knife_edge_band_loss(b) + 10.0 * std::log10(knife_edge_band_power(b))));
+    }
+    CHECK(worst_typical < 1e-8);
+    CHECK(worst < 1e-7);
+    for (const double x : {1e-9, 2e6})
+        CHECK(knife_edge_band_loss(x) == -10.0 * std::log10(knife_edge_band_power(x)));
+    // knife_edge_loss is the table at x = delta f_c / c.
+    const std::vector<double> bands {63.0, 1000.0, 8000.0};
+    std::vector<double> loss(bands.size());
+    KnifeEdge edge;
+    edge.delta = 0.37;
+    knife_edge_loss(edge, bands, 340.0, 0, bands.size(), loss.data());
+    for (std::size_t band = 0; band < bands.size(); band++)
+        CHECK(loss[band] == knife_edge_band_loss(0.37 * bands[band] / 340.0));
+}
+
 namespace {
 
 // The lowest point of the aperture plane through `deepest` that both ends see

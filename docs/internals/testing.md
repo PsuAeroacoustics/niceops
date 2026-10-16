@@ -62,6 +62,10 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `terrain_steep_table_plate.csv` | C++ build | `terrain_steep_table_plate_golden` (1e-5 dB abs.) | `terrain_steep_table_plate` | copy the run's output |
 | `terrain_ridge_screened_point.csv` | C++ build | `terrain_ridge_screened_point_golden` (1e-6 dB abs.) | `terrain_ridge_screened_point` | copy the run's output |
 | `terrain_ridge_screened_plate.csv` | C++ build | `terrain_ridge_screened_plate_golden` (1e-6 dB abs.) | `terrain_ridge_screened_plate` | copy the run's output |
+| `terrain_ridge_kirchhoff_point.csv` | C++ build | `terrain_ridge_kirchhoff_point_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_point` | copy the run's output |
+| `terrain_ridge_kirchhoff_plate.csv` | C++ build | `terrain_ridge_kirchhoff_plate_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_plate` | copy the run's output |
+| `terrain_ridge_kirchhoff_noground.csv` | C++ build | `terrain_ridge_kirchhoff_noground_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_noground` | copy the run's output |
+| `terrain_ridge_kirchhoff_table.csv` | C++ build | `terrain_ridge_kirchhoff_table_golden` (1e-5 dB abs.) | `terrain_ridge_kirchhoff_table` | copy the run's output |
 
 All files are in `golden/`; each producing run writes `integrated/<name>.csv` unless the table
 says otherwise. To regenerate a C++ golden, run its comparison with the build that carries the
@@ -121,6 +125,12 @@ Notes on each:
   pair the whole path's ground as well (ground counted twice) fails both, and giving a plate's
   microphone side the point model in place of the plate fails the plate's. The windowed/marched
   pairs compare a run with itself and pass with either.
+- **`terrain_ridge_kirchhoff_{point,plate,noground,table}.csv`** were made by the builds that
+  added `--terrain_screening kirchhoff` (point, plate) and its band-loss table (the other two;
+  the table moved the first two by under 10⁻⁸ dB), behind the ridge fixture, and pin the
+  knife edge's four call sites: the ground model over the plane, the plate, the free field with no
+  ground model, and the table (looser, as the table is built by the test run). Dropping the loss
+  from the free field's or the table's call passed every other test.
 
 ## `self_test`
 
@@ -178,6 +188,7 @@ CTests are defined in `CMakeLists.txt`.
 | `ground_classes_tabled_matches_exact` | CTest | point receivers keyed by height alone, so a concrete microphone reads the grass table at its height: the windowed, subsets and single-class tests all passed with it |
 | `ground_classes_impedance_is_the_observers`, `ground_classes_terrain_impedance_is_the_observers` | CTest | every microphone given the first class's admittance with its own class's model, on flat ground and along a terrain path. The second needs its first concrete microphone on a pole: a flush one over the hills reads its class's table, which was built with the right admittance |
 | `the screening gate is the brute-force scan of the blended profile`; `a profile exactly on the line of sight does not block`; `a blended profile touching the line of sight does not block` | `test_terrain.cpp` | `GroundPlaneCache::may_block` reading the horizon at floor(D/step) rather than at the last interior sample; ray b skipped; `>=` in the quick test; `>=` in `blocked()`'s own scan, which is reached only after the quick test passes, so the last case puts one ray above the line of sight and the blend exactly on it |
+| `terrain_ridge_kirchhoff_noground_golden`, `terrain_ridge_kirchhoff_table_golden` | CTest | the knife edge's loss dropped from the free-field fallback with no ground model, or from the table's level: each windowed/marched pair compares a run with itself, and `terrain_ridge_kirchhoff_is_not_cnossos` reads the plates |
 | `terrain_ridge_screened_point_golden`, `terrain_ridge_screened_plate_golden` | CTest | the screened pair's call given the whole path's ground, plate and table besides its side terms; the plate's microphone side evaluated with the point model |
 | `a screened pair never exceeds the bound's screened term` | `test_screening.cpp` | F's clamp to 1 dropped; `screen_gain_bound` without G_S, or without the 1/3 (it must come within 3% of the bound, which rigid ground near grazing does). The call site's screening term removed from the bound passes every `terrain_ridge_screened_*_windowed_is_exact`, although the term raises the bound in most bands, so the run logs how many bands it raises and `terrain_ridge_screened_bound` requires at least one. Which classes the term's source side takes is guarded by reading |
 | `the point receiver's ground bound over several classes is their elementwise maximum` | `test_ground_classes.cpp` | the bound over the first class only, inside `point_ground_gain_bounds`. No CTest kills it: each class's bound is within about 3 dB of the others' in the bands A-weighting keeps, and `ground_classes{,_terrain}_windowed_is_exact` passed with it for grass, concrete, snow, water and passive thin layers. The call site passing every class (`point_classes`) is therefore guarded only by reading |

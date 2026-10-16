@@ -186,7 +186,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
 | `--observers_on_terrain` | With `--terrain` and `-b`: take each observer's ground height from the terrain rather than the file's z. |
-| `--terrain_screening` | With `--terrain`: `none` (default) or `cnossos`, which screens a path the terrain rises above ([Terrain](#terrain)). Spectral path only. |
+| `--terrain_screening` | With `--terrain`: `none` (default), `cnossos` or `kirchhoff`, two ways of screening a path the terrain rises above ([Terrain](#terrain)). Spectral path only. |
 | `--screening_min_height` | With `--terrain_screening`: how far the terrain must rise above a path's line of sight to screen it, in `--units`. Default 0.5 m, above a terrain grid's texture. |
 
 #### Metrics
@@ -298,7 +298,7 @@ The main ones:
 | `--shadow_model resolved` without `--refraction stratified` and the ground effect; `--scattering` without `--refraction` and the ground effect | They act through the shadow transition, which needs a ground model. |
 | `--tunneling`, `--skip_fill` without `--refraction stratified` | They are stratified-ray corrections. |
 | `--terrain` with `--refraction`, or without a frame | The ray models are built over flat ground; terrain needs to know where x/y lie. |
-| `--terrain_screening` without `--terrain`, with `--no-spectral` or a database without spectra, or with `--propagation_table` and `--no-ground_effect` | The edges are the terrain's; the diffraction is per band; a screened path leaves the table for the ground model. |
+| `--terrain_screening` without `--terrain`, or with `--no-spectral` or a database without spectra; `--terrain_screening cnossos` with `--propagation_table` and `--no-ground_effect` | The edges are the terrain's; the diffraction is per band; a path `cnossos` screens leaves the table for the ground model. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
 | `--ground_classes` with grid observers, without an observer file's ground column, or naming a class the file does not define; the column without `--ground_classes` | Each names the other. |
 | `--ground_classes` with `--refraction`, `--propagation_table`, `--no-ground_effect`, `--no-spectral` or a database without spectra; flush microphones on more than one class, or on one the plate table was not built for | The ray models need the ground along the path, a table and a plate table each hold one ground, and the classes are a ground for the ground effect. |
@@ -823,25 +823,41 @@ file's z, with a warning where it differs from the terrain by more than 1 m;
 **Screening.** By default terrain does not screen or diffract: a ridge between source and
 receiver puts the source below the mean plane, and its height is set to zero, so the level there
 is too high. The run warns when it happens, with how many observers had such paths (a receiver in
-a dip raises the same flag). `--terrain_screening cnossos` screens instead: a path on which the
-terrain rises above the line of sight takes the CNOSSOS-EU diffraction over the terrain's convex
-outline between source and microphone, with the ground effect on each side of it, capped at
-25 dB ([THEORY §6.4](THEORY.md#64-terrain-screening)). Every other path is evaluated as without
-it, so level ground, a uniform slope, or hills no path crosses give the unscreened run exactly.
-Use it where ridges, bluffs or berms stand between low flight and the receivers.
+a dip raises the same flag). `--terrain_screening` screens instead, by one of two models, on the
+same paths: those on which the terrain rises more than `--screening_min_height` above the line of
+sight. Every other path is evaluated as without it, so level ground, a uniform slope, or hills no
+path crosses give the unscreened run exactly. Use it where ridges, bluffs or berms stand between
+low flight and the receivers.
+
+- `cnossos` takes the CNOSSOS-EU diffraction over the terrain's convex outline between source
+  and microphone, with the ground effect on each side of it in place of the whole path's, capped
+  at 25 dB ([THEORY §6.4](THEORY.md#64-terrain-screening)). It is the method European noise
+  mapping prescribes; choose it to match that.
+- `kirchhoff` keeps the level the path would have unscreened, with its ground over the mean
+  plane, its plate or its table, and takes off the Fresnel-Kirchhoff loss of one knife edge,
+  standing where the terrain rises highest above the line of sight, as high as both ends see
+  over the terrain there ([THEORY §6.4](THEORY.md#64-terrain-screening)). Behind a hill it
+  shields less than `cnossos` above the low bands, which is closer to what was measured, and it
+  costs little more than the unscreened run.
+
+What both leave out, and where they step:
 
 - Only the vertical plane through source and microphone is taken: no paths around the ends of an
   obstacle, and no buildings or vegetation. The rays are straight. Behind an isolated hill, which
-  sound also reaches around its sides, this overstates the shielding above the low bands
-  ([FIDELITY](FIDELITY.md#terrain-screening)); use it for long ridges, bluffs and berms.
+  sound also reaches around its sides, both models overstate the shielding above the low bands
+  ([FIDELITY](FIDELITY.md#terrain-screening)); use them for long ridges, bluffs and berms.
 - Crests are found at `--terrain_step`, so a sharp ridge is slightly under-screened at the
   default step; a finer step costs about proportionally more.
-- As a source drops behind a crest the diffraction term switches on at 4.8 dB, not from zero,
-  so the level steps; that shows in LAmax and time above more than in SEL.
-- With `--propagation_table`, a screened path is not read from the table but takes the screening
-  with the ground model, which must then be on; unblocked paths keep the table. The two physics
-  meet at the edge of the screened region, and the log counts the paths that left the table.
-- Its accuracy, against an exact solution and behind one measured hill, is in
+- As a source drops behind a crest the loss switches on at 4.8 dB (`cnossos`) or 6.0 dB
+  (`kirchhoff`), not from zero, so the level steps; that shows in LAmax and time above more than
+  in SEL.
+- `kirchhoff` stands one edge for all the crests on a path, so two ridges well apart shield less
+  than they would one after the other. `cnossos` diffracts over every crest of the outline.
+- With `--propagation_table`, a path `cnossos` screens is not read from the table but takes the
+  screening with the ground model, which must then be on; unblocked paths keep the table. The two
+  physics meet at the edge of the screened region, and the log counts the paths that left the
+  table. `kirchhoff` keeps the table on every path.
+- Their accuracy, against an exact solution and behind one measured hill, is in
   [FIDELITY](FIDELITY.md#terrain-screening).
 
 Each path's ground is otherwise one plane. `--refraction` is refused, because the ray models are
@@ -852,8 +868,9 @@ built over flat ground, and on the broadband path `--terrain` only places the ob
 **Cost and effect.** Plates keep their tables over terrain; point receivers over real terrain are
 evaluated exactly, about 4 times the CPU, which a test array of tens of microphones does not
 notice; a ground-model `--propagation_table` with rows spanning their heights above the planes
-reads them instead, at about 1.5 times. Screening adds a test per path and two exact ground
-evaluations per screened path, and keeps about twice the terrain samples in memory per thread. At
+reads them instead, at about 1.5 times. Screening adds a test per path and keeps about twice the
+terrain samples in memory per thread; `cnossos` adds two exact ground evaluations per screened
+path, and `kirchhoff` a table lookup per band. At
 Amedee terrain moves flush-plate SEL by hundredths of a dB; at a sloped site it can move it by a dB
 at low elevation ([FIDELITY](FIDELITY.md#terrain-at-amedee),
 [sensitivity](FIDELITY.md#sensitivity-studies)).
@@ -989,8 +1006,10 @@ one value means every direction), `source_height` and `receiver_height` (above t
   practical row spacing above a few hundred hertz. A flush plate reads the lowest row, as on flat
   ground, which needs no extra rows. A table that refracts (a PE table, or any not built by the
   ground model with no atmosphere) is taken to have its atmosphere follow each path's mean plane;
-  the run warns when pairs read it over a plane tilted more than 5 degrees. With `--terrain_screening`, a path the terrain blocks takes the screening and the ground
-  model instead of the table ([Terrain](#terrain)).
+  the run warns when pairs read it over a plane tilted more than 5 degrees. With
+  `--terrain_screening cnossos`, a path the terrain blocks takes the screening and the ground
+  model instead of the table; `kirchhoff` reads the table and takes its knife edge's loss off it
+  ([Terrain](#terrain)).
 - **The file** is netCDF, SI: `relative_level(bearing, source_height, receiver_height, range,
   band)`, a coordinate variable per axis, and the attributes `propagation_table_version` (1),
   `method`, `includes_absorption` and `provenance_*`. Anything that fills it can be read

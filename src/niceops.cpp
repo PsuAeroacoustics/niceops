@@ -3850,7 +3850,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // there: the level is too high, and the run used to say so only in
             // the log.  A receiver in a dip raises the same flag.
             const auto observers_raised = std::count(raised_at.begin(), raised_at.end(), char(1));
-            if (screening)
+            if (kirchhoff)
+                warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
+                        "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
+                        terrain_samples.load(), " evaluations), taken onto it. Those the terrain blocks keep "
+                        "that plane's ground less their knife edge's loss, and nothing rises above the line of "
+                        "sight of the rest: a receiver in a dip, or a source under a plane that terrain beyond "
+                        "it lifts, is only approximate.");
+            else if (screening)
                 warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
                         "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
                         terrain_samples.load(), " unscreened evaluations), taken onto it. Nothing on those "

@@ -311,30 +311,107 @@ double niceops::knife_edge_power(double v)
     return 0.5 * ((0.5 - c) * (0.5 - c) + (0.5 - s) * (0.5 - s));
 }
 
+namespace {
+
+// Eight-point Gauss-Legendre on [-1, 1]: the positive nodes and their weights.
+constexpr double gauss_node[4] = {0.1834346424956498, 0.5255324099163290, 0.7966664774136267, 0.9602898564975363};
+constexpr double gauss_weight[4] = {0.3626837833783620, 0.3137066458778873, 0.2223810344533745,
+        0.1012285362903763};
+
+// knife_edge_band_power and its derivative in ln x: through v = 2 sqrt(x u),
+// d|F|^2 / d ln x = (v / 2) d|F|^2 / dv, and d|F|^2 / dv =
+// -((1/2 - C) cos(pi v^2 / 2) + (1/2 - S) sin(pi v^2 / 2)).
+struct BandPower
+{
+    double mean = 0.0;
+    double slope = 0.0;
+};
+
+BandPower band_power(double x)
+{
+    const double third = std::pow(2.0, 1.0 / 6.0);
+    const double mid = 0.5 * (third + 1.0 / third);
+    const double half = 0.5 * (third - 1.0 / third);
+    BandPower p;
+    for (int i = 0; i < 4; i++)
+        for (const double side : {-1.0, 1.0})
+        {
+            const double v = 2.0 * std::sqrt(x * (mid + side * half * gauss_node[i]));
+            double c = 0.0, s = 0.0;
+            fresnel_integrals(v, c, s);
+            const double phase = 0.5 * pi * v * v;
+            p.mean += 0.25 * gauss_weight[i] * ((0.5 - c) * (0.5 - c) + (0.5 - s) * (0.5 - s));
+            p.slope -= 0.25 * gauss_weight[i] * v * ((0.5 - c) * std::cos(phase) + (0.5 - s) * std::sin(phase));
+        }
+    return p;
+}
+
+// The band loss -10 lg knife_edge_band_power(x) and its slope against
+// t = ln x, every `step` from ln `lowest` to ln `highest`, for cubic Hermite
+// interpolation.  Built once, on first use; outside it the loss is evaluated
+// directly.
+struct BandLossTable
+{
+    static constexpr double lowest = 1e-8;
+    static constexpr double highest = 1e6;
+    static constexpr double step = 1.0 / 32.0;
+    double start = 0.0;
+    std::vector<double> loss;
+    std::vector<double> slope;
+
+    BandLossTable() : start(std::log(lowest))
+    {
+        const auto count = static_cast<std::size_t>(std::ceil((std::log(highest) - start) / step)) + 1;
+        loss.resize(count);
+        slope.resize(count);
+        for (std::size_t k = 0; k < count; k++)
+        {
+            const BandPower p = band_power(std::exp(start + step * static_cast<double>(k)));
+            loss[k] = -10.0 * std::log10(p.mean);
+            slope[k] = -10.0 / std::log(10.0) * p.slope / p.mean;
+        }
+    }
+
+    double operator()(double x) const
+    {
+        const double u = (std::log(x) - start) / step;
+        if (!(u >= 0.0 && u < static_cast<double>(loss.size() - 1)))
+            return -10.0 * std::log10(band_power(x).mean);
+        const auto k = static_cast<std::size_t>(u);
+        const double s = u - static_cast<double>(k);
+        const double r = 1.0 - s;
+        return (1.0 + 2.0 * s) * r * r * loss[k] + s * r * r * step * slope[k] + s * s * (3.0 - 2.0 * s) * loss[k + 1]
+                - s * s * r * step * slope[k + 1];
+    }
+};
+
+const BandLossTable& band_loss_table()
+{
+    static const BandLossTable table;
+    return table;
+}
+
+} // namespace
+
+double niceops::knife_edge_band_power(double x)
+{
+    assert(x > 0.0);
+    return band_power(x).mean;
+}
+
+double niceops::knife_edge_band_loss(double x)
+{
+    assert(x > 0.0);
+    return band_loss_table()(x);
+}
+
 void niceops::knife_edge_loss(const KnifeEdge& edge, const std::vector<double>& band_centers, double sound_speed,
         std::size_t first, std::size_t last, double* loss)
 {
     assert(edge.delta > 0.0 && sound_speed > 0.0);
-    // Eight-point Gauss-Legendre on [-1, 1]: the positive nodes and their weights.
-    static constexpr double node[4] = {0.1834346424956498, 0.5255324099163290, 0.7966664774136267,
-            0.9602898564975363};
-    static constexpr double weight[4] = {0.3626837833783620, 0.3137066458778873, 0.2223810344533745,
-            0.1012285362903763};
-    const double third = std::pow(2.0, 1.0 / 6.0);
+    const BandLossTable& table = band_loss_table();
+    const double scale = edge.delta / sound_speed;
     last = std::min(last, band_centers.size());
     for (std::size_t band = first; band < last; band++)
-    {
-        const double lo = band_centers[band] / third;
-        const double hi = band_centers[band] * third;
-        const double mid = 0.5 * (hi + lo);
-        const double half = 0.5 * (hi - lo);
-        double mean = 0.0;
-        for (int i = 0; i < 4; i++)
-            for (const double side : {-1.0, 1.0})
-            {
-                const double f = mid + side * half * node[i];
-                mean += 0.5 * weight[i] * knife_edge_power(2.0 * std::sqrt(edge.delta * f / sound_speed));
-            }
-        loss[band] = -10.0 * std::log10(mean);
-    }
+        loss[band] = table(scale * band_centers[band]);
 }

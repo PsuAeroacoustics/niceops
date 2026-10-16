@@ -275,8 +275,9 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
 
 ### Screening (`--terrain_screening`)
 
-`src/screening.{hpp,cpp}` is the CNOSSOS-EU kernel, `GroundPlaneCache::may_block`, `blocked` and
-`fit_range` its terrain, and `screened_level` in `process_trajectory` the call. The equations are
+`src/screening.{hpp,cpp}` holds the CNOSSOS-EU kernel and the knife edge,
+`GroundPlaneCache::may_block`, `blocked` and `fit_range` their terrain, and `screened_level` in
+`process_trajectory` the CNOSSOS call (the knife edge's is below). The equations are
 in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
 
 - **An unblocked pair takes the untouched call.** `straight_level` asks `blocked()` first and
@@ -336,6 +337,55 @@ in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
   with a log check that pairs were screened; the point and plate runs pinned at 1e-6
   (`terrain_ridge_screened_{point,plate}_golden`); the refusals; and the Catch2 `[screening]` cases,
   including the bound sweep and the half-plane comparison.
+
+#### The knife edge (`--terrain_screening kirchhoff`)
+
+`knife_edge`, `knife_edge_loss` and the band-loss table in `src/screening.cpp`. In
+`straight_level` a blocked pair computes its loss (`knife`) and goes on down the unscreened call,
+which takes it off whichever level that reaches. What to keep:
+
+- **The same blocked pairs as CNOSSOS.** It reuses `blocked()`, `--screening_min_height` and
+  `rubber_band`, so where nothing is blocked the runs are the unscreened ones byte for byte
+  (`terrain_flat_*_kirchhoff_is_flat`, `terrain_tilted_plate_kirchhoff_is_unscreened`,
+  `terrain_hills_kirchhoff_is_unscreened`, each with a log check that nothing was screened).
+- **The loss goes on every unscreened level**: the ground model over the mean plane
+  (`spectral_level_along`'s extra loss), the table (`table_level`'s `added_loss`), and with
+  neither the free field along the straight ray, which replaces `spectral_level_at_observer` for
+  a blocked pair. Each call site has its golden; the table's and the free field's were added
+  because dropping the loss there passed every windowed/marched pair.
+- **Keep the whole path's ground, not CNOSSOS's two side terms.** Behind the Sweetwater hill
+  `cnossos` came 29 to 48 dB below the unscreened level per blocked state from 500 Hz to 2 kHz
+  (median over 11 runs), past its 25 dB cap on Δdif, where the measured shielding was 4–7 dB: the
+  rest is its side terms in place of the path's ground.
+- **No bound term.** |F(v)|² ≤ 1/4 for v ≥ 0 and falls monotonically, so the band loss is at
+  least 10 lg 4 and a blocked pair is below its unscreened level, which the bounds already cover.
+  `screen_gain_bound` is skipped, and behind the ridge the run evaluates the unscreened run's
+  fraction (98.44%, against 99.26% for `cnossos`). A lit-side extension (v < 0, where |F|² reaches
+  1.37) would need a term.
+- **The edge** is the higher of the two horizon rays where they cross the aperture plane, which
+  stands at the sample deepest above the line of sight (the first, on a tie). δ is summed as
+  H²/(√(d² + H²) + d), which keeps its digits for H ≪ d. `the equivalent edge is the lowest point
+  both ends see` checks it against a bisection on a peak, a hill and 200 random profiles.
+- **The band loss is a table in ln x**, x = δ f_c/c, which is all it depends on: built on first
+  use (a function-local static, so thread-safe), every 1/32 from 10⁻⁸ to 10⁶ (1033 nodes, about
+  2 ms), with each node's exact slope for cubic Hermite. It is within 10⁻⁹ dB of the quadrature
+  for x from 10⁻⁶ to 10³ and 6·10⁻⁸ dB at its top end; beyond its ends the quadrature is
+  evaluated directly.
+- **Rejected:** the eight-point quadrature per band at run time. Eight Fresnel integrals per band,
+  each a series or a continued fraction, came to 50–64 µs per screened evaluation for δ of 0.1 to
+  1 m, and the full ridge grid took 74 s against 8 s unscreened; the table takes 0.12 µs for 31
+  bands.
+- Tests: `terrain_ridge_kirchhoff_{point,plate,noground,table}_windowed_is_exact`, each with a log
+  check that pairs were screened (the table's that they kept the table); all four runs pinned
+  (`terrain_ridge_kirchhoff_*_golden`, the table's at 1e-5); `terrain_ridge_kirchhoff_is_not_cnossos`;
+  and the Catch2 `[kirchhoff]` cases: the Fresnel integrals against SciPy, |F|² at grazing and in
+  the shadow, the half-plane comparison, the band loss's floor and order, the table against the
+  quadrature and the quadrature against Simpson, and the edge against bisection.
+- **Cost** behind the ridge on the full demo grid (point receivers on variable-porosity ground of
+  200 kPa·s/m², 8 threads, one run each on a shared M4 Pro at load 5 to 10, so read the ratios):
+  59.1 s of CPU unscreened, 65.7 s `kirchhoff`, 77.5 s `cnossos`; peak RSS 239, 250 and 249 MiB.
+  The knife edge's 6.6 s over 8.92 million screened evaluations is about 0.7 µs each, mostly the
+  blocked test, the rubber band and the edge.
 
 ### How the plane is found (`GroundPlaneCache`)
 
@@ -404,7 +454,7 @@ every 20 ft):
   5% in CPU: the quick test per pair, and the bound's screened term, up to 4.1 dB above the
   ground term in 28 of 31 bands, which evaluated 0.7 points more of the pairs.
 - **Behind the ridge** 9.27 million evaluations were screened (9.9% of those made, at 6057 of
-  14,400 observers), 3.51 million of them (38%) reached the 25 dB cap in some band, and F was
+  14,400 observers; 8.95 million at 6048 with the minimum protrusion added since), 3.51 million of them (38%) reached the 25 dB cap in some band, and F was
   held at 1 on neither side. The 18 s of extra CPU, the pairs the looser bound adds included, is
   about 2 µs per screened evaluation, as at one thread on the 441-observer grid (0.55 s for
   289,159).

@@ -1902,6 +1902,11 @@ set_tests_properties(terrain_ridge_kirchhoff_is_not_cnossos PROPERTIES PASS_REGU
 add_test(NAME terrain_ridge_kirchhoff_point_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_point.csv golden/terrain_ridge_kirchhoff_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME terrain_ridge_kirchhoff_plate_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_plate.csv golden/terrain_ridge_kirchhoff_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_ridge_kirchhoff_point_golden terrain_ridge_kirchhoff_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_ridge_kirchhoff_runs)
+# The table's and the free field's call sites, each of which a windowed/marched pair passes without
+# the loss: pinned too (the table's looser, as it is built by the test run).
+add_test(NAME terrain_ridge_kirchhoff_noground_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_noground.csv golden/terrain_ridge_kirchhoff_noground.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_ridge_kirchhoff_table_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_table.csv golden/terrain_ridge_kirchhoff_table.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_kirchhoff_noground_golden terrain_ridge_kirchhoff_table_golden PROPERTIES FIXTURES_REQUIRED terrain_ridge_kirchhoff_runs)
 add_test(NAME terrain_screening_rejects_unknown COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --terrain_screening deygout -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_screening_rejects_unknown PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: deygout not in")
 # Refusals.
