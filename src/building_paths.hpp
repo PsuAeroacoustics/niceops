@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "buildings.hpp"
+#include "diffuse_facades.hpp"
 #include "urban.hpp"
 #include "vec3.hpp"
 
@@ -95,6 +96,30 @@ struct BuildingRay
     bool run_evaluates = false;
 };
 
+// The departures a specular ray may leave a point along, for the plane wave
+// from `u`: u's reflections in the facades' orientations, to `max_turns`
+// changes of orientation and at most `max_departures` of them, breadth first.
+std::vector<Vec3> specular_departures(const Buildings& buildings, const Vec3& u, std::size_t max_turns,
+        std::size_t max_departures);
+
+// A specular ray traced back from a point: the facades it reflected in, the
+// point's side first, how far it went to its last reflection, and where that
+// is (the point itself for none).
+struct SpecularTrace
+{
+    std::vector<std::size_t> facades;
+    double travelled = 0.0;
+    Vec3 exit;
+};
+
+// Trace back from `start` along `departure`, in the floor's mirror world for
+// `below_floor`, through up to `max_order` reflections; true, with `trace`,
+// when it leaves along u.  Below the floor a rising ray can also enter a
+// mirrored building through its mirrored roof -- the incident wave coming down
+// through a real one -- so there each leg is tested whole.
+bool trace_specular(const Buildings& buildings, const Vec3& start, const Vec3& departure, const Vec3& u,
+        bool below_floor, std::size_t max_order, SpecularTrace& trace);
+
 // One microphone among the buildings, with what does not depend on the wave's
 // direction worked out once: the facades' frames and orientations, the edges
 // within reach, and the images a diffracted ray can reach it through.
@@ -112,11 +137,14 @@ public:
 
     // The table entry: the energy ratio to open ground per band, every ray but
     // the run's summed coherently and band-averaged over three sub-bands (as
-    // canyon_ratio does), or in energy without `options.diffraction`.
-    // `reflection` is [facade][band] for buildings.facades(); `out` gets one
-    // value per band.
+    // canyon_ratio does), or in energy without `options.diffraction`, and the
+    // facades' diffuse energy added where `diffuse` is given.  `reflection` is
+    // the facades' specular energy reflection, [facade][band] for
+    // buildings.facades() -- rho (1 - s) where they also scatter; `out` gets
+    // one value per band.
     void ratio(const Vec3& u, const std::vector<double>& reflection, double floor_reflection,
-            const std::vector<double>& bands, double sound_speed, double* out) const;
+            const std::vector<double>& bands, double sound_speed, double* out,
+            const DiffuseFacades* diffuse = nullptr) const;
 
     // The images of the microphone the diffracted rays are tried through, the
     // microphone itself first: each with the facades it was mirrored in, the
@@ -142,7 +170,6 @@ private:
     {
         double x0, y0, ax, ay, length, nx, ny;
     };
-    std::size_t first_hit(const Vec3& pos, const Vec3& dir, bool below_floor, Vec3& hit) const;
     bool diffracted_path_open(const Vec3& q, const Image& image, bool below_floor) const;
 
     const Buildings* buildings_;
@@ -150,7 +177,6 @@ private:
     std::vector<std::size_t> run_facades_;
     BuildingPathOptions options_;
     std::vector<Frame> frames_;
-    std::vector<std::size_t> planes_;   // one facade per orientation
     std::vector<std::size_t> edges_;    // within reach
     std::vector<Image> images_;
     std::vector<std::vector<std::size_t>> image_edges_; // per image, the edges whose rays can reach it
@@ -165,10 +191,11 @@ std::complex<double> ray_amplitude(const BuildingRay& ray, const std::vector<dou
 // A receiver's table over `axes`, [azimuth][elevation][band] in dB (floored
 // at urban_gain_floor_db), its azimuths compass bearings and the local +x
 // along `frame_bearing`; the directions are shared out over `threads`.
-// `reflection` is [facade][band] for the buildings' facades.
+// `reflection` is [facade][band] for the buildings' facades, specular, and
+// `diffuse` the facades' diffuse reflection, if any.
 std::vector<double> building_gains(const BuildingReceiver& receiver, const UrbanTable::Axes& axes,
         double frame_bearing, const std::vector<double>& reflection, double floor_reflection, double sound_speed,
-        unsigned threads = 1);
+        unsigned threads = 1, const DiffuseFacades* diffuse = nullptr);
 
 // The facades the run evaluates for a microphone: those within `radius`
 // (horizontal, m) whose outer face looks at it.

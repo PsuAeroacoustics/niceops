@@ -837,17 +837,51 @@ the change from the most thorough table, in the cells within 10 dB of open groun
 
 | Specular / diffracted reflections | Images | Time | Energy mean | p95 change |
 | --- | --- | --- | --- | --- |
-| 8 / 2 | 63 | 0.40 s | −0.67 dB | 13.9 dB |
-| 64 / 2 | 63 | 0.41 s | −0.46 dB | 3.4 dB |
-| 64 / 4 | 513 | 1.07 s | −0.36 dB | 1.4 dB |
-| 64 / 6 (default) | 2763 | 2.82 s | −0.34 dB | 0.52 dB |
-| 64 / 7 | 5969 | 4.67 s | −0.34 dB | 0.26 dB |
-| 64 / 9 | 25597 | 13.9 s | −0.34 dB | (reference) |
+| 8 / 2 | 63 | 0.16 s | −0.67 dB | 13.9 dB |
+| 64 / 2 | 63 | 0.14 s | −0.46 dB | 3.4 dB |
+| 64 / 4 | 513 | 0.36 s | −0.36 dB | 1.4 dB |
+| 64 / 6 (default) | 2763 | 1.01 s | −0.34 dB | 0.52 dB |
+| 64 / 7 | 5969 | 1.80 s | −0.34 dB | 0.26 dB |
+| 64 / 9 | 25597 | 6.03 s | −0.34 dB | (reference) |
 
 Grazing directions need the specular bounces: a ray at 1.5 degrees climbs half a metre per
 crossing of a 20 m street. Walls this reflective are the slow case; the energy mean has settled
 by four diffracted reflections. Beam pruning made a 27-band table with three diffracted
-reflections 25 times faster, 44 s to 1.8 s, with the same rays.
+reflections 25 times faster, 44 s to 1.8 s, with the same rays, and the plan-view grid behind
+the visibility tests (identical to trying every building and facade on 4000 random segments and
+rays) a further 2.8 to 4 times.
+
+**Scattering walls** (`src/diffuse_facades`, `tests/test_diffuse_facades.cpp`):
+
+- **A lit wall's diffuse field** at a microphone 200 m in front of a face 4 km by 2 km, in 20 m
+  patches, is rho s cos(incidence) times the face's solid angle over pi to 0.2%.
+- **The reverse solve is the forward one** to 1e-8, in three bands over twelve directions, for a
+  street whose walls exchange energy through the air and off the floor.
+- **Every specular reflection scatters its share.** Between two walls 30 m tall and 20 m apart,
+  under a wave at 20 degrees, each of 600 patches' irradiance is cos(incidence) times the product
+  of rho (1 - s) over the reflections it takes to climb out, to 1e-12, and nothing where the
+  last reflection is on the wrong wall.
+- **Form factors are reciprocal**, A_p F_pq = A_q F_qp, to 1e-12 where neither is subdivided.
+
+What s = 0.2 on every wall does to the district above (2 kHz, the mean level over azimuth by
+elevation):
+
+| Elevation | 0° | 4.5° | 9° | 13.5° | 22.5° | 40° | 70° |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Specular walls | −38.9 dB | −4.1 | −4.5 | −4.6 | −5.6 | −6.4 | −5.8 |
+| s = 0.2 | −18.8 dB | −4.8 | −5.0 | −3.8 | −3.0 | −2.2 | −2.1 |
+
+At grazing the diffuse field fills the street's shadow by 20 dB; at low elevations the specular
+bounces up the street keep 0.8 of their energy where they kept 1 and the diffuse field nearly
+makes it up; higher up the lit facades scatter into the azimuths the street shades. Over every
+direction and band the table's energy mean rises from −0.34 to +0.86 dB. Lighting the walls with
+the plane wave and its floor reflection alone, the cheaper model, reads 2-3 dB low from 4.5 to
+13.5 degrees: the specular bounces lose their scattered share and nothing receives it. On the demo track s = 0.2 moves the seven test microphones by −0.01 to +0.84 dB
+against specular walls: most in the street (−2.09 to −1.25 dB against open ground) and the
+intersection (−1.50 to −0.97), nothing for the microphone behind a building, which sees only that
+building's shaded face. A receiver's diffuse field adds 1 s of setup and about 7 s of lookups on
+one thread for the 100-block district.
+
 
 On the demo track, the seven test microphones among eleven buildings
 (`tests/data/urban_buildings.csv`), SEL against open ground: −2.09 dB in a street, +0.01 at an

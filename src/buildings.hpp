@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "plan_grid.hpp"
 #include "urban.hpp"
 #include "vec3.hpp"
 
@@ -119,12 +120,47 @@ public:
     // its sides; the building's index, or size() for none.
     std::size_t inside(double x, double y) const;
 
+    // The first facade a ray from `pos` along the unit `dir` meets from
+    // outside, and where; facades().size() for none.  A facade `pos` lies on
+    // (within contact) is behind the ray: it is where the ray reflected or
+    // diffracted.  Below the floor a facade's image stands from -top.  A
+    // rising ray enters a building only through a wall, so for one this is
+    // its first obstruction.
+    std::size_t first_hit(const Vec3& pos, const Vec3& dir, bool below_floor, Vec3& hit) const;
+
+    // `v` reflected in a facade: its horizontal component mirrored.
+    Vec3 reflect(std::size_t facade, const Vec3& v) const
+    {
+        const FacadeFrame& fr = frames_[facade];
+        const double d = v.x * fr.nx + v.y * fr.ny;
+        return {v.x - 2.0 * d * fr.nx, v.y - 2.0 * d * fr.ny, v.z};
+    }
+
+    // One facade per orientation: facades whose normals are parallel mirror
+    // alike.
+    const std::vector<std::size_t>& orientations() const
+    {
+        return orientations_;
+    }
+
 private:
     bool blocked_by(std::size_t building, const Vec3& a, const Vec3& b, bool below_floor) const;
     bool strictly_inside(std::size_t building, double x, double y) const;
 
+    // A facade's base point, unit base direction and length, and the unit
+    // normal to its outside.
+    struct FacadeFrame
+    {
+        double x0, y0, ax, ay, length, nx, ny;
+    };
+
     std::vector<Footprint> footprints_;
     std::vector<Facade> facades_;
+    std::vector<FacadeFrame> frames_;
+    std::vector<std::size_t> orientations_;
+    // The buildings' and the facades' boxes, for the queries to walk.
+    PlanGrid building_grid_;
+    PlanGrid facade_grid_;
     std::vector<std::size_t> facade_building_;
     std::vector<Edge> edges_;
     // Per building: x min, x max, y min, y max.

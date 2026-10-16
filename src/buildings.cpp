@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -157,6 +158,31 @@ Buildings::Buildings(std::vector<Footprint> footprints)
             }
         }
     }
+
+    // The grids, their cells about one and a half typical items across.
+    std::vector<double> facade_boxes;
+    double building_size = 0.0, facade_size = 0.0;
+    for (const Facade& f : facades_)
+    {
+        const double length = std::hypot(f.x1 - f.x0, f.y1 - f.y0);
+        const double ax = (f.x1 - f.x0) / length, ay = (f.y1 - f.y0) / length;
+        frames_.push_back({f.x0, f.y0, ax, ay, length, -ay, ax});
+        const FacadeFrame& fi = frames_.back();
+        if (std::none_of(orientations_.begin(), orientations_.end(), [&](std::size_t o) {
+                return std::abs(frames_[o].nx * fi.ny - frames_[o].ny * fi.nx) < 1e-12;
+            }))
+            orientations_.push_back(frames_.size() - 1);
+        facade_boxes.insert(facade_boxes.end(),
+                {std::min(f.x0, f.x1), std::max(f.x0, f.x1), std::min(f.y0, f.y1), std::max(f.y0, f.y1)});
+        facade_size += length;
+    }
+    for (std::size_t b = 0; b < footprints_.size(); b++)
+        building_size += std::max(bounds_[4 * b + 1] - bounds_[4 * b], bounds_[4 * b + 3] - bounds_[4 * b + 2]);
+    if (!footprints_.empty())
+    {
+        building_grid_ = PlanGrid(bounds_, std::max(1.0, 1.5 * building_size / footprints_.size()));
+        facade_grid_ = PlanGrid(facade_boxes, std::max(1.0, 1.5 * facade_size / facades_.size()));
+    }
 }
 
 bool Buildings::strictly_inside(std::size_t building, double x, double y) const
@@ -245,12 +271,94 @@ bool Buildings::blocked_by(std::size_t building, const Vec3& a, const Vec3& b, b
     return false;
 }
 
+namespace {
+
+// A stamp per item, so that a query walking several cells tests each item
+// once: an item is new to the query when its stamp is not the query's.
+struct Stamps
+{
+    std::vector<std::uint32_t> stamp;
+    std::uint32_t current = 0;
+
+    void next(std::size_t items)
+    {
+        if (stamp.size() < items)
+            stamp.resize(items, 0);
+        if (++current == 0)
+        {
+            std::fill(stamp.begin(), stamp.end(), 0);
+            current = 1;
+        }
+    }
+    bool first(std::uint32_t item)
+    {
+        if (stamp[item] == current)
+            return false;
+        stamp[item] = current;
+        return true;
+    }
+};
+
+} // namespace
+
 bool Buildings::blocked(const Vec3& a, const Vec3& b, bool below_floor) const
 {
-    for (std::size_t building = 0; building < footprints_.size(); building++)
-        if (blocked_by(building, a, b, below_floor))
-            return true;
-    return false;
+    thread_local Stamps seen;
+    seen.next(footprints_.size());
+    bool hit = false;
+    building_grid_.walk(a.x, a.y, b.x - a.x, b.y - a.y, 1.0,
+            [&](const std::uint32_t* first, const std::uint32_t* last, double) {
+                for (const std::uint32_t* i = first; i != last; i++)
+                    if (seen.first(*i) && blocked_by(*i, a, b, below_floor))
+                    {
+                        hit = true;
+                        return false;
+                    }
+                return true;
+            });
+    return hit;
+}
+
+std::size_t Buildings::first_hit(const Vec3& pos, const Vec3& dir, bool below_floor, Vec3& hit) const
+{
+    std::size_t best = facades_.size();
+    double best_t = std::numeric_limits<double>::infinity();
+    // Above every roof nothing is in the way.
+    double t_max = std::numeric_limits<double>::infinity();
+    if (dir.z > 0.0)
+        t_max = std::max(0.0, (max_top_ - pos.z) / dir.z) + 1.0;
+    thread_local Stamps seen;
+    seen.next(facades_.size());
+    facade_grid_.walk(pos.x, pos.y, dir.x, dir.y, t_max,
+            [&](const std::uint32_t* first, const std::uint32_t* last, double t_exit) {
+                for (const std::uint32_t* item = first; item != last; item++)
+                {
+                    const std::uint32_t i = *item;
+                    if (!seen.first(i))
+                        continue;
+                    const FacadeFrame& fr = frames_[i];
+                    const double side = (pos.x - fr.x0) * fr.nx + (pos.y - fr.y0) * fr.ny;
+                    const double approach = dir.x * fr.nx + dir.y * fr.ny;
+                    if (side <= contact || approach >= 0.0)
+                        continue;
+                    const double t = side / -approach;
+                    if (t >= best_t)
+                        continue;
+                    const Vec3 p = pos + t * dir;
+                    const double along = (p.x - fr.x0) * fr.ax + (p.y - fr.y0) * fr.ay;
+                    const double bottom = below_floor ? -facades_[i].top : facades_[i].bottom;
+                    if (along >= -1e-9 && along <= fr.length + 1e-9 && p.z >= bottom - 1e-9
+                            && p.z <= facades_[i].top + 1e-9)
+                    {
+                        best = i;
+                        best_t = t;
+                        hit = p;
+                    }
+                }
+                // Every cell nearer than the best hit has been searched.
+                return best_t > t_exit;
+            });
+    return best;
 }
 
 bool Buildings::escapes(const Vec3& a, const Vec3& direction, bool below_floor) const

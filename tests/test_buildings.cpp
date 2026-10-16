@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <random>
 #include <stdexcept>
 #include <vector>
 
@@ -168,4 +170,79 @@ TEST_CASE("bad footprints are refused", "[buildings]")
     REQUIRE_THROWS_AS(Buildings({bow}), std::invalid_argument);
     Footprint flat = box(0.0, 0.0, 1.0, 1.0, 0.0);
     REQUIRE_THROWS_AS(Buildings({flat}), std::invalid_argument);
+}
+
+TEST_CASE("the plan grid finds what trying everything finds", "[buildings]")
+{
+    // A random district: rectangles and skewed quadrilaterals of random
+    // heights, some touching.
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    std::vector<Footprint> footprints;
+    for (int i = 0; i < 60; i++)
+    {
+        const double cx = 400.0 * unit(rng), cy = 400.0 * unit(rng);
+        const double a = 5.0 + 30.0 * unit(rng), b = 5.0 + 30.0 * unit(rng), turn = unit(rng) * pi;
+        Footprint f;
+        for (int k = 0; k < 4; k++)
+        {
+            const double px = (k == 1 || k == 2 ? a : -a) * (0.7 + 0.3 * unit(rng));
+            const double py = (k >= 2 ? b : -b) * (0.7 + 0.3 * unit(rng));
+            f.x.push_back(cx + px * std::cos(turn) - py * std::sin(turn));
+            f.y.push_back(cy + px * std::sin(turn) + py * std::cos(turn));
+        }
+        f.top = 5.0 + 45.0 * unit(rng);
+        footprints.push_back(f);
+    }
+    const Buildings city(footprints);
+    std::vector<Buildings> alone;
+    for (const auto& f : city.footprints())
+        alone.emplace_back(std::vector<Footprint> {f});
+    auto random_point = [&](double z_low, double z_high) {
+        return Vec3(-50.0 + 500.0 * unit(rng), -50.0 + 500.0 * unit(rng), z_low + (z_high - z_low) * unit(rng));
+    };
+    std::size_t blocked = 0, hits = 0;
+    for (int trial = 0; trial < 4000; trial++)
+    {
+        const bool below = trial % 3 == 0;
+        const Vec3 a = random_point(below ? -40.0 : 0.0, 60.0), b = random_point(0.0, 60.0);
+        bool any = false;
+        for (const auto& one : alone)
+            any = any || one.blocked(a, b, below);
+        REQUIRE(city.blocked(a, b, below) == any);
+        blocked += any;
+
+        // A rising ray, against every facade tried in turn.
+        Vec3 dir = Vec3(unit(rng) - 0.5, unit(rng) - 0.5, 0.3 * unit(rng));
+        dir.normalize();
+        Vec3 hit;
+        const std::size_t found = city.first_hit(a, dir, below, hit);
+        std::size_t best = city.facades().size();
+        double best_t = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i < city.facades().size(); i++)
+        {
+            const Facade& f = city.facades()[i];
+            const double side = facade_side(f, a);
+            const double length = std::hypot(f.x1 - f.x0, f.y1 - f.y0);
+            const double nx = -(f.y1 - f.y0) / length, ny = (f.x1 - f.x0) / length;
+            const double approach = dir.x * nx + dir.y * ny;
+            if (side <= Buildings::contact || approach >= 0.0)
+                continue;
+            const double t = side / -approach;
+            const Vec3 p = a + t * dir;
+            const double along = ((p.x - f.x0) * (f.x1 - f.x0) + (p.y - f.y0) * (f.y1 - f.y0)) / length;
+            const double bottom = below ? -f.top : f.bottom;
+            if (t < best_t && along >= -1e-9 && along <= length + 1e-9 && p.z >= bottom - 1e-9 && p.z <= f.top + 1e-9)
+            {
+                best = i;
+                best_t = t;
+            }
+        }
+        REQUIRE(found == best);
+        hits += found < city.facades().size();
+    }
+    // Both kinds of answer were exercised.
+    REQUIRE(blocked > 400);
+    REQUIRE(blocked < 3600);
+    REQUIRE(hits > 400);
 }

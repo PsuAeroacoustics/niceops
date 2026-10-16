@@ -1069,9 +1069,10 @@ the paths are summed in energy. Microphones without a table are evaluated as wit
   building edges diffract, all summed with their phases so that the field stays continuous where a
   reflection or the direct sound is cut off. Among buildings, the roof edges and the buildings'
   convex corners diffract, and a diffracted ray may reflect in the facades on its way to the
-  microphone. Diffraction at two edges in turn, diffuse reflection, roofs as reflectors,
-  an ideal street's ends and turbulence in the shadows are not modeled, nor are the
-  low-frequency wave effects unless the table has a wave band (ideal canyons only).
+  microphone, and with `--facade_scattering` the walls also scatter part of what they reflect
+  diffusely, which fills the shadows that specular reflection leaves. Diffraction at two edges in
+  turn, roofs as reflectors, an ideal street's ends and turbulence in the shadows are not modeled,
+  nor are the low-frequency wave effects unless the table has a wave band (ideal canyons only).
 - **Not with** `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`.
 
 A microphone in a street costs about one extra evaluation per reflecting facade.
@@ -1705,6 +1706,7 @@ niceops_urban_table --buildings district.csv --receivers observers.csv \
 | `x`, `y` | The vertex, in the run's local frame. |
 | `top` | The roof above the ground, the same on each of the building's rows. |
 | `absorption` | Optional: its walls' energy absorption coefficient, every band, the same on each of its rows. Default `--absorption`. |
+| `scattering` | Optional: the share of what its walls reflect that they scatter diffusely, every band, the same on each of its rows. Default `--facade_scattering`. |
 
 | Option | Meaning |
 | --- | --- |
@@ -1712,6 +1714,19 @@ niceops_urban_table --buildings district.csv --receivers observers.csv \
 | `--max_diffracted_order` | Facade reflections on a ray after an edge diffracts it, at most. Default 6. |
 | `--radius` | The edges, and the facades a diffracted ray reflects in, within this of a microphone. Default 150 m. |
 | `--facade_radius` | The facades within this of a microphone, facing it, are written for the run's first-order reflections. Default 100 m. |
+| `--facade_scattering` | The share of what a wall reflects that it scatters diffusely, where a building gives none. Default 0: specular walls. |
+| `--patch_size` | With scattering walls: the walls are cut into patches no larger than this for the diffuse field. Default 4 m. |
+| `--diffuse_radius` | With scattering walls: the walls within this of a microphone scatter. Default 100 m. |
+
+**Scattering walls.** Real facades -- windows, balconies, ledges -- scatter part of what they
+reflect, and that diffuse energy is what reaches a microphone the direct sound and its
+reflections do not. With a scattering coefficient s the walls reflect rho (1 - s) specularly,
+in the table's rays and in the run's own first-order reflections, and rho s diffusely
+([THEORY §6.5](THEORY.md#65-urban-receivers)). Measured facade data are scarce: ISO 17497-1
+gives a random-incidence scattering coefficient, and facades measured at steep incidence hardly
+exist, so s is a modelling choice to be studied rather than a value to look up. The default leaves
+the walls specular, and tables built with it are unchanged; [FIDELITY](FIDELITY.md#buildings)
+has what s = 0.2 does. The diffuse field adds several seconds to a receiver's build on one thread.
 
 A microphone inside a footprint is refused, as is `--wave_below`. A table for a street
 microphone among a hundred blocks takes a few seconds per receiver at the defaults; the time

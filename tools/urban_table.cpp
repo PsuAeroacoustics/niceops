@@ -29,7 +29,8 @@
 // --units: building (an id; a building's rows consecutive, its vertices in
 // order around it), x, y, top (its roof above the ground), and optionally
 // absorption (its walls' energy absorption coefficient, the same on each of
-// its rows; default --absorption).  --receivers has the observer file's x, y,
+// its rows; default --absorption) and scattering (the share of what its walls
+// reflect that they scatter diffusely, likewise; default --facade_scattering).  --receivers has the observer file's x, y,
 // z and height; the buildings stand on the ground at each receiver's z.  Each
 // receiver's facades within --facade_radius that face it are written for the
 // run's first-order images, and left out of its table.
@@ -49,6 +50,7 @@
 #include <cmath>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -75,6 +77,9 @@ int main(int argc, char** argv)
     std::size_t max_diffracted_order = 6;
     double radius = 150.0;        // m unless given
     double facade_radius = 100.0; // m unless given
+    double facade_scattering = 0.0;
+    double patch_size = 4.0;      // m unless given
+    double diffuse_radius = 100.0; // m unless given
     std::string database_file;
     std::string output;
     std::string units = "ft";
@@ -102,6 +107,18 @@ int main(int argc, char** argv)
     app.add_option("--radius", radius,
             "With --buildings: the edges, and the facades a diffracted ray reflects in, within this of a "
             "microphone, in --units (default 150 m).")
+            ->check(CLI::PositiveNumber);
+    app.add_option("--facade_scattering", facade_scattering,
+            "With --buildings: the share of what a wall reflects that it scatters diffusely, where a building "
+            "gives none (default 0, specular).")
+            ->check(CLI::Range(0.0, 1.0));
+    app.add_option("--patch_size", patch_size,
+            "With --buildings and scattering walls: the walls' patches for the diffuse field, at most this "
+            "size, in --units (default 4 m).")
+            ->check(CLI::PositiveNumber);
+    app.add_option("--diffuse_radius", diffuse_radius,
+            "With --buildings and scattering walls: the walls within this of a microphone scatter, in --units "
+            "(default 100 m).")
             ->check(CLI::PositiveNumber);
     app.add_option("--facade_radius", facade_radius,
             "With --buildings: the facades written for the run's first-order images, within this of a "
@@ -157,6 +174,10 @@ int main(int argc, char** argv)
             radius *= to_meters;
         if (app.count("--facade_radius") > 0)
             facade_radius *= to_meters;
+        if (app.count("--patch_size") > 0)
+            patch_size *= to_meters;
+        if (app.count("--diffuse_radius") > 0)
+            diffuse_radius *= to_meters;
         if (!bands.empty() == !database_file.empty())
             throw std::runtime_error("give either --database or --bands");
         if (!database_file.empty())
@@ -228,8 +249,9 @@ int main(int argc, char** argv)
             const std::size_t by = column_of(bcsv, buildings_file, "y", true, true);
             const std::size_t bt = column_of(bcsv, buildings_file, "top", true, true);
             const std::size_t ba = column_of(bcsv, buildings_file, "absorption", false, false);
+            const std::size_t bs = column_of(bcsv, buildings_file, "scattering", false, false);
             std::vector<Footprint> footprints;
-            std::vector<double> building_absorption;
+            std::vector<double> building_absorption, building_scattering;
             std::vector<double> ids;
             std::set<double> seen;
             for (std::size_t row = 0; row < bcsv.rows.size(); row++)
@@ -237,6 +259,7 @@ int main(int argc, char** argv)
                 const auto& r = bcsv.rows[row];
                 const std::string where = buildings_file + " row " + std::to_string(row + 1) + ": ";
                 const double alpha = ba == LabeledCsv::npos ? absorption : r[ba];
+                const double scatter = bs == LabeledCsv::npos ? facade_scattering : r[bs];
                 if (footprints.empty() || r[cid] != ids.back())
                 {
                     if (!seen.insert(r[cid]).second)
@@ -244,13 +267,18 @@ int main(int argc, char** argv)
                                 + "'s rows are not consecutive");
                     if (!(alpha >= 0.0 && alpha <= 1.0))
                         throw std::runtime_error(where + "an absorption coefficient must lie within [0, 1]");
+                    if (!(scatter >= 0.0 && scatter <= 1.0))
+                        throw std::runtime_error(where + "a scattering coefficient must lie within [0, 1]");
                     footprints.emplace_back();
                     footprints.back().top = r[bt] * to_meters;
                     building_absorption.push_back(alpha);
+                    building_scattering.push_back(scatter);
                     ids.push_back(r[cid]);
                 }
-                else if (r[bt] * to_meters != footprints.back().top || alpha != building_absorption.back())
-                    throw std::runtime_error(where + "a building's rows must give one top and one absorption");
+                else if (r[bt] * to_meters != footprints.back().top || alpha != building_absorption.back()
+                        || scatter != building_scattering.back())
+                    throw std::runtime_error(
+                            where + "a building's rows must give one top, one absorption and one scattering");
                 footprints.back().x.push_back(r[bx] * to_meters);
                 footprints.back().y.push_back(r[by] * to_meters);
             }
@@ -263,11 +291,25 @@ int main(int argc, char** argv)
             {
                 throw std::runtime_error(buildings_file + ": " + e.what() + " (counting buildings from 1 in file order)");
             }
-            // Each facade's reflection, every band: its building's walls.
-            std::vector<double> reflection(city.facades().size() * nb);
+            // Each facade's reflection and scattering, every band: its
+            // building's walls.  The rays, and the run's own reflections,
+            // carry the specular share, rho (1 - s).
+            std::vector<double> reflection(city.facades().size() * nb), scattering(reflection.size());
+            std::vector<double> specular(reflection.size());
+            bool scatters = false;
             for (std::size_t f = 0; f < city.facades().size(); f++)
-                std::fill_n(reflection.begin() + static_cast<std::ptrdiff_t>(f * nb), nb,
-                        1.0 - building_absorption[city.facade_building(f)]);
+                for (std::size_t b = 0; b < nb; b++)
+                {
+                    const std::size_t building = city.facade_building(f);
+                    reflection[f * nb + b] = 1.0 - building_absorption[building];
+                    scattering[f * nb + b] = building_scattering[building];
+                    specular[f * nb + b] = reflection[f * nb + b] * (1.0 - scattering[f * nb + b]);
+                    scatters = scatters || building_scattering[building] > 0.0;
+                }
+            DiffuseOptions diffuse_options;
+            diffuse_options.radius = diffuse_radius;
+            diffuse_options.patch_size = patch_size;
+            diffuse_options.max_order = max_order;
 
             const LabeledCsv rcsv = read_rows(receivers_file, "receivers");
             const std::size_t rx = column_of(rcsv, receivers_file, "x", true, true);
@@ -281,7 +323,7 @@ int main(int argc, char** argv)
             options.diffraction = !no_diffraction;
             std::vector<UrbanTable::Receiver> receivers;
             std::vector<double> gains;
-            std::size_t truncated = 0;
+            std::size_t truncated = 0, unconverged = 0, patches = 0;
             const auto start = std::chrono::steady_clock::now();
             for (std::size_t row = 0; row < rcsv.rows.size(); row++)
             {
@@ -299,8 +341,16 @@ int main(int argc, char** argv)
                 const auto run = facing_facades(city, local, facade_radius);
                 const BuildingReceiver receiver(city, local, run, options);
                 truncated += receiver.truncated();
-                const auto row_gains = building_gains(receiver, axes, frame_bearing, reflection,
-                        1.0 - floor_absorption, sound_speed, tool_thread_count(threads));
+                std::unique_ptr<DiffuseFacades> diffuse;
+                if (scatters)
+                {
+                    diffuse = std::make_unique<DiffuseFacades>(city, local, reflection, scattering,
+                            1.0 - floor_absorption, bands, sound_speed, diffuse_options, tool_thread_count(threads));
+                    unconverged += !diffuse->converged();
+                    patches += diffuse->patches().size();
+                }
+                const auto row_gains = building_gains(receiver, axes, frame_bearing, specular,
+                        1.0 - floor_absorption, sound_speed, tool_thread_count(threads), diffuse.get());
                 gains.insert(gains.end(), row_gains.begin(), row_gains.end());
                 UrbanTable::Receiver out;
                 out.microphone = Vec3(x, y, floor + height);
@@ -310,14 +360,20 @@ int main(int argc, char** argv)
                     facade.bottom += floor;
                     facade.top += floor;
                     out.facades.push_back(facade);
-                    out.reflection.insert(out.reflection.end(), reflection.begin() + static_cast<std::ptrdiff_t>(f * nb),
-                            reflection.begin() + static_cast<std::ptrdiff_t>((f + 1) * nb));
+                    out.reflection.insert(out.reflection.end(), specular.begin() + static_cast<std::ptrdiff_t>(f * nb),
+                            specular.begin() + static_cast<std::ptrdiff_t>((f + 1) * nb));
                 }
                 receivers.push_back(std::move(out));
             }
             std::cerr << "Traced " << receivers.size() << " receivers among " << city.size() << " buildings in "
                       << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << " s."
                       << std::endl;
+            if (scatters)
+                std::cerr << "The walls' diffuse field: " << patches << " patches over the receivers." << std::endl;
+            if (unconverged > 0)
+                std::cerr << "niceops_urban_table: warning: for " << unconverged
+                          << " receivers the diffuse field's solve did not converge; give the walls some absorption."
+                          << std::endl;
             if (truncated > 0)
                 std::cerr << "niceops_urban_table: warning: for " << truncated
                           << " receivers the diffracted rays' image search stopped at its limit; lower "
@@ -332,11 +388,18 @@ int main(int argc, char** argv)
                     {"max_diffracted_order", std::to_string(max_diffracted_order)},
                     {"radius_m", exact_text(radius)},
                     {"facade_radius_m", exact_text(facade_radius)},
+                    {"facade_scattering", scatters ? "per building (see the buildings file), default "
+                                    + exact_text(facade_scattering) : "none"},
                     {"sound_speed_mps", exact_text(sound_speed)},
                     {"floor_absorption", exact_text(floor_absorption)},
             };
-            const UrbanTable table(axes, std::move(receivers), std::move(gains), frame_bearing, "lod1_buildings",
-                    provenance);
+            if (scatters)
+            {
+                provenance["patch_size_m"] = exact_text(patch_size);
+                provenance["diffuse_radius_m"] = exact_text(diffuse_radius);
+            }
+            const UrbanTable table(axes, std::move(receivers), std::move(gains), frame_bearing,
+                    scatters ? "lod1_buildings+diffuse" : "lod1_buildings", provenance);
             table.save(output);
             std::cerr << "Wrote " << output << " (" << table.receivers().size() << " receivers x "
                       << axes.azimuths.size() << " azimuths x " << axes.elevations.size() << " elevations x " << nb

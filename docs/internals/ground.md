@@ -144,7 +144,7 @@ What to keep:
   windowed against marched for canyons, plates and the +25 dB bump table, the pinned goldens and
   the refusals).
 
-### LoD1 buildings (`src/buildings`, `src/building_paths`)
+### LoD1 buildings (`src/buildings`, `src/building_paths`, `src/diffuse_facades`, `src/plan_grid.hpp`)
 
 `niceops_urban_table --buildings` builds the table among footprints extruded to flat roofs:
 `Buildings` holds the geometry and the visibility test, `BuildingReceiver` one microphone's rays and
@@ -157,9 +157,18 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
   midpoint test between them. Touching is not blocking -- a ray ending on a wall where it
   reflects, leaving an edge where it diffracts, or grazing a wall -- which is what lets every
   path be tested with the same call. Embree, which the plan named, is left for LoD2 meshes.
+- **The visibility queries walk a plan-view grid** (`PlanGrid`): `blocked` the buildings' boxes,
+  `first_hit` the facades', cell by cell along the line, each item tested once per query (a
+  per-thread stamp) and `first_hit` stopping at the cell that holds its best hit. The grid only
+  prunes; `the plan grid finds what trying everything finds` holds both to the exhaustive answer
+  on 4000 random queries. It is what makes a real district's thousands of buildings affordable.
 - **The floor is a mirror world**, `below_floor`: every building from `-top` to `top`, the same
   trick as the canyon's walls carried below the floor, so a floor-reflected ray is one straight
-  line from the microphone's floor image.
+  line from the microphone's floor image. Below the floor a rising ray can enter a mirrored
+  building through its mirrored roof -- the incident wave coming down through a real one -- which
+  the facade search cannot see, so `trace_specular` tests every leg there whole. A microphone
+  lower than the roofs around it has its floor image above their mirrored roofs, so its rays did
+  not move (every golden held); a high patch's floor image is below some of them.
 - **Facades run clockwise around their building**, so that `facade_side` is positive outside, as
   `first_order_image` and the run expect.
 - **Specular rays are traced, not enumerated.** A vertical facade turns only a ray's horizontal
@@ -194,6 +203,27 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
   Passing an empty list instead fails both `urban_buildings` goldens.
 - **Grazing and overhead are clamped as in the canyon**: elevations under 1e-3 rad are taken at
   it, and a direction within 1e-9 of vertical is vertical.
+
+- **Scattering walls are radiosity, solved backwards** (`DiffuseFacades`, THEORY §6.5). The
+  form factors and the microphone's gathering depend only on the geometry and the band, so
+  w = S (I - F^T D)^-1 g is solved once per receiver and band, and a direction costs only its
+  irradiance. `energy_forward` solves the other way round, per direction, as the test's
+  reference. What to keep:
+  - **Every specular reflection scatters its share.** A patch's irradiance is gathered from every
+    specular arrival, traced from the patch with the microphone's own tracer
+    (`specular_departures`, `trace_specular`) and carrying rho (1 - s) per reflection. Lighting the
+    walls with the plane wave's first hit alone loses the share of every later reflection: 2-3 dB
+    at 4.5 to 13.5 degrees on the FIDELITY district.
+  - **Diffuse energy stays diffuse, with the whole rho.** A field arriving from every direction
+    reflects into every direction, specularly or not.
+  - **The microphone's two paths from a patch interfere** band-averaged as open ground's rays do,
+    so a flush plate gets the same doubling from the diffuse field as from the direct sound;
+    between patches the floor path adds in energy.
+  - **With s = 0 nothing changes, byte for byte**: the tool builds no diffuse field, and
+    rho (1 - 0) is rho. The run's first-order reflections carry rho (1 - s);
+    `urban_buildings_diffuse_golden` fails if they carry rho.
+  - Patches under three of their sizes from a receiving point are summed over 4 by 4 parts;
+    each patch is lit, and seen, from its centre, so shadow edges are resolved to a patch.
 
 ### The canyon wave solver (`src/canyon_wave`)
 

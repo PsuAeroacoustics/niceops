@@ -196,6 +196,7 @@ add_library(niceops_core STATIC
   src/wedge.cpp
   src/buildings.cpp
   src/building_paths.cpp
+  src/diffuse_facades.cpp
   src/predicates.cpp
   src/delaunay.cpp
   # interpolator.cpp was its own library in the D era, to wall off CGAL's heavy
@@ -281,6 +282,7 @@ add_executable(niceops_unit_tests
   tests/test_wedge.cpp
   tests/test_buildings.cpp
   tests/test_building_paths.cpp
+  tests/test_diffuse_facades.cpp
   tests/test_atmosphere.cpp
   tests/test_atmosphere_profile.cpp
   tests/test_atmosphere_builder.cpp
@@ -1137,6 +1139,17 @@ add_test(NAME urban_buildings_plate_windowed_is_exact COMMAND golden_compare int
 add_test(NAME urban_buildings_golden COMMAND golden_compare integrated/urban_buildings.csv golden/urban_buildings.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME urban_buildings_plate_golden COMMAND golden_compare integrated/urban_buildings_plate.csv golden/urban_buildings_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_buildings_windowed_is_exact urban_buildings_plate_windowed_is_exact urban_buildings_golden urban_buildings_plate_golden PROPERTIES FIXTURES_REQUIRED urban_buildings_runs)
+# The same with walls scattering a fifth of what they reflect (--facade_scattering 0.2, src/diffuse_facades):
+# the windowed run equals its march, which the diffuse field's share of the table's largest gain
+# has to keep so, and the run is pinned (golden/urban_buildings_diffuse.csv).
+add_test(NAME urban_buildings_diffuse_build COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_observers.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 --facade_scattering 0.2 -j 2 -o tables/urban_buildings_diffuse_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_diffuse_build PROPERTIES FIXTURES_SETUP urban_buildings_diffuse_file)
+add_test(NAME urban_buildings_diffuse COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_buildings_diffuse_test.nc -o integrated/urban_buildings_diffuse.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_diffuse_marched COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_buildings_diffuse_test.nc -D integrated/urban_buildings_diffuse_dnl.csv -o integrated/urban_buildings_diffuse_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_diffuse urban_buildings_diffuse_marched PROPERTIES FIXTURES_REQUIRED urban_buildings_diffuse_file FIXTURES_SETUP urban_buildings_diffuse_runs)
+add_test(NAME urban_buildings_diffuse_windowed_is_exact COMMAND golden_compare integrated/urban_buildings_diffuse.csv integrated/urban_buildings_diffuse_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_diffuse_golden COMMAND golden_compare integrated/urban_buildings_diffuse.csv golden/urban_buildings_diffuse.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_diffuse_windowed_is_exact urban_buildings_diffuse_golden PROPERTIES FIXTURES_REQUIRED urban_buildings_diffuse_runs)
 # The builder refuses a microphone inside a building, the wave band with buildings, and buildings
 # without receivers.
 add_test(NAME urban_buildings_refuses_inside COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_inside.csv --bands 1000 --frame_bearing 210 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

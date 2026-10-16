@@ -899,6 +899,35 @@ front, with no leg through a building. Among buildings the rays leave out, beyon
 list: diffraction at two edges in turn, an edge lit only by a reflected wave or off the floor, a
 diffraction point off the end of its edge (the corner's own diffraction), and roofs as reflectors.
 
+**Diffuse reflection** (`--facade_scattering`, among buildings). A facade reflects the fraction
+$\rho$ of the energy reaching it and scatters the share $s$ of that diffusely, by Lambert's law;
+the rays then carry $\rho(1 - s)$ per reflection, the run's own first-order reflections included.
+The facades within a radius are cut into patches, and the diffuse energy is radiosity among them:
+
+$$
+\mathbf B = S\,\mathbf E + D\,F\,\mathbf B, \qquad S = \operatorname{diag}(\rho s),\ D = \operatorname{diag}(\rho),
+$$
+
+with $\mathbf B$ the patches' exitance, $F_{pq} = A_q\cos\theta_p\cos\theta_q/\pi r_{pq}^2$ the
+irradiance at patch $p$ per unit exitance of $q$ through the air, plus $\rho_f$ times the same off
+the floor, and $\mathbf E$ the irradiance the plane wave delivers: the sum, over every specular
+arrival at the patch (traced from it as from the microphone, in the floor's mirror world too), of
+$\cos\theta$ times $\prod\rho(1 - s)$ over the arrival's reflections and $\rho_f$ if it came off the
+floor. Every specular reflection therefore scatters its share, not only the first; diffracted
+waves light nothing. Energy a patch receives from other patches it re-emits diffusely with its
+whole $\rho$: a field arriving from every direction reflects, specularly or not, into every
+direction. The microphone gathers $\mathbf g\cdot\mathbf B$, where
+$g_q = A_q\cos\theta_q/\pi r^2$ along each of the two paths, direct and off the floor, and the two
+interfere band-averaged as open ground's rays do. Solving the adjoint once per band,
+
+$$
+\mathbf g\cdot\mathbf B = \mathbf w\cdot\mathbf E, \qquad \mathbf w = S\,(I - F^{\mathsf T} D)^{-1}\,\mathbf g,
+$$
+
+leaves a direction the cost of its arrivals. The diffuse energy adds to the table's band energy
+before the ratio to open ground. Patches near one another, or near the microphone, are summed
+over 4 by 4 parts; each is lit, and seen, from its centre.
+
 **Separating the paths.** A table keyed on the arrival direction alone assumes every path leaves
 the rotor in the direct path's direction at the direct path's range. Close to the buildings a
 reflection leaves 10 to 40 degrees away, which is why the first-order reflections are evaluated
