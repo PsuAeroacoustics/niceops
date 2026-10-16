@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -197,6 +198,25 @@ std::string latlon_companion(const std::string& level_file)
             .string();
 }
 
+// `value` as a stream at setprecision(`precision`) writes it in the default
+// float format -- printf's %.<precision>g -- by std::to_chars, which the
+// standard defines as that same conversion; a stream's formatting was a tenth
+// of a validation run.  A NaN is "nan" whatever its sign, as the streams have
+// it (to_chars writes "-nan" for one with its sign bit set, which arithmetic
+// gives on x86).
+void append_number(std::string& out, double value, int precision = 17)
+{
+    if (std::isnan(value))
+    {
+        out += "nan";
+        return;
+    }
+    char buffer[40];
+    const auto result
+            = std::to_chars(buffer, buffer + sizeof buffer, value, std::chars_format::general, precision);
+    out.append(buffer, result.ptr);
+}
+
 void write_time_history_file(const std::vector<double>& time_history, double dt, double x, double y,
         const std::string& filename, LengthUnit unit)
 {
@@ -205,10 +225,14 @@ void write_time_history_file(const std::vector<double>& time_history, double dt,
     file << "Level time history. Next row [dt (s), x (" << unit.name << "), y(" << unit.name
          << ")], remaining rows, dB.\n";
     file << dt << "," << x / unit.to_meters << "," << y / unit.to_meters << "\n";
+    std::string text;
+    text.reserve(time_history.size() * 20);
     for (auto level : time_history)
     {
-        file << level << "\n";
+        append_number(text, level);
+        text += '\n';
     }
+    file << text;
 }
 
 // One observer's per-band history (--band_history): a row per trajectory
@@ -241,30 +265,40 @@ void write_band_history_file(const std::vector<BandHistoryRow>& rows,
     for (auto center : band_centers)
         file << ",band_" << center;
     file << "\n";
-    file << std::setprecision(10);
+    // The rows at ten digits, as setprecision(10) would write them.
     const std::size_t nb = band_centers.size();
+    std::string text;
+    text.reserve(rows.size() * (nb + 7) * 14);
     for (std::size_t it = 0; it < rows.size(); it++)
     {
         const auto& row = rows[it];
         const bool evaluated = std::isfinite(levels[it]);
-        file << row.emission_time << ",";
+        append_number(text, row.emission_time, 10);
+        text += ',';
         if (evaluated)
         {
-            file << row.reception_time << "," << row.range / unit.to_meters << ","
-                 << row.elevation << "," << row.phi << "," << row.theta << "," << levels[it];
+            for (const double value : {row.reception_time, row.range / unit.to_meters, row.elevation, row.phi,
+                         row.theta})
+            {
+                append_number(text, value, 10);
+                text += ',';
+            }
+            append_number(text, levels[it], 10);
         }
         else
         {
-            file << ",,,,," << levels[it];
+            text += ",,,,,";
+            append_number(text, levels[it], 10);
         }
         for (std::size_t band = 0; band < nb; band++)
         {
-            file << ",";
+            text += ',';
             if (evaluated && band >= first_band && band < last_band)
-                file << band_levels[it * nb + band];
+                append_number(text, band_levels[it * nb + band], 10);
         }
-        file << "\n";
+        text += '\n';
     }
+    file << text;
 }
 
 // One observer's EPNL (--epnl_file), from its 0.5 s reception-time frames.
@@ -2506,9 +2540,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 : ShadowAttenuation(database.band_centers(), first_band, last_band);
         if (ground_model != nullptr)
         {
+            // Each transition tabulates the residue series when a ray first
+            // comes near a shadow boundary, or the peak search's bound asks.
             for (const double height : point_heights)
             {
-                const auto start = std::chrono::steady_clock::now();
                 shadow_transitions.emplace_back(database.band_centers(), ground_impedance_bands,
                         height, sound_speed, first_band, last_band, nullptr, nullptr,
                         options.thread_count);
@@ -2516,22 +2551,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     shadow_transitions.back().set_scattering(
                             ShadowScattering::for_receiver(options.scattering, height, false));
                 log("  shadow-boundary field for microphones ", height / options.unit.to_meters, " ",
-                        options.unit.name, " up tabulated from the residue series in ",
-                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-                        " s.");
+                        options.unit.name, " up: from the residue series, tabulated when first needed.");
             }
             if (any_plate)
             {
-                const auto start = std::chrono::steady_clock::now();
                 plate_transition.emplace(database.band_centers(), ground_impedance_bands,
                         plate->thickness(), sound_speed, first_band, last_band, &*plate, ground_model,
                         options.thread_count);
                 if (options.scattering > 0.0)
                     plate_transition->set_scattering(
                             ShadowScattering::for_receiver(options.scattering, plate->thickness(), true));
-                log("  shadow-boundary field for plate microphones tabulated in ",
-                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-                        " s.");
+                log("  shadow-boundary field for plate microphones: from the residue series, tabulated "
+                    "when first needed.");
             }
         }
         // --shadow_model resolved: the cramped bands' field on each transition,
@@ -2554,7 +2585,6 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 receivers.push_back(plate->thickness());
                 flush_receivers.push_back(true);
             }
-            const double cramped_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             double state_low = std::numeric_limits<double>::infinity(), state_high = 0.0;
             for (const auto& state : source_states)
             {
@@ -2567,12 +2597,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             log("  --shadow_model resolved: each band's shadow boundary from the profile it resolves at ",
                     options.shadow_phase, " rad of vertical phase, tabulated over bearing and source "
                     "height", options.cramped_ground == CrampedGround::series
-                            ? ", and the residue series at the source's own height for cramped bands,"
+                            ? ", and the residue series at the source's own height for cramped bands (each band "
+                              "and s when first read),"
                             : options.cramped_ground == CrampedGround::straight
                             ? ", with cramped bands' lit side on the straight path's ground geometry,"
                             : ",",
                     " in ", std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-                    " s (", cramped_seconds, " s of it the cramped bands' tables).");
+                    " s.");
         }
         std::string surface_bands;
         for (std::size_t band = first_band; band < last_band; band++)

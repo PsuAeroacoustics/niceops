@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <mutex>
+#include <memory>
 #include <stdexcept>
 
 #include "exact_solutions.hpp"
@@ -612,6 +614,24 @@ void shadow_loss(const RefractedRay& ray, const ShadowAttenuation& attenuation, 
 
 namespace niceops {
 
+struct ShadowTransition::Tables
+{
+    std::once_flag built;
+    // [band][j * xi_nodes_ + i]: V at s_j, xi_i.
+    std::vector<std::vector<double>> table;
+    // [band][j]: V at xi = 0, for the floor.
+    std::vector<std::vector<double>> at_boundary;
+    std::vector<double> max_power_ratio;
+    std::vector<double> max_power_db; // 10 lg max_power_ratio
+    // [band][i]: K at azimuth i * plate_azimuth_step; empty for a point receiver.
+    std::vector<std::vector<double>> plate_offset;
+    // --shadow_model resolved's series: [band][(j * cramped_root_nodes + k) *
+    // cramped_xi_nodes_ + i], NaN until column j is built, and once flags
+    // [band * s_nodes_ + j].  Empty without it.
+    std::vector<std::vector<float>> cramped;
+    std::unique_ptr<std::once_flag[]> cramped_built;
+};
+
 ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
         const std::vector<std::complex<double>>& admittance, double receiver_height,
         double sound_speed, std::size_t first_band, std::size_t last_band,
@@ -630,13 +650,36 @@ ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
         throw std::invalid_argument("ShadowTransition: one admittance per band");
     xi_nodes_ = static_cast<std::size_t>(std::lround((xi_max - xi_ray) / xi_step)) + 1;
     s_nodes_ = static_cast<std::size_t>(std::ceil(std::log10(s_max / s_min) * s_per_decade)) + 1;
-    table_.assign(frequencies.size(), {});
-    at_boundary_.assign(frequencies.size(), {});
-    max_power_ratio_.assign(frequencies.size(), 1.0);
+    first_band_ = first_band;
+    last_band_ = last_band;
+    threads_ = threads;
+    tables_ = std::make_shared<Tables>();
+}
+
+const ShadowTransition::Tables& ShadowTransition::tables() const
+{
+    std::call_once(tables_->built, [this] { build(*tables_); });
+    return *tables_;
+}
+
+void ShadowTransition::build(Tables& t) const
+{
+    const std::vector<double>& frequencies = frequencies_;
+    const std::vector<std::complex<double>>& admittance = admittance_;
+    const double receiver_height = receiver_height_;
+    const double sound_speed = sound_speed_;
+    const std::size_t first_band = first_band_;
+    const std::size_t last_band = last_band_;
+    const unsigned threads = threads_;
+    const PlateReceiver* plate = plate_;
+    t.table.assign(frequencies.size(), {});
+    t.at_boundary.assign(frequencies.size(), {});
+    t.max_power_ratio.assign(frequencies.size(), 1.0);
     const std::size_t at_zero = static_cast<std::size_t>(std::lround(-xi_ray / xi_step));
     const double doubling = 20.0 * std::log10(2.0);
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const std::size_t end = std::min(last_band, frequencies.size());
+    t.max_power_db.assign(frequencies.size(), 0.0);
     if (first_band >= end)
         return;
 
@@ -714,17 +757,24 @@ ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
             }
             for (const double v : col)
                 if (std::isfinite(v))
-                    max_power_ratio_[band] = std::max(max_power_ratio_[band], std::pow(10.0, v / 10.0));
-            table_[band] = std::move(col);
-            at_boundary_[band] = std::move(zero);
+                    t.max_power_ratio[band] = std::max(t.max_power_ratio[band], std::pow(10.0, v / 10.0));
+            t.table[band] = std::move(col);
+            t.at_boundary[band] = std::move(zero);
         }
     });
 
+    auto finish = [&t] {
+        for (std::size_t band = 0; band < t.max_power_ratio.size(); band++)
+            t.max_power_db[band] = 10.0 * std::log10(t.max_power_ratio[band]);
+    };
     if (plate == nullptr)
+    {
+        finish();
         return;
+    }
     // K: the plate over bare ground at its top, 2 degrees up, a kilometer out.
-    plate_offset_.assign(frequencies.size(), std::vector<double>(plate_azimuths, 0.0));
-    GroundModel bare = *ground;
+    t.plate_offset.assign(frequencies.size(), std::vector<double>(plate_azimuths, 0.0));
+    GroundModel bare = *ground_;
     bare.receiver_height = receiver_height;
     const double elevation = 2.0 * pi / 180.0;
     const double h = 1000.0 * std::sin(elevation), d = 1000.0 * std::cos(elevation);
@@ -735,34 +785,49 @@ ShadowTransition::ShadowTransition(const std::vector<double>& frequencies,
     {
         plate->level(h, d, 2.0 * pi * i / plate_azimuths, plate_db.data(), first_band, end);
         for (std::size_t band = first_band; band < end; band++)
-            plate_offset_[band][i] = plate_db[band] - bare_db[band];
+            t.plate_offset[band][i] = plate_db[band] - bare_db[band];
     }
     // The bound has to cover V + K at the loudest azimuth.
     for (std::size_t band = first_band; band < end; band++)
     {
-        const double k_max = *std::max_element(plate_offset_[band].begin(), plate_offset_[band].end());
-        max_power_ratio_[band] = 1.0;
-        for (const double v : table_[band])
+        const double k_max = *std::max_element(t.plate_offset[band].begin(), t.plate_offset[band].end());
+        t.max_power_ratio[band] = 1.0;
+        for (const double v : t.table[band])
             if (std::isfinite(v))
-                max_power_ratio_[band] = std::max(max_power_ratio_[band], std::pow(10.0, (v + k_max) / 10.0));
+                t.max_power_ratio[band] = std::max(t.max_power_ratio[band], std::pow(10.0, (v + k_max) / 10.0));
     }
+    finish();
+}
+
+double ShadowTransition::max_power_ratio(std::size_t band) const
+{
+    if (empty())
+        return 1.0;
+    const Tables& t = tables();
+    return band < t.max_power_ratio.size() ? t.max_power_ratio[band] : 1.0;
 }
 
 double ShadowTransition::plate_offset(std::size_t band, double azimuth) const
 {
-    if (plate_offset_.empty() || plate_offset_[band].empty())
+    return empty() ? 0.0 : plate_offset_in(tables(), band, azimuth);
+}
+
+double ShadowTransition::plate_offset_in(const Tables& tab, std::size_t band, double azimuth) const
+{
+    const auto& offsets = tab.plate_offset;
+    if (offsets.empty() || offsets[band].empty())
         return 0.0;
     const double x = std::fmod(azimuth / (2.0 * pi) * plate_azimuths, static_cast<double>(plate_azimuths));
     const double wrapped = x < 0.0 ? x + plate_azimuths : x;
     const int i = std::min(static_cast<int>(wrapped), plate_azimuths - 1);
     const double t = wrapped - i;
-    const auto& k = plate_offset_[band];
+    const auto& k = offsets[band];
     return k[i] + t * (k[(i + 1) % plate_azimuths] - k[i]);
 }
 
-double ShadowTransition::column(std::size_t band, std::size_t j, double xi) const
+double ShadowTransition::column(const Tables& t, std::size_t band, std::size_t j, double xi) const
 {
-    const double* v = table_[band].data() + j * xi_nodes_;
+    const double* v = t.table[band].data() + j * xi_nodes_;
     const double x = (xi - xi_ray) / xi_step;
     if (x < 0.0)
         return std::numeric_limits<double>::quiet_NaN();
@@ -775,16 +840,43 @@ double ShadowTransition::column(std::size_t band, std::size_t j, double xi) cons
 
 double ShadowTransition::level(std::size_t band, double xi, double s) const
 {
-    if (table_[band].empty())
+    return empty() ? std::numeric_limits<double>::quiet_NaN() : level_in(tables(), band, xi, s);
+}
+
+double ShadowTransition::level_in(const Tables& tab, std::size_t band, double xi, double s) const
+{
+    if (tab.table[band].empty())
         return std::numeric_limits<double>::quiet_NaN();
     const double x = std::clamp(std::log10(s / s_min) * s_per_decade, 0.0,
             static_cast<double>(s_nodes_ - 1));
     const std::size_t j = std::min(static_cast<std::size_t>(x), s_nodes_ - 2);
     const double t = x - static_cast<double>(j);
-    const double v0 = column(band, j, xi);
-    const double v1 = column(band, j + 1, xi);
+    const double v0 = column(tab, band, j, xi);
+    const double v1 = column(tab, band, j + 1, xi);
     // Held at V(0) - floor happens in apply(); here only the table.
     return v0 + t * (v1 - v0);
+}
+
+double ShadowScattering::band_part(double frequency) const
+{
+    return a_db + 10.0 * std::log10(gamma_t) + per_decade_frequency * std::log10(frequency / 1000.0);
+}
+
+void ShadowScattering::pair_logs(double slant, double source_height, double& log_range, double& log_height) const
+{
+    const double range = std::clamp(slant, 100.0, 10000.0);
+    const double height = std::clamp(source_height, 10.0, 300.0);
+    log_range = std::log10(range / 100.0);
+    log_height = std::log10(height / 100.0);
+}
+
+void ShadowTransition::set_scattering(const ShadowScattering& scattering)
+{
+    scattering_ = scattering;
+    scattering_band_.assign(frequencies_.size(), 0.0);
+    if (scattering_.on())
+        for (std::size_t band = 0; band < frequencies_.size(); band++)
+            scattering_band_[band] = scattering_.band_part(frequencies_[band]);
 }
 
 double ShadowScattering::level(double frequency, double slant, double source_height) const
@@ -852,6 +944,7 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
     if (empty() || !ray.curved || !(ray.direct.boundary_gradient < 0.0)
             || !std::isfinite(ray.direct.boundary) || first_band >= last_band)
         return false;
+    const Tables& tab = tables();
     const double c0 = ray.profile.sound_speed;
     const double r_s = ray.direct.boundary;
     const double r_l = ray.direct.linear_boundary;
@@ -860,7 +953,7 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
     // profile).
     const bool between = std::isfinite(r_l) && r_l > r_s;
     const bool fallback = !std::isfinite(r_l);
-    const bool flush = !plate_offset_.empty() || receiver_height_ < flush_height;
+    const bool flush = !tab.plate_offset.empty() || receiver_height_ < flush_height;
     const double root = std::sqrt(2.0 * std::max(ray.source_z, 0.0))
             + std::sqrt(2.0 * std::max(ray.receiver_z, 0.0));
     // The curvature that makes a boundary r: c0 root^2 / r^2.
@@ -877,6 +970,15 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
     if (ray.horizontal - r_s < xi_ray * s_lo * s_lo * c0 / (pi * f_lo) && !(ray.shadow_depth > 0.0))
         return false;
     const LinearProfile one_boundary {c0, -a_one};
+    // With scattering, the pair's own terms once: its slant range, its
+    // spreading against the ray's, and the scattered level's range and height.
+    double slant = 0.0, scattered_spreading_db = 0.0, log_range = 0.0, log_height = 0.0;
+    if (scattering_.on())
+    {
+        slant = std::hypot(ray.horizontal, ray.source_z - ray.receiver_z);
+        scattered_spreading_db = 20.0 * std::log10(slant / ray.path.range);
+        scattering_.pair_logs(slant, ray.source_z, log_range, log_height);
+    }
     for (std::size_t band = first_band; band < last_band; band++)
     {
         const double f = frequencies_[band];
@@ -920,30 +1022,28 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
             continue;
         const double blend_from = cramped ? 0.0 : xi_ray;
         const double blend_to = cramped ? 1.0 : xi_modal;
-        double v = level(band, xi, s);
+        double v = level_in(tab, band, xi, s);
         if (std::isnan(v))
             continue;
         // At worst V(0) - floor: the boundary's own level, less the floor.
         const double x = std::clamp(std::log10(s / s_min) * s_per_decade, 0.0,
                 static_cast<double>(s_nodes_ - 1));
         const std::size_t j = std::min(static_cast<std::size_t>(x), s_nodes_ - 2);
-        const double v_zero = at_boundary_[band][j]
-                + (x - static_cast<double>(j)) * (at_boundary_[band][j + 1] - at_boundary_[band][j]);
+        const double v_zero = tab.at_boundary[band][j]
+                + (x - static_cast<double>(j)) * (tab.at_boundary[band][j + 1] - tab.at_boundary[band][j]);
         if (std::isfinite(v_zero) && !scattering_.on())
             v = std::max(v, v_zero - floor);
-        v += plate_offset(band, plate_azimuth);
+        v += plate_offset_in(tab, band, plate_azimuth);
         if (scattering_.on())
         {
             // The scattered energy, from re free field at the slant range into
             // re the ray's own spreading, as V is; the plate lifts it as it
             // lifts the coherent field.  The sum is held to the table's largest,
             // which is what the peak search's bound allows for.
-            const double slant = std::hypot(ray.horizontal, ray.source_z - ray.receiver_z);
-            const double spreading_db = 20.0 * std::log10(slant / ray.path.range);
-            const double scattered = scattering_.level(f, slant, ray.source_z)
-                    + plate_offset(band, plate_azimuth) - spreading_db;
+            const double scattered = scattering_.level_of(scattering_band_[band], log_range, log_height)
+                    + plate_offset_in(tab, band, plate_azimuth) - scattered_spreading_db;
             v = std::min(10.0 * std::log10(std::pow(10.0, 0.1 * v) + std::pow(10.0, 0.1 * scattered)),
-                    10.0 * std::log10(max_power_ratio_[band]));
+                    tab.max_power_db[band]);
         }
         if (xi >= blend_to)
         {
@@ -965,6 +1065,7 @@ bool ShadowTransition::apply(const RefractedRay& ray, const ShadowAttenuation& a
 
 void ShadowTransition::set_cramped_ground(CrampedGround mode, const GroundModel* ground, unsigned threads)
 {
+    (void)threads;
     cramped_ground_ = mode;
     if (ground != nullptr && plate_ == nullptr)
     {
@@ -973,93 +1074,92 @@ void ShadowTransition::set_cramped_ground(CrampedGround mode, const GroundModel*
     }
     if (mode == CrampedGround::straight && ground_ == nullptr)
         throw std::invalid_argument("ShadowTransition: a straight cramped ground term needs the ground model");
-    if (mode != CrampedGround::series || !cramped_table_.empty() || empty())
+    if (mode != CrampedGround::series || empty() || !tables_->cramped.empty())
         return;
+    // Room for every band V covers, NaN until a column is built (cramped_column).
+    Tables& t = *tables_;
+    cramped_xi_nodes_ = static_cast<std::size_t>(std::lround((xi_max - xi_ray) / cramped_xi_step)) + 1;
+    const std::size_t end = std::min(last_band_, frequencies_.size());
+    t.cramped.assign(frequencies_.size(), {});
+    for (std::size_t band = first_band_; band < end; band++)
+        t.cramped[band].assign(s_nodes_ * cramped_root_nodes * cramped_xi_nodes_,
+                std::numeric_limits<float>::quiet_NaN());
+    t.cramped_built = std::make_unique<std::once_flag[]>(frequencies_.size() * s_nodes_);
+}
+
+const float* ShadowTransition::cramped_column(std::size_t band, std::size_t j) const
+{
+    Tables& t = *tables_;
+    std::call_once(t.cramped_built[band * s_nodes_ + j], [&] { build_cramped(t, band, j); });
+    return t.cramped[band].data() + j * cramped_root_nodes * cramped_xi_nodes_;
+}
+
+void ShadowTransition::build_cramped(Tables& t, std::size_t band, std::size_t j) const
+{
     // The residue series at the source's own height, sqrt(y_s) on its nodes,
     // over the same (xi, s) grid as V: k^2 linear in height with the
     // curvature whose model boundary is the band's.  One series per (band,
-    // s, y_s), each a few milliseconds.
-    cramped_table_.assign(frequencies_.size(), {});
-    std::vector<std::size_t> work;
-    for (std::size_t band = 0; band < frequencies_.size(); band++)
-        if (!table_[band].empty())
-            work.push_back(band);
-    const double nan = std::numeric_limits<double>::quiet_NaN();
-    const std::size_t per_band = s_nodes_ * cramped_root_nodes;
-    cramped_xi_nodes_ = static_cast<std::size_t>(std::lround((xi_max - xi_ray) / cramped_xi_step)) + 1;
+    // s), every height's ranges in one list, sharing the modes.
     const std::size_t xi_nodes = cramped_xi_nodes_;
-    std::vector<std::vector<float>> tables(frequencies_.size());
-    for (const std::size_t band : work)
-        tables[band].assign(per_band * xi_nodes, static_cast<float>(nan));
-    parallel_chunks(work.size() * s_nodes_, threads > 0 ? threads : default_thread_count(),
-            [&](std::size_t lo, std::size_t hi) {
-        for (std::size_t item = lo; item < hi; item++)
+    const double f = frequencies_[band];
+    const double k0 = 2.0 * pi * f / sound_speed_;
+    const double s = s_min * std::pow(10.0, static_cast<double>(j) / s_per_decade);
+    const double a = pi * f / (s * s * s);
+    const double l = s / k0;
+    const double diffraction = 2.0 * s * s / k0;
+    const LinearProfile profile {sound_speed_, -a};
+    std::vector<double> heights, ranges;
+    std::vector<std::size_t> node_of, height_of, xi_of;
+    for (int k = 0; k < cramped_root_nodes; k++)
+    {
+        const double root = cramped_root_max * static_cast<double>(k) / (cramped_root_nodes - 1);
+        // Below the receiver too: the series is reciprocal, and the nodes
+        // bracket every source above it.
+        const double z_s = root * root * l;
+        const double model_boundary = shadow_boundary(profile, z_s, receiver_height_);
+        for (std::size_t i = 0; i < xi_nodes; i++)
         {
-            const std::size_t band = work[item / s_nodes_];
-            const std::size_t j = item % s_nodes_;
-            const double f = frequencies_[band];
-            const double k0 = 2.0 * pi * f / sound_speed_;
-            const double s = s_min * std::pow(10.0, static_cast<double>(j) / s_per_decade);
-            const double a = pi * f / (s * s * s);
-            const double l = s / k0;
-            const double diffraction = 2.0 * s * s / k0;
-            const LinearProfile profile {sound_speed_, -a};
-            // Every height's ranges in one list: the modes are shared.
-            std::vector<double> heights, ranges;
-            std::vector<std::size_t> node_of, height_of, xi_of;
-            for (int k = 0; k < cramped_root_nodes; k++)
+            const double r = model_boundary + (xi_ray + i * cramped_xi_step) * diffraction;
+            if (r > 0.0)
             {
-                const double root = cramped_root_max * static_cast<double>(k) / (cramped_root_nodes - 1);
-                // Below the receiver too: the series is reciprocal, and the
-                // nodes bracket every source above it.
-                const double z_s = root * root * l;
-                const double model_boundary = shadow_boundary(profile, z_s, receiver_height_);
-                for (std::size_t i = 0; i < xi_nodes; i++)
-                {
-                    const double r = model_boundary + (xi_ray + i * cramped_xi_step) * diffraction;
-                    if (r > 0.0)
-                    {
-                        ranges.push_back(r);
-                        height_of.push_back(heights.size());
-                        node_of.push_back(static_cast<std::size_t>(k));
-                        xi_of.push_back(i);
-                    }
-                }
-                heights.push_back(z_s);
-            }
-            if (ranges.empty())
-                continue;
-            ExactProblem problem;
-            problem.frequency = f;
-            problem.sound_speed = sound_speed_;
-            problem.admittance = admittance_[band];
-            problem.receiver_height = receiver_height_;
-            std::vector<std::complex<double>> field;
-            try
-            {
-                field = upward_pressure_heights(problem, sound_speed_ / a, heights, ranges, height_of);
-            }
-            catch (const std::exception&)
-            {
-                continue;
-            }
-            for (std::size_t q = 0; q < ranges.size(); q++)
-            {
-                const double z_s = heights[height_of[q]];
-                const double db = 20.0 * std::log10(std::abs(field[q])
-                        * std::hypot(ranges[q], z_s - receiver_height_));
-                if (std::isfinite(db))
-                    tables[band][(j * cramped_root_nodes + node_of[q]) * xi_nodes + xi_of[q]] = static_cast<float>(db);
+                ranges.push_back(r);
+                height_of.push_back(heights.size());
+                node_of.push_back(static_cast<std::size_t>(k));
+                xi_of.push_back(i);
             }
         }
-    });
-    cramped_table_ = std::move(tables);
+        heights.push_back(z_s);
+    }
+    if (ranges.empty())
+        return;
+    ExactProblem problem;
+    problem.frequency = f;
+    problem.sound_speed = sound_speed_;
+    problem.admittance = admittance_[band];
+    problem.receiver_height = receiver_height_;
+    std::vector<std::complex<double>> field;
+    try
+    {
+        field = upward_pressure_heights(problem, sound_speed_ / a, heights, ranges, height_of);
+    }
+    catch (const std::exception&)
+    {
+        return;
+    }
+    float* column = t.cramped[band].data() + j * cramped_root_nodes * xi_nodes;
+    for (std::size_t q = 0; q < ranges.size(); q++)
+    {
+        const double z_s = heights[height_of[q]];
+        const double db = 20.0 * std::log10(std::abs(field[q]) * std::hypot(ranges[q], z_s - receiver_height_));
+        if (std::isfinite(db))
+            column[node_of[q] * xi_nodes + xi_of[q]] = static_cast<float>(db);
+    }
 }
 
 double ShadowTransition::cramped_level(std::size_t band, double xi, double s, double y_s) const
 {
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    if (band >= cramped_table_.size() || cramped_table_[band].empty() || !(y_s >= 0.0))
+    if (empty() || band >= tables_->cramped.size() || tables_->cramped[band].empty() || !(y_s >= 0.0))
         return nan;
     const double y = std::sqrt(y_s) / cramped_root_max * (cramped_root_nodes - 1);
     if (y > cramped_root_nodes - 1)
@@ -1073,8 +1173,9 @@ double ShadowTransition::cramped_level(std::size_t band, double xi, double s, do
     if (u < 0.0)
         return nan;
     const std::size_t last = cramped_xi_nodes_ - 1;
+    const float* columns[2] = {cramped_column(band, j), cramped_column(band, j + 1)};
     auto column = [&](std::size_t jj, std::size_t kk) {
-        const float* v = cramped_table_[band].data() + (jj * cramped_root_nodes + kk) * cramped_xi_nodes_;
+        const float* v = columns[jj - j] + kk * cramped_xi_nodes_;
         if (u >= static_cast<double>(last))
             return v[last] + (u - static_cast<double>(last)) * (static_cast<double>(v[last]) - v[last - 1]);
         const std::size_t i = static_cast<std::size_t>(u);
@@ -1092,12 +1193,16 @@ bool ShadowTransition::apply_resolved(const RefractedRay& ray, const ResolvedBan
     if (empty() || !ray.curved || !(ray.direct.boundary_gradient < 0.0)
             || !std::isfinite(ray.direct.boundary) || first_band >= last_band)
         return false;
+    const Tables& tab = tables();
     const double c0 = ray.profile.sound_speed;
     const double r = ray.horizontal;
     const double root = std::sqrt(2.0 * std::max(ray.source_z, 0.0))
             + std::sqrt(2.0 * std::max(ray.receiver_z, 0.0));
     const double slant = std::hypot(r, ray.source_z - ray.receiver_z);
     const double spreading_db = 20.0 * std::log10(slant / ray.path.range);
+    double log_range = 0.0, log_height = 0.0;
+    if (scattering_.on())
+        scattering_.pair_logs(slant, ray.source_z, log_range, log_height);
     // The ray's equivalent geometry has collapsed when it is the limiting ray
     // carried into a shadow (the layered one past r_s, or the fit's past r_l).
     const bool degenerate = !ray.direct.lit
@@ -1151,7 +1256,7 @@ bool ShadowTransition::apply_resolved(const RefractedRay& ray, const ResolvedBan
         auto at_zero = [&]() {
             const double x = std::clamp(std::log10(s / s_min) * s_per_decade, 0.0, static_cast<double>(s_nodes_ - 1));
             const std::size_t j = std::min(static_cast<std::size_t>(x), s_nodes_ - 2);
-            return at_boundary_[band][j] + (x - static_cast<double>(j)) * (at_boundary_[band][j + 1] - at_boundary_[band][j]);
+            return tab.at_boundary[band][j] + (x - static_cast<double>(j)) * (tab.at_boundary[band][j + 1] - tab.at_boundary[band][j]);
         };
         const double field = !(cramped && cramped_ground_ == CrampedGround::series && s >= s_min)
                 ? std::numeric_limits<double>::quiet_NaN()
@@ -1166,15 +1271,15 @@ bool ShadowTransition::apply_resolved(const RefractedRay& ray, const ResolvedBan
             const double v_zero = at_zero();
             if (std::isfinite(v_zero) && !scattering_.on())
                 v = std::max(v, v_zero - floor);
-            v += plate_offset(band, plate_azimuth);
+            v += plate_offset_in(tab, band, plate_azimuth);
             if (scattering_.on())
             {
-                const double scattered = scattering_.level(f, slant, ray.source_z)
-                        + plate_offset(band, plate_azimuth) - spreading_db;
+                const double scattered = scattering_.level_of(scattering_band_[band], log_range, log_height)
+                        + plate_offset_in(tab, band, plate_azimuth) - spreading_db;
                 v = 10.0 * std::log10(std::pow(10.0, 0.1 * v) + std::pow(10.0, 0.1 * scattered));
             }
             ground_weight[band] = 0.0;
-            loss[band] = -std::min(v, 10.0 * std::log10(max_power_ratio_[band]));
+            loss[band] = -std::min(v, tab.max_power_db[band]);
             continue;
         }
         if (s < s_min || xi <= xi_ray)
@@ -1197,19 +1302,19 @@ bool ShadowTransition::apply_resolved(const RefractedRay& ray, const ResolvedBan
         }
         const double blend_from = cramped ? 0.0 : xi_ray;
         const double blend_to = cramped ? 1.0 : xi_modal;
-        double v = level(band, xi, s);
+        double v = level_in(tab, band, xi, s);
         if (std::isnan(v))
             continue;
         const double v_zero = at_zero();
         if (std::isfinite(v_zero) && !scattering_.on())
             v = std::max(v, v_zero - floor);
-        v += plate_offset(band, plate_azimuth);
+        v += plate_offset_in(tab, band, plate_azimuth);
         if (scattering_.on())
         {
-            const double scattered = scattering_.level(f, slant, ray.source_z) + plate_offset(band, plate_azimuth)
-                    - spreading_db;
+            const double scattered = scattering_.level_of(scattering_band_[band], log_range, log_height)
+                    + plate_offset_in(tab, band, plate_azimuth) - spreading_db;
             v = std::min(10.0 * std::log10(std::pow(10.0, 0.1 * v) + std::pow(10.0, 0.1 * scattered)),
-                    10.0 * std::log10(max_power_ratio_[band]));
+                    tab.max_power_db[band]);
         }
         if (xi >= blend_to)
         {

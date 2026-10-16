@@ -1679,11 +1679,12 @@ The acoustic loop on the full demo grid (S-76D track, 94.3 million observer–st
 | `--refraction linear` (`example_windy.csv`), ground effect | 7.8 s |
 | `--refraction stratified` (`example_windy.csv`), ground effect | 37 s, more in ducts |
 
-A broadband run is several times cheaper than spectral. On top of these:
-`--shadow_model resolved` spends about a second on setup (several at `-j 1`); `--tunneling` adds about 20% and `--skip_fill`
-2–4 times to a stratified run; point receivers over real terrain take about 4 times the CPU; a
-propagation table is cheap to read but takes minutes to build; `--epnl_file` and `--band_frames`
-evaluate every state.
+A broadband run is several times cheaper than spectral. On top of these: `--shadow_model resolved`
+and the refraction models' shadow transitions build their tables only once a ray nears a shadow
+boundary, up to a second at 8 threads and several at `-j 1`; `--tunneling` adds about 20% and
+`--skip_fill` 2–4 times to a stratified run; point receivers over real terrain take about 4 times
+the CPU; a propagation table is cheap to read but takes minutes to build; `--epnl_file` and
+`--band_frames` evaluate every state.
 
 ## Plotting
 

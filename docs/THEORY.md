@@ -1068,7 +1068,12 @@ a caustic's tail on the dark side of an interior extremum of a family's range,
 $I = C\,\mathrm{Ai}^2\!\left(\omega^{2/3} d\,(2/X'')^{1/3}\right)$, with $d$ the distance short of
 the caustic and $C$ matched to the two rays' energy on the lit side. Each is averaged over 7
 sub-frequencies of the third octave and normalized to the ray tube at the 10 kHz reference
-frequency, so it is never a gain over the tube [43].
+frequency, so it is never a gain over the tube [43]. Both arguments go as $\omega^{2/3}$, so a
+band's mean of $\mathrm{Ai}^2$ depends only on the argument $x$ at its center, the sub-frequencies'
+being $x\,2^{(k-3)/27}$, $k = 0, \dots, 6$: it is tabulated once against $x$ (its logarithm and
+exact slope every 1/128 from $-60$ to $64$, read by cubic Hermite interpolation), taken as zero
+past $x = 72$, where every sub-frequency's $\mathrm{Ai}^2$ is below the $10^{-300}$ floor, and
+evaluated directly elsewhere.
 
 ### 8.3 The resolved shadow
 

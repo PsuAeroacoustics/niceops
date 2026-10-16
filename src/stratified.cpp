@@ -44,17 +44,15 @@ struct Crossing
 //
 // At a turning point the sine is zero by definition; evaluated from p and c it
 // is instead the square root of a rounding error, ~1e-8, which costs the
-// layer's crossing that much accuracy.  `turn0` / `turn1` pin it to zero.
+// layer's crossing that much accuracy, so the caller passes q = 0 there.  The
+// sines q0 and q1 come in formed (Path::between forms each level's once).
 template <bool full>
-inline Crossing cross(double p, double z0, double c0, double z1, double c1, bool turn0 = false,
-        bool turn1 = false)
+inline Crossing cross_sines(double p, double z0, double c0, double q0, double z1, double c1, double q1)
 {
     Crossing out;
     const double dz = z1 - z0;
     if (!(dz > 0.0))
         return out;
-    const double q0 = turn0 ? 0.0 : sine(p, c0);
-    const double q1 = turn1 ? 0.0 : sine(p, c1);
     const double sum = q0 + q1;
     out.dx = sum > 0.0 ? p * (c0 + c1) * dz / sum : 0.0;
     if constexpr (full)
@@ -75,37 +73,81 @@ inline Crossing cross(double p, double z0, double c0, double z1, double c1, bool
     return out;
 }
 
+
 // One path's layered speed, with what a ray needs precomputed.
 struct Path
 {
     const Layers& L;
+
+    // A pair's solve walks between the same few heights -- the source, the
+    // receiver, the ground -- for every p it tries: each height's first level
+    // above it and its speed, looked up once (`where`) and kept.
+    struct Height
+    {
+        double z = std::numeric_limits<double>::quiet_NaN();
+        const double* upper = nullptr;
+        double c = 0.0;
+    };
+    mutable Height remembered[4];
+    mutable unsigned next = 0;
+
+    const Height& where(double z) const
+    {
+        for (const Height& h : remembered)
+            if (h.z == z)
+                return h;
+        Height& h = remembered[next++ % 4];
+        h.z = z;
+        h.upper = std::upper_bound(L.z, L.z + L.levels, z);
+        h.c = at_below(z, h.upper);
+        return h;
+    }
+
+    // Layers::at(height) given `upper`, the first level above `height`
+    // (std::upper_bound's answer), so that a walk that has found it does not
+    // search again: the same branches and the same arithmetic.
+    double at_below(double height, const double* upper) const
+    {
+        if (L.levels == 1 || height <= L.z[0])
+            return L.c[0];
+        if (height >= L.z[L.levels - 1])
+            return L.c[L.levels - 1];
+        const std::size_t i = static_cast<std::size_t>(upper - L.z) - 1;
+        return L.c[i] + (height - L.z[i]) / (L.z[i + 1] - L.z[i]) * (L.c[i + 1] - L.c[i]);
+    }
 
     // Sum the crossings of every layer between heights za < zb; `turn_a` /
     // `turn_b` say the ray turns at that end.
     template <bool full>
     Crossing between(double p, double za, double zb, bool turn_a = false, bool turn_b = false) const
     {
+        // Each level's sine is formed once, as the top of one layer and the
+        // bottom of the next.  A layer of zero thickness contributes nothing,
+        // whatever its sines.
         Crossing total;
         if (!(zb > za))
             return total;
-        double z0 = za;
-        double c0 = L.at(za);
-        bool first = true;
         const double* begin = L.z;
         const double* end = L.z + L.levels;
-        for (const double* level = std::upper_bound(begin, end, za); level != end && *level < zb;
-                ++level)
+        const Height& a = where(za);
+        const double* level = a.upper;
+        double z0 = za;
+        double c0 = a.c;
+        double q0 = turn_a ? 0.0 : sine(p, c0);
+        for (; level != end && *level < zb; ++level)
         {
             const double c1 = L.c[level - begin];
-            const auto piece = cross<full>(p, z0, c0, *level, c1, first && turn_a, false);
+            const double q1 = sine(p, c1);
+            const auto piece = cross_sines<full>(p, z0, c0, q0, *level, c1, q1);
             total.dx += piece.dx;
             total.dt += piece.dt;
             total.ds += piece.ds;
             z0 = *level;
             c0 = c1;
-            first = false;
+            q0 = q1;
         }
-        const auto piece = cross<full>(p, z0, c0, zb, L.at(zb), first && turn_a, turn_b);
+        const double cb = where(zb).c;
+        const auto piece = cross_sines<full>(p, z0, c0, q0, zb, cb, turn_b ? 0.0 : sine(p, cb));
         total.dx += piece.dx;
         total.dt += piece.dt;
         total.ds += piece.ds;
@@ -171,13 +213,15 @@ struct Path
     double turning_above(double p, double z) const
     {
         const double target = 1.0 / p;
-        double z0 = z;
-        double c0 = L.at(z);
-        if (c0 >= target)
-            return z;
         const double* begin = L.z;
         const double* end = L.z + L.levels;
-        for (const double* level = std::upper_bound(begin, end, z); level != end; ++level)
+        const Height& h = where(z);
+        const double* level = h.upper;
+        double z0 = z;
+        double c0 = h.c;
+        if (c0 >= target)
+            return z;
+        for (; level != end; ++level)
         {
             const double c1 = L.c[level - begin];
             if (c1 >= target)
@@ -1299,23 +1343,81 @@ constexpr double airy_zero_squared = 0.355028053887817239 * 0.355028053887817239
 // tube is normalized by, lit side included.
 constexpr double airy_peak_squared = 0.535656656015700 * 0.535656656015700;
 
-// Ai^2 averaged over a third-octave band about f, at x = (omega / omega_f)^power x_f:
-// on a caustic's lit side Ai oscillates, and a band averages its fringes.
-template <typename Argument>
-double band_airy_squared(double f, Argument&& argument)
+// Ai^2 averaged over a third-octave band, seven frequencies f 2^((k - 3)/18)
+// about its center: on a caustic's lit side Ai oscillates, and a band averages
+// its fringes.  Both of add_wave_loss's arguments go as omega^(2/3), so the
+// mean depends on the band only through x at its center: the k-th frequency's
+// is x rho_k, rho_k = 2^((k - 3)/27).  With it, the mean's slope in x.
+struct BandAiry
+{
+    double mean = 0.0;
+    double slope = 0.0;
+};
+
+BandAiry band_airy_direct(double x)
 {
     constexpr int n = 7;
-    double sum = 0.0;
+    BandAiry b;
     for (int k = 0; k < n; k++)
     {
-        const double fk = f * std::pow(2.0, (k - 0.5 * (n - 1)) / (3.0 * (n - 1)));
-        sum += [&] {
-            std::complex<double> ai, ai_prime;
-            airy(std::complex<double>(argument(2.0 * pi * fk), 0.0), ai, ai_prime);
-            return ai.real() * ai.real();
-        }();
+        const double rho = std::pow(2.0, 2.0 * (k - 0.5 * (n - 1)) / (9.0 * (n - 1)));
+        std::complex<double> ai, ai_prime;
+        airy(std::complex<double>(x * rho, 0.0), ai, ai_prime);
+        b.mean += ai.real() * ai.real();
+        b.slope += 2.0 * ai.real() * ai_prime.real() * rho;
     }
-    return sum / n;
+    b.mean /= n;
+    b.slope /= n;
+    return b;
+}
+
+// The mean's logarithm and its slope every 1/128 in x from -60 to 64, for
+// cubic Hermite interpolation; built on first use (a function-local static,
+// so thread-safe).  Beyond 72 every sub-band's Ai^2 is under e^-726, below
+// add_wave_loss's floor of 1e-300 in every band, so the mean is taken as
+// zero; elsewhere outside the table it is evaluated directly.  The arrival
+// loop asks for it per band per arrival, seven complex Airy evaluations each
+// directly -- half a run with --tunneling and --skip_fill in a duct.
+struct BandAiryTable
+{
+    static constexpr double lowest = -60.0;
+    static constexpr double highest = 64.0;
+    static constexpr double step = 1.0 / 128.0;
+    static constexpr double vanishing = 72.0;
+    std::vector<double> log_mean, slope;
+
+    BandAiryTable()
+    {
+        const auto count = static_cast<std::size_t>(std::lround((highest - lowest) / step)) + 1;
+        log_mean.resize(count);
+        slope.resize(count);
+        for (std::size_t k = 0; k < count; k++)
+        {
+            const BandAiry b = band_airy_direct(lowest + step * static_cast<double>(k));
+            log_mean[k] = std::log(b.mean);
+            slope[k] = b.slope / b.mean;
+        }
+    }
+
+    double operator()(double x) const
+    {
+        if (x >= vanishing)
+            return 0.0;
+        const double u = (x - lowest) / step;
+        if (!(u >= 0.0 && u < static_cast<double>(log_mean.size() - 1)))
+            return band_airy_direct(x).mean;
+        const auto k = static_cast<std::size_t>(u);
+        const double t = u - static_cast<double>(k);
+        const double r = 1.0 - t;
+        return std::exp((1.0 + 2.0 * t) * r * r * log_mean[k] + t * r * r * step * slope[k]
+                + t * t * (3.0 - 2.0 * t) * log_mean[k + 1] - t * t * r * step * slope[k + 1]);
+    }
+};
+
+double band_airy_squared(double x)
+{
+    static const BandAiryTable table;
+    return table(x);
 }
 
 // The Airy length at a turning point where the sound speed is c and falls at
@@ -1356,17 +1458,14 @@ void add_wave_loss(const WaveCorrection& wave, double chord, double spreading_ra
         // the energy near a turning point or caustic, scales as omega^(1/3).
         const double scale = std::cbrt(f / wave_reference_frequency);
         double db = 0.0;
-        (void)omega;
         if (wave.evanescent > 0.0)
         {
-            const double e = wave.evanescent;
-            const double a = band_airy_squared(f, [e](double w) { return std::pow(1.5 * w * e, 2.0 / 3.0); });
+            const double a = band_airy_squared(std::pow(1.5 * omega * wave.evanescent, 2.0 / 3.0));
             db -= 10.0 * std::log10(std::max(scale * a / airy_zero_squared, 1e-300));
         }
         if (wave.caustic)
         {
-            const double d = wave.caustic_depth;
-            const double a = band_airy_squared(f, [d](double w) { return std::cbrt(w * w) * d; });
+            const double a = band_airy_squared(std::cbrt(omega * omega) * wave.caustic_depth);
             db -= 10.0 * std::log10(std::max(scale * a / airy_peak_squared, 1e-300));
         }
         loss[band] += std::max(db, tube_gain_db - max_focusing_gain_db);

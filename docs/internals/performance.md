@@ -528,6 +528,75 @@ Not taken:
 - **The PE.** A propagation table's build is 96% `pade_step`, already interleaved and fused
   (pe.md); the factorization's complex divides are the next 4%.
 
+### The propagation models, measured as a suite
+
+Twenty-two cases, every propagation model at both of its shapes of use: the validation
+harness's (one AS350 approach at Amedee, 46 flush plates, `-j 1`, histories written) and a
+footprint's (the demo track on a 41 x 41 grid, an eighth of the demo grid, `-j 8`), plus one PE
+table build. Each case was run with the build before and after, alternately, on the same machine
+at the same load, and every output compared. The harness's own record of what its CPU went on
+set the order: in the wide study `--shadow_model resolved` was 75% of all NICE-OPS CPU, and
+every refracting option's setup most of the rest.
+
+| case | before, CPU | after | × | outputs |
+| --- | ---: | ---: | ---: | --- |
+| harness, `--shadow_model resolved` | 11.0 s | 1.38 s | 7.96 | identical |
+| harness, `--refraction linear` | 1.42 s | 0.42 s | 3.35 | identical |
+| harness, `--refraction stratified` | 2.54 s | 1.37 s | 1.86 | identical |
+| harness, plate / soft ground, no refraction | 0.47 / 0.41 s | 0.41 / 0.35 s | 1.15 | identical |
+| grid, duct with `--tunneling --skip_fill` | 1779 s | 586 s | 3.04 | within 3.5e-12 dB |
+| grid, `--shadow_model resolved` | 41.4 s | 31.7 s | 1.31 | identical |
+| grid, stratified in the duct | 94.2 s | 75.5 s | 1.25 | identical |
+| grid, `--scattering` | 10.9 s | 9.9 s | 1.10 | identical |
+| grid, stratified windy (point, plate) | 35.1, 28.7 s | 35.3, 27.6 s | 1.0 | identical |
+| grid, ground, exact ground, plate, linear, table, terrain, screening, broadband | | | 1.0 | identical |
+| PE table (8 bearings, 17 bands, 5 frequencies) | 116 s | 116 s | 1.0 | identical |
+
+What did it, each bit-identical but the first:
+
+- **The wave arrivals' band mean of Ai^2 is a table** in the band center's argument
+  ([refraction.md](refraction.md#wave-arrivals---tunneling-and---skip_fill)): seven complex Airy
+  evaluations per band per arrival had been half of a duct run with both options.
+- **The shadow-boundary tables are built when first wanted**
+  ([refraction.md](refraction.md#shadowtransition-the-level-near-a-shadow-boundary)): V whole,
+  the first time a ray nears a boundary or the bound asks; the cramped series a (band, s)
+  column at a time. A validation run marches every state, so builds no bound, and on the
+  approach measured no ray came near a boundary: it built neither, and 8.5 s of the resolved
+  run's 11 and 0.9 s of every other refracting run's went. Where they are built, the values are
+  the same. `apply` fetches the tables once a pair: fetched per band (twice, through `level`
+  and `plate_offset`) the `call_once` check cost a linear run 10%.
+- **The layer walk** (`Path::between`, stratified.cpp) forms each level's sine once, as the top
+  of one layer and the bottom of the next, and looks up its ends' level and speed once a pair
+  (`Path::where`, the source, receiver and ground heights it walks between for every p) rather
+  than by a binary search and an interpolation at both ends of every walk. 10–20% in a duct,
+  where walks are long; nothing measurable on the windy profile's 17 levels.
+- **`--scattering`'s level is summed from parts formed once**: the run's and band's in
+  `set_scattering`, the pair's range and height before the band loop, in the original
+  expression's order so its multiply-adds fuse the same way; and 10 lg of V's largest power
+  ratio once per band.
+- **Time and band histories are formatted by `std::to_chars`** (`append_number`), the
+  standard's definition of the %.17g (and %.10g) the streams wrote, with every NaN written
+  "nan" as the streams do. Writing 46 histories of 4780 rows was half of a plate run's loop.
+
+Tried and not taken:
+
+- **A warm start for the stratified eigenray solve from the previous state's root**: 2–4% on
+  the windy grid, with outputs moved up to 1.6e-6 dB, and the result would depend on the order
+  in which the windowed search evaluates states, so windowed and marched runs would stop
+  agreeing to the bit. The linear model's guess is already close.
+- **Secant-guided bracketing and Anderson–Björck in place of Illinois** in `solve`: 1.5%, and
+  outputs moved up to 1e-4 dB: some pairs are sensitive to which root within the tolerance
+  comes back.
+- **A tighter bound for the windowed search.** Every grid case evaluates 97–99% of its pairs;
+  the outermost 10 dB-down window covers most of the demo track for most observers, and even
+  the broadband sphere bound alone (no ground term) evaluates 94%.
+- **The PE table build** is 96% `pade_step`, already interleaved and fused (pe.md): cost goes
+  as f^2 through the grid and the step, both fixed by accuracy.
+- **The stratified solve itself** is about 11 range evaluations a solve (2 at the family's
+  ends, 3.5 bracketing the guess, 5.3 iterating) and 30 a pair, each a walk whose inner loop is
+  a square root, a divide and a dozen other instructions a layer. Batching two p values a walk
+  across a vector's lanes is what is left, for the ends and the tube's two points at most.
+
 ### Taken, each exact
 
 Each keeps the formulas and the per-band summation order; none involves an approximation,

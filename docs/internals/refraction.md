@@ -152,6 +152,12 @@ is in [THEORY §8.1](../THEORY.md); the calibration against the PE is in
   forms it. `max_power_ratio` includes the loudest K.
 - The tables take the run's `-j` (`threads`). Validation runs a dozen `-j 1` processes at
   once, and a table building on every core in each of them took 7 s.
+- **V is built when first wanted, not at setup** (`ShadowTransition::tables`, a
+  `std::once_flag`): the first ray that comes near a boundary, the peak search's bound, or a
+  test. A run that marches every state (any history output, so every validation run) and whose
+  rays never near a boundary builds none of it. The values are the same computation whenever
+  it runs; the tables live in a `shared_ptr` so that the vector of transitions can move them.
+  `apply`'s clamp reads the largest power ratio, so V is built whole, never by the band.
 
 ## Stratified rays
 
@@ -338,8 +344,16 @@ Ray theory leaves two gaps that these opt-in Airy terms address (the equations a
 - **Near a tunneled family's caustic the coalescing pair is replaced by the caustic's
   band-averaged Airy field.** Left to the +10 dB focusing cap it put the return well over the PE
   ([FIDELITY](../FIDELITY.md#micro-shadows-and-skip-zones)).
+- **The band's mean of Ai^2 is a table in the center's argument** (`BandAiryTable`,
+  stratified.cpp), since both corrections' arguments go as omega^(2/3): its logarithm and slope
+  every 1/128 from -60 to 64, cubic Hermite, zero past 72 (every sub-band then under the
+  1e-300 floor in every band), direct elsewhere. Seven complex Airy evaluations per band per
+  arrival were half of a duct run with both options (222 s against 93 s on an eighth of the
+  demo grid); the table is within 1e-10 dB of them
+  (`a wave arrival's loss is its band's seven Airy evaluations`).
 - Cost on a day-286 run: `--tunneling` about +20%, `--skip_fill` 2–4x, a PE table about the
-  ray model's own.
+  ray model's own. In `example_inversion.csv`'s duct both together are about 8x the plain
+  stratified run, nearly all of it the arrival search's layer walks.
 
 ## Resolved shadow (`--shadow_model resolved`)
 
@@ -391,11 +405,13 @@ What to preserve:
   tabulates them once per trajectory (`ResolvedShadowTable`: every `bearing_step` = 2 degrees,
   source-height nodes even in sqrt(z_s), interpolated in 1/r_b so a band with no boundary is
   0). Every band whose h_f lies in one layer shares one profile, so the build costs one boundary
-  solve per layer touched, about 0.01 s on `example_windy.csv`. The cramped series table costs
-  about 0.3 s of CPU per band per receiver height: an AS350 approach at Amedee (28 bands, one
-  plate) takes 8.5 s at `-j 1` and 1.2 s at `-j 8` (58 s and 8 s before the mode sums were
-  trimmed; [performance.md](performance.md#the-residue-series-tables)). A pair pays one table
-  lookup per band.
+  solve per layer touched, about 0.01 s on `example_windy.csv`. The cramped series table is
+  built a (band, s) column at a time, when `cramped_level` first reads it (a `std::once_flag`
+  per column): a column is one series call, about 14 ms. Built whole it was 8.5 s at `-j 1` for
+  an AS350 approach at Amedee (28 bands, one plate; 58 s before the mode sums were trimmed,
+  [performance.md](performance.md#the-residue-series-tables)), and that run never reads it:
+  none of its bands is ever cramped. The cramped values do not feed the bound (V's largest
+  power ratio does), which is what lets them wait. A pair pays one table lookup per band.
 - **The bound stays exact**: the series and V are held to the transition's largest power ratio,
   and the straight ground term is within the ground's own bound.
   `stratified_resolved_{point,plate,straight_point,duct_point}_windowed_is_exact` check it, and

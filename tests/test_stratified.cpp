@@ -10,12 +10,15 @@
 #include <catch2/catch_approx.hpp>
 
 #include <cmath>
+#include <complex>
+#include <random>
 #include <functional>
 #include <limits>
 #include <vector>
 
 #include "atmosphere_profile.hpp"
 #include "refraction.hpp"
+#include "airy.hpp"
 #include "stratified.hpp"
 #include "util/constants.hpp"
 
@@ -624,6 +627,75 @@ TEST_CASE("a wave arrival's loss is never negative", "[stratified]")
     const std::vector<double> one = {wave_reference_frequency};
     add_wave_loss(wave, 1000.0, 10.0, one, 0, 1, loss.data());
     CHECK(loss[0] == Catch::Approx(40.0 - max_focusing_gain_db).margin(1e-6));
+}
+
+TEST_CASE("a wave arrival's loss is its band's seven Airy evaluations", "[stratified]")
+{
+    // add_wave_loss reads the band mean of Ai^2 from a table in x at the
+    // band's center: against the mean written out, seven frequencies
+    // f 2^((k - 3)/18) a band, each with its own argument, over both
+    // corrections, the lit side of a caustic, its deep shadow (where the floor
+    // takes over) and the table's edges.
+    const std::vector<double> bands = {20, 50, 125, 315, 800, 2000, 5000, 12500};
+    const auto mean = [](double f, auto argument) {
+        double sum = 0.0;
+        for (int k = 0; k < 7; k++)
+        {
+            const double fk = f * std::pow(2.0, (k - 3.0) / 18.0);
+            std::complex<double> ai, aip;
+            airy(std::complex<double>(argument(2.0 * pi * fk), 0.0), ai, aip);
+            sum += ai.real() * ai.real();
+        }
+        return sum / 7.0;
+    };
+    constexpr double zero2 = 0.355028053887817239 * 0.355028053887817239;
+    constexpr double peak2 = 0.535656656015700 * 0.535656656015700;
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    int compared = 0;
+    for (int trial = 0; trial < 400; trial++)
+    {
+        WaveCorrection wave;
+        // Evanescent depths to x of about 80 at the top band; caustic depths
+        // from x of -70 (beyond the table) to past the floor.
+        if (trial % 2 == 0)
+            wave.evanescent = std::pow(10.0, -7.0 + 5.0 * unit(rng));
+        else
+        {
+            wave.caustic = true;
+            wave.caustic_depth = (unit(rng) < 0.3 ? -1.0 : 1.0) * std::pow(10.0, -6.0 + 4.5 * unit(rng));
+        }
+        if (trial % 3 == 0 && !wave.caustic)
+        {
+            wave.caustic = true;
+            wave.caustic_depth = std::pow(10.0, -5.0 + 3.0 * unit(rng));
+        }
+        std::vector<double> loss(bands.size(), 0.0);
+        add_wave_loss(wave, 1000.0, 1000.0, bands, 0, bands.size(), loss.data());
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            const double f = bands[b];
+            const double scale = std::cbrt(f / wave_reference_frequency);
+            double db = 0.0;
+            if (wave.evanescent > 0.0)
+            {
+                const double e = wave.evanescent;
+                const double a = mean(f, [e](double w) { return std::pow(1.5 * w * e, 2.0 / 3.0); });
+                db -= 10.0 * std::log10(std::max(scale * a / zero2, 1e-300));
+            }
+            if (wave.caustic)
+            {
+                const double d = wave.caustic_depth;
+                const double a = mean(f, [d](double w) { return std::cbrt(w * w) * d; });
+                db -= 10.0 * std::log10(std::max(scale * a / peak2, 1e-300));
+            }
+            const double reference = std::max(db, -max_focusing_gain_db);
+            CAPTURE(wave.evanescent, wave.caustic, wave.caustic_depth, f);
+            CHECK(loss[b] == Catch::Approx(reference).margin(1e-8));
+            compared++;
+        }
+    }
+    CHECK(compared == 3200);
 }
 
 TEST_CASE("a deep duct retains more than 24 arrivals", "[stratified]")
