@@ -1,7 +1,7 @@
 """Experiment 1: per (state, sphere direction) differences between condition
 blends, at the sphere grid nodes (no sphere-grid interpolation involved).
 
-  a  barycentric dB blend (NICE-OPS)
+  a  barycentric dB blend (NICEOPS)
   b  barycentric energy blend 10 log10 sum w 10^(L/10)
   c  nearest stored condition, normalized (mu, gamma, CT) Euclidean
   c2 nearest (mu, gamma) flight condition + exact CT law of the database

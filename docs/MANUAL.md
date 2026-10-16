@@ -1,6 +1,6 @@
-# NICE-OPS manual
+# NICEOPS manual
 
-This manual is the user's reference: how to run NICE-OPS, every option, the input and output
+This manual is the user's reference: how to run NICEOPS, every option, the input and output
 formats, which model to use when, and what each one costs and refuses. It states each model in a
 paragraph or two. [THEORY.md](THEORY.md) has the equations and references,
 [FIDELITY.md](FIDELITY.md) the evidence of how well each model agrees with exact solutions and
@@ -11,7 +11,7 @@ the code, start with the [README](../README.md); developers start at
 ## Contents
 
 - [Overview: how a prediction is made](#overview-how-a-prediction-is-made)
-- [Running NICE-OPS](#running-nice-ops): [Quick start](#quick-start) · [Command-line
+- [Running NICEOPS](#running-niceops): [Quick start](#quick-start) · [Command-line
   options](#command-line-options) · [Units](#units) · [Errors and refusals](#errors-and-refusals)
 - [Inputs](#inputs): [Input files](#input-files) · [Trajectories](#trajectories) · [Vehicle
   file](#vehicle-file) · [Observers](#observers)
@@ -45,7 +45,7 @@ the code, start with the [README](../README.md); developers start at
 
 ## Overview: how a prediction is made
 
-NICE-OPS is a source–path–receiver model, run for every trajectory state and every observer: on
+NICEOPS is a source–path–receiver model, run for every trajectory state and every observer: on
 the demo case, 6,551 states by 14,400 observers.
 
 - **Source.** A database of noise spheres around the aircraft, one per operating condition. Each
@@ -65,11 +65,11 @@ the demo case, 6,551 states by 14,400 observers.
   for its maximum, time above a threshold or EPNL; several trajectories combine into day-night
   metrics ([THEORY §10](THEORY.md#10-noise-metrics)).
 
-## Running NICE-OPS
+## Running NICEOPS
 
 ### Quick start
 
-With no arguments NICE-OPS runs the demo case: `tracks/S-76D/197421AC.csv` against
+With no arguments NICEOPS runs the demo case: `tracks/S-76D/197421AC.csv` against
 `databases/S-76D_M3.nod` and `databases/S-76D.json`, writing `integrated/197421_LAE.csv`. Run from
 the repository root, since paths are relative; output directories are created as needed.
 
@@ -456,7 +456,7 @@ the B407's recipe without a hover correction. No approach was used to build any 
 approaches are the validation set ([FIDELITY](FIDELITY.md#shipped-databases-approach-scores-per-aircraft)).
 Each file records its build at the root (`speed_reference`, the build atmosphere, `hover_source`)
 and `DOPPLER_SHIFT_REMOVED` and `coverage` per group. The spheres keep the measured,
-Doppler-shifted spectra, and NICE-OPS applies no frequency shift. The rebuilds are in
+Doppler-shifted spectra, and NICEOPS applies no frequency shift. The rebuilds are in
 [HISTORY](HISTORY.md#the-2017-noise-abatement-databases).
 
 ### Spectra
@@ -801,7 +801,7 @@ real three-dimensional path. A level terrain file reproduces the run without it,
 
     z_ground(x, y) = H(latitude, longitude) + --terrain_offset − --ground_elevation
 
-with H the grid's height, interpolated bilinearly. NICE-OPS does not convert between datums:
+with H the grid's height, interpolated bilinearly. NICEOPS does not convert between datums:
 `--terrain_offset` states the difference, and the log repeats it. At the 2017 Amedee site the
 3DEP grid is NAVD88 while the flight altitudes and surveyed microphone heights are ellipsoidal,
 23.6 m (77.43 ft) apart, and the AC tracks put their z = 0 at 3926.74 ft ellipsoidal:
@@ -1709,6 +1709,6 @@ headless. A build without plotting refuses `-p`, `-f` and `-F`; the build option
 
 ## Comparing with older results
 
-Several deliberate changes have moved NICE-OPS's results, the largest being the removal of a 4x
+Several deliberate changes have moved NICEOPS's results, the largest being the removal of a 4x
 multiplier on the database's EAA. Before comparing old and new results, read
 [HISTORY.md](HISTORY.md#changes-that-affect-results).

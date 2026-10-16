@@ -116,7 +116,7 @@ void write_band_frames(const std::string& path, const BandFramesFile& meta,
         nc_check(nc_def_var_deflate(ncid, level_var, 1, 1, 1), "setting compression", path);
     }
 
-    put_text(ncid, NC_GLOBAL, "title", "NICE-OPS band levels in reception-time frames", path);
+    put_text(ncid, NC_GLOBAL, "title", "NICEOPS band levels in reception-time frames", path);
     put_text(ncid, NC_GLOBAL, "trajectory", meta.trajectory, path);
     put_text(ncid, NC_GLOBAL, "database", meta.database, path);
     put_text(ncid, NC_GLOBAL, "observer_layout",

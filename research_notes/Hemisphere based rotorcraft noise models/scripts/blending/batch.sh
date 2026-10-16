@@ -1,5 +1,5 @@
 #!/bin/bash
-# Full-grid NICE-OPS run + numpy blend-variant footprint for every track of a vehicle.
+# Full-grid NICEOPS run + numpy blend-variant footprint for every track of a vehicle.
 # usage: batch.sh VEHICLE DBNAME JSON
 set -e
 W=/Users/evg5332/Code/D/NICEOPS/.claude/worktrees/hemisphere-review

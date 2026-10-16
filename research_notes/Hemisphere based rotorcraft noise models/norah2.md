@@ -140,9 +140,9 @@ NORAH means "NOise of Rotorcraft Assessed by a Hemisphere-approach". It is a **E
 
 ### Inferences
 - **Hemisphere versus sphere.** The file format and grid are a genuine lower hemisphere. Upward emission (φ beyond ±90°) does not exist, and populated cells end around ±60–70° lateral. That is enough for ground observers from an aircraft at altitude, but grazing paths fall back on the nearest-bin fill (§5 below).
-  - NICE-OPS uses a full sphere (per its CLAUDE.md, phi spans the upper surface after the legacy-hover repair). Its sphere radius is set by the database, not fixed at 60 m.
-  - The channel angle convention looks the same in substance. NORAH φ = atan2(lateral, down) with 0 = down, and θ = angle from the nose. NICE-OPS's phi = atan(across/|up|) with 0 = down, and theta from the nose (per CLAUDE.md).
-- **Content per cell.** NORAH stores full band spectra in every cell. NICE-OPS's default path stores broadband dBA plus an EAA factor; its `--spectral` path carries bands.
+  - NICEOPS uses a full sphere (per its CLAUDE.md, phi spans the upper surface after the legacy-hover repair). Its sphere radius is set by the database, not fixed at 60 m.
+  - The channel angle convention looks the same in substance. NORAH φ = atan2(lateral, down) with 0 = down, and θ = angle from the nose. NICEOPS's phi = atan(across/|up|) with 0 = down, and theta from the nose (per CLAUDE.md).
+- **Content per cell.** NORAH stores full band spectra in every cell. NICEOPS's default path stores broadband dBA plus an EAA factor; its `--spectral` path carries bands.
 - **The RmOmega field is inconsistent across files.**
   - Most values are about 100 (that is, % RPM; D1.5d lists the unit as "%" while the files say "rpm").
   - Several are negative (−94 to −926) or −999. Files affected: A109 at 60 kt/12°, 73 kt/6°, 113 kt and 126 kt; EC120 at 53 kt/11° and 67 kt; EC135 at 57 kt/5°; R66 at 80 kt/5.5°, 105 kt and 57 kt; four takeoff files at −999.
@@ -217,9 +217,9 @@ NORAH means "NOise of Rotorcraft Assessed by a Hemisphere-approach". It is a **E
   - the negative values are evidently "nearest hemisphere #"; the manual says only "Triangle ... or nearest hemisphere", p.35;
   - for a 50 kt / −5° step outside the R22 hull, the code picked hemisphere 4 (53.3 kt / −5°) over hemisphere 1 (49.9 kt / −7°);
   - that choice is what the γ-doubling (F_fc = 2) normalisation predicts; raw (kt, deg) distance would pick hemisphere 1.
-- **Comparison with NICE-OPS.**
+- **Comparison with NICEOPS.**
   - NORAH: 2-D (V, γ), inverse-distance energy blend of 3 corners, nearest-neighbour extrapolation.
-  - NICE-OPS: 3-D Delaunay over (μ, γ, CT) with barycentric weights over 4 corners, per its CLAUDE.md.
+  - NICEOPS: 3-D Delaunay over (μ, γ, CT) with barycentric weights over 4 corners, per its CLAUDE.md.
   - NORAH's inverse-distance blend within a triangle is not a partition of unity in the barycentric sense, so it is not linear-exact. It is discontinuous in gradient across edges, and singular (correctly limiting to the vertex) as δ → 0.
   - NORAH has no CT or load-factor parameter. Thrust effects (weight, load factor in turns) enter only through the bank tilt and the measured condition.
 - **The shipped hover/idle offsets (+8, −10, −2 dB) differ from the D1.5d Approach 3 values (+12, −12, −2.5 dB).** In the public package, R22 hover uses a B412 soft-ground HIGE table as a "test" stand-in. No other type has a hover hemisphere, so hover or idle for other types would fall back on the nearest forward-flight hemisphere.
@@ -267,8 +267,8 @@ NORAH means "NOise of Rotorcraft Assessed by a Hemisphere-approach". It is a **E
 
 ### Inferences
 - The effective NORAH frame is x along the rotation angle (heading + slip) in the **horizontal plane**, rolled by ROLL about that axis. Body pitch and γ are not applied, because the hemisphere was measured in that steady condition.
-  - Compare NICE-OPS: a `SphereFrame` from the velocity and the TPP normal (nose, normal, starboard), with an optional "qsam" effective γ (per its CLAUDE.md).
-  - The NORAH approach is equivalent to assuming the measured hemisphere's attitude recurs whenever (V, γ) recurs. NICE-OPS instead re-derives orientation from the trajectory's TPP normal.
+  - Compare NICEOPS: a `SphereFrame` from the velocity and the TPP normal (nose, normal, starboard), with an optional "qsam" effective γ (per its CLAUDE.md).
+  - The NORAH approach is equivalent to assuming the measured hemisphere's attitude recurs whenever (V, γ) recurs. NICEOPS instead re-derives orientation from the trajectory's TPP normal.
 - **Roll sign, possible bug (needs confirmation before relying on it).** In the shipped `R22_H1_DEP_STD1_NE` departure:
   - ROLL = −2.34° on the right turn (heading 45° to 90°) and +3.12° on the left turn (heading 90° to 0°);
   - the fitted rotation applies positive ROLL as starboard-wing-down;
@@ -296,8 +296,8 @@ NORAH uses **bilinear interpolation in energy** (10^(L/10)) over the 10° (φ, �
 ### Inferences
 - Because roughly 45% of every hemisphere is −999, grazing and near-axis emission angles (φ beyond ±60°, θ near 0 or 180°) get **constant extrapolation** of the outermost measured bin, with no physics of the unmeasured directivity.
   - This matters for distant lateral observers, where a 300 m altitude source at 3 km is at φ ≈ 84°.
-  - NICE-OPS has a full sphere from prediction, so no such fill is needed.
-- **NORAH interpolates in energy; NICE-OPS blends dBA in dB, linearly** (per its CLAUDE.md `Pair` and `cell_stencil` descriptions). Energy averaging biases toward the louder corner. The two will differ most at steep directivity gradients and between dissimilar conditions.
+  - NICEOPS has a full sphere from prediction, so no such fill is needed.
+- **NORAH interpolates in energy; NICEOPS blends dBA in dB, linearly** (per its CLAUDE.md `Pair` and `cell_stencil` descriptions). Energy averaging biases toward the louder corner. The two will differ most at steep directivity gradients and between dissimilar conditions.
 
 ### Gaps
 - Whether the gap-fill is applied per band or per bin across all bands. The text implies per bin.
@@ -320,7 +320,7 @@ NORAH evaluates each emission point at its emission time and moves the result to
   No Doppler step is listed — [Final report §2.2.3 p.14-15](https://www.easa.europa.eu/en/downloads/139729/en).
 
 ### Inferences
-- The emission angles are evidently the emission-time (retarded) angles. The stored hemispheres therefore represent the field as heard from those angles in that steady flight, Doppler-shifted and convectively amplified, which is the same convention NICE-OPS uses ("spheres keep Doppler").
+- The emission angles are evidently the emission-time (retarded) angles. The stored hemispheres therefore represent the field as heard from those angles in that steady flight, Doppler-shifted and convectively amplified, which is the same convention NICEOPS uses ("spheres keep Doppler").
 - Re-applying a Doppler shift in NORAH would double-count it; neither model does.
 - Substitution between speeds (interpolation between hemispheres at different V) does not correct for the Doppler difference.
 
@@ -399,9 +399,9 @@ The atmosphere is uniform (no gradients). Refraction, wind and turbulence are **
 - **Urban use** would need vector building input and ray-path tracking, which are not in the prototype — [Final report §6.2 p.38-39](https://www.easa.europa.eu/en/downloads/139729/en).
 
 ### Inferences
-- **Close match to NICE-OPS's spectral ground path.** NORAH's ground model is the same physics as NICE-OPS's `--spectral --ground_effect` (the panam `ega()` port): a Chien–Soroka spherical reflection, Delany–Bazley impedance, a Faddeeva/erfc boundary loss, and a sinc band-averaging term. A point-by-point comparison should check the coherence constants (0.727 and 6.325 f_c ΔR/c) and the boundary-loss evaluation (NORAH uses the A&S and Matta–Reichel approximations at about 1e-6; NICE-OPS uses Weideman's).
-- **Absorption.** NORAH's absorption is ARP5534 with Rickley band conversion. NICE-OPS uses ISO 9613-1 per band (spectral path), or a fitted EAA (broadband).
-- **What NORAH lacks** relative to NICE-OPS's newer propagation work: refraction, layered atmospheres, wind, turbulence, shadow zones and PE. NORAH has terrain diffraction and MGP ground, which NICE-OPS does not (NICE-OPS assumes flat ground, per its CLAUDE.md).
+- **Close match to NICEOPS's spectral ground path.** NORAH's ground model is the same physics as NICEOPS's `--spectral --ground_effect` (the panam `ega()` port): a Chien–Soroka spherical reflection, Delany–Bazley impedance, a Faddeeva/erfc boundary loss, and a sinc band-averaging term. A point-by-point comparison should check the coherence constants (0.727 and 6.325 f_c ΔR/c) and the boundary-loss evaluation (NORAH uses the A&S and Matta–Reichel approximations at about 1e-6; NICEOPS uses Weideman's).
+- **Absorption.** NORAH's absorption is ARP5534 with Rickley band conversion. NICEOPS uses ISO 9613-1 per band (spectral path), or a fitted EAA (broadband).
+- **What NORAH lacks** relative to NICEOPS's newer propagation work: refraction, layered atmospheres, wind, turbulence, shadow zones and PE. NORAH has terrain diffraction and MGP ground, which NICEOPS does not (NICEOPS assumes flat ground, per its CLAUDE.md).
 - **Lateral attenuation** is handled by the explicit ground model and directivity, not an SAE-AIR-5662-style empirical lateral attenuation. None is mentioned.
 
 ### Gaps
@@ -454,9 +454,9 @@ The atmosphere is uniform (no gradients). Refraction, wind and turbulence are **
   - In the shipped `.his`, SELA − LAE = 29.9 dB, which implies T ≈ 980 s. That is about the reception-time span of the 1031 s trajectory.
   - In the single-point hover case (`ARP/Case4/SE/R22_DEP_RT2`), LAE = LAMAX = SELA = 103.64 dB.
   - So LAE ≈ LAeq over the event and SELA = LAE + 10·log10(T/1 s). The manual does not define LAE.
-- **Contrast with NICE-OPS.** NICE-OPS's SEL uses the 10-dB-down window walked out from the peak (its "first crossing" rule is called out as a fragility). NORAH's land-use default integrates the **whole** history, so it has no window knife-edge. It does, however, depend on trajectory length and on the DMAX/GRDEXT truncation.
+- **Contrast with NICEOPS.** NICEOPS's SEL uses the 10-dB-down window walked out from the peak (its "first crossing" rule is called out as a fragility). NORAH's land-use default integrates the **whole** history, so it has no window knife-edge. It does, however, depend on trajectory length and on the DMAX/GRDEXT truncation.
   - When comparing footprints with NORAH, set ISEL10DB = 1 or account for the difference.
-- **DTIME = 0.5 s** in NORAH versus the 0.02 s shipped tracks in NICE-OPS. NORAH's guidance treats the step as an accuracy/cost trade, consistent with NICE-OPS's finding that SEL is heavily oversampled at 50 Hz.
+- **DTIME = 0.5 s** in NORAH versus the 0.02 s shipped tracks in NICEOPS. NORAH's guidance treats the step as an accuracy/cost trade, consistent with NICEOPS's finding that SEL is heavily oversampled at 50 Hz.
 
 ### Gaps
 - Exact EPNL implementation details: tone correction, and whether integration is on half-second PNLT.
@@ -502,7 +502,7 @@ The multi-event module runs one single-event per operation and energy-sums them 
 
 ### Inferences
 - **No noise-abatement design features.** Nothing documents optimisation or abatement-procedure tools. Abatement is assessed only by running alternative profiles.
-- **The radar path uses the ground-referenced 3-D speed and no wind.** That contrasts with NICE-OPS's `--speed_reference air`.
+- **The radar path uses the ground-referenced 3-D speed and no wind.** That contrasts with NICEOPS's `--speed_reference air`.
 - **No geodetic tracks for tracks & profiles.** The lat/lon route exists only for radar input, and conversion uses a projected CRS (pyproj-style EPSG codes) rather than a local transverse Mercator.
 
 ### Gaps
@@ -606,7 +606,7 @@ Hover is measured on a quarter-circle of microphones at 30° spacing, 150 m from
 - **Ground reflection removal** is done by measuring with **inverted microphones on ground plates** and applying the "free field" correction. That is the standard ground-plate pressure-doubling (about −6 dB) correction, which is my inference; the correction value is not stated. So there is no explicit image-source subtraction.
 - The 1.2 m tripod microphones are used only for quality control against certification levels.
 - **No de-Dopplerization or retarded-time back-propagation detail is given.** Scaling to 60 m presumably uses spherical spreading and ARP5534 absorption at the measured conditions, then re-adds absorption at reference conditions; that would explain FREEFIELD = 2.
-- **Contrast with NICE-OPS's databases**, which are built by panam from predictions or other source spheres. NORAH's are purely measured, which explains the partial angular coverage and the absence of thrust as a parameter.
+- **Contrast with NICEOPS's databases**, which are built by panam from predictions or other source spheres. NORAH's are purely measured, which explains the partial angular coverage and the absence of thrust as a parameter.
 
 ### Gaps
 - The exact free-field (ground-plate) correction values.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Write NICE-OPS trajectory state (-S) for every shipped track of a vehicle.
+# Write NICEOPS trajectory state (-S) for every shipped track of a vehicle.
 set -e
 W=/Users/evg5332/Code/D/NICEOPS/.claude/worktrees/hemisphere-review
 B=/Users/evg5332/Code/D/NICEOPS/build/niceops

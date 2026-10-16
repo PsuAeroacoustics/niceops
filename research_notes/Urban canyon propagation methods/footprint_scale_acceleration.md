@@ -1,6 +1,6 @@
 # Acceleration, precomputation and emulation of urban (building-aware) propagation at footprint scale
 
-Context for the reader: NICE-OPS evaluates ~10^4 observers x ~10^4 states (~10^8 source-receiver pairs) at
+Context for the reader: NICEOPS evaluates ~10^4 observers x ~10^4 states (~10^8 source-receiver pairs) at
 ~20-150 ns per pair on the spectral path, integrates SEL over the 10 dB-down window, and culls states with
 per-direction upper bounds. Two candidate architectures: (1) per-receiver, direction-indexed transfer tables
 built by reciprocity (trace outward from each receiver) for sources well above rooftops; (2) per-pair 3-D
@@ -15,7 +15,7 @@ Every production system that makes building-aware propagation cheap at runtime d
 parameters rather than raw responses: Microsoft's parametric coding stores ~100-120 KB per listener probe
 (80-160 MB per game map) and decodes in ~100 us per source, and Empa's sonAIR precomputes band attenuations
 at virtual source positions on an altitude-adaptive cell grid and interpolates by aircraft position. Neither
-stores a pure direction-only table; that is a NICE-OPS-specific simplification justified only in the far field
+stores a pure direction-only table; that is a NICEOPS-specific simplification justified only in the far field
 (Section 2).
 
 ### Cited Findings
@@ -81,7 +81,7 @@ stores a pure direction-only table; that is a NICE-OPS-specific simplification j
   (description from search summary).
 
 ### Inferences
-- The Microsoft pipeline *is* the reciprocity architecture NICE-OPS option (1) proposes, but it stores the
+- The Microsoft pipeline *is* the reciprocity architecture NICEOPS option (1) proposes, but it stores the
   field over *source position* within 45 m of the probe because game sources are near. For a helicopter
   hundreds of meters away the 3-D source-position field collapses to (direction, range) and, if range enters
   only through spreading (Section 2), to direction alone -- which is what makes a 2-D table per receiver
@@ -89,7 +89,7 @@ stores a pure direction-only table; that is a NICE-OPS-specific simplification j
 - Storage estimate for option (1) (inference, not from a source): an upper-hemisphere direction grid at ~3 deg
   is ~2,300 directions; x 24 third-octave bands x 14,400 receivers x 2 bytes (int16 at 0.01-0.1 dB) = ~1.6 GB;
   at 5 deg (~825 directions) ~0.57 GB; 1 byte at 0.25 dB halves it. Per receiver it is ~110 KB at 3 deg, i.e. an
-  L2-resident table for the duration of one observer's state loop, matching NICE-OPS's observer-outer loop.
+  L2-resident table for the duration of one observer's state loop, matching NICEOPS's observer-outer loop.
   This is the same order as Microsoft's ~100-120 KB per probe.
 - Microsoft's choice of six cosine-squared lobes (partition of unity, no ringing) over low-order spherical
   harmonics is directly relevant: low-order SH of a band-energy table can go negative and ring across a
@@ -200,9 +200,9 @@ receiver-side precomputation.
 ### Inferences
 - Cost per pair, option (2): taking ~1 ms per source-listener pair (between the 0.14-7.5 ms diffraction figures
   and the ~1-5 ms/source of the city frames) gives 10^8 pairs ~ 10^5 s (~28 h) on a 2014-2021 4-core CPU,
-  three to four orders of magnitude above NICE-OPS's current ~2-15 s of loop CPU. GPU throughput might buy 10-100x
+  three to four orders of magnitude above NICEOPS's current ~2-15 s of loop CPU. GPU throughput might buy 10-100x
   but not 10^4x. Option (2) therefore has to be restricted to a small observer set (e.g. a vertiport
-  neighbourhood of 10^2-10^3 receivers) or to the few states inside each SEL window, using NICE-OPS's existing
+  neighbourhood of 10^2-10^3 receivers) or to the few states inside each SEL window, using NICEOPS's existing
   bounds to cull.
 - Option (1) moves the same ray work to precompute: per receiver, trace ~10^4-10^5 rays outward (2,300
   directions x tens of rays per direction for edge/reflection sampling) -- at 10^7-10^8 rays/s that is
@@ -250,7 +250,7 @@ candidate generator.
 
 ### Inferences
 - The reported errors (0.65-2.6 dB) are of the same order as the effects being modelled (3-5 dB building
-  reflection gains, Section 7), and are averages over maps; NICE-OPS's exact windowed search needs bounds that
+  reflection gains, Section 7), and are averages over maps; NICEOPS's exact windowed search needs bounds that
   are never exceeded, which none of the urban surrogates provide.
 - The useful idea to borrow is the certified-monotone construction: a per-receiver table with a stored
   max-over-cell value is already a certified bound, at zero training cost.
@@ -299,7 +299,7 @@ grids at 4 m height, tiling, and "efficiency settings" accepted when the 95% con
 - The engineering methods' main trick (first-order reflections only, no lateral diffraction for aircraft,
   energy addition) maps naturally onto a per-receiver direction table: first-order specular images plus
   vertical-plane edge diffraction is a small, enumerable set of paths per receiver per direction.
-- The 1 dB / 95% CI acceptance criterion is a reasonable external benchmark for whatever NICE-OPS's table
+- The 1 dB / 95% CI acceptance criterion is a reasonable external benchmark for whatever NICEOPS's table
   discretization costs.
 
 ### Gaps
@@ -340,7 +340,7 @@ radians, so a ~2-3 deg direction grid resolves edges more than ~20 m away up to 
   at 4 kHz for 100 m. A 2-3 deg grid with bilinear interpolation is adequate for ~<=1 kHz and near edges;
   high bands behind distant edges will be under-resolved (step-like), which affects accuracy but not the bound
   if the stored per-cell maximum is used for culling.
-- Moving source: because NICE-OPS integrates energy over the SEL window, the integrand needs only band
+- Moving source: because NICEOPS integrates energy over the SEL window, the integrand needs only band
   energies at each state; interpolation in direction between states is not needed (each state looks up its own
   direction). Temporal smoothness matters only for the 10 dB-down window detection, which is already robust to
   steps by the "outermost crossing" rule.
@@ -381,7 +381,7 @@ precomputed table's per-direction maximum is an exact bound for the table model.
   incoherent. This holds for any source position, so it can be a single per-receiver constant.
 - **Table bound.** If the table stores per (receiver, direction cell, band) the maximum gain over the cell
   (or the grid node values with bilinear interpolation, which cannot exceed the max node), then
-  max_over_directions(table) per band is an exact bound for the table model, and can be fed to NICE-OPS's
+  max_over_directions(table) per band is an exact bound for the table model, and can be fed to NICEOPS's
   existing bound machinery exactly as the propagation table's per-band maximum already is
   (`path_gains` in the bound setup). A per-receiver-and-direction-bin max would keep DirectionBounds' tightness.
 - Because measured gains are small (3-5 dB) relative to losses (up to 12-14 dB), the urban model will mostly

@@ -23,12 +23,12 @@ Scope note for the report writer:
 ## 1. Source representation and how it depends on operating state (and interpolation between states)
 
 ### Takeaway
-Almost every research-grade rotorcraft footprint tool uses the same core idea as NICE-OPS. That includes RNM, SELENE, HELENA, CAROT, FRAME-QS, AMAT, MANOEUVRES, JAXA and the Korean UAM tools. Each stores a fixed-radius hemisphere or sphere of 1/3-octave levels per steady operating condition (some add narrowband or tonal data). A small set of flight parameters selects or interpolates it.
+Almost every research-grade rotorcraft footprint tool uses the same core idea as NICEOPS. That includes RNM, SELENE, HELENA, CAROT, FRAME-QS, AMAT, MANOEUVRES, JAXA and the Korean UAM tools. Each stores a fixed-radius hemisphere or sphere of 1/3-octave levels per steady operating condition (some add narrowband or tonal data). A small set of flight parameters selects or interpolates it.
 
 They differ mainly in which parameters index the database:
 
 - **RNM / AAM:** (airspeed, flight path angle, nacelle angle), interpolated linearly in energy.
-- **SELENE:** (mu, alpha_TPP, CT) on a Delaunay triangulation, with nearest-neighbour outside the envelope. This is the closest published analogue to NICE-OPS's (mu, gamma, CT) barycentric scheme.
+- **SELENE:** (mu, alpha_TPP, CT) on a Delaunay triangulation, with nearest-neighbour outside the envelope. This is the closest published analogue to NICEOPS's (mu, gamma, CT) barycentric scheme.
 - **FRAME-QS:** (V, gamma, n_z), natural-neighbour interpolation over a Delaunay triangulation.
 - **HNM / INM / AEDT (regulatory):** noise-distance curves at three lateral directions only (centreline and +/-45 deg), for a handful of fixed modes.
 
@@ -134,8 +134,8 @@ They differ mainly in which parameters index the database:
 - Penn State's "comprehensive noise prediction system" (Botre, Brentner, Horn, Wachspress, VFS 75, 2019) was validated on level flight, descent, left and right level turns, a decelerating turn and a descending turn. It matched SEL contours "within a few SELdBA". I read the abstract only, so the source representation is undetermined. — [PSU Pure record](https://pure.psu.edu/en/publications/validation-of-helicopter-noise-prediction-system-with-flight-data/)
 
 ### Inferences
-- The European research tools (SELENE, the HELENA/DLR work, MANOEUVRES) and FRAME have converged on the main-rotor aerodynamic state for indexing hemispheres: (mu, CT, alpha_TPP), or close equivalents such as gamma_e and n_z. RNM/AAM and the regulatory tools stay with kinematic parameters (airspeed, flight path angle). NICE-OPS's (mu, gamma or gamma_e, CT) sits between the two and is closest to SELENE and FRAME-QS.
-- SELENE's design (Delaunay triangulation, nearest-neighbour fallback outside the hull) matches NICE-OPS's `interpolator.cpp` almost exactly. The others differ:
+- The European research tools (SELENE, the HELENA/DLR work, MANOEUVRES) and FRAME have converged on the main-rotor aerodynamic state for indexing hemispheres: (mu, CT, alpha_TPP), or close equivalents such as gamma_e and n_z. RNM/AAM and the regulatory tools stay with kinematic parameters (airspeed, flight path angle). NICEOPS's (mu, gamma or gamma_e, CT) sits between the two and is closest to SELENE and FRAME-QS.
+- SELENE's design (Delaunay triangulation, nearest-neighbour fallback outside the hull) matches NICEOPS's `interpolator.cpp` almost exactly. The others differ:
   - RNM interpolates linearly in energy, one axis at a time.
   - FRAME-QS uses natural-neighbour weights rather than barycentric ones.
 - Whether a tool interpolates in dB or in energy is rarely stated. RNM says energy, and NLR argues that dB is the better domain for *fitting* hemispheres.
@@ -212,9 +212,9 @@ Shadow zones are handled crudely in the ray tools; SELENE floors the level. Urba
 - Contrast: NORAH2's propagation was benchmarked against NORD2000. — [EASA NOISE final report](https://www.easa.europa.eu/en/downloads/139729/en)
 
 ### Inferences
-- NICE-OPS's straight / linear / stratified / PE hierarchy goes further than any footprint tool found here. Only two pair a full-wave solution with a hemisphere footprint tool: APET (GFPE tables feeding RNM) and NICE-OPS's `--propagation_table`. APET's tables are aimed at terrain and detectability.
-- SELENE's published shadow handling (a floor wherever the eigenray search fails) is the same as NICE-OPS's behaviour before ShadowTransition. No tool reviewed publishes a creeping-wave, residue-series or boundary-transition treatment.
-- The absorption standards differ: ANSI S1.26-1978 in RNM and the NORAH benchmark, ISO 9613-1/-2 in the Korean studies and NICE-OPS. The choice can move long-range high-frequency levels by around 1 dB/km, which is worth flagging in any cross-tool comparison.
+- NICEOPS's straight / linear / stratified / PE hierarchy goes further than any footprint tool found here. Only two pair a full-wave solution with a hemisphere footprint tool: APET (GFPE tables feeding RNM) and NICEOPS's `--propagation_table`. APET's tables are aimed at terrain and detectability.
+- SELENE's published shadow handling (a floor wherever the eigenray search fails) is the same as NICEOPS's behaviour before ShadowTransition. No tool reviewed publishes a creeping-wave, residue-series or boundary-transition treatment.
+- The absorption standards differ: ANSI S1.26-1978 in RNM and the NORAH benchmark, ISO 9613-1/-2 in the Korean studies and NICEOPS. The choice can move long-range high-frequency levels by around 1 dB/km, which is worth flagging in any cross-tool comparison.
 
 ### Gaps
 - The sources read do not state the absorption standard or ground-impedance model used by SELENE, HELENA or CAROT.
@@ -231,7 +231,7 @@ The tools march along the trajectory in source time and place each contribution 
 - **SELENE.**
 - **CAROT:** by re-dopplerizing de-dopplerized tonal hemispheres.
 
-Maneuvers are handled quasi-statically: a steady hemisphere is chosen by (mu, CT, alpha_TPP) or gamma_e and oriented by attitude. Studies agree this beats matching path slope but does not equal unsteady FW-H. The common footprint metric is SEL integrated within 10 dB of the peak (HELENA, SELENE, the AAM comparisons), as in NICE-OPS.
+Maneuvers are handled quasi-statically: a steady hemisphere is chosen by (mu, CT, alpha_TPP) or gamma_e and oriented by attitude. Studies agree this beats matching path slope but does not equal unsteady FW-H. The common footprint metric is SEL integrated within 10 dB of the peak (HELENA, SELENE, the AAM comparisons), as in NICEOPS.
 
 ### Cited Findings
 - RNM "is a source time based model, which uses the flight track based source time directly, 'binning' sound at the receiver locations based on arrival time".
@@ -274,8 +274,8 @@ Maneuvers are handled quasi-statically: a steady hemisphere is chosen by (mu, CT
 - NAF synthesises sample by sample at the instantaneous emission angle for transitional (unsteady) eVTOL flight, so it avoids hemisphere interpolation. — [Krishnamurthy, Tuttle, Rizzi, NTRS 20200011447](https://ntrs.nasa.gov/api/citations/20200011447/downloads/20200011447.pdf)
 
 ### Inferences
-- The 10-dB-down SEL window is not peculiar to NICE-OPS or the D original. HELENA and SELENE document it explicitly, and the NASA comparisons use it in AAM, so NICE-OPS's first-crossing fragility (CLAUDE.md) probably exists in those tools too. SELENE defines t1 as the *last* point within 10 dB, which reads like the outermost-crossing rule that NICE-OPS measured as an alternative.
-- None of the tools reviewed documents a wind-relative ("air") flight condition as a database convention. SELENE handles it implicitly through its flight-mechanics code, and Greenwood & Sim show that the trim/crab choice matters. This supports NICE-OPS's explicit `speed_reference` attribute.
+- The 10-dB-down SEL window is not peculiar to NICEOPS or the D original. HELENA and SELENE document it explicitly, and the NASA comparisons use it in AAM, so NICEOPS's first-crossing fragility (CLAUDE.md) probably exists in those tools too. SELENE defines t1 as the *last* point within 10 dB, which reads like the outermost-crossing rule that NICEOPS measured as an alternative.
+- None of the tools reviewed documents a wind-relative ("air") flight condition as a database convention. SELENE handles it implicitly through its flight-mechanics code, and Greenwood & Sim show that the trim/crab choice matters. This supports NICEOPS's explicit `speed_reference` attribute.
 
 ### Gaps
 - The sources read do not state the time-step defaults of SELENE, HELENA, CAROT or AMAT.
@@ -330,8 +330,8 @@ The recurring limitations:
 - Against Gaussian beams, straight-ray propagation in vertiport and terrain settings errs by about 5 dB in lit zones and about 35 dB in terrain shadow. — [Yunus et al. 2023](https://iris.polito.it/bitstream/11583/2978683/1/2023YunusAST.pdf)
 
 ### Inferences
-- The best-documented failure mode across tools is on the source side: extrapolated or missing hemisphere regions near the TPP and laterally beyond the array (RNM/NATO, the Korean null cells). This matches NICE-OPS's own finding that forward-line errors are dominated by the approach's end and by low, slow states rather than by propagation.
-- No tool reviewed publishes a quantitative comparison against a full-wave reference (PE or exact solutions) of the kind NICE-OPS holds itself to. In what was found, APET's GFPE builds tables; it is not used as a validation oracle.
+- The best-documented failure mode across tools is on the source side: extrapolated or missing hemisphere regions near the TPP and laterally beyond the array (RNM/NATO, the Korean null cells). This matches NICEOPS's own finding that forward-line errors are dominated by the approach's end and by low, slow states rather than by propagation.
+- No tool reviewed publishes a quantitative comparison against a full-wave reference (PE or exact solutions) of the kind NICEOPS holds itself to. In what was found, APET's GFPE builds tables; it is not used as a validation oracle.
 
 ### Gaps
 - No quantitative validation statistics (bias or rms over many microphones) were found for SELENE, HELENA, CAROT or sonAIR helicopters.

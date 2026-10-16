@@ -1,4 +1,4 @@
-"""Condition-space interpolation as NICE-OPS does it (src/interpolator.cpp,
+"""Condition-space interpolation as NICEOPS does it (src/interpolator.cpp,
 Database::blend_at), plus the alternatives under test."""
 import numpy as np
 from scipy.spatial import Delaunay, cKDTree
@@ -45,7 +45,7 @@ class Conditions:
         return np.clip((q - self.lo) / (self.hi - self.lo), 0.0, 1.0)
 
     def barycentric(self, q):
-        """q: (n,3) raw conditions -> (weights (n,4), indices (n,4)), NICE-OPS rules."""
+        """q: (n,3) raw conditions -> (weights (n,4), indices (n,4)), NICEOPS rules."""
         x = self.normalize(q)
         s = self.tri.find_simplex(x)
         n = len(x)
@@ -92,7 +92,7 @@ class Conditions:
 def idw_weights(C, x, w, idx):
     """NORAH2-style weights (D1.5d eqs. 3-10): inverse normalised distance to
     the vertices of the enclosing simplex, to be applied to energies.  Uses the
-    NICE-OPS simplex and normalisation (no F_fc = 2 on gamma: the axes differ).
+    NICEOPS simplex and normalisation (no F_fc = 2 on gamma: the axes differ).
     Vertices with zero barycentric weight (padding) are excluded."""
     d = np.linalg.norm(C.norm[idx] - x[:, None, :], axis=2)
     use = w != 0.0

@@ -1,6 +1,6 @@
 # Experiment: blending source spheres in dB, in energy, or picking the nearest
 
-The literature does not give this number, so this note measures it. Across operating conditions, NICE-OPS blends sphere levels **linearly in dB** with barycentric Delaunay weights over (μ, γ, CT). Here that blend is compared with three alternatives:
+The literature does not give this number, so this note measures it. Across operating conditions, NICEOPS blends sphere levels **linearly in dB** with barycentric Delaunay weights over (μ, γ, CT). Here that blend is compared with three alternatives:
 
 - a barycentric blend **in energy**, 10 log10 Σ w 10^(L/10);
 - a **NORAH2-style blend**: inverse-distance weights over the same simplex, applied to energies;
@@ -27,10 +27,10 @@ All of it ran on the shipped databases and tracks. Nothing in the repository was
 - **In leave-one-out, dB and energy are statistically indistinguishable.** On three of four databases dB has the lower rms by 1–3%. On B407, energy is lower (1.54 vs 1.76 dB), but only because it damps a single held-out sphere with a deep null.
   - In any case, the interpolation error (~1.1–1.8 dB rms over footprint directions) is roughly ten times the dB–energy difference.
   - The choice of blending domain is therefore a **systematic ~+0.25 dB bias question, not an accuracy question**.
-- **NICE-OPS cannot switch to an energy blend just by changing the formula.** The condition set is a degenerate prism, so the Delaunay triangulation is not unique.
+- **NICEOPS cannot switch to an energy blend just by changing the formula.** The condition set is a degenerate prism, so the Delaunay triangulation is not unique.
   - The dB blend is invariant to which valid triangulation is chosen; the max difference measured was 0.000 dB.
   - The energy blend is not invariant: 95th percentile 0.10–0.19 dB, maximum 0.8–1.5 dB between two valid triangulations.
-- **Correction to the task framing:** AAM/RNM blend **in dB**, not in energy. Up to four spheres are "linearly interpolated in decibels" ([aam_v3.md §2](aam_v3.md), TR p.33–34). Among the tools reviewed, only NORAH2 blends in energy ([norah2.md §3](norah2.md), D1.5d eqs. 3–10). NICE-OPS and AAM share the dB convention; NORAH2 is the outlier.
+- **Correction to the task framing:** AAM/RNM blend **in dB**, not in energy. Up to four spheres are "linearly interpolated in decibels" ([aam_v3.md §2](aam_v3.md), TR p.33–34). Among the tools reviewed, only NORAH2 blends in energy ([norah2.md §3](norah2.md), D1.5d eqs. 3–10). NICEOPS and AAM share the dB convention; NORAH2 is the outlier.
 
 ## Method
 
@@ -81,18 +81,18 @@ Four things about these databases shape the result.
   - nearest vertex outside the triangulation.
 - **Validation.** A numpy re-implementation of the broadband path takes these weights through to SEL:
   - sphere frame, φ/θ lookup, bilinear interpolation on the sphere grid, spreading, EAA, 10 dB-down window, reception-time weight.
-  - It reproduces the NICE-OPS LAE output to **≤ 2.4e-13 dB on all 43 S-76D and B205 tracks** at the default 120 × 120 grid.
-  - The NICE-OPS run of the demo case is byte-identical to `golden/197421_LAE.csv`.
-  - So the dB-blend baseline here *is* NICE-OPS, even though scipy's triangulation is not NICE-OPS's. See the triangulation section for why that does not matter in dB.
+  - It reproduces the NICEOPS LAE output to **≤ 2.4e-13 dB on all 43 S-76D and B205 tracks** at the default 120 × 120 grid.
+  - The NICEOPS run of the demo case is byte-identical to `golden/197421_LAE.csv`.
+  - So the dB-blend baseline here *is* NICEOPS, even though scipy's triangulation is not NICEOPS's. See the triangulation section for why that does not matter in dB.
 
 ### Variants, all at the sphere grid nodes
 
-- **(a) dB:** Σ w L. This is NICE-OPS.
+- **(a) dB:** Σ w L. This is NICEOPS.
 - **(b) energy:** 10 log10 Σ w 10^(L/10), with the same weights.
 - **(c) nearest:** the nearest stored condition in normalised (μ, γ, CT).
 - **(c2) nearest FC + CT law:** the nearest (μ, γ) sphere plus the database's exact 20 log10(CT/CT_ref). This isolates the choice of directivity.
 - **(d) NORAH2-style:** inverse normalised distance to the vertices of the same simplex, applied to energies.
-  - This is D1.5d eq. 3 transplanted to NICE-OPS's 3-D simplex and normalisation.
+  - This is D1.5d eq. 3 transplanted to NICEOPS's 3-D simplex and normalisation.
   - It does not use NORAH's 2-D (V, γ) space or its F_fc = 2 γ scaling.
 
 Only the dBA blend differs between variants. EAA is always blended with the (a) weights.
@@ -191,7 +191,7 @@ How to read the table:
 - A second, equally valid triangulation was built with Qhull `QJ` instead of the default `Qt`. It shares the vertex set of the enclosing simplex in only 23–28% of trajectory states.
 - The **dB blend is identical** under both: max |Δ| 0.000 dB on all states. The levels are additive, L = D(μ, γ) + g(CT), the conditions form a prism, and any barycentric weights reproduce both the (μ, γ) marginal and the CT coordinate, so a linear blend cannot tell triangulations apart.
 - The **energy blend is not identical**: p95 0.19 / 0.10 / 0.18 dB and max 0.78 / 0.96 / 1.51 dB (S-76D / AW139 / B205).
-- This is also why scipy's triangulation (12,330 simplices for S-76D, against NICE-OPS's logged 10,049, including zero-volume slivers) still reproduces NICE-OPS to round-off.
+- This is also why scipy's triangulation (12,330 simplices for S-76D, against NICEOPS's logged 10,049, including zero-volume slivers) still reproduces NICEOPS to round-off.
 
 **The CT axis on its own.** The stored copies follow 20 log10 CT exactly. In LF, a dB blend lies below that law (the chord of a concave function), and an energy blend 10 log10(Σ w CT²) lies above it by the same amount:
 
@@ -201,14 +201,14 @@ How to read the table:
 
 The exact law sits midway between the two blends. At trajectory load factors this contributes ≤ 0.02 dB (S-76D) and ≤ 0.11 dB (AW139, B205) to the energy–dB gap. Effectively all of the gap comes from directivity differences between (μ, γ) spheres.
 
-## What this says about NICE-OPS
+## What this says about NICEOPS
 
-1. **Keep dB, but say why.** NICE-OPS's dB blend agrees with AAM's convention and is unbiased in leave-one-out. It is also the only blend that is well defined on the current degenerate Delaunay set. Nowhere does the code or its documentation justify the choice, and the comparison with NORAH2 deserves a sentence there:
+1. **Keep dB, but say why.** NICEOPS's dB blend agrees with AAM's convention and is unbiased in leave-one-out. It is also the only blend that is well defined on the current degenerate Delaunay set. Nowhere does the code or its documentation justify the choice, and the comparison with NORAH2 deserves a sentence there:
    - the domain choice costs about 0.25 dB of systematic offset in SEL against an energy-blending tool such as NORAH2;
    - up to ~2–3 dB in individual cells;
    - about 1 dB in single directions at the ~5 dB spreads that are common between neighbouring flight conditions.
 2. **An energy option would need a different scheme.** If an energy blend (for NORAH2 parity) were ever wanted, a formula swap is not enough, because the result would depend on Qhull/Bowyer–Watson tie-breaking by up to ~1.5 dB. It would need a tensor-product scheme: a 2-D (μ, γ) triangulation crossed with linear interpolation in CT. Since the CT copies are the exact 20 log10 law, CT could instead be applied analytically, as the `fixed_load_factor` path already does.
-3. **Nearest-sphere fallbacks cost more than the blending domain does.** NICE-OPS falls back to nearest only for databases with fewer than dim + 1 conditions, or outside the triangulation. That is the right call: nearest selection adds ±1–4 dB of track-dependent SEL noise and is the least accurate method in leave-one-out.
+3. **Nearest-sphere fallbacks cost more than the blending domain does.** NICEOPS falls back to nearest only for databases with fewer than dim + 1 conditions, or outside the triangulation. That is the right call: nearest selection adds ±1–4 dB of track-dependent SEL noise and is the least accurate method in leave-one-out.
 4. **Interpolation error dominates both.** Leave-one-out gives ~1.1–1.8 dB rms over footprint directions on every database. Database density and measurement scatter matter about ten times more than dB versus energy.
 5. **Incidental observations.** These were noticed while reproducing the path and were not part of the question.
    - **Padding means extrapolation.** A third to a half of each database's flight conditions are padding copies at γ = −24° / +35°, so the blend outside the measured γ range (S-76D: −8.7° to +14.4°) is constant extrapolation of the edge spheres. That is a builder (panam) property worth stating in the review.
@@ -216,12 +216,12 @@ The exact law sits midway between the two blends. At trajectory load factors thi
 
 ## Caveats
 
-- **Sphere-grid nodes only.** Part 1 compares blends at the sphere-grid nodes. In NICE-OPS the blend happens at the four corners of each sphere cell, which are then interpolated bilinearly in dB. The energy variants here change only the condition blend, not the bilinear step. NORAH2 also interpolates angles in energy, which this experiment does not include.
-- **NORAH2 analogue.** The "NORAH-IDW" variant uses NORAH's weighting rule on NICE-OPS's 3-D simplex and normalisation. It is not a reimplementation of NORAH2's 2-D (V, γ) triangulation with F_fc = 2.
-- **What nearest means here.** "Nearest" is Euclidean distance in NICE-OPS's normalised (μ, γ, CT) box, or in (μ, γ) for variant c2. AAM selects by speed and FPA with dFPA/dSPD gates and a higher-speed tie rule, so its actual choices can differ.
+- **Sphere-grid nodes only.** Part 1 compares blends at the sphere-grid nodes. In NICEOPS the blend happens at the four corners of each sphere cell, which are then interpolated bilinearly in dB. The energy variants here change only the condition blend, not the bilinear step. NORAH2 also interpolates angles in energy, which this experiment does not include.
+- **NORAH2 analogue.** The "NORAH-IDW" variant uses NORAH's weighting rule on NICEOPS's 3-D simplex and normalisation. It is not a reimplementation of NORAH2's 2-D (V, γ) triangulation with F_fc = 2.
+- **What nearest means here.** "Nearest" is Euclidean distance in NICEOPS's normalised (μ, γ, CT) box, or in (μ, γ) for variant c2. AAM selects by speed and FPA with dFPA/dSPD gates and a higher-speed tie rule, so its actual choices can differ.
 - **Footprint scope.** Footprints are broadband only (`--no-spectral`) and use dBA spheres. They were run for S-76D and B205. AW139 has per-direction statistics but no footprint run, and B407 has random states only.
 - **What leave-one-out can and cannot show.** It removes a sphere and its copies, so it tests a sparser database than the real one. Its errors also include each held-out sphere's own measurement noise. It ranks the methods; it does not measure absolute accuracy at full density.
-- **Triangulations.** scipy's triangulation differs from NICE-OPS's Bowyer–Watson. The dB results are exact regardless, as shown above. The energy and IDW numbers depend on which triangulation was used, by the amounts given in section 4.
+- **Triangulations.** scipy's triangulation differs from NICEOPS's Bowyer–Watson. The dB results are exact regardless, as shown above. The energy and IDW numbers depend on which triangulation was used, by the amounts given in section 4.
 - **Legacy databases.** All four databases are legacy: no `database_version`, and the hover repair applied. Their CT copies are synthetic, so "CT interpolation" here tests only the 20 log10 law, not measured thrust dependence.
 
 ## Reproduction
@@ -232,8 +232,8 @@ All scripts are in `/Users/evg5332/.claude/jobs/a090ec0c/tmp/dbblend/` and run w
 | --- | --- |
 | `nod.py` | `.nod` loader with the legacy hover repair |
 | `inspect_db.py` | caches the grids to `*.npz` |
-| `blend.py` | NICE-OPS weights and the alternative blends |
-| `states.sh`, `batch.sh` | NICE-OPS `-S` / LAE runs, written to `states/` and `fp/` |
+| `blend.py` | NICEOPS weights and the alternative blends |
+| `states.sh`, `batch.sh` | NICEOPS `-S` / LAE runs, written to `states/` and `fp/` |
 | `direction_stats.py` | part 1 (`direction_stats.out`, `.json`) |
 | `footprint.py`, `aggregate.py` | part 2 (`fp/*/summary.txt`, `agg_S-76D.out`, `agg_B205.out`) |
 | `loo.py` | part 3 (`loo.out`, `loo.json`) |

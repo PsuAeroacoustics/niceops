@@ -2,13 +2,13 @@
 
 Refraction explains most of the grazing-incidence propagation error, and what is left is not modeled propagation. With each run's own profile, curved rays take the 0–2° board/pole transfer-function error from 7.6 to 0.8–1.2 dB rms with the ground model unchanged, and the parabolic equation (PE) agrees with the ray models at every geometry checked. Two faults in `--refraction stratified` were found and fixed on the way: rays bounced along a surface duct were never searched, and a low source in a weak upwind gradient got no shadow boundary at all. The B407 spheres were rebuilt three times. The shipped database now depropagates along curved rays, refuses to divide out a ground board's near-grazing null, and grids with a floored, azimuth-stretched Shepard weight. Against the day-286 approach SEL it improves rms from 1.42 to 1.37 dB under `stratified` (1.31 to 1.26 under the station atmosphere). The residuals that remain sit near the horizon and are not explained by propagation as modeled, nor by the boards, the gridding or the database blend: low sources at short range read 3–4 dB loud, fast high flight 1.5–2.8 dB quiet at long range. The 1.2 m poles carry the same error as the boards beside them, so the cause is shared: the source's levels near the horizon, or something along the path the models leave out.
 
-This report follows the plan in `Grazing incidence soft ground propagation.md` (30 September). Its first two ranked steps, the full-wave check and the curved-ray pair rerun, are done; the profile ensemble and the reciprocal PE table were not needed for what was found. All numbers are from runs made on 1–2 October 2026 on branch `stratified-ducts` (NICE-OPS, the validation harness, and the harness's public-lineage panam clone); none of it is pushed. `H/` below is the validation harness (`~/Code/Python/niceops-validation`).
+This report follows the plan in `Grazing incidence soft ground propagation.md` (30 September). Its first two ranked steps, the full-wave check and the curved-ray pair rerun, are done; the profile ensemble and the reciprocal PE table were not needed for what was found. All numbers are from runs made on 1–2 October 2026 on branch `stratified-ducts` (NICEOPS, the validation harness, and the harness's public-lineage panam clone); none of it is pushed. `H/` below is the validation harness (`~/Code/Python/niceops-validation`).
 
 ## Propagation
 
 ### Bounced arrivals in a duct
 
-`--refraction stratified` found one eigenray per path. In the day-286 inversion the air aloft is faster than everything between ground and source, so beyond the reach of every direct ray the energy arrives by bouncing along the ground, and the model reported a near-silent shadow there. It now sums every arrival in energy, bounced ones included, each earlier bounce costing the plane-wave |R|²; past every direct ray's reach the strongest bounce becomes the primary (NICE-OPS `e1617d0`).
+`--refraction stratified` found one eigenray per path. In the day-286 inversion the air aloft is faster than everything between ground and source, so beyond the reach of every direct ray the energy arrives by bouncing along the ground, and the model reported a near-silent shadow there. It now sums every arrival in energy, bounced ones included, each earlier bounce costing the plane-wave |R|²; past every direct ray's reach the strongest bounce becomes the primary (NICEOPS `e1617d0`).
 
 | Case | Before | After |
 | --- | --- | --- |
@@ -20,7 +20,7 @@ Three changes bought the cost down from +107% to +55%: splitting each bracket at
 
 ### Board/pole pairs with curved rays
 
-The pairs compare each ground board with the 1.2 m pole beside it, T = L_board − L_pole + G_pole, so the source cancels and only the receivers' ground interaction is left. Taking the ray geometry from each run's measured profile (`niceops_ray_geometry`, NICE-OPS `cdd1b9e`, `2dfb18b`):
+The pairs compare each ground board with the 1.2 m pole beside it, T = L_board − L_pole + G_pole, so the source cancels and only the receivers' ground interaction is left. Taking the ray geometry from each run's measured profile (`niceops_ray_geometry`, NICEOPS `cdd1b9e`, `2dfb18b`):
 
 | Elevation | Frames | Straight rays | Linear | Stratified | Another run's profile |
 | --- | --- | --- | --- | --- | --- |
@@ -32,7 +32,7 @@ Per band, straight rays were 5–16 dB off at 200 Hz–1.25 kHz; curved rays lea
 
 ### A low source in a weak upwind gradient
 
-At the slow end of the day-286 approaches `stratified` was 6.5 dB over straight rays at 63–250 Hz, at microphones 150–450 ft from a source 15–50 ft up, where the PE matched straight rays within 0.5 dB. Two faults (NICE-OPS `90cd576`, `0316225`):
+At the slow end of the day-286 approaches `stratified` was 6.5 dB over straight rays at 63–250 Hz, at microphones 150–450 ft from a source 15–50 ft up, where the PE matched straight rays within 0.5 dB. Two faults (NICEOPS `90cd576`, `0316225`):
 
 - **Faster air aloft hid the boundary.** Any air above the source faster than the ground was read as "rays from aloft reach the receiver", so no ground-grazing boundary was set. They land only past their skip distance, kilometers out; short of it the receiver is in an ordinary shadow. With no boundary there was no transition and no hand-over to the linear fit, and the shadow took the layered shadow ray, focused 6.5 dB by the log law's lowest meters, plus the whole ground term: 12 dB over free field at 63 Hz where the PE gives 4. The boundary now stands (`boundary_under_aloft`) and is taken back where a ray from aloft or along a duct does arrive, which leaves the duct's handling exactly as it was.
 - **A low source leaves the transition no room.** When a band's boundary lies within two diffraction lengths of the source, the shadow-transition table has no lit zone to hand over from, and the source is under the 5 l its table was validated to; V put the whole path 2–5 dB under the PE. Such a band keeps the ray model to its boundary and blends to V over the next diffraction length, without the creeping-wave loss in the blend (which put a 30 m source in a linear lapse 6 dB under the PE near its boundary).
@@ -64,7 +64,7 @@ Frame scores are energy means with no gate on the measured level (`band_frames_s
 
 ### Depropagating along curved rays
 
-Straight-ray depropagation is good to about 0.5 dB at a 10° rim, ±1.5 dB at 5–10° and up to 10 dB below 5° (`H/propagation/depropagation_refraction.py`). panam's `depropagate_hemisphere` now takes a `ray_model`: `niceops_ray_geometry` returns per pair the launch depression (where the sample is filed), the tube's range (spreading), the arc length (absorption) and the arrival angle (the board's response). panam depends on NICE-OPS only through that executable and a CSV; the default stays straight rays.
+Straight-ray depropagation is good to about 0.5 dB at a 10° rim, ±1.5 dB at 5–10° and up to 10 dB below 5° (`H/propagation/depropagation_refraction.py`). panam's `depropagate_hemisphere` now takes a `ray_model`: `niceops_ray_geometry` returns per pair the launch depression (where the sample is filed), the tube's range (spreading), the arc length (absorption) and the arrival angle (the board's response). panam depends on NICEOPS only through that executable and a CSV; the default stays straight rays.
 
 ### Ground-board correction near grazing
 
@@ -72,7 +72,7 @@ A curved ray reaching a flush board within half a degree of grazing had the boar
 
 ### Gridding the rim
 
-The hemisphere grid was a 10° elevation step with Shepard interpolation over a fixed 25° radius. It is big enough to fill overhead, where samples are up to 18° apart, and far too big for the rim, where they are under a degree apart: on low descents the samples fall about 6 dB from 8–10° to 2–4° below the horizon, and the grid read 2.4–2.9 dB loud at 2–4°. The written sphere and NICE-OPS's bilinear reading add nothing further (`H/spheres/rim_samples.py`).
+The hemisphere grid was a 10° elevation step with Shepard interpolation over a fixed 25° radius. It is big enough to fill overhead, where samples are up to 18° apart, and far too big for the rim, where they are under a degree apart: on low descents the samples fall about 6 dB from 8–10° to 2–4° below the horizon, and the grid read 2.4–2.9 dB loud at 2–4°. The written sphere and NICEOPS's bilinear reading add nothing further (`H/spheres/rim_samples.py`).
 
 An adaptive grid (panam `4a8debd`) gives each node a radius from its own samples: R = max(1.3 d₈, 1.3 d₃ mics, 0.5 s), capped at 60°, d₈ the distance to the 8th sample, d₃ mics the distance within which three microphones contribute, s the sample's angular resolution. A node no radius under the cap can bracket with three microphones retries with fewer before it is a gap (panam `ea119c2`); every sphere with gaps now misses fewer directions than the fixed grid did (286318: 54% against 68%).
 
@@ -90,7 +90,7 @@ At 10–40° every variant stays within 0.25 dB of its samples ahead, abeam and 
 
 ### Databases against the day-286 approaches
 
-| Database (NICE-OPS commit) | SEL rms, station / `stratified` | at 5–10° peak elevation | Frames, under 100 ft and 20 kt | Frames, 2–5° at 4,000–8,000 ft |
+| Database (NICEOPS commit) | SEL rms, station / `stratified` | at 5–10° peak elevation | Frames, under 100 ft and 20 kt | Frames, 2–5° at 4,000–8,000 ft |
 | --- | --- | --- | --- | --- |
 | Curved rays, fixed 25° grid (`56ce39b`) | 1.31 / 1.42 dB | 2.10 / 2.28 dB | +4.45 dB | −0.13 dB |
 | Adaptive Shepard, board cap (`041f39b`) | 1.28 / 1.39 | 2.02 / 2.20 | +3.90 | −0.55 |
@@ -118,7 +118,7 @@ SEL by speed overhead, energy means, predicted − measured: 40–60 kt −0.3 d
 
 ### The hover
 
-NICE-OPS pointed the sphere's nose along the velocity, which at hover is a few tenths of a knot of drift in any direction. Below 5 kt the nose is now the heading (the AC format's column 8), turned into the local frame by an offset inferred from the track's fast states or from `--frame_bearing` (NICE-OPS `9fc714a`). No shipped track and no day-286 approach goes that slow (the approaches bottom out at 13 kt), so neither moves.
+NICEOPS pointed the sphere's nose along the velocity, which at hover is a few tenths of a knot of drift in any direction. Below 5 kt the nose is now the heading (the AC format's column 8), turned into the local frame by an offset inferred from the track's fast states or from `--frame_bearing` (NICEOPS `9fc714a`). No shipped track and no day-286 approach goes that slow (the approaches bottom out at 13 kt), so neither moves.
 
 The database's hover is synthesised from the slowest level pass averaged fore to aft. The day-283 hovers (H1–H12, never used before) were flown over the center of a 500 ft ring of 13 boards, low (4–30 ft, heard at 0.5–3° below the horizon) and high (165–235 ft, 18–25°), at four headings (`H/hover/`). Against them, with the nose on the heading:
 
@@ -222,13 +222,13 @@ The per-line offsets could be corrected, but they are ±1 dB at the rim and they
 
 | Repository | Commit | What |
 | --- | --- | --- |
-| NICE-OPS | `e1617d0` | Every arrival under `--refraction stratified`, bounced ones in ducts |
-| NICE-OPS | `cdd1b9e`, `2dfb18b` | `niceops_ray_geometry`: refracted-ray geometry for a batch of pairs |
-| NICE-OPS | `56ce39b` | B407 databases depropagated along curved rays |
-| NICE-OPS | `90cd576`, `0316225` | Boundary short of the skip distance; room for the transition |
-| NICE-OPS | `9fc714a` | Sphere nose on the heading at hover |
-| NICE-OPS | `041f39b` | B407 databases: adaptive grid, board correction capped |
-| NICE-OPS | `5d761b8` | B407 databases: floored Shepard, azimuth reach ×5 (shipped) |
+| NICEOPS | `e1617d0` | Every arrival under `--refraction stratified`, bounced ones in ducts |
+| NICEOPS | `cdd1b9e`, `2dfb18b` | `niceops_ray_geometry`: refracted-ray geometry for a batch of pairs |
+| NICEOPS | `56ce39b` | B407 databases depropagated along curved rays |
+| NICEOPS | `90cd576`, `0316225` | Boundary short of the skip distance; room for the transition |
+| NICEOPS | `9fc714a` | Sphere nose on the heading at hover |
+| NICEOPS | `041f39b` | B407 databases: adaptive grid, board correction capped |
+| NICEOPS | `5d761b8` | B407 databases: floored Shepard, azimuth reach ×5 (shipped) |
 | panam | `23b8bcf`, `8143c63` | `ray_model` in depropagation; samples carry range and height |
 | panam | `4a8debd`, `ce0b16e` | Adaptive radius; `rim_range` |
 | panam | `c0e8639` | `hover_correction` in `build_empirical_database` |
@@ -270,7 +270,7 @@ On the B206L3's decelerating approaches the line breakdown cannot separate site 
 
 ## Addendum: run 286288 is an elevated duct, not a warm layer (2 October, night)
 
-The flush-microphone failure listed under Next item 3 was investigated with the PE, profile variants and the day-286 frames (harness `propagation/micro_shadow.py`, `micro_shadow_frames.py`; NICE-OPS `5d761b8`, shipped B407 database).
+The flush-microphone failure listed under Next item 3 was investigated with the PE, profile variants and the day-286 frames (harness `propagation/micro_shadow.py`, `micro_shadow_frames.py`; NICEOPS `5d761b8`, shipped B407 database).
 
 **The profile.** Toward 270 the effective sound speed is highest at the ground, 334.13 m/s. It falls 0.21 m/s in the lowest foot and 0.42 m/s by 20 ft, to a minimum near 230 ft, and rises to 333.92 m/s at the inversion's top near 330 ft. The near-ground fall is the log-law headwind assumed below the LIDAR's 46 ft gate (z0 = 0.1 ft); the temperature *rises* 0.18 K over the lowest 10 ft. So it is an elevated duct. Its returning rays turn back up 1–20 ft above the ground, and ray theory delivers them to neither receiver.
 
@@ -392,7 +392,7 @@ Under 1,000 ft the 200–630 Hz term is −0.9 to −2 dB at 1–10°. Together 
 
 **Aft, a ray-model artifact beyond the cap:** with curved rays, aft samples past 4,500 ft depropagate +11 to +17 dB too loud at 5–10° (−9 dB at 10–20°). Under straight rays the same samples are within ±1.8 dB at 63–630 Hz. Depropagating through the ray model's too-deep shadows is the cause, which is a second reason to keep the cap with curved rays.
 
-**Approach cards:** panam `bbf8224` refuses approach cards outright. The B206L3 databases are rebuilt without them (NICE-OPS `019a0d5`, September recipe; SEL rms 1.48 / 1.47 dB out of sample). The R66 rebuild is waiting on its data fetch.
+**Approach cards:** panam `bbf8224` refuses approach cards outright. The B206L3 databases are rebuilt without them (NICEOPS `019a0d5`, September recipe; SEL rms 1.48 / 1.47 dB out of sample). The R66 rebuild is waiting on its data fetch.
 
 ## Addendum: building the hover from measured data (3 October)
 
@@ -417,13 +417,13 @@ The synthesised hover (the slowest level pass averaged fore to aft) is 4–13 dB
 
 The approaches barely move (their slowest states are 13 kt): under 100 ft and 40 kt, 63–630 Hz +0.74 → −0.20 dB, 800–2,000 Hz −0.65 → +0.19; every other state within 0.02 dB.
 
-**Statistical fusion** (`H/hover/gp_fusion.py`): the hovers depropagated by panam like the flight spheres (`nose_from_heading`), fused with the synthesis by Gaussian-process regression with run offsets and ring-specific noise. panam's residuals agree with the NICE-OPS frames within 1–1.5 dB at the high ring (except 63 Hz, unresolved: −7.1 against +1.5). From 400 Hz up the fitted vertical correlation length goes to its floor (≈2°): the two rings (+4 to +7 dB at 20°, −1 to −3 near the horizon) are not one smooth field, and off the rings the posterior standard deviation is 5–13 dB. Below 400 Hz the field is smooth (10–17°, ±3–4 dB).
+**Statistical fusion** (`H/hover/gp_fusion.py`): the hovers depropagated by panam like the flight spheres (`nose_from_heading`), fused with the synthesis by Gaussian-process regression with run offsets and ring-specific noise. panam's residuals agree with the NICEOPS frames within 1–1.5 dB at the high ring (except 63 Hz, unresolved: −7.1 against +1.5). From 400 Hz up the fitted vertical correlation length goes to its floor (≈2°): the two rings (+4 to +7 dB at 20°, −1 to −3 near the horizon) are not one smooth field, and off the rings the posterior standard deviation is 5–13 dB. Below 400 Hz the field is smooth (10–17°, ±3–4 dB).
 
 **A second aircraft** (`H/hover/r66_hovers.py`): the R66 flew the same cards at Eglin 500–580 ft up, several runs well off centre, so its boards hear it from 30 to 78°. Against its own synthesised hover (RO-66520, 38 kt) the measured excess at 315–1,250 Hz is +5.6, +5.4, +6.7 and +7.2 dB at 30–40, 40–50, 50–60 and 60–80°, nearly flat and similar all round; near the horizon −1.5 dB (−7.9 above 1.6 kHz). That supports carrying the high ring's offset unchanged toward the nadir, as the two-ring construction does, and not the fall back to the synthesis that the local form and the fusion's short correlation imply. **The R66 track altitude is ~28.6 ft low against the Eglin boards** (the aircraft on the ground reads 17–25 ft below them; board Z and track z share one reference): check the R-66 spheres for it before using them.
 
 **Open:** 3–17° is unmeasured on both aircraft; the 63 Hz disagreement between the two processing routes; whether to ship the de-Doppler two-ring hover with its uncertainty.
 
-**The 63 Hz disagreement was band leakage** (4 October). panam's depropagation sums whole FFT bins between band edges, with 0.64 s Hann windows (1.56 Hz bins at 51.2 kHz). The B407 main rotor's 27.6 and 55.2 Hz harmonics sit 0.6 and 1.0 Hz below the 25/31.5 and 50/63 Hz edges, so a large part of each lands in the band above: on a hover recording, against a 4 s reference, 31.5 Hz +9.6 dB, 63 Hz +6.9 dB, 50 Hz −1.5 dB (the NICE-OPS frame tool's 0.5 s frames leak +1.5 to +4 dB into 63 Hz). Every panam sphere carries it, where depends on each harmonic's Doppler shift; A-weighting takes those bands down 26–40 dB, so SEL hardly moves, but spectral databases' and spectral runs' 31.5–63 Hz do. panam `d716002` adds `tone_aware` banding (tones located by the Hann ratio formula, removed with the window's own shape, filed whole in their own band; within ~1 dB of the reference), and `band_frames.py --tone-aware` the same for frames. With both, the two routes agree at 63 Hz (+2.2 / +2.2 dB at the high ring), and the 63 Hz hover correction is +2.2 dB, not −14: it was processing, half Doppler and half leakage. The de-Doppler, tone-aware two-ring hover (`H/spheres/out/hover_ddt_two_ring`) scores high hovers −7.05 → −1.11 dB and low hovers +0.70 → −0.07 at 315–1,250 Hz on tone-aware frames; approaches overall unchanged, their slowest states 63–630 Hz +0.25 → −0.72 and 800–2,000 Hz −0.64 → +0.21. The low ring still reads 1–3 dB lower through panam than through the frames at 160–1,250 Hz (grazing treatment, open). Not shipped; rebuilding every flight sphere tone-aware is the remaining step before it would be consistent.
+**The 63 Hz disagreement was band leakage** (4 October). panam's depropagation sums whole FFT bins between band edges, with 0.64 s Hann windows (1.56 Hz bins at 51.2 kHz). The B407 main rotor's 27.6 and 55.2 Hz harmonics sit 0.6 and 1.0 Hz below the 25/31.5 and 50/63 Hz edges, so a large part of each lands in the band above: on a hover recording, against a 4 s reference, 31.5 Hz +9.6 dB, 63 Hz +6.9 dB, 50 Hz −1.5 dB (the NICEOPS frame tool's 0.5 s frames leak +1.5 to +4 dB into 63 Hz). Every panam sphere carries it, where depends on each harmonic's Doppler shift; A-weighting takes those bands down 26–40 dB, so SEL hardly moves, but spectral databases' and spectral runs' 31.5–63 Hz do. panam `d716002` adds `tone_aware` banding (tones located by the Hann ratio formula, removed with the window's own shape, filed whole in their own band; within ~1 dB of the reference), and `band_frames.py --tone-aware` the same for frames. With both, the two routes agree at 63 Hz (+2.2 / +2.2 dB at the high ring), and the 63 Hz hover correction is +2.2 dB, not −14: it was processing, half Doppler and half leakage. The de-Doppler, tone-aware two-ring hover (`H/spheres/out/hover_ddt_two_ring`) scores high hovers −7.05 → −1.11 dB and low hovers +0.70 → −0.07 at 315–1,250 Hz on tone-aware frames; approaches overall unchanged, their slowest states 63–630 Hz +0.25 → −0.72 and 800–2,000 Hz −0.64 → +0.21. The low ring still reads 1–3 dB lower through panam than through the frames at 160–1,250 Hz (grazing treatment, open). Not shipped; rebuilding every flight sphere tone-aware is the remaining step before it would be consistent.
 
 **Tone-aware rebuild and the candidate database** (4 October). The B407 spheres rebuilt with the shipped recipe on today's tools reproduce the shipped ones to 0.00 dB (`H/spheres/out/shepfloor5_control`); with `--tone-aware` (`shepfloor5_tone`) only the bands beside rotor harmonics move (5th percentiles 25 Hz −17.9, 31.5 Hz −8.2, 63 Hz −4.7, 80 Hz −3.8 dB; 50 Hz up to +1.9; 125 Hz–3 kHz under 0.4). With the de-Doppler, tone-aware two-ring hover on top (`tone_ddt_two_ring`; `self_test` passes on all 238,428 samples), the day-286 approach SEL (1,112 mic-runs, 10 dB-down measured, median / rms):
 
@@ -435,9 +435,9 @@ The approaches barely move (their slowest states are 13 kt): under 100 ft and 40
 
 Tone-aware bands are neutral for SEL; the hover moves only the mic-runs hearing the approach's slow end (5th percentile −1.0 dB). Ready to ship on request; the ambient-gated database would be rebuilt the same way.
 
-## Addendum: the hover frames ran on a stale NICE-OPS; the release build (4 October)
+## Addendum: the hover frames ran on a stale NICEOPS; the release build (4 October)
 
-**Every hover frame set from 2 October 23:00 to 4 October 01:47 ran NICE-OPS 84462d7, which has no heading nose at hover.** That build is the harness default `build/niceops` (the submodule, 30 September). The shell exports of `NICEOPS_BIN` did not persist into the `band_frames.py` commands. It predates 9fc714a, so a hovering aircraft's nose followed its drift. On H7 (run 283427, nose toward mic 7), mic 7 sat at theta 120°; with the heading nose it sits at 25°, its depression angle.
+**Every hover frame set from 2 October 23:00 to 4 October 01:47 ran NICEOPS 84462d7, which has no heading nose at hover.** That build is the harness default `build/niceops` (the submodule, 30 September). The shell exports of `NICEOPS_BIN` did not persist into the `band_frames.py` commands. It predates 9fc714a, so a hovering aircraft's nose followed its drift. On H7 (run 283427, nose toward mic 7), mic 7 sat at theta 120°; with the heading nose it sits at 25°, its depression angle.
 
 So every azimuthal hover correction above is drift-referenced: the Fourier, two-ring, `dd` and `ddt` corrections and the `tone_ddt_two_ring` candidate. The one exception is the first local correction of 2 October 09:51, which ran the dev build. The fit's wind offsets per card absorbed part of the error. The day-286 approach frames from the same commands ran the old build too. Their database-to-database differences stand, because forward flight's nose is the velocity. The approach SEL tables did set `NICEOPS_BIN` and are unaffected.
 
@@ -472,4 +472,4 @@ Day-286 approach SEL (1,112 mic-runs, median / rms):
 
 The approaches are not in any fit. On them, only the two-ring hover improves the 5–10° bin. The high-ring-only variant leaves the low hovers 1.6 dB loud where the two-ring one leaves them 1.7 dB quiet. The de-Dopplerized hover makes the slowest, lowest approach states 1.3 dB quieter at 63–630 Hz (43,000 of 1.7 million frames). That is the fore-to-aft tone it removes; a slow aircraft has a smaller but real Doppler shift.
 
-**Shipped** in NICE-OPS PR #11 (merge c089976, 4 October): the two-ring B407 databases (`self_test` passes on 238,428 and 1,907,424 samples), with `golden/stratified_*.csv` regenerated (mean change within ±0.05 dB, at most 4.8 dB in one far in-duct cell). The panam that built them is master 4a7779a (panam PR #10). The harness pins both and its default binary is rebuilt, so a run without `NICEOPS_BIN` no longer falls back to the stale build.
+**Shipped** in NICEOPS PR #11 (merge c089976, 4 October): the two-ring B407 databases (`self_test` passes on 238,428 and 1,907,424 samples), with `golden/stratified_*.csv` regenerated (mean change within ±0.05 dB, at most 4.8 dB in one far in-duct cell). The panam that built them is master 4a7779a (panam PR #10). The harness pins both and its default binary is rebuilt, so a run without `NICEOPS_BIN` no longer falls back to the stale build.

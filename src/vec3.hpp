@@ -2,7 +2,7 @@
 
 // A three-component vector of doubles, replacing Eigen::Vector3d.
 //
-// Eigen was the last library the build required beyond netCDF, and NICE-OPS
+// Eigen was the last library the build required beyond netCDF, and NICEOPS
 // used about a hundredth of it: positions, velocities and TPP normals, with
 // dot, cross, norm and normalize.  Nothing here templates over size or defers
 // evaluation, because nothing needs to.

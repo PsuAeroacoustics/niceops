@@ -18,7 +18,7 @@ namespace niceops {
 // The file holds 1-D `latitude` and `longitude` coordinate variables (degrees,
 // strictly increasing) and a 2-D `elevation(latitude, longitude)` in meters.
 // An optional text attribute `vertical_datum` records the datum the heights are
-// on.  NICE-OPS does not convert between datums: --terrain_offset is what puts
+// on.  NICEOPS does not convert between datums: --terrain_offset is what puts
 // the heights on the trajectory's datum (at Amedee, 3DEP's NAVD88 against the
 // 2017 tracks' ellipsoidal heights, -23.6 m), and a mismatch is the caller's
 // error -- which run() and process_trajectory() check for as far as the inputs

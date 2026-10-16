@@ -1,6 +1,6 @@
 # Validation data, benchmarks, inputs and open-source code for an urban street-canyon propagation model (elevated aircraft sources)
 
-Scope: what exists (as of Oct 2026) to build and validate a per-third-octave, energy-based urban canyon propagation model in NICE-OPS (MIT; GPL code only as an external executable for benchmarking). Licenses were checked against the repository or data portal itself wherever marked "verified".
+Scope: what exists (as of Oct 2026) to build and validate a per-third-octave, energy-based urban canyon propagation model in NICEOPS (MIT; GPL code only as an external executable for benchmarking). Licenses were checked against the repository or data portal itself wherever marked "verified".
 
 ## 1. Measured datasets of outdoor sound in canyons/courtyards from elevated or moving sources
 
@@ -72,11 +72,11 @@ The single most relevant measured dataset (Lugten et al., 2383 real aircraft fly
 **Helicopter, urban**: I found no publicly downloadable helicopter-in-street-canyon measurement set. The classic reference is NASA's 1978 urban helicopter noise requirements paper — [NTRS 19780024877](https://ntrs.nasa.gov/api/citations/19780024877/downloads/19780024877.pdf).
 
 ### Inferences
-- For NICE-OPS, validation needs three levels:
+- For NICEOPS, validation needs three levels:
   - EDGE (downloadable, with geometry) for the diffraction and reflection kernels under controlled conditions
   - Lugten's flyover statistics (front/rear and per-position dB(A), octave-band shielding) as the only real-aircraft urban comparison, from the published figures and tables unless the authors share data
   - The user's own 2017 flight-test data, which is open-field, so it does not cover canyons
-- EDGE's CC BY-SA 4.0 is fine for *using* the data in validation. Redistributing derived data files (e.g., checked-in goldens built from EDGE geometry) would carry share-alike obligations on those files, not on NICE-OPS code. That is a judgment; check with counsel if goldens will ship.
+- EDGE's CC BY-SA 4.0 is fine for *using* the data in validation. Redistributing derived data files (e.g., checked-in goldens built from EDGE geometry) would carry share-alike obligations on those files, not on NICEOPS code. That is a judgment; check with counsel if goldens will ship.
 - The Palenda tool's supplementary package is CC BY-NC-SA. Its runnable components ship as Windows wheels (pigeon_exe, pelican_exe, dovelet). It is usable as an external benchmark executable, not as linkable code.
 
 ### Gaps
@@ -104,7 +104,7 @@ The established urban code-comparison benchmark is Hornikx et al. (2017). It use
 - A Zenodo "Urban Sound Propagation" set has 25,000 OSM-derived 500 m × 500 m layouts in 10 cities, with NoiseModelling v4.0 maps (baseline, reflection, diffraction variants). It is anonymous and **CC BY-NC-ND 4.0** — a surrogate-model training set, simulated, not measured — [Zenodo 10609793](https://zenodo.org/records/10609793)
 
 ### Inferences
-- A practical benchmark ladder for NICE-OPS:
+- A practical benchmark ladder for NICEOPS:
   1. Analytic wedge and thin-screen (Biot–Tolstoy/Medwin or BTM via EDtoolbox) for diffraction kernels
   2. Hornikx 2017 2D cross-sections, rerun with openPSTD as an external GPL executable, since the reference data do not appear to be published
   3. EDGE measured 3D scenes
@@ -149,7 +149,7 @@ Facade absorption is small (about 0.01–0.1 broadband), so the dominant uncerta
 
 ### Inferences
 - For an energy-based third-octave model, a facade can be parametrized as absorption α(f) (about 0.02–0.1) plus a scattering coefficient s(f). Glazing gives more low-frequency absorption from panel resonance; balconies and recesses contribute most to s.
-- The Heimes & Vorländer SOFA format is a good, CC BY input format if NICE-OPS ever moves beyond Lambert-plus-specular.
+- The Heimes & Vorländer SOFA format is a good, CC BY input format if NICEOPS ever moves beyond Lambert-plus-specular.
 - Since facade α barely moves levels, most of the effort should go to geometry and scattering.
 
 ### Gaps
@@ -202,7 +202,7 @@ Elsewhere, Overture or OSM footprints (ODbL), with heights from USGS 3DEP lidar 
 - A UAV-derived building height and floor-count dataset exists for one campus (UT Dallas, 2025) — [PMC12704084](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12704084/)
 
 ### Inferences
-- ODbL is a database license. Using OSM or Overture geometry as *input* to a run creates no obligation on NICE-OPS's MIT code. Redistributing a derived building database (e.g., a shipped test city) would require ODbL share-alike on that database. CC BY 4.0 (3D BAG, Google) and CDLA-Permissive-2.0 only need attribution. dl-de/zero needs nothing. US 3DEP is public domain.
+- ODbL is a database license. Using OSM or Overture geometry as *input* to a run creates no obligation on NICEOPS's MIT code. Redistributing a derived building database (e.g., a shipped test city) would require ODbL share-alike on that database. CC BY 4.0 (3D BAG, Google) and CDLA-Permissive-2.0 only need attribution. dl-de/zero needs nothing. US 3DEP is public domain.
 - For canyon acoustics, height error matters through canyon aspect ratio H/W and through rooftop diffraction-edge height. Imagery-derived heights at 3–4 m RMSE with underestimation bias would systematically bias shielding. Lidar-derived (3DEP, AHN) or official LoD2 heights are preferred.
 - OSM `height` and `building:levels` tags are patchy; LoD1 extrusion from levels × 3 m is the usual fallback. (Common practice, not sourced here.)
 

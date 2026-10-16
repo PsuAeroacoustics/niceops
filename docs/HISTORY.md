@@ -1,6 +1,6 @@
-# NICE-OPS history
+# NICEOPS history
 
-How NICE-OPS got to its current form, and why old results differ from new ones. For what the
+How NICEOPS got to its current form, and why old results differ from new ones. For what the
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
@@ -19,7 +19,7 @@ retain the original path.
 
 ## Origins (2020–2021)
 
-Eric Greenwood and Rob Rau developed NICE-OPS in D, starting in January 2020. It used a
+Eric Greenwood and Rob Rau developed NICEOPS in D, starting in January 2020. It used a
 CGAL-based barycentric interpolator, the SPLINTER B-spline library and matplotlib-d. The S-76D
 case, with `S-76D_M3.nod`, became the default in March 2020. The AW139, B205 and B407 databases
 and tracks from the joint NASA/FAA flight tests were added in January 2021, together with a
@@ -32,7 +32,7 @@ The June 2020 reference figures came from that code; see
 
 ## The C++17 port (September 2026)
 
-In September 2026 NICE-OPS was ported to C++17 (`666046b`) and checked against the D reference.
+In September 2026 NICEOPS was ported to C++17 (`666046b`) and checked against the D reference.
 On the demo case the port matched D to 1e-9 relative, with an actual maximum difference of about
 1e-14, a few ULPs of LDC-vs-clang floating point. Each D dependency was replaced with a small
 local equivalent. [`internals/porting.md`](internals/porting.md) lists the replacements, the four
@@ -66,7 +66,7 @@ multiply the database's `EAA` by a constant 4.0, computing `4.0 * EAA * (range -
 `//TODO Add ground effects` inherited verbatim from the D original (`c74bab3`). That is not a
 ground effect, and it overstated atmospheric absorption fourfold: 168 dB at 6 km, where the
 physical value is 14. panam *writes* that `EAA` as `SPLA - SPLAa` over a 1000 m reference and
-consumes it as `EAA / distance * (slant_range - radius)`, with no such factor. NICE-OPS does the
+consumes it as `EAA / distance * (slant_range - radius)`, with no such factor. NICEOPS does the
 same.
 
 Before it was removed, it was measured against `--ground_effect`, the model it was standing in
@@ -97,7 +97,7 @@ whose closest approach to a source state is inside the 30.48 m sphere.
 
 ## Changes that affect results
 
-Besides the departures from D above, these corrections have moved NICE-OPS's results. Compare
+Besides the departures from D above, these corrections have moved NICEOPS's results. Compare
 old and new results only with them in mind.
 
 ### Metrics
@@ -149,8 +149,8 @@ old and new results only with them in mind.
   1.2 m is a sizeable fraction of the source's height. Plate and free-field results, and the
   goldens, did not move ([Receivers](MANUAL.md#receivers)).
 - **The ground model's boundary-loss term has no cutoff.** panam cut that term to zero past
-  |w| = 500, and NICE-OPS followed, until panam `e978703` evaluated it by `wofz` at any |w|.
-  NICE-OPS does the same, pinned to panam `b758e3a`. The reflection coefficient Q moves by up to
+  |w| = 500, and NICEOPS followed, until panam `e978703` evaluated it by `wofz` at any |w|.
+  NICEOPS does the same, pinned to panam `b758e3a`. The reflection coefficient Q moves by up to
   2e-3 just past the old cut. The demo footprint with the plate receiver moved by at most
   0.028 dB, and by 0.08 dB with a 4 ft point receiver, where the two paths nearly cancel; the
   means moved by about 1e-4 dB. The near-grazing three-term series that stood in past the cut
@@ -280,7 +280,7 @@ faults, each found and fixed in a later rebuild:
 
 **The October 2026 rebuilds.** AS350, Be206L3, EC130, RO-44 and RO-66 were rebuilt on
 2026-10-04 (the AS350 on 2026-10-05) on the B407's flight recipe and its de-Dopplerized hover
-source, without a hover correction. Against each aircraft's approaches (NICE-OPS minus the
+source, without a hover correction. Against each aircraft's approaches (NICEOPS minus the
 measured 10 dB-down SEL, station atmosphere, median / rms in dB), the rebuild moved the scores
 as follows:
 
@@ -309,10 +309,10 @@ The RO-44 and RO-66 rows are after the frame-bearing rebuild below.
 frame-bearing error in the validation harness's sphere build. Its stratified rays took the track
 frame's +x bearing as 270° for every aircraft, but the Eglin layout these two flew runs along
 140°, so the LIDAR winds were rotated by 130° in 55 of RO-44's 86 runs and 82 of RO-66's 98.
-Nothing else changed: the recipe, panam `eeb040b` and NICE-OPS `e13577e`'s ray tool are the
+Nothing else changed: the recipe, panam `eeb040b` and NICEOPS `e13577e`'s ray tool are the
 2026-10-04 build's, and every straight-ray sphere came out bit-identical. Before the fix RO-44
 scored +0.12 / 1.27 and RO-66 +0.86 / 1.57. RO-44's gain is below 20 degrees (0–5 degrees, rms
-2.36 → 1.94; 5–10 degrees, 1.41 → 1.23); RO-66 is unchanged. NICE-OPS predictions were never
+2.36 → 1.94; 5–10 degrees, 1.41 → 1.23); RO-66 is unchanged. NICEOPS predictions were never
 affected, since they fit each track's own bearing.
 
 ## Reference figures (June 2020)

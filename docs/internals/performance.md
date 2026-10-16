@@ -490,7 +490,7 @@ The numbers are here so they are not re-derived.
 boundary (`ShadowTransition`), and `--shadow_model resolved` builds the cramped bands' table
 (`set_cramped_ground`), both from `upward_pressure` and `upward_pressure_heights` in
 `exact_solutions.cpp`. In the validation harness's wide study the cramped table was 75% of all
-NICE-OPS CPU (884 resolved runs at 74 s each, against 0.3–4 s for every other option), and V
+NICEOPS CPU (884 resolved runs at 74 s each, against 0.3–4 s for every other option), and V
 about two thirds of every other refracting run. Profiled with `sample`, then taken, in order:
 
 | change | cramped table, 24 bands, `-j 1` |
@@ -535,7 +535,7 @@ harness's (one AS350 approach at Amedee, 46 flush plates, `-j 1`, histories writ
 footprint's (the demo track on a 41 x 41 grid, an eighth of the demo grid, `-j 8`), plus one PE
 table build. Each case was run with the build before and after, alternately, on the same machine
 at the same load, and every output compared. The harness's own record of what its CPU went on
-set the order: in the wide study `--shadow_model resolved` was 75% of all NICE-OPS CPU, and
+set the order: in the wide study `--shadow_model resolved` was 75% of all NICEOPS CPU, and
 every refracting option's setup most of the rest.
 
 | case | before, CPU | after | × | outputs |

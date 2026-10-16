@@ -1,7 +1,7 @@
-# NICE-OPS theory
+# NICEOPS theory
 
-This document states the models NICE-OPS implements, as equations, with the references they
-come from. It describes the code as it runs: where NICE-OPS departs from a cited reference, the
+This document states the models NICEOPS implements, as equations, with the references they
+come from. It describes the code as it runs: where NICEOPS departs from a cited reference, the
 departure is stated. [The manual](MANUAL.md) covers the options that select each model and when
 to use them. [FIDELITY.md](FIDELITY.md) holds the evidence: how each model was checked, and how
 well it agrees with exact solutions and with measurements. The
@@ -26,7 +26,7 @@ References are numbered in order of first citation and listed at the end.
 
 ## 1. Overview and notation
 
-NICE-OPS is a source–path–receiver model. For each state of a flight trajectory it forms a
+NICEOPS is a source–path–receiver model. For each state of a flight trajectory it forms a
 source directivity from a database of measured noise "spheres" [1]. For each observer it
 carries the level along a path through the atmosphere to the ground. It then integrates each
 observer's level history into exposure metrics. The approach follows the maneuvering-flight
@@ -154,7 +154,7 @@ carries $C_T$ as it does under the barycentric blend. Within the layer:
 
 The 20 kt gate is converted to advance ratio with the database's tip speed, or the vehicle
 file's for a database that records none. The path angle is the one the run uses (§2.1). The
-reference leaves three cases open, and NICE-OPS settles them so:
+reference leaves three cases open, and NICEOPS settles them so:
 
 - **Ties in path angle** go toward level flight: an approach takes the higher (less steep)
   angle, a departure the lower. This follows the labels of [12, Table 2-8], whose signs
@@ -477,7 +477,7 @@ $Q \leftarrow Q\, e^{-2(k\sigma_r\cos\vartheta)^2}$.
 
 ### 5.3 Band averaging and turbulence
 
-A one-third-octave band is not a pure tone. NICE-OPS uses Chessell's band-averaged form
+A one-third-octave band is not a pure tone. NICEOPS uses Chessell's band-averaged form
 [27], with the corrections noted by Daigle, Embleton and Piercy [28], with the path delay
 $\tau = (R_2 - R_1)/c$ and range ratio $\varrho = R_2/R_1$:
 
@@ -938,7 +938,7 @@ energy turbulence scatters into the shadow.
 diffracts smoothly from lit to shadow. Its ground term, taken at the grazing ray's straight
 equivalent geometry, sinks toward the grazing ground wave over soft ground and doubles over
 rigid ground, where the exact field does neither, and near the ground the equivalent-linear
-method can depart from a PE by up to 10 dB [45]. When a ground model is on, NICE-OPS replaces
+method can depart from a PE by up to 10 dB [45]. When a ground model is on, NICEOPS replaces
 the ray model there by a tabulated field.
 
 For each band, and each microphone height, it tabulates $V(\xi, s)$: the level of the
@@ -977,7 +977,7 @@ receiver and $C = 0.75$ for a flush one (below 5 cm, or a plate). Where the fit 
 $m = 1.60$ flush and $1.90$ otherwise. The band is then treated as a linear profile whose
 boundary is $r_b$, gradient $\lvert a\rvert = c_0(\sqrt{2z_s} + \sqrt{2z_r})^2/r_b^2$, for
 $s$, $\xi$ and the creeping-wave rate. With $r_s = r_l$, a linear profile, it is the one
-boundary. The law and its constants are a fit to the parabolic equation particular to NICE-OPS;
+boundary. The law and its constants are a fit to the parabolic equation particular to NICEOPS;
 the calibration is in [FIDELITY](FIDELITY.md#shadow-transition-calibration).
 
 **Turbulent scattering** (`--scattering`, off by default). Turbulence scatters energy into the
@@ -991,7 +991,7 @@ $$
 relative to free field, with $R$ the slant range, is added in energy to the coherent field $V$,
 and replaces the `--shadow_floor` hold. $R$ is clamped to [100, 10 000] m and $z_s$ to
 [10, 300] m, and the energy sum is capped at the table's maximum. A plate adds $K$ to $S$ as it
-does to $V$. The coefficients are NICE-OPS's own regression on parabolic-equation runs with
+does to $V$. The coefficients are NICEOPS's own regression on parabolic-equation runs with
 von Kármán phase screens (§9.1) through measured upwind profiles, not a published formula. The
 flush coefficients, $(a_0, b_0, c_0', d_0) = (39.18, -1.55, 2.10, 5.30)$, apply below 5 cm or
 on a plate, and $(36.67, 5.61, 5.13, 5.30)$, fitted for a receiver 1.2 m up, to every other
@@ -1514,7 +1514,7 @@ than for SEL.
 ## 11. What is not modeled
 
 - **Doppler frequency shift.** The spheres carry the measured, Doppler-shifted spectra, and
-  NICE-OPS applies no shift. A database whose spheres have had the shift removed is refused. The
+  NICEOPS applies no shift. A database whose spheres have had the shift removed is refused. The
   source's motion enters only through the reception-time factor $1 + \dot r/c$ (§10.2).
 - **Diffraction and screening by buildings**, and by terrain without `--terrain_screening`,
   when terrain enters only through each path's mean ground plane (§6.3). Screening by terrain

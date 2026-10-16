@@ -132,7 +132,7 @@ Terrain::Terrain(const std::string& path)
     if (!units.empty() && units != "m" && units != "meter" && units != "meters" && units != "metre"
             && units != "metres")
     {
-        input_error("Terrain file ", path, ": elevation is in '", units, "'; NICE-OPS reads "
+        input_error("Terrain file ", path, ": elevation is in '", units, "'; NICEOPS reads "
                 "terrain heights in meters. Convert the grid to meters.");
     }
     elevations_.resize(lengths[0] * lengths[1]);

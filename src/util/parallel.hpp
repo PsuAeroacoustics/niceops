@@ -1,7 +1,7 @@
 #pragma once
 
 // Minimal chunked parallel-for.  The observer loop is the only thing in
-// NICE-OPS that needs one: every observer's time history is computed from
+// NICEOPS that needs one: every observer's time history is computed from
 // read-only data (the database, and the per-state SourceState array built
 // before the loop) and written to its own slot, so the work splits with no
 // synchronization at all.

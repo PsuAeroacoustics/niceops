@@ -1,6 +1,6 @@
-# NICE-OPS fidelity
+# NICEOPS fidelity
 
-How far each part of NICE-OPS can be trusted, and the evidence for it. The equations are in
+How far each part of NICEOPS can be trusted, and the evidence for it. The equations are in
 [THEORY.md](THEORY.md), how to run each option is in the [manual](MANUAL.md), and changes that
 moved results are in [HISTORY.md](HISTORY.md).
 
@@ -211,7 +211,7 @@ For a 30 m source upwind on a 7 kt log law at 10 kHz, the boundary:
 | calm floor | none | 1 mm | 0.1 ft | 1 ft | 1 m |
 | --- | --- | --- | --- | --- | --- |
 | plain ray theory | 186 m | 893 m | 21.8 km | 216 km | 707 km |
-| NICE-OPS (travel capped at 1.5 k h²) | 186 m | 186 m | 187 m | 233 m | 544 m |
+| NICEOPS (travel capped at 1.5 k h²) | 186 m | 186 m | 187 m | 233 m | 544 m |
 
 At 100 Hz the same source's boundary is 215 m (198 m under a 1 mm floor). The cap's margin over
 ray theory's (4/3) k h² is what a floor can still add: with a cap of 2 k h², a 0.1 ft floor
@@ -590,7 +590,7 @@ variable-porosity grass (200 kPa·s/m²), against the same microphones all on gr
   prediction at 1 kHz by ±5 dB and the best-fitting class from about 1000 to 2000.
 - **The T-38A runway test at Wallops** (NASA TP-1747): pairs of microphones on a concrete runway's
   centerline and on grass beside it, at 0, 1.2 and 9.14 m, five reference runs transcribed from
-  its appendix C (100 Hz–2 kHz). Each pair's concrete-minus-grass difference against NICE-OPS's,
+  its appendix C (100 Hz–2 kHz). Each pair's concrete-minus-grass difference against NICEOPS's,
   source spectrum cancelled, variable porosity 200 for grass and Delany–Bazley 20,000 for
   concrete, rms over bands: 1.2 m pairs near the track 3.3 dB (5.0 predicting no difference),
   far 7.2 dB (10.4), flush pairs 5.1 dB, 9.14 m pairs 5.9 dB. Willshire's own fits (62.5 and
@@ -624,10 +624,10 @@ the TR's c = 340 m/s and homogeneous conditions:
 - **TC23**, an earth berm 5 m high between a source 1 m and a receiver 4 m up, 70 m apart: the
   rubber band's two edges, every diffraction term (Δdif(S,R) uncapped to 29.05 dB at 8 kHz,
   Δdif(S′,R), Δdif(S,R′)), both side planes' heights and lengths, and, with the TR's own
-  A_ground injected for NICE-OPS's ground model, both Δground terms and A_dif (the 25 dB cap
+  A_ground injected for NICEOPS's ground model, both Δground terms and A_dif (the 25 dB cap
   included), all within 0.01–0.03 dB or 0.01 m of the TR.
 - **TC06**, a path clearing a plateau's edge by 0.67 m: unscreened here, where the TR diffracts
-  its 500 Hz and 1 kHz bands (A_dif 4.31 and −0.83 dB); that is NICE-OPS's strict onset, and the
+  its 500 Hz and 1 kHz bands (A_dif 4.31 and −0.83 dB); that is NICEOPS's strict onset, and the
   Directive's term at those bands is reproduced to 0.01 dB.
 - **TC05 and TC20**, unobstructed paths over a 10 m rise: the whole path's mean plane (the
   geometry a table read over terrain takes) is the polyline's exact least-squares plane to
@@ -755,7 +755,7 @@ intervals come from a bootstrap that resamples whole runs.
 
 ### Shipped databases: approach scores per aircraft
 
-NICE-OPS minus the measured 10 dB-down SEL over each aircraft's approaches, station atmosphere,
+NICEOPS minus the measured 10 dB-down SEL over each aircraft's approaches, station atmosphere,
 with the shipped database:
 
 | Database | Spheres | Approaches | Median / rms |
@@ -1186,7 +1186,7 @@ AAM or NORAH2 contour, use `--full_history`; to match a measured SEL's conventio
 **Terrain slope.** A 1–3° slope along the path changes the grazing angle by the slope. Through
 the plate table and the B407 spectrum, that is about 1 dB at 5° peak elevation and 0.3–0.7 dB at
 10° for flush plates, and tenths of a dB at 1.2 m. These come from a standalone model of the
-plate and pole at the changed elevation, not from a NICE-OPS run (a positive slope raises the
+plate and pole at the changed elevation, not from a NICEOPS run (a positive slope raises the
 elevation over the plane):
 
 | peak elevation | plate, slope −3° / −1° / +1° / +3° | 1.2 m pole, 500 m, the same slopes |

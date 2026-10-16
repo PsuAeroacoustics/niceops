@@ -87,7 +87,7 @@ is in [THEORY §8.1](../THEORY.md); the calibration against the PE is in
   V collapses over source height (from 5 l to 100 l; how closely is in FIDELITY), but the series
   itself fails for high sources at high frequency, so do not build it at the actual height.
 - **Each model at its own boundary**: the table places the exact field at the parabolic
-  boundary of k^2-linear and the ray at the circle one; NICE-OPS uses the ray's.
+  boundary of k^2-linear and the ray at the circle one; NICEOPS uses the ray's.
 - **Ray model below xi = -2, blend to -1, V beyond**, floored at V(0) - floor and capped at
   20 log10 2. `max_power_ratio` feeds the peak search's ground bound, or the windowed run stops
   being exact.

@@ -26,7 +26,7 @@ for db in ['S-76D_M3', 'AW139_M1', 'B205_M1', 'B407_M2']:
         drop = same | np.all(np.isclose(cond[:, :2], cond[h, :2]), axis=1)
         keep = ~drop
         # the reduced database must keep the original normalisation box to be comparable;
-        # Conditions normalises by its own min/max, which is what NICE-OPS would do.
+        # Conditions normalises by its own min/max, which is what NICEOPS would do.
         C = Conditions(cond[keep])
         q = cond[h:h + 1]
         x = C.normalize(q)

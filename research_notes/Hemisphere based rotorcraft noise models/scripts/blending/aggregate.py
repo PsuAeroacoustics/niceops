@@ -19,7 +19,7 @@ for f in files:
         d = z[k] - a
         pool[k].append(d.ravel()); poolm[k].append(d[m].ravel())
         per[k].append((d.mean(), d[m].mean(), np.abs(d[m]).max()))
-print(veh, 'tracks', len(files), 'max validation |a - NICE-OPS| %.2e dB' % max(val))
+print(veh, 'tracks', len(files), 'max validation |a - NICEOPS| %.2e dB' % max(val))
 print('fraction of observers whose 10 dB window changed under energy blend: median %.3f max %.3f' % (np.median(win), max(win)))
 for k, name in [('b', 'energy - dB'), ('c', 'nearest 3D - dB'), ('c2', 'nearest FC + CT law - dB'), ('d', 'NORAH IDW energy - dB')]:
     for lab, P in [('all observers', pool[k]), ('within 20 dB of track peak', poolm[k])]:

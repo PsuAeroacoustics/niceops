@@ -26,7 +26,7 @@ enum class TerrainScreening
 //
 //   A = Delta_dif(S,R) + Delta_ground(S,O) + Delta_ground(O,R),
 //
-// with the ground on each side of the diffracting edges from NICE-OPS's own
+// with the ground on each side of the diffracting edges from NICEOPS's own
 // ground model.  THEORY 6.4 has the equations as run.  Everything here is pure
 // and allocation-free once its scratch has grown; process_trajectory holds the
 // scratch per thread.

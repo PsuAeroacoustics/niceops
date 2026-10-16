@@ -1,6 +1,6 @@
-# NICE-OPS leads on propagation, lags on sources
+# NICEOPS leads on propagation, lags on sources
 
-> **Status.** This is a snapshot of NICE-OPS `stratified-ducts` at `e472b6f`, written on 2026-10-03. Most of the ranked shortcomings below have since been addressed:
+> **Status.** This is a snapshot of NICEOPS `stratified-ducts` at `e472b6f`, written on 2026-10-03. Most of the ranked shortcomings below have since been addressed:
 >
 > - PR #8 made ground effect the default, refused a missing humidity, normalized DNL to 24 hours and refused vehicle mismatches.
 > - PR #9 started reading the upper hemisphere, made the seam periodic, read the Doppler flag, and added static operations, NAx and coverage.
@@ -8,22 +8,22 @@
 >
 > Still open: a single compact source, no Doppler shift applied, and no ambient-pressure scaling. `docs/MANUAL.md` describes the current behavior. The validation harness's `paper/model_review.md` (2026-10-05) supersedes the tool comparison here. It covers the build side as well, and corrects the SELENE and HELENA entries: SELENE does not floor its shadow zones, and HELENA blends four (V, γ) hemispheres by inverse distance.
 
-Every research-grade rotorcraft footprint tool reviewed here does the same core thing NICE-OPS does. That covers AAM v3.1, NORAH2, RNM and its FRAME-QS descendant, DLR SELENE, HELENA, Airbus CAROT/MOTUS, ANOPP2/AMAT and the 2023–26 eVTOL work. Each tool stores a fixed-radius sphere or hemisphere of band levels for each steady operating condition, picks or blends spheres along the trajectory, rotates them into the flight frame, and propagates along rays. The tools differ in four things: which state variables index the spheres, the domain they blend in, how much of the sphere they trust, and how much propagation physics sits downstream. AEDT/HNM is the exception, using noise-distance curves at three lateral angles.
+Every research-grade rotorcraft footprint tool reviewed here does the same core thing NICEOPS does. That covers AAM v3.1, NORAH2, RNM and its FRAME-QS descendant, DLR SELENE, HELENA, Airbus CAROT/MOTUS, ANOPP2/AMAT and the 2023–26 eVTOL work. Each tool stores a fixed-radius sphere or hemisphere of band levels for each steady operating condition, picks or blends spheres along the trajectory, rotates them into the flight frame, and propagates along rays. The tools differ in four things: which state variables index the spheres, the domain they blend in, how much of the sphere they trust, and how much propagation physics sits downstream. AEDT/HNM is the exception, using noise-distance curves at three lateral angles.
 
-On the first and last of those four, NICE-OPS is at or beyond the published state of the art. Its (μ, γ_e, C_T) Delaunay blend is the indexing the maneuver literature recommends. No footprint tool found combines its spectral ground model, layered-eigenray refraction, residue-series shadow transitions and a benchmarked PE. The closest is the TU Delft ray model used by Gennaretti et al. (IJA 2017): layered arcs, ray-tube spreading, and Arntzen's shadow-zone model with ground-wave, diffraction and turbulence-scattering terms. Its internal harness result, 1.26 dB rms SEL over 1,112 held-out microphone-runs of B407 approaches, is a multi-run error distribution of a kind no sphere tool has published. It is not yet published itself.
+On the first and last of those four, NICEOPS is at or beyond the published state of the art. Its (μ, γ_e, C_T) Delaunay blend is the indexing the maneuver literature recommends. No footprint tool found combines its spectral ground model, layered-eigenray refraction, residue-series shadow transitions and a benchmarked PE. The closest is the TU Delft ray model used by Gennaretti et al. (IJA 2017): layered arcs, ray-tube spreading, and Arntzen's shadow-zone model with ground-wave, diffraction and turbulence-scattering terms. Its internal harness result, 1.26 dB rms SEL over 1,112 held-out microphone-runs of B407 approaches, is a multi-run error distribution of a kind no sphere tool has published. It is not yet published itself.
 
 Its weaknesses sit elsewhere:
 
 - **Source coverage at the envelope edges.** The hover is synthesised, steep descents are copies of level spheres, and the rim is zero-gated. This is where its largest measured residuals live: +3.9 dB at the low, slow end of approaches and −1.5 to −2.8 dB on the fast forward rim.
 - **Defaults that are not the validated configuration.** A default run has no ground model and assumes 20% relative humidity.
 - **No terrain or screening.** AAM and NORAH2 both model it.
-- **Thin outputs.** NICE-OPS reports A-weighted SEL only, and its "DNL" is 49.4 dB above a standard DNL.
+- **Thin outputs.** NICEOPS reports A-weighted SEL only, and its "DNL" is 49.4 dB above a standard DNL.
 - **One whole-vehicle source.** It does not read the Doppler flag, and it has no static operating modes.
 - **Documentation drift.** CLAUDE.md and the README now misstate the SEL window, the spectral default, the assert policy and the map projection.
 
-Blending in dB rather than energy, the obvious point of difference from NORAH2, matters least. Our own measurement puts it at +0.25 dB mean in SEL. That is a quarter to a seventh of the 1.1–1.8 dB rms leave-one-out interpolation error, and the dB–energy difference in that test (0.02–0.05 dB rms, apart from B407's single deep-null sphere) is a small fraction of it. dB is the only blend that is well defined on NICE-OPS's degenerate condition set.
+Blending in dB rather than energy, the obvious point of difference from NORAH2, matters least. Our own measurement puts it at +0.25 dB mean in SEL. That is a quarter to a seventh of the 1.1–1.8 dB rms leave-one-out interpolation error, and the dB–energy difference in that test (0.02–0.05 dB rms, apart from B407's single deep-null sphere) is a small fraction of it. dB is the only blend that is well defined on NICEOPS's degenerate condition set.
 
-All NICE-OPS code references below are to the `stratified-ducts` branch at `e472b6f`. Where the code-verified note ([verification_niceops.md](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/verification_niceops.md)) disagrees with the inventory, the verified reading is used. The inventory was written at `e472b6f`; the note was run at `fb9fad5`. Of the files it checks, only `niceops.cpp`, `trajectory.*`, `ground_effect.*`, `refraction.*` and `stratified.*` differ between the two, and the line numbers cited here have been re-checked at `e472b6f`. AAM page numbers are the printed TR page numbers; NORAH2 page numbers are the printed page footers of each document.
+All NICEOPS code references below are to the `stratified-ducts` branch at `e472b6f`. Where the code-verified note ([verification_niceops.md](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/verification_niceops.md)) disagrees with the inventory, the verified reading is used. The inventory was written at `e472b6f`; the note was run at `fb9fad5`. Of the files it checks, only `niceops.cpp`, `trajectory.*`, `ground_effect.*`, `refraction.*` and `stratified.*` differ between the two, and the line numbers cited here have been re-checked at `e472b6f`. AAM page numbers are the printed TR page numbers; NORAH2 page numbers are the printed page footers of each document.
 
 ## One lookup table, five lineages, and a regulatory retreat from interpolation
 
@@ -31,7 +31,7 @@ The US lineage runs from RNM (NASA Langley and Wyle, late 1990s) to AAM, which V
 
 **RNM.** The original RNM indexed hemispheres by airspeed, flight-path angle and pylon angle. It took the *nearest* γ and pylon angle, then interpolated airspeed only, "assum[ing] a linear variation in pressure squared". Within a hemisphere it used a Coons-surface interpolation in (θ, φ), and it stepped the aircraft at 0.5 s ([Lucas & Marcolini, c. 1997](https://ntrs.nasa.gov/api/citations/20040110391/downloads/20040110391.pdf)). By 2002 the same sentence described two successive linear interpolations "in the energy domain", first in airspeed and then in flight-path angle ([Conner & Page 2002](https://ntrs.nasa.gov/citations/20030003730)).
 
-**AAM v3.1.** The current AAM Technical Reference repeats that sentence with "in the energy domain" removed ([TR p.31][aam31]). Two pages later it says twice (and again for fixed-wing on p.36–37) that up to four spheres are "linearly interpolated in decibels", in speed and then in FPA, and that this procedure "remains" ([TR p.33–34][aam33]). The documented AAM v3 method is therefore **dB-linear, like NICE-OPS**. Either the domain changed at some RNM version or one of the two documents is wrong; the TR is the later and more specific source. The search has hard gates: 3° in FPA on approach, 5° on departure and 20 kt in speed. FPA may disqualify spheres but speed may not. Ties at the speed midpoint go to the faster sphere ([TR p.33–34][aam33]), and a sparse database falls back to the nearest sphere ([TR p.31][aam31]).
+**AAM v3.1.** The current AAM Technical Reference repeats that sentence with "in the energy domain" removed ([TR p.31][aam31]). Two pages later it says twice (and again for fixed-wing on p.36–37) that up to four spheres are "linearly interpolated in decibels", in speed and then in FPA, and that this procedure "remains" ([TR p.33–34][aam33]). The documented AAM v3 method is therefore **dB-linear, like NICEOPS**. Either the domain changed at some RNM version or one of the two documents is wrong; the TR is the later and more specific source. The search has hard gates: 3° in FPA on approach, 5° on departure and 20 kt in speed. FPA may disqualify spheres but speed may not. Ties at the speed midpoint go to the faster sphere ([TR p.33–34][aam33]), and a sparse database falls back to the nearest sphere ([TR p.31][aam31]).
 
 AAM adds three things on top of the RNM search:
 
@@ -41,11 +41,11 @@ AAM adds three things on top of the RNM search:
 
 AAM does not account for wind in source lookup: ground speed stands in for airspeed ([TR p.226][aam226]).
 
-**FRAME-QS.** This is the research end of the US lineage, and the closest published analogue to NICE-OPS's state handling. It holds about 500 FRAME-predicted spheres over (V, γ, n_z) and blends them by natural-neighbour weights on a 3-D Delaunay triangulation. Its γ_e is the angle between the velocity and the inertial tip-path plane, sin γ_e = v·n̂/V, with n̂ the inertial TPP normal (the direction of a + g). On an aggressive Bell 430 pitch-up it caught the transient OASPL rise "within 2 dB in all three directions"; holding C_T fixed missed about 3.5 dB, close to 20 log10 n_z ([Greenwood, Rau, May & Hobbs 2015](https://ntrs.nasa.gov/api/citations/20160005979/downloads/20160005979.pdf)).
+**FRAME-QS.** This is the research end of the US lineage, and the closest published analogue to NICEOPS's state handling. It holds about 500 FRAME-predicted spheres over (V, γ, n_z) and blends them by natural-neighbour weights on a 3-D Delaunay triangulation. Its γ_e is the angle between the velocity and the inertial tip-path plane, sin γ_e = v·n̂/V, with n̂ the inertial TPP normal (the direction of a + g). On an aggressive Bell 430 pitch-up it caught the transient OASPL rise "within 2 dB in all three directions"; holding C_T fixed missed about 3.5 dB, close to 20 log10 n_z ([Greenwood, Rau, May & Hobbs 2015](https://ntrs.nasa.gov/api/citations/20160005979/downloads/20160005979.pdf)).
 
 **European research tools.** These converged on the main-rotor aerodynamic state:
 
-- **DLR SELENE** stores hemispheres by μ, α_TPP and C_T on a Delaunay mesh with a nearest-neighbour fallback outside the envelope ([Olsman & Lummer](https://dspace-erf.nlr.nl/bitstreams/61aeceb7-6f3b-486f-8d7e-d335cd4db426/download)). That is almost exactly NICE-OPS's `interpolator.cpp`.
+- **DLR SELENE** stores hemispheres by μ, α_TPP and C_T on a Delaunay mesh with a nearest-neighbour fallback outside the envelope ([Olsman & Lummer](https://dspace-erf.nlr.nl/bitstreams/61aeceb7-6f3b-486f-8d7e-d335cd4db426/download)). That is almost exactly NICEOPS's `interpolator.cpp`.
 - **MANOEUVRES** re-indexed its maps from (V, γ, W) to (μ, C_T, α_TPP) ([Trainelli et al. 2015](https://dspace-erf.nlr.nl/server/api/core/bitstreams/132a1b61-32a5-4197-9f86-3fe20f153d5b/content)).
 - **Gennaretti et al.** concluded that "at least three parameters, including disk loading, are required to adequately characterize noise hemispheres" ([Gennaretti et al., AST 2016](https://consensus.app/papers/details/6d70fa64cca3505e90368ff77076782d/?utm_source=claude_desktop)).
 - **HELENA**'s indexing is not documented in anything retrievable; a "three closest flight conditions" rule is unverified. It propagates with SAE ARP 866A absorption, Zaporozhets–Tokarev ground reflection and ray-traced refraction ([ACRP 02-44](https://onlinepubs.trb.org/onlinepubs/acrp/docs/ACRP02-44_FR.pdf)).
@@ -55,7 +55,7 @@ AAM does not account for wind in source lookup: ground speed stands in for airsp
 
 NORAH2 (EASA, 2023–24) added a 2-D Delaunay blend over normalised (V, γ). γ is multiplied by F_fc = 2, "empirically determined to give minimum interpolation error", with no error figure given. The three triangle vertices are combined by an **inverse-distance-weighted energy average**, not barycentric weights ([D1.5d §A.3.1 p.12–13](https://www.easa.europa.eu/en/downloads/132005/en)).
 
-ECAC Doc 32 (1st edition, endorsed 19 May 2026) is built on NORAH but **did not adopt the blend**: "there is no agreed method for the interpolation between hemispheres", so users assign a hemisphere per constant-speed, constant-angle segment. It disclaims single-event accuracy ([ECAC Doc 32](https://www.ecac-ceac.org/images/documents/ECAC-CEAC-DOC_32-REPORT_ON_STANDARD_METHOD_OF_COMPUTING_ROTORCRAFT_NOISE_CONTOURS.pdf)). NICE-OPS's barycentric blending is therefore outside the endorsed European method. That absence of an agreed method is ECAC's whole stated reason. No published measurement of interpolation error exists either, and the experiment below supplies one for NICE-OPS's databases.
+ECAC Doc 32 (1st edition, endorsed 19 May 2026) is built on NORAH but **did not adopt the blend**: "there is no agreed method for the interpolation between hemispheres", so users assign a hemisphere per constant-speed, constant-angle segment. It disclaims single-event accuracy ([ECAC Doc 32](https://www.ecac-ceac.org/images/documents/ECAC-CEAC-DOC_32-REPORT_ON_STANDARD_METHOD_OF_COMPUTING_ROTORCRAFT_NOISE_CONTOURS.pdf)). NICEOPS's barycentric blending is therefore outside the endorsed European method. That absence of an agreed method is ECAC's whole stated reason. No published measurement of interpolation error exists either, and the experiment below supplies one for NICEOPS's databases.
 
 **The regulatory US tools have no sphere.** HNM, inherited by INM and AEDT's helicopter mode, stores SEL-versus-distance at eight distances from 200 to 10,000 ft. These cover three moving modes at left 45°, centre and right 45°, plus static-mode LAmax curves with an eight-term azimuthal Fourier directivity ([HNM methodology, 1988](https://rosap.ntl.bts.gov/view/dot/10018)). AEDT/INM has 16 helicopter modes: 8 dynamic and 8 static or vertical (ground and flight idle, HIGE, HOGE, and vertical ascent/descent in and out of ground effect) ([ACRP 02-44](https://onlinepubs.trb.org/onlinepubs/acrp/docs/ACRP02-44_FR.pdf)).
 
@@ -66,13 +66,13 @@ NASA's 2025 recommendations say the ±45° extrapolation "may not accurately ref
 - Hemispheres 13× coarser move ground levels by only 1–3 dB on average.
 - Tilt-rotor transition is a gap that no three-parameter index covers.
 
-Averages hide local error. In ACRP 02-44, cutting a Bell 412 sphere's lateral spacing to 30–45° moved SEL(A) by up to 2.9 dB and Lmax by up to 9.4 dB at a 6,300 ft sideline, and by 0.0 dB under the track ([ACRP 02-44](https://onlinepubs.trb.org/onlinepubs/acrp/docs/ACRP02-44_FR.pdf)). NICE-OPS's 10° φ × 5° θ grid is three to four times finer laterally, and the harness puts its bilinear reading within about 0.3 dB of the depropagated samples at 4–20° elevation ([niceops_inventory.md §1](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/niceops_inventory.md)).
+Averages hide local error. In ACRP 02-44, cutting a Bell 412 sphere's lateral spacing to 30–45° moved SEL(A) by up to 2.9 dB and Lmax by up to 9.4 dB at a 6,300 ft sideline, and by 0.0 dB under the track ([ACRP 02-44](https://onlinepubs.trb.org/onlinepubs/acrp/docs/ACRP02-44_FR.pdf)). NICEOPS's 10° φ × 5° θ grid is three to four times finer laterally, and the harness puts its bilinear reading within about 0.3 dB of the depropagated samples at 4–20° elevation ([niceops_inventory.md §1](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/niceops_inventory.md)).
 
 ## The tools side by side
 
 The table condenses the comparison. "AAM" is v3.1.0 as documented in the May 2021 TR. "NORAH2" is the D1.5d method plus the V2.0.74 public package, with ECAC Doc 32 noted where it differs. Cells marked *(ours)* are findings from our own inspection of shipped files, not from the documents.
 
-| Aspect | NICE-OPS (stratified-ducts, e472b6f) | AAM v3.1 | NORAH2 / ECAC Doc 32 | RNM / FRAME-QS | SELENE / HELENA / CAROT | AEDT / HNM |
+| Aspect | NICEOPS (stratified-ducts, e472b6f) | AAM v3.1 | NORAH2 / ECAC Doc 32 | RNM / FRAME-QS | SELENE / HELENA / CAROT | AEDT / HNM |
 | --- | --- | --- | --- | --- | --- | --- |
 | **Source format and grid** | netCDF `.nod`, one group per condition. 30.48 m sphere, 36 φ (10°) × 37 θ (5°). dBA + EAA, plus optional 31 one-third-octave bands, 10 Hz–10 kHz (the AS350, B407, Be206L3, EC130, RO-44 and RO-66 `_fixed_load_factor` databases have them; S-76D_M3 does not). Full sphere stored. | One NetCDF file per source per condition. Any regular (θ, φ) grid, "typically" 5° ([p.144][aam144]). Broadband 1/3-OB, narrowband, 1/12-OB or pure tones with phase. Radius per file. 1E35 = no data ([p.145][aam145], [p.163–164][aam163]) | ASCII `.hem` (the HELENA format). 19 × 19 lower hemisphere, 10° bins, 60 m. 31 bands, with absorption to 60 m at ICAO reference conditions included. 38–67% of bins filled, −999 elsewhere *(ours)*. Hover is an azimuth-only table ([D1.5d p.14–15, App. A](https://www.easa.europa.eu/en/downloads/132005/en)) | RNM: broadband and pure-tone hemispheres, 5° typical. FRAME-QS: about 500 predicted spheres | SELENE: fixed-radius hemispheres. HELENA: hemispheres or "noise carpets". CAROT: separate MR tonal, TR tonal and residual hemispheres | No sphere. NPD at 8 distances × 3 lateral angles. Static modes: an azimuth-only Fourier fit (HNM), or 15° steps at 200 ft (AEDT) |
 | **Operating-state index** | (μ, γ_e or γ, C_T); `-q` (γ_e) is the default. C_T = LF·W/(ρV_tip²πR²). On `fixed_load_factor` databases: (μ, γ) + 20 lg(C_T/C_T,ref) above the reference, uncapped | (V, γ) for helicopters, plus nacelle angle (nearest) for tiltrotors. FRAME mode adds W·LF ([p.30][aam30], [p.41][aam41]) | (V, γ) only, using ground-relative 3-D speed. Hover, idle and taxi are discrete modes with fixed dB offsets ([D1.5d p.11–19](https://www.easa.europa.eu/en/downloads/132005/en)) | RNM: (V, γ, pylon). FRAME-QS: (V, γ_e, n_z) | SELENE: (μ, α_TPP, C_T). CAROT: unpublished | 16 discrete modes; speed enters through a 10 lg(V_ref/V) duration term |
@@ -92,12 +92,12 @@ The table condenses the comparison. "AAM" is v3.1.0 as documented in the May 202
 | **Sphere generation** | panam: steady runs over flush boards. Ambient gate at 10 dB with subtraction. Plate BEM divided out (capped at 15 dB). ISO absorption undone (capped at 30 dB), with curved rays where profiles exist. Adaptive Shepard in power on a 2° working grid (weight floored, reach ×5 in azimuth), written at 10° φ × 5° θ; 2° rim. Mirrored upper half, synthetic hover and γ, load-factor copies | ART: fly OMNI_200, subtract every propagation term per band. SNR gate at 5 dB, no subtraction. ZGRID. 1E35 holes. High-frequency absorption cap at 5 kHz ([p.145–161][aam145]) | Measured: 17 inverted plate microphones. Last-good-band repair. Scaled to 60 m, binned at 10°, repeat runs merged in energy ([Final report §2.2.3](https://www.easa.europa.eu/en/downloads/139729/en)) | FRAME: physics model calibrated to measurement | DLR: back-propagated to a 300 m sphere | AAM-simulated certification events → NPDs |
 | **Validation** | Internal, unpublished: B407 day-286 approaches, 1,112 mic-runs, **1.26 dB rms** SEL (station atmosphere), 1.37 (stratified). Windy day 284: about 1.7. S-76D: "within 2 dBA" | Qualitative ("agree well"); no statistics ([p.3][aam3], [p.12][aam12]) | Against certification: ≤ 1.8 EPNdB. Against Nord2000: ±1 dB. No operational comparison ([D3](https://www.easa.europa.eu/en/downloads/139664/en)) | RNM XV-15: 0.5 dB, but self-consistency only. FRAME-QS: 2 dB on 2 maneuvers | SELENE: "good agreement". HELENA: no numbers | Model-to-model only: ±1 dBA SEL against AAM/HELENA inside 45°, 3–5 dBA toward the rotor plane (MD-902, ACRP 02-44). 1.7 dB SELA under-track against AAM for a UAM quadrotor. A 40 dBA contour at over twice AMAT's lateral extent (NASA TM 2025) |
 
-Sources for the NICE-OPS column:
+Sources for the NICEOPS column:
 
 - Grid, blend, fold, Doppler, metrics, refusals and window: verified in code ([verification_niceops.md §§1–10](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/verification_niceops.md)).
 - Validation: the harness README ([niceops-validation README](/Users/evg5332/Code/Python/niceops-validation/README.md)) and the grazing-incidence findings ([Grazing incidence findings](/Users/evg5332/Code/D/NICEOPS/reports/Grazing%20incidence%20findings%202026-10-02.md)).
 - S-76D result: [Pascioni et al., VFS 76, 2020](https://ntrs.nasa.gov/api/citations/20205008035/downloads/Pascioni_VFS2020.pdf).
-- The sphere-generation recipe and the day-286 approach figures (1.26 / 1.37 dB SEL rms, +3.9 dB at the slow end) are for the B407 database of `5d761b8`, the build `e472b6f` ships. That build replaced `0decafa` (straight-ray depropagation, a fixed 10° Shepard grid with a 25° radius, no cap on the board correction; the 2° floor is unchanged) by way of `56ce39b` and `041f39b`. The options study (§1), the day-284 windy-day figures and the four footprints (§11) are harness README results measured at earlier NICE-OPS commits (`d4c868d`, `70ce85e`, `d852613`) on the straight-ray build or its day-284-held-out variant, and have not been rerun on `5d761b8`.
+- The sphere-generation recipe and the day-286 approach figures (1.26 / 1.37 dB SEL rms, +3.9 dB at the slow end) are for the B407 database of `5d761b8`, the build `e472b6f` ships. That build replaced `0decafa` (straight-ray depropagation, a fixed 10° Shepard grid with a 25° radius, no cap on the board correction; the 2° floor is unchanged) by way of `56ce39b` and `041f39b`. The options study (§1), the day-284 windy-day figures and the four footprints (§11) are harness README results measured at earlier NICEOPS commits (`d4c868d`, `70ce85e`, `d852613`) on the straight-ray build or its day-284-held-out variant, and have not been rerun on `5d761b8`.
 
 ### The NORAH2 rows rest partly on reverse-engineering
 
@@ -105,13 +105,13 @@ The NORAH2 frame findings come from refitting the `.his` emission angles of the 
 
 The departure example banks its hemisphere **away from** the turn centre in both turns (0.026° rms against 5.7° for inward bank), while the approaches bank inward. The cause is the multi-event module: it gives each `R` track segment −atan(V²/gR) and each `L` segment +atan(V²/gR) regardless of the direction in which the segment is flown. One of the two senses must therefore be wrong, and D1.5d eq. 20 says it is the departure. The φ error is 2|bank|. For the example's 2–3° banks that costs about 0.2–0.3 dB typical and 0.8–1.0 dB at the 90th percentile, along the turns only. This is a sensitivity estimate; NORAH2 was not rerun. The same refit shows that SingleEvt clamps any direction above the equator to φ = ±90° at the same θ. Scripts: [norah2_frame](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/scripts/norah2_frame/).
 
-NICE-OPS cannot make this class of error, because its bank is the load-factor direction derived from the path itself. It is a warning, though, for any future input column that carries roll explicitly.
+NICEOPS cannot make this class of error, because its bank is the load-factor direction derived from the path itself. It is a warning, though, for any future input column that carries roll explicitly.
 
 ## Exchanging spheres with AAM and NORAH2
 
 The three formats agree on the angle grid and disagree on almost everything stored with it:
 
-| Convention | NICE-OPS / panam | AAM v3.1 (ART) | NORAH2 (.hem) |
+| Convention | NICEOPS / panam | AAM v3.1 (ART) | NORAH2 (.hem) |
 | --- | --- | --- | --- |
 | θ, φ | θ from nose; φ = 0 down, + starboard | Same (ANOPP) ([p.29][aam29]); the RNM 1997 paper had + port | Same (D1.5d eq. 11) |
 | Roll sign | None stored (bank from the path) | + = left (port) down ([p.20][aam20]) | + = starboard down (SingleEvt fit *(ours)*) |
@@ -126,16 +126,16 @@ The three formats agree on the angle grid and disagree on almost everything stor
 
 Sources: [aam_v3.md §§1, 3, 5](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/aam_v3.md), [norah2.md §§2–3](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/norah2.md), [norah2_aam_checks.md §A](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/norah2_aam_checks.md), [hemisphere_generation.md §5](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/hemisphere_generation.md).
 
-panam already writes both formats (`write_aam_hemisphere_netcdf`, `write_norah2_hemisphere`, `write_norah2_triangulation`) and reads `.hem` (`load_norah2_hemisphere`). NICE-OPS exports AAM spheres (`--export_aam`) but imports neither format. Two hazards follow:
+panam already writes both formats (`write_aam_hemisphere_netcdf`, `write_norah2_hemisphere`, `write_norah2_triangulation`) and reads `.hem` (`load_norah2_hemisphere`). NICEOPS exports AAM spheres (`--export_aam`) but imports neither format. Two hazards follow:
 
 - **Ground speed in an IAS field.** panam writes the run's mean ground speed into NORAH2's ACSPEED field (`noise_abatement_2017.py:490, 993`). That is harmless inside NORAH2, which looks up by ground speed, but wrong for anyone who reads the field as labelled.
-- **Lost error cancellation.** An ART sphere had its ground reflection removed with AAM's own Chien–Soroka model and flow resistivity. Propagating it with NICE-OPS's plate or ground models loses the error cancellation AAM gets ([aam_v3.md §11](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/aam_v3.md)).
+- **Lost error cancellation.** An ART sphere had its ground reflection removed with AAM's own Chien–Soroka model and flow resistivity. Propagating it with NICEOPS's plate or ground models loses the error cancellation AAM gets ([aam_v3.md §11](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/aam_v3.md)).
 
 ## Blending in dB costs a quarter decibel; picking the nearest sphere costs up to four
 
 The literature has no number for the blending domain. NORAH2's F_fc = 2 was tuned "to give minimum interpolation error" with no figure published, and ECAC cites the absence of an agreed method. So this review measured it directly.
 
-All numbers in this section are **our own computation**. We re-implemented NICE-OPS's broadband path in numpy, copying its normalisation, the 10% boundary duplication, the Delaunay weights, clamping and the nearest fallback. The re-implementation reproduces the NICE-OPS LAE output to ≤ 2.4e-13 dB on all 43 S-76D and B205 tracks at the default 120 × 120 grid. We then swapped only the condition blend for three alternatives:
+All numbers in this section are **our own computation**. We re-implemented NICEOPS's broadband path in numpy, copying its normalisation, the 10% boundary duplication, the Delaunay weights, clamping and the nearest fallback. The re-implementation reproduces the NICEOPS LAE output to ≤ 2.4e-13 dB on all 43 S-76D and B205 tracks at the default 120 × 120 grid. We then swapped only the condition blend for three alternatives:
 
 - an energy blend with the same weights;
 - a NORAH-style inverse-distance energy blend over the same simplex;
@@ -143,7 +143,7 @@ All numbers in this section are **our own computation**. We re-implemented NICE-
 
 The data were the shipped `S-76D_M3`, `AW139_M1`, `B205_M1` and `B407_M2` databases, with the S-76D, AW139 and B205 tracks; B407 has no shipped track and was evaluated at 20,000 random states ([experiment scripts](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/scripts/blending/)). The scripts, and those for the NORAH2 roll refit above, are committed with the research notes together with their summary outputs. The per-track state CSVs and intermediate arrays are not included; `scripts/blending/states.sh` regenerates the states. The scripts could later move to `niceops-validation`.
 
-The comparison ran against an existing NICE-OPS build, not one made at `e472b6f`. The broadband path it reproduces does not differ between `fb9fad5` and `e472b6f`: `src/sphere_database.cpp`, `src/interpolator.cpp`, `src/delaunay.cpp`, `src/predicates.cpp` and `src/util/sel.hpp` are unchanged between `fb9fad5` and `e472b6f`, and so are those four databases (`B407_M2` is not the B407 build of `5d761b8`, which changed only `B407_fixed_load_factor.nod` and `B407_ambient_gated.nod`) and the tracks used. The one change in `src/niceops.cpp` and `src/trajectory.cpp` that reaches a broadband run, `9fc714a`'s heading nose, applies only below 5 kt. No shipped track goes below 12.5 kt.
+The comparison ran against an existing NICEOPS build, not one made at `e472b6f`. The broadband path it reproduces does not differ between `fb9fad5` and `e472b6f`: `src/sphere_database.cpp`, `src/interpolator.cpp`, `src/delaunay.cpp`, `src/predicates.cpp` and `src/util/sel.hpp` are unchanged between `fb9fad5` and `e472b6f`, and so are those four databases (`B407_M2` is not the B407 build of `5d761b8`, which changed only `B407_fixed_load_factor.nod` and `B407_ambient_gated.nod`) and the tracks used. The one change in `src/niceops.cpp` and `src/trajectory.cpp` that reaches a broadband run, `9fc714a`'s heading nose, applies only below 5 kt. No shipped track goes below 12.5 kt.
 
 ### The size of the effect
 
@@ -186,9 +186,9 @@ The dB blend is unbiased and the energy blends run high by 0.08–0.24 dB. The r
 
 **The blending domain is therefore a systematic offset question against NORAH2 (+0.25 dB from the condition blend), not an accuracy question.** Database density and measurement scatter matter an order of magnitude more. Tuinstra and Sijtsma reach the analytical counterpart: dB averaging sits 0.03, 0.15 and about 0.6 dB below the energy mean for ±1, ±2 and ±6 dB scatter. They also show that energy-domain directivity fits give "erroneous results", including negative energies, under strong directivity ([Tuinstra & Sijtsma](https://dspace-erf.nlr.nl/bitstreams/10f99d37-2225-43e9-9bf1-ac584ac6cdd7/download)).
 
-This covers the condition blend alone. NORAH2 also interpolates within each hemisphere in energy, on 10° × 10° cells against NICE-OPS's 10° × 5°, and fills 33–62% of each hemisphere from the nearest bin. Neither step was included here. Jensen's inequality makes the energy bilinear step add to the offset, and the fill can move it either way, so the full NICE-OPS–NORAH2 offset is unmeasured. The NORAH-style variant also used NICE-OPS's 3-D simplex, not NORAH2's 2-D (V, 2γ) mesh.
+This covers the condition blend alone. NORAH2 also interpolates within each hemisphere in energy, on 10° × 10° cells against NICEOPS's 10° × 5°, and fills 33–62% of each hemisphere from the nearest bin. Neither step was included here. Jensen's inequality makes the energy bilinear step add to the offset, and the fill can move it either way, so the full NICEOPS–NORAH2 offset is unmeasured. The NORAH-style variant also used NICEOPS's 3-D simplex, not NORAH2's 2-D (V, 2γ) mesh.
 
-### Why NICE-OPS cannot simply switch to energy
+### Why NICEOPS cannot simply switch to energy
 
 The shipped conditions form a degenerate prism. Every flight condition carries eight synthetic C_T copies at 0, 1, 1.1, 1.2, 1.5, 2, 3 and 5 × C_T,ref. Those above 1 × are exactly the reference sphere plus 20 lg(C_T/C_T,ref), and the 0 × copy repeats the reference. The Delaunay triangulation of that set is therefore not unique.
 
@@ -201,11 +201,11 @@ An energy option for NORAH2 parity would therefore need a different scheme: a 2-
 Two incidental findings from the experiment matter more than the domain:
 
 - **Padding copies.** A third to half of each database's flight conditions are copies of a measured sphere at γ = −24° and +35°. Outside the measured γ range (−8.7° to +14.4° for S-76D), the blend is therefore constant extrapolation of the edge spheres.
-- **Nearest fallback.** Falling back to the nearest condition, as AAM does for sparse databases and NORAH2 does outside its hull, is the least accurate method on every database. NICE-OPS reserves it for queries outside the hull, which is the right call.
+- **Nearest fallback.** Falling back to the nearest condition, as AAM does for sparse databases and NORAH2 does outside its hull, is the least accurate method on every database. NICEOPS reserves it for queries outside the hull, which is the right call.
 
 ## Ranked shortcomings, with evidence and fixes
 
-The ranking weighs measured or well-bounded dB impact against how many runs each item touches. Items 1–4 change real predictions by a decibel or more today. Items 5–8 limit what NICE-OPS can be used for, though item 7's nose switch also moves predictions at the hover end. Items 9–11 are about trust in the code and the record.
+The ranking weighs measured or well-bounded dB impact against how many runs each item touches. Items 1–4 change real predictions by a decibel or more today. Items 5–8 limit what NICEOPS can be used for, though item 7's nose switch also moves predictions at the hover end. Items 9–11 are about trust in the code and the record.
 
 | # | Shortcoming | Expected impact | Who does it better | Fix effort |
 | --- | --- | --- | --- | --- |
@@ -229,9 +229,9 @@ The defaults do not match the configuration that was validated:
 - **The ground model is off.** No ground effect is applied by default.
 - **The atmosphere defaults are silent.** Humidity defaults to 20%, and pressure is derived from density·R·T. The code review measured these silent defaults at 1.2–3.0 dB median ([code review X3](/Users/evg5332/Code/D/NICEOPS/reports/NICEOPS%20code%20review%202026-10-02.md)).
 
-The harness options study shows what the defaults cost. Replacing the flat +6 dB board correction with the soft-ground reflection model is "the largest single step on both days": on the spectral path with station air, rms SEL falls from 2.98 to 1.38 dB on calm day 286 and from 4.18 to 2.43 dB on windy day 284 (options study at NICE-OPS `d852613`, on an earlier B407 build). The broadband EAA path with the flat correction sits at 3.40 / 4.34 dB ([harness README](/Users/evg5332/Code/Python/niceops-validation/README.md)). The broadband EAA is linear in range and anchored at 1 km, while true A-weighted absorption is concave in range. With the atmosphere matched, spectral minus broadband therefore runs from −0.75 dB at 0–250 m to +1.76 dB at 1.5–1.75 km.
+The harness options study shows what the defaults cost. Replacing the flat +6 dB board correction with the soft-ground reflection model is "the largest single step on both days": on the spectral path with station air, rms SEL falls from 2.98 to 1.38 dB on calm day 286 and from 4.18 to 2.43 dB on windy day 284 (options study at NICEOPS `d852613`, on an earlier B407 build). The broadband EAA path with the flat correction sits at 3.40 / 4.34 dB ([harness README](/Users/evg5332/Code/Python/niceops-validation/README.md)). The broadband EAA is linear in range and anchored at 1 km, while true A-weighted absorption is concave in range. With the atmosphere matched, spectral minus broadband therefore runs from −0.75 dB at 0–250 m to +1.76 dB at 1.5–1.75 km.
 
-Both competitors default to a ground model. NORAH2 assumes flat soft ground (σ = 200 kPa·s/m², 1.2 m microphones) unless told otherwise ([Manual Annex B p.48][nman]). AAM applies Chien–Soroka with a flow resistivity from SETUP PARA at a 5 ft grid height ([TR p.75][aam75]). A default NICE-OPS footprint is a free-field prediction, which no community receiver experiences.
+Both competitors default to a ground model. NORAH2 assumes flat soft ground (σ = 200 kPa·s/m², 1.2 m microphones) unless told otherwise ([Manual Annex B p.48][nman]). AAM applies Chien–Soroka with a flow resistivity from SETUP PARA at a 5 ft grid height ([TR p.75][aam75]). A default NICEOPS footprint is a free-field prediction, which no community receiver experiences.
 
 **Fix:**
 
@@ -264,7 +264,7 @@ Other tools handle the envelope edges more honestly or more physically:
 
 **Fix:**
 
-- Have panam write a per-cell, per-band coverage mask (measured, gated-low, filled) into each `.nod` group, and have NICE-OPS report, per observer, the share of SEL energy drawn from unmeasured cells.
+- Have panam write a per-cell, per-band coverage mask (measured, gated-low, filled) into each `.nod` group, and have NICEOPS report, per observer, the share of SEL energy drawn from unmeasured cells.
 - Replace the zeroing gate with a censored estimate: keep the gated value as an upper bound and fill from neighbours or a FRAME-type fit.
 - Ship the measured hover correction as its own condition group.
 - Use FRAME-calibrated spheres, or the 2017 Volpe hover-array data (recorded but not distributed by NASA, per [Watts et al. 2019](https://aeroacoustics.psu.edu/files/2022/09/Watts.TM2019-compressed.pdf)), in place of the synthetic hover and the γ copies.
@@ -272,7 +272,7 @@ Other tools handle the envelope edges more honestly or more physically:
 
 ### 3. Flat ground at z = 0 is the largest physics gap against AAM and NORAH2
 
-**What NICE-OPS assumes.** NICE-OPS's ground models take the source height as `source.z` and the horizontal ground distance (`src/propagation.hpp:68-81`). An observer's own z moves only the direct path, and propagation tables likewise assume flat, uniform ground.
+**What NICEOPS assumes.** NICEOPS's ground models take the source height as `source.z` and the horizontal ground distance (`src/propagation.hpp:68-81`). An observer's own z moves only the direct path, and propagation tables likewise assume flat, uniform ground.
 
 **What the competitors model.**
 
@@ -300,14 +300,14 @@ Several reference conditions are either not recorded in the database or not chec
 
 **The load-factor law has no directivity.** Every C_T copy above the reference is the reference sphere plus exactly 20 lg(C_T/C_T,ref) in every direction and band (the 0 × copy repeats it). FRAME-QS's support is in OASPL, and Q-SAM without thrust data is limited to load-factor increases under 10% ([Greenwood et al. 2015](https://ntrs.nasa.gov/api/citations/20160005979/downloads/20160005979.pdf)). FRAME-QS's own database stops at 2 g, and Greenwood, Sim & Boyd saw low-frequency loading noise fall 6 dB in some directions as C_W rose 24%. Above about 2 g the copies, and the analytic correction on `fixed_load_factor` databases, are an extrapolation.
 
-**Ground speed, and no altitude scaling.** The spheres are labelled with ground speed. The `speed_reference` attribute exists in NICE-OPS but panam does not write it, so every database is ground-referenced. More seriously, the levels carry no ambient-pressure or hover-tip-Mach scaling. At constant IAS and weight, the AS350 rose 4.7–5.4 dB in thickness noise from sea level to 7000 ft. Data collapse only when C_W and M_He are matched and amplitude is scaled with ambient pressure; "no simple empirical model can be used to 'correct' the data" ([Watts, Greenwood & Stephenson 2016](https://ntrs.nasa.gov/api/citations/20160009057/downloads/20160009057.pdf); [Greenwood, Sim & Boyd](https://ntrs.nasa.gov/api/citations/20160009056/downloads/20160009056.pdf)). NICE-OPS's μ and C_T are non-dimensional, but its tip speed is a database constant. Running the Amedee B407 database (about 4000 ft) at a sea-level heliport is therefore an unflagged extrapolation. Scaling the AS350 result linearly gives a rough size: about 3 dB in in-plane thickness noise between 4000 ft and sea level (our interpolation), with BVI able to move several dB either way. The 20 lg(p_amb/p_ref) correction in the fix is valid only once C_W and M_He are matched, so it should be applied with an M_He check, not on its own.
+**Ground speed, and no altitude scaling.** The spheres are labelled with ground speed. The `speed_reference` attribute exists in NICEOPS but panam does not write it, so every database is ground-referenced. More seriously, the levels carry no ambient-pressure or hover-tip-Mach scaling. At constant IAS and weight, the AS350 rose 4.7–5.4 dB in thickness noise from sea level to 7000 ft. Data collapse only when C_W and M_He are matched and amplitude is scaled with ambient pressure; "no simple empirical model can be used to 'correct' the data" ([Watts, Greenwood & Stephenson 2016](https://ntrs.nasa.gov/api/citations/20160009057/downloads/20160009057.pdf); [Greenwood, Sim & Boyd](https://ntrs.nasa.gov/api/citations/20160009056/downloads/20160009056.pdf)). NICEOPS's μ and C_T are non-dimensional, but its tip speed is a database constant. Running the Amedee B407 database (about 4000 ft) at a sea-level heliport is therefore an unflagged extrapolation. Scaling the AS350 result linearly gives a rough size: about 3 dB in in-plane thickness noise between 4000 ft and sea level (our interpolation), with BVI able to move several dB either way. The 20 lg(p_amb/p_ref) correction in the fix is valid only once C_W and M_He are matched, so it should be applied with an M_He check, not on its own.
 
 **What NORAH2 records.** Its hemispheres carry TAMB, RELHUM and PAMB, IAS (ACSPEED), γ, pitch, roll, rotor RPM and the wind components in every file ([D1.5d App. A p.34–35](https://www.easa.europa.eu/en/downloads/132005/en)). Its RPM field is corrupt in about 15 shipped files *(ours)*.
 
 **Fix:**
 
 - Have panam write the build atmosphere, the speed reference, the rotor RPM and the site's pressure altitude as root attributes.
-- Have NICE-OPS refuse a vehicle file whose W, R, V_tip or ρ reproduces C_T,ref worse than about 2%, unless overridden.
+- Have NICEOPS refuse a vehicle file whose W, R, V_tip or ρ reproduces C_T,ref worse than about 2%, unless overridden.
 - Add 20 lg(p_amb/p_ref) amplitude scaling and an M_He axis or correction, and say in the output which database conditions were extrapolated.
 - Cap the analytic load-factor correction at the largest load factor the database's source supports (2 g for FRAME-type data), say so in the log, and replace the copies with FRAME-calibrated C_T sweeps where available.
 
@@ -321,7 +321,7 @@ Several reference conditions are either not recorded in the database or not chec
 
 **What the competitors report.** AAM reports Lmax, SEL (A and C), DNL, CNEL, NEF, PNL/PNLT/EPNL, WECPNL, NA, TA and TVL ([TR p.50–52][aam50]). NORAH2 reports LAE, LAmax, PNLTM, EPNL and NAx, with user-defined Lden/Ldn weightings ([Manual §5.1.3 p.21–22][nman]).
 
-**The window differs too.** Both competitors integrate the **whole** history by default: DBDOWN10 is opt-in in AAM ([TR p.64][aam64]) and ISEL10DB = 0 is NORAH2's land-use default. A like-for-like comparison therefore needs a flag on one side. Even with it on, AAM's documented rule is a threshold on samples ("only include points within 10 dB of the maximum"), not NICE-OPS's contiguous first-to-last interval, so dips are excluded there and included here. NORAH2 does not state how ISEL10DB = 1 defines its period. SELENE's definition matches NICE-OPS's. The size of the full-history versus 10 dB-down difference on NICE-OPS footprints has not been measured.
+**The window differs too.** Both competitors integrate the **whole** history by default: DBDOWN10 is opt-in in AAM ([TR p.64][aam64]) and ISEL10DB = 0 is NORAH2's land-use default. A like-for-like comparison therefore needs a flag on one side. Even with it on, AAM's documented rule is a threshold on samples ("only include points within 10 dB of the maximum"), not NICEOPS's contiguous first-to-last interval, so dips are excluded there and included here. NORAH2 does not state how ISEL10DB = 1 defines its period. SELENE's definition matches NICEOPS's. The size of the full-history versus 10 dB-down difference on NICEOPS footprints has not been measured.
 
 **Fix:**
 
@@ -332,7 +332,7 @@ Several reference conditions are either not recorded in the database or not chec
 
 ### 6. A single compact source, and a Doppler flag that is never read
 
-NICE-OPS places one whole-vehicle sphere at the track point (`src/niceops.cpp:778`). The JSON's `Tail Rotor` block is never read. Measured empirical spheres fold the components together correctly at the measured conditions. The single sphere fails in three cases:
+NICEOPS places one whole-vehicle sphere at the track point (`src/niceops.cpp:778`). The JSON's `Tail Rotor` block is never read. Measured empirical spheres fold the components together correctly at the measured conditions. The single sphere fails in three cases:
 
 - when components scale differently off-database;
 - when tones must be summed coherently;
@@ -346,7 +346,7 @@ The evidence for why this matters:
 
 AAM carries up to ten broadband, ten narrowband and ten pure-tone spheres at body offsets. Its tones are summed coherently with absolute phase ([TR p.30][aam30], [p.40–41][aam40]). CAROT/MOTUS separates main rotor, tail rotor and residual, and applies its design masks per component.
 
-The Doppler convention is right for panam's spheres. They keep the received shift (`DOPPLER_SHIFT_REMOVED = 0` in the per-run `.nc` files; the assembled `.nod` carries no flag), so NICE-OPS correctly applies no shift. But NICE-OPS never *reads* the flag (`src/sphere_database.cpp` writes it only in the AAM exporter). An imported AAM or ART sphere marked de-Dopplerized would therefore be propagated with stationary-frame frequencies through absorption, ground and A-weighting.
+The Doppler convention is right for panam's spheres. They keep the received shift (`DOPPLER_SHIFT_REMOVED = 0` in the per-run `.nc` files; the assembled `.nod` carries no flag), so NICEOPS correctly applies no shift. But NICEOPS never *reads* the flag (`src/sphere_database.cpp` writes it only in the AAM exporter). An imported AAM or ART sphere marked de-Dopplerized would therefore be propagated with stationary-frame frequencies through absorption, ground and A-weighting.
 
 There is a trap here too. AAM's DOPPLERSTATE keyword (1 = moving) is coded inversely to the NetCDF variable `DOPPLER_SHIFT_REMOVED` (1, by its name, = stationary), and Bullwink's input (0 = moving, 1 = stationary) follows the file's sense, not the keyword's ([TR p.11][aam10], [p.165][aam165]). Blending reception-referenced spheres across speed also blends different shifts with no correction. AAM instead applies a test-to-model speed difference ([TR p.11][aam10]). When conventions are applied consistently, de-Dopplerized processing and moving-observer prediction agree "typically within 0.5 dB or less" ([ASCENT 038 2025](https://s3.wp.wsu.edu/uploads/sites/2479/2026/04/ASCENT-Project-038-2025-Annual-Report.pdf)).
 
@@ -354,7 +354,7 @@ A misread flag costs more. By our arithmetic, at 100 kt (M ≈ 0.15) the fore/af
 
 **Fix:**
 
-- Have panam write `DOPPLER_SHIFT_REMOVED` per `.nod` group, and have NICE-OPS read it and refuse mixed or set flags. Better, apply f′ = f/(1 − M_r) per band before absorption, ground and weighting.
+- Have panam write `DOPPLER_SHIFT_REMOVED` per `.nod` group, and have NICEOPS read it and refuse mixed or set flags. Better, apply f′ = f/(1 − M_r) per band before absorption, ground and weighting.
 - Allow several spheres per condition group, each with a body-frame offset and a type (broadband or tonal), summed incoherently at first. This is the hook for MR/TR separation and for per-rotor eVTOL spheres. The dimension-agnostic `Delaunay` already makes a fourth index axis, such as nacelle tilt, structurally cheap.
 
 ### 7. No static operations, and a hard switch to the hover nose
@@ -364,7 +364,7 @@ A misread flag costs more. By our arithmetic, at 100 kt (M ≈ 0.15) the fore/af
 - AEDT has 8 static and vertical modes ([ACRP 02-44](https://onlinepubs.trb.org/onlinepubs/acrp/docs/ACRP02-44_FR.pdf)).
 - NORAH2 has IGH, OGH, FIDL, RIDL and TAX ([Manual §5.1.6 p.26][nman]).
 
-**A hard switch at 5 kt.** The sphere nose is the (air) velocity projected into the TPP (`src/sphere_database.cpp:678-688`, fed from `src/niceops.cpp:763-782`). Below 5 kt it is the INS heading instead (`nose_direction`, `src/trajectory.cpp:828-835`), turned into the local frame by an offset inferred from the track's states over 20 kt, or by `--frame_bearing` (`heading_offset`, `:799-826`). A track with neither falls back to the drift, with a warning. Before `9fc714a` every hover nose followed the drift, a few tenths of a knot in any direction. The switch is hard: the code review found that a nose rotated by 30–90° between the two branches steps the level by 2.2–4.4 dB (X4, library-level; how often real hovers and approach ends present such angles is unmeasured). NORAH2's hover tables are azimuth-only, and HNM's static directivity is an eight-term Fourier series in azimuth. NICE-OPS's full (φ, θ) hover sphere is richer in kind; it is let down only by the data behind it and by the hard switch at 5 kt.
+**A hard switch at 5 kt.** The sphere nose is the (air) velocity projected into the TPP (`src/sphere_database.cpp:678-688`, fed from `src/niceops.cpp:763-782`). Below 5 kt it is the INS heading instead (`nose_direction`, `src/trajectory.cpp:828-835`), turned into the local frame by an offset inferred from the track's states over 20 kt, or by `--frame_bearing` (`heading_offset`, `:799-826`). A track with neither falls back to the drift, with a warning. Before `9fc714a` every hover nose followed the drift, a few tenths of a knot in any direction. The switch is hard: the code review found that a nose rotated by 30–90° between the two branches steps the level by 2.2–4.4 dB (X4, library-level; how often real hovers and approach ends present such angles is unmeasured). NORAH2's hover tables are azimuth-only, and HNM's static directivity is an eight-term Fourier series in azimuth. NICEOPS's full (φ, θ) hover sphere is richer in kind; it is let down only by the data behind it and by the hard switch at 5 kt.
 
 **Fix:**
 
@@ -455,18 +455,18 @@ The turns are large effects. Measured LA,max differences between paired turns re
 - Publish per-aircraft statistics for the existing six-aircraft, 139-run approach set, then rebuild one aircraft's database with every approach card excluded.
 - Use the repeat runs plus the measured profiles to put a Monte-Carlo band on a footprint. That would be a first for the field.
 
-**No cross-tool calibration yet.** No published head-to-head comparison of hemispheres for the same vehicle and condition exists ([hemisphere_generation.md §2](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/hemisphere_generation.md)), and NICE-OPS has the material for one:
+**No cross-tool calibration yet.** No published head-to-head comparison of hemispheres for the same vehicle and condition exists ([hemisphere_generation.md §2](../research_notes/Hemisphere%20based%20rotorcraft%20noise%20models/hemisphere_generation.md)), and NICEOPS has the material for one:
 
 - Compare panam's B407 sphere for run 109 with the AAM tutorial's ART sphere for the same run ([TR p.199–207][aam199]), and the shipped 2017 databases with the Watts et al. ART hemispheres, cell by cell over 30–2500 Hz. This isolates builder differences: 10 dB gate with subtraction against a 5 dB gate without, plate BEM against −6 dB, curved against straight depropagation.
-- Load NORAH2's R44, R66 and AS350 hemispheres with `load_norah2_hemisphere`, undo their 60 m ICAO absorption and rescale them to 30.48 m. Compare them with RO-44, RO-66 and AS350 over the |φ| ≤ 60° cells both cover, and fly one NICE-OPS track with each database.
-- Following ANOPP2's ASOFT, reduce a NICE-OPS sphere to the AEDT 0/±45° slices and fly it, to quantify what AEDT-style directivity costs on the day-286 approaches.
+- Load NORAH2's R44, R66 and AS350 hemispheres with `load_norah2_hemisphere`, undo their 60 m ICAO absorption and rescale them to 30.48 m. Compare them with RO-44, RO-66 and AS350 over the |φ| ≤ 60° cells both cover, and fly one NICEOPS track with each database.
+- Following ANOPP2's ASOFT, reduce a NICEOPS sphere to the AEDT 0/±45° slices and fly it, to quantify what AEDT-style directivity costs on the day-286 approaches.
 
-## Where NICE-OPS is ahead of the state of the art
+## Where NICEOPS is ahead of the state of the art
 
-**State indexing and orientation.** NICE-OPS's state handling is what the maneuver literature converged on, and the regulatory tools have not adopted it:
+**State indexing and orientation.** NICEOPS's state handling is what the maneuver literature converged on, and the regulatory tools have not adopted it:
 
 - **Indexing.** (μ, γ_e, C_T), with C_T taken from the trajectory's own load factor and the sphere oriented by the inertial TPP normal, is Q-SAM2 plus FRAME-QS's load-factor axis. It uses the same Delaunay-plus-nearest-fallback design as SELENE, built here on exact predicates. AAM needs the FRAME database type to reach three axes, and NORAH2 stays at (V, γ). The `--no-qsam` ablation alone moves the demo by 0.10 dB median and 1.7 dB at worst.
-- **Orientation.** Because the bank comes from path curvature, NICE-OPS cannot reproduce NORAH2's turn-sense sign error.
+- **Orientation.** Because the bank comes from path curvature, NICEOPS cannot reproduce NORAH2's turn-sense sign error.
 - **Air reference.** Its `--speed_reference air` machinery anticipates the crosswind result that BVI is unchanged in crabbed flight but changes by about 11 dB in sideslip ([Greenwood & Sim](https://ntrs.nasa.gov/api/citations/20130013862/downloads/20130013862.pdf)). No other tool documents an air-referenced database convention; AAM and NORAH2 both say they neglect wind in lookup.
 
 **Propagation.** No footprint tool found combines all of the following, each with reference checks:
@@ -484,7 +484,7 @@ The comparators fall short in specific ways:
 - AAM's refraction is an omnidirectional pre-tabulation over flat ground, and cannot be combined with terrain.
 - NORAH2 has no refraction at all.
 - APET's GFPE tables are the only other full-wave coupling found, and nothing found uses them as a validation oracle.
-- The TU Delft/Arntzen model (Gennaretti et al. 2017) fills shadows with ground-wave, diffraction and turbulence-scattered energy, the counterpart of NICE-OPS's ShadowTransition plus `--scattering`; no accuracy figure is published for it ([Gennaretti et al., IJA 2017](https://repository.tudelft.nl/file/File_8a12a003-8adb-4fca-b37d-03c081592697)).
+- The TU Delft/Arntzen model (Gennaretti et al. 2017) fills shadows with ground-wave, diffraction and turbulence-scattered energy, the counterpart of NICEOPS's ShadowTransition plus `--scattering`; no accuracy figure is published for it ([Gennaretti et al., IJA 2017](https://repository.tudelft.nl/file/File_8a12a003-8adb-4fca-b37d-03c081592697)).
 
 The measured payoff on the windy day (held-out database, harness runs that predate the `5d761b8` rebuild): the 5–10° bin went from +4.5/5.8 dB under straight rays to +0.8/3.0 under stratified rays, and overall rms from 2.36 to 1.70 ([harness README](/Users/evg5332/Code/Python/niceops-validation/README.md)). On co-located board/pole pairs at 0–2° (4,861 frames), straight rays are 7.6 dB rms against 0.8 for linear and 1.2 for stratified ([Grazing incidence findings](/Users/evg5332/Code/D/NICEOPS/reports/Grazing%20incidence%20findings%202026-10-02.md)).
 
@@ -496,21 +496,21 @@ Its known limits (the README and the code review, re-checked at `5d761b8`; the s
 - **Ground-board response.** panam divides out the plate's BEM response instead of a flat −6 dB. ARP 4055 is specified only within 30° of normal incidence, which every rim cell violates ([SAE ARP4055](https://saemobilus.sae.org/standards/arp4055-ground-plane-microphone-configuration-propeller-driven-light-aircraft-noise-measurement)).
 - **Noise floor.** panam subtracts the ambient instead of only gating it. AAM's default gating biases near-floor levels high by up to about 1.2 dB at its 5 dB threshold, by our arithmetic: 10 lg(1 + 10^−0.5).
 
-**Time resolution, kinematics and speed.** NICE-OPS integrates at the trajectory's 0.02 s, against RNM's 0.5 s and AAM's 1–2 s, and applies a reception-time Jacobian worth 0.4 dB on the check set. The demo case's 94.3 million observer-state pairs go through the acoustic loop in about 0.16 s of wall time on 14 threads (about 1 s for the whole run, most of it database load), which makes the propagation options affordable at footprint scale.
+**Time resolution, kinematics and speed.** NICEOPS integrates at the trajectory's 0.02 s, against RNM's 0.5 s and AAM's 1–2 s, and applies a reception-time Jacobian worth 0.4 dB on the check set. The demo case's 94.3 million observer-state pairs go through the acoustic loop in about 0.16 s of wall time on 14 threads (about 1 s for the whole run, most of it database load), which makes the propagation options affordable at footprint scale.
 
 **Validation scale.** As item 11 says, its 1.26 dB rms over 1,112 held-out approach microphone-runs is unmatched in the literature, and would be the field's first such distribution once written up.
 
 ## Conclusion
 
-The comparison changes where effort pays off. The design arguments that dominate the hemisphere literature are already settled in NICE-OPS's favour or are second-order:
+The comparison changes where effort pays off. The design arguments that dominate the hemisphere literature are already settled in NICEOPS's favour or are second-order:
 
 - dB versus energy in the condition blend is worth 0.25 dB;
-- barycentric versus natural-neighbour weights, and (V, γ) versus (μ, C_T, α_TPP) indexing, are questions NICE-OPS already answers the recommended way;
-- no other published propagation chain combines what NICE-OPS's does, though its own limits in ducts and at shadow edges are documented.
+- barycentric versus natural-neighbour weights, and (V, γ) versus (μ, C_T, α_TPP) indexing, are questions NICEOPS already answers the recommended way;
+- no other published propagation chain combines what NICEOPS's does, though its own limits in ducts and at shadow edges are documented.
 
-What separates NICE-OPS from being the reference tool is mostly outside the code: the sphere database at its edges, and the gap between the validated and the default configuration. The two largest measured residuals, the +3.9 dB slow end and the −1.5 to −2.8 dB fast forward rim, are both source-side by elimination: neither goes away under any ray model. Their causes are not yet isolated. Section 2 names the builder candidates: the zeroing gate, the synthesised hover, the γ copies and the hover's lack of variants. The database blend is ruled out. Day 286's spheres are +0.5 to +1.2 dB louder at the forward rim, but a day-286-only database moves only the 6–10° rim and leaves the 2–6° shortfall in place. Each can be tested cheaply: rebuild with the measured hover correction and rescore the under-100 ft, under-20 kt frames; rebuild with a censored rather than zeroing gate and rescore the 2–10° forward frames. Until those runs exist, the coverage mask is a diagnostic, not a fix.
+What separates NICEOPS from being the reference tool is mostly outside the code: the sphere database at its edges, and the gap between the validated and the default configuration. The two largest measured residuals, the +3.9 dB slow end and the −1.5 to −2.8 dB fast forward rim, are both source-side by elimination: neither goes away under any ray model. Their causes are not yet isolated. Section 2 names the builder candidates: the zeroing gate, the synthesised hover, the γ copies and the hover's lack of variants. The database blend is ruled out. Day 286's spheres are +0.5 to +1.2 dB louder at the forward rim, but a day-286-only database moves only the 6–10° rim and leaves the 2–6° shortfall in place. Each can be tested cheaply: rebuild with the measured hover correction and rescore the under-100 ft, under-20 kt frames; rebuild with a censored rather than zeroing gate and rescore the 2–10° forward frames. Until those runs exist, the coverage mask is a diagnostic, not a fix.
 
-On the regulatory side, ECAC's retreat from interpolation shows the field lacks exactly the evidence NICE-OPS can now supply: a measured interpolation error (about 1.1–1.8 dB rms in leave-one-out), a quantified domain effect, and a held-out multi-run validation. Written up with LAmax and terrain added, that evidence would make NICE-OPS the strongest available argument for interpolating hemispheres at all.
+On the regulatory side, ECAC's retreat from interpolation shows the field lacks exactly the evidence NICEOPS can now supply: a measured interpolation error (about 1.1–1.8 dB rms in leave-one-out), a quantified domain effect, and a held-out multi-run validation. Written up with LAmax and terrain added, that evidence would make NICEOPS the strongest available argument for interpolating hemispheres at all.
 
 [aamAnn]: file:///Users/evg5332/Library/CloudStorage/OneDrive-ThePennsylvaniaStateUniversity/Outbox/AAMv3/AAM-V3.10Beta-Distribution-May-2021/AAM_v3_TechnicalReferenceAndUsersGuide-27May2021.pdf#page=3
 [aam3]: file:///Users/evg5332/Library/CloudStorage/OneDrive-ThePennsylvaniaStateUniversity/Outbox/AAMv3/AAM-V3.10Beta-Distribution-May-2021/AAM_v3_TechnicalReferenceAndUsersGuide-27May2021.pdf#page=19

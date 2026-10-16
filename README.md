@@ -1,4 +1,4 @@
-# NICE-OPS
+# NICEOPS
 
 **N**oise **I**nformed **C**ommunity **E**nvironment **O**perations **P**lanning **S**ystem is a
 helicopter noise footprint tool. It predicts ground-level dBA noise exposure over an observer
@@ -13,7 +13,7 @@ grid (or a scattered observer set) from a flight trajectory and a rotor-noise "s
    operations into a day-night level (DNL). Lden, CNEL, LAmax, NAx, time above, C-weighted SEL
    and EPNL are available on request.
 
-NICE-OPS was developed by Eric Greenwood and Rob Rau, written first in D and now implemented in
+NICEOPS was developed by Eric Greenwood and Rob Rau, written first in D and now implemented in
 C++17; [docs/HISTORY.md](docs/HISTORY.md) covers the port and every change that moved results.
 
 ## Building
@@ -46,7 +46,7 @@ tests, from a build with `-DNICEOPS_ASSERTS=ON` as CI does: `ctest --test-dir bu
 
 ## Quick start
 
-With no arguments, NICE-OPS runs a demo case: the trajectory `tracks/S-76D/197421AC.csv`, the
+With no arguments, NICEOPS runs a demo case: the trajectory `tracks/S-76D/197421AC.csv`, the
 database `databases/S-76D_M3.nod` and the vehicle `databases/S-76D.json`, writing
 `integrated/197421_LAE.csv`. That database is broadband. A database that carries spectra runs
 the spectral path, with ground effect, by default; it needs a relative humidity, from the
@@ -83,7 +83,7 @@ sphere databases and four vehicle files; see [Shipped databases](docs/MANUAL.md#
 
 ## Documentation
 
-- [`docs/MANUAL.md`](docs/MANUAL.md): using NICE-OPS: every option, input, output and model.
+- [`docs/MANUAL.md`](docs/MANUAL.md): using NICEOPS: every option, input, output and model.
 - [`docs/THEORY.md`](docs/THEORY.md): the models as equations, with references.
 - [`docs/FIDELITY.md`](docs/FIDELITY.md): how accurate each model is, and the evidence.
 - [`docs/HISTORY.md`](docs/HISTORY.md): the D original, the port, and the
@@ -94,7 +94,7 @@ sphere databases and four vehicle files; see [Shipped databases](docs/MANUAL.md#
 
 ## License
 
-NICE-OPS is under the MIT License; see [`LICENSE`](LICENSE). Every third-party component it
+NICEOPS is under the MIT License; see [`LICENSE`](LICENSE). Every third-party component it
 builds against is permissive (BSD, MIT or the Boost Software License), and none carries a
 reciprocal or source-disclosure obligation. A binary distribution must carry their notices,
 which `THIRD_PARTY_NOTICES.md` reproduces.

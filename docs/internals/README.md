@@ -1,6 +1,6 @@
 # Developer guide
 
-This directory is the developer documentation for NICE-OPS. Each file covers one area of the
+This directory is the developer documentation for NICEOPS. Each file covers one area of the
 code: what to preserve there, why it is built the way it is, the designs that were tried and
 rejected, what it costs, and the tests that guard it. **Read the matching file before you change
 a module.** Much of what looks over-engineered was measured, and many of the obvious
@@ -10,7 +10,7 @@ simplifications were tried and failed.
 
 | File | Reader | What goes there |
 | --- | --- | --- |
-| [`README.md`](../../README.md) | Anyone arriving | What NICE-OPS is, building, a first run, the units trap, an index of the docs. Kept short. |
+| [`README.md`](../../README.md) | Anyone arriving | What NICEOPS is, building, a first run, the units trap, an index of the docs. Kept short. |
 | [`docs/MANUAL.md`](../MANUAL.md) | End users | How to use each option and file: what it does, when to use it, its limits and cost, and the refusals. No equations beyond one-liners, no measurements, no code or test names, no history. |
 | [`docs/THEORY.md`](../THEORY.md) | Users and reviewers who need the equations | The models as run: equations, conventions and references. A change to a model's equations updates it in the same commit. |
 | [`docs/FIDELITY.md`](../FIDELITY.md) | Anyone deciding how far to trust a model | Every measured and validation result, stated once; the other docs link to it. |
@@ -118,9 +118,9 @@ The Python scripts:
 
 ## Propagation roadmap
 
-The plan for propagation (refraction first, then urban) is the Claude Doc "NICE-OPS:
+The plan for propagation (refraction first, then urban) is the Claude Doc "NICEOPS:
 Atmospheric and Urban Propagation Options".
-[`reports/`](../../reports/NICE-OPS%20Atmospheric%20and%20Urban%20Propagation%20Options.md) holds
+[`reports/`](../../reports/NICEOPS%20Atmospheric%20and%20Urban%20Propagation%20Options.md) holds
 a snapshot of it. The internals files name roadmap items by what they are (the
 linear refraction model, the stratified rays, the PE, the propagation tables) and link here
 rather than citing step numbers.

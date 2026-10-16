@@ -80,7 +80,7 @@ with exit status 0. Know these before adding a reader, and follow the same rules
   `fixed_load_factor` database its C_T at 1 g, are compared with the database's
   (`process_trajectory`). A difference over 1 percent
   warns, and over 2 percent is refused unless `--accept_vehicle_mismatch` is given. The weight
-  is compared at 1 percent because panam builds with g = 9.82 and NICE-OPS uses 9.80665. The
+  is compared at 1 percent because panam builds with g = 9.82 and NICEOPS uses 9.80665. The
   vehicle file's keys are listed in the manual's [Vehicle file](../MANUAL.md#vehicle-file).
 - **Databases.** A database must vary where the triangulation needs it (advance ratio, flight
   path angle, and C_T unless `fixed_load_factor`) and may not hold two spheres at one condition;

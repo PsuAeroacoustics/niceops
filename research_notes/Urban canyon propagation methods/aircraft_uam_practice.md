@@ -52,7 +52,7 @@ No regulatory/best-practice aircraft or rotorcraft noise tool (AEDT, FLULA2, ECA
 - ONERA used CSTB's commercial ray code **Mithra** for a source 500 ft above the Airbus Helicopters Marignane site. — [Malbéqui, Forum Acusticum 2023 (CC-BY 3.0)](https://dael.euracoustics.org/confs/fa2023/data/articles/000104.pdf)
 
 ### Inferences
-- The sonAIR design is the closest production analog to what NICE-OPS would build: per-(source cell, receiver) precomputed attenuation, with a cheap on-the-fly path for unobstructed geometries above a 15° margin over the obstacle horizon. NICE-OPS's existing per-state source frame and per-observer loop would map to this by caching a building transfer only for (observer, direction) pairs whose line of sight is near or below the local skyline.
+- The sonAIR design is the closest production analog to what NICEOPS would build: per-(source cell, receiver) precomputed attenuation, with a cheap on-the-fly path for unobstructed geometries above a 15° margin over the obstacle horizon. NICEOPS's existing per-state source frame and per-observer loop would map to this by caching a building transfer only for (observer, direction) pairs whose line of sight is near or below the local skyline.
 - Every production tool that touches buildings uses vertical-plane (over-the-top) diffraction plus incoherent specular reflection; lateral (around-the-edge) diffraction is consistently dropped for cost, and Empa justifies it by time-averaging over a moving source.
 - The repeated statement that building effects are "local" and produce grid-scale artifacts means a footprint tool needs either facade receivers or a statistical treatment (per-receiver urban correction), not a 150 m grid with explicit buildings.
 
@@ -80,7 +80,7 @@ NASA's UAM work so far frames urban propagation as a gap rather than delivering 
 - Casalino, Barbarino & Visingardi, "Simulation of Helicopter Community Noise in Complex Urban Geometry," AIAA J. 49 (2011): early CAA/FW-H plus ray-tracing chain for helicopters in urban geometry. — [DOI 10.2514/1.J050774](https://www.researchgate.net/publication/258475225_Simulation_of_Helicopter_Community_Noise_in_Complex_Urban_Geometry) (title/authors only; no numbers retrieved)
 
 ### Inferences
-- The academic chains are structurally the same as NICE-OPS (noise sphere, then propagation) and use ray or beam tracing directly from the sphere. Their headline magnitudes (+5 dB from reflections, shadows of 20–40 dB) are model results without diffraction and should be treated as upper bounds on shadow depth.
+- The academic chains are structurally the same as NICEOPS (noise sphere, then propagation) and use ray or beam tracing directly from the sphere. Their headline magnitudes (+5 dB from reflections, shadows of 20–40 dB) are model results without diffraction and should be treated as upper bounds on shadow depth.
 - The ONERA +8 dB corner and +14 dB in-canyon figures are coherent, image-source, single-frequency/octave results with perfectly rigid walls; incoherent energy summation would give about +3 dB per reflecting plane instead.
 
 ### Gaps
@@ -126,7 +126,7 @@ Sonic-boom urban work uses 2D/3D Euler or FDTD (Dragna et al.; Cho & Sparrow) an
 
 ### Inferences
 - The sonic-boom result that canyon *median* levels sit within 1 dB of flat ground, while individual locations vary widely, is useful framing for a footprint tool: for a high-elevation source the population-averaged urban correction may be small even where local effects are large.
-- The Riegel 2024 zero-PLdB shadows show what omitting diffraction does, and are a caution for any NICE-OPS ray-only implementation.
+- The Riegel 2024 zero-PLdB shadows show what omitting diffraction does, and are a caution for any NICEOPS ray-only implementation.
 
 ### Gaps
 - Loubeau's and Pierce's specific urban work was not retrieved in this pass; the Dragna 2022 full texts (dB ranges per geometry) were not retrieved (HAL served HTML).
@@ -149,7 +149,7 @@ For SEL, LAeq and Lden, the dominant urban effect in every quantified aircraft s
 - Building wake turbulence adds >3 dB temporal variability locally (AAM tonal source). — [Goyal et al. 2026](https://doi.org/10.1121/10.0042402)
 
 ### Inferences
-- For SEL integrated over the 10-dB-down window, the peak is usually set by the highest-elevation states, which are least affected by shielding; urban effects therefore act mostly on the window's shoulders and on far-lateral receivers. This is consistent with the Schiphol arrival/departure contrast and with Empa's "negligible above 80 dB" finding. A NICE-OPS urban model would change SEL most for receivers lateral to the track and for low hover/approach segments near vertiports, where elevation angles are below about 15–30°.
+- For SEL integrated over the 10-dB-down window, the peak is usually set by the highest-elevation states, which are least affected by shielding; urban effects therefore act mostly on the window's shoulders and on far-lateral receivers. This is consistent with the Schiphol arrival/departure contrast and with Empa's "negligible above 80 dB" finding. A NICEOPS urban model would change SEL most for receivers lateral to the track and for low hover/approach segments near vertiports, where elevation angles are below about 15–30°.
 - A practical magnitude envelope for planning: exposed facade +3 dB (incoherent, one plane; up to +6 dB at the surface), canyon multi-reflection +3 to +5 dB (incoherent) or up to +8 to +14 dB (coherent, rigid), shielded rear facade or courtyard −8 to −16 dB(A) at low elevation and −0 to −5 dB(A) for near-overhead arrivals.
 
 ### Gaps
@@ -159,7 +159,7 @@ For SEL, LAeq and Lden, the dominant urban effect in every quantified aircraft s
 ## 6. Precomputed per-receiver transfer functions indexed by direction (reciprocity), and attenuation tables
 
 ### Takeaway
-Two production-adjacent precedents exist. sonAIR precomputes attenuation per (airspace cell corner, receiver) and interpolates by aircraft position, which is source-position indexed rather than direction indexed. MOTUS/Airbus used per-receiver dB(A)/dB(C) transfer functions from measurement sites to each facade. Gao, Porcayo & Clarke explicitly use reciprocity (tracing from receivers) to build 3D exclusion zones. No tool was found that stores a per-receiver transfer function indexed by incidence direction (azimuth and elevation), which is the form NICE-OPS's sphere lookup would most naturally consume.
+Two production-adjacent precedents exist. sonAIR precomputes attenuation per (airspace cell corner, receiver) and interpolates by aircraft position, which is source-position indexed rather than direction indexed. MOTUS/Airbus used per-receiver dB(A)/dB(C) transfer functions from measurement sites to each facade. Gao, Porcayo & Clarke explicitly use reciprocity (tracing from receivers) to build 3D exclusion zones. No tool was found that stores a per-receiver transfer function indexed by incidence direction (azimuth and elevation), which is the form NICEOPS's sphere lookup would most naturally consume.
 
 ### Cited Findings
 - sonAIR: attenuation precalculated at airspace cell corners for each receiver, "weighted by the aircraft position within the cell," cell size adaptive to altitude and horizontal distance; above 15° over the obstacle horizon, computed on the fly. — [Schalcher et al. 2025](https://www.dora.lib4ri.ch/empa/dload/empa:42543/PDF/view)
@@ -168,9 +168,9 @@ Two production-adjacent precedents exist. sonAIR precomputes attenuation per (ai
 - Kim & Lee 2024: a learned surrogate (CNN, RMSE 2.56 dB, >1800× faster) replaces per-scenario ray tracing in randomly generated urban areas. — [Kim & Lee 2024](https://doi.org/10.1121/10.0024242)
 
 ### Inferences
-- Reciprocity suits NICE-OPS's structure: trace once from each observer (or observer class) over a direction grid (elevation × azimuth) to form a per-band urban gain table G(observer, θ, φ, band), then look up the incidence direction per state, just as the sphere is looked up by emission direction. sonAIR's source-cell indexing is the alternative, and costs ~4 million cell points per airport.
+- Reciprocity suits NICEOPS's structure: trace once from each observer (or observer class) over a direction grid (elevation × azimuth) to form a per-band urban gain table G(observer, θ, φ, band), then look up the incidence direction per state, just as the sphere is looked up by emission direction. sonAIR's source-cell indexing is the alternative, and costs ~4 million cell points per airport.
 - The MOTUS evidence that one transfer function per receiver was adequate across trajectory clusters suggests a coarse direction table could hold A-weighted accuracy for SEL/Lmax.
 
 ### Gaps
 - No published direction-indexed per-receiver urban transfer table (incoherent or coherent) for aircraft was found; neither its accuracy versus full tracing nor its sensitivity to moving-source averaging appears to have been studied.
-- Licenses: sonAIR/sonX, CadnaA, Mithra and UYGUR are proprietary or unreleased (no public license found); NoiseModelling is GPL-3.0, which would constrain direct code reuse in MIT-licensed NICE-OPS.
+- Licenses: sonAIR/sonX, CadnaA, Mithra and UYGUR are proprietary or unreleased (no public license found); NoiseModelling is GPL-3.0, which would constrain direct code reuse in MIT-licensed NICEOPS.

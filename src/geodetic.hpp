@@ -1,7 +1,7 @@
 #pragma once
 
 // WGS84 geodetic coordinates and their projection onto the local Cartesian
-// frame the rest of NICE-OPS works in.  Ported from the D original's
+// frame the rest of NICEOPS works in.  Ported from the D original's
 // worldtransforms.d and wgs84tocartesian.d, the latter itself a port of
 // https://github.com/chrberger/WGS84toCartesian.
 //

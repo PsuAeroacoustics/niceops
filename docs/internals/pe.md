@@ -89,7 +89,7 @@ and the tools `tools/pe_compare.cpp` (`niceops_pe_compare`), `tools/benchmark.cp
   quarter of the step; `PeResult::self_started` says which ran.
 - **Normalization:** Salomons' second-order Gaussian starter times sqrt(i k_a) makes
   p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the exact
-  two-ray field (rigid) and to Weyl–van der Pol through NICE-OPS's own
+  two-ray field (rigid) and to Weyl–van der Pol through NICEOPS's own
   `spherical_reflection_coefficient` (grass), which checks the ground condition's sign too.
 - **The kernel pairs terms into two-lane vectors by hand** (`Lanes`, as `Pair` in
   `sphere_database.cpp`), with the term count a template parameter. From scalar source the
@@ -287,7 +287,7 @@ their printed digits under `--scheme cn`.
   smallest term is exp(-2|z|). A switch on |z| alone put H0(3+6i) off by 1e-6. Its test values
   are Mathematica's, as are the root-finder's.
 - **The benchmark's inputs are its own:** the tabulated impedances (Z = 38.79+38.41i,
-  12.81+11.62i, 5.96+2.46i), not a NICE-OPS impedance model, and the absorption it quotes
+  12.81+11.62i, 5.96+2.46i), not a NICEOPS impedance model, and the absorption it quotes
   (0.18 and 5.4 dB/km, ANSI S1.26-1978; ISO 9613-1 gives 0.22 and 4.98). Its profiles stop at
   1000 m, the height of its contour plots. Only case 2 at 10 km cares, and the paper notes the
   same dependence.

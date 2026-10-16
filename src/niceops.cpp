@@ -256,7 +256,7 @@ void write_band_history_file(const std::vector<BandHistoryRow>& rows,
         const Vec3& microphone, LengthUnit unit, const std::string& filename)
 {
     auto file = open_output(filename);
-    file << "# NICE-OPS band history. Microphone x, y, z (" << unit.name << "): "
+    file << "# NICEOPS band history. Microphone x, y, z (" << unit.name << "): "
          << microphone.x / unit.to_meters << ", " << microphone.y / unit.to_meters << ", "
          << microphone.z / unit.to_meters << ". Times s, range " << unit.name
          << ", angles deg; level_dBA is the A-weighted, band-limited level, band_<Hz> each "
@@ -4511,7 +4511,7 @@ int run(int argc, char* argv[])
     double path_smoothing = 10.0 * ft2m; // 10 ft, in meters
     bool latlon = false;
 
-    CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
+    CLI::App app{"Noise Informed Community Environment Operation Planning System (NICEOPS)."};
     auto* database_option = app.add_option("-d,--database", database_files,
             "netCDF noise database file. Once, or once per trajectory.");
     app.add_option("-l,--logfile", log_file, "Output log file.");

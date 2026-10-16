@@ -139,7 +139,7 @@ change to panam first.
     surface (a thin layer's band, θ a hair under −45°) the wave carries on: |Q| = 151 at
     |w| = 1250 at grazing. The sweep stops at the edge and the formula takes over; `a surface wave
     carried past |w| = 500 ...` holds it to a sweep out to κ = 1e10.
-  - **A mass-like admittance (Im β > 0) keeps NICE-OPS's branch, not panam's.** Its parameter is
+  - **A mass-like admittance (Im β > 0) keeps NICEOPS's branch, not panam's.** Its parameter is
     in the second quadrant. panam squares it and takes the principal root, the negative, whose w()
     grows as exp(|Re w|) and overflows by |w| ~ 1000. Such a surface has no surface wave, and the
     parameter itself gives none. A thin layer gives this in some bands.
@@ -217,7 +217,7 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
     `--terrain_offset -1250` and `--ground_elevation 54.2651` take back to zero in the program's
     own arithmetic.
 - **The ground's z is H + `--terrain_offset` − `--ground_elevation`**, the same
-  `--ground_elevation` that is a WGS84 track's z = 0. NICE-OPS converts no datums. Leaving out
+  `--ground_elevation` that is a WGS84 track's z = 0. NICEOPS converts no datums. Leaving out
   either is a plausible wrong answer, so the run checks what it can (the list is in the manual's
   [Terrain](../MANUAL.md#terrain)). The AC track's own lat/lon check uses `Trajectory::recorded`,
   kept as read, before any trim. Every refusal has a CTest on its message.

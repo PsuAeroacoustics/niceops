@@ -336,9 +336,9 @@ TEST_CASE("Delta_dif against the exact half-plane", "[screening]")
 // terrain model can take: no buildings, barriers or reflections.  The expected
 // values are the TR's, as NoiseModelling's AttenuationComputeOutputCnossosTest
 // transcribes them, rounded to 0.01 dB or 0.01 m; homogeneous conditions only,
-// since NICE-OPS's screening is straight-ray.  Octave bands 63 Hz-8 kHz at the
+// since NICEOPS's screening is straight-ray.  Octave bands 63 Hz-8 kHz at the
 // TR's c = 340 m/s.  Each profile is the TR's polyline, sampled every 0.01 m
-// (which puts every vertex on a sample), seen from the receiver as NICE-OPS
+// (which puts every vertex on a sample), seen from the receiver as NICEOPS
 // sees a path: s from the microphone toward the source.
 namespace {
 
@@ -451,7 +451,7 @@ TEST_CASE("ISO/TR 17534-4 TC23: diffraction over an earth berm", "[screening][is
     check_bands("Delta_dif(S,R')", {10.86, 13.28, 16.05, 19.18, 22.97, 27.46, 31.70, 35.22}, receiver_image, 0.03);
 
     // With the TR's own A_ground on each side (its G-based ground, not
-    // NICE-OPS's model, injected as G = 10^(-A/10)), the combination gives the
+    // NICEOPS's model, injected as G = 10^(-A/10)), the combination gives the
     // TR's Delta_ground terms and A_dif, the cap included.
     const std::vector<double> a_ground_so {-1.02, -0.08, -0.73, -2.79, -2.79, -2.79, -2.79, -2.79};
     const std::vector<double> a_ground_or {-0.28, -1.00, -2.46, -2.46, -2.46, -2.46, -2.46, -2.46};
@@ -489,7 +489,7 @@ TEST_CASE("ISO/TR 17534-4 TC06: a path just over a crest is not screened", "[scr
     // TR table 23: the source 1 m up, the receiver 1.5 m above a plateau 10 m
     // up, whose edge the line of sight clears by 0.67 m.  The TR screens the
     // 500 Hz and 1 kHz bands all the same (Delta_dif(S,R) 3.16 and 0.56 dB,
-    // A_dif 4.31 and -0.83 dB), by the Directive's -lambda/20 rule; NICE-OPS
+    // A_dif 4.31 and -0.83 dB), by the Directive's -lambda/20 rule; NICEOPS
     // screens only a profile above the line of sight (ground.md, Screening),
     // so this path is unscreened, and the difference is the documented one.
     const TrCase c = tr_case({{0.0, 0.0}, {112.41, 0.0}, {178.84, 10.0}, {194.16, 10.0}});

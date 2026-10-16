@@ -74,7 +74,7 @@ void check_against(const std::string& path, const GroundModel& ground,
     std::vector<double> level(kBands.size());
     for (const auto& r : references)
     {
-        // NICE-OPS propagates observer minus source, the reverse of panam's dx, dy.
+        // NICEOPS propagates observer minus source, the reverse of panam's dx, dy.
         plate.level_exact(r.source_height, std::hypot(r.dx, r.dy), std::atan2(-r.dy, -r.dx),
                 level.data(), 0, kBands.size());
         for (std::size_t band = 0; band < kBands.size(); band++)

@@ -49,8 +49,8 @@ An AAM source is a set of NetCDF files, one per noise source and per flight cond
 - QuietSphere "reads in ASCII data, allows the user to add or subtract a fixed dB value in all directions and across frequency bands". It writes an ASCII NetCDF-style file for NCGen, under a new 5-character vehicle name ([TR p.172 §4.13][p172]). The distribution table says it "Takes a NCDump format ASCII file (1/3 OB only) and adds x dB to all bands" ([TR p.46 Table 3-3][p46]). The v3.1.0 ReadMe lists an "Updated QuietSphere utility for more flexible input formats" ([ReadMe][readme]).
 
 ### Inferences
-- The angle convention (theta from the nose, phi a roll angle about the body x-axis with 0 = down) is the same as NICE-OPS's: phi = 0 straight down, source spheres on [-90, 90], upper surface at 180 - phi. The `DOPPLER_SHIFT_REMOVED` attribute name used by panam/NICE-OPS is AAM's. This suggests panam's .nod layout descends from the AAM/ART NetCDF convention. That is an inference from the matching names, not something the document says.
-- AAM stores one condition per file. NICE-OPS stores many conditions as groups in one `.nod` file. AAM has no in-file representation of a condition grid: the "database" is the directory listing, sorted by header values at run time (see §2).
+- The angle convention (theta from the nose, phi a roll angle about the body x-axis with 0 = down) is the same as NICEOPS's: phi = 0 straight down, source spheres on [-90, 90], upper surface at 180 - phi. The `DOPPLER_SHIFT_REMOVED` attribute name used by panam/NICEOPS is AAM's. This suggests panam's .nod layout descends from the AAM/ART NetCDF convention. That is an inference from the matching names, not something the document says.
+- AAM stores one condition per file. NICEOPS stores many conditions as groups in one `.nod` file. AAM has no in-file representation of a condition grid: the "database" is the directory listing, sorted by header values at run time (see §2).
 - QuietSphere is a what-if utility (for example, a notional vehicle N dB quieter). It is not part of the propagation chain and plays no role in sphere generation or selection.
 
 ### Gaps
@@ -127,9 +127,9 @@ There are hard limits on how far apart spheres may be: dFPA 3 deg on approach, 5
 - Airspeed versus ground speed: "At present, AAM does not account for the wind when determining airspeed and performing a source data look-up. Winds are taken into account by the RNMwea propagation module" ([TR p.226 Glossary "Flight Profile"][p226]; also "Ground speed", [TR p.227][p227]). The multiple-operations rotorcraft profile specifies "Indicated airspeed (kts)" ([TR p.115 Table 3-64][p115]).
 
 ### Inferences
-- AAM's rotorcraft condition space is (nacelle, γ, V). Thrust and CT are implicit: they follow from γ and V at a fixed weight. NICE-OPS uses (μ, γ, CT) with a Delaunay-barycentric blend over scattered conditions. AAM blends speed then FPA, with fall-backs to nearest, so it implicitly assumes a roughly grid-like (γ, V) layout. NICE-OPS's blend handles arbitrary scatter. Both blend linearly in dB.
-- The dFPA/dSPD limits make AAM's output discontinuous in the operating condition. When a condition is too far from its neighbours it snaps to the nearest sphere, and on ties it picks the higher speed. NICE-OPS has no such distance gating.
-- Q-SAM1/Q-SAM2 put manoeuvre effects into the lookup variable (γ_eff) and the sphere orientation. This is close to NICE-OPS's `fpa_e` (flight path angle relative to the TPP normal, `qsam` flag). NICE-OPS also carries CT through load factor. FRAME's "effective weight" plays the same role as NICE-OPS's CT = LF·W/(ρ V_tip² πR²) dimension.
+- AAM's rotorcraft condition space is (nacelle, γ, V). Thrust and CT are implicit: they follow from γ and V at a fixed weight. NICEOPS uses (μ, γ, CT) with a Delaunay-barycentric blend over scattered conditions. AAM blends speed then FPA, with fall-backs to nearest, so it implicitly assumes a roughly grid-like (γ, V) layout. NICEOPS's blend handles arbitrary scatter. Both blend linearly in dB.
+- The dFPA/dSPD limits make AAM's output discontinuous in the operating condition. When a condition is too far from its neighbours it snaps to the nearest sphere, and on ties it picks the higher speed. NICEOPS has no such distance gating.
+- Q-SAM1/Q-SAM2 put manoeuvre effects into the lookup variable (γ_eff) and the sphere orientation. This is close to NICEOPS's `fpa_e` (flight path angle relative to the TPP normal, `qsam` flag). NICEOPS also carries CT through load factor. FRAME's "effective weight" plays the same role as NICEOPS's CT = LF·W/(ρ V_tip² πR²) dimension.
 - Weights are stored in each sphere, but outside FRAME/QSAM2 they are not used for lookup (see Gaps).
 
 ### Gaps
@@ -153,8 +153,8 @@ The sphere is fixed to **body axes**, not to the tip-path plane or the velocity 
 - Q-SAM1 rotates the source with γ_eff ([TR p.39][p39]). Q-SAM2 derives roll from the inertial tip-path-plane projection (Eqs. 17–18) ([TR p.40][p40]).
 
 ### Inferences
-- AAM's sphere frame is (body x-axis, body y-axis), driven by user-supplied AOA, roll and yaw. NICE-OPS builds its frame from the TPP normal (the load-factor direction) and the velocity: `sphere_frame(velocity, normal)`, with the heading as the nose at hover. Q-SAM2's n̂ = (a + g)/|a + g| is exactly a load-factor TPP normal, so with QSAM2 the two models orient the sphere the same way. In plain AAM, the sphere tilts only through the AOA input.
-- Eq. 8 uses the source height above ground h_s rather than the actual receiver vector. This suggests the first-order ANGLES path assumes a receiver at ground level on flat terrain. NICE-OPS computes φ from three dot products against an orthonormal frame, which is exact for any receiver height.
+- AAM's sphere frame is (body x-axis, body y-axis), driven by user-supplied AOA, roll and yaw. NICEOPS builds its frame from the TPP normal (the load-factor direction) and the velocity: `sphere_frame(velocity, normal)`, with the heading as the nose at hover. Q-SAM2's n̂ = (a + g)/|a + g| is exactly a load-factor TPP normal, so with QSAM2 the two models orient the sphere the same way. In plain AAM, the sphere tilts only through the AOA input.
+- Eq. 8 uses the source height above ground h_s rather than the actual receiver vector. This suggests the first-order ANGLES path assumes a receiver at ground level on flat terrain. NICEOPS computes φ from three dot products against an orthonormal frame, which is exact for any receiver height.
 
 ### Gaps
 - τ and ξ are drawn in Figure 2-15 (τ the body-axis elevation, ε another angle) but never defined in the text. Presumably τ = pitch (γ + AOA) and ξ = heading plus yaw.
@@ -172,7 +172,7 @@ The technical reference does not say how AAM reads a level at an arbitrary (θ, 
 
 ### Inferences
 - From the 5 deg grid and the absence of any mention, it is likely (unverified) that AAM interpolates between grid nodes in some form, probably bilinear in dB, as RNM did. This needs confirmation from the code or the RNM manual (Page, Wilmer, Plotkin 2008, WR 08-04).
-- ZGRID smooths the measured directivity on the sphere before propagation. A NICE-OPS user reading an AAM-made sphere inherits that smoothing.
+- ZGRID smooths the measured directivity on the sphere before propagation. A NICEOPS user reading an AAM-made sphere inherits that smoothing.
 
 ### Gaps
 - The interpolation method, its wrap-around behaviour at φ = ±180 deg, and how it treats a 1E35 neighbour are all undocumented here.
@@ -191,7 +191,7 @@ A sphere carries a flag for whether its spectra are in the moving (ground-observ
 - Arrival time: "the arrival time is calculated based on a straight-line propagation path from the sound sphere center to the receiver using the average speed of sound on the path". For broadband and narrowband sources the vehicle centre is used ([TR p.40 §2.5.5][p40]). "Sound is 'binned' at the receiver locations based on the arrival time. Only after the propagation has been completed, are the receiver sounds interpolated onto a uniform time mesh and added" ([TR p.10][p10]). Absolute time and phase tracking "was implemented in order to eliminate the need for the iterative schemes found in early versions of the flight track module" ([TR p.41][p41]).
 
 ### Inferences
-- NICE-OPS keeps spheres in the moving frame and applies no shift. That corresponds to AAM's DOPPLERSTATE = 1 used at the test speed. AAM additionally corrects for a mismatch between the modelled speed and the sphere's speed. NICE-OPS blends between speed-indexed spheres instead.
+- NICEOPS keeps spheres in the moving frame and applies no shift. That corresponds to AAM's DOPPLERSTATE = 1 used at the test speed. AAM additionally corrects for a mismatch between the modelled speed and the sphere's speed. NICEOPS blends between speed-indexed spheres instead.
 - Since AAM interpolates between spheres of different speeds, it is unclear whether the speed-difference correction is applied per sphere before blending or to the blend. The document does not say.
 - Mixed conventions: Bullwink's input line 5 is "Doppler shift status (0=moving source, 1= stationary source)" ([TR p.165 Table 4-40][p165]). That is the opposite coding to DOPPLERSTATE (0 = stationary, 1 = moving). The NetCDF variable is `DOPPLER_SHIFT_REMOVED`, where 1 should mean stationary. So the integer in the file and the DOPPLERSTATE keyword are inverses of each other. Anyone writing AAM-compatible files from panam should store `DOPPLER_SHIFT_REMOVED`, not DOPPLERSTATE.
 
@@ -249,8 +249,8 @@ AAM's ground level is the straight-ray budget of Eq. 1: L = L(r₀) + A_spread +
   ([TR p.75–76][p75]).
 
 ### Inferences
-- AAM's broadband path is fully spectral: every band is propagated with its own absorption and ground effect. This corresponds to NICE-OPS's `--spectral --ground_effect` path, not to its default broadband EAA path. AAM has no equivalent of the broadband dBA plus fitted EAA.
-- AAM's refraction is a pre-tabulated omnidirectional-source correction on a ground mesh, indexed by source height, and is incompatible with terrain. NICE-OPS's `--refraction linear|stratified` traces per pair, with ground models, shadow transitions and duct arrivals. That is substantially richer, and AAM has nothing comparable to the PE reference.
+- AAM's broadband path is fully spectral: every band is propagated with its own absorption and ground effect. This corresponds to NICEOPS's `--spectral --ground_effect` path, not to its default broadband EAA path. AAM has no equivalent of the broadband dBA plus fitted EAA.
+- AAM's refraction is a pre-tabulated omnidirectional-source correction on a ground mesh, indexed by source height, and is incompatible with terrain. NICEOPS's `--refraction linear|stratified` traces per pair, with ground models, shadow transitions and duct arrivals. That is substantially richer, and AAM has nothing comparable to the PE reference.
 - No lateral-attenuation term (such as SAE AIR 5662) appears; ground and terrain physics carry that role. No receiver-side plate or board model is mentioned.
 
 ### Gaps
@@ -273,7 +273,7 @@ Receivers are a rectangular grid or up to 500 points of interest (POI). A grid s
 - Multiple-operations profiles: altitudes below 5 ft AGL are raised to 5 ft "For compatibility and consistency with NMAP" ([TR p.114][p114]).
 
 ### Inferences
-- AAM's grid receivers all share one height, as NICE-OPS's grids effectively do. NICE-OPS additionally supports per-observer heights, plates and point receivers in one run. AAM's POIs allow a per-point z but no receiver-type model.
+- AAM's grid receivers all share one height, as NICEOPS's grids effectively do. NICEOPS additionally supports per-observer heights, plates and point receivers in one run. AAM's POIs allow a per-point z but no receiver-type model.
 
 ### Gaps
 - How receiver height enters Chien–Soroka (point receiver at z AGL is assumed).
@@ -310,8 +310,8 @@ SEL integrates the *whole* time history by default; DBDOWN10 restricts it to wit
 - TA needs a time spacing under 2 s, or AAM warns ([TR p.142][p142]).
 
 ### Inferences
-- NICE-OPS integrates SEL only over the 10-dB-down window (the first-crossing `peak_range`), which corresponds to AAM's opt-in DBDOWN10, not to its default. AAM's default sums the full history. A like-for-like comparison of the two codes needs DBDOWN10 on in AAM, or NICE-OPS's window widened. AAM's DBDOWN10 window definition (first or outermost crossing) is not stated.
-- AAM's 2 s default step is far coarser than NICE-OPS's 0.02 s tracks. The document's footnote argues the coarse step suits 500 ft community grids ([TR p.20 footnote][p20]).
+- NICEOPS integrates SEL only over the 10-dB-down window (the first-crossing `peak_range`), which corresponds to AAM's opt-in DBDOWN10, not to its default. AAM's default sums the full history. A like-for-like comparison of the two codes needs DBDOWN10 on in AAM, or NICEOPS's window widened. AAM's DBDOWN10 window definition (first or outermost crossing) is not stated.
+- AAM's 2 s default step is far coarser than NICEOPS's 0.02 s tracks. The document's footnote argues the coarse step suits 500 ft community grids ([TR p.20 footnote][p20]).
 
 ### Gaps
 - The SEL quadrature rule (rectangle or trapezoid on the uniform receiver mesh), the uniform mesh's step, and the interpolation used for it (energy-linear?) are not given for AAM itself. Only the visualizer is described as interpolating linearly in energy ([TR p.176][p176]).
@@ -328,7 +328,7 @@ A vehicle can carry up to 10 broadband, 10 narrowband and 10 pure-tone spheres a
 - "Multiple vehicles, such as those in formation flight, may also be modeled" ([TR p.3][p3]).
 
 ### Inferences
-- NICE-OPS uses one compact sphere per condition, centred at the hub. AAM's multi-sphere option allows separate MR/TR/engine components and coherent tonal interference. Neither the shipped CH-146 nor the Bo105 sets are documented as using more than one sphere, and the B407 example uses one broadband sphere at (0, 0, 0) ([TR p.206][p206]).
+- NICEOPS uses one compact sphere per condition, centred at the hub. AAM's multi-sphere option allows separate MR/TR/engine components and coherent tonal interference. Neither the shipped CH-146 nor the Bo105 sets are documented as using more than one sphere, and the B407 example uses one broadband sphere at (0, 0, 0) ([TR p.206][p206]).
 
 ### Gaps
 - Whether interpolation across conditions is done per component sphere independently (it presumably is, since search is keyed on matching XYZ centre).
@@ -401,7 +401,7 @@ Validation is cited only qualitatively ("agree well") against NATO F-16 terrain 
   - The flight-path-fixed glossary has "Y is positive on the port side" ([TR p.227][p227]) while body Y is starboard.
 
 ### Inferences
-- For a NICE-OPS comparison, the most consequential AAM assumptions are:
+- For a NICEOPS comparison, the most consequential AAM assumptions are:
   1. lookup by ground-referenced speed;
   2. FPA/speed gating with nearest-sphere fall-back;
   3. the full-history SEL default;
@@ -454,7 +454,7 @@ Ground reflection is removed exactly as AAM's own ground model predicts it, usin
   - FRAME produces sphere databases from flight-test-derived models ([TR p.41][p41]).
 
 ### Inferences
-- ART's ground removal uses the same Chien–Soroka/Chessell (or Rasmussen) model and the same nominal flow resistivity that AAM later applies forward. Errors in the ground model therefore partly cancel when an ART sphere is re-propagated with matching settings in AAM. Spheres propagated in a different code (such as NICE-OPS's panam-ported EGA, or a board/plate receiver model) will not get that cancellation, and the mismatch goes straight into predicted levels.
+- ART's ground removal uses the same Chien–Soroka/Chessell (or Rasmussen) model and the same nominal flow resistivity that AAM later applies forward. Errors in the ground model therefore partly cancel when an ART sphere is re-propagated with matching settings in AAM. Spheres propagated in a different code (such as NICEOPS's panam-ported EGA, or a board/plate receiver model) will not get that cancellation, and the mismatch goes straight into predicted levels.
 - AAM's ambient handling is gating, not subtraction (unless USESYNSPL). Depropagated levels near the noise floor are biased high by up to about 1.2 dB at the 5 dB threshold. That figure is my arithmetic: 10 log(1 + 10^-0.5) ≈ 1.19 dB. Holes are left as 1E35 instead of being filled.
 - ART sets a sphere's (V, γ) to the averaged on-condition values, and AAM rounds γ to 0.5 deg. A sphere set from many runs therefore forms a scattered (V, γ) cloud, not a grid, which is exactly the case AAM's bracketing search handles worst (§2).
 

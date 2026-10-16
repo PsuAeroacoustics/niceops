@@ -1,6 +1,6 @@
 # Third-party notices
 
-NICE-OPS itself is under the MIT License; see `LICENSE`.
+NICEOPS itself is under the MIT License; see `LICENSE`.
 
 It builds against the components listed below. All are permissive: each asks
 only that its copyright notice and disclaimer travel with redistributions, and
