@@ -25,6 +25,11 @@ output with a file in `golden/` or with another run, through `golden_compare`:
   `mismatch at value` message through `PASS_REGULAR_EXPRESSION`, not on its exit status, so a
   usage error or a missing file cannot satisfy them. Refusals and warnings are tested the same
   way, on their message text.
+- **Runs matched on their log** go through `tests/run_logged.cmake` (`add_logged_run`). CTest
+  ignores the exit status of a test with `PASS_REGULAR_EXPRESSION`, so `run_logged.cmake` prints
+  `run_logged: the command exited with` on a nonzero exit, and every such test carries that as a
+  `FAIL_REGULAR_EXPRESSION`. A test that sets its own `FAIL_REGULAR_EXPRESSION` must keep it in
+  the list (`LOGGED_RUN_FAILED`).
 - **Ordering.** A comparison reads files its producing run writes, so each pair is tied by a CTest
   fixture (`FIXTURES_SETUP`/`FIXTURES_REQUIRED`); `ctest -j` and `ctest -R` then run the
   producer first.
@@ -52,8 +57,16 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `stratified_duct_point.csv` | C++ build | `stratified_duct_point_golden` (1e-4 dB abs.) | `stratified_duct_point` | copy the run's output |
 | `stratified_duct_plate.csv` | C++ build | `stratified_duct_plate_golden` (1e-4 dB abs.) | `stratified_duct_plate` | copy the run's output |
 | `stratified_calm_floor_plate_200hz.csv` | C++ build | `stratified_calm_floor_plate_200hz_golden` (1e-4 dB abs.) | `stratified_calm_floor_plate_200hz` | copy the run's output |
+| `stratified_{windy_point,duct_point,duct_plate,calm_floor_plate_200hz}_exact.csv` | C++ build | `*_exact_golden` (1e-4 dB abs.) | `*_exact` (`--ray_stride 1`) | copy the run's output |
 | `terrain_hills_point.csv` | C++ build | `terrain_hills_point_golden` (1e-6 dB abs.) | `terrain_hills_point` | copy the run's output |
 | `terrain_hills_plate.csv` | C++ build | `terrain_hills_plate_golden` (1e-6 dB abs.) | `terrain_hills_plate` | copy the run's output |
+| `terrain_steep_table_plate.csv` | C++ build | `terrain_steep_table_plate_golden` (1e-5 dB abs.) | `terrain_steep_table_plate` | copy the run's output |
+| `terrain_ridge_screened_point.csv` | C++ build | `terrain_ridge_screened_point_golden` (1e-6 dB abs.) | `terrain_ridge_screened_point` | copy the run's output |
+| `terrain_ridge_screened_plate.csv` | C++ build | `terrain_ridge_screened_plate_golden` (1e-6 dB abs.) | `terrain_ridge_screened_plate` | copy the run's output |
+| `terrain_ridge_kirchhoff_point.csv` | C++ build | `terrain_ridge_kirchhoff_point_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_point` | copy the run's output |
+| `terrain_ridge_kirchhoff_plate.csv` | C++ build | `terrain_ridge_kirchhoff_plate_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_plate` | copy the run's output |
+| `terrain_ridge_kirchhoff_noground.csv` | C++ build | `terrain_ridge_kirchhoff_noground_golden` (1e-6 dB abs.) | `terrain_ridge_kirchhoff_noground` | copy the run's output |
+| `terrain_ridge_kirchhoff_table.csv` | C++ build | `terrain_ridge_kirchhoff_table_golden` (1e-5 dB abs.) | `terrain_ridge_kirchhoff_table` | copy the run's output |
 
 All files are in `golden/`; each producing run writes `integrated/<name>.csv` unless the table
 says otherwise. To regenerate a C++ golden, run its comparison with the build that carries the
@@ -102,6 +115,27 @@ Notes on each:
   pinned for the same reason: passing the plate's receiver as a point receiver at its call site
   (the plate then measures the source from the line, not from its microphone) moved cells by
   0.01 dB with every other terrain test green.
+- **`terrain_steep_table_plate.csv`** pins six plate microphones under the approach on the
+  5.7 degree plane, read through the ground-model table. A plate whose source's foot lies behind
+  it on the path's mean line (d' < 0) takes K at the turned separation's azimuth; taking it from
+  the true separation passed every other test, because such pairs are nearly overhead and too few
+  to move the grids, and moves these plates by 2e-4 to 7e-4 dB. The tolerance is looser than the
+  other terrain goldens' because the table is built by the test run.
+- **`terrain_ridge_screened_{point,plate}.csv`** were made by the build that added
+  `--terrain_screening`, behind the ridge fixture, and pin its call site: handing the screened
+  pair the whole path's ground as well (ground counted twice) fails both, and giving a plate's
+  microphone side the point model in place of the plate fails the plate's. The windowed/marched
+  pairs compare a run with itself and pass with either.
+- **The four stratified goldens were regenerated when `--ray_stride 4` became the default**; the
+  files from before, every state solved, are kept as `*_exact.csv` and pinned by runs with
+  `--ray_stride 1`, which reproduce them to the bit. `stratified_stride_{windy,duct}_is_close`
+  holds the default within 0.005 and 0.02 dB of them.
+- **`terrain_ridge_kirchhoff_{point,plate,noground,table}.csv`** were made by the builds that
+  added `--terrain_screening kirchhoff` (point, plate) and its band-loss table (the other two;
+  the table moved the first two by under 10⁻⁸ dB), behind the ridge fixture, and pin the
+  knife edge's four call sites: the ground model over the plane, the plate, the free field with no
+  ground model, and the table (looser, as the table is built by the test run). Dropping the loss
+  from the free field's or the table's call passed every other test.
 
 ## `self_test`
 
@@ -148,11 +182,21 @@ CTests are defined in `CMakeLists.txt`.
 | `epnl_frames_are_consistent` | CTest | the reception factor dropped from the frames' weights; the frames' band offset; the run not passing `--epnl_masking` on |
 | `epnl_frames_follow_reception_time` | CTest | states filed at t − r/c, or at their emission time: the energy check is blind to *when* |
 | `terrain_hills_point_golden`, `terrain_hills_plate_golden` | CTest | the plate's receiver passed as a point receiver at its call site |
+| `terrain_hills_table_point_is_the_ground_model`, `terrain_hills_table_plate_is_the_plate_model` | CTest | a table read over terrain taking the source's height above z = 0 for its height above the pair's mean plane: the flat-table and windowed tests compare a run with itself or with level ground, and passed with it |
+| `terrain_steep_table_plate_golden` | CTest | a table-read plate taking K's azimuth from the true separation rather than the turned one (`TableRead::plate_separation`) |
+| `terrain_hills_table_misses_are_free_field` | CTest | every pair over the plane counted toward the raised-height warning, including pairs the table misses that fall back to free field with no ground model; `terrain_hills_table_warns_unscreened` only shows that the pairs the table reads are counted |
 | `database_cache_loads_each_once`, `database_spellings_run`, `database_spellings_load_once` | CTest | a one-entry database cache (the front database reloaded in `-d A -d B -d A -d B`); a database erased before its last trajectory; databases compared by the path as typed. Output cannot see any of them, so the check reads the run's own log for a second "Opening netCDF file". The front database erased after its last trajectory, which leaves the provenance a dangling reference, trips an assert after the loop instead, so this and every other run aborts with asserts on |
 | `operations_count_three_equals_repeated_t` | CTest | the day-metric weight folded into the exponent (`pow(10, 0.1 L + lg w)`), which a count of 1 and the 1e-9 count-10 checks both pass; NAx adding 1 rather than the weight; the weight dropped from one coverage energy |
 | `operations_count_three_provenance` | CTest | the weight dropped from the provenance's per-state energy |
 | `operations_offset_mirror_left`, `operations_offset_mirror_right` | CTest; the hidden Catch case `[.offset_tracks]` in `test_trajectory.cpp` writes the tracks | the offset left unconverted at the `--units` seam (500 ft read as 500 m), or not handed to the job; the normal's sign. The `[lateral_offset]` cases build `Trajectory` directly and cannot see the seam |
 | `an AC track's fold test reads the path's curvature, not its recorded acceleration` | `test_trajectory.cpp` | an AC track's κ taken from its recorded acceleration (`n * LF * g`), whose single-sample spikes refuse offsets well inside the turn, or from an exact (unsmoothed) fit of x and y |
+| `ground_classes_tabled_matches_exact` | CTest | point receivers keyed by height alone, so a concrete microphone reads the grass table at its height: the windowed, subsets and single-class tests all passed with it |
+| `ground_classes_impedance_is_the_observers`, `ground_classes_terrain_impedance_is_the_observers` | CTest | every microphone given the first class's admittance with its own class's model, on flat ground and along a terrain path. The second needs its first concrete microphone on a pole: a flush one over the hills reads its class's table, which was built with the right admittance |
+| `the screening gate is the brute-force scan of the blended profile`; `a profile exactly on the line of sight does not block`; `a blended profile touching the line of sight does not block` | `test_terrain.cpp` | `GroundPlaneCache::may_block` reading the horizon at floor(D/step) rather than at the last interior sample; ray b skipped; `>=` in the quick test; `>=` in `blocked()`'s own scan, which is reached only after the quick test passes, so the last case puts one ray above the line of sight and the blend exactly on it |
+| `terrain_ridge_kirchhoff_noground_golden`, `terrain_ridge_kirchhoff_table_golden` | CTest | the knife edge's loss dropped from the free-field fallback with no ground model, or from the table's level: each windowed/marched pair compares a run with itself, and `terrain_ridge_kirchhoff_is_not_cnossos` reads the plates |
+| `terrain_ridge_screened_point_golden`, `terrain_ridge_screened_plate_golden` | CTest | the screened pair's call given the whole path's ground, plate and table besides its side terms; the plate's microphone side evaluated with the point model |
+| `a screened pair never exceeds the bound's screened term` | `test_screening.cpp` | F's clamp to 1 dropped; `screen_gain_bound` without G_S, or without the 1/3 (it must come within 3% of the bound, which rigid ground near grazing does). The call site's screening term removed from the bound passes every `terrain_ridge_screened_*_windowed_is_exact`, although the term raises the bound in most bands, so the run logs how many bands it raises and `terrain_ridge_screened_bound` requires at least one. Which classes the term's source side takes is guarded by reading |
+| `the point receiver's ground bound over several classes is their elementwise maximum` | `test_ground_classes.cpp` | the bound over the first class only, inside `point_ground_gain_bounds`. No CTest kills it: each class's bound is within about 3 dB of the others' in the bands A-weighting keeps, and `ground_classes{,_terrain}_windowed_is_exact` passed with it for grass, concrete, snow, water and passive thin layers. The call site passing every class (`point_classes`) is therefore guarded only by reading |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.
@@ -306,6 +350,24 @@ plane, the climb's fade at hover, and the frame's precedence over the fit. CTest
   0.1 dB.
 - **Calm air**, `wind_calm_air_is_ground`; and the refusals (`wind_speed_needs_unit`,
   `wind_with_atmosphere_refused`, `wind_options_need_wind`, and others), on their messages.
+- **The profile builder** (`niceops_build_atmosphere`). `build_atmosphere_surface_is_wind`: one
+  surface observation with `--wind`'s choices writes the file `wind_profile_written` writes, byte
+  for byte. `build_atmosphere_is_harness_profile`: the 2017 layout (seven LIDAR gates, one a fill
+  value, a string every 10 ft, a station humidity, the harness's level list) equals the
+  validation harness's own `Weather.profile`, which `tests/data/atmosphere_builder_expected.py`
+  runs on the same synthetic run. Regenerate that CSV from the script with the harness checked
+  out, never from the tool. `build_atmosphere_units_agree`: the same build in meters.
+  `build_atmosphere_stratified_windowed_is_exact`: a built profile runs under stratified
+  refraction, and the peak search over it equals a march. `fit_z0_recovers_known`: exact log-law
+  runs (`tests/data/atmosphere_builder/fit_runs.py`) give z0 back, with the light-wind run left
+  out. `build_atmosphere_z0_from_is_harness_profile`: the harness build taking z0 from that fit's
+  JSON is the harness profile, so a meter-valued `z0_m` scaled by `--units`, or a renamed key,
+  fails. The refusals pass on their messages. The Catch2 cases are listed in
+  [atmosphere.md](atmosphere.md#wind-profile-tests).
+- **The run's warnings on a profile**: `atmosphere_warns_no_ground_level`,
+  `atmosphere_warns_calm_floor`, and `atmosphere_still_does_not_warn` (a profile calm throughout,
+  with `FAIL_REGULAR_EXPRESSION`); `build_atmosphere_manifest` runs a built profile without either
+  warning, and `build_atmosphere_manifest_records_provenance` finds its sidecar in the manifest.
 
 ## The plotting gap
 

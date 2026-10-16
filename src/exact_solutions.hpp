@@ -23,6 +23,7 @@
 // imaginary part of the wavenumber, the admittance as in ground_effect.hpp.
 
 #include <complex>
+#include <cstddef>
 #include <vector>
 
 namespace niceops {
@@ -46,12 +47,14 @@ std::complex<double> homogeneous_pressure(const ExactProblem& problem, double ra
 std::vector<std::complex<double>> upward_pressure(const ExactProblem& problem, double radius,
         const std::vector<double>& ranges);
 // upward_pressure for several source heights at once (problem.source_height
-// ignored): [height][range].  The modes are taken until every height's series
-// has converged at the nearest range, so a height's values can differ from
-// upward_pressure's own by the extra terms' contribution (below 1e-17 of the
-// largest), and are NaN by the same tests.
-std::vector<std::vector<std::complex<double>>> upward_pressure_heights(const ExactProblem& problem,
-        double radius, const std::vector<double>& source_heights, const std::vector<double>& ranges);
+// ignored): ranges[k] from source_heights[height_of[k]], one value per range.
+// The modes are taken until every height's series has converged at the
+// nearest range, so a value can differ from upward_pressure's own by the
+// extra terms' contribution (below 1e-17 of the largest), and is NaN by the
+// same tests.
+std::vector<std::complex<double>> upward_pressure_heights(const ExactProblem& problem, double radius,
+        const std::vector<double>& source_heights, const std::vector<double>& ranges,
+        const std::vector<std::size_t>& height_of);
 std::vector<std::complex<double>> downward_pressure(const ExactProblem& problem, double radius,
         const std::vector<double>& ranges, double max_elevation = 90.0);
 

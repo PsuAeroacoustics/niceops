@@ -26,7 +26,7 @@
 // PRECONDITION: coordinates must be normal floating-point numbers, not
 // subnormals.  two_product is exact only while the product stays in the normal
 // range -- an FMA that underflows loses the low half, and with it the
-// exactness the whole construction rests on.  NICE-OPS normalizes every
+// exactness the whole construction rests on.  NICEOPS normalizes every
 // operating condition into [0, 1] before it gets here, so the smallest
 // magnitudes in play are around 1e-3; subnormals begin below 1e-308.
 //

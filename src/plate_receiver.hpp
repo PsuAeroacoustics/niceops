@@ -70,6 +70,11 @@ public:
             double sound_speed, std::size_t first_band = 0,
             std::size_t last_band = static_cast<std::size_t>(-1)) const;
 
+    // Why the table cannot be applied over `ground`, in the words bound()
+    // refuses it with; empty when the table was solved over that ground.  A
+    // caller holding several grounds can ask which of them fit.
+    std::string ground_mismatch(const GroundModel& ground) const;
+
     // Level at the microphone re free field, dB, per band in [first_band,
     // last_band) of `bands`, into `correction`.  `source_height` is above the
     // ground, `ground_distance` horizontal, both m.  `azimuth` is the

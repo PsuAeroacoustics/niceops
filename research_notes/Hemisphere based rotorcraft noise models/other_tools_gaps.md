@@ -126,16 +126,16 @@ AEDT 3g keeps this structure. It has 16 operational modes (11 of them static), t
 - In AEDT, helicopter exposure includes a lateral-attenuation term LA_ADJ alongside LD_ADJ (from Letica & Rizzi 2024, already cited in other_tools.md). The 2025 TM refers to "other AEDT adjustments (e.g., lateral attenuation adjustment)" and does not say which formula helicopter mode uses. — [NASA/TM-20250008619](https://ntrs.nasa.gov/citations/20250008619)
 
 ### Inferences
-- **Hover directivity: NICE-OPS is ahead of HNM/AEDT in kind.**
+- **Hover directivity: NICEOPS is ahead of HNM/AEDT in kind.**
   - HNM/AEDT has one LAmax curve per static mode, an azimuth-only Fourier or 15 deg directivity normalised at 200 ft, and a duration multiplier.
-  - NICE-OPS has a full (phi, theta) sphere and orients hover by INS heading below 5 kt.
-  - But NICE-OPS has no *static operation* as such. Hover must be flown as trajectory states, so a "30 s HIGE at the pad" needs a synthetic track. HNM/AEDT, NORAH2 and AAM all treat this as a first-class mode. This is a usability gap for heliport studies.
-- **NICE-OPS hover data is synthesised.** It comes from the slowest near-level sphere, averaged fore to aft (niceops_inventory.md). HNM's HIGE directivity came from dedicated hover measurements over hard and soft ground. NICE-OPS has neither IGE/OGE distinction nor hard/soft hover data.
+  - NICEOPS has a full (phi, theta) sphere and orients hover by INS heading below 5 kt.
+  - But NICEOPS has no *static operation* as such. Hover must be flown as trajectory states, so a "30 s HIGE at the pad" needs a synthetic track. HNM/AEDT, NORAH2 and AAM all treat this as a first-class mode. This is a usability gap for heliport studies.
+- **NICEOPS hover data is synthesised.** It comes from the slowest near-level sphere, averaged fore to aft (niceops_inventory.md). HNM's HIGE directivity came from dedicated hover measurements over hard and soft ground. NICEOPS has neither IGE/OGE distinction nor hard/soft hover data.
 - **Lateral attenuation is the clearest regulatory contrast.**
   - HNM's below-45 deg term is an empirical lump of ground effect and directivity, and can be a gain.
-  - NICE-OPS computes ground and directivity separately (`--ground_effect`, plates, refraction).
-  - This favours NICE-OPS physically. But it means NICE-OPS will not reproduce AEDT numbers off-track even with identical source data, which matters for any regulatory cross-check.
-- **NICE-OPS reports only A-weighted SEL** (niceops_inventory.md). That falls short of HNM/AEDT/ACRP practice, which carries LAmax, PNLT/EPNL and C-weighted metrics, and of ACRP's 10 Hz lower band.
+  - NICEOPS computes ground and directivity separately (`--ground_effect`, plates, refraction).
+  - This favours NICEOPS physically. But it means NICEOPS will not reproduce AEDT numbers off-track even with identical source data, which matters for any regulatory cross-check.
+- **NICEOPS reports only A-weighted SEL** (niceops_inventory.md). That falls short of HNM/AEDT/ACRP practice, which carries LAmax, PNLT/EPNL and C-weighted metrics, and of ACRP's 10 Hz lower band.
 
 ### Gaps
 - The AEDT 3g Technical Manual itself was not retrieved. The exact equations used for helicopter lateral attenuation (whether SAE-AIR-5662 or the HNM low-angle coefficients) and for the static directivity in AEDT are therefore unconfirmed. The 15 deg/200 ft data format is from ACRP 02-44; the 1.5 D IGE height and 200 ft reference are from NASA's TM.
@@ -191,9 +191,9 @@ It reproduces grazing-incidence (lateral attenuation) cases to about +/-1 dB wit
 - Empa's multicopter emission method (Wunderli, Schäffer et al., IJERPH 20(1):96, 2023) exists, but MDPI returned 403. Its form and whether sonAIR uses it are unverified. — [doi:10.3390/ijerph20010096](https://doi.org/10.3390/ijerph20010096)
 
 ### Inferences
-- sonAIR cannot be cited as a helicopter hemisphere tool. Its helicopter handling is "simplified", probably at FLULA2-like fidelity, and no paper says otherwise. Its propagation core is the relevant comparison for NICE-OPS:
-  - sonX has mapped ground cover, foliage, building shielding and reflection, and cliff echoes, which NICE-OPS lacks.
-  - NICE-OPS has ducted, multi-arrival stratified rays, shadow-boundary diffraction and a PE reference, which no sonAIR paper found describes.
+- sonAIR cannot be cited as a helicopter hemisphere tool. Its helicopter handling is "simplified", probably at FLULA2-like fidelity, and no paper says otherwise. Its propagation core is the relevant comparison for NICEOPS:
+  - sonX has mapped ground cover, foliage, building shielding and reflection, and cliff echoes, which NICEOPS lacks.
+  - NICEOPS has ducted, multi-arrival stratified rays, shadow-boundary diffraction and a PE reference, which no sonAIR paper found describes.
 - sonAIR is regression-parameterised (Mach, N1, density, configuration) rather than table-of-hemispheres. That is a third design pattern besides NPD and hemisphere tables. It suits a fleet measured at an airport, not a rotorcraft whose emission depends on (mu, CT, alpha_TPP).
 
 ### Gaps
@@ -252,9 +252,9 @@ Still unknown:
 - **HELISHAPE and HELINOISE** were Brite-EuRam rotor aerodynamics and aeroacoustics programmes, producing, for example, the HERNOP-2 time-domain FW-H code. They are source-prediction projects, not footprint tools. **[snippet only]** — [DLR elib 36440](https://elib.dlr.de/36440/); [CNR IRIS record](https://iris.cnr.it/handle/20.500.14243/210502)
 
 ### Inferences
-- HELENA's propagation (ARP 866A absorption, impedance ground, ray-traced refraction) is broadly what NICE-OPS's straight and linear modes do. NICE-OPS uses ISO 9613-1 and adds ducting, shadow-boundary diffraction and PE checks.
-- **The shadow-zone level is where NICE-OPS should check itself against the literature.** The TU Delft/Arntzen model puts ground-wave, diffraction and turbulence-scattered energy into shadows. NICE-OPS's `--scattering` (a fit to PE phase screens) is the analogous term, and is off by default.
-- Gennaretti 2016 supports NICE-OPS's inclusion of CT, a disk-loading parameter. Indexing by (mu, gamma) alone, which RNM/AAM's (V, gamma) amounts to, is the weaker choice for manoeuvres.
+- HELENA's propagation (ARP 866A absorption, impedance ground, ray-traced refraction) is broadly what NICEOPS's straight and linear modes do. NICEOPS uses ISO 9613-1 and adds ducting, shadow-boundary diffraction and PE checks.
+- **The shadow-zone level is where NICEOPS should check itself against the literature.** The TU Delft/Arntzen model puts ground-wave, diffraction and turbulence-scattered energy into shadows. NICEOPS's `--scattering` (a fit to PE phase screens) is the analogous term, and is off by default.
+- Gennaretti 2016 supports NICEOPS's inclusion of CT, a disk-loading parameter. Indexing by (mu, gamma) alone, which RNM/AAM's (V, gamma) amounts to, is the weaker choice for manoeuvres.
 
 ### Gaps
 - **HELENA's interpolation axes and scheme.** A search summary said HELENA "interpolates the corresponding noise hemisphere spectra from the three closest flight conditions", then applies Doppler, absorption and ground reflection. The originating document could not be identified, so this is **unverified**. The Gervais 2010 paper and the Meliveo user manuals were not obtainable.
@@ -322,13 +322,13 @@ AARON couples CAMRAD II with F1A tonal noise and an ANOPP2 self-noise module for
 - AMAT "is a time-marching simulation program that uses the full source noise hemisphere, akin to the Volpe Advanced Acoustic Model (AAM)". NASA states it is not "the 'truth'". — [Letica & Rizzi, NASA/TM-20250008619](https://ntrs.nasa.gov/citations/20250008619)
 
 ### Inferences
-- **On interpolation, NICE-OPS differs from RNM in three ways:**
+- **On interpolation, NICEOPS differs from RNM in three ways:**
   - Its across-condition blend is barycentric in dB over a 3-D Delaunay mesh. RNM's is nearest-neighbour in two axes, then linear in pressure squared in airspeed only.
   - Its within-sphere interpolation is bilinear in dB. RNM's is a Coons patch.
   - Its time step is the trajectory's own 0.02 s, against RNM's 0.5 s and AAM's typical 1 s.
-- Neither interpolation domain (energy or dB) has been shown to be better for footprints. NLR's argument for dB applies to fitting. This is a sensible item for NICE-OPS to test, for example on the self-test residual.
-- The ASOFT "azimuth filter" V&V pattern would be easy to copy in NICE-OPS: reduce a sphere to the AEDT 0/+/-45 deg slices and fly it. It would give a direct, apples-to-apples comparison against AEDT-style NPD predictions on the day-284/286 data.
-- **Absorption standards.** AMAT offers five and RNM uses ANSI S1.26; NICE-OPS uses ISO 9613-1 only, which is numerically close to the ANSI S1.26 family. Adding SAE ARP 866A would matter only for reproducing legacy NPD and certification corrections, not for physics.
+- Neither interpolation domain (energy or dB) has been shown to be better for footprints. NLR's argument for dB applies to fitting. This is a sensible item for NICEOPS to test, for example on the self-test residual.
+- The ASOFT "azimuth filter" V&V pattern would be easy to copy in NICEOPS: reduce a sphere to the AEDT 0/+/-45 deg slices and fly it. It would give a direct, apples-to-apples comparison against AEDT-style NPD predictions on the day-284/286 data.
+- **Absorption standards.** AMAT offers five and RNM uses ANSI S1.26; NICEOPS uses ISO 9613-1 only, which is numerically close to the ANSI S1.26 family. Adding SAE ARP 866A would matter only for reproducing legacy NPD and certification corrections, not for physics.
 
 ### Gaps
 - No document was found describing RNM 7's stratified-atmosphere and wind implementation (ray tracing or an effective-sound-speed correction), or validating it.
@@ -351,7 +351,7 @@ AARON couples CAMRAD II with F1A tonal noise and an ANOPP2 self-noise module for
   - Adds guidance for taxi, idle, hover and turns.
   - Its sources say the approach is "suitable" for drones and UAM, but none found says eVTOL hemispheres are in its database.
 
-The recurring eVTOL complication is a source that depends on more state than (V, gamma): rotor tilt, powerplant state, crossflow and interactions. NICE-OPS's fixed 3-D (mu, gamma, CT) axes share that limit.
+The recurring eVTOL complication is a source that depends on more state than (V, gamma): rotor tilt, powerplant state, crossflow and interactions. NICEOPS's fixed 3-D (mu, gamma, CT) axes share that limit.
 
 ### Cited Findings
 - **NORAH2 (NLR news, 13 June 2024):**
@@ -383,11 +383,11 @@ The recurring eVTOL complication is a source that depends on more state than (V,
 - The Korean vertiport studies (Lee & Haan; Jo & Wie, Forum Acusticum 2025) are already covered in other_tools.md and are not repeated here.
 
 ### Inferences
-- **What NICE-OPS shares with eVTOL tools, and what it lacks.** Like every eVTOL tool found, NICE-OPS fixes the sphere index at three operating parameters.
+- **What NICEOPS shares with eVTOL tools, and what it lacks.** Like every eVTOL tool found, NICEOPS fixes the sphere index at three operating parameters.
   - Tilt-rotor transition needs at least one more axis (nacelle or tilt angle, as RNM has had since the 1990s). So do powerplant state and crossflow.
-  - NICE-OPS's `Delaunay` is dimension-agnostic, per CLAUDE.md, which makes a fourth axis structurally cheap. The `.nod` schema and panam would need the extra coordinate.
-- ASCENT's finding that 13x coarser hemispheres move the ground by 1-3 dB on average is a useful bound for NICE-OPS's own grid-resolution sensitivity. It contrasts with ACRP's 3-9 dB local errors when only the *lateral* resolution is cut to 30-45 deg. So averages hide large local errors near the rotor plane, which is where NICE-OPS's grazing-pair work lives.
-- NORAH2's added screening (buildings and topography) and its static and turn guidance are exactly what NICE-OPS lacks: no terrain or obstacles, and no static operations. NICE-OPS's atmospheric physics is well beyond NORAH2's.
+  - NICEOPS's `Delaunay` is dimension-agnostic, per CLAUDE.md, which makes a fourth axis structurally cheap. The `.nod` schema and panam would need the extra coordinate.
+- ASCENT's finding that 13x coarser hemispheres move the ground by 1-3 dB on average is a useful bound for NICEOPS's own grid-resolution sensitivity. It contrasts with ACRP's 3-9 dB local errors when only the *lateral* resolution is cut to 30-45 deg. So averages hide large local errors near the rotor plane, which is where NICEOPS's grazing-pair work lives.
+- NORAH2's added screening (buildings and topography) and its static and turn guidance are exactly what NICEOPS lacks: no terrain or obstacles, and no static operations. NICEOPS's atmospheric physics is well beyond NORAH2's.
 
 ### Gaps
 - No source confirms that NORAH2's released database contains any eVTOL or drone hemisphere, or that a NORAH2 eVTOL extension project exists. Only the "suitable for" statement was found.

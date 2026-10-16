@@ -16,13 +16,50 @@ Every level is evaluated at the microphone, the observer's point raised by its h
 ground (`process_trajectory`). Which receiver a microphone gets is a user rule, given in the
 manual. What to keep:
 
-- **One ground model and one `GroundTable` per distinct receiver height**, built once per
-  trajectory, not per observer. An observer file's fifth column lets one run mix plates and poles.
+- **One ground model and one `GroundTable` per distinct (receiver height, ground class)**, built
+  once per trajectory, not per observer. An observer file's fifth column lets one run mix plates
+  and poles, and its sixth puts each microphone over a `--ground_classes` class. Keys are kept in
+  the order first met, so with one class the tables, logs and the refraction setup's
+  `point_heights` are what they were with heights alone.
 - **The peak search's ground bound is the larger of the plate's and the point receiver's**, which
-  does not depend on height, so a mixed run needs no per-observer bound.
+  does not depend on height, so a mixed run needs no per-observer bound. The point receiver's is
+  `point_ground_gain_bounds` over every class point receivers stand on, the elementwise maximum
+  of each class's `ground_gain_bounds`.
 - **`mixed_receivers_are_their_subsets`** checks a mixed run (`tests/data/mixed_receivers.csv`)
   against runs over each kind. It runs with `--exact_ground`, because a table's extent follows its
   own run's observers, so tables built for different observer sets differ at the last digits.
+- **Ground classes** (`src/ground_classes.{hpp,cpp}`, read as in
+  [inputs.md](inputs.md#the-ground-classes-file)). Each class is the run's `GroundModel` with
+  the file's overrides, and each has its admittance (`class_impedance`, one `ground_impedance()`
+  call per class per trajectory). The hot loop picks the observer's admittance once per observer
+  (`impedance_here`) and passes it where the run's was passed, on flat ground and over terrain, so
+  an evaluation costs nothing more. What to keep:
+  - **One class is the run without classes, byte for byte**: `class_models` is
+    `{options.ground}`, `class_impedance[0]` is the one call made without classes, and
+    `ground_class_single_is_scalar_{point,plate,terrain}` (and the explicit-columns twin) compare
+    the files. A class file's numbers in those tests are whole, so the reader's and CLI11's
+    parsing cannot differ by an ULP.
+  - **`ground_impedance_bands` is the first class's**, and the refraction models and a table's
+    plate offset take it. That is right only because `--refraction` and `--propagation_table`
+    are refused with classes (an assert in the refraction setup says so). Per-class shadow
+    transitions and bounce losses belong with ground along the path, not under the microphone.
+  - **Flush microphones are on one class**, refused otherwise, and the plate is bound over it
+    (`ground_model` points at it). The check is `PlateReceiver::ground_mismatch`, so `bound()`'s
+    message on a run without classes is unchanged.
+  - **Rejected:** a `DirectionBounds` table per class (more cache traffic for a bound that moves
+    little, since each class's bound is (1 + max|Q|)² and |Q| nears 1 at grazing for every
+    surface; revisit only if the measured evaluated fraction moves: half concrete moved it from
+    98.48% to 98.57%, [performance.md](performance.md#terrain-ground-classes-and-screening));
+    scaling the bound per observer (impossible, since the ground gain is folded into the
+    A-weighted direction table); substituting a lone class for `options.ground` (it would enable
+    refraction over a ground the user did not name); ids as row indexes (they move when rows are
+    reordered, and do not match land-cover codes).
+  - **A later blend over surfaces** (Fresnel-zone weighting along each path) stays under the same
+    bound only if it blends power ratios convexly; otherwise the bound must be re-derived.
+  - Tests: `ground_classes_mixed_are_their_subsets` (`--exact_ground`, as
+    `mixed_receivers_are_their_subsets`), `ground_classes_tabled_matches_exact`,
+    `ground_classes{,_terrain}_impedance_is_the_observers`,
+    `ground_classes{,_terrain}_windowed_is_exact`, and the refusals.
 - The direct path ends at the microphone, not on the ground. Moving it there changed
   point-receiver results; see [HISTORY](../HISTORY.md#changes-that-affect-results).
 
@@ -102,7 +139,7 @@ change to panam first.
     surface (a thin layer's band, θ a hair under −45°) the wave carries on: |Q| = 151 at
     |w| = 1250 at grazing. The sweep stops at the edge and the formula takes over; `a surface wave
     carried past |w| = 500 ...` holds it to a sweep out to κ = 1e10.
-  - **A mass-like admittance (Im β > 0) keeps NICE-OPS's branch, not panam's.** Its parameter is
+  - **A mass-like admittance (Im β > 0) keeps NICEOPS's branch, not panam's.** Its parameter is
     in the second quadrant. panam squares it and takes the principal root, the negative, whose w()
     grows as exp(|Re w|) and overflows by |w| ~ 1000. Such a surface has no surface wave, and the
     parameter itself gives none. A thin layer gives this in some bands.
@@ -180,7 +217,7 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
     `--terrain_offset -1250` and `--ground_elevation 54.2651` take back to zero in the program's
     own arithmetic.
 - **The ground's z is H + `--terrain_offset` − `--ground_elevation`**, the same
-  `--ground_elevation` that is a WGS84 track's z = 0. NICE-OPS converts no datums. Leaving out
+  `--ground_elevation` that is a WGS84 track's z = 0. NICEOPS converts no datums. Leaving out
   either is a plausible wrong answer, so the run checks what it can (the list is in the manual's
   [Terrain](../MANUAL.md#terrain)). The AC track's own lat/lon check uses `Trajectory::recorded`,
   kept as read, before any trim. Every refusal has a CTest on its message.
@@ -192,7 +229,8 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
   and keeps its table (source height h_s − h_r). `a path's own receiver height is the ground
   model's, past its table` holds the branch.
 - **Heights below the line are raised to zero**, CNOSSOS-EU's rule: a receiver in a dip, or a
-  source behind rising ground, which is screening and not modeled. The log counts them.
+  source behind rising ground, which is screened only with `--terrain_screening` (below). The
+  run counts them and warns.
 - **A negative distance along the line is taken by its size, not clamped to zero.** A nearly
   overhead source over ground falling toward it has its foot behind the microphone's. The image
   construction depends on d², so |d| keeps the model's direct path equal to the real range (zero
@@ -204,17 +242,150 @@ keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
   with itself, so a call-site mutation that handed the plate's microphone to `terrain_ray` as a
   point receiver moved cells by 0.01 dB and passed every other terrain test. Regenerate them only
   with a deliberate change, and say so.
-- **The bounds need nothing new.** `ground_gain_bounds` and `PlateReceiver::gain_bounds` hold for
-  every geometry and receiver height, and the bound test's geometry is the true 3-D path, as the
+- **The bounds need nothing new** without screening (with it, see
+  [Screening](#screening---terrain_screening)). `ground_gain_bounds` and
+  `PlateReceiver::gain_bounds` hold for every geometry and receiver height, and the bound test's geometry is the true 3-D path, as the
   level's spreading is. `terrain_hills_point_windowed_is_exact` and
   `terrain_hills_plate_windowed_is_exact` hold it. The tables' reach (`reach()` in
   `process_trajectory`) extends below z = 0 under terrain; node placement does not depend on the
   reach, so the flat case is unmoved.
-- **Refused with `--refraction` and `--propagation_table`.** The ray models reflect off and shadow
-  onto z = 0, and the table's heights are over flat ground. A tilted plane per path handed to them
-  would be another model.
+- **Refused with `--refraction`.** The ray models reflect off and shadow onto z = 0; a tilted
+  plane per path handed to them would be another model. That refusal is the only one; the one
+  with `--propagation_table` had no CTest, and `terrain_table_refuses_refraction` holds that
+  `--refraction` still wins when both are given.
+- **A propagation table reads the same path.** `straight_level` finds each pair's `terrain_ray`
+  path once, when a ground model or a table will read it, and hands it to `table_level` and then,
+  for a pair the table misses, to the ground model. The plane counts as taken, and a raised
+  height as raised, only for a pair one of them read: a pair the table misses with no ground
+  model is free field. Level terrain stays byte-identical through the same three spellings
+  (`terrain_flat_table_*_is_flat`).
+  - **The bearing is the true separation's; the plate's azimuth is the turned one's.** Read at
+    |d′| on a fixed bearing, an anisotropic table is continuous as d′ passes through zero; the
+    turned separation's bearing jumps 180° there. The plate is still crossed from the side the
+    arrival comes from. `a table read over terrain is continuous through d' = 0` holds both.
+  - **A point receiver outside the table's rows falls back and is counted, never clamped**, for
+    the reason in the bullet above: a height error moves the path difference. The run warns with
+    the heights seen, and up front for a table with one receiver row.
+  - **The bound needs nothing new.** The table term is its largest node (times the largest K
+    node for plates), which no interpolation exceeds, whichever cell a pair reads, and the
+    pairs that fall back are covered by the ground bounds above
+    (`terrain_hills_table_*_windowed_is_exact`, the bump table among them).
 - **Observers' ground is read from the grid itself in `run()`**, once, not from the raster, which
   is a resampling of it.
+
+### Screening (`--terrain_screening`)
+
+`src/screening.{hpp,cpp}` holds the CNOSSOS-EU kernel and the knife edge,
+`GroundPlaneCache::may_block`, `blocked` and `fit_range` their terrain, and `screened_level` in
+`process_trajectory` the CNOSSOS call (the knife edge's is below). The equations are
+in [THEORY §6.4](../THEORY.md#64-terrain-screening). What to keep:
+
+- **An unblocked pair takes the untouched call.** `straight_level` asks `blocked()` first and
+  otherwise goes on exactly as without screening, so level ground, a uniform slope and the hills
+  (where nothing blocks) are the unscreened runs byte for byte
+  (`terrain_flat_*_screened_is_flat`, `terrain_tilted_*_is_unscreened`,
+  `terrain_hills_unblocked_is_unscreened`, each with a log check that nothing was screened). A
+  pair with no ground model and no table is never given a `terrain_ray` path: it stays
+  `spectral_level_at_observer`'s.
+- **The onset is strict.** A sample exactly on the line of sight does not block. CNOSSOS's own
+  rule screens down to δ = −λ/20, but over level ground a sample near a 1.2 m microphone has
+  δ ≈ h²/2s, about 0.14 m at 5 m, under λ/20 at 63 Hz, so it would screen level terrain. (The
+  Directive also asks δ > λ/4 − δ′, δ′ by the ground images, which keeps the low bands out; the
+  conformance case TC06, a path clearing a plateau's edge by 0.67 m, is diffracted at 500 Hz
+  and 1 kHz in the TR and unscreened here, `ISO/TR 17534-4 TC06` in `tests/test_screening.cpp`.)
+- **A minimum protrusion** (`--screening_min_height`, 0.5 m): a sample blocks only when it is
+  that far above the line of sight. At Sweetwater the 1 m lidar grid's texture 3–5 m from a
+  flush board, 0.03–0.14 m above a path at 1–2° elevation, screened it, and the screened level came
+  out up to 1.1 dB above the unscreened one: with δ near zero the 4.77 dB floor and the two side
+  ground terms beat the whole path's plate term. The threshold leaves the quick test (a necessary
+  condition) as it was; it moved the ridge goldens by up to 0.9 dB (points) and 1.6 dB (plates)
+  in about 90 of 441 cells, all at the shadow's edge, where it was regenerated.
+- **One spelling of the slope** (`sight_slope`, (z − h_m)/s) for the horizon, the line of sight
+  and the scan. The quick test reads each ray's horizon at the last sample strictly inside the
+  path (ceil(D/Δ) − 1, never the footprint's), and with no turn reads ray a only, as `line_from`
+  does.
+- **The profile is one per pair**, blended in bearing with `line_from`'s own turn fraction, and
+  the microphone is at its height above the raster's ground at its foot, the base of the running
+  sums, so a flush microphone is never under its own profile. An observer file's z kept without
+  `--observers_on_terrain` is where the microphone is evaluated, so the horizon is taken from it
+  (`set_observer_at`), held no lower than the ground at the foot; taking the height above the
+  raster instead screened such a microphone from where it is not (`terrain_ridge_screened_file_z`:
+  3000 ft up, nothing is screened). A source under the profile at its
+  footprint (states down to 10 m under the terrain are let through) is raised onto it.
+- **No ground for the whole path on a screened pair** (`ground = nullptr`, `table = nullptr`):
+  the ground enters only through the two side terms, so it counts once. A propagation table's
+  level is not read either, since its ground is the whole path's; that is why the combination
+  needs a ground model (refused otherwise) and the log counts the pairs that left the table.
+- **F is clamped to 1** for the bound, and the run counts how often it binds. The bound's term is
+  `screen_gain_bound(G_S, G_R)` = max(1, G_S) max(1, G_R)/3, with G_S over every class in use,
+  a plate's included (the source side is always the point model), and G_R the point and plate
+  bounds. Without a ground model it is 1/3 and changes nothing. The 3 is `cnossos_floor`,
+  written once. The run logs how many bands the term raises above the ground term: the
+  windowed-is-exact tests pass without it, so that line is what `terrain_ridge_screened_bound`
+  checks.
+- **Side lines come from the running sums** (`fit_range`, re-based to k0), so a screened pair
+  fits nothing sample by sample; raw heights and the horizon cost about 16 bytes per sample per
+  ray per thread, only with the option.
+- **Rejected:** Deygout on the resampled profile (every sample of a rounded crest is a hull
+  vertex, so a path just grazing it took about 13.6 dB, depending on `--terrain_step`); blending
+  the two rays' losses in dB (a pair partly screened by a profile not its own, and a duplicate of
+  the four-way ground selection on half-blocked pairs); a persistent per-ray hull (about 20 bytes
+  per sample, and only useful with the dB blend); the sphere looked up toward the first edge
+  (breaks the direction bounds' bins); a fade-in below δ = 0 (breaks the level-terrain identity).
+- Tests: `terrain_ridge_screened_{point,plate,noground,classes,table}_windowed_is_exact` behind
+  the ridge fixture (`integrated/terrain_ridge.nc`, 25 m high, 250 m to the track's side), each
+  with a log check that pairs were screened; the point and plate runs pinned at 1e-6
+  (`terrain_ridge_screened_{point,plate}_golden`); the refusals; and the Catch2 `[screening]` cases,
+  including the bound sweep and the half-plane comparison.
+
+#### The knife edge (`--terrain_screening kirchhoff`)
+
+`knife_edge`, `knife_edge_loss` and the band-loss table in `src/screening.cpp`. In
+`straight_level` a blocked pair computes its loss (`knife`) and goes on down the unscreened call,
+which takes it off whichever level that reaches. What to keep:
+
+- **The same blocked pairs as CNOSSOS.** It reuses `blocked()`, `--screening_min_height` and
+  `rubber_band`, so where nothing is blocked the runs are the unscreened ones byte for byte
+  (`terrain_flat_*_kirchhoff_is_flat`, `terrain_tilted_plate_kirchhoff_is_unscreened`,
+  `terrain_hills_kirchhoff_is_unscreened`, each with a log check that nothing was screened).
+- **The loss goes on every unscreened level**: the ground model over the mean plane
+  (`spectral_level_along`'s extra loss), the table (`table_level`'s `added_loss`), and with
+  neither the free field along the straight ray, which replaces `spectral_level_at_observer` for
+  a blocked pair. Each call site has its golden; the table's and the free field's were added
+  because dropping the loss there passed every windowed/marched pair.
+- **Keep the whole path's ground, not CNOSSOS's two side terms.** Behind the Sweetwater hill
+  `cnossos` came 29 to 48 dB below the unscreened level per blocked state from 500 Hz to 2 kHz
+  (median over 11 runs), past its 25 dB cap on Δdif, where the measured shielding was 4–7 dB: the
+  rest is its side terms in place of the path's ground.
+- **No bound term.** |F(v)|² ≤ 1/4 for v ≥ 0 and falls monotonically, so the band loss is at
+  least 10 lg 4 and a blocked pair is below its unscreened level, which the bounds already cover.
+  `screen_gain_bound` is skipped, and behind the ridge the run evaluates the unscreened run's
+  fraction (98.44%, against 99.26% for `cnossos`). A lit-side extension (v < 0, where |F|² reaches
+  1.37) would need a term.
+- **The edge** is the higher of the two horizon rays where they cross the aperture plane, which
+  stands at the sample deepest above the line of sight (the first, on a tie). δ is summed as
+  H²/(√(d² + H²) + d), which keeps its digits for H ≪ d. `the equivalent edge is the lowest point
+  both ends see` checks it against a bisection on a peak, a hill and 200 random profiles.
+- **The band loss is a table in ln x**, x = δ f_c/c, which is all it depends on: built on first
+  use (a function-local static, so thread-safe), every 1/32 from 10⁻⁸ to 10⁶ (1033 nodes, about
+  2 ms), with each node's exact slope for cubic Hermite. It is within 10⁻⁹ dB of the quadrature
+  for x from 10⁻⁶ to 10³ and 6·10⁻⁸ dB at its top end; beyond its ends the quadrature is
+  evaluated directly.
+- **Rejected:** the eight-point quadrature per band at run time. Eight Fresnel integrals per band,
+  each a series or a continued fraction, came to 50–64 µs per screened evaluation for δ of 0.1 to
+  1 m, and the full ridge grid took 74 s against 8 s unscreened; the table takes 0.12 µs for 31
+  bands.
+- Tests: `terrain_ridge_kirchhoff_{point,plate,noground,table}_windowed_is_exact`, each with a log
+  check that pairs were screened (the table's that they kept the table); all four runs pinned
+  (`terrain_ridge_kirchhoff_*_golden`, the table's at 1e-5); `terrain_ridge_kirchhoff_is_not_cnossos`;
+  and the Catch2 `[kirchhoff]` cases: the Fresnel integrals against SciPy, |F|² at grazing and in
+  the shadow, the half-plane comparison, the band loss's floor and order, the table against the
+  quadrature and the quadrature against Simpson, and the edge against bisection.
+- **Cost** behind the ridge on the full demo grid (point receivers on variable-porosity ground of
+  200 kPa·s/m², 8 threads, one run each on a shared M4 Pro at load 5 to 10, so read the ratios):
+  59.1 s of CPU unscreened, 65.7 s `kirchhoff`, 77.5 s `cnossos`; peak RSS 239, 250 and 249 MiB.
+  The knife edge's 6.6 s over 8.92 million screened evaluations is about 0.7 µs each, mostly the
+  blocked test, the rubber band and the edge.
 
 ### How the plane is found (`GroundPlaneCache`)
 
@@ -257,6 +428,42 @@ so the model is evaluated exactly. On level terrain the height is the pole's and
 Plates keep their table either way. For the 2017 arrays (about 40 microphones) none of this is
 noticeable.
 
+With propagation tables and screening, on the same grid at 8 threads on an M4 Pro (asserts on,
+variable-porosity ground of 200 kPa·s/m², best of three; the machine was shared, load 10 to 31,
+so read the ratios rather than the seconds). The table is the five-row ground-model test table
+(`tables/ground_model_terrain_test.nc`: rows 0, 1.2 m, 8, 16 and 25 ft, source heights and ranges
+every 20 ft):
+
+| run | CPU | acoustic loop | evaluated | peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| level ground (no `--terrain`), 1.2 m point receivers | 23.2 s | 2.90 s | 98.48% | 231 MiB |
+| hills, point receivers | 93.4 s | 11.8 s | 98.90% | 240 MiB |
+| hills, point receivers, `--propagation_table` | 34.2 s | 4.32 s | 98.89% | 311 MiB |
+| hills, `--plate_table` | 61.3 s | 7.72 s | 98.91% | 275 MiB |
+| hills, `--plate_table --propagation_table` | 35.4 s | 4.46 s | 98.92% | 343 MiB |
+| hills, point receivers, `--terrain_screening cnossos` | 98.4 s | 12.4 s | 99.63% | 249 MiB |
+| ridge, point receivers | 61.8 s | 7.84 s | 98.44% | 240 MiB |
+| ridge, point receivers, `--terrain_screening cnossos` | 80.0 s | 10.2 s | 99.26% | 250 MiB |
+
+- **A table over terrain is cheaper than the ground model it replaces**: the point receivers'
+  exact evaluation (4.0x the level run) becomes a lookup at their height above the plane (1.5x).
+  The table covered 99.999% of the evaluations; the rest took the ground model. The extra 70 MiB
+  is the table itself. Its accuracy at this row spacing is in
+  [FIDELITY](../FIDELITY.md#propagation-tables).
+- **Screening with nothing to screen** (the hills, byte-identical to the unscreened run) cost
+  5% in CPU: the quick test per pair, and the bound's screened term, up to 4.1 dB above the
+  ground term in 28 of 31 bands, which evaluated 0.7 points more of the pairs.
+- **Behind the ridge** 9.27 million evaluations were screened (9.9% of those made, at 6057 of
+  14,400 observers; 8.95 million at 6048 with the minimum protrusion added since), 3.51 million of them (38%) reached the 25 dB cap in some band, and F was
+  held at 1 on neither side. The 18 s of extra CPU, the pairs the looser bound adds included, is
+  about 2 µs per screened evaluation, as at one thread on the 441-observer grid (0.55 s for
+  289,159).
+- **The screening cache** holds about 16 bytes more per sample per ray. At these fixtures' 42.8 m
+  step a path of 4.4 km is about 100 samples, about 2.3 MB per thread with every ray sampled:
+  the peak footprint rose 3.4 MiB at one thread and 7.5 MiB at eight (441 observers), and 7.1
+  MiB at eight on the full grid. At a 5 m step and 3 km, 600 samples, it is about 14 MB per
+  thread.
+
 ### Terrain tests
 
 - *Level terrain reproduces the run without it, byte for byte*: point receivers, plates, and
@@ -272,6 +479,19 @@ noticeable.
   ground model agrees (`terrain_reaches_the_ground_model`,
   `terrain_without_ground_places_observers`). A level that reads the `GroundTable` at the wrong
   height is caught in `tests/test_spectral_propagation.cpp`.
+- *A propagation table over terrain* is the flat read on level terrain, byte for byte
+  (`terrain_flat_table_*_is_flat`), keeps the windowed search exact over the hills
+  (`terrain_hills_table_*_windowed_is_exact`), counts its pairs toward the raised-height warning
+  with no ground model (`terrain_hills_table_warns_unscreened`), warns of receiver rows
+  (`terrain_table_warns_one_row`, `terrain_table_warns_receiver_rows`), and warns of a steep
+  plane for a refracting table but not for a ground-model one
+  (`terrain_steep_refracting_table_warns`, `terrain_steep_ground_model_table_is_quiet`, on the
+  5.7° plane `integrated/terrain_steep.nc`). The geometry is checked in `tests/test_terrain.cpp`
+  (`a table read ...`). A ground-model table over the hills is the terrain ground model to its
+  interpolation (`terrain_hills_table_point_is_the_ground_model`, from 20 to 250 Hz over rows
+  every half foot, `tables/ground_model_terrain_low_test.nc`; and
+  `terrain_hills_table_plate_is_the_plate_model`); the measured error is in
+  [FIDELITY](../FIDELITY.md#propagation-tables).
 - *Every refusal has a CTest* that passes on its message.
 
 What terrain changes at Amedee, and the slope sensitivity, are in

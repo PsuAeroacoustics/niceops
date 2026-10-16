@@ -191,7 +191,7 @@ int main(int argc, char** argv)
         transition.set_cramped_ground(cramped_ground == "ray" ? CrampedGround::ray
                         : cramped_ground == "series"            ? CrampedGround::series
                                                                 : CrampedGround::straight,
-                &ground, workers);
+                &ground);
     transition.set_tangent_decay(tangent_decay);
 
     std::vector<PeResult> pe(bands.size());

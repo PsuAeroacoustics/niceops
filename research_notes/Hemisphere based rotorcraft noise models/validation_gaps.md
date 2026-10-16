@@ -25,7 +25,7 @@ It documents:
 - 50 Hz INS/GPS state data;
 - per-run and averaged ART hemispheres at a 100 ft radius over 30–2,500 Hz A-weighted, flagged `DOPPLER_SHIFT_REMOVED`.
 
-The B407 days NICE-OPS uses are flights 283–286 (10–13 Oct 2017) at Amedee AAF.
+The B407 days NICEOPS uses are flights 283–286 (10–13 Oct 2017) at Amedee AAF.
 
 ### Cited Findings
 - **Identity and stated objectives** — [Watts, Greenwood, Smith, Stephenson, "Noise Abatement Flight Test Data Report," NASA/TM-2019-220264, Mar 2019](https://aeroacoustics.psu.edu/files/2022/09/Watts.TM2019-compressed.pdf):
@@ -82,9 +82,9 @@ The B407 days NICE-OPS uses are flights 283–286 (10–13 Oct 2017) at Amedee A
   - FRAME "must be calibrated using measured steady-flight acoustic data for each type of helicopter," which is why the steady matrix was flown. — [Watts et al. 2019, §2](https://aeroacoustics.psu.edu/files/2022/09/Watts.TM2019-compressed.pdf)
 
 ### Inferences
-- The report confirms the 2017 data were designed partly *for* model validation. Its only validation customer named in the text is the physics-based PSU-WOPWOP/CHARM system, so a sphere-model validation on these data (NICE-OPS) would be new use rather than a replication.
+- The report confirms the 2017 data were designed partly *for* model validation. Its only validation customer named in the text is the physics-based PSU-WOPWOP/CHARM system, so a sphere-model validation on these data (NICEOPS) would be new use rather than a replication.
 - Three properties of the distributed hemispheres matter to any sphere tool built on them:
-  1. Speed is **ground speed**, and the condition is a *target* FPA. This is the database-side counterpart of NICE-OPS's `--speed_reference` and its air-referenced wind correction.
+  1. Speed is **ground speed**, and the condition is a *target* FPA. This is the database-side counterpart of NICEOPS's `--speed_reference` and its air-referenced wind correction.
   2. The radius is 100 ft (30.5 m). NORAH and ECAC use 60 m.
   3. Spectra stop at 2,500 Hz, so any A-weighted level from these spheres omits content above that.
 - Because the descent hemispheres are unaveraged single runs, any blend of them carries single-run variability. The ±0.5 to 7.5 dB repeatability floors in the earlier note apply in full.
@@ -147,12 +147,12 @@ The new regulatory method, **ECAC Doc 32 (1st ed., endorsed 19 May 2026)**, is b
   - The authors note that for such tools "the accuracy has not been fully validated."
 
 ### Inferences
-- The European regulatory line has moved *backwards* on interpolation. NORAH2 (2024) introduced energy-domain inverse-distance blending; ECAC Doc 32 (2026) did not adopt it. A tool that interpolates (NICE-OPS: barycentric blending over μ, γ_e, CT) is therefore outside the endorsed European method. The absence of any published interpolation-error measurement is the reason ECAC gives.
-- The NORAH lineage differs from NICE-OPS in ways that matter for comparison:
-  - NORAH ignores attitude in hemisphere construction; NICE-OPS uses a TPP-normal sphere frame.
-  - NORAH uses ground-relative velocity; NICE-OPS uses a ground or air reference according to the database.
-  - NORAH tilts *level* hemispheres for turns, including descending turns; NICE-OPS uses Q-SAM with CT and γ_e.
-  - NORAH interpolates in energy; NICE-OPS blends dBA linearly.
+- The European regulatory line has moved *backwards* on interpolation. NORAH2 (2024) introduced energy-domain inverse-distance blending; ECAC Doc 32 (2026) did not adopt it. A tool that interpolates (NICEOPS: barycentric blending over μ, γ_e, CT) is therefore outside the endorsed European method. The absence of any published interpolation-error measurement is the reason ECAC gives.
+- The NORAH lineage differs from NICEOPS in ways that matter for comparison:
+  - NORAH ignores attitude in hemisphere construction; NICEOPS uses a TPP-normal sphere frame.
+  - NORAH uses ground-relative velocity; NICEOPS uses a ground or air reference according to the database.
+  - NORAH tilts *level* hemispheres for turns, including descending turns; NICEOPS uses Q-SAM with CT and γ_e.
+  - NORAH interpolates in energy; NICEOPS blends dBA linearly.
 
 ### Gaps
 - HELENA's EC130/EC135 dB results remain unretrieved; only the abstract is available.
@@ -186,7 +186,7 @@ The quantified US comparisons fall into four groups:
 - **Crane-suspended vertical arrays (CH-46E, CH-53E, AH-1)** — [Lucas, "Acoustic directivity measurements of the CH-46E, CH-53E, and AH-1A helicopters," JASA 1998 (abstract)](https://consensus.app/papers/details/0fe21bb4d4f85cdd9f0fbb24c0386f6f/?utm_source=claude_desktop):
   - Two 180 ft crane arrays plus a ground array formed a "U," with the rotor plane flown roughly in line with the crane tips.
   - This is the RNM-era answer to near-rotor-plane coverage.
-- **PSU-WOPWOP/CHARM vs the 2017 data (not sphere-based; same data NICE-OPS uses)** — [ASCENT Project 038 2018 Annual Report, Task 10](https://ascent.aero/documents/2019/07/ascent-project-038-2018-annual-report.pdf):
+- **PSU-WOPWOP/CHARM vs the 2017 data (not sphere-based; same data NICEOPS uses)** — [ASCENT Project 038 2018 Annual Report, Task 10](https://ascent.aero/documents/2019/07/ascent-project-038-2018-annual-report.pdf):
   - Case: 80 kt, 6° descent ("strong BVI").
   - "Peak SEL values and the contour shapes agree within about 2 dBA or less for all of the aircraft, except for the EC130," which was "lower than the measured data by 5 to 6 dB," attributed to the unmodelled Fenestron shroud.
   - The rotation-direction contour skew (right for CCW rotors, left for CW) was reproduced.
@@ -213,8 +213,8 @@ The quantified US comparisons fall into four groups:
 
 ### Inferences
 - Every quantified "within 0.5 dB" sphere result found (XV-15, the R44 table) predicts the *same run* that built the sphere. Those results measure processing round-trip consistency, not predictive skill. Independent-run validation of sphere models (CH-146) exists only as an unquantified abstract claim.
-- The PSU results give a benchmark for the same 2017 data a sphere tool uses: about 2 dBA peak-SEL agreement for a steady BVI descent, from physics alone. A held-out NICE-OPS approach error of about +1.5 dB median (internal, see the earlier note) is in the same range. NICE-OPS is evaluated on decelerating approaches, a harder case.
-- Trajectory and meteorology moved predictions by at most 0.2 dB at near-field mics in the R44 table. This suggests source-state selection dominates near the track. Refraction matters mainly at the long ranges where NICE-OPS's rim-dependent error sits.
+- The PSU results give a benchmark for the same 2017 data a sphere tool uses: about 2 dBA peak-SEL agreement for a steady BVI descent, from physics alone. A held-out NICEOPS approach error of about +1.5 dB median (internal, see the earlier note) is in the same range. NICEOPS is evaluated on decelerating approaches, a harder case.
+- Trajectory and meteorology moved predictions by at most 0.2 dB at near-field mics in the R44 table. This suggests source-state selection dominates near the track. Refraction matters mainly at the long ranges where NICEOPS's rim-dependent error sits.
 
 ### Gaps
 - No quantified Eglin 2007 (Acoustics Week III) or Eglin 2010 sphere-model validation was found. The Eglin 2007 document (govdocs mirror) could not be downloaded.
@@ -274,13 +274,13 @@ Several of the gaps named earlier now have numbers, mostly from analysis or simu
 - **Weather sensitivity of hemisphere-based footprints (eVTOL, model-to-model)** — [Fuerkaiti et al., JASA 2021 (abstract)](https://consensus.app/papers/details/b05b0c351cd55240bdf8f87bd18ec91f/?utm_source=claude_desktop): vertical temperature and wind gradients cause a "mismatch up to 4 dBA in the illuminated zone and a significant drop in the refractive shadow zone" relative to a homogeneous atmosphere.
 
 ### Inferences
-- **dB-domain blending in NICE-OPS.** NICE-OPS blends the broadband dBA linearly in dB across the four Delaunay-bracketing conditions and across bilinear sphere corners. RNM, NORAH2 and ECAC all interpolate in energy. Tuinstra and Sijtsma's statistics suggest the difference is small where neighbouring values differ by a couple of dB: averaging in dB sits below the energy mean by roughly 0.15 dB at ±2 dB spread.
+- **dB-domain blending in NICEOPS.** NICEOPS blends the broadband dBA linearly in dB across the four Delaunay-bracketing conditions and across bilinear sphere corners. RNM, NORAH2 and ECAC all interpolate in energy. Tuinstra and Sijtsma's statistics suggest the difference is small where neighbouring values differ by a couple of dB: averaging in dB sits below the energy mean by roughly 0.15 dB at ±2 dB spread.
   - Their scatter figures (±1, ±2, ±6 dB) are reused here as a stand-in for the spread between blended neighbours, with weights instead of equal averages. That reuse is mine, not theirs.
   - Under the same reading, the bias grows toward 0.6 dB or more where the blended neighbours differ by about 6 dB or more, as across a BVI boundary or between a hover sphere and a forward sphere.
-  - That direction (dB blending lower than energy) is opposite in sign to the NICE-OPS slow-end over-prediction, so it cannot explain it.
-- **Ground boards.** The flush ground-board, single-height arrangement of the 2017 and 2019 arrays avoids the "nearly 10 dB" elevated-microphone reflection problem at near-normal incidence. ARP4055's 30° validity cone does not cover the near-horizon rim data, which are exactly the long-range emission angles where NICE-OPS's internal error depends on how the rim is treated.
-- **Refraction in the database itself.** Munt's r < 450 m and θ-range limits imply that hemisphere data near the rim are themselves refraction-contaminated, at about 2 dB inside the limits and worse outside, because ART de-propagates through a uniform (or averaged) atmosphere. A propagation model applied downstream (NICE-OPS `--refraction`) cannot undo refraction already baked into the database. Validating long-range refraction against those same rim data is partly circular.
-- **Doppler.** De-Dopplerised flight hemispheres used with a moving-source, non-Doppler-shifting propagator are consistent to about 0.5 dB, per the PSU equivalence result. That supports NICE-OPS's convention of not applying a frequency shift, given the database's `DOPPLER_SHIFT_REMOVED` flag. The internal memory note records that the panam spheres keep Doppler, so the flag in each file is the thing to check, not the convention.
+  - That direction (dB blending lower than energy) is opposite in sign to the NICEOPS slow-end over-prediction, so it cannot explain it.
+- **Ground boards.** The flush ground-board, single-height arrangement of the 2017 and 2019 arrays avoids the "nearly 10 dB" elevated-microphone reflection problem at near-normal incidence. ARP4055's 30° validity cone does not cover the near-horizon rim data, which are exactly the long-range emission angles where NICEOPS's internal error depends on how the rim is treated.
+- **Refraction in the database itself.** Munt's r < 450 m and θ-range limits imply that hemisphere data near the rim are themselves refraction-contaminated, at about 2 dB inside the limits and worse outside, because ART de-propagates through a uniform (or averaged) atmosphere. A propagation model applied downstream (NICEOPS `--refraction`) cannot undo refraction already baked into the database. Validating long-range refraction against those same rim data is partly circular.
+- **Doppler.** De-Dopplerised flight hemispheres used with a moving-source, non-Doppler-shifting propagator are consistent to about 0.5 dB, per the PSU equivalence result. That supports NICEOPS's convention of not applying a frequency shift, given the database's `DOPPLER_SHIFT_REMOVED` flag. The internal memory note records that the panam spheres keep Doppler, so the flag in each file is the thing to check, not the convention.
 
 ### Gaps
 - No flight-test measurement of the dB- vs energy-domain *interpolation between operating conditions* was found, in any tool. NORAH2's F_fc = 2 was "empirically determined to give minimum interpolation error" without a published error.
@@ -317,8 +317,8 @@ The regulatory method (ECAC Doc 32) explicitly declines single-event accuracy cl
   1. measured source repeatability (±0.5 dB at best in level flight, up to 7.5 dB for BVI);
   2. database processing bias (about 0.1–0.6 dB from dB averaging, about 2 dB of refraction contamination near the rim);
   3. propagation and weather (up to 4 dBA illuminated, more in shadow).
-- NICE-OPS already holds the ingredients for a first such UQ: repeat runs in the 2017 set, measured weather profiles, and multiple propagation models. That would be novel relative to the literature found.
-- The 2024 MD530F design-of-experiments matrix is the first sign of a statistically designed sphere database. A NICE-OPS blending-error study could use it to separate interpolation error from source variability.
+- NICEOPS already holds the ingredients for a first such UQ: repeat runs in the 2017 set, measured weather profiles, and multiple propagation models. That would be novel relative to the literature found.
+- The 2024 MD530F design-of-experiments matrix is the first sign of a statistically designed sphere database. A NICEOPS blending-error study could use it to separate interpolation error from source variability.
 
 ### Gaps
 - No Monte-Carlo or Bayesian UQ of a hemisphere-based helicopter or eVTOL footprint against flight test was found, in Consensus or in web search.

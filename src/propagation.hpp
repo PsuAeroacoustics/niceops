@@ -150,4 +150,29 @@ inline RayPath terrain_ray(const Vec3& source, const Vec3& microphone, const Gro
     return path;
 }
 
+// Where a propagation table is read for a pair over terrain (THEORY 9.3): in
+// terrain_ray()'s frame, the source's height above the path's mean ground
+// line, the microphone's, and the distance along it.  A point receiver reads
+// at its own height above the line.  A flush microphone reads the table's
+// lowest receiver row, `lowest_row`, at the source's height above the
+// microphone, as on flat ground, and its plate offset at the arrival's
+// separation, turned round when the source's foot lies behind the
+// microphone's.  The table's bearing is not taken from here but from the true
+// horizontal separation: read at |d'| on a fixed bearing, an anisotropic
+// table stays continuous as d' passes through zero, where the turned
+// separation's bearing jumps by 180 degrees.
+struct TableRead
+{
+    double source_height = 0.0;
+    double receiver_height = 0.0;
+    double range = 0.0;
+    Vec3 plate_separation;
+};
+
+inline TableRead table_read(const RayPath& path, bool flush, double lowest_row)
+{
+    return TableRead {path.source_height, flush ? lowest_row : path.receiver_height, path.ground_distance,
+            path.separation};
+}
+
 } // namespace niceops

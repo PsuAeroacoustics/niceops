@@ -1,6 +1,7 @@
 #include "terrain.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -131,7 +132,7 @@ Terrain::Terrain(const std::string& path)
     if (!units.empty() && units != "m" && units != "meter" && units != "meters" && units != "metre"
             && units != "metres")
     {
-        input_error("Terrain file ", path, ": elevation is in '", units, "'; NICE-OPS reads "
+        input_error("Terrain file ", path, ": elevation is in '", units, "'; NICEOPS reads "
                 "terrain heights in meters. Convert the grid to meters.");
     }
     elevations_.resize(lengths[0] * lengths[1]);
@@ -434,14 +435,18 @@ GroundLine niceops::fit_ground_line(const TerrainRaster& raster, double x0, doub
     return line_from_sums(sum_z, sum_kz, n, length / static_cast<double>(n), base);
 }
 
-GroundPlaneCache::GroundPlaneCache(const TerrainRaster& raster)
+GroundPlaneCache::GroundPlaneCache(const TerrainRaster& raster, bool screening, double min_protrusion)
     : raster_(&raster)
     , step_(raster.step())
+    , screening_(screening)
+    , min_protrusion_(min_protrusion)
     , cos_(bearings)
     , sin_(bearings)
     , stamp_(bearings, 0u)
     , sum_z_(bearings)
     , sum_kz_(bearings)
+    , z_raw_(screening ? bearings : 0)
+    , horizon_(screening ? bearings : 0)
 {
     for (int ray = 0; ray < bearings; ray++)
     {
@@ -464,6 +469,22 @@ void GroundPlaneCache::set_observer(double x, double y)
     }
 }
 
+void GroundPlaneCache::set_observer(double x, double y, double microphone_height)
+{
+    // The horizon depends on the microphone's height, so it belongs to the
+    // observer, and the generation stamp that rewinds the sums rewinds it.
+    microphone_ = microphone_height;
+    set_observer(x, y);
+}
+
+void GroundPlaneCache::set_observer_at(double x, double y, double microphone_z)
+{
+    set_observer(x, y);
+    // A microphone the file puts below the raster's ground would sit under its
+    // own profile and see every path blocked; it is taken at the ground.
+    microphone_ = std::max(0.0, microphone_z - z_);
+}
+
 void GroundPlaneCache::ensure(int ray, std::size_t n)
 {
     auto& sum_z = sum_z_[ray];
@@ -473,6 +494,11 @@ void GroundPlaneCache::ensure(int ray, std::size_t n)
         stamp_[ray] = generation_;
         sum_z.clear();
         sum_kz.clear();
+        if (screening_)
+        {
+            z_raw_[ray].clear();
+            horizon_[ray].clear();
+        }
     }
     if (sum_z.size() > n)
         return;
@@ -487,6 +513,13 @@ void GroundPlaneCache::ensure(int ray, std::size_t n)
         const double z = raster_->height(x_ + s * dx, y_ + s * dy) - z_;
         sum_z.push_back((k > 0 ? sum_z[k - 1] : 0.0) + z);
         sum_kz.push_back((k > 0 ? sum_kz[k - 1] : 0.0) + s * z);
+        if (screening_)
+        {
+            auto& horizon = horizon_[ray];
+            z_raw_[ray].push_back(z);
+            horizon.push_back(k > 0 ? std::max(horizon[k - 1], sight_slope(z, s * step_))
+                                    : -std::numeric_limits<double>::infinity());
+        }
     }
 }
 
@@ -506,28 +539,144 @@ GroundLine GroundPlaneCache::along(int ray, std::size_t n, double fraction)
             (1.0 - fraction) * a.slope + fraction * b.slope};
 }
 
-GroundLine GroundPlaneCache::line_to(double dx, double dy, double distance)
+GroundPlaneCache::RayPair GroundPlaneCache::locate(double dx, double dy, double distance) const
 {
+    RayPair pair;
     double angle = std::atan2(dy, dx);
     if (angle < 0.0)
         angle += 2.0 * pi;
     const double u = angle * (bearings / (2.0 * pi));
-    const int ray = std::min(static_cast<int>(u), bearings - 1);
-    const double turn = std::clamp(u - ray, 0.0, 1.0);
-    const int next = ray + 1 == bearings ? 0 : ray + 1;
+    pair.ray = std::min(static_cast<int>(u), bearings - 1);
+    pair.turn = std::clamp(u - pair.ray, 0.0, 1.0);
+    pair.next = pair.ray + 1 == bearings ? 0 : pair.ray + 1;
 
     const double v = distance / step_;
-    std::size_t n = static_cast<std::size_t>(v);
-    double fraction = v - static_cast<double>(n);
-    if (n < 1)
+    pair.n = static_cast<std::size_t>(v);
+    pair.fraction = v - static_cast<double>(pair.n);
+    if (pair.n < 1)
     {
         // Shorter than one step: the line over the first step along its bearing.
-        n = 1;
-        fraction = 0.0;
+        pair.n = 1;
+        pair.fraction = 0.0;
     }
-    const GroundLine a = along(ray, n, fraction);
-    if (!(turn > 0.0))
+    pair.distance = distance;
+    return pair;
+}
+
+GroundLine GroundPlaneCache::line_from(const RayPair& pair)
+{
+    const GroundLine a = along(pair.ray, pair.n, pair.fraction);
+    if (!(pair.turn > 0.0))
         return a;
-    const GroundLine b = along(next, n, fraction);
+    const GroundLine b = along(pair.next, pair.n, pair.fraction);
+    const double turn = pair.turn;
+    return {(1.0 - turn) * a.intercept + turn * b.intercept, (1.0 - turn) * a.slope + turn * b.slope};
+}
+
+GroundLine GroundPlaneCache::line_to(double dx, double dy, double distance)
+{
+    return line_from(locate(dx, dy, distance));
+}
+
+std::size_t GroundPlaneCache::interior_samples(const RayPair& pair) const
+{
+    // ceil(D / step) - 1: the samples strictly between the microphone and the
+    // footprint.  line_from() has already, or will have, sampled each ray to
+    // floor(D / step), plus one past a fraction, which covers these and the
+    // one after.
+    const double v = pair.distance / step_;
+    if (!(v > 1.0))
+        return 0;
+    return static_cast<std::size_t>(std::ceil(v)) - 1;
+}
+
+double GroundPlaneCache::source_height(const RayPair& pair, double source_z) const
+{
+    // The blended profile at the footprint, between the samples around it.  A
+    // state a few meters under the terrain is let through upstream
+    // (process_trajectory), and is taken onto it, as terrain_ray() takes a
+    // height below the mean line onto the line.
+    const auto at = [&](std::size_t k) {
+        const double a = z_raw_[pair.ray][k];
+        if (!(pair.turn > 0.0))
+            return a;
+        return (1.0 - pair.turn) * a + pair.turn * z_raw_[pair.next][k];
+    };
+    double foot = at(pair.n);
+    if (pair.fraction > 0.0)
+        foot = (1.0 - pair.fraction) * foot + pair.fraction * at(pair.n + 1);
+    return std::max(source_z - z_, foot);
+}
+
+bool GroundPlaneCache::may_block(const RayPair& pair, double source_z)
+{
+    assert(screening_);
+    const std::size_t interior = interior_samples(pair);
+    if (interior == 0)
+        return false;
+    ensure(pair.ray, interior + 1);
+    if (pair.turn > 0.0)
+        ensure(pair.next, interior + 1);
+    const double sight = sight_slope(source_height(pair, source_z), pair.distance);
+    // A blended sample's slope is never above the larger of its two rays'.
+    if (horizon_[pair.ray][interior] > sight)
+        return true;
+    return pair.turn > 0.0 && horizon_[pair.next][interior] > sight;
+}
+
+bool GroundPlaneCache::blocked(const RayPair& pair, double source_z, Profile& profile)
+{
+    if (!may_block(pair, source_z))
+        return false;
+    const std::size_t interior = interior_samples(pair);
+    const double source = source_height(pair, source_z);
+    const double sight = sight_slope(source, pair.distance);
+    const double* a = z_raw_[pair.ray].data();
+    const double* b = z_raw_[pair.next].data();
+    const bool turned = pair.turn > 0.0;
+    const double turn = pair.turn;
+    bool above = false;
+    for (std::size_t k = 1; k <= interior && !above; k++)
+    {
+        const double z = turned ? (1.0 - turn) * a[k] + turn * b[k] : a[k];
+        const double s = static_cast<double>(k) * step_;
+        above = sight_slope(z, s) > sight && (min_protrusion_ == 0.0 || z - (microphone_ + sight * s) > min_protrusion_);
+    }
+    if (!above)
+        return false;
+    profile.heights.resize(interior + 2);
+    for (std::size_t k = 0; k <= interior + 1; k++)
+        profile.heights[k] = turned ? (1.0 - turn) * a[k] + turn * b[k] : a[k];
+    profile.interior = interior;
+    profile.step = step_;
+    profile.distance = pair.distance;
+    profile.microphone_height = microphone_;
+    profile.source_height = source;
+    return true;
+}
+
+GroundLine GroundPlaneCache::fit_ray_range(int ray, std::size_t k0, std::size_t k1) const
+{
+    // Re-based to k0, so the index-weighted sum is over (k - k0) and the
+    // closed form of line_from_sums applies; then moved back to s from the
+    // observer.
+    const auto& sum_z = sum_z_[ray];
+    const auto& sum_kz = sum_kz_[ray];
+    const double z = sum_z[k1] - (k0 > 0 ? sum_z[k0 - 1] : 0.0);
+    const double kz = sum_kz[k1] - (k0 > 0 ? sum_kz[k0 - 1] : 0.0) - static_cast<double>(k0) * z;
+    GroundLine line = line_from_sums(z, kz, k1 - k0, step_, 0.0);
+    line.intercept -= line.slope * (static_cast<double>(k0) * step_);
+    return line;
+}
+
+GroundLine GroundPlaneCache::fit_range(const RayPair& pair, std::size_t k0, std::size_t k1) const
+{
+    assert(screening_ && k0 < k1 && k1 < sum_z_[pair.ray].size());
+    const GroundLine a = fit_ray_range(pair.ray, k0, k1);
+    if (!(pair.turn > 0.0))
+        return a;
+    assert(k1 < sum_z_[pair.next].size());
+    const GroundLine b = fit_ray_range(pair.next, k0, k1);
+    const double turn = pair.turn;
     return {(1.0 - turn) * a.intercept + turn * b.intercept, (1.0 - turn) * a.slope + turn * b.slope};
 }

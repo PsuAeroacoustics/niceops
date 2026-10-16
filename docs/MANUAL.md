@@ -1,6 +1,6 @@
-# NICE-OPS manual
+# NICEOPS manual
 
-This manual is the user's reference: how to run NICE-OPS, every option, the input and output
+This manual is the user's reference: how to run NICEOPS, every option, the input and output
 formats, which model to use when, and what each one costs and refuses. It states each model in a
 paragraph or two. [THEORY.md](THEORY.md) has the equations and references,
 [FIDELITY.md](FIDELITY.md) the evidence of how well each model agrees with exact solutions and
@@ -11,7 +11,7 @@ the code, start with the [README](../README.md); developers start at
 ## Contents
 
 - [Overview: how a prediction is made](#overview-how-a-prediction-is-made)
-- [Running NICE-OPS](#running-nice-ops): [Quick start](#quick-start) · [Command-line
+- [Running NICEOPS](#running-niceops): [Quick start](#quick-start) · [Command-line
   options](#command-line-options) · [Units](#units) · [Errors and refusals](#errors-and-refusals)
 - [Inputs](#inputs): [Input files](#input-files) · [Trajectories](#trajectories) · [Vehicle
   file](#vehicle-file) · [Observers](#observers)
@@ -23,7 +23,7 @@ the code, start with the [README](../README.md); developers start at
 - [Propagation](#propagation): [Broadband and spectral paths](#broadband-and-spectral-paths) ·
   [Stratified atmosphere](#stratified-atmosphere) · [A profile from the surface
   wind](#a-profile-from-the-surface-wind) · [Ground effect](#ground-effect) ·
-  [Receivers](#receivers) · [Ground-plane microphones](#ground-plane-microphones) ·
+  [Mixed ground](#mixed-ground) · [Receivers](#receivers) · [Ground-plane microphones](#ground-plane-microphones) ·
   [Terrain](#terrain) · [Refraction](#refraction) · [Refraction through the profile's
   layers](#refraction-through-the-profiles-layers) · [Low sources near grazing: the resolved
   shadow](#low-sources-near-grazing-the-resolved-shadow) · [Micro-shadows and skip
@@ -35,6 +35,7 @@ the code, start with the [README](../README.md); developers start at
   above and C-weighted SEL](#maximum-level-time-above-and-c-weighted-sel) · [EPNL and reception-time
   frames](#epnl-and-reception-time-frames)
 - [Companion tools](#companion-tools): [`niceops_procedure`](#niceops_procedure) · [`niceops_propagation_table`](#niceops_propagation_table) ·
+  [`niceops_build_atmosphere`](#niceops_build_atmosphere) ·
   [`niceops_pe_compare`](#niceops_pe_compare) · [`niceops_benchmark`](#niceops_benchmark) · [Plot
   scripts](#plot-scripts)
 - [Performance](#performance): [How much gets evaluated](#how-much-gets-evaluated) ·
@@ -44,7 +45,7 @@ the code, start with the [README](../README.md); developers start at
 
 ## Overview: how a prediction is made
 
-NICE-OPS is a source–path–receiver model, run for every trajectory state and every observer: on
+NICEOPS is a source–path–receiver model, run for every trajectory state and every observer: on
 the demo case, 6,551 states by 14,400 observers.
 
 - **Source.** A database of noise spheres around the aircraft, one per operating condition. Each
@@ -64,11 +65,11 @@ the demo case, 6,551 states by 14,400 observers.
   for its maximum, time above a threshold or EPNL; several trajectories combine into day-night
   metrics ([THEORY §10](THEORY.md#10-noise-metrics)).
 
-## Running NICE-OPS
+## Running NICEOPS
 
 ### Quick start
 
-With no arguments NICE-OPS runs the demo case: `tracks/S-76D/197421AC.csv` against
+With no arguments NICEOPS runs the demo case: `tracks/S-76D/197421AC.csv` against
 `databases/S-76D_M3.nod` and `databases/S-76D.json`, writing `integrated/197421_LAE.csv`. Run from
 the repository root, since paths are relative; output directories are created as needed.
 
@@ -161,6 +162,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--cramped_ground` | `resolved`: how a band whose boundary is within two diffraction lengths of the source is filled: `series` (default), `straight` or `ray`. |
 | `--tunneling` | `--refraction stratified`: add the rays that turn back just above the microphone, through an Airy tail per band. Off by default ([Micro-shadows](#micro-shadows-and-skip-zones)). |
 | `--skip_fill` | `--refraction stratified`: fill the skip zone short of where rays from aloft first land with the caustic's Airy tail. Off by default. |
+| `--ray_stride` | `--refraction stratified`: solve each path's layered rays only every this many trajectory states and interpolate the states between where the two agree ([Refraction through the profile's layers](#refraction-through-the-profiles-layers)). Default 4; 1 solves every state. |
 
 #### Ground, receivers and terrain
 
@@ -176,14 +178,17 @@ is a physical quantity, given here in meters with its value in feet.
 | `--turbulence` | Chessell's turbulence parameter, rad·s/√m, typically 0 to 16e-4. Default 0. |
 | `--gamma_t` | HARMONOISE turbulence strength γ<sub>T</sub>, m<sup>−2/3</sup>: about 1e-6 moderate, 1e-5 strong. Default 0. |
 | `--receiver_height` | Height of a point receiver's microphone. Default 1.2 m (3.937 ft). An observer file's fifth column overrides it per observer. Also places the microphone for `--propagation_table`. |
+| `--ground_classes` | A CSV of ground surfaces keyed by an integer id, which an observer file's sixth column picks per microphone ([Mixed ground](#mixed-ground)). Needs `-b` with that column. Not with `--refraction` or `--propagation_table`. |
 | `--plate_table` | Observers are flush microphones on a ground plate: a netCDF table built for the run's ground ([Ground-plane microphones](#ground-plane-microphones)). Needs the ground effect. |
 | `--plate_mic_azimuth` | Which way the microphone is offset on its plate: `outboard` (default, away from the track) or degrees in the local frame from +x toward +y. |
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state rather than from per-trajectory tables. Slower; for checking the tables. |
 | `--propagation_table` | A propagation loss table (netCDF) that replaces the ground and ray models wherever it covers a pair ([Propagation loss tables](#propagation-loss-tables)). Spectral path only. |
-| `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction` or `--propagation_table`. The three rows below are refused without it. |
+| `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
 | `--observers_on_terrain` | With `--terrain` and `-b`: take each observer's ground height from the terrain rather than the file's z. |
+| `--terrain_screening` | With `--terrain`: `none` (default), `cnossos` or `kirchhoff`, two ways of screening a path the terrain rises above ([Terrain](#terrain)). Spectral path only. |
+| `--screening_min_height` | With `--terrain_screening`: how far the terrain must rise above a path's line of sight to screen it, in `--units`. Default 0.5 m, above a terrain grid's texture. |
 
 #### Metrics
 
@@ -292,9 +297,12 @@ The main ones:
 | `--csel_file` with `--db_cutoff` | The cutoff is proven on the A-weighted level. |
 | `--refraction` without `--atmosphere` or `--wind`; `--atmosphere` with `--wind` | One profile, stated once. |
 | `--shadow_model resolved` without `--refraction stratified` and the ground effect; `--scattering` without `--refraction` and the ground effect | They act through the shadow transition, which needs a ground model. |
-| `--tunneling`, `--skip_fill` without `--refraction stratified` | They are stratified-ray corrections. |
-| `--terrain` with `--refraction` or `--propagation_table`, or without a frame | Those models are built over flat ground; terrain needs to know where x/y lie. |
+| `--tunneling`, `--skip_fill` or `--ray_stride` without `--refraction stratified` | They are stratified-ray options. |
+| `--terrain` with `--refraction`, or without a frame | The ray models are built over flat ground; terrain needs to know where x/y lie. |
+| `--terrain_screening` without `--terrain`, or with `--no-spectral` or a database without spectra; `--terrain_screening cnossos` with `--propagation_table` and `--no-ground_effect` | The edges are the terrain's; the diffraction is per band; a path `cnossos` screens leaves the table for the ground model. |
 | `--plate_table` without the ground effect, or over a different ground | The table is built for one ground. |
+| `--ground_classes` with grid observers, without an observer file's ground column, or naming a class the file does not define; the column without `--ground_classes` | Each names the other. |
+| `--ground_classes` with `--refraction`, `--propagation_table`, `--no-ground_effect`, `--no-spectral` or a database without spectra; flush microphones on more than one class, or on one the plate table was not built for | The ray models need the ground along the path, a table and a plate table each hold one ground, and the classes are a ground for the ground effect. |
 | `--latlon`, `--contour_file`, `--nose heading` without a frame; `--contour_file` or `--raster_file` with `-b`; `--contour_file` with `--contour_metric sel` over several trajectories | Nothing to turn compass directions or invert positions with; scattered observers have no grid to contour; one SEL per trajectory. |
 | `-D`, `--lden_file`, `--cnel_file` or a period level on a track with no clock, unless an operations file gives period counts | Day or night would be made up. |
 | `--laeq_file` without `--laeq_window`, or an empty window | There is no default period. |
@@ -409,9 +417,10 @@ databases need one you supply.
 
 Without `-b` the observers are a grid, by default −1500 … 1475 m in 25 m steps on each axis (120
 values, 14,400 observers), set by `--grid` and `--gridstep`. Grid observers stand at z = 0, or on
-the terrain. `-b FILE` reads scattered observers instead, in `--units`: `x,y,z`, `id,x,y,z`, or
-`id,x,y,z,height`, the fifth column being each microphone's height above the ground
-([Receivers](#receivers)). The first line is always a header, and is discarded even when it
+the terrain. `-b FILE` reads scattered observers instead, in `--units`: `x,y,z`, `id,x,y,z`,
+`id,x,y,z,height` or `id,x,y,z,height,ground`, the fifth column being each microphone's height
+above the ground ([Receivers](#receivers)) and the sixth the ground class it stands on
+([Mixed ground](#mixed-ground)). The first line is always a header, and is discarded even when it
 holds numbers. `tests/data/mixed_receivers.csv` is an example (coordinates shortened here):
 
 ```csv
@@ -447,7 +456,7 @@ the B407's recipe without a hover correction. No approach was used to build any 
 approaches are the validation set ([FIDELITY](FIDELITY.md#shipped-databases-approach-scores-per-aircraft)).
 Each file records its build at the root (`speed_reference`, the build atmosphere, `hover_source`)
 and `DOPPLER_SHIFT_REMOVED` and `coverage` per group. The spheres keep the measured,
-Doppler-shifted spectra, and NICE-OPS applies no frequency shift. The rebuilds are in
+Doppler-shifted spectra, and NICEOPS applies no frequency shift. The rebuilds are in
 [HISTORY](HISTORY.md#the-2017-noise-abatement-databases).
 
 ### Spectra
@@ -624,7 +633,11 @@ z_ft,T_K,RH,p_kPa
 - **Pressure.** Without a column, it is integrated hydrostatically up from the surface pressure
   (the vehicle file's or `--pressure`'s). A single row is a uniform atmosphere.
 - **The profile has to reach the aircraft.** A trajectory above the top level is refused. Below
-  the lowest level that level is held to the ground, so give the profile a level at the ground.
+  the lowest level that level is held to the ground, with a warning, so give the profile a level
+  at the ground ([`niceops_build_atmosphere`](#niceops_build_atmosphere) always writes one).
+- **No calm level above the ground under wind.** `--refraction stratified` takes one as a thin
+  layer that can put levels 20 dB or more low, and the run warns of it. A profile calm at every
+  level is still air and does not warn.
 - **Surface properties stay at the surface**: the ground level supplies the sound speed for the
   reception time and the ground impedance.
 - **Not with `--temperature` or `--humidity`**; `--pressure` only when the file has no pressure.
@@ -700,6 +713,43 @@ the answer is sensitive to it, so name the surface rather than guessing.
 - **Tables.** The ground gain is interpolated from a per-trajectory table, within about 0.001 dB
   of the exact model; `--exact_ground` evaluates it directly, several times slower.
 
+### Mixed ground
+
+When microphones stand on different surfaces, for example a concrete pad among grass,
+`--ground_classes FILE` gives each surface as a row of a CSV, and an observer file's sixth column
+(`id,x,y,z,height,ground`) names the class of each microphone:
+
+```csv
+class,name,impedance_model,flow_resistance
+0,grass,,
+21,pad,delany_bazley,10000
+```
+
+- **Columns.** `class` is required: an integer id from 0 to 2147483647, in any order (land-cover
+  codes work). The others are optional: `name` (for the log), `impedance_model`,
+  `flow_resistance` (kPa·s/m²), `porosity_rate` (1/m), `layer_depth` and `roughness` (in
+  `--units`). A column left out, or a cell left empty, takes the command line's value, so a file
+  lists only what differs; above, class 0 is whatever the command line says.
+- **Turbulence is the air's**, so it stays run-wide (`--turbulence`, `--gamma_t`), and a
+  turbulence column is refused. The receiver height comes from the observer file.
+- **Flush microphones** on a plate (`--plate_table`) must all be on one class, the ground the
+  plate table was built for.
+- **The limit.** Each microphone is evaluated as if the whole ground were its class. Use a class
+  where the patch extends well beyond the microphone toward the aircraft: tens of meters for a
+  1.2 m pole at grazing incidence, less for a high source. A flush plate needs only a patch
+  larger than the plate. A small pad under a pole microphone is given the full effect of a
+  concrete plain, which overstates it at long range.
+- **A land-cover class is not an impedance.** Ground mapped as built-up or paved is seldom a
+  concrete plain: measured at grazing, such a patch behaved like ground of about 1000–2000
+  kPa·s/m², and concrete's 10,000 or more overstated it by several dB
+  ([FIDELITY](FIDELITY.md#ground-classes)). Give a hard class a moderate flow resistance unless
+  the surface is known to be sealed pavement.
+- **What it does not combine with.** `--refraction` (its terms depend on the ground along the
+  path), `--propagation_table` (a table holds one ground), grid observers (they have no class
+  column), `--no-ground_effect` and the broadband path. `--terrain` works.
+- **Cost.** One ground table per microphone height and class, about 10 MB each; above 16 the run
+  warns and `--exact_ground` is the alternative. Classes defined but not used are only logged.
+
 ### Receivers
 
 Each observer's level is evaluated at its microphone, the observer's point raised by the
@@ -713,7 +763,8 @@ microphone's height. What the microphone is decides the ground model:
 
 With a four-column observer file every observer takes the run's receiver. A fifth column gives
 each microphone's own height, so one run can hold flush microphones with a few on poles: under
-`--plate_table`, height 0 is a plate and anything else a point receiver. The log reports how many
+`--plate_table`, height 0 is a plate and anything else a point receiver. A sixth column puts each
+microphone over its own ground class ([Mixed ground](#mixed-ground)). The log reports how many
 observers took each.
 
 ### Ground-plane microphones
@@ -750,7 +801,7 @@ real three-dimensional path. A level terrain file reproduces the run without it,
 
     z_ground(x, y) = H(latitude, longitude) + --terrain_offset − --ground_elevation
 
-with H the grid's height, interpolated bilinearly. NICE-OPS does not convert between datums:
+with H the grid's height, interpolated bilinearly. NICEOPS does not convert between datums:
 `--terrain_offset` states the difference, and the log repeats it. At the 2017 Amedee site the
 3DEP grid is NAVD88 while the flight altitudes and surveyed microphone heights are ellipsoidal,
 23.6 m (77.43 ft) apart, and the AC tracks put their z = 0 at 3926.74 ft ellipsoidal:
@@ -770,16 +821,59 @@ the terrain is refused as a datum mismatch; up to 10 m warns. Scattered observer
 file's z, with a warning where it differs from the terrain by more than 1 m;
 `--observers_on_terrain` stands them on the terrain instead.
 
-**What is not modeled.** Terrain does not screen or diffract: a ridge between source and receiver
-puts the source below the mean plane, and its height is set to zero, so the level there is too
-high. The run warns when it happens, with how many observers had such paths (a receiver in a dip
-raises the same flag). Each path's ground is one plane. `--refraction` and `--propagation_table` are refused, because they are built over flat
-ground, and on the broadband path `--terrain` only places the observers.
+**Screening.** By default terrain does not screen or diffract: a ridge between source and
+receiver puts the source below the mean plane, and its height is set to zero, so the level there
+is too high. The run warns when it happens, with how many observers had such paths (a receiver in
+a dip raises the same flag). `--terrain_screening` screens instead, by one of two models, on the
+same paths: those on which the terrain rises more than `--screening_min_height` above the line of
+sight. Every other path is evaluated as without it, so level ground, a uniform slope, or hills no
+path crosses give the unscreened run exactly. Use it where ridges, bluffs or berms stand between
+low flight and the receivers.
+
+- `cnossos` takes the CNOSSOS-EU diffraction over the terrain's convex outline between source
+  and microphone, with the ground effect on each side of it in place of the whole path's, capped
+  at 25 dB ([THEORY §6.4](THEORY.md#64-terrain-screening)). It is the method European noise
+  mapping prescribes; choose it to match that.
+- `kirchhoff` keeps the level the path would have unscreened, with its ground over the mean
+  plane, its plate or its table, and takes off the Fresnel-Kirchhoff loss of one knife edge,
+  standing where the terrain rises highest above the line of sight, as high as both ends see
+  over the terrain there ([THEORY §6.4](THEORY.md#64-terrain-screening)). Behind a hill it
+  shields less than `cnossos` above the low bands, which is closer to what was measured, and it
+  costs little more than the unscreened run.
+
+What both leave out, and where they step:
+
+- Only the vertical plane through source and microphone is taken: no paths around the ends of an
+  obstacle, and no buildings or vegetation. The rays are straight. Behind an isolated hill, which
+  sound also reaches around its sides, both models overstate the shielding above the low bands
+  ([FIDELITY](FIDELITY.md#terrain-screening)); use them for long ridges, bluffs and berms.
+- Crests are found at `--terrain_step`, so a sharp ridge is slightly under-screened at the
+  default step; a finer step costs about proportionally more.
+- As a source drops behind a crest the loss switches on at 4.8 dB (`cnossos`) or 6.0 dB
+  (`kirchhoff`), not from zero, so the level steps; that shows in LAmax and time above more than
+  in SEL.
+- `kirchhoff` stands one edge for all the crests on a path, so two ridges well apart shield less
+  than they would one after the other. `cnossos` diffracts over every crest of the outline.
+- With `--propagation_table`, a path `cnossos` screens is not read from the table but takes the
+  screening with the ground model, which must then be on; unblocked paths keep the table. The two
+  physics meet at the edge of the screened region, and the log counts the paths that left the
+  table. `kirchhoff` keeps the table on every path.
+- Their accuracy, against an exact solution and behind one measured hill, is in
+  [FIDELITY](FIDELITY.md#terrain-screening).
+
+Each path's ground is otherwise one plane. `--refraction` is refused, because the ray models are
+built over flat ground, and on the broadband path `--terrain` only places the observers. A
+`--propagation_table` is read over each path's mean plane
+([Propagation loss tables](#propagation-loss-tables)).
 
 **Cost and effect.** Plates keep their tables over terrain; point receivers over real terrain are
 evaluated exactly, about 4 times the CPU, which a test array of tens of microphones does not
-notice. At Amedee terrain moves flush-plate SEL by hundredths of a dB; at a sloped site it can
-move it by a dB at low elevation ([FIDELITY](FIDELITY.md#terrain-at-amedee),
+notice; a ground-model `--propagation_table` with rows spanning their heights above the planes
+reads them instead, at about 1.5 times. Screening adds a test per path and keeps about twice the
+terrain samples in memory per thread; `cnossos` adds two exact ground evaluations per screened
+path, and `kirchhoff` a table lookup per band. At
+Amedee terrain moves flush-plate SEL by hundredths of a dB; at a sloped site it can move it by a dB
+at low elevation ([FIDELITY](FIDELITY.md#terrain-at-amedee),
 [sensitivity](FIDELITY.md#sensitivity-studies)).
 
 ### Refraction
@@ -843,6 +937,17 @@ model that agrees with the parabolic equation.
 - **Cost.** On the demo grid with a point receiver, about five times `linear`'s
   acoustic loop ([Relative cost](#relative-cost)), and more in a duct, where the arrivals
   multiply.
+- **Interpolated states (`--ray_stride`, 4 by default).** The rays to a microphone change little
+  from one trajectory state to the next, so they are solved at every fourth state and the states
+  between are interpolated. A state whose two solved neighbors differ in kind (lit and shadowed, a
+  different set of arrivals, a caustic or boundary passing between them) is solved itself, and
+  the level at every state is still formed from its own geometry. It roughly halves a stratified
+  run against solving every state, for SEL and LAmax within thousandths to hundredths of a
+  decibel; a single sample of a time history can differ by up to a decibel where the solved
+  history itself steps from one state to the next
+  ([FIDELITY](FIDELITY.md#interpolated-rays---ray_stride)). `--ray_stride 1` solves every state:
+  to compare ray models state by state, or to reproduce a stratified result made before the
+  default. Larger strides gain little more, since what is left is the rest of the evaluation.
 
 ### Low sources near grazing: the resolved shadow
 
@@ -903,6 +1008,20 @@ one value means every direction), `source_height` and `receiver_height` (above t
   that fall back. Build the table with the run's (`niceops_propagation_table --turbulence`,
   `--gamma_t`, `--roughness`); a run whose settings differ from what the table records is warned.
 - **With `--refraction` too**, every state is evaluated rather than windowed from the peak.
+- **Over terrain** each pair reads the table at its heights above, and range along, its path's
+  mean ground plane ([Terrain](#terrain)), as the ground model does there. A point microphone's
+  height above the plane is its own, not its pole's: build the table with receiver rows from 0 to
+  above the tallest microphone plus the terrain's relief. A pair whose microphone falls outside
+  the rows takes the run's own model, and the run warns with the heights seen; a table with one
+  receiver row is warned about before the run. Reading between rows is where a point receiver's
+  error is over terrain: the ground's interference fringes in receiver height are finer than a
+  practical row spacing above a few hundred hertz. A flush plate reads the lowest row, as on flat
+  ground, which needs no extra rows. A table that refracts (a PE table, or any not built by the
+  ground model with no atmosphere) is taken to have its atmosphere follow each path's mean plane;
+  the run warns when pairs read it over a plane tilted more than 5 degrees. With
+  `--terrain_screening cnossos`, a path the terrain blocks takes the screening and the ground
+  model instead of the table; `kirchhoff` reads the table and takes its knife edge's loss off it
+  ([Terrain](#terrain)).
 - **The file** is netCDF, SI: `relative_level(bearing, source_height, receiver_height, range,
   band)`, a coordinate variable per axis, and the attributes `propagation_table_version` (1),
   `method`, `includes_absorption` and `provenance_*`. Anything that fills it can be read
@@ -1274,8 +1393,8 @@ to the run; `--band_frames` more than doubles it and holds about 0.9 GB.
 
 ## Companion tools
 
-The build also makes three tools for checking the propagation models and building tables, and
-one for building tracks. They share the `--units` convention (feet by default) and the profile
+The build also makes three tools for checking the propagation models and building tables, one
+for building tracks, and one for building profiles. They share the `--units` convention (feet by default) and the profile
 format.
 
 ### `niceops_procedure`
@@ -1384,6 +1503,97 @@ bounds neither the error everywhere nor the hand-over to the run's own model. Us
 coordinates to add height nodes, shorten the range step or add bearings. Measured table errors
 are in [FIDELITY](FIDELITY.md#propagation-tables).
 
+### `niceops_build_atmosphere`
+
+Builds an `--atmosphere` profile from measured columns, and fits a site's roughness length to
+wind profiles. Use `build` for anything measured or modeled in height: a met tower, a sodar or
+LIDAR, a temperature string or tethered balloon, a radiosonde, or a weather model's column already
+extracted to CSV. Use `fit_z0` for a site with a LIDAR or tower whose roughness length nobody
+measured.
+
+```sh
+niceops_build_atmosphere build --column lidar.csv --column string.csv --missing 9999 \
+    --humidity 62.5 --z0 0.1 --top 5000 -o atmospheres/run.csv
+niceops --atmosphere atmospheres/run.csv --pressure 101.2 --refraction stratified ...
+
+niceops_build_atmosphere fit_z0 runs/*.csv --missing 9999 -o site_z0.json
+niceops_build_atmosphere build ... --z0_from site_z0.json -o atmospheres/run.csv
+```
+
+**Inputs to `build`.** Each `--column FILE` gives every variable it carries, under the column
+names of [Stratified atmosphere](#stratified-atmosphere). Any variable may be missing, and the
+humidity may also be a dew point (`Td_C`, `Td_K`) or a specific humidity (`q_kgkg`, `q_gkg`, with
+the pressure in the same rows). A variable two files carry is refused; `--wind_from`,
+`--temperature_from`, `--humidity_from` and `--pressure_from` name the file to take it from.
+`--temperature`, `--humidity`, `--pressure` and `--wind SPEED,DIRECTION[,HEIGHT]` (as niceops's
+`--wind`) are a surface station: its air is the ground level's, and its wind a level at the
+anemometer. Lengths are in `--units`, feet by default, on the command line and in the files.
+
+- **`--missing V ...`** lists cell values that are fill, not data (9999, 99999, a LIDAR's
+  1.944e4). They are dropped for their variable at their level, and counted. Any other
+  implausible value is refused with its file and row; `--drop_implausible` drops those too. A
+  wind column left with no value is refused, since it would build still air; a temperature,
+  humidity or pressure column left with none is warned of and ignored.
+- **Instrument cleaning stays with the caller**: a LIDAR's 180° direction ambiguity, a balloon
+  that was not aloft, or a GRIB2 file. The tool takes clean columns.
+
+**The profile.**
+
+- **The ground level** takes the station's value where one is given. Otherwise it takes the
+  measurements interpolated to the ground; levels below it (an instrument standing lower than
+  the microphones) count only for that. Otherwise the lowest value is held down, with a warning.
+  The wind at the ground is calm.
+- **Below the lowest wind level**, `--fill log` (the default) carries that level's wind down by
+  the `--wind` log law, which makes the roughness length the only thing the fill adds. `--fill
+  hold` holds the level's wind down; `--fill none` takes it linearly to calm at the ground. The
+  fill's levels start at ten roughness lengths (or the lowest wind level, if lower), so no level
+  above the ground is calm. A temperature, humidity or pressure measured lower is a level too,
+  except at or below the roughness length, where the law is calm: there it sets the values
+  around it without being a level, with a warning.
+- **`--z0` or `--z0_from` is required.** Nothing measures the roughness length, and the wind
+  near the ground depends on it, so a profile never carries a default. A weather model's z0 is a
+  grid cell's, not the site's.
+- **Between measurements** temperature and humidity are linear in height, the wind linear in its
+  components, and pressure in its logarithm. **Above** each variable's highest measurement it is
+  held; `--above lapse` lapses the temperature dry-adiabatically instead, and `--humidity_aloft
+  held_concentration` keeps the water vapor and lets the relative humidity follow the cooling air.
+  `--surface_layer_depth` carries the law up from a single wind level, as `--wind` does; with
+  several levels it is refused. `--stability` applies only to a temperature measured at the ground
+  alone, with `--above lapse`.
+- **Levels.** By default they are geometric, `--levels_per_decade` (16) a decade, through every
+  measured level. `--levels 0,1,3,10,20` instead gives the levels to use, to which every
+  measured level, the ground and the top are added. Give the levels a profile was run with when
+  reproducing it: the stratified ray search follows the layers.
+- **`--top` is required**: a run refuses a track above the profile.
+- **Pressure** is written when measured, or with `--write_pressure` or `held_concentration` from
+  `--pressure`, hydrostatically. Otherwise the file has none and the run integrates its own.
+
+**What it refuses**, naming the cause: a calm wind measured above the ground (`--calm_levels
+drop` drops it), a roughness length at or above the lowest wind level, a `--levels` height at or
+below the roughness length under the log fill, pressure rising with
+height, a relative humidity above 100 (`--clip_humidity` clips it), two levels of one variable at
+one height, a variable two files offer, a speed without its unit, and any output `--atmosphere`
+would refuse. The written file is read back through `--atmosphere`'s reader before the tool exits.
+
+**Provenance.** Beside the profile, `OUT.provenance.json` (or `--provenance`) records the build,
+the command line, each input's digest, the rules, the roughness length and where it came from,
+which heights each variable was measured over and which stretches of wind were filled, the counts
+of dropped values, and every warning. The CSV itself stays plain.
+
+**`fit_z0`** takes one column file per run, named for the run, and fits one roughness length to
+every run's gates between `--gates LOW,HIGH` (default 46,197 ft), with the log law's slope free
+per run ([THEORY §7](THEORY.md#7-the-stratified-moving-atmosphere)). A run enters only if it is
+near neutral: `--max_richardson` (0.05) on the bulk Richardson number from the temperatures in the
+same file, at least `--min_speed` (3mps) at the highest gate, and at most `--max_veer` (20°) of
+turning. A run without temperatures at both gate heights is left out unless `--assume_neutral`.
+The output JSON holds z0 with its 95% bootstrap interval over runs (`--draws`, `--seed`), the runs
+used and each one left out with its reason; `--table` writes a one-row CSV. Fewer than
+`--min_runs` (5) runs are refused. The fit is ill-conditioned (a 1% error in the speed ratio
+moves z0 by a factor of about 1.4), so pool runs, and quote the interval with z0. A low gate
+biased by its probe volume would bias z0.
+
+Both commands take milliseconds to a second.
+
 ### `niceops_pe_compare`
 
 Runs one path through every model and writes each band's level relative to free field: straight
@@ -1479,13 +1689,14 @@ The acoustic loop on the full demo grid (S-76D track, 94.3 million observer–st
 | spectral with the ground effect (the default) | 2.9 s; 11.6 s with `--exact_ground` |
 | `--plate_table` | 7.1 s; 21.0 s with `--exact_ground` |
 | `--refraction linear` (`example_windy.csv`), ground effect | 7.8 s |
-| `--refraction stratified` (`example_windy.csv`), ground effect | 37 s, more in ducts |
+| `--refraction stratified` (`example_windy.csv`), ground effect | 18 s; 34 s with `--ray_stride 1`; more in ducts |
 
-A broadband run is several times cheaper than spectral. On top of these:
-`--shadow_model resolved` spends 5–8 s on setup; `--tunneling` adds about 20% and `--skip_fill`
-2–4 times to a stratified run; point receivers over real terrain take about 4 times the CPU; a
-propagation table is cheap to read but takes minutes to build; `--epnl_file` and `--band_frames`
-evaluate every state.
+A broadband run is several times cheaper than spectral. On top of these: `--shadow_model resolved`
+and the refraction models' shadow transitions build their tables only once a ray nears a shadow
+boundary, up to a second at 8 threads and several at `-j 1`; `--tunneling` adds about 20% and
+`--skip_fill` 2–4 times to a stratified run; point receivers over real terrain take about 4 times
+the CPU; a propagation table is cheap to read but takes minutes to build; `--epnl_file` and
+`--band_frames` evaluate every state.
 
 ## Plotting
 
@@ -1498,6 +1709,6 @@ headless. A build without plotting refuses `-p`, `-f` and `-F`; the build option
 
 ## Comparing with older results
 
-Several deliberate changes have moved NICE-OPS's results, the largest being the removal of a 4x
+Several deliberate changes have moved NICEOPS's results, the largest being the removal of a 4x
 multiplier on the database's EAA. Before comparing old and new results, read
 [HISTORY.md](HISTORY.md#changes-that-affect-results).

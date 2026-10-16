@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Rules and invariants for Claude Code (claude.ai/code) in this repository. NICE-OPS predicts
+Rules and invariants for Claude Code (claude.ai/code) in this repository. NICEOPS predicts
 ground-level dBA noise exposure over observers from a helicopter trajectory and a rotor-noise
 "sphere" database (`.nod`, built by panam). It is C++17 in `src/`, ported from a D original
 whose semantics the comments reference; those comments are load-bearing. The D sources remain at

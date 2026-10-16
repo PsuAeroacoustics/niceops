@@ -1,0 +1,3 @@
+class,name,impedance_model,flow_resistance,layer_depth
+0,grass,,,
+1,thin,delany_bazley_layer,10,0.01

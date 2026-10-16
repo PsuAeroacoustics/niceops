@@ -1,0 +1,13 @@
+{
+  "z0_m": 0.030480000000004746,
+  "z0_low_m": 0.030479999999998546,
+  "z0_high_m": 0.030480000000004746,
+  "at_bound": true,
+  "runs_used": [
+    "fit_run1",
+    "fit_run2",
+    "fit_run3",
+    "fit_run4",
+    "fit_run5"
+  ]
+}

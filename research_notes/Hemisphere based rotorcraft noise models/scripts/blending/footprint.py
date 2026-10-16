@@ -1,10 +1,10 @@
 """Experiment 2: SEL footprint of a trajectory under each condition blend.
 
-Re-implements the broadband default path of NICE-OPS (src/sphere_database.cpp
+Re-implements the broadband default path of NICEOPS (src/sphere_database.cpp
 Database::eval, src/util/sel.hpp) in numpy: sphere frame, lookup_angles,
 condition blend at the sphere grid nodes, bilinear on (phi, theta), spherical
 spreading, EAA * (r - r_s)/1000, 10 dB-down window, reception-time weight.
-Variant a (dB blend) is checked against the NICE-OPS output on the same grid.
+Variant a (dB blend) is checked against the NICEOPS output on the same grid.
 Only the dBA blend changes between variants; EAA is always dB-weight blended.
 
 usage: footprint.py state.csv niceops_lae.csv out.npz
@@ -117,7 +117,7 @@ for k in S:
     res[k] = res[k].reshape(X.shape)
     res[k + '_window'] = (l0 - f0).reshape(X.shape)
 dref = res['a'] - ref
-print('validation a vs NICE-OPS: max |diff| %.3e dB, mean %.3e' % (np.abs(dref).max(), dref.mean()))
+print('validation a vs NICEOPS: max |diff| %.3e dB, mean %.3e' % (np.abs(dref).max(), dref.mean()))
 # fraction of observers whose window changed
 for k in ['b', 'c', 'c2', 'd']:
     dd = res[k] - res['a']

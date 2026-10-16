@@ -26,6 +26,7 @@
 //
 // Everything here is meters, seconds and radians.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
@@ -253,6 +254,9 @@ struct RefractedRay
     // The pair's other eigenrays (Arrival).  Empty but for --refraction
     // stratified, and there only where more than one ray arrives.
     std::vector<Arrival> extra;
+    // --ray_stride: the layered solves were interpolated between two solved
+    // states (layered_direct_ray's `given`), so the ground's may be too.
+    bool interpolated = false;
 };
 
 // The refracted path from `source` to the microphone at `receiver` --
@@ -446,6 +450,15 @@ struct ShadowScattering
 
     bool on() const { return gamma_t > 0.0; }
     double level(double frequency, double slant, double source_height) const;
+    // level() in two parts: a band's share (the constant, gamma_t's and the
+    // frequency's terms), then a pair's (the logarithms of its range and
+    // height), so that a caller can form each once; level_of() sums them.
+    double band_part(double frequency) const;
+    void pair_logs(double slant, double source_height, double& log_range, double& log_height) const;
+    double level_of(double band, double log_range, double log_height) const
+    {
+        return std::min(0.0, band + per_decade_range * log_range + per_decade_height * log_height);
+    }
     // The fitted constants for a flush microphone (under 5 cm up, or on a
     // plate) or one receiver_height meters up.
     static ShadowScattering for_receiver(double gamma_t, double receiver_height, bool plate);
@@ -496,19 +509,16 @@ public:
             const PlateReceiver* plate = nullptr, const GroundModel* ground = nullptr,
             unsigned threads = 0);
 
-    bool empty() const { return table_.empty(); }
+    bool empty() const { return frequencies_.empty(); }
     double receiver_height() const { return receiver_height_; }
     // Scattered energy to add in the shadow (off by default).  With it the
     // coherent field is not held at V(0) - floor: the scattered energy is what
     // the floor stood in for.
-    void set_scattering(const ShadowScattering& scattering) { scattering_ = scattering; }
+    void set_scattering(const ShadowScattering& scattering);
     const ShadowScattering& scattering() const { return scattering_; }
     // The largest 10^(V/10) in `band`'s table, at least 1: what the peak
     // search's bound on the ground's gain has to allow for.
-    double max_power_ratio(std::size_t band) const
-    {
-        return band < max_power_ratio_.size() ? max_power_ratio_[band] : 1.0;
-    }
+    double max_power_ratio(std::size_t band) const;
 
     // For an upward-refracting ray that carries a boundary, per band in
     // [first_band, last_band): the weight on the ray's own ground term (1 on
@@ -539,11 +549,10 @@ public:
             double plate_azimuth = 0.0, const double* cramped_field = nullptr) const;
     // What apply_resolved() gives a cramped band's lit side; `straight` needs
     // the ground model (a point receiver's at this receiver height; a plate's
-    // ground is the plate the constructor took).  `series` builds the cramped
-    // table below, on `threads` threads, which apply_resolved() then reads
-    // when it is given no cramped_field of its own.
-    void set_cramped_ground(CrampedGround mode, const GroundModel* ground = nullptr,
-            unsigned threads = 0);
+    // ground is the plate the constructor took).  `series` makes ready the
+    // cramped table below, which apply_resolved() then reads when it is given
+    // no cramped_field of its own; each column is built when first read.
+    void set_cramped_ground(CrampedGround mode, const GroundModel* ground = nullptr);
     // The cramped table: per band, the residue series' level re free field at
     // the slant range, for a source y_s = z_s / l up, at xi and s (as level()),
     // the receiver this transition's.  NaN where the series is not trusted
@@ -605,21 +614,54 @@ public:
     static constexpr double flush_height = 0.05;
 
 private:
-    double column(std::size_t band, std::size_t j, double xi) const;
+    // The tables, shared by copies and built when first wanted: V, its
+    // boundary column, the largest power ratio and K all at once (build), the
+    // first time a ray comes near a boundary or the bound or a test asks; the
+    // cramped table a (band, s) column at a time (cramped_column).  A run
+    // whose rays never come near a boundary, and that builds no bound -- one
+    // that marches every state -- builds neither, which most validation runs
+    // are.  Each is the same computation whenever it runs.
+    struct Tables;
+    const Tables& tables() const;
+    void build(Tables& t) const;
+    const float* cramped_column(std::size_t band, std::size_t j) const;
+    void build_cramped(Tables& t, std::size_t band, std::size_t j) const;
+    double column(const Tables& t, std::size_t band, std::size_t j, double xi) const;
+    // s's place among the s nodes: the node j below it and the fraction t past.
+    struct Place
+    {
+        std::size_t j = 0;
+        double t = 0.0;
+    };
+    Place s_place(double s) const;
+    // level() and plate_offset() on tables already in hand, so that a pair's
+    // bands do not each ask for them again; level_at() at s's place, which
+    // the floor (finish_level) takes too.
+    double level_at(const Tables& tab, std::size_t band, double xi, Place s) const;
+    double plate_offset_in(const Tables& tab, std::size_t band, double azimuth) const;
+    // A pair's scattering terms: ShadowScattering::pair_logs's, and the slant
+    // range's spreading against the ray's own, dB.
+    struct PairTerms
+    {
+        double log_range = 0.0, log_height = 0.0, spreading_db = 0.0;
+    };
+    // A shadowed band's level v re the ray's spreading, finished: at worst the
+    // boundary's own level less `floor` (without scattering), plus the plate's
+    // K, and with scattering the scattered energy added and the sum held to
+    // the table's largest.
+    double finish_level(const Tables& tab, std::size_t band, double v, Place s, double floor,
+            double plate_azimuth, const PairTerms& pair) const;
 
     std::vector<double> frequencies_;
     double receiver_height_ = 0.0;
     std::size_t xi_nodes_ = 0;
     std::size_t s_nodes_ = 0;
-    // [band][j * xi_nodes_ + i]: V at s_j, xi_i.
-    std::vector<std::vector<double>> table_;
-    // [band][j]: V at xi = 0, for the floor.
-    std::vector<std::vector<double>> at_boundary_;
-    std::vector<double> max_power_ratio_;
-    // [band][i]: K at azimuth i * plate_azimuth_step; empty for a point receiver.
-    std::vector<std::vector<double>> plate_offset_;
+    std::size_t first_band_ = 0;
+    std::size_t last_band_ = 0;
+    unsigned threads_ = 0;
     static constexpr int plate_azimuths = 36;
     ShadowScattering scattering_;
+    std::vector<double> scattering_band_; // scattering_.band_part per band
     // --shadow_model resolved.
     CrampedGround cramped_ground_ = CrampedGround::ray;
     bool tangent_decay_ = false;
@@ -627,9 +669,8 @@ private:
     std::shared_ptr<GroundModel> ground_;
     const PlateReceiver* plate_ = nullptr;
     double sound_speed_ = 0.0;
-    // [band][(j * cramped_root_nodes + k) * cramped_xi_nodes_ + i]: the cramped table.
-    std::vector<std::vector<float>> cramped_table_;
     std::size_t cramped_xi_nodes_ = 0;
+    std::shared_ptr<Tables> tables_;
 };
 
 } // namespace niceops

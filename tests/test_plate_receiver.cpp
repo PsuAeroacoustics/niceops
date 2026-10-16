@@ -74,7 +74,7 @@ void check_against(const std::string& path, const GroundModel& ground,
     std::vector<double> level(kBands.size());
     for (const auto& r : references)
     {
-        // NICE-OPS propagates observer minus source, the reverse of panam's dx, dy.
+        // NICEOPS propagates observer minus source, the reverse of panam's dx, dy.
         plate.level_exact(r.source_height, std::hypot(r.dx, r.dy), std::atan2(-r.dy, -r.dx),
                 level.data(), 0, kBands.size());
         for (std::size_t band = 0; band < kBands.size(); band++)
@@ -176,6 +176,44 @@ TEST_CASE("Plate receiver refuses a table for another ground or other bands", "[
     REQUIRE_THROWS(plate.bound(shifted, grass(), 343.0));
     // A band outside the run's range may differ.
     REQUIRE_NOTHROW(plate.bound(shifted, grass(), 343.0, 11, 31));
+}
+
+TEST_CASE("a plate's ground mismatch is empty exactly when bound() accepts the ground, and is its refusal",
+        "[plate_receiver]")
+{
+    std::vector<GroundModel> grounds = {grass(), amedee()};
+    auto other = grass();
+    other.flow_resistance = 200.0;
+    grounds.push_back(other);
+    auto porous = amedee();
+    porous.porosity_rate = 0.5;
+    grounds.push_back(porous);
+    auto layer = grass();
+    layer.impedance_model = ImpedanceModel::delany_bazley_layer;
+    layer.layer_depth = 0.05;
+    grounds.push_back(layer);
+    for (const std::string path : {"plates/gr1425_db225.nc", "plates/gr1425_vp200.nc"})
+    {
+        const auto plate = PlateReceiver::load(path);
+        std::size_t accepted = 0;
+        for (const auto& ground : grounds)
+        {
+            const std::string mismatch = plate.ground_mismatch(ground);
+            std::string refusal;
+            try
+            {
+                (void)plate.bound(kBands, ground, 343.0);
+            }
+            catch (const std::exception& e)
+            {
+                refusal = e.what();
+            }
+            INFO(path << ": " << mismatch);
+            CHECK(mismatch == refusal);
+            accepted += mismatch.empty();
+        }
+        CHECK(accepted == 1);
+    }
 }
 
 TEST_CASE("Plate receiver's tabulated Q stays close to the evaluated one, inside the bound",

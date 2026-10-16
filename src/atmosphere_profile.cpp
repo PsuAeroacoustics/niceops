@@ -137,6 +137,160 @@ AtmosphereProfile AtmosphereProfile::with_hydrostatic_pressure(double surface_pr
     return filled;
 }
 
+ProfileColumns find_profile_columns(const LabeledCsv& csv, LengthUnit unit,
+        const std::string& path, ProfileColumns::Require require, const std::string& what)
+{
+    constexpr std::size_t npos = LabeledCsv::npos;
+    const bool metric = unit.to_meters == 1.0;
+    ProfileColumns found;
+    found.used.assign(csv.header.size(), false);
+    auto take = [&found](std::size_t column) {
+        if (column != npos)
+            found.used[column] = true;
+        return column;
+    };
+
+    // Height.  As with a geodetic track's altitude, only the unit spellings
+    // that agree with --units are matched: a column that says "z_m" while the
+    // run speaks feet fails rather than being read three times too large.
+    std::size_t height_column = csv.column({"z", "agl", "z agl", "height agl"});
+    if (height_column == npos)
+    {
+        height_column = metric ? csv.column({"z m", "agl m", "z agl m", "height agl m"})
+                               : csv.column({"z ft", "agl ft", "z agl ft", "height agl ft"});
+    }
+    if (height_column == npos)
+    {
+        found.above_sea_level = true;
+        height_column = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height",
+                                          "height msl"});
+        if (height_column == npos)
+        {
+            height_column = metric
+                    ? csv.column({"alt m", "altitude m", "alt msl m", "height m", "height msl m"})
+                    : csv.column({"alt ft", "altitude ft", "alt msl ft", "height ft",
+                                        "height msl ft"});
+        }
+    }
+    if (height_column == npos)
+    {
+        input_error(what, " ", path, " names no height column. Give height above the "
+                "observers as \"z\" (or \"agl\"), or altitude above sea level as \"alt\", in ",
+                unit.name, "; a column whose name carries a unit (z_ft, z_m) has to agree "
+                "with --units.");
+    }
+    found.height = take(height_column);
+
+    std::size_t temperature_column = csv.column({"t k", "temp k", "temperature k"});
+    if (temperature_column == npos)
+    {
+        temperature_column = csv.column({"t c", "temp c", "temperature c", "t degc",
+                                               "temperature degc"});
+        found.celsius = temperature_column != npos;
+    }
+    if (temperature_column == npos)
+    {
+        temperature_column = csv.column({"t", "temp", "temperature"});
+        found.temperature_unit_named = false;
+    }
+    if (temperature_column == npos && require == ProfileColumns::Require::thermo)
+    {
+        input_error(what, " ", path, " names no temperature column. Give \"T_K\" or "
+                "\"T_C\".");
+    }
+    found.temperature = take(temperature_column);
+
+    found.humidity
+            = take(csv.column({"rh", "relative humidity", "humidity", "rh pct", "rh percent"}));
+    if (found.humidity == npos && require == ProfileColumns::Require::thermo)
+    {
+        input_error(what, " ", path, " names no relative humidity column. Give \"RH\", "
+                "in percent.");
+    }
+
+    // Pressure is optional: without it, it is integrated hydrostatically from
+    // the surface pressure (with_hydrostatic_pressure).
+    std::size_t pressure_column = csv.column({"p kpa", "pressure kpa", "pres kpa"});
+    if (pressure_column == npos)
+    {
+        pressure_column = csv.column({"p hpa", "pressure hpa", "pres hpa", "p mb", "pressure mb",
+                                            "p mbar", "pressure mbar"});
+        if (pressure_column != npos)
+            found.pressure_to_kpa = 0.1;
+    }
+    if (pressure_column == npos)
+    {
+        pressure_column = csv.column({"p pa", "pressure pa", "pres pa"});
+        if (pressure_column != npos)
+            found.pressure_to_kpa = 1e-3;
+    }
+    if (pressure_column == npos)
+    {
+        pressure_column = csv.column({"p", "pressure", "pres"});
+        found.pressure_unit_named = false;
+    }
+    found.pressure = take(pressure_column);
+
+    // Wind, as speed and the direction it blows from, or as east and north
+    // components.  Its unit has to be named: m/s and knots cover the same
+    // values, so unlike temperature nothing in the numbers can tell them apart.
+    std::size_t speed_column = csv.column({"wind speed mps", "wind speed ms", "wspd mps",
+            "wspd ms", "ws mps", "ws ms"});
+    if (speed_column == npos)
+    {
+        speed_column = csv.column({"wind speed kt", "wind speed kts", "wind speed knots",
+                "wspd kt", "wspd kts", "ws kt", "ws kts"});
+        found.speed_to_mps = knot;
+    }
+    const std::size_t direction_column = csv.column({"wind direction", "wind dir", "wdir", "wd",
+            "wind direction deg", "wdir deg", "wd deg"});
+    std::size_t u_column = csv.column({"u mps", "u ms"});
+    std::size_t v_column = csv.column({"v mps", "v ms"});
+    if (u_column == npos && v_column == npos)
+    {
+        u_column = csv.column({"u kt", "u kts"});
+        v_column = csv.column({"v kt", "v kts"});
+        found.component_to_mps = knot;
+    }
+    if (speed_column == npos && u_column == npos && v_column == npos
+            && csv.column({"wind speed", "wspd", "ws", "wind", "u", "v"}) != npos)
+    {
+        input_error(what, " ", path, ": name the wind's unit in its column, as "
+                "wind_speed_mps or wind_speed_kt (with wind_direction), or u_mps and v_mps.");
+    }
+    if ((speed_column == npos) != (direction_column == npos))
+    {
+        input_error(what, " ", path, ": wind speed and wind direction come together; "
+                "this file gives one without the other.");
+    }
+    if ((u_column == npos) != (v_column == npos))
+    {
+        input_error(what, " ", path, ": the wind components u and v come together; this "
+                "file gives one without the other.");
+    }
+    if (speed_column != npos && u_column != npos)
+    {
+        input_error(what, " ", path, " gives the wind both as speed and direction and as "
+                "components; give one.");
+    }
+    found.speed = take(speed_column);
+    found.direction = take(direction_column);
+    found.u = take(u_column);
+    found.v = take(v_column);
+    return found;
+}
+
+std::size_t ProfileColumns::needed() const
+{
+    std::size_t width = 0;
+    for (const std::size_t column : {height, temperature, humidity, pressure, speed, direction, u, v})
+    {
+        if (column != npos)
+            width = std::max(width, column + 1);
+    }
+    return width;
+}
+
 AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit unit,
         double ground_elevation)
 {
@@ -161,161 +315,28 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
                 ". A text line is only allowed above the first row of data.");
     }
 
-    const bool metric = unit.to_meters == 1.0;
-    std::vector<bool> used(csv.header.size(), false);
-    auto take = [&used](std::size_t column) {
-        if (column != LabeledCsv::npos)
-            used[column] = true;
-        return column;
-    };
-
-    // Height.  As with a geodetic track's altitude, only the unit spellings
-    // that agree with --units are matched: a column that says "z_m" while the
-    // run speaks feet fails rather than being read three times too large.
-    bool above_sea_level = false;
-    std::size_t height_column = csv.column({"z", "agl", "z agl", "height agl"});
-    if (height_column == LabeledCsv::npos)
-    {
-        height_column = metric ? csv.column({"z m", "agl m", "z agl m", "height agl m"})
-                               : csv.column({"z ft", "agl ft", "z agl ft", "height agl ft"});
-    }
-    if (height_column == LabeledCsv::npos)
-    {
-        above_sea_level = true;
-        height_column = csv.column({"alt", "altitude", "alt msl", "altitude msl", "height",
-                                          "height msl"});
-        if (height_column == LabeledCsv::npos)
-        {
-            height_column = metric
-                    ? csv.column({"alt m", "altitude m", "alt msl m", "height m", "height msl m"})
-                    : csv.column({"alt ft", "altitude ft", "alt msl ft", "height ft",
-                                        "height msl ft"});
-        }
-    }
-    if (height_column == LabeledCsv::npos)
-    {
-        input_error("--atmosphere ", path, " names no height column. Give height above the "
-                "observers as \"z\" (or \"agl\"), or altitude above sea level as \"alt\", in ",
-                unit.name, "; a column whose name carries a unit (z_ft, z_m) has to agree "
-                "with --units.");
-    }
-    take(height_column);
-
-    Unit temperature_unit = Unit::named;
-    bool celsius = false;
-    std::size_t temperature_column = csv.column({"t k", "temp k", "temperature k"});
-    if (temperature_column == LabeledCsv::npos)
-    {
-        temperature_column = csv.column({"t c", "temp c", "temperature c", "t degc",
-                                               "temperature degc"});
-        celsius = temperature_column != LabeledCsv::npos;
-    }
-    if (temperature_column == LabeledCsv::npos)
-    {
-        temperature_column = csv.column({"t", "temp", "temperature"});
-        temperature_unit = Unit::inferred;
-    }
-    if (temperature_column == LabeledCsv::npos)
-    {
-        input_error("--atmosphere ", path, " names no temperature column. Give \"T_K\" or "
-                "\"T_C\".");
-    }
-    take(temperature_column);
-
-    const std::size_t humidity_column
-            = take(csv.column({"rh", "relative humidity", "humidity", "rh pct", "rh percent"}));
-    if (humidity_column == LabeledCsv::npos)
-    {
-        input_error("--atmosphere ", path, " names no relative humidity column. Give \"RH\", "
-                "in percent.");
-    }
-
-    // Pressure is optional: without it, it is integrated hydrostatically from
-    // the surface pressure (with_hydrostatic_pressure).
-    Unit pressure_unit = Unit::named;
-    double pressure_to_kpa = 1.0;
-    std::size_t pressure_column = csv.column({"p kpa", "pressure kpa", "pres kpa"});
-    if (pressure_column == LabeledCsv::npos)
-    {
-        pressure_column = csv.column({"p hpa", "pressure hpa", "pres hpa", "p mb", "pressure mb",
-                                            "p mbar", "pressure mbar"});
-        if (pressure_column != LabeledCsv::npos)
-            pressure_to_kpa = 0.1;
-    }
-    if (pressure_column == LabeledCsv::npos)
-    {
-        pressure_column = csv.column({"p pa", "pressure pa", "pres pa"});
-        if (pressure_column != LabeledCsv::npos)
-            pressure_to_kpa = 1e-3;
-    }
-    if (pressure_column == LabeledCsv::npos)
-    {
-        pressure_column = csv.column({"p", "pressure", "pres"});
-        pressure_unit = Unit::inferred;
-    }
-    take(pressure_column);
+    const ProfileColumns columns
+            = find_profile_columns(csv, unit, path, ProfileColumns::Require::thermo);
+    const std::vector<bool>& used = columns.used;
+    const bool above_sea_level = columns.above_sea_level;
+    const std::size_t height_column = columns.height;
+    const std::size_t temperature_column = columns.temperature;
+    const Unit temperature_unit = columns.temperature_unit_named ? Unit::named : Unit::inferred;
+    bool celsius = columns.celsius;
+    const std::size_t humidity_column = columns.humidity;
+    const std::size_t pressure_column = columns.pressure;
+    const Unit pressure_unit = columns.pressure_unit_named ? Unit::named : Unit::inferred;
+    double pressure_to_kpa = columns.pressure_to_kpa;
     const bool have_pressure = pressure_column != LabeledCsv::npos;
-
-    // Wind, as speed and the direction it blows from, or as east and north
-    // components.  Its unit has to be named: m/s and knots cover the same
-    // values, so unlike temperature nothing in the numbers can tell them apart.
-    constexpr std::size_t npos = LabeledCsv::npos;
-    double speed_to_mps = 1.0;
-    std::size_t speed_column = csv.column({"wind speed mps", "wind speed ms", "wspd mps",
-            "wspd ms", "ws mps", "ws ms"});
-    if (speed_column == npos)
-    {
-        speed_column = csv.column({"wind speed kt", "wind speed kts", "wind speed knots",
-                "wspd kt", "wspd kts", "ws kt", "ws kts"});
-        speed_to_mps = knot;
-    }
-    const std::size_t direction_column = csv.column({"wind direction", "wind dir", "wdir", "wd",
-            "wind direction deg", "wdir deg", "wd deg"});
-    double component_to_mps = 1.0;
-    std::size_t u_column = csv.column({"u mps", "u ms"});
-    std::size_t v_column = csv.column({"v mps", "v ms"});
-    if (u_column == npos && v_column == npos)
-    {
-        u_column = csv.column({"u kt", "u kts"});
-        v_column = csv.column({"v kt", "v kts"});
-        component_to_mps = knot;
-    }
-    if (speed_column == npos && u_column == npos && v_column == npos
-            && csv.column({"wind speed", "wspd", "ws", "wind", "u", "v"}) != npos)
-    {
-        input_error("--atmosphere ", path, ": name the wind's unit in its column, as "
-                "wind_speed_mps or wind_speed_kt (with wind_direction), or u_mps and v_mps.");
-    }
-    if ((speed_column == npos) != (direction_column == npos))
-    {
-        input_error("--atmosphere ", path, ": wind speed and wind direction come together; "
-                "this file gives one without the other.");
-    }
-    if ((u_column == npos) != (v_column == npos))
-    {
-        input_error("--atmosphere ", path, ": the wind components u and v come together; this "
-                "file gives one without the other.");
-    }
-    if (speed_column != npos && u_column != npos)
-    {
-        input_error("--atmosphere ", path, " gives the wind both as speed and direction and as "
-                "components; give one.");
-    }
-    const bool polar_wind = speed_column != npos;
-    const bool component_wind = u_column != npos;
-    take(speed_column);
-    take(direction_column);
-    take(u_column);
-    take(v_column);
-
-    std::size_t needed = 1
-            + std::max({height_column, temperature_column, humidity_column,
-                    have_pressure ? pressure_column : 0});
-    for (const std::size_t column : {speed_column, direction_column, u_column, v_column})
-    {
-        if (column != npos)
-            needed = std::max(needed, column + 1);
-    }
+    const std::size_t speed_column = columns.speed;
+    const std::size_t direction_column = columns.direction;
+    const double speed_to_mps = columns.speed_to_mps;
+    const std::size_t u_column = columns.u;
+    const std::size_t v_column = columns.v;
+    const double component_to_mps = columns.component_to_mps;
+    const bool polar_wind = speed_column != LabeledCsv::npos;
+    const bool component_wind = u_column != LabeledCsv::npos;
+    const std::size_t needed = columns.needed();
     if (csv.rows.empty())
         input_error("--atmosphere ", path, " holds no numeric rows under its header.");
     // nan and inf parse as numbers; the range checks below compare against them
@@ -468,6 +489,45 @@ AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit un
                 input_error("--atmosphere ", path, ": pressure rises with height at ",
                         profile.height[i] / unit.to_meters, " ", unit.name, ".");
             }
+        }
+    }
+
+    // What the run takes on trust, said once per file: below the lowest level
+    // that level is held to the ground, and a calm level above the ground is
+    // the thin layer that --refraction stratified reads 20 dB or more low.
+    // Warnings, not refusals: example_windy_calm_floor.csv is calm at 0.1 ft
+    // on purpose, and a profile from a sounding may start above the ground.
+    // Calm at every level is still air (example_inversion.csv), not a layer.
+    if (profile.height.size() > 1 && profile.bottom() > 0.0)
+    {
+        warn("--atmosphere ", path, " has no level at or below the ground: its lowest, at ",
+                profile.bottom() / unit.to_meters, " ", unit.name, ", is held down to it. "
+                "niceops_build_atmosphere writes a ground level.");
+    }
+    if (profile.has_wind())
+    {
+        std::size_t calm = 0;
+        double lowest = 0.0;
+        for (std::size_t i = 0; i < profile.height.size(); i++)
+        {
+            if (profile.height[i] > 0.0 && profile.wind_east[i] == 0.0
+                    && profile.wind_north[i] == 0.0)
+            {
+                if (calm++ == 0)
+                    lowest = profile.height[i];
+            }
+        }
+        const bool still = std::all_of(profile.wind_east.begin(), profile.wind_east.end(),
+                                   [](double u) { return u == 0.0; })
+                && std::all_of(profile.wind_north.begin(), profile.wind_north.end(),
+                        [](double v) { return v == 0.0; });
+        if (calm > 0 && !still)
+        {
+            warn("--atmosphere ", path, " is calm at ", lowest / unit.to_meters, " ", unit.name,
+                    calm > 1 ? " (and " + std::to_string(calm - 1) + " more levels)" : std::string(),
+                    ", above the ground. --refraction stratified takes a calm level there as a "
+                    "thin layer, which can put levels 20 dB or more low; niceops_build_atmosphere "
+                    "refuses or drops one.");
         }
     }
 
@@ -787,33 +847,40 @@ SurfaceWind parse_surface_wind(const std::string& text, LengthUnit unit)
     return wind;
 }
 
+std::vector<double> geometric_levels(std::vector<double> anchors, int levels_per_decade)
+{
+    std::sort(anchors.begin(), anchors.end());
+    anchors.erase(std::unique(anchors.begin(), anchors.end(),
+                          [](double a, double b) { return b - a <= 1e-9 * b; }),
+            anchors.end());
+    std::vector<double> levels;
+    levels.push_back(anchors.front());
+    for (std::size_t i = 0; i + 1 < anchors.size(); i++)
+    {
+        const double ratio = anchors[i + 1] / anchors[i];
+        const int steps = std::max(1,
+                static_cast<int>(std::ceil(levels_per_decade * std::log10(ratio) - 1e-9)));
+        for (int j = 1; j < steps; j++)
+            levels.push_back(anchors[i] * std::pow(ratio, static_cast<double>(j) / steps));
+        levels.push_back(anchors[i + 1]);
+    }
+    return levels;
+}
+
 AtmosphereProfile synthetic_profile(const SurfaceWind& wind, const Atmosphere& surface,
         double highest)
 {
     const double depth = wind.surface_layer_depth;
     const double top = std::max(depth, 1.05 * highest);
-    // Exact levels: the profile passes through the observation itself, and
-    // the kink where the surface layer ends is a level rather than smeared
-    // over whichever layer straddles it.
-    std::vector<double> anchors {wind.first_level(), wind.height, depth, top};
-    std::sort(anchors.begin(), anchors.end());
-    anchors.erase(std::unique(anchors.begin(), anchors.end(),
-                          [](double a, double b) { return b - a <= 1e-9 * b; }),
-            anchors.end());
-
     AtmosphereProfile profile;
     profile.source = "the --wind profile";
     profile.height.push_back(0.0);
-    profile.height.push_back(anchors.front());
-    for (std::size_t i = 0; i + 1 < anchors.size(); i++)
-    {
-        const double ratio = anchors[i + 1] / anchors[i];
-        const int steps = std::max(1,
-                static_cast<int>(std::ceil(wind.levels_per_decade * std::log10(ratio) - 1e-9)));
-        for (int j = 1; j < steps; j++)
-            profile.height.push_back(anchors[i] * std::pow(ratio, static_cast<double>(j) / steps));
-        profile.height.push_back(anchors[i + 1]);
-    }
+    // Exact levels: the profile passes through the observation itself, and
+    // the kink where the surface layer ends is a level rather than smeared
+    // over whichever layer straddles it.
+    const auto levels = geometric_levels({wind.first_level(), wind.height, depth, top},
+            wind.levels_per_decade);
+    profile.height.insert(profile.height.end(), levels.begin(), levels.end());
 
     const double gradient = wind.temperature_gradient();
     const double east = -std::sin(wind.direction * pi / 180.0);

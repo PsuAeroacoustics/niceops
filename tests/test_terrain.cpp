@@ -16,7 +16,9 @@
 #include <netcdf.h>
 
 #include "propagation.hpp"
+#include "propagation_table.hpp"
 #include "terrain.hpp"
+#include "util/constants.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace)
 
@@ -386,6 +388,288 @@ TEST_CASE("The cached mean ground line is the direct least-squares fit", "[terra
     CHECK(worst < 0.15);
 }
 
+TEST_CASE("line_from(locate) is line_to, and screening leaves the lines alone", "[terrain]")
+{
+    const TerrainRaster raster = raster_of(rolling, 2500.0, 10.0);
+    GroundPlaneCache plain(raster);
+    GroundPlaneCache screening(raster, true);
+    std::mt19937 random(11);
+    std::uniform_real_distribution<double> where(-1500.0, 1500.0);
+    for (int observer = 0; observer < 10; observer++)
+    {
+        const double x0 = where(random), y0 = where(random);
+        plain.set_observer(x0, y0);
+        screening.set_observer(x0, y0, 1.2);
+        for (int pair = 0; pair < 50; pair++)
+        {
+            const double dx = where(random) - x0, dy = where(random) - y0;
+            const double distance = std::hypot(dx, dy);
+            const GroundLine line = plain.line_to(dx, dy, distance);
+            // Screening samples the rays in another order (blocked() before
+            // line_to()), which must not change a bit of the sums.
+            GroundPlaneCache::Profile profile;
+            const auto where_ = screening.locate(dx, dy, distance);
+            screening.blocked(where_, 30.0 + screening.ground_z(), profile);
+            const GroundLine from = screening.line_from(where_);
+            CHECK(from.intercept == line.intercept);
+            CHECK(from.slope == line.slope);
+        }
+    }
+}
+
+namespace {
+
+// The brute-force screening scan the cache's is checked against: each ray's
+// heights read straight from the raster, blended in bearing, and every
+// interior sample's slope from the microphone against the line of sight's.
+struct ScanResult
+{
+    bool any_ray_above = false; // what may_block() must say
+    bool blended_above = false; // what blocked() must say
+    double source_height = 0.0;
+};
+
+ScanResult brute_force_scan(const TerrainRaster& raster, double x0, double y0, double microphone,
+        double dx, double dy, double distance, double source_z)
+{
+    const double step = raster.step();
+    double angle = std::atan2(dy, dx);
+    if (angle < 0.0)
+        angle += 2.0 * pi;
+    const double u = angle * (GroundPlaneCache::bearings / (2.0 * pi));
+    const int ray = std::min(static_cast<int>(u), GroundPlaneCache::bearings - 1);
+    const double turn = std::clamp(u - ray, 0.0, 1.0);
+    const int next = ray + 1 == GroundPlaneCache::bearings ? 0 : ray + 1;
+    const double z0 = raster.height(x0, y0);
+    const auto height = [&](int r, std::size_t k) {
+        const double a = 2.0 * pi * r / GroundPlaneCache::bearings;
+        const double s = static_cast<double>(k);
+        return raster.height(x0 + s * (step * std::cos(a)), y0 + s * (step * std::sin(a))) - z0;
+    };
+    const auto blend = [&](std::size_t k) {
+        return turn > 0.0 ? (1.0 - turn) * height(ray, k) + turn * height(next, k) : height(ray, k);
+    };
+    ScanResult result;
+    const double v = distance / step;
+    const std::size_t n = static_cast<std::size_t>(v);
+    const double fraction = v - static_cast<double>(n);
+    double foot = blend(n);
+    if (fraction > 0.0)
+        foot = (1.0 - fraction) * foot + fraction * blend(n + 1);
+    result.source_height = std::max(source_z - z0, foot);
+    if (!(v > 1.0))
+        return result;
+    const std::size_t interior = static_cast<std::size_t>(std::ceil(v)) - 1;
+    const double sight = (result.source_height - microphone) / distance;
+    for (std::size_t k = 1; k <= interior; k++)
+    {
+        const double s = static_cast<double>(k) * step;
+        result.blended_above = result.blended_above || (blend(k) - microphone) / s > sight;
+        result.any_ray_above = result.any_ray_above || (height(ray, k) - microphone) / s > sight
+                || (turn > 0.0 && (height(next, k) - microphone) / s > sight);
+    }
+    return result;
+}
+
+double tilted_plane(double x, double)
+{
+    return 0.25 * x;
+}
+
+} // namespace
+
+TEST_CASE("the screening gate is the brute-force scan of the blended profile", "[terrain]")
+{
+    const TerrainRaster raster = raster_of(rolling, 2500.0, 10.0);
+    GroundPlaneCache cache(raster, true);
+    std::mt19937 random(5);
+    std::uniform_real_distribution<double> where(-1500.0, 1500.0);
+    std::uniform_real_distribution<double> up(-2.0, 40.0);
+    std::uniform_int_distribution<int> whole(1, 120);
+    std::uniform_int_distribution<int> bearing(0, GroundPlaneCache::bearings - 1);
+    int blocked_count = 0, quick_only = 0, clear = 0;
+    for (int observer = 0; observer < 40; observer++)
+    {
+        const double x0 = where(random), y0 = where(random);
+        const double microphone = observer % 4 == 0 ? 0.0 : 1.2 + observer % 3;
+        cache.set_observer(x0, y0, microphone);
+        for (int pair = 0; pair < 200; pair++)
+        {
+            double dx, dy, distance;
+            if (pair % 3 == 0)
+            {
+                // A whole number of steps out, between two rays: the sample at
+                // the footprint is a ray's own, and must not count as interior.
+                const double angle = 2.0 * pi * (bearing(random) + 0.5) / GroundPlaneCache::bearings;
+                distance = 10.0 * whole(random);
+                dx = distance * std::cos(angle);
+                dy = distance * std::sin(angle);
+            }
+            else
+            {
+                dx = where(random) - x0;
+                dy = where(random) - y0;
+                distance = std::hypot(dx, dy);
+            }
+            const double source_z = raster.height(x0 + dx, y0 + dy) + up(random);
+            const ScanResult expected = brute_force_scan(raster, x0, y0, microphone, dx, dy, distance, source_z);
+            const auto located = cache.locate(dx, dy, distance);
+            GroundPlaneCache::Profile profile;
+            const bool quick = cache.may_block(located, source_z);
+            const bool blocked = cache.blocked(located, source_z, profile);
+            REQUIRE(quick == expected.any_ray_above);
+            REQUIRE(blocked == expected.blended_above);
+            if (blocked)
+            {
+                blocked_count++;
+                // Not to the bit: GCC fuses the blend's multiply-adds differently
+                // in the two spellings.
+                CHECK(profile.source_height == Catch::Approx(expected.source_height).margin(1e-11));
+                CHECK(profile.interior + 2 == profile.heights.size());
+                CHECK(profile.heights[0] == 0.0);
+            }
+            else if (quick)
+                quick_only++;
+            else
+                clear++;
+        }
+    }
+    // Every branch is reached.
+    CHECK(blocked_count > 100);
+    CHECK(quick_only > 0);
+    CHECK(clear > 100);
+}
+
+TEST_CASE("a profile exactly on the line of sight does not block", "[terrain]")
+{
+    // z = x / 4, sampled every 10 m from the origin along +x: every sample's
+    // slope from a flush microphone is exactly 1/4, and so is the line of sight
+    // to a source on the plane's extension.  A strict test leaves it unblocked;
+    // >= would screen every path down a uniform slope.
+    const TerrainRaster raster = raster_of(tilted_plane, 500.0, 10.0);
+    GroundPlaneCache cache(raster, true);
+    cache.set_observer(0.0, 0.0, 0.0);
+    GroundPlaneCache::Profile profile;
+    for (const double distance : {105.0, 200.0, 333.0})
+    {
+        const auto located = cache.locate(distance, 0.0, distance);
+        REQUIRE(located.turn == 0.0);
+        CHECK(!cache.may_block(located, 0.25 * distance));
+        CHECK(!cache.blocked(located, 0.25 * distance, profile));
+    }
+    // Seen from a centimeter under the plane the near samples rise above the
+    // line of sight, and the same profile screens.
+    cache.set_observer(0.0, 0.0, -0.01);
+    for (const double distance : {105.0, 200.0, 333.0})
+        CHECK(cache.blocked(cache.locate(distance, 0.0, distance), 0.25 * distance, profile));
+}
+
+TEST_CASE("a sample under the minimum protrusion does not block", "[terrain]")
+{
+    // A microphone 1.2 m up, a source 0.6 m up 400 m out on level ground: the
+    // line of sight is 0.9 m up at 200 m.  A bump there 0.3 m above it blocks
+    // with no minimum, and not with 0.5 m, which one 2.1 m above it still
+    // exceeds.
+    for (const auto& [top, blocks_at_half_metre] : {std::pair {1.2, false}, {3.0, true}})
+    {
+        const auto bump = [top = top](double x, double) { return std::fabs(x - 200.0) < 1.0 ? top : 0.0; };
+        const TerrainRaster raster = raster_of(bump, 1000.0, 1.0);
+        GroundPlaneCache::Profile profile;
+        GroundPlaneCache none(raster, true);
+        none.set_observer(0.0, 0.0, 1.2);
+        CHECK(none.blocked(none.locate(400.0, 0.0, 400.0), 0.6, profile));
+        GroundPlaneCache half_metre(raster, true, 0.5);
+        half_metre.set_observer(0.0, 0.0, 1.2);
+        CHECK(half_metre.blocked(half_metre.locate(400.0, 0.0, 400.0), 0.6, profile) == blocks_at_half_metre);
+    }
+}
+
+TEST_CASE("a blended profile touching the line of sight does not block", "[terrain]")
+{
+    // Level ground, except a stripe 400 < x < 600 that rises across the line
+    // halfway between rays 0 and 1, so ray 1 there is above a level line of
+    // sight and ray 0 below it.  A pair a quarter of the way from ray 0 to ray
+    // 1 passes the quick test (ray 1's horizon), but its blended profile is
+    // below the line in the stripe and exactly on it (zero) everywhere else.
+    // >= in blocked()'s own scan would screen it.  The stripe's edge nodes are
+    // below the line, so ray 1, a little short of each node, never reads its
+    // rising half where ray 0 reads level ground.
+    const double half_turn = std::tan(pi / GroundPlaneCache::bearings);
+    const auto stripe = [half_turn](double x, double y) {
+        if (x == 400.0 || x == 600.0)
+            return -10.0;
+        return x > 400.0 && x < 600.0 ? 10.0 * (y - x * half_turn) : 0.0;
+    };
+    const TerrainRaster raster = raster_of(stripe, 1000.0, 10.0);
+    GroundPlaneCache cache(raster, true);
+    cache.set_observer(0.0, 0.0, 0.0);
+    const double angle = 2.0 * pi * 0.25 / GroundPlaneCache::bearings;
+    for (const double distance : {700.0, 805.0, 950.0})
+    {
+        const double dx = distance * std::cos(angle), dy = distance * std::sin(angle);
+        const auto located = cache.locate(dx, dy, distance);
+        REQUIRE(located.ray == 0);
+        REQUIRE(located.turn == Catch::Approx(0.25));
+        const ScanResult expected = brute_force_scan(raster, 0.0, 0.0, 0.0, dx, dy, distance, 0.0);
+        REQUIRE(expected.any_ray_above);
+        REQUIRE(!expected.blended_above);
+        GroundPlaneCache::Profile profile;
+        CHECK(cache.may_block(located, 0.0));
+        CHECK(!cache.blocked(located, 0.0, profile));
+    }
+}
+
+TEST_CASE("an observer file's z sets the screening horizon where the microphone is", "[terrain]")
+{
+    // A 20 m wall 500-510 m east on level ground at 3 m; a source 5 m up
+    // (local z 8), 1000 m east.  A microphone 1.2 m above the ground is behind the wall;
+    // one the observer file puts 50 m up (no --observers_on_terrain) sees over it.
+    const auto wall = [](double x, double) { return x >= 500.0 && x <= 510.0 ? 23.0 : 3.0; };
+    const TerrainRaster raster = raster_of(wall, 1500.0, 5.0);
+    GroundPlaneCache cache(raster, true);
+    GroundPlaneCache::Profile profile;
+    const auto blocked_from = [&](auto&& place) {
+        place();
+        const auto located = cache.locate(1000.0, 0.0, 1000.0);
+        return cache.may_block(located, 8.0) && cache.blocked(located, 8.0, profile);
+    };
+    const bool on_ground = blocked_from([&] { cache.set_observer(0.0, 0.0, 1.2); });
+    CHECK(on_ground);
+    // At the raster's own height plus 1.2 m, the same microphone.
+    CHECK(blocked_from([&] { cache.set_observer_at(0.0, 0.0, 3.0 + 1.2); }) == on_ground);
+    CHECK(!blocked_from([&] { cache.set_observer_at(0.0, 0.0, 50.0); }));
+    // Below the raster's ground it is taken at the ground, not under it.
+    CHECK(blocked_from([&] { cache.set_observer_at(0.0, 0.0, -10.0); })
+            == blocked_from([&] { cache.set_observer(0.0, 0.0, 0.0); }));
+}
+
+TEST_CASE("fit_range is the direct least-squares fit over the same samples", "[terrain]")
+{
+    const TerrainRaster raster = raster_of(rolling, 2500.0, 10.0);
+    GroundPlaneCache cache(raster, true);
+    const double ox = -137.0, oy = 211.0;
+    cache.set_observer(ox, oy, 1.2);
+    for (const int ray : {0, 1, 359, 720, 1000, 1439})
+    {
+        const double angle = 2.0 * pi * ray / GroundPlaneCache::bearings;
+        const double c = std::cos(angle), s = std::sin(angle);
+        const auto located = cache.locate(1500.0 * c, 1500.0 * s, 1500.0);
+        cache.line_from(located);
+        for (const auto& [k0, k1] : {std::pair<std::size_t, std::size_t> {0, 1}, {0, 40}, {3, 4}, {17, 120},
+                     {90, 150}})
+        {
+            const GroundLine range = cache.fit_range(located, k0, k1);
+            const double x0 = ox + static_cast<double>(k0) * (10.0 * c), y0 = oy + static_cast<double>(k0) * (10.0 * s);
+            const double x1 = ox + static_cast<double>(k1) * (10.0 * c), y1 = oy + static_cast<double>(k1) * (10.0 * s);
+            const GroundLine direct = fit_ground_line(raster, x0, y0, x1, y1, k1 - k0);
+            CHECK(range.slope == Catch::Approx(direct.slope).margin(1e-9));
+            // direct's intercept is at sample k0, on the frame's own z.
+            CHECK(range.intercept + range.slope * (10.0 * static_cast<double>(k0)) + cache.ground_z()
+                    == Catch::Approx(direct.intercept).margin(1e-7));
+        }
+    }
+}
+
 TEST_CASE("Over a uniformly tilted plane the ground models get the plane's own geometry", "[terrain]")
 {
     // z = 40 + 0.06 x - 0.025 y, a 3.7 degree slope.  Along any path the mean
@@ -437,6 +721,142 @@ TEST_CASE("Over a uniformly tilted plane the ground models get the plane's own g
         CHECK(flush.source_height == Catch::Approx(above / norm).margin(1e-3));
         CHECK(std::isnan(flush.receiver_height));
     }
+}
+
+TEST_CASE("a table read over a tilted plane takes the closed-form heights and range", "[terrain]")
+{
+    // The same plane as above.  The last pair is nearly overhead on ground
+    // falling toward the source, so its foot on the line lies behind the
+    // microphone's (d' < 0).
+    const double gx = 0.06, gy = -0.025;
+    const auto plane = [&](double x, double y) { return 40.0 + gx * x + gy * y; };
+    const TerrainRaster raster = raster_of(plane, 3000.0, 10.0);
+    GroundPlaneCache cache(raster);
+    const double lowest_row = 0.5;
+    struct Pair
+    {
+        Vec3 observer, source;
+        double microphone;
+    };
+    const std::vector<Pair> pairs = {
+            {{0.0, 0.0, 0.0}, {800.0, 300.0, 400.0}, 1.2},
+            {{1000.0, -900.0, 0.0}, {-1200.0, 1300.0, 600.0}, 4.0},
+            {{300.0, 300.0, 0.0}, {297.0, 300.0, 120.0}, 1.2},
+    };
+    bool behind = false;
+    for (const auto& p : pairs)
+    {
+        const Vec3 ground(p.observer.x, p.observer.y, plane(p.observer.x, p.observer.y));
+        const Vec3 microphone = ground + Vec3(0.0, 0.0, p.microphone);
+        const Vec3 source = p.source + Vec3(0.0, 0.0, plane(p.source.x, p.source.y));
+        cache.set_observer(ground.x, ground.y);
+        const double dx = source.x - ground.x, dy = source.y - ground.y;
+        const double distance = std::hypot(dx, dy);
+        const GroundLine line = cache.line_to(dx, dy, distance);
+        const double slope = (gx * dx + gy * dy) / distance;
+        const double norm = std::sqrt(1.0 + slope * slope);
+        const double above = source.z - (ground.z + slope * distance);
+        const double along = (distance + slope * (source.z - microphone.z)) / norm;
+        const Vec3 separation = microphone - source;
+
+        const TableRead point = table_read(terrain_ray(source, microphone, line, false), false, lowest_row);
+        CHECK(point.source_height == Catch::Approx(above / norm).margin(1e-3));
+        CHECK(point.receiver_height == Catch::Approx(p.microphone / norm).margin(1e-6));
+        CHECK(point.range == Catch::Approx(std::fabs(along)).margin(1e-3));
+
+        // A flush microphone reads the lowest row at the source's height above
+        // it, and its plate is crossed from the side the arrival comes from.
+        const TableRead flush = table_read(terrain_ray(source, ground, line, true), true, lowest_row);
+        CHECK(flush.receiver_height == lowest_row);
+        CHECK(flush.source_height == Catch::Approx(above / norm).margin(1e-3));
+        const double side = (distance + slope * (source.z - ground.z)) < 0.0 ? -1.0 : 1.0;
+        behind = behind || side < 0.0;
+        CHECK(flush.plate_separation.x == side * (ground - source).x);
+        CHECK(flush.plate_separation.y == side * (ground - source).y);
+        CHECK(point.plate_separation.x == (along < 0.0 ? -separation.x : separation.x));
+    }
+    CHECK(behind);
+}
+
+TEST_CASE("a table read on a level line is the flat read to the bit", "[terrain]")
+{
+    const GroundLine level {0.0, 0.0};
+    const double lowest_row = 1.2;
+    for (const Vec3& source : {Vec3(812.25, -305.5, 401.75), Vec3(-3.0, 2.0, 97.0), Vec3(1500.0, 20.0, 0.0)})
+    {
+        const Vec3 microphone(10.5, -7.25, 3.937);
+        const Vec3 separation = microphone - source;
+        const TableRead point = table_read(terrain_ray(source, microphone, level, false), false, lowest_row);
+        CHECK(point.source_height == source.z);
+        CHECK(point.receiver_height == microphone.z);
+        CHECK(point.range == separation.horizontal_norm());
+        CHECK(point.plate_separation.x == separation.x);
+        CHECK(point.plate_separation.y == separation.y);
+
+        const Vec3 ground(microphone.x, microphone.y, 0.0);
+        const TableRead flush = table_read(terrain_ray(source, ground, level, true), true, lowest_row);
+        CHECK(flush.source_height == source.z);
+        CHECK(flush.receiver_height == lowest_row);
+        CHECK(flush.range == (ground - source).horizontal_norm());
+    }
+}
+
+TEST_CASE("a table read over terrain is continuous through d' = 0", "[terrain]")
+{
+    // An anisotropic table, 10 sin(bearing) dB, read by a source walking toward
+    // a microphone on ground rising away from it.  The source's foot on the
+    // line passes behind the microphone's (d' through 0) at about 7 m out.
+    // Read on the true bearing the level is continuous there; on the turned
+    // separation's bearing it would jump 20 dB.
+    PropagationTable::Axes axes;
+    axes.bearings = {0.0, 90.0, 180.0, 270.0};
+    axes.source_heights = {0.0, 100.0, 200.0};
+    axes.receiver_heights = {0.0, 2.0};
+    axes.ranges = {0.0, 10.0, 20.0, 40.0};
+    axes.bands = {1000.0};
+    std::vector<double> values;
+    for (const double b : axes.bearings)
+        for (const double s : axes.source_heights)
+            for (std::size_t h = 0; h < axes.receiver_heights.size(); h++)
+                for (const double r : axes.ranges)
+                    values.push_back(10.0 * std::sin(b * M_PI / 180.0) + 0.01 * s - 0.1 * r);
+    const PropagationTable table(axes, values, "planted", false);
+    const auto bands = table.match_bands({1000.0}, 0, 1);
+
+    const double gx = 0.06;
+    const auto plane = [&](double x, double) { return 40.0 + gx * x; };
+    const TerrainRaster raster = raster_of(plane, 500.0, 10.0);
+    GroundPlaneCache cache(raster);
+    const Vec3 ground(0.0, 0.0, plane(0.0, 0.0));
+    const Vec3 microphone = ground + Vec3(0.0, 0.0, 1.2);
+    cache.set_observer(ground.x, ground.y);
+    double previous = std::numeric_limits<double>::quiet_NaN();
+    double largest_step = 0.0, turned_step = 0.0, previous_turned = previous;
+    bool crossed = false;
+    for (double t = -20.0; t <= -1.0; t += 0.25)
+    {
+        const Vec3 source(t, 0.0, plane(t, 0.0) + 120.0);
+        const double dx = source.x - ground.x, dy = source.y - ground.y;
+        const RayPath path = terrain_ray(source, microphone, cache.line_to(dx, dy, std::hypot(dx, dy)), false);
+        const TableRead read = table_read(path, false, axes.receiver_heights.front());
+        const Vec3 separation = microphone - source;
+        crossed = crossed || path.separation.x != separation.x;
+        double level = 0.0, turned = 0.0;
+        REQUIRE(table.lookup(std::atan2(separation.x, separation.y) * 180.0 / M_PI, read.source_height,
+                read.receiver_height, read.range, bands, &level));
+        REQUIRE(table.lookup(std::atan2(read.plate_separation.x, read.plate_separation.y) * 180.0 / M_PI,
+                read.source_height, read.receiver_height, read.range, bands, &turned));
+        if (!std::isnan(previous))
+        {
+            largest_step = std::max(largest_step, std::fabs(level - previous));
+            turned_step = std::max(turned_step, std::fabs(turned - previous_turned));
+        }
+        previous = level;
+        previous_turned = turned;
+    }
+    CHECK(crossed);
+    CHECK(largest_step < 0.05);
+    CHECK(turned_step > 19.0);
 }
 
 TEST_CASE("plane_geometry is a rotation, and the identity on level ground", "[terrain]")
@@ -532,7 +952,8 @@ TEST_CASE("plane_geometry is a rotation, and the identity on level ground", "[te
 TEST_CASE("write the terrain files the --terrain CTests read", "[.terrain_files]")
 {
     // Not a test: CMakeLists.txt's terrain_files runs it (by its hidden tag) to
-    // write integrated/terrain_flat.nc and integrated/terrain_hills.nc around
+    // write integrated/terrain_flat.nc, terrain_hills.nc, terrain_steep.nc,
+    // terrain_ridge.nc and terrain_tilted.nc around
     // the demo track's frame (origin 39.81043 N 74.42631 W, +x along 210
     // degrees, which reproduces the track's own x/y to 0.85 ft rms; its z = 0 is at
     // altitude 54.2651 ft).  The flat one is level everywhere at the height
@@ -548,6 +969,33 @@ TEST_CASE("write the terrain files the --terrain CTests read", "[.terrain_files]
     write_terrain_file("integrated/terrain_hills.nc", lat, lon, [&](double la, double lo) {
         const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
         return -20.0 - 0.03 * p.x + 0.5 * rolling(p.x, p.y) - 6.0;
+    });
+    // And a plane tilted 5.7 degrees along x, steeper than the tilt past which
+    // a refracting propagation table's read over terrain is warned about.
+    write_terrain_file("integrated/terrain_steep.nc", lat, lon, [&](double la, double lo) {
+        const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
+        return -26.0 - 0.1 * p.x;
+    });
+    // For --terrain_screening: level ground at the flat file's height with a
+    // ridge 25 m high and 300 m across at its foot (150 m across at half
+    // height), parallel to the track 250 m to its -y side, from x = -2200 to
+    // 900 m with 200 m tapers -- every low state is screened from the
+    // observers behind it, and none stands over it; and a plane falling 4% along
+    // +x, whose profiles are their own lines, so nothing on it can screen.
+    write_terrain_file("integrated/terrain_ridge.nc", lat, lon, [&](double la, double lo) {
+        const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
+        const double across = (p.y + 250.0) / 150.0;
+        if (std::fabs(across) >= 1.0 || p.x < -2400.0 || p.x > 1100.0)
+            return flat;
+        const double along = p.x < -2200.0 ? std::sin(0.5 * pi * (p.x + 2400.0) / 200.0)
+                : p.x > 900.0              ? std::sin(0.5 * pi * (1100.0 - p.x) / 200.0)
+                                           : 1.0;
+        const double c = std::cos(0.5 * pi * across);
+        return flat + 25.0 * c * c * along * along;
+    });
+    write_terrain_file("integrated/terrain_tilted.nc", lat, lon, [&](double la, double lo) {
+        const Vec3 p = frame.to_local(Geodetic {la, lo, 0.0});
+        return flat - 0.04 * p.x;
     });
     REQUIRE(Terrain("integrated/terrain_flat.nc").elevation(39.81043, -74.42631) == flat);
 

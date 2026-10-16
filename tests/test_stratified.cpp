@@ -9,11 +9,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <complex>
 #include <functional>
 #include <limits>
+#include <random>
 #include <vector>
 
+#include "airy.hpp"
 #include "atmosphere_profile.hpp"
 #include "refraction.hpp"
 #include "stratified.hpp"
@@ -624,6 +628,247 @@ TEST_CASE("a wave arrival's loss is never negative", "[stratified]")
     const std::vector<double> one = {wave_reference_frequency};
     add_wave_loss(wave, 1000.0, 10.0, one, 0, 1, loss.data());
     CHECK(loss[0] == Catch::Approx(40.0 - max_focusing_gain_db).margin(1e-6));
+}
+
+TEST_CASE("a wave arrival's loss is its band's seven Airy evaluations", "[stratified]")
+{
+    // add_wave_loss reads the band mean of Ai^2 from a table in x at the
+    // band's center: against the mean written out, seven frequencies
+    // f 2^((k - 3)/18) a band, each with its own argument, over both
+    // corrections, the lit side of a caustic, its deep shadow (where the floor
+    // takes over) and the table's edges.
+    const std::vector<double> bands = {20, 50, 125, 315, 800, 2000, 5000, 12500};
+    const auto mean = [](double f, auto argument) {
+        double sum = 0.0;
+        for (int k = 0; k < 7; k++)
+        {
+            const double fk = f * std::pow(2.0, (k - 3.0) / 18.0);
+            std::complex<double> ai, aip;
+            airy(std::complex<double>(argument(2.0 * pi * fk), 0.0), ai, aip);
+            sum += ai.real() * ai.real();
+        }
+        return sum / 7.0;
+    };
+    constexpr double zero2 = 0.355028053887817239 * 0.355028053887817239;
+    constexpr double peak2 = 0.535656656015700 * 0.535656656015700;
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    int compared = 0;
+    for (int trial = 0; trial < 400; trial++)
+    {
+        WaveCorrection wave;
+        // Evanescent depths to x of about 80 at the top band; caustic depths
+        // from x of -70 (beyond the table) to past the floor.
+        if (trial % 2 == 0)
+            wave.evanescent = std::pow(10.0, -7.0 + 5.0 * unit(rng));
+        else
+        {
+            wave.caustic = true;
+            wave.caustic_depth = (unit(rng) < 0.3 ? -1.0 : 1.0) * std::pow(10.0, -6.0 + 4.5 * unit(rng));
+        }
+        if (trial % 3 == 0 && !wave.caustic)
+        {
+            wave.caustic = true;
+            wave.caustic_depth = std::pow(10.0, -5.0 + 3.0 * unit(rng));
+        }
+        std::vector<double> loss(bands.size(), 0.0);
+        add_wave_loss(wave, 1000.0, 1000.0, bands, 0, bands.size(), loss.data());
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            const double f = bands[b];
+            const double scale = std::cbrt(f / wave_reference_frequency);
+            double db = 0.0;
+            if (wave.evanescent > 0.0)
+            {
+                const double e = wave.evanescent;
+                const double a = mean(f, [e](double w) { return std::pow(1.5 * w * e, 2.0 / 3.0); });
+                db -= 10.0 * std::log10(std::max(scale * a / zero2, 1e-300));
+            }
+            if (wave.caustic)
+            {
+                const double d = wave.caustic_depth;
+                const double a = mean(f, [d](double w) { return std::cbrt(w * w) * d; });
+                db -= 10.0 * std::log10(std::max(scale * a / peak2, 1e-300));
+            }
+            const double reference = std::max(db, -max_focusing_gain_db);
+            CAPTURE(wave.evanescent, wave.caustic, wave.caustic_depth, f);
+            CHECK(loss[b] == Catch::Approx(reference).margin(1e-8));
+            compared++;
+        }
+    }
+    CHECK(compared == 3200);
+}
+
+TEST_CASE("two states' layered solves interpolate only where they agree", "[stratified]")
+{
+    // interpolate_layered (--ray_stride): angles and boundaries linear in t,
+    // tubes, lengths and times linear as fractions of each state's chord, and
+    // a refusal wherever the two differ in kind or by more than the limits.
+    LayeredSolution a, b;
+    a.solved = b.solved = true;
+    a.chord = 1000.0;
+    b.chord = 1010.0;
+    a.direct.launch = -0.100;
+    b.direct.launch = -0.104;
+    a.direct.arrival = -0.090;
+    b.direct.arrival = -0.093;
+    a.direct.spreading_range = 1001.0;
+    b.direct.spreading_range = 1012.0;
+    a.direct.path_length = 1000.5;
+    b.direct.path_length = 1010.6;
+    a.direct.travel_time = 2.9;
+    b.direct.travel_time = 2.93;
+    a.direct.boundary = 3000.0;
+    b.direct.boundary = 3010.0;
+    a.direct.boundary_gradient = -0.02;
+    b.direct.boundary_gradient = -0.021;
+    Arrival arrival;
+    arrival.bounces = 1;
+    arrival.launch = 0.05;
+    arrival.arrival = -0.06;
+    arrival.grazing = 0.07;
+    arrival.spreading_range = 1100.0;
+    arrival.path_length = 1050.0;
+    arrival.travel_time = 3.1;
+    a.arrivals = {arrival};
+    arrival.launch = 0.051;
+    arrival.spreading_range = 1111.0;
+    arrival.path_length = 1060.0;
+    b.arrivals = {arrival};
+    LayeredSolution out;
+    const double chord = 1004.0;
+    REQUIRE(interpolate_layered(a, b, 0.25, chord, out));
+    CHECK(out.direct.launch == Catch::Approx(-0.101).epsilon(1e-12));
+    CHECK(out.direct.boundary == Catch::Approx(3002.5).epsilon(1e-12));
+    CHECK(out.direct.spreading_range
+            == Catch::Approx(chord * (0.75 * 1001.0 / 1000.0 + 0.25 * 1012.0 / 1010.0)).epsilon(1e-12));
+    CHECK(out.direct.travel_time == Catch::Approx(chord * (0.75 * 2.9 / 1000.0 + 0.25 * 2.93 / 1010.0)).epsilon(1e-12));
+    REQUIRE(out.arrivals.size() == 1);
+    CHECK(out.arrivals[0].launch == Catch::Approx(0.05025).epsilon(1e-12));
+    CHECK(out.arrivals[0].bounces == 1);
+    // A ray whose tube grows with its chord interpolates to the chord's own.
+    LayeredSolution c = a, d = a;
+    d.chord = 1200.0;
+    d.direct.spreading_range = a.direct.spreading_range * 1.2;
+    d.direct.path_length = a.direct.path_length * 1.2;
+    d.arrivals[0].spreading_range *= 1.2;
+    d.arrivals[0].path_length *= 1.2;
+    REQUIRE(interpolate_layered(c, d, 0.5, 1100.0, out));
+    CHECK(out.direct.spreading_range == Catch::Approx(1001.0 * 1.1).epsilon(1e-12));
+    // Refusals.
+    auto refused = [&](auto change) {
+        LayeredSolution x = a, y = b;
+        change(x, y);
+        LayeredSolution unused;
+        return !interpolate_layered(x, y, 0.5, chord, unused);
+    };
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.solved = false; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.handover = true; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.lit = false; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.boundary = std::numeric_limits<double>::infinity(); }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.launch = -0.100 - 0.6 * pi / 180.0; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.spreading_range = 1010.0 * 1.03; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.boundary = 3100.0; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.arrivals.clear(); }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.arrivals[0].bounces = 2; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.arrivals[0].wave.caustic = true; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.arrivals[0].grazing = 0.0; }));
+    // The ground's part.
+    a.ground_set = b.ground_set = true;
+    a.grazing = 0.08;
+    b.grazing = 0.082;
+    a.length = 1001.0;
+    b.length = 1011.0;
+    REQUIRE(interpolate_ground(a, b, 0.5, chord, out));
+    CHECK(out.grazing == Catch::Approx(0.081).epsilon(1e-12));
+    CHECK(out.length == Catch::Approx(chord * 0.5 * (1001.0 / 1000.0 + 1011.0 / 1010.0)).epsilon(1e-12));
+    b.grazing = 0.0;
+    CHECK_FALSE(interpolate_ground(a, b, 0.5, chord, out));
+}
+
+TEST_CASE("a strided ray does not depend on the order the states are asked for", "[stratified]")
+{
+    // --ray_stride: anchors are fixed states, so a windowed run, which asks for
+    // states in its own order, some twice, and finishes them later, takes the
+    // same rays bit for bit as a marched one; and an anchor is exactly its own
+    // solve.  A descent past a microphone through the windy profile's upwind
+    // shadow and through the duct.
+    for (const char* file : {"atmospheres/example_windy.csv", "atmospheres/example_inversion.csv"})
+    {
+        const auto profile = read_atmosphere_profile(file, feet, 0.0).with_hydrostatic_pressure(101.325);
+        const LayeredSoundSpeed air(profile, 90.0);
+        const EffectiveSoundSpeed linear(profile, 90.0, 0.0, profile.top() + 20.0);
+        std::vector<Vec3> sources;
+        std::vector<EffectiveSoundSpeed::Moments> moments;
+        for (int k = 0; k <= 122; k++)
+        {
+            sources.emplace_back(-3000.0 + 25.0 * k, 50.0, 150.0 - 0.75 * k);
+            moments.push_back(linear.moments(sources.back().z));
+        }
+        const std::size_t nt = sources.size();
+        const Vec3 microphone(0.0, 0.0, 1.2);
+        const auto at_microphone = linear.moments(microphone.z);
+        struct Seen
+        {
+            double range, source_height, ground_distance, travel_time, launch;
+            std::size_t extra;
+            bool interpolated;
+            bool operator==(const Seen& o) const
+            {
+                return range == o.range && source_height == o.source_height && ground_distance == o.ground_distance
+                        && travel_time == o.travel_time && launch == o.launch && extra == o.extra
+                        && interpolated == o.interpolated;
+            }
+        };
+        auto seen = [](const RefractedRay& ray) {
+            return Seen {ray.path.range, ray.path.source_height, ray.path.ground_distance, ray.travel_time,
+                    ray.direct.launch, ray.extra.size(), ray.interpolated};
+        };
+        StridedLayeredRays marched(air, linear, sources, moments, default_ray_stride, {});
+        marched.begin_observer(microphone, at_microphone, false);
+        std::vector<Seen> in_order;
+        for (std::size_t it = 0; it < nt; it++)
+        {
+            RefractedRay ray = marched.ray(it);
+            marched.finish(it, ray, GroundGeometry::point, microphone.z);
+            in_order.push_back(seen(ray));
+        }
+        std::vector<std::size_t> order(nt);
+        for (std::size_t it = 0; it < nt; it++)
+            order[it] = it;
+        std::mt19937 shuffle(7);
+        std::shuffle(order.begin(), order.end(), shuffle);
+        StridedLayeredRays windowed(air, linear, sources, moments, default_ray_stride, {});
+        windowed.begin_observer(Vec3(5.0, 5.0, 1.2), at_microphone, false); // another observer's anchors first
+        for (std::size_t it = 0; it < nt; it += 3)
+            windowed.ray(it);
+        windowed.begin_observer(microphone, at_microphone, false);
+        std::vector<RefractedRay> rays(nt);
+        for (const std::size_t it : order)
+            rays[it] = windowed.ray(it);
+        for (std::size_t it = 0; it < nt; it += 5)
+            rays[it] = windowed.ray(it); // asked again
+        std::shuffle(order.begin(), order.end(), shuffle);
+        std::size_t interpolated = 0;
+        std::vector<double> scratch;
+        for (const std::size_t it : order)
+        {
+            windowed.finish(it, rays[it], GroundGeometry::point, microphone.z);
+            INFO(file << ", state " << it);
+            CHECK(seen(rays[it]) == in_order[it]);
+            if (rays[it].interpolated)
+                interpolated++;
+            if (it % default_ray_stride == 0 || it == nt - 1)
+            {
+                RefractedRay solved = layered_direct_ray(air, linear, sources[it], moments[it], microphone,
+                        at_microphone, scratch);
+                layered_finish_ground(air, solved, GroundGeometry::point, microphone.z, scratch);
+                CHECK(seen(rays[it]) == seen(solved));
+            }
+        }
+        INFO(file << ": " << interpolated << " of " << nt << " interpolated");
+        CHECK(interpolated > nt / 5);
+    }
 }
 
 TEST_CASE("a deep duct retains more than 24 arrivals", "[stratified]")

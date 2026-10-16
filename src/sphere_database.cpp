@@ -1510,7 +1510,7 @@ Database::Database(const std::string& datafile_path, const DatabaseLoadOptions& 
     }
     if (doppler_removed == 1)
         input_error("Database ", datafile_path, " has DOPPLER_SHIFT_REMOVED = 1: its spheres are "
-                "stationary-frame, and NICE-OPS does not yet shift them to the observer's frequencies. "
+                "stationary-frame, and NICEOPS does not yet shift them to the observer's frequencies. "
                 "Propagating them unshifted would be wrong by up to about 2 dB in tonal bands; refused.");
     has_coverage_ = !group_ids.empty() && groups_with_coverage == group_ids.size();
     if (!has_coverage_)
@@ -3256,7 +3256,7 @@ void write_aam_sphere(const Database::Sphere& sphere, const std::string& path, d
             "defining AMPLITUDE");
     nc_check(nc_put_att_text(file, amplitude_var, "unit", 7, "DECIBEL"), "annotating AMPLITUDE");
 
-    const std::string title = "NICE-OPS interpolated sphere";
+    const std::string title = "NICEOPS interpolated sphere";
     nc_check(nc_put_att_text(file, NC_GLOBAL, "title", title.size(), title.c_str()),
             "writing title");
     nc_check(nc_enddef(file), "ending define mode");

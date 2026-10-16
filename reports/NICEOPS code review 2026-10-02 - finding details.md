@@ -1,4 +1,4 @@
-# NICE-OPS code review: finding details (companion to the report)
+# NICEOPS code review: finding details (companion to the report)
 
 Recovered from the partial workflow run `wf_79c5f1ad-97a`. Each entry is one reviewing agent's finding as reported, with its own words. Reviewers worked on `84462d7`. Evidence tags and caveats are in the report, section 0. Where an independent verifier agent also ran, its reasoning follows the finding. Treat claims tagged S as unverified.
 
@@ -1408,7 +1408,7 @@ The write_sphere round trip is in fact exact on the demo database (S-76D_M3 at 0
 AAM file inspected by hand from B407_fixed_load_factor (mu 0.15): RADIUS=100 (ft), SPEED=67.26659 (kt), and PHI = -180..170 in 36 values, i.e. the completed full circle, although the writer's comment says it emits 'the AAM/RNM hemisphere layout, as the source spheres themselves carry it' (source spheres span phi in [-90,90] per CLAUDE.md). Whether a consumer accepts a full-circle PHI is unverifiable here (no AAM reference file in the repo), which is exactly what a pinned test or fixture would settle.
 - **Scenario.** A refactor of write_sphere's flatten loop, of the AAM dimension order, or of the correction branch ships green. Exported spheres then carry swapped levels, a transposed AMPLITUDE array, or lose the load-factor scaling.
 - **Proposed change.** Add (a) a round-trip test that requires reloaded.interpolate_sphere cells and amplitudes to equal the exported ones exactly (dBA, EAA, phis, thetas), including an empty cell and a fixed_load_factor database queried above reference CT; (b) a write_aam_sphere test that reads back PHI/THETA/FREQUENCY/AMPLITUDE with nc_get_var and checks the AMPLITUDE element order, the unit attributes and RADIUS/SPEED against hand-computed values; (c) a decision recorded on hemisphere vs full-circle PHI.
-- **Expected impact.** Pins the only route by which computed spheres leave NICE-OPS.
+- **Expected impact.** Pins the only route by which computed spheres leave NICEOPS.
 
 ### db-write/B.r1.4: self_test compares at 1% relative tolerance although eval reads every stored value back bit-exactly, and checks neither EAA nor spectra
 

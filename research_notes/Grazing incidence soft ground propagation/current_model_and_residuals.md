@@ -1,15 +1,15 @@
-# NICE-OPS at near-grazing incidence over soft ground: what is modeled, and the measured residuals
+# NICEOPS at near-grazing incidence over soft ground: what is modeled, and the measured residuals
 
 Compiled 2026-09-30 from local code, logs and notes only. No computation was rerun; every number is quoted from the file cited.
 
 Path abbreviations used in the citations:
 
-- `N/` = `/Users/evg5332/Code/D/NICEOPS/` (NICE-OPS working tree, branch `band-history`, HEAD 84462d7)
-- `H/` = `/Users/evg5332/Code/Python/niceops-validation/` (validation harness; NICE-OPS and panam pinned as submodules)
+- `N/` = `/Users/evg5332/Code/D/NICEOPS/` (NICEOPS working tree, branch `band-history`, HEAD 84462d7)
+- `H/` = `/Users/evg5332/Code/Python/niceops-validation/` (validation harness; NICEOPS and panam pinned as submodules)
 - `P/` = `H/external/panam/` (panam, pinned at public master becbf63)
 - `M/` = `/Users/evg5332/.claude/projects/-Users-evg5332-Code-D-NICEOPS/memory/` (project memory notes)
 
-Sign convention throughout: error = NICE-OPS − measured, so positive is over-prediction. "median / rms" pairs are in dB. Elevation bins are the **peak elevation of the aircraft seen from the microphone** in the SEL tables, and the **emission elevation** in the frame tables.
+Sign convention throughout: error = NICEOPS − measured, so positive is over-prediction. "median / rms" pairs are in dB. Elevation bins are the **peak elevation of the aircraft seen from the microphone** in the SEL tables, and the **emission elevation** in the frame tables.
 
 ---
 
@@ -29,7 +29,7 @@ The point-receiver ground term is a Chien–Soroka/Weyl–van der Pol spherical-
 - |Q| exceeds 1 toward grazing (the surface wave), reaching about 2.02 just inside |w| = 500, i.e. +9.6 dB, not +6 dB. This is the bound the peak search uses. — `N/src/ground_effect.cpp` lines 336–344
 - An asymptotic boundary loss for large |w| was tried and rejected: error plateaus at 1.6e-5 at |w| ≥ 50 and 1.9e-6 at |w| ≥ 100, which cannot hold the 1e-9 dB pinning to panam. — `N/CLAUDE.md` ("The asymptotic boundary loss was tried and rejected")
 - Faddeeva: Weideman 32-term rational approximation, max relative error 3e-13 over Re z ∈ [0.09, 22.3], Im z ∈ [−1.2, 15.6]; the lower-half-plane reflection is safe only in that domain. Fast paths (asymptotic for |z| ≥ 6, Taylor table below) agree within 1e-11. — `N/CLAUDE.md` (`src/faddeeva` entry); `N/README.md` "Ground-plane microphones"
-- The model is pinned to panam's `ega()` at 1e-9 dB and to `ground_plane.pole_level` (15 cases, 1e-6 dB). — `N/CLAUDE.md`; `P/docs/ground_plane_corrections.md` "In NICE-OPS"
+- The model is pinned to panam's `ega()` at 1e-9 dB and to `ground_plane.pole_level` (15 cases, 1e-6 dB). — `N/CLAUDE.md`; `P/docs/ground_plane_corrections.md` "In NICEOPS"
 
 **Band averaging (one frequency per band)**
 - The band level is Chessell's eqs. 20–21: magnitude = 1 + |Q|²/ρ² + (2/ρ)·[Re Q cos(6.325159 f τ) − Im Q sin(6.325159 f τ)] · T · sinc(0.727477 f τ), with ρ = R_image/R_direct, τ = (R_image − R_direct)/c, T the turbulence factor. Q, β and f are all taken **at the band center only**; the band average enters only through the sinc factor and the modified phase constant. — `N/src/ground_effect.cpp` lines 16–18, 250–306
@@ -59,13 +59,13 @@ The point-receiver ground term is a Chien–Soroka/Weyl–van der Pol spherical-
 - Header: "Zero puts the microphone on the surface, where the direct and reflected paths coincide and the model tends to its +6 dB limit" (rigid ground). — `N/src/ground_effect.hpp` lines 96–99
 - In the code the sinc factor is applied only when the path delay is strictly positive ("at zero delay the two paths are the same path and the ratio is 0/0"). — `N/src/ground_effect.cpp` lines 247, 285–292
 - In a run, a microphone of height 0 with `--plate_table` is a plate; any other height with `--ground_effect` is a point receiver at that height. — `N/README.md` "Receivers"; `N/src/niceops.cpp` line 849
-- The harness's board-free comparison puts the microphone 1 mm up (`FLUSH_FT = 0.001 / 0.3048`), described as "1 mm up, which NICE-OPS's point receiver needs" / "whose point receiver cannot sit on the plane". — `H/propagation/footprints.py` lines 48–53; `H/propagation/installation_validation.py` docstring; `H` git log 408ca6a
+- The harness's board-free comparison puts the microphone 1 mm up (`FLUSH_FT = 0.001 / 0.3048`), described as "1 mm up, which NICEOPS's point receiver needs" / "whose point receiver cannot sit on the plane". — `H/propagation/footprints.py` lines 48–53; `H/propagation/installation_validation.py` docstring; `H` git log 408ca6a
 
 **Curved-ray geometry into the ground model**
 - "Ground models get an equivalent straight geometry. A point receiver gets h' = L2 sin(grazing) − h_r and d' = L2 cos(grazing) from the reflected ray; a plate gets the direct ray's arrival angle and length. The ground models themselves are untouched." — `N/CLAUDE.md` (`src/refraction` entry)
 - The reflected ray goes to the microphone's height above the plane z = 0; the ground is the plane z = 0 whatever the observer's own z. — `N/src/refraction.hpp` lines 189–196
 - One direct and one reflected ray; "The extra ground-bouncing arrivals of strong downward refraction at long range are not included." — `N/README.md` "Refraction"
-- The roadmap records a caveat on this approach: Nguyen et al. 2022, citing Ostashev & Wilson, "argue the spherical-wave coefficient's assumptions weaken under refraction"; Nord2000 is validated this way to 1 km and acceptable to 3 km (Ahearn et al. 2012). — `N/NICE-OPS Atmospheric and Urban Propagation Options.md` line 100
+- The roadmap records a caveat on this approach: Nguyen et al. 2022, citing Ostashev & Wilson, "argue the spherical-wave coefficient's assumptions weaken under refraction"; Nord2000 is validated this way to 1 km and acceptable to 3 km (Ahearn et al. 2012). — `N/NICEOPS Atmospheric and Urban Propagation Options.md` line 100
 - The sound speed for the ground impedance and reception time is the profile's surface level. — `N/README.md` "Stratified atmosphere"
 
 **Tabulation**
@@ -98,7 +98,7 @@ The plate receiver applies a precomputed axisymmetric-BEM solution for the GRAS 
 **What it computes and its inputs**
 - p/p_free = P_d + Q P_r; P_d and P_r depend on frequency, source elevation and azimuth (far field of the plate); Q is the spherical-wave coefficient at the geometry. The table records the ground it was built on and a mismatch is refused. — `N/src/plate_receiver.hpp` lines 3–23
 - Band average: |P_d + Q P_r|² at five sub-frequencies per third-octave band, averaged in energy. P_d, P_r interpolated bilinearly (real and imaginary) in elevation and azimuth; "below the table's lowest elevation they are held." — `N/src/plate_receiver.hpp` lines 25–28
-- Run path: Q taken as quadratic in log frequency through each band's edges and center (2n + 1 evaluations). Within 0.07 dB of the exact form wherever the level is above −15 dB re free field; up to ~1.5 dB in the deep near-grazing cancellations (−30 to −70 dB). A linear Q was rejected: up to 0.8 dB above −15 dB and 2.9 dB in the grazing nulls, "because P_d − P_r nearly cancels there and any error in Q shows." — `N/src/plate_receiver.hpp` lines 76–82; `P/docs/ground_plane_corrections.md` "In NICE-OPS"
+- Run path: Q taken as quadratic in log frequency through each band's edges and center (2n + 1 evaluations). Within 0.07 dB of the exact form wherever the level is above −15 dB re free field; up to ~1.5 dB in the deep near-grazing cancellations (−30 to −70 dB). A linear Q was rejected: up to 0.8 dB above −15 dB and 2.9 dB in the grazing nulls, "because P_d − P_r nearly cancels there and any error in Q shows." — `N/src/plate_receiver.hpp` lines 76–82; `P/docs/ground_plane_corrections.md` "In NICEOPS"
 - Shipped table `plates/gr1425_vp200.nc` (ncdump header): 31 bands × 5 sub × 80 elevations × 36 azimuths; `radius_m = 0.2`, `thickness_m = 0.008`, `edge_thickness_m = 0.0025`, `taper_length_m = 0.02`, `mic_x_m = 0`, `mic_y_m = 0.15`, `sound_speed_mps = 342.9`, `ground_model = variable_porosity`, `flow_resistance = 200`, `porosity_rate = 0`. Elevation nodes start at 0.05° and are log-spaced up to 10°, then roughly 2° steps to 90°. — `N/plates/gr1425_vp200.nc` (ncdump -h / -v elevation)
 - A second table, `gr1425_db225.nc`, is for Delany–Bazley 225. — `N/README.md` "Ground-plane microphones"
 - Azimuth: horizontal propagation direction in the plate frame; microphone offset "outboard" (away from the track) by default, `--plate_mic_azimuth`. — `N/src/plate_receiver.hpp` lines 155–164
@@ -121,9 +121,9 @@ The plate receiver applies a precomputed axisymmetric-BEM solution for the GRAS 
 | axisymmetric BEM | exact series, rigid sphere (hemisphere on rigid ground), ka 0.5, 2, 5 | max 2.7e-4 relative (0.002 dB) |
 | three plate formulations in the thin limit | each other, 250–1000 Hz, 5–70° | within 0.25 dB |
 | real plate, axisymmetric vs 3-D surface | each other, 500 Hz and 2 kHz, 10° and 45° | within 0.3 dB |
-| NICE-OPS `level_exact` | panam `board_level` | 1e-6 dB |
+| NICEOPS `level_exact` | panam `board_level` | 1e-6 dB |
 
-— `P/docs/ground_plane_corrections.md` "Validation", "In NICE-OPS"; `N/README.md` "Ground-plane microphones"
+— `P/docs/ground_plane_corrections.md` "Validation", "In NICEOPS"; `N/README.md` "Ground-plane microphones"
 - "The combined soft-ground plate problem has no closed form"; published BEM correction curves (Kingan et al., Blandeau et al.) "were not accessible". — `P/docs/ground_plane_corrections.md` "Validation"
 
 **Against the co-located pole/board pairs** (four aircraft, 771 runs, 68,210 frames; every model on variable porosity σe 200; rms of the per-band median error, 50 Hz–2.5 kHz, dB)
@@ -201,8 +201,8 @@ Refraction is by eigenrays (`--refraction linear`: one equivalent linear profile
 **How the harness builds the profile below the lowest measured level**
 - Temperature: tethered balloon, 0–500 ft AGL every 10 ft (°F), held at the 500 ft value above. Wind: ZephIR 300 at 46, 125, 197, 348, 495, 696, 984 ft AGL, taken as knots, direction "from", true; interpolated in east/north components, held above 984 ft, "and below 46 ft brought to zero at the ground by a log law with z0 = 0.1 ft". Humidity: ground stations', same at every height. Pressure: stations', hydrostatic above. — `H/propagation/profile_validation.py` docstring lines 14–22
 - Code: levels include 0, 1, 3, 10, 20 ft plus the temperature and LIDAR heights and a 5,000 ft top; below the lowest valid gate, `scale = log(z/Z0_FT)/log(h0/Z0_FT)` applied to that gate's u, v (so direction is held constant below 46 ft); `Z0_FT = 0.1`, `TOP_FT = 5000.0`. A run needs at least three valid LIDAR gates. — `H/propagation/profile_validation.py` lines 60–62, 132–160
-- NICE-OPS then holds the lowest level's values below it and refuses trajectories above the top. — `N/README.md` "Stratified atmosphere"
-- Roadmap: "The biggest risk is not the method but the input: the near-ground gradient controls the grazing geometry, and it is rarely known well." — `N/NICE-OPS Atmospheric and Urban Propagation Options.md` line 168
+- NICEOPS then holds the lowest level's values below it and refuses trajectories above the top. — `N/README.md` "Stratified atmosphere"
+- Roadmap: "The biggest risk is not the method but the input: the near-ground gradient controls the grazing geometry, and it is rarely known well." — `N/NICEOPS Atmospheric and Urban Propagation Options.md` line 168
 
 ### Inferences
 - The shadow boundary under `stratified` is set by the speed at the ground against the speed at the source, and in the harness the ground-level wind is not measured: it is the assumed log law between 0 and 46 ft. The calibration README's finding that the upwind limiting ray "is fixed by c(z_s)/c(0) alone" (`N/CLAUDE.md`, "The log-law finding") means the unmeasured lowest 14 m directly sets the layered shadow onset.
@@ -219,7 +219,7 @@ Refraction is by eigenrays (`--refraction linear`: one equivalent linear profile
 ## 4. Quantified residuals against measurements at low elevation, long range, low frequency, or flush microphones
 
 ### Takeaway
-On calm day 286 with the 2° spheres and like-for-like 10 dB-down SEL, the 5–10° bin is still +1.4 to +2.0 dB high depending on the model (62 mic-runs), while frame-level analysis shows a range trend of −2.4 dB/km at fixed direction, with NICE-OPS about 2 dB too quiet beyond 4,000 ft at 2–10° and 63–630 Hz decaying 1–2 dB/km more slowly in the measurement than predicted. On windy day 284, `stratified` brings 5–10° to about +0.3 to +0.8 / 3.0–3.6 dB. At 0–2° the flush microphone reads 5–10 dB above every ground-aware model from 500 Hz up.
+On calm day 286 with the 2° spheres and like-for-like 10 dB-down SEL, the 5–10° bin is still +1.4 to +2.0 dB high depending on the model (62 mic-runs), while frame-level analysis shows a range trend of −2.4 dB/km at fixed direction, with NICEOPS about 2 dB too quiet beyond 4,000 ft at 2–10° and 63–630 Hz decaying 1–2 dB/km more slowly in the measurement than predicted. On windy day 284, `stratified` brings 5–10° to about +0.3 to +0.8 / 3.0–3.6 dB. At 0–2° the flush microphone reads 5–10 dB above every ground-aware model from 500 Hz up.
 
 ### Cited Findings
 
@@ -266,7 +266,7 @@ Other lines:
 
 — `H/propagation/band_frames/aweighted.txt`
 - Range slope at fixed direction cell (elevation × sphere θ, 10° × 30°) and run: all −2.40 ± 0.02 dB/km (n = 65,634); forward lines −2.69 ± 0.04 (n = 9,970); other lines −1.99 ± 0.03 (n = 55,664). Standard errors treat frames as independent, "so it is optimistic by the frames' correlation within a mic". — `H/propagation/band_frames/aweighted.txt`; `H/propagation/band_frames_summary.py` docstring
-- "beyond 4,000 ft at 2–10° NICE-OPS is about 2 dB too quiet on every line. Per band, 63–630 Hz decays 1–2 dB/km more slowly than predicted ... Above 3 kHz the measured frames at range are noise-limited (per-band slopes of −13 to −39 dB/km at 4–5 kHz)." "The state is matched by height, which is exact only for a monotonic descent." — `H/README.md` "The forward-line over-prediction is the end of the approach"
+- "beyond 4,000 ft at 2–10° NICEOPS is about 2 dB too quiet on every line. Per band, 63–630 Hz decays 1–2 dB/km more slowly than predicted ... Above 3 kHz the measured frames at range are noise-limited (per-band slopes of −13 to −39 dB/km at 4–5 kHz)." "The state is matched by height, which is exact only for a monotonic descent." — `H/README.md` "The forward-line over-prediction is the end of the approach"
 - Forward lines carry about 30% of the squared SEL error on both days: +1.65 dB median on day 286 against +0.34 on the other lines; the frames carry +1.46. By height at emission (forward / other): 0–100 ft +2.04 / +0.07; 100–200 ft +1.23 / −0.18; 200–400 ft +1.15 / +0.10; 400–800 ft −0.02 / +0.41; 800–3000 ft −2.27 / +0.84. By ground speed: 0–20 kt +3.19 / −4.68; 20–40 kt +0.97 / −0.33; 40–60 kt +1.23 / +0.02; 60–80 kt +1.29 / +1.42; 80–200 kt −0.89 / +0.04. — `H/propagation/band_frames/aweighted.txt`; `H/README.md`
 - By sphere θ at emission, 5–20° elevation: θ 0–30 forward +0.43 / other −0.47; 30–60 +1.78 / +0.96; 60–90 −0.02 / +0.20; 90–120 other −0.27; 120–150 −0.47; 150–180 −1.08. — `H/propagation/band_frames/aweighted.txt`
 - Frame gating: measured band ≥ 10 dB over the mic's ambient and ≥ 3 dB over the record's own floor, within 10 dB of that mic-band's loudest frame, emission elevation ≥ 2°. — `H/propagation/band_frames_summary.py` docstring
@@ -293,7 +293,7 @@ Other lines:
 - Structure of the day-284 upwind errors before the fixes: "sideline mics 2–9 dB low under `stratified`, far mics 4–9 dB high under every model." — `H/README.md`
 - Footprints: 284205 D34 (windy) flat +2.9/6.4, EGA +1.5/3.8, plate +1.5/3.7, linear +1.5/2.8, stratified +0.7/1.7; 284211 L4 +2.3/4.5, 0.0/1.9, +0.1/1.8, −0.4/1.2, −0.8/1.3. — `H/README.md`
 
-**4d. Modeling-option ladder** (every B407 mic-run, overall rms, calm 286 / windy 284, dB; NICE-OPS d852613)
+**4d. Modeling-option ladder** (every B407 mic-run, overall rms, calm 286 / windy 284, dB; NICEOPS d852613)
 
 | option | 286 | 284 |
 | --- | --- | --- |
@@ -347,7 +347,7 @@ Other lines:
 - The remaining calm-day 5–10° SEL excess (+1.4 to +2.0 dB) and the long-range deficit (−2 dB beyond 4,000 ft) have opposite signs and coexist in the same elevation band; the frame tables show the sign flips with range (positive inside 4,000 ft on forward lines, negative beyond on all lines). An SEL-by-peak-elevation statistic therefore mixes a short-range source/directivity excess with a long-range propagation deficit.
 - The measured-decays-slower finding on calm day 286 (63–630 Hz) and the measured-falls-faster finding on windy run 284153 (4–6 dB/km faster than every model) point in opposite directions on different days, which is what a refraction-related (meteorology-dependent) cause would do and what a fixed ground-impedance error would not. This is an inference; no file states it.
 - The 0–5° SEL bin is effectively unpopulated (n = 0 on day 286, n = 2 on day 284), so SEL validation says nothing below 5° peak elevation; the only evidence there is the pair transfer functions and the 2–5° frame rows.
-- The frames were produced with NICE-OPS adaf7c0 per `H/propagation/band_frames/manifest.txt`, whereas `H/README.md` attributes the finding to 84462d7; 84462d7 only added `--band_history`, so the propagation physics should be the same, but the manifest and README disagree on the commit.
+- The frames were produced with NICEOPS adaf7c0 per `H/propagation/band_frames/manifest.txt`, whereas `H/README.md` attributes the finding to 84462d7; 84462d7 only added `--band_history`, so the propagation physics should be the same, but the manifest and README disagree on the commit.
 
 ### Gaps
 - The per-band range-slope table (output of `band_frames_summary.py`) is not stored as text; only the README's summary ("63–630 Hz decays 1–2 dB/km more slowly", "−13 to −39 dB/km at 4–5 kHz") and the A-weighted table survive. The 2.5 GB frame set was not reprocessed for this note.
@@ -412,7 +412,7 @@ The 2017 spheres are built from steady runs with a 2,000 ft cap on the propagati
 - Effect on day-286 SEL at 5–10° (station, standard measure): sep25 +2.83 / 3.54; min10 +2.75 / 3.49; min5 +1.51 / 2.11; min2 +1.43 / 2.05. Change from sep25 in that bin: min5 −1.57 [−3.1, −0.3], min2 −1.65 [−3.2, −0.4]. — `H/propagation/database_effect_B407_standard.txt`; run directories `H/propagation/out_min10`, `out_min5`, `out_min2`, `out_db_sep25` (each 25 runs; `out_min2/manifest.txt`: niceops f217339, panam becbf63)
 - The 2° build is the promoted one (`databases/B407_{fixed_load_factor,ambient_gated}.nod`); "It is marginally ahead of 5° in that bin under all four models and level elsewhere, but its 2–5° data lean harder on the plate and ground models near grazing." — `H/README.md`
 - The held-out database for day 284 is `spheres/out/min2_no284`. One day-284 run (284203) failed to build ("No valid hemisphere samples were generated"). — `H/README.md`; `H/spheres/out/min2.log`
-- Spheres' reference: database's `EAA` built over 1,000 m; NICE-OPS database sphere grid is 5° in direction; "At kilometer ranges [the launch angle] is a few degrees from the straight line, which is a large fraction of the database's 5° grid." — `N/CLAUDE.md`; `N/README.md` "Refraction"
+- Spheres' reference: database's `EAA` built over 1,000 m; NICEOPS database sphere grid is 5° in direction; "At kilometer ranges [the launch angle] is a few degrees from the straight line, which is a large fraction of the database's 5° grid." — `N/CLAUDE.md`; `N/README.md` "Refraction"
 - Other source-side facts: γ −24/+35 database entries are copies of the level sphere at each μ; the μ = 0 hover sphere is quieter (88 dB max vs 92–98) and differs from every flight sphere. — `M/propagation-roadmap.md`
 - High-band contamination: top source bands are ambient floor amplified by depropagation; for Be407 from 3,150 Hz at the aft pole; onset moves aft (clean to 10 kHz at θ ≤ 120°, 6.3 kHz at 150°, 3,150 Hz at 165–180°). — `M/nod-database-generator.md`
 - Speed basis: spheres take μ, γ and azimuth reference from ground velocity; the B407 spheres include 16 steady runs from day 284 flown in 9–15 kt. — `H/README.md` "Speed basis"

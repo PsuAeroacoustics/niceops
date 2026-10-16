@@ -4,10 +4,12 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <stdexcept>
 #include <type_traits>
 
 #include "airy.hpp"
 #include "util/constants.hpp"
+#include "util/hermite.hpp"
 #include "util/parallel.hpp"
 
 namespace niceops {
@@ -44,17 +46,15 @@ struct Crossing
 //
 // At a turning point the sine is zero by definition; evaluated from p and c it
 // is instead the square root of a rounding error, ~1e-8, which costs the
-// layer's crossing that much accuracy.  `turn0` / `turn1` pin it to zero.
+// layer's crossing that much accuracy, so the caller passes q = 0 there.  The
+// sines q0 and q1 come in formed (Path::between forms each level's once).
 template <bool full>
-inline Crossing cross(double p, double z0, double c0, double z1, double c1, bool turn0 = false,
-        bool turn1 = false)
+inline Crossing cross_sines(double p, double z0, double c0, double q0, double z1, double c1, double q1)
 {
     Crossing out;
     const double dz = z1 - z0;
     if (!(dz > 0.0))
         return out;
-    const double q0 = turn0 ? 0.0 : sine(p, c0);
-    const double q1 = turn1 ? 0.0 : sine(p, c1);
     const double sum = q0 + q1;
     out.dx = sum > 0.0 ? p * (c0 + c1) * dz / sum : 0.0;
     if constexpr (full)
@@ -78,34 +78,78 @@ inline Crossing cross(double p, double z0, double c0, double z1, double c1, bool
 // One path's layered speed, with what a ray needs precomputed.
 struct Path
 {
+    // A height's first level above it and its speed.
+    struct Height
+    {
+        double z = std::numeric_limits<double>::quiet_NaN();
+        const double* upper = nullptr;
+        double c = 0.0;
+    };
+
     const Layers& L;
+    // A pair's solve walks between the same few heights -- the source, the
+    // receiver, the ground -- for every p it tries, so they are looked up
+    // once, here; any other (a turning point, which moves with p) is looked
+    // up when asked.
+    Height fixed[3];
+
+    explicit Path(const Layers& layers, double z_s = std::numeric_limits<double>::quiet_NaN(),
+            double z_r = std::numeric_limits<double>::quiet_NaN())
+        : L(layers), fixed {look_up(z_s), look_up(z_r), look_up(0.0)}
+    {
+    }
+
+    Height look_up(double z) const
+    {
+        Height h;
+        if (std::isnan(z))
+            return h;
+        h.z = z;
+        h.upper = std::upper_bound(L.z, L.z + L.levels, z);
+        h.c = L.at(z, h.upper);
+        return h;
+    }
+
+    Height where(double z) const
+    {
+        for (const Height& h : fixed)
+            if (h.z == z)
+                return h;
+        return look_up(z);
+    }
 
     // Sum the crossings of every layer between heights za < zb; `turn_a` /
     // `turn_b` say the ray turns at that end.
     template <bool full>
     Crossing between(double p, double za, double zb, bool turn_a = false, bool turn_b = false) const
     {
+        // Each level's sine is formed once, as the top of one layer and the
+        // bottom of the next.  A layer of zero thickness contributes nothing,
+        // whatever its sines.
         Crossing total;
         if (!(zb > za))
             return total;
-        double z0 = za;
-        double c0 = L.at(za);
-        bool first = true;
         const double* begin = L.z;
         const double* end = L.z + L.levels;
-        for (const double* level = std::upper_bound(begin, end, za); level != end && *level < zb;
-                ++level)
+        const Height a = where(za);
+        const double* level = a.upper;
+        double z0 = za;
+        double c0 = a.c;
+        double q0 = turn_a ? 0.0 : sine(p, c0);
+        for (; level != end && *level < zb; ++level)
         {
             const double c1 = L.c[level - begin];
-            const auto piece = cross<full>(p, z0, c0, *level, c1, first && turn_a, false);
+            const double q1 = sine(p, c1);
+            const auto piece = cross_sines<full>(p, z0, c0, q0, *level, c1, q1);
             total.dx += piece.dx;
             total.dt += piece.dt;
             total.ds += piece.ds;
             z0 = *level;
             c0 = c1;
-            first = false;
+            q0 = q1;
         }
-        const auto piece = cross<full>(p, z0, c0, zb, L.at(zb), first && turn_a, turn_b);
+        const double cb = where(zb).c;
+        const auto piece = cross_sines<full>(p, z0, c0, q0, zb, cb, turn_b ? 0.0 : sine(p, cb));
         total.dx += piece.dx;
         total.dt += piece.dt;
         total.ds += piece.ds;
@@ -171,13 +215,15 @@ struct Path
     double turning_above(double p, double z) const
     {
         const double target = 1.0 / p;
-        double z0 = z;
-        double c0 = L.at(z);
-        if (c0 >= target)
-            return z;
         const double* begin = L.z;
         const double* end = L.z + L.levels;
-        for (const double* level = std::upper_bound(begin, end, z); level != end; ++level)
+        const Height h = where(z);
+        const double* level = h.upper;
+        double z0 = z;
+        double c0 = h.c;
+        if (c0 >= target)
+            return z;
+        for (; level != end; ++level)
         {
             const double c1 = L.c[level - begin];
             if (c1 >= target)
@@ -790,13 +836,14 @@ double tube_range(Range&& range, const Family& family, double p, double c_s, dou
 
 } // namespace
 
-double Layers::at(double height) const
+double Layers::at(double height, const double* upper) const
 {
     if (levels == 1 || height <= z[0])
         return c[0];
     if (height >= z[levels - 1])
         return c[levels - 1];
-    const double* upper = std::upper_bound(z, z + levels, height);
+    if (upper == nullptr)
+        upper = std::upper_bound(z, z + levels, height);
     const std::size_t i = static_cast<std::size_t>(upper - z) - 1;
     return c[i] + (height - z[i]) / (z[i + 1] - z[i]) * (c[i + 1] - c[i]);
 }
@@ -834,7 +881,7 @@ void LayeredSoundSpeed::along(double hx, double hy, double* out) const
 DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double z_r, double r,
         double guess)
 {
-    const Path path {layers};
+    const Path path {layers, z_s, z_r};
     const double c_s = layers.at(z_s);
     const double c_r = layers.at(z_r);
     const auto fams = families(path, z_s, z_r, false);
@@ -941,7 +988,7 @@ DirectEigenray layered_direct_eigenray(const Layers& layers, double z_s, double 
 ReflectedEigenray layered_reflected_eigenray(const Layers& layers, double z_s, double z_r,
         double r, double guess)
 {
-    const Path path {layers};
+    const Path path {layers, z_s, z_r};
     const double c_s = layers.at(z_s);
     const auto fams = families(path, z_s, z_r, true);
     const Jumps jumps(layers, z_s, z_r);
@@ -993,7 +1040,7 @@ std::vector<Arrival> layered_arrivals(const Layers& layers, double z_s, double z
         const DirectEigenray& primary, bool bounced_only, int sample_count)
 {
     std::vector<Arrival> out;
-    const Path path {layers};
+    const Path path {layers, z_s, z_r};
     const Jumps jumps(layers, z_s, z_r);
     const double c_s = layers.at(z_s);
     const double c_r = layers.at(z_r);
@@ -1299,23 +1346,79 @@ constexpr double airy_zero_squared = 0.355028053887817239 * 0.355028053887817239
 // tube is normalized by, lit side included.
 constexpr double airy_peak_squared = 0.535656656015700 * 0.535656656015700;
 
-// Ai^2 averaged over a third-octave band about f, at x = (omega / omega_f)^power x_f:
-// on a caustic's lit side Ai oscillates, and a band averages its fringes.
-template <typename Argument>
-double band_airy_squared(double f, Argument&& argument)
+// Ai^2 averaged over a third-octave band, seven frequencies f 2^((k - 3)/18)
+// about its center: on a caustic's lit side Ai oscillates, and a band averages
+// its fringes.  Both of add_wave_loss's arguments go as omega^(2/3), so the
+// mean depends on the band only through x at its center: the k-th frequency's
+// is x rho_k, rho_k = 2^((k - 3)/27).  With it, the mean's slope in x.
+struct BandAiry
+{
+    double mean = 0.0;
+    double slope = 0.0;
+};
+
+BandAiry band_airy_direct(double x)
 {
     constexpr int n = 7;
-    double sum = 0.0;
+    BandAiry b;
     for (int k = 0; k < n; k++)
     {
-        const double fk = f * std::pow(2.0, (k - 0.5 * (n - 1)) / (3.0 * (n - 1)));
-        sum += [&] {
-            std::complex<double> ai, ai_prime;
-            airy(std::complex<double>(argument(2.0 * pi * fk), 0.0), ai, ai_prime);
-            return ai.real() * ai.real();
-        }();
+        const double rho = std::pow(2.0, 2.0 * (k - 0.5 * (n - 1)) / (9.0 * (n - 1)));
+        std::complex<double> ai, ai_prime;
+        airy(std::complex<double>(x * rho, 0.0), ai, ai_prime);
+        b.mean += ai.real() * ai.real();
+        b.slope += 2.0 * ai.real() * ai_prime.real() * rho;
     }
-    return sum / n;
+    b.mean /= n;
+    b.slope /= n;
+    return b;
+}
+
+// The mean's logarithm and its slope every 1/128 in x from -60 to 64, for
+// cubic Hermite interpolation; built on first use (a function-local static,
+// so thread-safe).  Beyond 72 every sub-band's Ai^2 is under e^-726, below
+// add_wave_loss's floor of 1e-300 in every band, so the mean is taken as
+// zero; elsewhere outside the table it is evaluated directly.  The arrival
+// loop asks for it per band per arrival, seven complex Airy evaluations each
+// directly -- half a run with --tunneling and --skip_fill in a duct.
+struct BandAiryTable
+{
+    static constexpr double lowest = -60.0;
+    static constexpr double highest = 64.0;
+    static constexpr double step = 1.0 / 128.0;
+    static constexpr double vanishing = 72.0;
+    std::vector<double> log_mean, slope;
+
+    BandAiryTable()
+    {
+        const auto count = static_cast<std::size_t>(std::lround((highest - lowest) / step)) + 1;
+        log_mean.resize(count);
+        slope.resize(count);
+        for (std::size_t k = 0; k < count; k++)
+        {
+            const BandAiry b = band_airy_direct(lowest + step * static_cast<double>(k));
+            log_mean[k] = std::log(b.mean);
+            slope[k] = b.slope / b.mean;
+        }
+    }
+
+    double operator()(double x) const
+    {
+        if (x >= vanishing)
+            return 0.0;
+        const double u = (x - lowest) / step;
+        if (!(u >= 0.0 && u < static_cast<double>(log_mean.size() - 1)))
+            return band_airy_direct(x).mean;
+        const auto k = static_cast<std::size_t>(u);
+        return std::exp(cubic_hermite(u - static_cast<double>(k), step, log_mean[k], slope[k], log_mean[k + 1],
+                slope[k + 1]));
+    }
+};
+
+double band_airy_squared(double x)
+{
+    static const BandAiryTable table;
+    return table(x);
 }
 
 // The Airy length at a turning point where the sound speed is c and falls at
@@ -1356,17 +1459,14 @@ void add_wave_loss(const WaveCorrection& wave, double chord, double spreading_ra
         // the energy near a turning point or caustic, scales as omega^(1/3).
         const double scale = std::cbrt(f / wave_reference_frequency);
         double db = 0.0;
-        (void)omega;
         if (wave.evanescent > 0.0)
         {
-            const double e = wave.evanescent;
-            const double a = band_airy_squared(f, [e](double w) { return std::pow(1.5 * w * e, 2.0 / 3.0); });
+            const double a = band_airy_squared(std::pow(1.5 * omega * wave.evanescent, 2.0 / 3.0));
             db -= 10.0 * std::log10(std::max(scale * a / airy_zero_squared, 1e-300));
         }
         if (wave.caustic)
         {
-            const double d = wave.caustic_depth;
-            const double a = band_airy_squared(f, [d](double w) { return std::cbrt(w * w) * d; });
+            const double a = band_airy_squared(std::cbrt(omega * omega) * wave.caustic_depth);
             db -= 10.0 * std::log10(std::max(scale * a / airy_peak_squared, 1e-300));
         }
         loss[band] += std::max(db, tube_gain_db - max_focusing_gain_db);
@@ -1379,7 +1479,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
     std::vector<Arrival> out;
     if (!options.any() || !(z_s > z_r))
         return out;
-    const Path path {layers};
+    const Path path {layers, z_s, z_r};
     const double c_s = layers.at(z_s);
     const double c_r = layers.at(z_r);
     const double c_0 = layers.at(0.0);
@@ -1713,7 +1813,7 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
-        bool linear_past_shadow, const WaveOptions& waves)
+        bool linear_past_shadow, const WaveOptions& waves, LayeredSolution* memo)
 {
     // The linear model's ray: the warm start, and the answer wherever the
     // layered solve does not apply -- straight paths, and a receiver at or
@@ -1746,41 +1846,69 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
         straight.horizontal = r;
         return straight;
     }
-    const double guess = ray.curved ? ray.direct.launch : std::atan2(z_r - z_s, r);
-    auto direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
     const double linear_boundary = ray.direct.boundary;
     // See below.  The fit's ray then stands for every downward direct ray, so
     // only bounced rays and those turned back from aloft are looked for; the
     // latter exist only under a boundary_under_aloft.
-    bool handover = linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
-            && linear_boundary > direct.boundary;
-    auto arrivals = layered_arrivals(layers, z_s, z_r, r, direct, handover);
+    auto hands_over = [&](const DirectEigenray& d) {
+        return linear_past_shadow && r > handover_fraction * d.boundary && ray.curved && linear_boundary > d.boundary;
+    };
+    DirectEigenray direct;
+    bool handover = false;
+    std::vector<Arrival> arrivals;
     std::vector<Arrival> arrivals_wave;
-    // A boundary set under faster air aloft stands only where nothing from
-    // aloft or along a duct arrives (layered_direct_eigenray).  Where something
-    // does, past the direct rays' reach, this is the duct's gap and is handled
-    // as one, below, exactly as before such boundaries were set.
-    if (direct.boundary_under_aloft && !direct.lit && !arrivals.empty())
+    // The solves' results in hand (interpolated between two solved states)
+    // stand if this pair hands over as they did.
+    bool taken = false;
+    if (memo != nullptr && memo->solved)
     {
-        direct.boundary = std::numeric_limits<double>::infinity();
-        direct.boundary_gradient = 0.0;
-        direct.boundary_under_aloft = false;
-        if (handover)
+        direct = memo->direct;
+        handover = hands_over(direct);
+        if (handover == memo->handover)
         {
-            handover = false;
-            arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false);
+            arrivals = memo->arrivals;
+            arrivals_wave = memo->waves;
+            taken = true;
         }
     }
-    // --tunneling, --skip_fill: arrivals ray theory does not have.  Kept out
-    // of `arrivals` until now, so they take no part in the boundary's removal
-    // or the promotion to primary below: each carries a per-band loss that only
-    // an extra arrival is given.
-    if (waves.any())
+    if (!taken)
     {
-        auto added = layered_wave_arrivals(layers, z_s, z_r, r, waves);
-        for (Arrival& a : added)
-            arrivals_wave.push_back(a);
+        const double guess = ray.curved ? ray.direct.launch : std::atan2(z_r - z_s, r);
+        direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
+        handover = hands_over(direct);
+        arrivals = layered_arrivals(layers, z_s, z_r, r, direct, handover);
+        // A boundary set under faster air aloft stands only where nothing from
+        // aloft or along a duct arrives (layered_direct_eigenray).  Where something
+        // does, past the direct rays' reach, this is the duct's gap and is handled
+        // as one, below, exactly as before such boundaries were set.
+        if (direct.boundary_under_aloft && !direct.lit && !arrivals.empty())
+        {
+            direct.boundary = std::numeric_limits<double>::infinity();
+            direct.boundary_gradient = 0.0;
+            direct.boundary_under_aloft = false;
+            if (handover)
+            {
+                handover = false;
+                arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false);
+            }
+        }
+        // --tunneling, --skip_fill: arrivals ray theory does not have.  Kept out
+        // of `arrivals` until now, so they take no part in the boundary's removal
+        // or the promotion to primary below: each carries a per-band loss that only
+        // an extra arrival is given.
+        if (waves.any())
+            arrivals_wave = layered_wave_arrivals(layers, z_s, z_r, r, waves);
+        if (memo != nullptr)
+        {
+            memo->solved = true;
+            memo->chord = layered_chord(source, receiver);
+            memo->direct = direct;
+            memo->handover = handover;
+            memo->arrivals = arrivals;
+            memo->waves = arrivals_wave;
+        }
     }
+    ray.interpolated = taken;
     // The pair's path, for the arrivals to start from: its separation is theirs.
     auto form_arrivals = [&](RefractedRay& into) {
         arrivals.insert(arrivals.end(), arrivals_wave.begin(), arrivals_wave.end());
@@ -1861,7 +1989,7 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
 }
 
 void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, GroundGeometry ground,
-        double microphone_height, std::vector<double>& scratch)
+        double microphone_height, std::vector<double>& scratch, LayeredSolution* memo)
 {
     if (!ray.curved)
         return;
@@ -1897,28 +2025,43 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
     }
     else if (ground == GroundGeometry::point && ray.source_z > microphone_height)
     {
-        const double r = ray.horizontal;
-        const double hx = path.separation.x / r;
-        const double hy = path.separation.y / r;
-        const auto layers = path_layers(air, hx, hy, scratch);
-        const auto reflected = direct.lit
-                ? layered_reflected_eigenray(layers, ray.source_z, microphone_height, r,
-                          -std::atan2(ray.source_z + microphone_height, r))
-                : ReflectedEigenray {};
-        double grazing = reflected.exists ? reflected.grazing : 0.0;
-        const double length = reflected.exists ? reflected.path_length : direct.path_length;
-        if (!reflected.exists && direct.lit && direct.arrival < 0.0)
+        double grazing = 0.0, length = 0.0;
+        if (memo != nullptr && memo->ground_set)
         {
-            // The reflected solve takes its families to be monotonic, so it
-            // misses its ray wherever the direct one is not (a source at a
-            // local maximum of the sound speed), and grazing 0 put the pair in
-            // the ground's null.  The partner of a ray arriving from above
-            // meets the ground at its own invariant's angle, as the arrivals'
-            // do, if nothing below the receiver turns it first.
-            const Path through {layers};
-            const double p = std::cos(direct.launch) / layers.at(ray.source_z);
-            if (1.0 / p > through.fastest(0.0, microphone_height))
-                grazing = std::asin(sine(p, layers.at(0.0)));
+            grazing = memo->grazing;
+            length = memo->length;
+        }
+        else
+        {
+            const double r = ray.horizontal;
+            const double hx = path.separation.x / r;
+            const double hy = path.separation.y / r;
+            const auto layers = path_layers(air, hx, hy, scratch);
+            const auto reflected = direct.lit
+                    ? layered_reflected_eigenray(layers, ray.source_z, microphone_height, r,
+                              -std::atan2(ray.source_z + microphone_height, r))
+                    : ReflectedEigenray {};
+            grazing = reflected.exists ? reflected.grazing : 0.0;
+            length = reflected.exists ? reflected.path_length : direct.path_length;
+            if (!reflected.exists && direct.lit && direct.arrival < 0.0)
+            {
+                // The reflected solve takes its families to be monotonic, so it
+                // misses its ray wherever the direct one is not (a source at a
+                // local maximum of the sound speed), and grazing 0 put the pair in
+                // the ground's null.  The partner of a ray arriving from above
+                // meets the ground at its own invariant's angle, as the arrivals'
+                // do, if nothing below the receiver turns it first.
+                const Path through {layers};
+                const double p = std::cos(direct.launch) / layers.at(ray.source_z);
+                if (1.0 / p > through.fastest(0.0, microphone_height))
+                    grazing = std::asin(sine(p, layers.at(0.0)));
+            }
+            if (memo != nullptr)
+            {
+                memo->ground_set = true;
+                memo->grazing = grazing;
+                memo->length = length;
+            }
         }
         path.source_height = std::max(length * std::sin(grazing) - microphone_height, 0.0);
         path.ground_distance = length * std::cos(grazing);
@@ -1927,6 +2070,242 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
     {
         finish_ground(ray, ground, microphone_height);
     }
+}
+
+namespace {
+
+double lerp(double a, double b, double t)
+{
+    return a + t * (b - a);
+}
+
+bool close_angles(double a, double b)
+{
+    return std::fabs(a - b) <= ray_interpolation_angle;
+}
+
+bool close_tubes(double a, double b)
+{
+    return a > 0.0 && b > 0.0 && std::fabs(b / a - 1.0) <= ray_interpolation_spreading;
+}
+
+// A length at a and b, each over its own chord, at t, over this chord.
+struct Chords
+{
+    double a, b, t, here;
+
+    bool close(double x, double y) const
+    {
+        return close_tubes(x / a, y / b);
+    }
+    double lerp_scaled(double x, double y) const
+    {
+        return here * lerp(x / a, y / b, t);
+    }
+};
+
+// Two arrival lists alike, and `out` the one between.
+bool interpolate_arrivals(const std::vector<Arrival>& a, const std::vector<Arrival>& b, const Chords& c,
+        std::vector<Arrival>& out)
+{
+    if (a.size() != b.size())
+        return false;
+    out = a;
+    for (std::size_t k = 0; k < a.size(); k++)
+    {
+        const Arrival& x = a[k];
+        const Arrival& y = b[k];
+        if (x.bounces != y.bounces || (x.grazing > 0.0) != (y.grazing > 0.0)
+                || (x.wave.evanescent > 0.0) != (y.wave.evanescent > 0.0) || x.wave.caustic != y.wave.caustic
+                || !close_angles(x.launch, y.launch) || !close_angles(x.arrival, y.arrival)
+                || !close_angles(x.grazing, y.grazing) || !c.close(x.spreading_range, y.spreading_range)
+                || !c.close(x.path_length, y.path_length))
+            return false;
+        Arrival& z = out[k];
+        z.launch = lerp(x.launch, y.launch, c.t);
+        z.arrival = lerp(x.arrival, y.arrival, c.t);
+        z.grazing = lerp(x.grazing, y.grazing, c.t);
+        z.spreading_range = c.lerp_scaled(x.spreading_range, y.spreading_range);
+        z.path_length = c.lerp_scaled(x.path_length, y.path_length);
+        z.travel_time = c.lerp_scaled(x.travel_time, y.travel_time);
+        z.wave.evanescent = lerp(x.wave.evanescent, y.wave.evanescent, c.t);
+        z.wave.caustic_depth = lerp(x.wave.caustic_depth, y.wave.caustic_depth, c.t);
+    }
+    return true;
+}
+
+} // namespace
+
+bool interpolate_layered(const LayeredSolution& a, const LayeredSolution& b, double t, double chord,
+        LayeredSolution& out)
+{
+    if (!a.solved || !b.solved || a.handover != b.handover || !(a.chord > 0.0) || !(b.chord > 0.0)
+            || !(chord > 0.0))
+        return false;
+    const Chords c {a.chord, b.chord, t, chord};
+    const DirectEigenray& x = a.direct;
+    const DirectEigenray& y = b.direct;
+    if (x.lit != y.lit || x.boundary_under_aloft != y.boundary_under_aloft
+            || std::isfinite(x.boundary) != std::isfinite(y.boundary)
+            || std::isfinite(x.linear_boundary) != std::isfinite(y.linear_boundary)
+            || (x.shadow_depth > 0.0) != (y.shadow_depth > 0.0) || !close_angles(x.launch, y.launch)
+            || !close_angles(x.arrival, y.arrival) || !c.close(x.spreading_range, y.spreading_range)
+            || !c.close(x.path_length, y.path_length))
+        return false;
+    if (std::isfinite(x.boundary) && !close_tubes(x.boundary, y.boundary))
+        return false;
+    if (!interpolate_arrivals(a.arrivals, b.arrivals, c, out.arrivals)
+            || !interpolate_arrivals(a.waves, b.waves, c, out.waves))
+        return false;
+    out.solved = true;
+    out.chord = chord;
+    out.handover = a.handover;
+    out.direct = x;
+    DirectEigenray& z = out.direct;
+    z.launch = lerp(x.launch, y.launch, t);
+    z.arrival = lerp(x.arrival, y.arrival, t);
+    z.spreading_range = c.lerp_scaled(x.spreading_range, y.spreading_range);
+    z.path_length = c.lerp_scaled(x.path_length, y.path_length);
+    z.travel_time = c.lerp_scaled(x.travel_time, y.travel_time);
+    z.shadow_depth = lerp(x.shadow_depth, y.shadow_depth, t);
+    if (std::isfinite(x.boundary))
+    {
+        z.boundary = lerp(x.boundary, y.boundary, t);
+        z.boundary_gradient = lerp(x.boundary_gradient, y.boundary_gradient, t);
+    }
+    if (std::isfinite(x.linear_boundary))
+        z.linear_boundary = lerp(x.linear_boundary, y.linear_boundary, t);
+    out.ground_set = false;
+    return true;
+}
+
+bool interpolate_ground(const LayeredSolution& a, const LayeredSolution& b, double t, double chord,
+        LayeredSolution& out)
+{
+    if (!a.ground_set || !b.ground_set || (a.grazing > 0.0) != (b.grazing > 0.0) || !(a.chord > 0.0)
+            || !(b.chord > 0.0) || !(chord > 0.0))
+        return false;
+    const Chords c {a.chord, b.chord, t, chord};
+    if (!close_angles(a.grazing, b.grazing) || !c.close(a.length, b.length))
+        return false;
+    out.ground_set = true;
+    out.grazing = lerp(a.grazing, b.grazing, t);
+    out.length = c.lerp_scaled(a.length, b.length);
+    return true;
+}
+
+double layered_chord(const Vec3& source, const Vec3& receiver)
+{
+    return std::hypot((receiver - source).horizontal_norm(), source.z - std::max(receiver.z, 0.0));
+}
+
+StridedLayeredRays::StridedLayeredRays(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
+        const std::vector<Vec3>& sources, const std::vector<EffectiveSoundSpeed::Moments>& moments,
+        std::size_t stride, const WaveOptions& waves)
+    : air_(air), linear_(linear), sources_(sources), moments_(moments),
+      stride_(sources.size() > 2 ? std::max<std::size_t>(stride, 1) : 1), waves_(waves),
+      anchors_(stride_ > 1 ? (sources.size() + stride_ - 2) / stride_ + 1 : 0)
+{
+    if (moments.size() != sources.size())
+        throw std::invalid_argument("StridedLayeredRays: one set of moments per source");
+}
+
+void StridedLayeredRays::begin_observer(const Vec3& receiver, const EffectiveSoundSpeed::Moments& at_receiver,
+        bool linear_past_shadow)
+{
+    receiver_ = receiver;
+    at_receiver_ = at_receiver;
+    linear_past_shadow_ = linear_past_shadow;
+    for (Anchor& a : anchors_)
+        a.formed = false;
+}
+
+void StridedLayeredRays::block_of(std::size_t it, std::size_t& a, std::size_t& b, double& t) const
+{
+    a = it - it % stride_;
+    b = std::min(a + stride_, sources_.size() - 1);
+    t = b > a ? static_cast<double>(it - a) / static_cast<double>(b - a) : 0.0;
+}
+
+RefractedRay StridedLayeredRays::solve(std::size_t it, LayeredSolution* memo)
+{
+    return layered_direct_ray(air_, linear_, sources_[it], moments_[it], receiver_, at_receiver_, scratch_,
+            linear_past_shadow_, waves_, memo);
+}
+
+StridedLayeredRays::Anchor& StridedLayeredRays::formed(std::size_t anchor)
+{
+    Anchor& a = slot(anchor);
+    if (!a.formed)
+    {
+        a.solution = LayeredSolution {};
+        a.ray = solve(anchor, &a.solution);
+        a.formed = true;
+        a.finished = false;
+    }
+    return a;
+}
+
+RefractedRay StridedLayeredRays::ray(std::size_t it)
+{
+    if (stride_ > 1)
+    {
+        std::size_t ia = 0, ib = 0;
+        double t = 0.0;
+        block_of(it, ia, ib, t);
+        if (it == ia || it == ib)
+            return formed(it).ray;
+        const Anchor& a = formed(ia);
+        const Anchor& b = formed(ib);
+        LayeredSolution between;
+        if (interpolate_layered(a.solution, b.solution, t, layered_chord(sources_[it], receiver_), between))
+            return solve(it, &between);
+    }
+    return solve(it, nullptr);
+}
+
+void StridedLayeredRays::finish(std::size_t it, RefractedRay& ray, GroundGeometry ground, double microphone_height)
+{
+    if (stride_ > 1)
+    {
+        std::size_t ia = 0, ib = 0;
+        double t = 0.0;
+        block_of(it, ia, ib, t);
+        auto finish_anchor = [&](Anchor& x, RefractedRay& into) {
+            layered_finish_ground(air_, into, ground, microphone_height, scratch_, &x.solution);
+            x.finished = true;
+        };
+        if (it == ia || it == ib)
+        {
+            Anchor& self = slot(it);
+            if (self.formed)
+            {
+                finish_anchor(self, ray);
+                return;
+            }
+        }
+        else if (ray.interpolated)
+        {
+            Anchor& a = slot(ia);
+            Anchor& b = slot(ib);
+            if (a.formed && b.formed)
+            {
+                for (Anchor* x : {&a, &b})
+                    if (!x->finished)
+                    {
+                        RefractedRay copy = x->ray;
+                        finish_anchor(*x, copy);
+                    }
+                LayeredSolution between;
+                if (interpolate_ground(a.solution, b.solution, t, layered_chord(sources_[it], receiver_), between))
+                {
+                    layered_finish_ground(air_, ray, ground, microphone_height, scratch_, &between);
+                    return;
+                }
+            }
+        }
+    }
+    layered_finish_ground(air_, ray, ground, microphone_height, scratch_);
 }
 
 } // namespace niceops
@@ -2044,7 +2423,7 @@ double layered_shadow_boundary(const Layers& layers, double z_s, double z_r)
     const double inf = std::numeric_limits<double>::infinity();
     if (!(z_s > z_r) || layers.uniform())
         return inf;
-    const Path path {layers};
+    const Path path {layers, z_s, z_r};
     const auto fams = families(path, z_s, z_r, false);
     // As layered_direct_eigenray: the fastest air below the source is at the ground.
     if (!(fams.count > 0) || path.fastest(0.0, z_s) > layers.at(0.0))

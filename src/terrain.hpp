@@ -18,7 +18,7 @@ namespace niceops {
 // The file holds 1-D `latitude` and `longitude` coordinate variables (degrees,
 // strictly increasing) and a 2-D `elevation(latitude, longitude)` in meters.
 // An optional text attribute `vertical_datum` records the datum the heights are
-// on.  NICE-OPS does not convert between datums: --terrain_offset is what puts
+// on.  NICEOPS does not convert between datums: --terrain_offset is what puts
 // the heights on the trajectory's datum (at Amedee, 3DEP's NAVD88 against the
 // 2017 tracks' ellipsoidal heights, -23.6 m), and a mismatch is the caller's
 // error -- which run() and process_trajectory() check for as far as the inputs
@@ -192,34 +192,122 @@ GroundLine fit_ground_line(const TerrainRaster& raster, double x0, double y0, do
 // over the first step along its bearing.
 //
 // One per thread: set_observer() rewinds it, and it holds no locks.
+//
+// With `screening` (--terrain_screening) each ray also keeps its raw heights
+// and its horizon from the microphone, the running maximum of
+// (z_k - h_mic) / (k step): about 16 bytes more per sample, and nothing at all
+// without it.  blocked() asks whether any sample between a pair's ends rises
+// above its line of sight, on the profile blended between the two rays in
+// bearing as the line is; fit_range() is the least-squares line over part of
+// that profile, from the same running sums.
 class GroundPlaneCache
 {
 public:
     // 0.25 degrees: rays 13 m apart at 3 km, about a 3DEP 1/3 arc-second cell.
     static constexpr int bearings = 1440;
 
-    explicit GroundPlaneCache(const TerrainRaster& raster);
+    // `min_protrusion` (m, screening only): how far a sample must rise above
+    // the line of sight to block it, so a raster's texture next to a
+    // microphone does not screen a path that only grazes it.
+    explicit GroundPlaneCache(const TerrainRaster& raster, bool screening = false, double min_protrusion = 0.0);
 
     // Start on a new observer, whose ground point is (x, y).
     void set_observer(double x, double y);
+    // The same, with the microphone `microphone_height` above the raster's
+    // ground at (x, y), which the horizon is taken from (screening only).
+    void set_observer(double x, double y, double microphone_height);
+    // The same, with the microphone at `microphone_z` in the raster's frame
+    // (an observer file's own z), held no lower than the ground at its foot.
+    void set_observer_at(double x, double y, double microphone_z);
+
+    // Where a path to the footprint (dx, dy) away horizontally falls among the
+    // rays: the ray at or counterclockwise below its bearing, the next one,
+    // the fraction of the way between them, and the whole steps and fraction
+    // of a step along them.  `distance` = hypot(dx, dy).
+    struct RayPair
+    {
+        int ray = 0;
+        int next = 0;
+        double turn = 0.0;
+        std::size_t n = 1;
+        double fraction = 0.0;
+        double distance = 0.0;
+    };
+    RayPair locate(double dx, double dy, double distance) const;
 
     // The line under the path from the observer to the footprint (dx, dy) away
-    // horizontally, `distance` = hypot(dx, dy).
+    // horizontally, `distance` = hypot(dx, dy).  line_from(locate(...)) is the
+    // same line to the bit.
     GroundLine line_to(double dx, double dy, double distance);
+    GroundLine line_from(const RayPair& pair);
+
+    // A pair's terrain profile, blended between its two rays: heights relative
+    // to the observer's ground at samples k = 0 .. interior + 1, k steps out,
+    // where 1 .. interior are the samples strictly between the microphone and
+    // the source's footprint, and interior + 1 is the first at or past it.
+    // `source_height` is the source's height on the same base, raised onto
+    // the profile at the footprint if it is below it.
+    struct Profile
+    {
+        std::vector<double> heights;
+        std::size_t interior = 0;
+        double step = 0.0;
+        double distance = 0.0;
+        double microphone_height = 0.0;
+        double source_height = 0.0;
+    };
+
+    // Screening only.  The quick test: false when neither ray's horizon over
+    // the interior samples rises above the pair's line of sight to a source at
+    // local z `source_z`, which proves the blended profile does not either.
+    bool may_block(const RayPair& pair, double source_z);
+    // Whether some interior sample of the blended profile lies strictly above
+    // the line of sight, by more than the minimum protrusion; `profile` is
+    // filled when it does.  A sample exactly on it does not block.
+    bool blocked(const RayPair& pair, double source_z, Profile& profile);
+
+    // Screening only: the least-squares line through the blended profile's
+    // samples k0 .. k1 (k0 < k1, both already sampled), heights relative to
+    // the observer's ground, s from the observer.
+    GroundLine fit_range(const RayPair& pair, std::size_t k0, std::size_t k1) const;
+
+    // The raster's height at the observer's ground point, which the profile's
+    // heights are relative to.
+    double ground_z() const
+    {
+        return z_;
+    }
 
 private:
     // The fit over the first n steps of ray `ray` (n + 1 samples), relative to
     // the observer's height.
     GroundLine fit(int ray, std::size_t n);
+    // The fit over samples k0 .. k1 of ray `ray`, relative to the observer's
+    // height, s from the observer.
+    GroundLine fit_ray_range(int ray, std::size_t k0, std::size_t k1) const;
     // The ray's running sums through sample n, sampling it further if needed.
     void ensure(int ray, std::size_t n);
     GroundLine along(int ray, std::size_t n, double fraction);
+    // Screening: the samples strictly inside a pair's distance, and the
+    // source's height raised onto the blended profile at the footprint.
+    std::size_t interior_samples(const RayPair& pair) const;
+    double source_height(const RayPair& pair, double source_z) const;
+    // The slope of a sample's height `z` (relative to the observer's ground)
+    // as seen from the microphone, `distance` away: the one spelling the
+    // horizon, the line of sight and the scan all use.
+    double sight_slope(double z, double distance) const
+    {
+        return (z - microphone_) / distance;
+    }
 
     const TerrainRaster* raster_;
     double step_;
+    bool screening_ = false;
+    double min_protrusion_ = 0.0;
     double x_ = 0.0;
     double y_ = 0.0;
     double z_ = 0.0;
+    double microphone_ = 0.0;
     unsigned generation_ = 0;
     std::vector<double> cos_;
     std::vector<double> sin_;
@@ -229,6 +317,10 @@ private:
     std::vector<unsigned> stamp_;
     std::vector<std::vector<double>> sum_z_;
     std::vector<std::vector<double>> sum_kz_;
+    // Screening only: each sample's height relative to the observer's, and the
+    // horizon, the largest sight_slope of samples 1 .. k (-infinity at k = 0).
+    std::vector<std::vector<double>> z_raw_;
+    std::vector<std::vector<double>> horizon_;
 };
 
 // What the ground models take, over a sloping mean ground line, for a source

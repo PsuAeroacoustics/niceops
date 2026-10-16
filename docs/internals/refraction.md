@@ -87,10 +87,17 @@ is in [THEORY §8.1](../THEORY.md); the calibration against the PE is in
   V collapses over source height (from 5 l to 100 l; how closely is in FIDELITY), but the series
   itself fails for high sources at high frequency, so do not build it at the actual height.
 - **Each model at its own boundary**: the table places the exact field at the parabolic
-  boundary of k^2-linear and the ray at the circle one; NICE-OPS uses the ray's.
+  boundary of k^2-linear and the ray at the circle one; NICEOPS uses the ray's.
 - **Ray model below xi = -2, blend to -1, V beyond**, floored at V(0) - floor and capped at
   20 log10 2. `max_power_ratio` feeds the peak search's ground bound, or the windowed run stops
   being exact.
+- **V's deep lit side is rounding noise at large s.** Between xi = -2 and about -1.6, at s of a
+  few hundred and up, the series' terms cancel by up to nine orders at k0 r of 10^6-10^7, so a
+  mode zero's last bit moves V there by up to 0.4 dB: the same build under GCC and under clang
+  differs by as much at the same 460 nodes (of 52,164), and by under 2e-6 dB everywhere from
+  xi = -1 on. Those nodes enter only the blend, at a weight of 0.4 or less. The trusted test
+  (`modal_sum`) bounds the terms' sizes, not their phases, so it passes them. A fix would move
+  results; none has been made.
 - **A cramped band keeps the ray model to the boundary.** When a band's boundary is nearer the
   source than two diffraction lengths, it keeps the ray model to the boundary, blends to V over
   the next diffraction length, and takes V beyond (`cramped` in `apply`). There the source is a
@@ -145,6 +152,12 @@ is in [THEORY §8.1](../THEORY.md); the calibration against the PE is in
   forms it. `max_power_ratio` includes the loudest K.
 - The tables take the run's `-j` (`threads`). Validation runs a dozen `-j 1` processes at
   once, and a table building on every core in each of them took 7 s.
+- **V is built when first wanted, not at setup** (`ShadowTransition::tables`, a
+  `std::once_flag`): the first ray that comes near a boundary, the peak search's bound, or a
+  test. A run that marches every state (any history output, so every validation run) and whose
+  rays never near a boundary builds none of it. The values are the same computation whenever
+  it runs; the tables live in a `shared_ptr` so that the vector of transitions can move them.
+  `apply`'s clamp reads the largest power ratio, so V is built whole, never by the band.
 
 ## Stratified rays
 
@@ -260,6 +273,46 @@ its highest band) of the fastest air, and the limiting ray's travel across it is
   10 kHz, so it is what fails if `process_trajectory` stops handing `LayeredSoundSpeed` its band
   (`a run's resolution frequency reaches every path's layers` covers `path_layers`).
 
+## Interpolated states (`--ray_stride`)
+
+`LayeredSolution` (stratified.hpp) is what a pair's layered solves give: the direct eigenray
+after the boundary's removal under aloft, the hand-over, the ray and wave arrivals, and the
+reflected ray's grazing and length for a point receiver's ground. `layered_direct_ray` and
+`layered_finish_ground` take one (`memo`): what it holds stands in place of solving, and what it
+lacks the solves fill in. `StridedLayeredRays` keeps an observer's anchors, one per thread;
+`process_trajectory` hands it each observer (`begin_observer`) and asks it for every state's ray
+and ground finish. What to keep:
+
+- **Interpolate the solves, not the levels.** The sphere's direction, the ground, the absorption
+  and the shadow transition are formed at each state from its own geometry and the interpolated
+  ray. Interpolating levels would miss the dips between anchors that move the 10 dB window, as
+  decimating the trajectory does ([performance.md](performance.md#the-sel-window-the-oversampling-and-the-windowed-peak-search)).
+- **Anchors are fixed states** (every K-th and the last), each solved exactly as without the
+  option, so a state's ray does not depend on which state the windowed search asked for first:
+  windowed equals marched byte for byte. `stratified_windowed_is_exact` and its twins run at the
+  default stride; `a strided ray does not depend on the order the states are asked for` asks for
+  the states shuffled, some twice, after another observer's anchors, and finishes them in
+  another order.
+- **Tubes, lengths and times as fractions of the chord.** Taken as they are, 14% of states
+  between anchors 8 apart were refused on the 2% tube limit by nothing but the tube's growth with
+  range; as fractions of the straight chord the growth is exact and only the focusing is
+  interpolated.
+- **The hand-over is decided afresh** from the interpolated boundary and the state's own linear
+  boundary; where it differs from the anchors' the state is solved. A state whose ray was solved
+  is finished exactly too (`RefractedRay::interpolated`).
+- **A ray from aloft, a duct's promotion, a caustic coming or going** change the arrivals' count,
+  bounces or kinds, or move angles and tubes past the limits, so those states are solved.
+- **Cost:** see [performance.md](performance.md#interpolated-rays). What is left at stride 4 is
+  the rest of the evaluation (the shadow transition, the band levels, the database load and the
+  histories), so larger strides gain little; in a duct with wave arrivals the arrivals' kinds
+  change often enough that most states are solved anyway.
+- **4 is the default**; `--ray_stride 1` solves every state and reproduces the results from
+  before it to the bit (the `*_exact` goldens).
+- Tests: `two states' layered solves interpolate only where they agree`
+  (`tests/test_stratified.cpp`), `stratified_stride_{windy,duct}_is_close` (against every state
+  solved, at 0.005 and 0.02 dB), `stratified_stride_is_not_exact`, the `*_exact_golden` pins,
+  `stratified_windowed_is_exact` (now at the default stride), `ray_stride_needs_stratified`.
+
 ## Arrivals and ducts
 
 Every arrival is summed in energy (`layered_arrivals`, `Arrival` in refraction.hpp). The primary
@@ -331,8 +384,16 @@ Ray theory leaves two gaps that these opt-in Airy terms address (the equations a
 - **Near a tunneled family's caustic the coalescing pair is replaced by the caustic's
   band-averaged Airy field.** Left to the +10 dB focusing cap it put the return well over the PE
   ([FIDELITY](../FIDELITY.md#micro-shadows-and-skip-zones)).
+- **The band's mean of Ai^2 is a table in the center's argument** (`BandAiryTable`,
+  stratified.cpp), since both corrections' arguments go as omega^(2/3): its logarithm and slope
+  every 1/128 from -60 to 64, cubic Hermite, zero past 72 (every sub-band then under the
+  1e-300 floor in every band), direct elsewhere. Seven complex Airy evaluations per band per
+  arrival were half of a duct run with both options (222 s against 93 s on an eighth of the
+  demo grid); the table is within 1e-10 dB of them
+  (`a wave arrival's loss is its band's seven Airy evaluations`).
 - Cost on a day-286 run: `--tunneling` about +20%, `--skip_fill` 2–4x, a PE table about the
-  ray model's own.
+  ray model's own. In `example_inversion.csv`'s duct both together are about 8x the plain
+  stratified run, nearly all of it the arrival search's layer walks.
 
 ## Resolved shadow (`--shadow_model resolved`)
 
@@ -384,9 +445,13 @@ What to preserve:
   tabulates them once per trajectory (`ResolvedShadowTable`: every `bearing_step` = 2 degrees,
   source-height nodes even in sqrt(z_s), interpolated in 1/r_b so a band with no boundary is
   0). Every band whose h_f lies in one layer shares one profile, so the build costs one boundary
-  solve per layer touched, about 0.01 s on `example_windy.csv`. The cramped series table costs
-  about 2–3 s of CPU per band per receiver height: 24 bands take 5–8 s on 14 threads and about a
-  minute at `-j 1`. A pair pays one table lookup per band.
+  solve per layer touched, about 0.01 s on `example_windy.csv`. The cramped series table is
+  built a (band, s) column at a time, when `cramped_level` first reads it (a `std::once_flag`
+  per column): a column is one series call, about 14 ms. Built whole it was 8.5 s at `-j 1` for
+  an AS350 approach at Amedee (28 bands, one plate; 58 s before the mode sums were trimmed,
+  [performance.md](performance.md#the-residue-series-tables)), and that run never reads it:
+  none of its bands is ever cramped. The cramped values do not feed the bound (V's largest
+  power ratio does), which is what lets them wait. A pair pays one table lookup per band.
 - **The bound stays exact**: the series and V are held to the transition's largest power ratio,
   and the straight ground term is within the ground's own bound.
   `stratified_resolved_{point,plate,straight_point,duct_point}_windowed_is_exact` check it, and

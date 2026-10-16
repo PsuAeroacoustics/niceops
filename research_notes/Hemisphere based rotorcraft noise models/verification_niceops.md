@@ -60,7 +60,7 @@ Any shipped `*_fixed_load_factor.nod` database does carry spectra (B407: `freque
 
 The sphere grid itself spans phi -180 to 170. The only time a cell beyond ±90 is touched is at phi = ±90 exactly, where `locate` may pick the [90, 100] cell with zero weight on the 100 knot. So the stored upper half carries no weight in any level.
 
-For panam-built databases this loses nothing relative to the file. panam fills the upper half by mirroring through the horizontal plane (inventory §1), which in steady flight is the same reflection as NICE-OPS's fold. A database carrying a *genuine* upper hemisphere (a computed sphere, say from a first-principles code) would have that half silently ignored.
+For panam-built databases this loses nothing relative to the file. panam fills the upper half by mirroring through the horizontal plane (inventory §1), which in steady flight is the same reflection as NICEOPS's fold. A database carrying a *genuine* upper hemisphere (a computed sphere, say from a first-principles code) would have that half silently ignored.
 
 **When `up > 0` actually arises.** The TPP normal is the load-factor unit vector (`trajectory.cpp:461-465`; `niceops.cpp:765`). In steady unaccelerated flight that is vertical, so "above the TPP" means above the aircraft's horizontal plane. Four configurations reach it:
 - **Receiver above the source.** The microphone is the observer point raised by its height. Scattered observers carry their own z (`x,y,z[,height]`), and the default point-receiver height is 1.2 m. The mirror is read for:
@@ -117,7 +117,7 @@ The unit box is per-axis min/max. A non-rectangular envelope (for example, high 
   - Applied in `eval` (`:1353`) and per band, uniformly, in `eval_spectrum` (`:1446-1447`).
 - Other databases:
   - `:1244-1254`: CT is a third, normalised and clamped axis.
-  - NICE-OPS adds no LF term itself; the 20 log10(LF) lives in panam's materialised copies.
+  - NICEOPS adds no LF term itself; the 20 log10(LF) lives in panam's materialised copies.
   - `S-76D_M3.nod` holds CT at {0, 1, 1.1, 1.2, 1.5, 2, 3, 5} × 0.005863 (164 conditions each, from `ncdump -v thrust_coefficient`). That is a clamp at exactly 5 g, plus a CT = 0 copy, so LF < 1 interpolates toward the 1 g level.
 - CT itself is LF·W/(rho V_tip² pi R²) from the vehicle JSON (`trajectory.cpp:467`).
 
@@ -131,7 +131,7 @@ The unit box is per-axis min/max. A non-rectangular envelope (for example, high 
 - A grep of `src/` for `doppler|convective|mach` finds only:
   - `sphere_database.cpp:2341-2342, 2384`: the AAM *export* writer, which writes `DOPPLER_SHIFT_REMOVED = 0`;
   - a tip-Mach comment.
-- NICE-OPS never *reads* a Doppler flag from a `.nod`. It would not notice a database whose shift had been removed.
+- NICEOPS never *reads* a Doppler flag from a `.nod`. It would not notice a database whose shift had been removed.
 - `src/util/sel.hpp:85-97`, `reception_factor`: max(1 + (dr/dt)/c, 1e-3), with dr/dt by central differences. It is applied as the per-sample weight in every SEL path (`sel.hpp:159-165`; `niceops.cpp:378-380`).
 - Ranges are the straight-line range (`niceops.cpp:1779-1780`), or c·travel_time under refraction (`:1717, 1727, 1758`).
 

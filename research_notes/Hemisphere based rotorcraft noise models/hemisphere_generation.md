@@ -214,7 +214,7 @@ Empirical tools (RNM) index spheres by dimensional airspeed and flight-path angl
   - (V, γ) → (V, γ_e) for acceleration (Q-SAM).
   - → (V, γ_e, n_z) or C_T for maneuvers (FRAME-QS).
   - → non-dimensional (μ, C_T/C_W, M_H or effective M_tip, λ or γ_e) for transfer across altitude and temperature (Greenwood & Schmitz 2011/2014; Greenwood, Sim & Boyd 2016/2024).
-- Indexing by (μ, γ_e, C_T), as NICE-OPS does, matches the published recommendation. The source in which these spheres are documented (FRAME-QS) indexes by (V, γ, n_z).
+- Indexing by (μ, γ_e, C_T), as NICEOPS does, matches the published recommendation. The source in which these spheres are documented (FRAME-QS) indexes by (V, γ, n_z).
 - The 3.5 dB result says a footprint tool that evaluates C_T from load factor during maneuvers recovers most of the transient rise. Holding C_T fixed misses it entirely.
 - Crosswind results imply the sphere should be selected and oriented by the air-relative velocity (crabbed flight leaves the acoustic state unchanged; directivity rotates with the wind). Wind *gradients* change trim and are not captured by any steady-wind correction.
 - For multirotor eVTOL, a single dB sphere per condition is a lossy representation whenever rotor phase is uncontrolled. Variability of up to 20 dB tonal at a point is possible in principle, and averaging-type spheres smooth it out.
@@ -248,7 +248,7 @@ Across conditions, published schemes range from nearest-neighbour (RNM in flight
   - Main rotor harmonic and broadband have different directivity, and BPF-band sphere interpolation errors exceed broadband ones ([Houston et al. 2025](https://ntrs.nasa.gov/api/citations/20250002951/downloads/VFS81_Snapshot_Array_04142025_v2.pdf)).
 
 ### Inferences
-- The measured-data community interpolates energy (p²), not dB (Houston 2025 within-sphere; RNM across airspeed). Interpolating dB is a geometric mean of energies and biases low between dissimilar spheres. A tool that blends dBA values (as NICE-OPS's grid does) will differ from a p² blend wherever neighbouring spheres differ by several dB. The size of that difference was not found quantified in the literature.
+- The measured-data community interpolates energy (p²), not dB (Houston 2025 within-sphere; RNM across airspeed). Interpolating dB is a geometric mean of energies and biases low between dissimilar spheres. A tool that blends dBA values (as NICEOPS's grid does) will differ from a p² blend wherever neighbouring spheres differ by several dB. The size of that difference was not found quantified in the literature.
 - Delaunay/barycentric or natural-neighbour interpolation across conditions has precedent in FRAME-QS. RNM's nearest-in-γ approach produces step changes at segment boundaries that a footprint will show as artifacts.
 - Interpolating between spheres of different flight speed also blends different Doppler shifts and different convective amplification when spheres keep the received spectrum (section 6).
 
@@ -313,7 +313,7 @@ Mixing them double-applies or omits the shift.
 - Time-domain de-Dopplerization transforms ground signals to an observer "moving with the aircraft and removing the Doppler frequency shift from the signal." Amplitudes can be normalised to the virtual microphone using the known emission-time distance ([Rachaprolu & Greenwood 2024](https://rosap.ntl.bts.gov/view/dot/72623/dot_72623_DS1.pdf); [Greenwood & Schmitz 2014](https://pure.psu.edu/en/publications/separation-of-main-and-tail-rotor-noise-from-ground-based-acousti/)).
 - Recording-based auralization de-Dopplerizes ground recordings to a virtual microphone at 30.48 m "moving with the source" before segmenting by emission angle ([Pera et al. 2018](https://ntrs.nasa.gov/api/citations/20180002090/downloads/20180002090.pdf)).
 - The snapshot de-propagation equation (spreading, absorption, ground board) contains no Doppler term. Its 0.5 s spectra are formed at the received frequencies ([Houston et al. 2025](https://ntrs.nasa.gov/api/citations/20250002951/downloads/VFS81_Snapshot_Array_04142025_v2.pdf)).
-- Project-internal context (not literature; [local memory note](/Users/evg5332/.claude/projects/-Users-evg5332-Code-D-NICEOPS/memory/sphere-doppler-convention.md)): panam-built `.nod`/sphere files carry `DOPPLER_SHIFT_REMOVED = 0`. They are reception-referenced, so NICE-OPS applies only the reception-time energy factor and no frequency shift.
+- Project-internal context (not literature; [local memory note](/Users/evg5332/.claude/projects/-Users-evg5332-Code-D-NICEOPS/memory/sphere-doppler-convention.md)): panam-built `.nod`/sphere files carry `DOPPLER_SHIFT_REMOVED = 0`. They are reception-referenced, so NICEOPS applies only the reception-time energy factor and no frequency shift.
 
 ### Inferences
 - Snapshot and Houston-style spectral hemispheres, like panam's, appear to keep the received spectrum. RNM/ART, ANOPP2 and the de-Dopplerized virtual-microphone methods remove it. A database should carry an explicit flag, and a footprint tool must branch on it.

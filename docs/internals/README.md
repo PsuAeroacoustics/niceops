@@ -1,6 +1,6 @@
 # Developer guide
 
-This directory is the developer documentation for NICE-OPS. Each file covers one area of the
+This directory is the developer documentation for NICEOPS. Each file covers one area of the
 code: what to preserve there, why it is built the way it is, the designs that were tried and
 rejected, what it costs, and the tests that guard it. **Read the matching file before you change
 a module.** Much of what looks over-engineered was measured, and many of the obvious
@@ -10,7 +10,7 @@ simplifications were tried and failed.
 
 | File | Reader | What goes there |
 | --- | --- | --- |
-| [`README.md`](../../README.md) | Anyone arriving | What NICE-OPS is, building, a first run, the units trap, an index of the docs. Kept short. |
+| [`README.md`](../../README.md) | Anyone arriving | What NICEOPS is, building, a first run, the units trap, an index of the docs. Kept short. |
 | [`docs/MANUAL.md`](../MANUAL.md) | End users | How to use each option and file: what it does, when to use it, its limits and cost, and the refusals. No equations beyond one-liners, no measurements, no code or test names, no history. |
 | [`docs/THEORY.md`](../THEORY.md) | Users and reviewers who need the equations | The models as run: equations, conventions and references. A change to a model's equations updates it in the same commit. |
 | [`docs/FIDELITY.md`](../FIDELITY.md) | Anyone deciding how far to trust a model | Every measured and validation result, stated once; the other docs link to it. |
@@ -42,10 +42,10 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | --- | --- | --- |
 | Command line, the observer loop, metrics; hot loop, SEL window, windowed peak search, load time, rejected optimizations | `niceops.cpp`, `sphere_database.cpp`, `util/sel.hpp`, `util/parallel.hpp` | [performance.md](performance.md) |
 | Sphere database, Delaunay and exact predicates, the sphere lookup, `--blend` (including `nearest`/`aam`), legacy repair, broadband vs spectral | `sphere_database`, `predicates`, `delaunay`, `interpolator`, `condition_selection` | [database.md](database.md) |
-| ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind` | `atmosphere`, `propagation.hpp`, `atmosphere_profile` | [atmosphere.md](atmosphere.md) |
+| ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind`, the profile builder | `atmosphere`, `propagation.hpp`, `atmosphere_profile`, `atmosphere_builder` | [atmosphere.md](atmosphere.md) |
 | `--refraction linear` / `stratified`, shadow zones, `ShadowTransition`, ducts, `--tunneling` | `refraction`, `stratified`, `airy` | [refraction.md](refraction.md) |
 | Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `tools/` | [pe.md](pe.md) |
-| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `plate_receiver`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
+| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
 | EPNL, reception-time band frames, LAmax/NAx/TA, DNL/Lden/CNEL, C-SEL | `pnl`, `band_frames`, `util/time_weighting.hpp` | [metrics.md](metrics.md) |
 | AC and geodetic tracks, smoothing spline, hover nose, lateral subtracks, `--nose`, `--speed_reference`, `niceops_procedure` | `trajectory`, `geodetic`, `smoothing_spline`, `util/csv.hpp`, `procedure`, `state_condition`, `tools/procedure.cpp` | [trajectory.md](trajectory.md) |
 | `--units`, input checking, the operations file (`--operations`) | `run()` in `niceops.cpp`, the readers, `operations` | [inputs.md](inputs.md) |
@@ -94,9 +94,11 @@ The C++ tools in `tools/` are built alongside `niceops` and link `niceops_core`:
 | `niceops_pe_field` | `tools/pe_field.cpp` | The PE's whole field on one vertical plane, for plotting. |
 | `niceops_ray_geometry` | `tools/ray_geometry.cpp` | The refracted ray's geometry for a batch of source–receiver pairs, so ground models outside `niceops` can be evaluated on the same rays. |
 | `niceops_benchmark` | `tools/benchmark.cpp` | The Attenborough et al. (1995) benchmark cases by the PE and, where one exists, the exact solution. |
+| `niceops_build_atmosphere` | `tools/build_atmosphere.cpp` | `--atmosphere` profiles from measured columns (`build`), and a site roughness length from wind profiles (`fit_z0`); see [atmosphere.md](atmosphere.md#the-profile-builder-niceops_build_atmosphere). |
 
-The manual covers the three that users run:
+The manual covers the four that users run:
 [niceops_propagation_table](../MANUAL.md#niceops_propagation_table),
+[niceops_build_atmosphere](../MANUAL.md#niceops_build_atmosphere),
 [niceops_pe_compare](../MANUAL.md#niceops_pe_compare),
 [niceops_benchmark](../MANUAL.md#niceops_benchmark).
 
@@ -116,9 +118,9 @@ The Python scripts:
 
 ## Propagation roadmap
 
-The plan for propagation (refraction first, then urban) is the Claude Doc "NICE-OPS:
+The plan for propagation (refraction first, then urban) is the Claude Doc "NICEOPS:
 Atmospheric and Urban Propagation Options".
-[`reports/`](../../reports/NICE-OPS%20Atmospheric%20and%20Urban%20Propagation%20Options.md) holds
+[`reports/`](../../reports/NICEOPS%20Atmospheric%20and%20Urban%20Propagation%20Options.md) holds
 a snapshot of it. The internals files name roadmap items by what they are (the
 linear refraction model, the stratified rays, the PE, the propagation tables) and link here
 rather than citing step numbers.

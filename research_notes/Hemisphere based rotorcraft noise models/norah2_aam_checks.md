@@ -132,12 +132,12 @@ The departure's emission angles are those of a hemisphere **banked away from the
 - So upward directions are mapped onto the equator at the same θ. They are neither discarded nor mirrored.
 - In these examples it happens only when the bank lifts a distant, near-grazing observer above the equator.
 - **This accounts for the whole residual that norah2.md §4 left unexplained.**
-- It is NORAH's answer to the "upper hemisphere" question, and differs from NICE-OPS, which uses a full sphere with 180 − φ completion.
+- It is NORAH's answer to the "upper hemisphere" question, and differs from NICEOPS, which uses a full sphere with 180 − φ completion.
 
-### Relevance to NICE-OPS
-- NICE-OPS takes the sphere frame from the TPP normal (`SphereFrame`: nose, normal, starboard; see CLAUDE.md, hot-path notes). That normal is the load-factor direction, from the trajectory's own acceleration.
-- So bank follows the curvature physically, and NICE-OPS cannot get a turn-sense sign wrong this way. There is no separately stored ROLL whose sign could disagree with the path.
-- The NORAH bug is a warning for any interface where NICE-OPS might *accept* an externally supplied roll or bank column: state the sign convention in words, and cross-check it against path curvature on load.
+### Relevance to NICEOPS
+- NICEOPS takes the sphere frame from the TPP normal (`SphereFrame`: nose, normal, starboard; see CLAUDE.md, hot-path notes). That normal is the load-factor direction, from the trajectory's own acceleration.
+- So bank follows the curvature physically, and NICEOPS cannot get a turn-sense sign wrong this way. There is no separately stored ROLL whose sign could disagree with the path.
+- The NORAH bug is a warning for any interface where NICEOPS might *accept* an externally supplied roll or bank column: state the sign convention in words, and cross-check it against path curvature on load.
 
 ### Corrections to norah2.md
 - §4's "possible roll-sign problem (needs confirmation)" is **confirmed**. The defect is located in the multi-event track-to-trajectory conversion: R → negative, L → positive, irrespective of the direction flown. SingleEvt is consistent.
@@ -162,7 +162,7 @@ The AAM TR carries what is plainly the same sentence (TR p.31: "...extracted fro
 - For AAM v3, the documented method is **linear in dB**, so aam_v3.md is right.
 - other_tools.md is right that the 2002 RNM paper says energy. Its line 30, "RNM / AAM ... interpolated linearly in energy", should not be applied to AAM v3.
 - What the code did in 2002 or does now cannot be settled from documents. Either RNM changed domain at some version, or one document is wrong. The AAM TR is the later document and the more specific one (it repeats "decibels" and covers fixed-wing too), so take dB for AAM v3.
-- For NICE-OPS comparisons: NICE-OPS blends in dB (barycentric over (μ, γ, CT)), which matches AAM v3 as documented.
+- For NICEOPS comparisons: NICEOPS blends in dB (barycentric over (μ, γ, CT)), which matches AAM v3 as documented.
 
 ### B2. Levels between sphere grid nodes (θ, φ)
 **Not documented anywhere in the TR.** An exhaustive search covered:
@@ -198,7 +198,7 @@ What the documents do show:
 - Sound "is 'binned' at the receiver locations based on the arrival time. Only after the propagation has been completed, are the receiver sounds interpolated onto a uniform time mesh and added" (TR p.10).
 - SEL is defined only conceptually: the 1-second constant level with the same energy (TR p.50).
 - Integration covers "the entire noise event" (TR p.51, contrasting it with SENEL). DBDOWN10 "forces all integrated metric calculations to only include points within 10 dB of the maximum level" (TR p.64).
-  - That wording reads as a **threshold on samples**, not a contiguous window. NICE-OPS's `peak_range` is a contiguous first-crossing window. The two differ whenever the history dips below and recovers.
+  - That wording reads as a **threshold on samples**, not a contiguous window. NICEOPS's `peak_range` is a contiguous first-crossing window. The two differ whenever the history dips below and recovers.
 - **Not stated anywhere:**
   - the quadrature rule (rectangle or trapezoid);
   - the step of the uniform receiver mesh;
@@ -219,14 +219,14 @@ What the documents do show:
 - ART regions with no data are 1E35, and AAM "will not propagate the source point" there (TR p.145).
 - WRAPAROUND "takes a hemisphere (lower half) ... and mirror images the values on the top half of the sphere ... so that a fully defined sphere will be populated with reasonable source levels instead of 1E35 (no data) points" (TR p.161 §4.1.2.38; keyword summary table TR p.150).
   - "Mirror image" onto the top half is most naturally the reflection through the rotor/wing plane, φ → 180° − φ, which keeps port and starboard. The TR does not give the formula.
-  - That is exactly the ambiguity behind NICE-OPS's legacy −φ hover bug.
+  - That is exactly the ambiguity behind NICEOPS's legacy −φ hover bug.
 - EXTEND45 / EXTENDX copy the values at φ = 45° (or a chosen φ) out to the upper extent of the SPHERE domain (TR p.153).
 
 **Inference:** a direction outside a hemisphere file's φ extent is treated like 1E35, i.e. not propagated. That is why ART offers WRAPAROUND and EXTEND to fill the top before AAM sees it. The TR never says so for a direction outside the stored axis range, as opposed to a 1E35 node inside it. Clamping, as NORAH does, is also possible.
 
 Contrast:
 - NORAH2 clamps to the equator (A, above).
-- NICE-OPS completes the sphere at load with 180 − φ and repairs legacy files that used −φ.
+- NICEOPS completes the sphere at load with 180 − φ and repairs legacy files that used −φ.
 
 ### Summary of corrections to the other notes
 - **aam_v3.md:**

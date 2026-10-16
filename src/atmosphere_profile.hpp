@@ -129,6 +129,63 @@ struct CompassToLocal
 AtmosphereProfile read_atmosphere_profile(const std::string& path, LengthUnit unit,
         double ground_elevation);
 
+struct LabeledCsv;
+
+// Where a profile file keeps each quantity: the column-finding half of
+// read_atmosphere_profile, with the same names and unit rules, shared with the
+// profile builder's reader (atmosphere_builder.hpp) so the two accept the same
+// headers.  Every index is npos when the file has no such column.
+struct ProfileColumns
+{
+    static constexpr std::size_t npos = static_cast<std::size_t>(-1);
+    // thermo: a file without temperature or humidity is refused, as
+    // --atmosphere refuses it.  none: any quantity may be absent.
+    enum class Require
+    {
+        thermo,
+        none,
+    };
+
+    std::size_t height = npos;
+    // The height is altitude above sea level, to have the ground elevation
+    // taken off.
+    bool above_sea_level = false;
+    std::size_t temperature = npos;
+    // False when the header did not say kelvin or Celsius and the values must.
+    bool temperature_unit_named = true;
+    bool celsius = false;
+    std::size_t humidity = npos;
+    std::size_t pressure = npos;
+    bool pressure_unit_named = true;
+    double pressure_to_kpa = 1.0;
+    // Wind as speed and the bearing it blows from, or as u and v.
+    std::size_t speed = npos;
+    std::size_t direction = npos;
+    double speed_to_mps = 1.0;
+    std::size_t u = npos;
+    std::size_t v = npos;
+    double component_to_mps = 1.0;
+    // Per header column: claimed by one of the above.
+    std::vector<bool> used;
+
+    // The fields a row needs to reach every column found.
+    std::size_t needed() const;
+};
+
+// Throws input_error, naming `what` and `path`, for a file with no height
+// column, a wind column without its unit, or half a wind.
+ProfileColumns find_profile_columns(const LabeledCsv& csv, LengthUnit unit,
+        const std::string& path, ProfileColumns::Require require,
+        const std::string& what = "--atmosphere");
+
+// The levels synthetic_profile places from `anchors` (meters, above the
+// ground): the anchors sorted, those within 1e-9 of their upper neighbor
+// merged, and between each consecutive pair ceil(n log10(ratio)) geometric
+// steps, n = levels_per_decade.  Returns the levels from the lowest anchor up,
+// the anchors exact.  The profile builder shares it, so a change here moves
+// both, and build_atmosphere_surface_is_wind says so.
+std::vector<double> geometric_levels(std::vector<double> anchors, int levels_per_decade);
+
 // Write a profile in the form read_atmosphere_profile reads: z in `unit`, T_K,
 // RH, p_kPa when it has pressure, and u_mps, v_mps when it has wind, every value
 // to 17 significant digits so that reading it back gives the same doubles (the

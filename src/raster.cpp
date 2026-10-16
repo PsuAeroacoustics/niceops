@@ -92,7 +92,7 @@ void write_raster(const std::string& path, const std::vector<double>& x, const s
     }
 
     put_text(ncid, NC_GLOBAL, "Conventions", "CF-1.8", path);
-    put_text(ncid, NC_GLOBAL, "source", "NICE-OPS", path);
+    put_text(ncid, NC_GLOBAL, "source", "NICEOPS", path);
     if (frame)
     {
         put_double(ncid, NC_GLOBAL, "frame_reference_latitude_deg", frame->reference().latitude, path);

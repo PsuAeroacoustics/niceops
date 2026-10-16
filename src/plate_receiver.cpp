@@ -150,6 +150,29 @@ PlateReceiver PlateReceiver::load(const std::string& path)
     return plate;
 }
 
+std::string PlateReceiver::ground_mismatch(const GroundModel& ground) const
+{
+    const std::string& path = source_;
+    // P_d and P_r depend on the ground the table was solved over; applying
+    // them with another Q would be neither model.
+    if (parse_impedance_model(ground_model_) != ground.impedance_model
+            || !close_to(flow_resistance_, ground.flow_resistance))
+        return detail::format_message("Plate table ", path, " was computed over ", ground_model_,
+                " ground of flow resistance ", flow_resistance_,
+                " kPa s/m^2; the run's ground differs. Match --impedance_model and "
+                "--flow_resistance to it, or build a table for this ground (panam "
+                "axisymmetric_bem.table and write_netcdf).");
+    if (ground.impedance_model == ImpedanceModel::variable_porosity
+            && std::abs(porosity_rate_ - ground.porosity_rate) > 1e-9)
+        return detail::format_message("Plate table ", path, " porosity rate is ", porosity_rate_,
+                " 1/m; the run's is ", ground.porosity_rate, ".");
+    if (ground.impedance_model == ImpedanceModel::delany_bazley_layer
+            && !close_to(layer_depth_, ground.layer_depth))
+        return detail::format_message("Plate table ", path, " layer depth is ", layer_depth_,
+                " m; the run's is ", ground.layer_depth, ".");
+    return {};
+}
+
 PlateReceiver PlateReceiver::bound(const std::vector<double>& bands, const GroundModel& ground,
         double sound_speed, std::size_t first_band, std::size_t last_band) const
 {
@@ -166,23 +189,8 @@ PlateReceiver PlateReceiver::bound(const std::vector<double>& bands, const Groun
             input_error("Plate table ", path, " band ", band, " is ", centers_[band],
                     " Hz; the database's is ", bands[band], " Hz.");
     }
-    // P_d and P_r depend on the ground the table was solved over; applying
-    // them with another Q would be neither model.
-    if (parse_impedance_model(ground_model_) != ground.impedance_model
-            || !close_to(flow_resistance_, ground.flow_resistance))
-        input_error("Plate table ", path, " was computed over ", ground_model_,
-                " ground of flow resistance ", flow_resistance_,
-                " kPa s/m^2; the run's ground differs. Match --impedance_model and "
-                "--flow_resistance to it, or build a table for this ground (panam "
-                "axisymmetric_bem.table and write_netcdf).");
-    if (ground.impedance_model == ImpedanceModel::variable_porosity
-            && std::abs(porosity_rate_ - ground.porosity_rate) > 1e-9)
-        input_error("Plate table ", path, " porosity rate is ", porosity_rate_,
-                " 1/m; the run's is ", ground.porosity_rate, ".");
-    if (ground.impedance_model == ImpedanceModel::delany_bazley_layer
-            && !close_to(layer_depth_, ground.layer_depth))
-        input_error("Plate table ", path, " layer depth is ", layer_depth_, " m; the run's is ",
-                ground.layer_depth, ".");
+    if (const std::string mismatch = ground_mismatch(ground); !mismatch.empty())
+        input_error(mismatch);
 
     PlateReceiver plate = *this;
     plate.ground_ = ground;

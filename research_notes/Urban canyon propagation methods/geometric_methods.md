@@ -1,6 +1,6 @@
 # Geometric (ray-based) methods for urban street-canyon and building propagation, for an elevated rotorcraft source
 
-Scope: image-source and image-edge methods with edge diffraction, ray, beam and Gaussian-beam tracing, how facade scattering and coherence are handled, coupling to curved-ray atmospheres, cost, and what the virtual-acoustics groups use. The target is NICE-OPS: 10^8 to 10^9 source-receiver pairs per run, energy per third-octave band, about 10 Hz to 10 kHz. Its current per-pair budget is about 19 ns broadband, 150 ns spectral and about 1 µs with the ground model ([NICE-OPS CLAUDE.md](/Users/evg5332/Code/D/NICEOPS/CLAUDE.md)).
+Scope: image-source and image-edge methods with edge diffraction, ray, beam and Gaussian-beam tracing, how facade scattering and coherence are handled, coupling to curved-ray atmospheres, cost, and what the virtual-acoustics groups use. The target is NICEOPS: 10^8 to 10^9 source-receiver pairs per run, energy per third-octave band, about 10 Hz to 10 kHz. Its current per-pair budget is about 19 ns broadband, 150 ns spectral and about 1 µs with the ground model ([NICEOPS CLAUDE.md](/Users/evg5332/Code/D/NICEOPS/CLAUDE.md)).
 
 Source note: several primary papers were paywalled or blocked by the publisher (403). These are Palenda & Vorländer 2026, Wei, Van Renterghem & Botteldooren 2015 (JASA), Kang 2000, Casalino et al. 2011, and the Yu et al. 2019 MDPI paper. For these the notes use the abstract or repository text only, and say so where they do. Full texts were read for the following:
 - Schäfer, Reich & Vorländer 2022
@@ -24,7 +24,7 @@ Source note: several primary papers were paywalled or blocked by the publisher (
 Image sources plus edge diffraction is the most validated deterministic geometric family for buildings.
 - **Accuracy:** BTM is the accurate reference. UTD, the cheap asymptotic, is within about 1 dB of BTM in the lit zone and about 3-4 dB at first- and second-order diffracted receivers, and it overestimates high-frequency attenuation. Energy-based UTD at high order overestimates the diffracted field, by up to 20 dB at 84 Hz when every path is summed.
 - **Orders needed:** first-order diffraction over the roof edge plus a few facade reflections dominates the shielded canyon. Wei et al. 2015 (IOA) found that levels saturate after about 4 reflections when horizontal reflections dominate. In the work cited here, second-order diffraction mattered mainly for receivers that are themselves shadowed.
-- **Cost:** a full image-edge path search costs milliseconds to about a second per source-receiver pair. That is 10^3 to 10^7 times the NICE-OPS budget.
+- **Cost:** a full image-edge path search costs milliseconds to about a second per source-receiver pair. That is 10^3 to 10^7 times the NICEOPS budget.
 
 ### Cited Findings
 **BTM and UTD in general**
@@ -76,7 +76,7 @@ Image sources plus edge diffraction is the most validated deterministic geometri
 ### Inferences
 - For an elevated source over a roof edge into a canyon, the dominant energy path is one roof-edge diffraction plus 0 to about 4 facade reflections in the receiver canyon (Wei 2014's A_can). That is a low-order image-edge problem. The high diffraction orders that game engines chase (5-10) matter for street-level sources wrapping around blocks, much less for a source above the roofline. For a low vertiport or UAM source near or below roof height, horizontal multi-edge paths around corners return, and the order requirement goes up.
 - UTD's systematic errors (about 3 dB per diffraction against BTM, overestimated HF attenuation, energy-sum blow-up at high order and low frequency) point the same way. A Pierce/UTD-class single-edge coefficient is adequate for third-octave energy if the diffraction order is capped at 1-2 and only the dominant diffraction path per edge sequence is kept. The "loudest path" result in Schissler 2021 supports this.
-- A full deterministic image-edge search per pair is unaffordable at NICE-OPS scale (Section 6). Any adoption has to amortize the path search across source states.
+- A full deterministic image-edge search per pair is unaffordable at NICEOPS scale (Section 6). Any adoption has to amortize the path search across source states.
 
 ### Gaps
 - Wei, Van Renterghem & Botteldooren 2015 (JASA) dB error statistics and the orders used: paywalled, abstract only.
@@ -148,8 +148,8 @@ Gaussian beam tracing (GBT) removes caustic and ray-density artifacts and handle
 - Eikonal and transport equations are solved on a tetrahedral mesh, with UTD for edges, as a non-ray-shooting geometric-optics alternative for building geometries — [Potter & Cameron 2022, arXiv](https://consensus.app/papers/details/572e40390b5e5e1da6075c48828762a0/?utm_source=claude_desktop)
 
 ### Inferences
-- The two prominent GBT UAM models omit edge diffraction (Yunus explicitly). Every published geometric model that omits diffraction (Yunus GBT, Riegel radiosity) reports physically wrong, near-silent shadows behind buildings. For an elevated source the roof-edge diffracted path is first-order essential. A tracer without diffraction is disqualified for NICE-OPS's shielded receivers.
-- Stochastic tracing's Monte Carlo noise (several dB at 1000 rays) is incompatible with NICE-OPS's bit-reproducible, golden-tested design and its peak-search bounds. A deterministic path enumeration (image-edge), or a deterministic beam method, fits the codebase's culture better than per-pair stochastic sampling. Stochastic methods may still be acceptable inside an offline per-receiver precomputation that is then frozen.
+- The two prominent GBT UAM models omit edge diffraction (Yunus explicitly). Every published geometric model that omits diffraction (Yunus GBT, Riegel radiosity) reports physically wrong, near-silent shadows behind buildings. For an elevated source the roof-edge diffracted path is first-order essential. A tracer without diffraction is disqualified for NICEOPS's shielded receivers.
+- Stochastic tracing's Monte Carlo noise (several dB at 1000 rays) is incompatible with NICEOPS's bit-reproducible, golden-tested design and its peak-search bounds. A deterministic path enumeration (image-edge), or a deterministic beam method, fits the codebase's culture better than per-pair stochastic sampling. Stochastic methods may still be acceptable inside an offline per-receiver precomputation that is then frozen.
 
 ### Gaps
 - No published convergence study of ray count against canyon level for an *elevated* source was found. All the convergence numbers are for games and rooms, or for street-level sources.
@@ -213,7 +213,7 @@ Measured or estimated facade scattering coefficients are small to moderate. Onag
 - Heutschi (2009, Acta Acustica 95) holds that facade reflections are "more likely specular or coherent at low frequencies and increasingly diffuse or incoherent at higher frequencies". The degree of incoherence was estimated for typical facades numerically — [Heutschi, IOA proceedings, as summarized by search](https://www.ioa.org.uk/system/files/proceedings/k_heutschi_coherent_and_incoherent_reflections_at_building_facades.pdf). The PDF link returned 404 when fetched, so this claim is from the search summary.
 
 ### Inferences
-- **What NICE-OPS should implement:** specular image paths (with a Pierce/UTD roof-edge coefficient) for orders 0-2, plus a diffuse energy term for higher orders. Wei 2014's A_can plus turbulence scattering, Can 2015's regressions, and IMCRI-style radiosity are three versions of that hybrid. A fully specular canyon model will overpredict levels along long streets (Kang) and underpredict shielding at high frequency (Van Renterghem 2006).
+- **What NICEOPS should implement:** specular image paths (with a Pierce/UTD roof-edge coefficient) for orders 0-2, plus a diffuse energy term for higher orders. Wei 2014's A_can plus turbulence scattering, Can 2015's regressions, and IMCRI-style radiosity are three versions of that hybrid. A fully specular canyon model will overpredict levels along long streets (Kang) and underpredict shielding at high frequency (Van Renterghem 2006).
 - **Default facade parameters:** scattering s ≈ 0.1-0.3, frequency dependent and rising with frequency, with absorption α ≈ 0.05-0.1 for masonry or glass. These defaults are inferred from the cited ranges. Sensitivity to s is a few dB in canyons, so the uncertainty in s is comparable to the method error of the propagation model itself.
 - **Isolated buildings and sparse suburbs** (the Empa and Riegel 2019 regime): specular reflection plus shielding captures most of the effect.
 
@@ -247,7 +247,7 @@ Rotor harmonics at 10-30 Hz have wavelengths (11-34 m) comparable to canyon widt
 - Wei et al. 2014 subtract 3 dB from facade-mounted measurements "to account for the coherence between the direct and reflected waves near the façades for very low frequencies (< 250 Hz)" — [Wei et al. 2014](https://publications.lib.chalmers.se/records/fulltext/206833/local_206833.pdf)
 
 ### Inferences
-- **NICE-OPS should stay incoherent (energy) for the urban paths in third-octave bands from about 100-200 Hz up.** It already works in energy, and the literature (Hornikx & Forssén, Heutschi, Wei) says coherent summation over-predicts at shielded urban positions once facade roughness and turbulence are present.
+- **NICEOPS should stay incoherent (energy) for the urban paths in third-octave bands from about 100-200 Hz up.** It already works in energy, and the literature (Hornikx & Forssén, Heutschi, Wei) says coherent summation over-predicts at shielded urban positions once facade roughness and turbulence are present.
 - **At the facade itself**, a microphone or receiver on the facade sees a coherent doubling below about 250 Hz. A +3 dB pressure-doubling rule is simpler and safer than tracking phase.
 - **Below about 100 Hz**, which covers the rotor fundamentals and first harmonics at 10-30 Hz, a geometric urban model is not physically justified. Canyon widths are 0.3-3 wavelengths, the field is modal and leaky, and diffraction fills shadows almost completely.
   - Option one: apply no urban correction below a crossover, treating buildings as transparent to energy at 10-50 Hz.
@@ -269,7 +269,7 @@ The established geometric coupling is Schäfer, Reich & Vorländer's virtual sou
 3. Run a straight-ray image-edge model from that virtual source.
 4. Re-normalize spreading, air absorption and launch direction to the curved path.
 
-Errors were at most 2.5° in arrival elevation, under about 1 dB in spreading, and 1.2 ms in delay, worst when the source is low and far. This is the closest published analogue to bolting an urban model onto NICE-OPS's existing stratified eigenrays.
+Errors were at most 2.5° in arrival elevation, under about 1 dB in spreading, and 1.2 ms in delay, worst when the source is low and far. This is the closest published analogue to bolting an urban model onto NICEOPS's existing stratified eigenrays.
 
 Gaussian beam tracers (Yunus 2023, MANIA-H 2025) couple refraction and urban reflection natively, but without diffraction.
 
@@ -327,11 +327,11 @@ Gaussian beam tracers (Yunus 2023, MANIA-H 2025) couple refraction and urban ref
 - In 2D FDTD-PE canyon-to-canyon results, downwind propagation decreases shielding by "near 10 dB" (u* = 1 m/s), with refraction the main mechanism. Upwind, turbulent scattering dominates. "The combination of effects … is in general not a simple addition of the separate effects" — [Van Renterghem et al. 2006](https://users.ugent.be/~tvrenter/publicaties/streetcanyonsFDTDPE.pdf)
 
 ### Inferences
-- **VSM maps directly onto NICE-OPS.** NICE-OPS already computes, per pair, the arrival direction, travel time, tube spreading and per-band absorption of each stratified eigenray (`RayPath`, `Arrival` in `src/propagation.hpp` and `src/refraction.hpp` — [CLAUDE.md](/Users/evg5332/Code/D/NICEOPS/CLAUDE.md)). An urban term could be an excess attenuation in dB per band, a function of the arrival direction at the receiver and of local geometry. The atmospheric eigenray then supplies everything else.
+- **VSM maps directly onto NICEOPS.** NICEOPS already computes, per pair, the arrival direction, travel time, tube spreading and per-band absorption of each stratified eigenray (`RayPath`, `Arrival` in `src/propagation.hpp` and `src/refraction.hpp` — [CLAUDE.md](/Users/evg5332/Code/D/NICEOPS/CLAUDE.md)). An urban term could be an excess attenuation in dB per band, a function of the arrival direction at the receiver and of local geometry. The atmospheric eigenray then supplies everything else.
   - This is cheaper than VSM proper, because it skips the virtual-source position and the per-path absorption re-normalization. The extra absorption of urban detours of a few tens of meters is negligible below about 4 kHz.
   - The error budget Schäfer measured (2.5° in arrival elevation, under 1 dB) bounds what a direction-only interface costs.
-- **Where the interface breaks:** VSM's "one atmospheric eigenray per receiver" assumption fails exactly where NICE-OPS's grazing and shadow-zone modeling is most delicate, at low elevation (Schäfer: largest error near-horizontal). In a refractive shadow, the arrival is a creeping or diffracted wave with no well-defined direction. The urban term there has to fall back to something direction-agnostic, for example a diffuse-canyon correction.
-- **Multiple atmospheric arrivals:** NICE-OPS keeps several (ducted and bounced). Each would carry its own urban transfer by its own arrival direction, summed in energy, which is consistent with NICE-OPS's existing incoherent arrival sum.
+- **Where the interface breaks:** VSM's "one atmospheric eigenray per receiver" assumption fails exactly where NICEOPS's grazing and shadow-zone modeling is most delicate, at low elevation (Schäfer: largest error near-horizontal). In a refractive shadow, the arrival is a creeping or diffracted wave with no well-defined direction. The urban term there has to fall back to something direction-agnostic, for example a diffuse-canyon correction.
+- **Multiple atmospheric arrivals:** NICEOPS keeps several (ducted and bounced). Each would carry its own urban transfer by its own arrival direction, summed in energy, which is consistent with NICEOPS's existing incoherent arrival sum.
 
 ### Gaps
 - Palenda & Vorländer 2026: the quantitative benchmark errors, the orders used and the runtimes were not readable (publisher 403, and ResearchGate 403).
@@ -348,7 +348,7 @@ Published geometric urban methods cost between about 0.1 ms and 1 s per source-r
 - **Game-engine UTD path search with diffuse cache:** 2-5 ms per source per frame on 4 cores, and down to about 0.2-3.6 ms single-thread with A* graph search.
 - **GBT:** tens of seconds per case on 36 cores. GPU GBT is up to 790x faster.
 
-NICE-OPS's existing pair evaluation is 19 ns to 1 µs. A per-pair urban path search at 10^8 to 10^9 pairs is therefore 10^3 to 10^6 times over budget: roughly 10^5 to 10^9 core-seconds per run. Only formulations that do the geometric search once per receiver (or per receiver and source direction bin) and reuse it across thousands of source states are viable.
+NICEOPS's existing pair evaluation is 19 ns to 1 µs. A per-pair urban path search at 10^8 to 10^9 pairs is therefore 10^3 to 10^6 times over budget: roughly 10^5 to 10^9 core-seconds per run. Only formulations that do the geometric search once per receiver (or per receiver and source direction bin) and reuse it across thousands of source states are viable.
 
 ### Cited Findings
 **Image-edge and VSM (Schäfer et al. 2022)**
@@ -383,7 +383,7 @@ NICE-OPS's existing pair evaluation is 19 ns to 1 µs. A per-pair urban path sea
 - sonAIR (Empa): a single flight's propagation takes "a few minutes" with BASIC (direct sound, shielding by terrain and buildings). Adding building reflections (REFLECT, third-order energy exchanges, visibility only) adds about 10-20 minutes. Adding forest reflections brings it to about 2 hours (i7 workstation, 32 GB) — [Ramseier et al. 2023](https://dael.euracoustics.org/landing_pages/aaua/51980.html)
 - NoiseModelling (CNOSSOS-EU) uses a "rubber-band like" path finder with an R-tree. It ignores rays going backwards to source or receiver: "if a receiver is located inside a U-shaped building, only diffractions on horizontal edges will be taken into account" — [NoiseModelling docs](https://noisemodelling.readthedocs.io/en/latest/Numerical_Model.html)
 
-**NICE-OPS reference cost**
+**NICEOPS reference cost**
 - One evaluation is 19.4 ns (broadband). Spectral is about 150 ns, `--ground_effect` about 1 µs. The default run is 94.3M evaluations — [CLAUDE.md](/Users/evg5332/Code/D/NICEOPS/CLAUDE.md)
 
 ### Inferences
@@ -397,11 +397,11 @@ NICE-OPS's existing pair evaluation is 19 ns to 1 µs. A per-pair urban path sea
 
 The last row shows that raw intersection throughput is not the bottleneck. Path validation, image-source bookkeeping and per-band diffraction coefficients are.
 
-**Exploiting NICE-OPS's structure**
+**Exploiting NICEOPS's structure**
 - For a source 50-1500 m away, the urban transfer at a receiver depends on the incidence direction (and frequency band) much more than on the exact source position. The far-field and plane-wave assumption is the same one Schäfer invoked: aircraft are "very far away from the urban environment if compared to the dimensions of the buildings".
 - Precompute per receiver a table U_r(band, θ, φ) of urban excess attenuation over arrival directions, with a few hundred to a few thousand direction bins.
 - That takes 10^5 receivers × 10^3 directions = 10^8 geometric solves once per city, reusable across runs and trajectories, and each solve can be an expensive BTM/UTD image-edge solve.
-- The hot loop then adds one table lookup, about 10-50 ns, in the same style as NICE-OPS's existing `GridAxis` and propagation-table lookups.
+- The hot loop then adds one table lookup, about 10-50 ns, in the same style as NICEOPS's existing `GridAxis` and propagation-table lookups.
 - This is an inference, and so is its limit: it fails for low vertiport and UAM sources within about 10 building heights of the receiver, where curvature of the incident wavefront and source position within the canyon matter. Those cases need a per-pair (or per-state-cluster) solve.
 
 **Reciprocity**
@@ -468,16 +468,16 @@ Sources: Schissler 2014 (full text); [Schissler 2021](https://research.facebook.
 - These are candidate references for validating any geometric model's building terms.
 
 ### Inferences
-**Ranking for NICE-OPS** (inference, weighing the evidence above)
+**Ranking for NICEOPS** (inference, weighing the evidence above)
 1. **Best fit: deterministic image-edge with a single-edge diffraction coefficient (Pierce/UTD-class, or UDFA-style filters), low order.** Up to 1-2 diffractions and about 3-4 specular facade reflections, plus a diffuse higher-order term (Wei/Can/IMCRI style). Computed per receiver as a direction-indexed urban transfer table, and coupled to the existing stratified eigenrays VSM-style through the arrival direction. Accuracy class: about 1-3 dB lit and first-order shadow against BTM, and about 3 dB standard deviation against FDTD for the canyon term (Wei 2014). This is deterministic, so it suits golden tests and the windowed peak-search bounds.
 2. **BTM** as the offline reference used to calibrate or verify (1), via BSD EDtoolbox. Too costly for the run itself, fine for a precompute or a test oracle.
 3. **Stochastic ray or particle tracing with diffuse reflections:** handles scattering naturally, but Monte Carlo noise of several dB at affordable ray counts, and it needs UTD or UBD bolted on for diffraction. Acceptable only inside an offline per-receiver precompute.
-4. **Gaussian beam tracing:** attractive because it natively unifies refraction and reflection and is GPU-friendly. But the published UAM implementations lack diffraction, producing 20-35 dB shadow errors, and cost tens of seconds per case on 36 cores. NICE-OPS's existing eigenray machinery already covers GBT's refraction advantage.
+4. **Gaussian beam tracing:** attractive because it natively unifies refraction and reflection and is GPU-friendly. But the published UAM implementations lack diffraction, producing 20-35 dB shadow errors, and cost tens of seconds per case on 36 cores. NICEOPS's existing eigenray machinery already covers GBT's refraction advantage.
 5. **Maekawa or ISO 9613-2 style charts:** cheapest, but documented errors over 10 dB at shielded urban positions (Wei 2014; Wei et al. 2015 IOA). Use them only as a fallback.
 
 **Regardless of method**
 - Below about 100 Hz, which covers the rotor fundamentals, geometric urban models are outside their validity, and the low bands need a wave-based or no-correction treatment.
-- Turbulence scattering into shielded canyons is essential at high frequency (Wei 2014; Van Renterghem 2006). NICE-OPS already has a turbulence-scattering model for refractive shadows (`ShadowScattering`) that could be extended.
+- Turbulence scattering into shielded canyons is essential at high frequency (Wei 2014; Van Renterghem 2006). NICEOPS already has a turbulence-scattering model for refractive shadows (`ShadowScattering`) that could be extended.
 
 ### Gaps
 - No head-to-head study of image-edge, ray tracing and GBT on the *same* urban scene with an elevated source against a wave or measurement reference was found. The ranking above is synthesized across studies with different scenes.

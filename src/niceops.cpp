@@ -8,10 +8,12 @@
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -41,8 +43,10 @@
 #include "pnl.hpp"
 #include "refraction.hpp"
 #include "stratified.hpp"
+#include "ground_classes.hpp"
 #include "ground_effect.hpp"
 #include "manifest.hpp"
+#include "screening.hpp"
 #include "operations.hpp"
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
@@ -194,6 +198,25 @@ std::string latlon_companion(const std::string& level_file)
             .string();
 }
 
+// `value` as a stream at setprecision(`precision`) writes it in the default
+// float format -- printf's %.<precision>g -- by std::to_chars, which the
+// standard defines as that same conversion; a stream's formatting was a tenth
+// of a validation run.  A NaN is "nan" whatever its sign, on every platform:
+// to_chars writes "-nan" for one with its sign bit set, which arithmetic gives
+// on x86, and so do glibc's streams, where macOS's write "nan".
+void append_number(std::string& out, double value, int precision = 17)
+{
+    if (std::isnan(value))
+    {
+        out += "nan";
+        return;
+    }
+    char buffer[40];
+    const auto result
+            = std::to_chars(buffer, buffer + sizeof buffer, value, std::chars_format::general, precision);
+    out.append(buffer, result.ptr);
+}
+
 void write_time_history_file(const std::vector<double>& time_history, double dt, double x, double y,
         const std::string& filename, LengthUnit unit)
 {
@@ -202,10 +225,14 @@ void write_time_history_file(const std::vector<double>& time_history, double dt,
     file << "Level time history. Next row [dt (s), x (" << unit.name << "), y(" << unit.name
          << ")], remaining rows, dB.\n";
     file << dt << "," << x / unit.to_meters << "," << y / unit.to_meters << "\n";
+    std::string text;
+    text.reserve(time_history.size() * 20);
     for (auto level : time_history)
     {
-        file << level << "\n";
+        append_number(text, level);
+        text += '\n';
     }
+    file << text;
 }
 
 // One observer's per-band history (--band_history): a row per trajectory
@@ -229,7 +256,7 @@ void write_band_history_file(const std::vector<BandHistoryRow>& rows,
         const Vec3& microphone, LengthUnit unit, const std::string& filename)
 {
     auto file = open_output(filename);
-    file << "# NICE-OPS band history. Microphone x, y, z (" << unit.name << "): "
+    file << "# NICEOPS band history. Microphone x, y, z (" << unit.name << "): "
          << microphone.x / unit.to_meters << ", " << microphone.y / unit.to_meters << ", "
          << microphone.z / unit.to_meters << ". Times s, range " << unit.name
          << ", angles deg; level_dBA is the A-weighted, band-limited level, band_<Hz> each "
@@ -238,30 +265,40 @@ void write_band_history_file(const std::vector<BandHistoryRow>& rows,
     for (auto center : band_centers)
         file << ",band_" << center;
     file << "\n";
-    file << std::setprecision(10);
+    // The rows at ten digits, as setprecision(10) would write them.
     const std::size_t nb = band_centers.size();
+    std::string text;
+    text.reserve(rows.size() * (nb + 7) * 14);
     for (std::size_t it = 0; it < rows.size(); it++)
     {
         const auto& row = rows[it];
         const bool evaluated = std::isfinite(levels[it]);
-        file << row.emission_time << ",";
+        append_number(text, row.emission_time, 10);
+        text += ',';
         if (evaluated)
         {
-            file << row.reception_time << "," << row.range / unit.to_meters << ","
-                 << row.elevation << "," << row.phi << "," << row.theta << "," << levels[it];
+            for (const double value : {row.reception_time, row.range / unit.to_meters, row.elevation, row.phi,
+                         row.theta})
+            {
+                append_number(text, value, 10);
+                text += ',';
+            }
+            append_number(text, levels[it], 10);
         }
         else
         {
-            file << ",,,,," << levels[it];
+            text += ",,,,,";
+            append_number(text, levels[it], 10);
         }
         for (std::size_t band = 0; band < nb; band++)
         {
-            file << ",";
+            text += ',';
             if (evaluated && band >= first_band && band < last_band)
-                file << band_levels[it * nb + band];
+                append_number(text, band_levels[it * nb + band], 10);
         }
-        file << "\n";
+        text += '\n';
     }
+    file << text;
 }
 
 // One observer's EPNL (--epnl_file), from its 0.5 s reception-time frames.
@@ -499,7 +536,7 @@ double windowed_sound_exposure_level(const Database& database,
 }
 
 void read_observer_file(const std::string& observer_file, std::vector<Vec3>& observers,
-        std::vector<double>& microphone_heights, LengthUnit unit)
+        std::vector<double>& microphone_heights, std::vector<std::int64_t>& ground_class_ids, LengthUnit unit)
 {
     trace("Reading observers from ", observer_file, ".");
     // D reads this with csvReader!(double)(contents, null), which consumes the
@@ -514,7 +551,8 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
                 " is not a row of numbers", report.dropped > 1
                         ? " (and " + std::to_string(report.dropped - 1) + " more are not)"
                         : std::string(),
-                ". After the header every line must be x,y,z, id,x,y,z or id,x,y,z,height.");
+                ". After the header every line must be x,y,z, id,x,y,z, id,x,y,z,height or "
+                "id,x,y,z,height,ground.");
     }
     // One shape for the whole file: a 3-field row is x,y,z and a 4-field one is
     // id,x,y,z, and the width was decided row by row, so a row cut short became
@@ -556,9 +594,30 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
             }
             microphone_heights.push_back(data[4] * unit.to_meters);
         }
+        else if (data.size() == 6)
+        {
+            // id, x, y, z, height, and the ground class the microphone stands
+            // on: an id in --ground_classes, an integer from 0 to 2^31 - 1.
+            observers.push_back(Vec3(data[1] * unit.to_meters, data[2] * unit.to_meters,
+                    data[3] * unit.to_meters));
+            if (!(data[4] >= 0.0))
+            {
+                input_error("Observer file ", observer_file, " gives a microphone height of ",
+                        data[4], " ", unit.name, "; it must not be negative.");
+            }
+            microphone_heights.push_back(data[4] * unit.to_meters);
+            if (!(data[5] >= 0.0 && data[5] <= 2147483647.0 && data[5] == std::floor(data[5])))
+            {
+                input_error("Observer file ", observer_file, " data row ", observers.size(),
+                        " gives the ground class ", data[5], "; a class is an integer from 0 to 2147483647, "
+                        "an id in --ground_classes.");
+            }
+            ground_class_ids.push_back(static_cast<std::int64_t>(data[5]));
+        }
         else
         {
-            input_error("Observer file format unreadable.");
+            input_error("Observer file format unreadable: ", data.size(), " fields where x,y,z, id,x,y,z, "
+                    "id,x,y,z,height or id,x,y,z,height,ground was expected.");
         }
     }
     if (!microphone_heights.empty() && microphone_heights.size() != observers.size())
@@ -574,7 +633,7 @@ void read_observer_file(const std::string& observer_file, std::vector<Vec3>& obs
         // numbers, so a one-line file lands here too.
         input_error("Observer file ", observer_file, " yielded no observers. The first record "
                 "is taken as a header and discarded; every row after it must be x,y,z, "
-                "id,x,y,z or id,x,y,z,height in ", unit.name, ".");
+                "id,x,y,z, id,x,y,z,height or id,x,y,z,height,ground in ", unit.name, ".");
     }
 }
 
@@ -589,12 +648,15 @@ struct ObserverSet
     // observer file gives one (id,x,y,z,height); empty otherwise, and every
     // observer takes the run's receiver (Receivers in process_trajectory).
     std::vector<double> microphone_heights;
+    // Each observer's ground class id, when the observer file gives one
+    // (id,x,y,z,height,ground); empty otherwise.
+    std::vector<std::int64_t> ground_class_ids;
 };
 
 ObserverSet scattered_observers(const std::string& observer_file, LengthUnit unit)
 {
     ObserverSet set;
-    read_observer_file(observer_file, set.observers, set.microphone_heights, unit);
+    read_observer_file(observer_file, set.observers, set.microphone_heights, set.ground_class_ids, unit);
     set.x.reserve(set.observers.size());
     set.y.reserve(set.observers.size());
     for (const auto& observer : set.observers)
@@ -662,6 +724,11 @@ struct RunOptions
     // by more than 2 percent.
     bool accept_vehicle_mismatch = false;
     GroundModel ground;
+    // --ground_classes: the surfaces an observer file's sixth column picks per
+    // microphone, each `ground` with the file's overrides (ground_classes.hpp),
+    // in file order.  Empty: every microphone is over `ground`.
+    std::vector<GroundClass> ground_classes;
+    std::string ground_classes_path;
     // Evaluate the point-receiver ground effect directly, not from GroundTable.
     bool exact_ground = false;
     // A flush microphone on a ground plate (--plate_table), read once and
@@ -681,6 +748,17 @@ struct RunOptions
     std::string terrain_path;
     double terrain_offset = 0.0;
     double terrain_step = 0.0;
+    // --terrain_screening: a pair whose terrain profile rises above its line
+    // of sight takes the CNOSSOS-EU diffraction over it in place of its
+    // mean-plane ground term (cnossos), or keeps that term less a knife edge's
+    // Fresnel-Kirchhoff loss (kirchhoff); screening.hpp.
+    TerrainScreening terrain_screening = TerrainScreening::none;
+    // --screening_min_height, m: how far terrain must rise above a path's line
+    // of sight to screen it.
+    double screening_min_height = 0.5;
+    // An observer file's z kept over --terrain (no --observers_on_terrain):
+    // the microphones need not stand on the raster's ground.
+    bool observers_keep_file_z = false;
     // Overrides for the atmosphere read from the vehicle JSON; NaN means "use
     // whatever the file said".
     double humidity_override = std::numeric_limits<double>::quiet_NaN();
@@ -706,6 +784,9 @@ struct RunOptions
     // --tunneling, --skip_fill (stratified only): arrivals ray theory leaves
     // out, with their Airy tails per band (layered_wave_arrivals).
     WaveOptions waves;
+    // --ray_stride (stratified only): the layered solves at every ray_stride-th
+    // state, the states between interpolated where the two agree (1: all solved).
+    std::size_t ray_stride = default_ray_stride;
     double shadow_floor = 20.0;
     // --shadow_model resolved (stratified only): each band's shadow boundary
     // from the near-ground profile it resolves at shadow_phase radians of
@@ -1117,7 +1198,8 @@ AtmosphereProfile wind_profile(const Trajectory& trajectory, const PathJob& job,
 // in here condemns this trajectory alone; the caller catches and moves on.
 Trajectory process_trajectory(const Database& database, const PathJob& job,
         const RunOptions& options, const std::vector<Vec3>& observers,
-        const std::vector<double>& microphone_heights, const std::vector<double>& x_obs,
+        const std::vector<double>& microphone_heights, const std::vector<std::int64_t>& ground_class_ids,
+        const std::vector<double>& x_obs,
         const std::vector<double>& y_obs, std::vector<double>& integrated_levels,
         RunTotals& totals)
 {
@@ -1578,8 +1660,34 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<Vec3> microphones(observer_count);
     std::vector<double> microphone_height(observer_count, 0.0);
     std::vector<char> on_plate(observer_count, 0);
-    // Point receivers, by distinct height: each needs its own ground table.
-    std::vector<double> point_heights;
+    // The ground classes, each a surface with its own ground model, and the
+    // class each observer stands on: --ground_classes in file order, or one,
+    // the run's own ground.  run() has checked that every id is defined.
+    std::vector<GroundModel> class_models;
+    std::vector<std::size_t> class_of(observer_count, 0);
+    if (options.ground_classes.empty())
+        class_models.push_back(options.ground);
+    else
+    {
+        for (const auto& surface : options.ground_classes)
+            class_models.push_back(surface.model);
+        assert(ground_class_ids.size() == observer_count);
+        for (std::size_t i = 0; i < observer_count; i++)
+        {
+            const auto found = std::find_if(options.ground_classes.begin(), options.ground_classes.end(),
+                    [&](const GroundClass& surface) { return surface.id == ground_class_ids[i]; });
+            assert(found != options.ground_classes.end());
+            class_of[i] = static_cast<std::size_t>(found - options.ground_classes.begin());
+        }
+    }
+    const auto class_name = [&](std::size_t c) {
+        return options.ground_classes.empty() ? std::string() : options.ground_classes[c].name;
+    };
+    // Point receivers, by distinct (height, class): each needs its own ground
+    // table.  Keys are kept in the order they are first met, so one class gives
+    // the distinct heights in observer order.  point_heights is their heights,
+    // which the refraction setup reads over the one class it supports.
+    std::vector<std::pair<double, std::size_t>> point_keys;
     std::vector<std::size_t> point_of(observer_count, 0);
     {
         const double run_height = options.plate ? 0.0
@@ -1593,15 +1701,31 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             on_plate[i] = options.plate && height == 0.0 ? 1 : 0;
             if (ground_effect && !on_plate[i])
             {
-                const auto found = std::find(point_heights.begin(), point_heights.end(), height);
-                point_of[i] = static_cast<std::size_t>(found - point_heights.begin());
-                if (found == point_heights.end())
-                    point_heights.push_back(height);
+                const std::pair<double, std::size_t> key {height, class_of[i]};
+                const auto found = std::find(point_keys.begin(), point_keys.end(), key);
+                point_of[i] = static_cast<std::size_t>(found - point_keys.begin());
+                if (found == point_keys.end())
+                    point_keys.push_back(key);
             }
         }
     }
+    std::vector<double> point_heights;
+    // The distinct classes point receivers stand on, for the peak search's bound.
+    std::vector<std::size_t> point_classes;
+    for (const auto& [height, ground_class] : point_keys)
+    {
+        point_heights.push_back(height);
+        if (std::find(point_classes.begin(), point_classes.end(), ground_class) == point_classes.end())
+            point_classes.push_back(ground_class);
+    }
     const bool any_plate = std::any_of(on_plate.begin(), on_plate.end(), [](char c) { return c != 0; });
-    const bool any_point = !point_heights.empty();
+    const bool any_point = !point_keys.empty();
+    // The class flush microphones stand on, which the plate table is bound
+    // over: run() has refused plates on more than one class.
+    std::size_t plate_class = 0;
+    if (any_plate)
+        plate_class = class_of[static_cast<std::size_t>(
+                std::find(on_plate.begin(), on_plate.end(), char(1)) - on_plate.begin())];
     if (ground_effect || !microphone_heights.empty())
     {
         std::vector<std::size_t> at_height(point_heights.size(), 0);
@@ -1624,8 +1748,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         };
         if (flush_count > 0)
             item(flush_count, " flush on plates");
+        if (flush_count > 0 && !options.ground_classes.empty())
+            summary << " (" << class_name(plate_class) << ")";
         for (std::size_t k = 0; k < point_heights.size(); k++)
+        {
             item(at_height[k], " at ", point_heights[k] / options.unit.to_meters, " ", options.unit.name);
+            if (!options.ground_classes.empty())
+                summary << " over " << class_name(point_keys[k].second);
+        }
         if (bare_count > 0)
             item(bare_count, " with no ground model");
         log("Receivers: ", summary.str(), "; each level is evaluated at its microphone.");
@@ -1772,6 +1902,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         }
     }
 
+    // --terrain_screening: only over terrain (run() refuses it otherwise).
+    const bool screening = options.terrain_screening != TerrainScreening::none && terrain_raster.has_value();
+    const bool kirchhoff = screening && options.terrain_screening == TerrainScreening::kirchhoff;
+
     // With --db_cutoff, skip any (observer, state) pair whose level is provably
     // below the cutoff.  The bound is per state, from the loudest sphere the
     // state blends and spherical spreading alone, so it never discards a sample
@@ -1812,10 +1946,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // [state][band], and the loop reads it instead of forming it per pair.
     std::vector<double> state_absorption_mean;
     const GroundModel* ground_model = nullptr;
-    std::vector<std::complex<double>> ground_impedance_bands;
+    // Each ground class's admittance per band.  ground_impedance_bands is the
+    // first class's, the run's own ground, which the refraction models and the
+    // table's plate offset take.
+    std::vector<std::vector<std::complex<double>>> class_impedance(class_models.size());
+    std::vector<std::complex<double>>& ground_impedance_bands = class_impedance[0];
     std::optional<PlateReceiver> plate;
-    // Per distinct point-receiver height: its ground model (receiver_height
-    // set) and, unless --exact_ground, its table.
+    // Per distinct point-receiver key (height, class): its ground model
+    // (receiver_height set) and, unless --exact_ground, its table.
     std::vector<GroundModel> point_models;
     std::vector<GroundTable> point_tables;
     // The contiguous run of bands inside the metric's limits. Band centers are
@@ -1836,6 +1974,21 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     std::vector<double> table_plate_offset;
     double table_plate_step = 0.0;
     std::size_t table_plate_elevations = 0;
+    // Whether the table refracts: anything but a ground-model table, unless
+    // its provenance records that it was built with no atmosphere.  Over
+    // terrain such a table is read by height above each path's mean plane,
+    // which takes its stratification to follow the ground, and the run warns
+    // of pairs whose plane tilts past about 5 degrees.  A ground-model table
+    // has no stratification to tilt and never warns.
+    const bool table_refracts = options.propagation_table && [&]() {
+        const PropagationTable& table = *options.propagation_table;
+        if (table.method() == "ground_model")
+            return false;
+        const auto atmosphere = table.provenance().find("atmosphere");
+        return atmosphere == table.provenance().end() || atmosphere->second != "none";
+    }();
+    constexpr double refracting_tilt_degrees = 5.0;
+    const double refracting_tilt_limit = std::tan(refracting_tilt_degrees * pi / 180.0);
 
     // The atmosphere is needed on every path now, not only the spectral one:
     // its sound speed turns the emission-time level history into reception time
@@ -1872,18 +2025,23 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     bool spectral = options.spectral;
     if (spectral && !database.has_spectra())
     {
+        if (options.terrain_screening != TerrainScreening::none)
+            input_error("--terrain_screening is per band, and ", job.database, " carries no per-band "
+                        "spectra. Rebuild it with spectra, or leave out --terrain_screening.");
         if (options.spectral_explicit || options.ground_effect_given || atmosphere
-                || options.propagation_table)
+                || options.propagation_table || !options.ground_classes.empty())
         {
             const std::string profile_option = options.surface_wind ? "--wind" : "--atmosphere";
             const std::string asked = options.propagation_table ? "--propagation_table"
+                    : !options.ground_classes.empty()           ? "--ground_classes"
                     : options.ground_effect_given               ? "--ground_effect"
                     : atmosphere                                ? profile_option
                                                                 : "--spectral";
             input_error(asked
                     + " needs a database carrying per-band spectra; this one has none. Rebuild "
                       "it with spectra, or propagate the broadband level with --no-spectral"
-                    + (options.ground_effect_given ? std::string(" and no ground effect.")
+                    + (options.ground_effect_given || !options.ground_classes.empty()
+                                    ? std::string(" and no ground effect.")
                                     : atmosphere ? " and no " + profile_option + "."
                                                  : std::string(".")));
         }
@@ -2100,8 +2258,26 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
         if (ground_effect)
         {
-            ground_model = &options.ground;
-            ground_impedance_bands = ground_impedance(options.ground, bands, sound_speed);
+            // The plate is bound over its class's ground; with one class that
+            // is the run's.
+            ground_model = &class_models[plate_class];
+            for (std::size_t c = 0; c < class_models.size(); c++)
+            {
+                try
+                {
+                    class_impedance[c] = ground_impedance(class_models[c], bands, sound_speed);
+                }
+                catch (const InputError& problem)
+                {
+                    if (options.ground_classes.empty())
+                        throw;
+                    const GroundClass& surface = options.ground_classes[c];
+                    const std::string context = "Ground class " + std::to_string(surface.id) + " (" + surface.name
+                            + ", " + options.ground_classes_path + " line " + std::to_string(surface.line) + "): ";
+                    report_again(problem, context);
+                    throw InputError(context + problem.what());
+                }
+            }
             log("  ground effect on: impedance model ", static_cast<int>(options.ground.impedance_model),
                     ", flow resistance ", options.ground.flow_resistance,
                     " kPa s/m^2, receiver ", options.ground.receiver_height, " m up, turbulence ",
@@ -2110,6 +2286,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     options.ground.turbulence_model == TurbulenceModel::chessell ? " (Chessell)"
                                                                                  : " (HARMONOISE gamma_T)",
                     ", roughness ", options.ground.roughness, " m, sound speed ", sound_speed, " m/s.");
+            for (std::size_t c = 0; c < options.ground_classes.size(); c++)
+            {
+                const GroundModel& model = class_models[c];
+                log("  ground class ", options.ground_classes[c].id, " (", options.ground_classes[c].name,
+                        "): impedance model ", static_cast<int>(model.impedance_model), ", flow resistance ",
+                        model.flow_resistance, " kPa s/m^2, porosity rate ", model.porosity_rate, " 1/m, layer ",
+                        model.layer_depth, " m, roughness ", model.roughness, " m.");
+            }
             // Farthest any observer is from any state: how far the ground
             // tables must reach.
             auto reach = [&]() {
@@ -2149,27 +2333,36 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 return r_max * 1.01;
             };
-            for (const double height : point_heights)
+            for (const auto& [height, ground_class] : point_keys)
             {
-                GroundModel model = options.ground;
+                GroundModel model = class_models[ground_class];
                 model.receiver_height = height;
                 point_models.push_back(model);
                 if (!options.exact_ground)
                 {
                     const auto table_start = std::chrono::steady_clock::now();
                     const double r_max = reach();
-                    point_tables.emplace_back(model, ground_impedance_bands, sound_speed, bands,
+                    point_tables.emplace_back(model, class_impedance[ground_class], sound_speed, bands,
                             first_band, last_band, 1.0, r_max);
                     log("  ground effect for microphones ", height / options.unit.to_meters, " ",
-                            options.unit.name, " up tabulated to ", r_max, " m in ",
+                            options.unit.name, " up",
+                            options.ground_classes.empty() ? std::string() : " over " + class_name(ground_class),
+                            " tabulated to ", r_max, " m in ",
                             std::chrono::duration<double>(std::chrono::steady_clock::now() - table_start)
                                     .count(),
                             " s (--exact_ground to evaluate it directly).");
                 }
             }
+            // Each table is float [range][angle][band], about 10 MB on the demo.
+            // Many heights over many classes add up without a word otherwise.
+            constexpr std::size_t many_tables = 16;
+            if (!options.ground_classes.empty() && point_tables.size() > many_tables)
+                warn("--ground_classes: ", point_tables.size(), " ground tables, one per microphone height and "
+                        "class, about ", point_tables.size() * point_tables.front().memory_bytes() / 1e6,
+                        " MB. --exact_ground evaluates the model directly instead, at a cost in time.");
             if (any_plate)
             {
-                plate = options.plate->bound(bands, options.ground, sound_speed, first_band,
+                plate = options.plate->bound(bands, *ground_model, sound_speed, first_band,
                         last_band);
                 if (!options.exact_ground)
                 {
@@ -2225,6 +2418,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         "; this run's microphones are also at ", heights.str(), " ", options.unit.name,
                         ". Build the table with those receiver heights.");
             }
+            // Over terrain a point receiver reads the table at its own height
+            // above each path's mean plane, which is its pole's only on level
+            // ground: a table with one receiver row covers few of those pairs.
+            if (terrain_raster && table.axes().receiver_heights.size() == 1
+                    && std::find(on_plate.begin(), on_plate.end(), char(0)) != on_plate.end())
+                warn("Point receivers over --terrain read --propagation_table ", options.propagation_table_path,
+                        " at their height above each path's mean ground plane, but it has one receiver row (",
+                        table.axes().receiver_heights.front() / options.unit.to_meters, " ", options.unit.name,
+                        "); build it with receiver heights from 0 to above the tallest microphone plus the "
+                        "terrain's relief, or most of those pairs take ",
+                        ground_model ? "the ground model." : "free-field propagation.");
+            if (terrain_raster && table_refracts)
+                log("  the table refracts: over --terrain its stratification is taken to follow each path's "
+                    "mean ground plane.");
             if (table.includes_absorption())
                 table_absorption.assign(bands.size(), 0.0);
             // A flush microphone on a plate reads the table at its lowest
@@ -2303,6 +2510,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // microphones, like everything else.
     std::optional<EffectiveSoundSpeed> effective_sound_speed;
     std::vector<EffectiveSoundSpeed::Moments> state_moments;
+    std::vector<Vec3> state_positions; // --refraction stratified's rays start here
     ShadowAttenuation shadow_attenuation;
     // Point receivers near a shadow boundary: one table per microphone height;
     // flush plate microphones, one more.
@@ -2318,6 +2526,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const double bearing = std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing;
         effective_sound_speed = EffectiveSoundSpeed(*profile, bearing, z_low,
                 z_high + EffectiveSoundSpeed::min_fit_span);
+        // The ray models' bounce and shadow terms take ground_impedance_bands,
+        // the first class's, which is every microphone's only because run()
+        // refuses --ground_classes with --refraction.
+        assert(class_models.size() <= 1 || !effective_sound_speed);
         // The layered solve follows flat air at a path's fastest height only
         // as far as the highest band evaluated resolves it (stratified.hpp).
         if (options.stratified)
@@ -2325,6 +2537,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         state_moments.reserve(nt);
         for (const auto& state : source_states)
             state_moments.push_back(effective_sound_speed->moments(state.position.z));
+        if (layered_sound_speed)
+            for (const auto& state : source_states)
+                state_positions.push_back(state.position);
         // The creeping wave runs along the ground: over its admittance when
         // there is a ground model, over rigid ground (the old rate) when not.
         shadow_attenuation = ground_model
@@ -2332,9 +2547,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 : ShadowAttenuation(database.band_centers(), first_band, last_band);
         if (ground_model != nullptr)
         {
+            // Each transition tabulates the residue series when a ray first
+            // comes near a shadow boundary, or the peak search's bound asks.
             for (const double height : point_heights)
             {
-                const auto start = std::chrono::steady_clock::now();
                 shadow_transitions.emplace_back(database.band_centers(), ground_impedance_bands,
                         height, sound_speed, first_band, last_band, nullptr, nullptr,
                         options.thread_count);
@@ -2342,22 +2558,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     shadow_transitions.back().set_scattering(
                             ShadowScattering::for_receiver(options.scattering, height, false));
                 log("  shadow-boundary field for microphones ", height / options.unit.to_meters, " ",
-                        options.unit.name, " up tabulated from the residue series in ",
-                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-                        " s.");
+                        options.unit.name, " up: from the residue series, tabulated when first needed.");
             }
             if (any_plate)
             {
-                const auto start = std::chrono::steady_clock::now();
                 plate_transition.emplace(database.band_centers(), ground_impedance_bands,
                         plate->thickness(), sound_speed, first_band, last_band, &*plate, ground_model,
                         options.thread_count);
                 if (options.scattering > 0.0)
                     plate_transition->set_scattering(
                             ShadowScattering::for_receiver(options.scattering, plate->thickness(), true));
-                log("  shadow-boundary field for plate microphones tabulated in ",
-                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-                        " s.");
+                log("  shadow-boundary field for plate microphones: from the residue series, tabulated "
+                    "when first needed.");
             }
         }
         // --shadow_model resolved: the cramped bands' field on each transition,
@@ -2369,18 +2581,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::vector<bool> flush_receivers;
             for (std::size_t k = 0; k < shadow_transitions.size(); k++)
             {
-                shadow_transitions[k].set_cramped_ground(options.cramped_ground, &point_models[k],
-                        options.thread_count);
+                shadow_transitions[k].set_cramped_ground(options.cramped_ground, &point_models[k]);
                 receivers.push_back(point_heights[k]);
                 flush_receivers.push_back(point_heights[k] < ShadowTransition::flush_height);
             }
             if (plate_transition)
             {
-                plate_transition->set_cramped_ground(options.cramped_ground, nullptr, options.thread_count);
+                plate_transition->set_cramped_ground(options.cramped_ground);
                 receivers.push_back(plate->thickness());
                 flush_receivers.push_back(true);
             }
-            const double cramped_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             double state_low = std::numeric_limits<double>::infinity(), state_high = 0.0;
             for (const auto& state : source_states)
             {
@@ -2393,12 +2603,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             log("  --shadow_model resolved: each band's shadow boundary from the profile it resolves at ",
                     options.shadow_phase, " rad of vertical phase, tabulated over bearing and source "
                     "height", options.cramped_ground == CrampedGround::series
-                            ? ", and the residue series at the source's own height for cramped bands,"
+                            ? ", and the residue series at the source's own height for cramped bands (each band "
+                              "and s when first read),"
                             : options.cramped_ground == CrampedGround::straight
                             ? ", with cramped bands' lit side on the straight path's ground geometry,"
                             : ",",
                     " in ", std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-                    " s (", cramped_seconds, " s of it the cramped bands' tables).");
+                    " s.");
         }
         std::string surface_bands;
         for (std::size_t band = first_band; band < last_band; band++)
@@ -2521,8 +2732,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 if (any_point)
                 {
-                    const auto point_gains = ground_gain_bounds(*ground_model,
-                            ground_impedance_bands, first_band, last_band);
+                    // Over every class a point receiver stands on.
+                    const auto point_gains = point_ground_gain_bounds(class_models, class_impedance, point_classes,
+                            first_band, last_band);
                     for (std::size_t band = 0; band < ground_gains.size(); band++)
                         ground_gains[band] = std::max(ground_gains[band], point_gains[band]);
                     // Near a shadow boundary the transition's field stands in
@@ -2553,6 +2765,52 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 for (std::size_t band = 0; band < path_gains.size(); band++)
                     path_gains[band] = std::max(path_gains[band], table_gains[band]);
+            }
+            // --terrain_screening: a blocked pair, table or no table, is the
+            // free field less Delta_dif >= 10 lg 3, times each side's ground
+            // factor, at most max(1, G) for that side (screen_gain_bound).  The
+            // source side is the point model over the observer's class, a
+            // plate's included; the receiver side is the point model or the
+            // plate.  Without a ground model the term is 1/3 and changes
+            // nothing.  --terrain_screening kirchhoff needs no term: a blocked
+            // pair is its unscreened level less a knife edge's loss, at least
+            // 10 lg 4 (knife_edge_loss), and the unscreened level is bounded
+            // already.
+            if (screening && !kirchhoff && ground_model != nullptr)
+            {
+                std::vector<std::size_t> classes = point_classes;
+                if (any_plate && std::find(classes.begin(), classes.end(), plate_class) == classes.end())
+                    classes.push_back(plate_class);
+                const auto source_side = point_ground_gain_bounds(class_models, class_impedance, classes,
+                        first_band, last_band);
+                std::vector<double> receiver_side(bound_gains.size(), 0.0);
+                if (any_point)
+                    receiver_side = point_ground_gain_bounds(class_models, class_impedance, point_classes,
+                            first_band, last_band);
+                if (any_plate)
+                {
+                    const auto plate_gains = plate->gain_bounds(first_band, last_band);
+                    for (std::size_t band = 0; band < receiver_side.size(); band++)
+                        receiver_side[band] = std::max(receiver_side[band], plate_gains[band]);
+                }
+                const std::vector<double> ground_term = path_gains;
+                for (std::size_t band = 0; band < path_gains.size(); band++)
+                    path_gains[band] = std::max(path_gains[band],
+                            screen_gain_bound(source_side[band], receiver_side[band]));
+                // Logged from the bound as built, so a CTest sees the term
+                // reach it: the windowed-is-exact tests pass without it.
+                std::size_t raised = 0;
+                double largest_raise = 1.0;
+                for (std::size_t band = 0; band < path_gains.size(); band++)
+                    if (path_gains[band] > ground_term[band])
+                    {
+                        raised++;
+                        if (ground_term[band] > 0.0)
+                            largest_raise = std::max(largest_raise, path_gains[band] / ground_term[band]);
+                    }
+                log("--terrain_screening: the peak-search bound's screened term is above its ground term in ",
+                        raised, " of ", path_gains.size(), " bands, by up to ", 10.0 * std::log10(largest_raise),
+                        " dB.");
             }
             for (std::size_t band = 0; band < bound_gains.size(); band++)
                 bound_gains[band] *= path_gains[band];
@@ -2680,6 +2938,31 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // Which observers had a height raised onto their path's mean ground plane
     // (each observer is one worker's, so no synchronization).
     std::vector<char> raised_at(terrain_raster ? observers.size() : 0, 0);
+    // --propagation_table over --terrain: the pairs that read the table in
+    // their mean plane's frame; the point-receiver pairs it was asked for, and
+    // those whose microphone stood outside its receiver heights, with the
+    // lowest and highest such height per observer; and, for a table that
+    // refracts, the pairs whose plane tilts past refracting_tilt_limit, with
+    // the steepest per observer.
+    const bool table_over_terrain = terrain_raster && options.propagation_table;
+    std::atomic<std::size_t> terrain_table_samples {0};
+    std::atomic<std::size_t> terrain_table_point_samples {0};
+    std::atomic<std::size_t> receiver_fallback_samples {0};
+    std::vector<double> receiver_fallback_low(table_over_terrain ? observers.size() : 0,
+            std::numeric_limits<double>::infinity());
+    std::vector<double> receiver_fallback_high(receiver_fallback_low.size(),
+            -std::numeric_limits<double>::infinity());
+    std::atomic<std::size_t> steep_table_samples {0};
+    std::vector<double> steepest_at(table_refracts && table_over_terrain ? observers.size() : 0, 0.0);
+    // --terrain_screening: the pairs screened, and which observers had any;
+    // those that reached the 25 dB cap in some band, or had a side's ground
+    // weight F held at 1; and, with a table, the screened pairs that left it.
+    std::atomic<std::size_t> screened_samples {0};
+    std::atomic<std::size_t> screen_capped {0};
+    std::atomic<std::size_t> screen_source_clamped {0};
+    std::atomic<std::size_t> screen_receiver_clamped {0};
+    std::atomic<std::size_t> screen_table_bypassed {0};
+    std::vector<char> screened_at(screening ? observers.size() : 0, 0);
     // The table's bearings are compass bearings; the run's x/y are turned from
     // east/north by --frame_bearing (CompassToLocal), whose inverse this is.
     const CompassToLocal compass(std::isnan(options.frame_bearing) ? 90.0 : options.frame_bearing);
@@ -2783,24 +3066,22 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             RefractedRay ray;
         };
         // The two halves of a refracted ray, from whichever model the run
-        // asked for; the layered one keeps its path's layers in `layer_scratch`.
-        std::vector<double> layer_scratch;
-        // `transition`: the observer is a point receiver that ShadowTransition
-        // serves, so past the layered boundary its lit level is the linear fit's.
+        // asked for.  The layered rays end at the observer begin_observer()
+        // was last given, which is the one at hand.
+        std::optional<StridedLayeredRays> layered_rays;
+        if (layered_sound_speed)
+            layered_rays.emplace(*layered_sound_speed, *effective_sound_speed, state_positions, state_moments,
+                    options.ray_stride, options.waves);
         auto form_ray = [&](std::size_t it, const Vec3& observer,
-                                const EffectiveSoundSpeed::Moments& at_receiver, bool transition) {
-            if (layered_sound_speed)
-            {
-                return layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
-                        source_states[it].position, state_moments[it], observer, at_receiver,
-                        layer_scratch, transition, options.waves);
-            }
+                                const EffectiveSoundSpeed::Moments& at_receiver) {
+            if (layered_rays)
+                return layered_rays->ray(it);
             return direct_ray(*effective_sound_speed, source_states[it].position, state_moments[it],
                     observer, at_receiver);
         };
-        auto finish_ray = [&](RefractedRay& ray, GroundGeometry ground, double microphone) {
-            if (layered_sound_speed)
-                layered_finish_ground(*layered_sound_speed, ray, ground, microphone, layer_scratch);
+        auto finish_ray = [&](std::size_t it, RefractedRay& ray, GroundGeometry ground, double microphone) {
+            if (layered_rays)
+                layered_rays->finish(it, ray, ground, microphone);
             else
                 finish_ground(ray, ground, microphone);
         };
@@ -2834,8 +3115,25 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // how many pairs took one, and how many had a height raised to zero.
         std::optional<GroundPlaneCache> planes;
         if (terrain_raster)
-            planes.emplace(*terrain_raster);
+            planes.emplace(*terrain_raster, screening, options.screening_min_height);
         std::size_t terrain_here = 0, raised_here = 0;
+        // --terrain_screening's scratch: a blocked pair's profile, its rubber
+        // band, each side's ground gain and the loss; and its counts.
+        GroundPlaneCache::Profile screen_profile;
+        std::vector<ScreenPoint> screen_points, screen_edges;
+        std::vector<std::size_t> screen_hull;
+        Screen screen;
+        const std::size_t screen_bands = screening ? database.band_centers().size() : 0;
+        std::vector<double> screen_loss(screen_bands, 0.0);
+        std::vector<double> screen_source_gain(screen_bands, 1.0);
+        std::vector<double> screen_receiver_gain(screen_bands, 1.0);
+        // --terrain_screening kirchhoff: the knife edge's loss for the pair at
+        // hand, and the table's loss with it added.
+        std::vector<double> knife_loss(screen_bands, 0.0);
+        std::size_t screened_here = 0, capped_here = 0, source_clamped_here = 0, receiver_clamped_here = 0;
+        std::size_t table_bypassed_here = 0;
+        std::size_t terrain_table_here = 0, terrain_table_point_here = 0, receiver_fallback_here = 0;
+        std::size_t steep_table_here = 0;
         std::vector<double> shadow_weight(shadow.size(), 1.0);
         std::vector<ResolvedBand> resolved_bands(resolved_table ? database.band_centers().size() : 0);
         std::size_t shadowed_here = 0;
@@ -2859,13 +3157,23 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const GroundTable* table_here = ground_model != nullptr && !flush && !point_tables.empty()
                     ? &point_tables[point_of[index]]
                     : nullptr;
+            const std::vector<std::complex<double>>* impedance_here = &class_impedance[class_of[index]];
             const double plate_mic_azimuth = flush && options.plate_orientation.outboard
                     ? outboard_azimuth(observer, source_states)
                     : options.plate_orientation.azimuth;
-            // Over terrain the ground model's geometry is taken over each path's
-            // mean ground line, from this observer's foot toward the source's.
-            const bool over_terrain = planes.has_value() && ground_here != nullptr;
-            if (over_terrain)
+            // Over terrain the ground model's and the table's geometry is taken
+            // over each path's mean ground line, from this observer's foot
+            // toward the source's.
+            const bool on_planes = planes.has_value() && (ground_here != nullptr || options.propagation_table);
+            // Screening takes the horizon from the microphone, its height above
+            // the ground at its foot (a flush one's is 0).
+            // An observer file's own z puts it where it is evaluated, which
+            // need not be on the raster's ground.
+            if (screening && options.observers_keep_file_z)
+                planes->set_observer_at(observers[index].x, observers[index].y, observer.z);
+            else if (screening)
+                planes->set_observer(observers[index].x, observers[index].y, microphone_height[index]);
+            else if (on_planes)
                 planes->set_observer(observers[index].x, observers[index].y);
             // The straight-ray spectral level: from --propagation_table where
             // it covers the pair, with the table's level in place of the ground
@@ -2874,18 +3182,36 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // The table's level for a pair it covers, into `level`; false where
             // it does not.  A plate microphone reads it at the table's lowest
             // receiver height and adds K at the pair's azimuth in its frame.
-            auto table_level = [&](std::size_t it, double* bands_out, double& level) {
+            // Over terrain `plane` is the pair's path over its mean ground
+            // line (terrain_ray), and the heights, the range and K's geometry
+            // are taken in its frame (table_read); the bearing is always the
+            // true separation's.  Without it they are the flat ground's.
+            auto table_level = [&](std::size_t it, double* bands_out, double& level, const RayPath* plane,
+                                       const double* added_loss) {
                 const Vec3& source = source_states[it].position;
                 const Vec3 separation = observer - source;
                 const auto east_north = compass.east_north({separation.x, separation.y});
                 const double east = east_north[0];
                 const double north = east_north[1];
-                const double height = flush ? options.propagation_table->axes().receiver_heights.front()
-                                            : microphone_height[index];
-                if (!options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, source.z, height,
-                            separation.horizontal_norm(), table_bands, table_loss.data()))
+                const double lowest = options.propagation_table->axes().receiver_heights.front();
+                const TableRead read = plane ? table_read(*plane, flush, lowest)
+                                             : TableRead {source.z, flush ? lowest : microphone_height[index],
+                                                       separation.horizontal_norm(), separation};
+                if (plane != nullptr && !flush)
+                    terrain_table_point_here++;
+                if (!options.propagation_table->lookup(std::atan2(east, north) * 180.0 / pi, read.source_height,
+                            read.receiver_height, read.range, table_bands, table_loss.data()))
                 {
                     fallback_here++;
+                    // A point receiver's height above the plane is its own,
+                    // and it is never clamped onto the table's rows: one
+                    // outside them falls back, and the run says how far out.
+                    if (plane != nullptr && !flush && !options.propagation_table->covers_receiver(read.receiver_height))
+                    {
+                        receiver_fallback_here++;
+                        receiver_fallback_low[index] = std::min(receiver_fallback_low[index], read.receiver_height);
+                        receiver_fallback_high[index] = std::max(receiver_fallback_high[index], read.receiver_height);
+                    }
                     return false;
                 }
                 // K at the pair's azimuth in the plate's frame and its elevation,
@@ -2894,14 +3220,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 double w[4] = {0.0, 0.0, 0.0, 0.0};
                 if (flush && !table_plate_offset.empty())
                 {
-                    const double azimuth = std::atan2(separation.y, separation.x) - plate_mic_azimuth + 0.5 * pi;
+                    const double azimuth = std::atan2(read.plate_separation.y, read.plate_separation.x)
+                            - plate_mic_azimuth + 0.5 * pi;
                     double x = std::fmod(azimuth / (2.0 * pi) * table_plate_azimuths, double(table_plate_azimuths));
                     if (x < 0.0)
                         x += table_plate_azimuths;
                     const std::size_t a_lo = std::min(static_cast<std::size_t>(x), std::size_t(table_plate_azimuths - 1));
                     const std::size_t a_hi = (a_lo + 1) % table_plate_azimuths;
                     const double a_weight = x - static_cast<double>(a_lo);
-                    const double elevation = std::atan2(std::max(source.z, 0.0), separation.horizontal_norm());
+                    const double elevation = std::atan2(std::max(read.source_height, 0.0), read.range);
                     const double y = std::min(elevation / table_plate_step, double(table_plate_elevations - 1));
                     const std::size_t e_lo = std::min(static_cast<std::size_t>(y), table_plate_elevations - 2);
                     const double e_weight = y - static_cast<double>(e_lo);
@@ -2923,6 +3250,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     if (k[0] != nullptr)
                         gain += w[0] * k[0][band] + w[1] * k[1][band] + w[2] * k[2][band] + w[3] * k[3][band];
                     table_loss[band] = -gain;
+                    if (added_loss != nullptr)
+                        table_loss[band] += added_loss[band];
                 }
                 tabled_here++;
                 level = database.spectral_level_along(straight_ray(source, observer), source_states[it],
@@ -2931,29 +3260,143 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         nullptr, 0.0, nullptr, table_loss.data(), nullptr, bands_out);
                 return true;
             };
+            // --terrain_screening, a pair the terrain blocks (`screen`, over
+            // `screen_profile`): the straight line's spreading, absorption and
+            // sphere direction, less the CNOSSOS-EU loss, with each side's
+            // ground from this observer's model and class -- the point model on
+            // the source side, and the point model or the plate on the
+            // microphone's -- and no ground term for the whole path, so ground
+            // counts once.  A propagation table is not read: its ground is the
+            // whole path's.
+            auto screened_level = [&](std::size_t it, const GroundPlaneCache::RayPair& pair, double* bands_out) {
+                const Vec3& source = source_states[it].position;
+                screen_sides(screen, screen_edges, planes->fit_range(pair, screen.source_edge, screen_profile.interior + 1),
+                        planes->fit_range(pair, 0, screen.receiver_edge), flush);
+                const double* source_gain = nullptr;
+                const double* receiver_gain = nullptr;
+                if (ground_here != nullptr)
+                {
+                    const auto& frequencies = database.band_centers();
+                    // Each side's edge stands in for the microphone or the
+                    // source, the sphere_database idiom for a height of its own.
+                    GroundModel side = *ground_here;
+                    side.receiver_height = screen.source_side.receiver_height;
+                    excess_ground_attenuation(side, *impedance_here, screen.source_side.source_height,
+                            screen.source_side.ground_distance, sound_speed, frequencies, screen_source_gain.data(),
+                            first_band, last_band, true);
+                    if (flush)
+                    {
+                        plate_receiver->power_ratio(screen.receiver_side.source_height,
+                                screen.receiver_side.ground_distance,
+                                plate_frame_azimuth(observer - source, plate_mic_azimuth), screen_receiver_gain.data(),
+                                first_band, last_band);
+                    }
+                    else
+                    {
+                        side.receiver_height = screen.receiver_side.receiver_height;
+                        excess_ground_attenuation(side, *impedance_here, screen.receiver_side.source_height,
+                                screen.receiver_side.ground_distance, sound_speed, frequencies,
+                                screen_receiver_gain.data(), first_band, last_band, true);
+                    }
+                    source_gain = screen_source_gain.data();
+                    receiver_gain = screen_receiver_gain.data();
+                }
+                ScreenTally tally;
+                cnossos_screen_loss(screen, database.band_centers(), sound_speed, source_gain, receiver_gain,
+                        first_band, last_band, screen_loss.data(), &tally);
+                screened_here++;
+                screened_at[index] = 1;
+                capped_here += tally.capped;
+                source_clamped_here += tally.source_clamped;
+                receiver_clamped_here += tally.receiver_clamped;
+                if (options.propagation_table)
+                    table_bypassed_here++;
+                return database.spectral_level_along(straight_ray(source, observer), source_states[it],
+                        absorption_for(it, observer), band_gains, nullptr, nullptr, sound_speed, first_band, last_band,
+                        packed_of_state[it], nullptr, 0.0, nullptr, screen_loss.data(), nullptr, bands_out);
+            };
             auto straight_level = [&](std::size_t it, double* bands_out) {
-                double level = 0.0;
-                if (options.propagation_table && table_level(it, bands_out, level))
-                    return level;
-                if (over_terrain)
+                // --terrain_screening: a pair whose profile rises above its line
+                // of sight is screened; every other pair goes on below, the
+                // same call as without it.  With kirchhoff a blocked pair goes on
+                // below too, carrying its knife edge's loss (`knife`).
+                const double* knife = nullptr;
+                if (screening)
                 {
                     const Vec3& source = source_states[it].position;
                     const double dx = source.x - observer.x;
                     const double dy = source.y - observer.y;
-                    bool raised = false;
-                    const RayPath path = terrain_ray(source, observer,
-                            planes->line_to(dx, dy, std::sqrt(dx * dx + dy * dy)), flush, &raised);
+                    const auto pair = planes->locate(dx, dy, std::sqrt(dx * dx + dy * dy));
+                    if (planes->blocked(pair, source.z, screen_profile)
+                            && rubber_band(screen_profile.heights, screen_profile.interior, screen_profile.step,
+                                    screen_profile.distance, screen_profile.microphone_height,
+                                    screen_profile.source_height, screen_points, screen_hull, screen_edges, screen))
+                    {
+                        if (!kirchhoff)
+                            return screened_level(it, pair, bands_out);
+                        knife_edge_loss(knife_edge(screen, screen_points), database.band_centers(), sound_speed,
+                                first_band, last_band, knife_loss.data());
+                        knife = knife_loss.data();
+                        screened_here++;
+                        screened_at[index] = 1;
+                    }
+                }
+                double level = 0.0;
+                // Over terrain the pair's path over its mean ground line, found
+                // once for the table and the ground model alike.  It counts as
+                // taken, and its raised heights as raised, only when one of
+                // them reads it: a pair the table misses with no ground model
+                // to fall back on is free field and never used the plane.
+                RayPath path;
+                const RayPath* plane = nullptr;
+                bool raised = false;
+                double slope = 0.0;
+                if (on_planes)
+                {
+                    const Vec3& source = source_states[it].position;
+                    const double dx = source.x - observer.x;
+                    const double dy = source.y - observer.y;
+                    const GroundLine line = planes->line_to(dx, dy, std::sqrt(dx * dx + dy * dy));
+                    path = terrain_ray(source, observer, line, flush, &raised);
+                    plane = &path;
+                    slope = line.slope;
+                }
+                auto take_plane = [&]() {
                     terrain_here++;
                     raised_here += raised;
                     if (raised)
                         raised_at[index] = 1;
+                };
+                if (options.propagation_table && table_level(it, bands_out, level, plane, knife))
+                {
+                    if (plane != nullptr)
+                    {
+                        take_plane();
+                        terrain_table_here++;
+                        if (!steepest_at.empty() && std::fabs(slope) > refracting_tilt_limit)
+                        {
+                            steep_table_here++;
+                            steepest_at[index] = std::max(steepest_at[index], std::fabs(slope));
+                        }
+                    }
+                    return level;
+                }
+                if (plane != nullptr && ground_here != nullptr)
+                {
+                    take_plane();
                     return database.spectral_level_along(path, source_states[it], absorption_for(it, observer),
-                            band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
-                            packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, nullptr, nullptr,
+                            band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
+                            packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, knife, nullptr,
                             bands_out);
                 }
+                // A knife edge with no ground model: the free field, less its loss.
+                if (knife != nullptr)
+                    return database.spectral_level_along(straight_ray(source_states[it].position, observer),
+                            source_states[it], absorption_for(it, observer), band_gains, nullptr, nullptr, sound_speed,
+                            first_band, last_band, packed_of_state[it], nullptr, 0.0, nullptr, knife, nullptr,
+                            bands_out);
                 return database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
-                        band_gains, ground_here, &ground_impedance_bands, sound_speed, first_band, last_band,
+                        band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, bands_out);
             };
             const GroundGeometry ray_ground = ground_model == nullptr ? GroundGeometry::none
@@ -2969,6 +3412,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const ShadowTransition* transition_here = flush
                     ? (plate_transition ? &*plate_transition : nullptr)
                     : (!shadow_transitions.empty() ? &shadow_transitions[point_of[index]] : nullptr);
+            // A point receiver that ShadowTransition serves takes the linear
+            // fit's ray past the layered boundary: its lit level there is the fit's.
+            if (layered_rays)
+                layered_rays->begin_observer(observer, at_receiver, transition_here != nullptr);
             auto refracted_level = [&](std::size_t it, RefractedRay ray) {
                 // With a table too, the pairs it covers take it; the rest the ray model.
                 if (options.propagation_table)
@@ -2977,10 +3424,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     double* table_bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
-                    if (table_level(it, table_bands_out, level))
+                    if (table_level(it, table_bands_out, level, nullptr, nullptr))
                         return add_ambient ? level_with_ambient(level, ambient_energy) : level;
                 }
-                finish_ray(ray, ray_ground, microphone_height[index]);
+                finish_ray(it, ray, ray_ground, microphone_height[index]);
                 double* bands_out = record_path(it, ray.path);
                 const double* extra_loss = nullptr;
                 const double* ground_weight = nullptr;
@@ -3095,7 +3542,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             skipped_numerator, skipped_squared_range, generation, evaluated_here,
                             [&](std::size_t it) {
                                 RefractedGeometry g;
-                                g.ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
+                                g.ray = form_ray(it, observer, at_receiver);
                                 const auto e = bound_geometry(it, g.ray);
                                 g.squared_range = e.squared_range;
                                 g.along = e.along;
@@ -3111,7 +3558,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             [&](std::size_t it) {
                                 if (travel_stamp[it] == generation)
                                     return travel[it];
-                                return sound_speed * form_ray(it, observer, at_receiver, transition_here != nullptr).travel_time;
+                                return sound_speed * form_ray(it, observer, at_receiver).travel_time;
                             });
                 }
                 else
@@ -3131,7 +3578,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    auto ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
+                    auto ray = form_ray(it, observer, at_receiver);
                     // Reception time from the curved ray's travel time, as the
                     // range a straight ray at the surface sound speed would take.
                     ranges[it] = sound_speed * ray.travel_time;
@@ -3411,25 +3858,81 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         fallback_samples += fallback_here;
         terrain_samples += terrain_here;
         terrain_raised += raised_here;
+        terrain_table_samples += terrain_table_here;
+        terrain_table_point_samples += terrain_table_point_here;
+        receiver_fallback_samples += receiver_fallback_here;
+        steep_table_samples += steep_table_here;
+        screened_samples += screened_here;
+        screen_capped += capped_here;
+        screen_source_clamped += source_clamped_here;
+        screen_receiver_clamped += receiver_clamped_here;
+        screen_table_bypassed += table_bypassed_here;
     });
 
     if (terrain_raster)
     {
-        if (ground_model == nullptr)
-            log("--terrain: no ground model runs, so the terrain sets only where the observers stand.");
+        if (ground_model == nullptr && !options.propagation_table && !screening)
+            log("--terrain: no ground model or propagation table runs, so the terrain sets only where the "
+                "observers stand.");
+        else if (ground_model == nullptr && !options.propagation_table)
+            log("--terrain: no ground model or propagation table runs, so the terrain sets where the "
+                "observers stand and screens the paths it blocks.");
         else if (terrain_raised.load() == 0)
-            log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane.");
+            log("--terrain: ", terrain_samples.load(), " evaluations took their path's mean ground plane",
+                    options.propagation_table
+                            ? ", " + std::to_string(terrain_table_samples.load()) + " of them through the "
+                                                                                     "propagation table."
+                            : std::string("."));
         else
         {
             // A source behind rising ground is heard as if the ground were not
             // there: the level is too high, and the run used to say so only in
             // the log.  A receiver in a dip raises the same flag.
             const auto observers_raised = std::count(raised_at.begin(), raised_at.end(), char(1));
-            warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
-                    "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
-                    terrain_samples.load(), " evaluations), taken onto it. A source behind rising ground "
-                    "is not screened, so those observers' levels are too high there; a receiver in a dip "
-                    "is only approximate.");
+            if (kirchhoff)
+                warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
+                        "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
+                        terrain_samples.load(), " evaluations), taken onto it. Those the terrain blocks keep "
+                        "that plane's ground less their knife edge's loss, and nothing rises above the line of "
+                        "sight of the rest: a receiver in a dip, or a source under a plane that terrain beyond "
+                        "it lifts, is only approximate.");
+            else if (screening)
+                warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
+                        "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
+                        terrain_samples.load(), " unscreened evaluations), taken onto it. Nothing on those "
+                        "paths rises above the line of sight, so --terrain_screening leaves them: a receiver "
+                        "in a dip, or a source under a plane that terrain beyond it lifts, is only "
+                        "approximate.");
+            else
+                warn("--terrain: at ", observers_raised, " of ", observers.size(), " observers, paths had a "
+                        "source or receiver below their mean ground plane (", terrain_raised.load(), " of ",
+                        terrain_samples.load(), " evaluations), taken onto it. A source behind rising ground "
+                        "is not screened, so those observers' levels are too high there; a receiver in a dip "
+                        "is only approximate.");
+        }
+    }
+    if (screening)
+    {
+        const auto observers_screened = std::count(screened_at.begin(), screened_at.end(), char(1));
+        if (kirchhoff)
+        {
+            log("--terrain_screening: ", screened_samples.load(), " evaluations were screened by the terrain, at ",
+                    observers_screened, " of ", observers.size(), " observers, each its unscreened level less a "
+                    "knife edge's Fresnel-Kirchhoff loss.");
+            if (options.propagation_table)
+                log("  The screened evaluations kept the propagation table where it covers them, less that loss.");
+        }
+        else
+        {
+            log("--terrain_screening: ", screened_samples.load(), " evaluations were screened by the terrain, at ",
+                    observers_screened, " of ", observers.size(), " observers; ", screen_capped.load(),
+                    " reached the 25 dB cap in some band, and the ground weight F was held at 1 on the source "
+                    "side in ", screen_source_clamped.load(), " and on the microphone's in ",
+                    screen_receiver_clamped.load(), ".");
+            if (options.propagation_table)
+                log("  ", screen_table_bypassed.load(), " of the screened evaluations were not read from the "
+                        "propagation table but took the screening with the ground model; the table's physics "
+                        "holds on the unblocked paths only.");
         }
     }
 
@@ -3441,6 +3944,34 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 "%); the rest -- outside its ranges or source heights, or where it has no value, as "
                 "steeper than a PE's angle limit -- took ",
                 ground_model ? "the ground model." : "free-field propagation.");
+        if (terrain_raster)
+            log("  over --terrain, ", terrain_table_samples.load(), " of the evaluations it covered read it at "
+                    "their heights above, and range along, their path's mean ground plane.");
+        if (receiver_fallback_samples.load() > 0)
+        {
+            const double low = *std::min_element(receiver_fallback_low.begin(), receiver_fallback_low.end());
+            const double high = *std::max_element(receiver_fallback_high.begin(), receiver_fallback_high.end());
+            const auto& rows = options.propagation_table->axes().receiver_heights;
+            warn("--propagation_table over --terrain: ", receiver_fallback_samples.load(), " of the ",
+                    terrain_table_point_samples.load(), " point-receiver evaluations put the microphone between ",
+                    low / options.unit.to_meters, " and ", high / options.unit.to_meters, " ", options.unit.name,
+                    " above their path's mean ground plane, outside the table's receiver heights (",
+                    rows.front() / options.unit.to_meters, " to ", rows.back() / options.unit.to_meters, " ",
+                    options.unit.name, "), and took ",
+                    ground_model ? "the ground model" : "free-field propagation",
+                    ". Build the table with receiver heights spanning ", low / options.unit.to_meters, " to ",
+                    high / options.unit.to_meters, " ", options.unit.name, ".");
+        }
+        if (steep_table_samples.load() > 0)
+        {
+            const double steepest = *std::max_element(steepest_at.begin(), steepest_at.end());
+            warn("--propagation_table ", options.propagation_table_path, " refracts, and over --terrain it is "
+                    "read by height above each path's mean ground plane, which takes its stratification to "
+                    "follow the ground. ", steep_table_samples.load(), " of the ", terrain_table_samples.load(),
+                    " evaluations it covered over the terrain had a plane tilted more than ",
+                    refracting_tilt_degrees, " degrees (the steepest ", std::atan(steepest) * 180.0 / pi,
+                    "), where that holds less well.");
+        }
     }
 
     if (effective_sound_speed)
@@ -3927,11 +4458,14 @@ int run(int argc, char* argv[])
     std::string turbulence_model = "chessell";
     double gamma_t = 0.0;
     double roughness = 0.0;          // m
+    std::string ground_classes_file;
     std::string plate_table;
     std::string propagation_table;
     std::string terrain_file;
     double terrain_offset = 0.0;  // meters
     double terrain_step = 0.0;    // meters; 0 follows the terrain's own spacing
+    std::string terrain_screening = "none";
+    double screening_min_height = 0.5; // meters
     bool observers_on_terrain = false;
     std::string plate_mic_azimuth = "outboard";
     bool exact_ground = false;
@@ -3954,6 +4488,7 @@ int run(int argc, char* argv[])
     double shadow_phase = default_resolved_phase;
     std::string cramped_ground = "series";
     bool tunneling = false;
+    std::size_t ray_stride = default_ray_stride;
     bool skip_fill = false;
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
@@ -3976,7 +4511,7 @@ int run(int argc, char* argv[])
     double path_smoothing = 10.0 * ft2m; // 10 ft, in meters
     bool latlon = false;
 
-    CLI::App app{"Noise Informed Community Environment Operation Planning System (NICE-OPS)."};
+    CLI::App app{"Noise Informed Community Environment Operation Planning System (NICEOPS)."};
     auto* database_option = app.add_option("-d,--database", database_files,
             "netCDF noise database file. Once, or once per trajectory.");
     app.add_option("-l,--logfile", log_file, "Output log file.");
@@ -4261,6 +4796,12 @@ int run(int argc, char* argv[])
             "--refraction stratified: also take the rays turned back from aloft that turn again just "
             "above the microphone, which the wave reaches through the layer below them (an Airy "
             "tail per band).  Off by default.");
+    auto* ray_stride_option = app.add_option("--ray_stride", ray_stride,
+            "--refraction stratified: solve each path's layered rays only every this many trajectory "
+            "states (default 4), and interpolate the states between wherever the two solved ones "
+            "agree -- the same arrivals, lit or shadowed alike, angles within half a degree and ray "
+            "tubes within 2% -- solving the rest. 1 solves every state.")
+        ->check(CLI::Range(std::size_t {1}, std::size_t {64}));
     app.add_flag("--skip_fill", skip_fill,
             "--refraction stratified: fill the skip zone short of where rays from aloft first land "
             "with the caustic's Airy tail per band.  Off by default.");
@@ -4360,6 +4901,12 @@ int run(int argc, char* argv[])
     auto* roughness_option = app.add_option("--roughness", roughness,
             "RMS roughness height of the ground, in --units: the coherent reflection falls by "
             "exp(-2 (k sigma cos theta)^2). Default 0.");
+    app.add_option("--ground_classes", ground_classes_file,
+            "A CSV of ground surfaces keyed by an integer class id (class, and any of name, "
+            "impedance_model, flow_resistance, porosity_rate, layer_depth, roughness; a missing "
+            "column or empty cell takes the command line's value), which an observer file's sixth "
+            "column (id,x,y,z,height,ground) picks per microphone. Each microphone is evaluated as "
+            "if the whole ground were its class. Turbulence stays run-wide.");
     app.add_flag("--exact_ground", exact_ground,
             "Evaluate the --ground_effect model (or --plate_table's reflection coefficients) at "
             "every observer and state instead of interpolating tables of it built per "
@@ -4383,8 +4930,23 @@ int run(int argc, char* argv[])
             "longitude) in meters, e.g. USGS 3DEP). Grid observers stand on it, and the ground "
             "model and plate take each path's least-squares mean ground plane (CNOSSOS-EU, "
             "NORAH2 / ECAC Doc 32) in place of the plane z = 0. Needs the run's frame (--origin, "
-            "and --frame_bearing for rotated x/y, or a geodetic track). No screening or "
-            "diffraction by terrain; not with --refraction or --propagation_table.");
+            "and --frame_bearing for rotated x/y, or a geodetic track). No screening by terrain "
+            "unless --terrain_screening; not with --refraction. A --propagation_table is read at "
+            "the heights above, and range along, each path's mean ground plane.");
+    app.add_option("--terrain_screening", terrain_screening,
+            "With --terrain: none (default); cnossos -- a path the terrain rises above takes the "
+            "CNOSSOS-EU diffraction over the profile's convex hull, with the ground on each side of "
+            "it, capped at 25 dB (with --propagation_table a blocked path leaves the table for the "
+            "ground model, which it then needs); or kirchhoff -- a blocked path keeps its ground, "
+            "plate or table and loses a knife edge's Fresnel-Kirchhoff diffraction, the edge being "
+            "the lowest point both ends see over the terrain where it rises highest. Spectral path "
+            "only.")
+            ->check(CLI::IsMember({"none", "cnossos", "kirchhoff"}));
+    auto* screening_min_height_option = app.add_option("--screening_min_height", screening_min_height,
+            "With --terrain_screening: how far the terrain must rise above a path's line of sight to "
+            "screen it, in --units (default 0.5 m), so a terrain grid's texture beside a microphone does "
+            "not screen a path that only grazes it.")
+            ->check(CLI::NonNegativeNumber);
     auto* terrain_offset_option = app.add_option("--terrain_offset", terrain_offset,
             "Added to every --terrain height, in --units, to put it on the trajectory's vertical "
             "datum (default 0). At Amedee 3DEP is NAVD88 and the 2017 tracks are ellipsoidal: "
@@ -4473,8 +5035,14 @@ int run(int argc, char* argv[])
             request.manifest.add_input("vehicle", f);
         request.manifest.add_input("observers", observer_file);
         for (const auto& f : atmosphere_files)
+        {
             request.manifest.add_input("atmosphere", f);
+            // niceops_build_atmosphere's sidecar: how the profile was made.
+            if (std::filesystem::exists(f + ".provenance.json"))
+                request.manifest.add_input("atmosphere_provenance", f + ".provenance.json");
+        }
         request.manifest.add_input("terrain", terrain_file);
+        request.manifest.add_input("ground_classes", ground_classes_file);
         request.manifest.add_input("plate_table", plate_table);
         request.manifest.add_input("propagation_table", propagation_table);
         request.manifest.refuse_overwriting_an_input(manifest_file);
@@ -4903,6 +5471,7 @@ int run(int argc, char* argv[])
     to_meters(surface_layer_option, surface_layer_depth);
     to_meters(terrain_offset_option, terrain_offset);
     to_meters(terrain_step_option, terrain_step);
+    to_meters(screening_min_height_option, screening_min_height);
     // An operations file's offsets are lengths the user wrote, in --units.
     if (operations)
     {
@@ -4916,6 +5485,56 @@ int run(int argc, char* argv[])
     auto& observers = observer_set.observers;
     auto& x_obs = observer_set.x;
     auto& y_obs = observer_set.y;
+    // --ground_classes and the observer file's sixth column name each other:
+    // one without the other is refused, as is a class the file does not define.
+    std::optional<GroundClassFile> ground_class_file;
+    if (ground_classes_file.empty())
+    {
+        if (!observer_set.ground_class_ids.empty())
+            input_error("Observer file ", observer_file, " gives each microphone a ground class (its sixth column, "
+                    "id,x,y,z,height,ground), and there is no --ground_classes to say what the classes are.");
+    }
+    else
+    {
+        if (!scattered)
+            input_error("--ground_classes picks each microphone's ground through an observer file's sixth "
+                    "column (-b, id,x,y,z,height,ground); grid observers have none. A grid over one ground "
+                    "takes it from --flow_resistance and --impedance_model.");
+        if (observer_set.ground_class_ids.empty())
+            input_error("--ground_classes needs the observer file to name each microphone's class in a sixth "
+                    "column (id,x,y,z,height,ground); ", observer_file, " has none.");
+        // Each class is a ground for the point receiver's model, taken as the
+        // whole half-space under every path to its microphones.  The models
+        // that need the ground along a path, or one ground for the run, are
+        // refused rather than given the first class.
+        if (refraction != "none")
+            input_error("--ground_classes does not combine with --refraction: the curved rays' creeping-wave, "
+                    "bounce and shadow-boundary terms belong to the ground along each path, not under its "
+                    "microphone.");
+        if (!propagation_table.empty())
+            input_error("--ground_classes does not combine with --propagation_table: a table was solved over "
+                    "one ground.");
+        if (!spectral)
+            input_error("--ground_classes needs the spectral path: the ground effect is a function of frequency, "
+                    "and the broadband path (--no-spectral) has none to apply it to.");
+        if (!ground_effect)
+            input_error("--ground_classes sets the ground --ground_effect evaluates, and --no-ground_effect "
+                    "turns it off.");
+        ground_class_file = read_ground_classes(ground_classes_file);
+        std::string defined;
+        for (const auto& row : ground_class_file->rows)
+            defined += (defined.empty() ? "" : ", ") + std::to_string(row.id);
+        for (std::size_t i = 0; i < observer_set.ground_class_ids.size(); i++)
+        {
+            const std::int64_t id = observer_set.ground_class_ids[i];
+            const bool known = std::any_of(ground_class_file->rows.begin(), ground_class_file->rows.end(),
+                    [id](const GroundClassRow& row) { return row.id == id; });
+            if (!known)
+                input_error("Observer file ", observer_file, " data row ", i + 1, " stands on ground class ", id,
+                        ", which --ground_classes ", ground_classes_file, " does not define (it defines ", defined,
+                        ").");
+        }
+    }
     std::vector<double> integrated_levels(observers.size());
     // DNL, Lden and CNEL are properties of the whole set of operations, not of
     // one flight: each trajectory's penalized exposure is an energy, and they sum.
@@ -5083,29 +5702,38 @@ int run(int argc, char* argv[])
                     "and --humidity would contradict it.");
     }
 
+    if (screening_min_height_option->count() > 0 && terrain_screening == "none")
+        input_error("--screening_min_height is for --terrain_screening, which is not given.");
     // --terrain, and what it does to the observers.
     std::shared_ptr<const Terrain> terrain;
     if (terrain_file.empty())
     {
         if (terrain_offset_option->count() > 0 || terrain_step_option->count() > 0 || observers_on_terrain)
             input_error("--terrain_offset, --terrain_step and --observers_on_terrain need --terrain.");
+        if (terrain_screening != "none")
+            input_error("--terrain_screening needs --terrain: the screening edges are the terrain's.");
     }
     else
     {
-        // Ground-reflected rays, shadow boundaries and the table's receiver
-        // heights are all built over the plane z = 0; handing them a tilted
-        // plane per path would be a different model, not this one.
+        // Ground-reflected rays and shadow boundaries are built over the plane
+        // z = 0; handing them a tilted plane per path would be a different
+        // model, not this one.  A propagation table is read in each path's
+        // mean-plane frame, as the ground model is.
         if (refraction != "none")
         {
             input_error("--terrain does not combine with --refraction: the ray models reflect off, "
                         "and cast their shadows onto, the flat ground z = 0. Use --terrain with "
                         "straight rays, or --refraction over flat ground.");
         }
-        if (!propagation_table.empty())
-        {
-            input_error("--terrain does not combine with --propagation_table: the table's source "
-                        "and receiver heights are over flat ground.");
-        }
+        if (terrain_screening != "none" && !spectral)
+            input_error("--terrain_screening is per band, and the broadband path (--no-spectral) has no "
+                        "bands.");
+        // A blocked pair leaves the table, whose ground runs the whole path,
+        // for the screening's ground on each side of the edge.
+        if (terrain_screening == "cnossos" && !propagation_table.empty() && !ground_effect)
+            input_error("--terrain_screening cnossos with --propagation_table needs a ground model: a path "
+                        "the terrain blocks leaves the table for the ground on each side of the edge, and "
+                        "--no-ground_effect leaves it none. --terrain_screening kirchhoff keeps the table.");
         if (observers_on_terrain && !scattered)
             input_error("--observers_on_terrain is for an observer file (-b); grid observers always "
                         "stand on the terrain.");
@@ -5243,6 +5871,11 @@ int run(int argc, char* argv[])
     options.terrain_path = terrain_file;
     options.terrain_offset = terrain_offset;
     options.terrain_step = terrain_step;
+    options.terrain_screening = terrain_screening == "cnossos"   ? TerrainScreening::cnossos
+            : terrain_screening == "kirchhoff"                   ? TerrainScreening::kirchhoff
+                                                                 : TerrainScreening::none;
+    options.screening_min_height = screening_min_height;
+    options.observers_keep_file_z = terrain && scattered && !observers_on_terrain;
     if (!propagation_table.empty())
     {
         options.propagation_table = std::make_shared<const PropagationTable>(PropagationTable::load(propagation_table));
@@ -5277,6 +5910,54 @@ int run(int argc, char* argv[])
             }
         }
     }
+    if (ground_class_file)
+    {
+        // The file's lengths are in --units, as the command line's are, and
+        // what it leaves out is the command line's ground.
+        options.ground_classes = ground_classes_from(*ground_class_file, options.ground, unit);
+        options.ground_classes_path = ground_classes_file;
+        const auto& ids = observer_set.ground_class_ids;
+        const auto& heights = observer_set.microphone_heights;
+        // Flush microphones are on one class, and the plate table was solved
+        // over its ground: P_d and P_r depend on it.
+        if (options.plate)
+        {
+            const GroundClass* plate_class = nullptr;
+            for (std::size_t i = 0; i < ids.size(); i++)
+            {
+                if (heights[i] != 0.0)
+                    continue;
+                const GroundClass* here = find_ground_class(options.ground_classes, ids[i]);
+                if (plate_class == nullptr)
+                    plate_class = here;
+                else if (here != plate_class)
+                    input_error("--plate_table: the flush microphones stand on ground classes ", plate_class->id,
+                            " (", plate_class->name, ") and ", here->id, " (", here->name, ") (observer file ",
+                            observer_file, " data row ", i + 1, "). One plate table is solved over one ground: "
+                            "put every flush microphone on one class.");
+            }
+            if (plate_class != nullptr)
+            {
+                const std::string mismatch = options.plate->ground_mismatch(plate_class->model);
+                if (!mismatch.empty())
+                    input_error("--plate_table over ground class ", plate_class->id, " (", plate_class->name,
+                            "), which the flush microphones stand on: ", mismatch);
+            }
+        }
+        std::string used;
+        std::string unused;
+        for (const auto& surface : options.ground_classes)
+        {
+            const auto on = static_cast<std::size_t>(std::count(ids.begin(), ids.end(), surface.id));
+            if (on > 0)
+                used += (used.empty() ? "" : ", ") + std::to_string(surface.id) + " (" + surface.name + ") "
+                        + std::to_string(on);
+            else
+                unused += (unused.empty() ? "" : ", ") + std::to_string(surface.id) + " (" + surface.name + ")";
+        }
+        log("Ground classes from ", ground_classes_file, ": microphones on ", used,
+                unused.empty() ? std::string(".") : "; not used: " + unused + ".");
+    }
     // Each trajectory's air (--atmosphere, --wind, --humidity, --temperature,
     // --pressure, --start_utc) goes into its own copy of the options, in the
     // trajectory loop.
@@ -5287,6 +5968,9 @@ int run(int argc, char* argv[])
     options.stratified = refraction == "stratified";
     if ((tunneling || skip_fill) && !options.stratified)
         input_error("--tunneling and --skip_fill need --refraction stratified.");
+    if (ray_stride_option->count() > 0 && !options.stratified)
+        input_error("--ray_stride needs --refraction stratified.");
+    options.ray_stride = ray_stride;
     options.waves.tunneling = tunneling;
     options.waves.skip_fill = skip_fill;
     options.shadow_floor = shadow_floor;
@@ -5455,7 +6139,7 @@ int run(int argc, char* argv[])
                             " s UTC, in place of any clock its track carries.");
             }
             trajectory_holder = process_trajectory(cached->second, job, path_options, observers,
-                    observer_set.microphone_heights, x_obs, y_obs, integrated_levels, totals);
+                    observer_set.microphone_heights, observer_set.ground_class_ids, x_obs, y_obs, integrated_levels, totals);
             operations_run += job.weight;
         }
         catch (const std::exception& problem)

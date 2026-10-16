@@ -1,4 +1,4 @@
-"""Read a NICE-OPS .nod sphere database into a (phi, theta, condition) grid,
+"""Read a NICEOPS .nod sphere database into a (phi, theta, condition) grid,
 mirroring Database::Database in src/sphere_database.cpp (read-only)."""
 import numpy as np
 import netCDF4

@@ -172,6 +172,7 @@ add_library(niceops_core STATIC
   src/sphere_database.cpp
   src/atmosphere.cpp
   src/atmosphere_profile.cpp
+  src/atmosphere_builder.cpp
   src/refraction.cpp
   src/stratified.cpp
   src/pade_propagator.cpp
@@ -185,9 +186,11 @@ add_library(niceops_core STATIC
   src/band_frames.cpp
   src/faddeeva.cpp
   src/ground_effect.cpp
+  src/ground_classes.cpp
   src/plate_receiver.cpp
   src/geodetic.cpp
   src/terrain.cpp
+  src/screening.cpp
   src/predicates.cpp
   src/delaunay.cpp
   # interpolator.cpp was its own library in the D era, to wall off CGAL's heavy
@@ -267,8 +270,10 @@ add_executable(niceops_unit_tests
   tests/test_sphere_database.cpp
   tests/test_geodetic.cpp
   tests/test_terrain.cpp
+  tests/test_screening.cpp
   tests/test_atmosphere.cpp
   tests/test_atmosphere_profile.cpp
+  tests/test_atmosphere_builder.cpp
   tests/test_refraction.cpp
   tests/test_stratified.cpp
   tests/test_pade_propagator.cpp
@@ -292,6 +297,7 @@ add_executable(niceops_unit_tests
   tests/test_trajectory.cpp
   tests/test_csv.cpp
   tests/test_operations.cpp
+  tests/test_ground_classes.cpp
   tests/test_legacy_repair.cpp
   tests/test_smoothing_spline.cpp
 )
@@ -322,6 +328,10 @@ add_executable(niceops_procedure tools/procedure.cpp)
 target_link_libraries(niceops_procedure niceops_core CLI11::CLI11)
 add_executable(niceops_propagation_table tools/propagation_table.cpp)
 target_link_libraries(niceops_propagation_table niceops_core CLI11::CLI11)
+# An --atmosphere profile from measured columns, and a site roughness length
+# from wind profiles (tools/build_atmosphere.cpp).
+add_executable(niceops_build_atmosphere tools/build_atmosphere.cpp)
+target_link_libraries(niceops_build_atmosphere niceops_core CLI11::CLI11)
 # The Attenborough et al. (1995) benchmark cases by the PE and the exact
 # solutions (tools/benchmark.cpp); tools/plot_benchmark.py draws them.
 add_executable(niceops_benchmark tools/benchmark.cpp)
@@ -1211,6 +1221,76 @@ add_test(NAME mixed_receivers_are_their_subsets COMMAND golden_compare integrate
 set_tests_properties(mixed_receivers_are_their_subsets PROPERTIES FIXTURES_REQUIRED "mixed_runs;mixed_expected_file")
 add_test(NAME mixed_receivers_windowed_is_exact COMMAND golden_compare integrated/mixed_receivers.csv integrated/mixed_receivers_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(mixed_receivers_windowed_is_exact PROPERTIES FIXTURES_REQUIRED mixed_runs)
+# --ground_classes (src/ground_classes.hpp) and the observer file's sixth column
+# (id,x,y,z,height,ground) name each other; the reader's own refusals are unit
+# tests ([ground_classes]).
+set(GROUND_CLASS_DEMO -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -L warn)
+set(GROUND_CLASS_GRASS --impedance_model variable_porosity --flow_resistance 200)
+add_test(NAME ground_classes_column_needs_file COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_column_needs_file PROPERTIES PASS_REGULAR_EXPRESSION "gives each microphone a ground class .* and there is no --ground_classes")
+add_test(NAME ground_classes_refuses_grid COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv --gridstep 4000 -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuses_grid PROPERTIES PASS_REGULAR_EXPRESSION "grid observers have none")
+add_test(NAME ground_classes_need_column COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/mixed_receivers.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_need_column PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes needs the observer file to name each microphone's class in a sixth column")
+add_test(NAME ground_classes_refuse_undefined_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_one.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_undefined_class PROPERTIES PASS_REGULAR_EXPRESSION "data row 1 stands on ground class 0, which --ground_classes tests/data/ground_classes_one.csv does not define \\(it defines 7\\)")
+add_test(NAME ground_classes_refuse_fractional_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_bad_id.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_fractional_class PROPERTIES PASS_REGULAR_EXPRESSION "data row 2 gives the ground class 2.5; a class is an integer")
+# Each microphone over its class.  One class repeating the command line's ground is the run
+# without classes, byte for byte: inherited (ground_classes_one.csv) and with every column given
+# at the command line's values in meters (ground_classes_one_explicit.csv; under --units ft the
+# two lengths go through x * 0.3048 and need not be), for point receivers with their tables,
+# for plates, and over the hills.
+add_test(NAME ground_class_scalar_point COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} -b tests/data/mixed_receivers.csv -o integrated/ground_class_scalar_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_single_point COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_one.csv -b tests/data/mixed_receivers_class7.csv -o integrated/ground_class_single_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_explicit_point COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_one_explicit.csv -b tests/data/mixed_receivers_class7.csv -o integrated/ground_class_explicit_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_scalar_plate COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc -b tests/data/mixed_receivers.csv -o integrated/ground_class_scalar_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_single_plate COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_one.csv -b tests/data/mixed_receivers_class7.csv -o integrated/ground_class_single_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_class_scalar_point ground_class_single_point ground_class_explicit_point ground_class_scalar_plate ground_class_single_plate PROPERTIES FIXTURES_SETUP ground_class_single_runs)
+add_test(NAME ground_class_single_is_scalar_point COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ground_class_single_point.csv integrated/ground_class_scalar_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_explicit_is_scalar_point COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ground_class_explicit_point.csv integrated/ground_class_scalar_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_class_single_is_scalar_plate COMMAND ${CMAKE_COMMAND} -E compare_files integrated/ground_class_single_plate.csv integrated/ground_class_scalar_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_class_single_is_scalar_point ground_class_explicit_is_scalar_point ground_class_single_is_scalar_plate PROPERTIES FIXTURES_REQUIRED ground_class_single_runs)
+# A grass and concrete array (ground_classes_two.csv: class 0 inherits the command line's grass,
+# class 1 is Delany-Bazley at 10000): plates and 4 ft poles on grass, then 4 ft and 10 ft poles
+# on concrete, so one height stands on both classes.  With --exact_ground it has to equal a grass
+# run over the grass rows and a concrete run over the concrete rows; with its tables it has to
+# agree with that to the tables' accuracy, which a table looked up by height alone would miss by
+# decibels at the concrete 4 ft poles.  It must differ from the all-grass run first at the first
+# concrete microphone's level (value 35), which an admittance taken from the wrong class would
+# not.  And its peak search, bounded over both classes, must equal the march, flat and over hills.
+add_test(NAME ground_classes_mixed COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_mixed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_mixed_marched COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -D integrated/ground_classes_mixed_dnl.csv -o integrated/ground_classes_mixed_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_mixed_exact COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --exact_ground --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_mixed_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_grass_only COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --exact_ground --plate_table plates/gr1425_vp200.nc -b tests/data/ground_classes_grass.csv -o integrated/ground_classes_grass.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_concrete_only COMMAND niceops ${GROUND_CLASS_DEMO} --flow_resistance 10000 --exact_ground -b tests/data/ground_classes_concrete.csv -o integrated/ground_classes_concrete.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_mixed ground_classes_mixed_marched ground_classes_mixed_exact ground_classes_grass_only ground_classes_concrete_only PROPERTIES FIXTURES_SETUP ground_classes_runs)
+add_test(NAME ground_classes_expected COMMAND ${CMAKE_COMMAND} -DOUT=integrated/ground_classes_expected.csv "-DINPUTS=integrated/ground_classes_grass.csv;integrated/ground_classes_concrete.csv" -P tests/concatenate.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_expected PROPERTIES FIXTURES_REQUIRED ground_classes_runs FIXTURES_SETUP ground_classes_expected_file)
+add_test(NAME ground_classes_mixed_are_their_subsets COMMAND golden_compare integrated/ground_classes_mixed_exact.csv integrated/ground_classes_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_mixed_are_their_subsets PROPERTIES FIXTURES_REQUIRED "ground_classes_runs;ground_classes_expected_file")
+add_test(NAME ground_classes_tabled_matches_exact COMMAND golden_compare integrated/ground_classes_mixed.csv integrated/ground_classes_mixed_exact.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_windowed_is_exact COMMAND golden_compare integrated/ground_classes_mixed.csv integrated/ground_classes_mixed_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_tabled_matches_exact ground_classes_windowed_is_exact PROPERTIES FIXTURES_REQUIRED ground_classes_runs)
+add_test(NAME ground_classes_impedance_is_the_observers COMMAND golden_compare integrated/ground_classes_mixed_exact.csv integrated/mixed_receivers.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_impedance_is_the_observers PROPERTIES FIXTURES_REQUIRED "ground_classes_runs;mixed_runs" PASS_REGULAR_EXPRESSION "mismatch at value 35:")
+# What the classes cannot serve, each refused with its reason.
+add_test(NAME ground_classes_refuse_refraction COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv --atmosphere atmospheres/B407_uniform.csv --refraction linear -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_refraction PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes does not combine with --refraction")
+add_test(NAME ground_classes_refuse_table COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv --propagation_table tables/absent.nc -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_table PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes does not combine with --propagation_table: a table was solved over one ground")
+add_test(NAME ground_classes_refuse_broadband COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv --no-spectral -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_broadband PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes needs the spectral path")
+add_test(NAME ground_classes_refuse_no_ground COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv --no-ground_effect -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_no_ground PROPERTIES PASS_REGULAR_EXPRESSION "--no-ground_effect turns it off")
+add_test(NAME ground_classes_need_spectra COMMAND niceops --humidity 20 --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -L warn -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_need_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--ground_classes needs a database carrying per-band spectra")
+add_test(NAME ground_classes_plates_on_one_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_vp200.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_two_plates.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_plates_on_one_class PROPERTIES PASS_REGULAR_EXPRESSION "the flush microphones stand on ground classes 0 \\(grass\\) and 1 \\(concrete\\)")
+add_test(NAME ground_classes_plate_matches_class COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --plate_table plates/gr1425_db225.nc --ground_classes tests/data/ground_classes_two.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_plate_matches_class PROPERTIES PASS_REGULAR_EXPRESSION "--plate_table over ground class 0 \\(grass\\), which the flush microphones stand on: Plate table plates/gr1425_db225.nc was computed over")
+add_test(NAME ground_classes_refuse_not_passive COMMAND niceops ${GROUND_CLASS_DEMO} ${GROUND_CLASS_GRASS} --ground_classes tests/data/ground_classes_not_passive.csv -b tests/data/ground_classes_mixed.csv -o integrated/ground_classes_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_refuse_not_passive PROPERTIES PASS_REGULAR_EXPRESSION "Ground class 1 \\(thin, tests/data/ground_classes_not_passive.csv line 3\\): The ground impedance model is not passive")
 # --band_history over flush plate microphones.  Writing the bands forces a
 # march, and must leave the footprint equal to the peak search's; a refracted
 # path through uniform air must record the straight one's geometry and bands.
@@ -1307,6 +1387,8 @@ set_tests_properties(stratified_duct_point stratified_duct_point_marched stratif
 add_test(NAME stratified_duct_point_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME stratified_duct_plate_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_plate.csv integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_duct_point_windowed_is_exact stratified_duct_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+add_test(NAME ray_stride_needs_stratified COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --ray_stride 4 --gridstep 4000 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ray_stride_needs_stratified PROPERTIES PASS_REGULAR_EXPRESSION "--ray_stride needs --refraction stratified")
 # --shadow_model resolved: each band's shadow boundary from the near-ground profile it resolves, and
 # cramped bands' field from the residue series at the source's own height (or the straight path's
 # ground term).  The peak search must stay exact with it on: the series and the table are capped at
@@ -1369,6 +1451,24 @@ add_test(NAME stratified_duct_point_golden COMMAND golden_compare integrated/str
 add_test(NAME stratified_duct_plate_golden COMMAND golden_compare integrated/stratified_duct_plate.csv golden/stratified_duct_plate.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_windy_point_golden PROPERTIES FIXTURES_REQUIRED stratified_runs)
 set_tests_properties(stratified_duct_point_golden stratified_duct_plate_golden PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# --ray_stride is 4 by default.  Every state solved (--ray_stride 1) stays pinned by the goldens made
+# before it was (*_exact.csv); the default is within 0.005 dB of it on the windy profile and 0.02 in the
+# duct (measured 0.001 and 0.005), and not equal to it.
+add_test(NAME stratified_windy_point_exact COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction stratified --frame_bearing 210 --ground_effect --gridstep 984 -L warn --ray_stride 1 -o integrated/stratified_windy_point_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_point_exact COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --gridstep 984 -L warn --ray_stride 1 -o integrated/stratified_duct_point_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate_exact COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 -L warn --ray_stride 1 -o integrated/stratified_duct_plate_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_plate_200hz_exact COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --refraction stratified --frame_bearing 210 --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc --gridstep 984 --band_limits 20 224 -L warn --ray_stride 1 -o integrated/stratified_calm_floor_plate_200hz_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_windy_point_exact stratified_duct_point_exact stratified_duct_plate_exact stratified_calm_floor_plate_200hz_exact PROPERTIES FIXTURES_SETUP stratified_exact_runs)
+add_test(NAME stratified_windy_point_exact_golden COMMAND golden_compare integrated/stratified_windy_point_exact.csv golden/stratified_windy_point_exact.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_point_exact_golden COMMAND golden_compare integrated/stratified_duct_point_exact.csv golden/stratified_duct_point_exact.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_duct_plate_exact_golden COMMAND golden_compare integrated/stratified_duct_plate_exact.csv golden/stratified_duct_plate_exact.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_calm_floor_plate_200hz_exact_golden COMMAND golden_compare integrated/stratified_calm_floor_plate_200hz_exact.csv golden/stratified_calm_floor_plate_200hz_exact.csv 1e-4 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_windy_is_close COMMAND golden_compare integrated/stratified_windy_point.csv integrated/stratified_windy_point_exact.csv 0.005 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_duct_is_close COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_exact.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_is_not_exact COMMAND golden_compare integrated/stratified_windy_point.csv integrated/stratified_windy_point_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_stride_is_not_exact PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(stratified_windy_point_exact_golden stratified_duct_point_exact_golden stratified_duct_plate_exact_golden stratified_calm_floor_plate_200hz_exact_golden stratified_stride_windy_is_close stratified_stride_duct_is_close stratified_stride_is_not_exact PROPERTIES FIXTURES_REQUIRED "stratified_exact_runs;stratified_runs;stratified_duct_runs")
+
 # --wind builds the profile in memory from one surface wind.  The run has to be exactly the one fed
 # that profile through --atmosphere (--write_atmosphere writes it), and refining its levels from 16
 # a decade to 64 must not move a plate microphone by 0.1 dB (it moves them 0.016).  The plate
@@ -1414,6 +1514,83 @@ add_test(NAME wind_needs_humidity COMMAND niceops -d databases/B407_fixed_load_f
 set_tests_properties(wind_needs_humidity PROPERTIES PASS_REGULAR_EXPRESSION "--wind builds the humidity profile from the surface humidity, and none is set")
 add_test(NAME wind_stability_class_warns COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 30 -t tracks/S-76D/197421AC.csv --wind 10kt,270 --stability II --gridstep 1640 -o integrated/wind_stability_class.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(wind_stability_class_warns PROPERTIES PASS_REGULAR_EXPRESSION "The stability classes are unvalidated")
+# niceops_build_atmosphere (tools/build_atmosphere.cpp).  One surface observation with --wind's
+# choices is the profile wind_profile_written writes, byte for byte.  The harness layout (seven
+# LIDAR gates, one a fill value, a string every 10 ft, a station humidity, the harness's level list)
+# is the validation harness's own Weather.profile, run by tests/data/atmosphere_builder_expected.py;
+# the same build in meters is the same profile.  A built profile runs, and the peak search over it
+# is exact.
+set(BUILD_ATMOSPHERE_DATA tests/data/atmosphere_builder)
+set(BUILD_ATMOSPHERE_HARNESS build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --column ${BUILD_ATMOSPHERE_DATA}/string_ft.csv --missing 9999 --humidity 62.5 --levels 0,1,3,10,20 --z0 0.1 --top 5000)
+add_test(NAME build_atmosphere_surface COMMAND niceops_build_atmosphere --units ft build --wind 12kt,250,6.5 --z0 0.1 --surface_layer_depth 3000 --levels_per_decade 10 --temperature 288.15 --humidity 40 --pressure 100 --above lapse --humidity_aloft held_concentration --top 3000 -o integrated/build_atmosphere_surface.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME build_atmosphere_harness COMMAND niceops_build_atmosphere ${BUILD_ATMOSPHERE_HARNESS} -o integrated/build_atmosphere_harness.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME build_atmosphere_harness_m COMMAND niceops_build_atmosphere --units m build --column ${BUILD_ATMOSPHERE_DATA}/lidar_m.csv --column ${BUILD_ATMOSPHERE_DATA}/string_m.csv --missing 9999 --humidity 62.5 --levels 0,0.3048,0.9144000000000001,3.048,6.096 --z0 0.030480000000000004 --top 1524 -o integrated/build_atmosphere_harness_m.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_surface build_atmosphere_harness build_atmosphere_harness_m PROPERTIES FIXTURES_SETUP build_atmosphere_runs)
+add_test(NAME build_atmosphere_surface_is_wind COMMAND ${CMAKE_COMMAND} -E compare_files integrated/build_atmosphere_surface.csv integrated/wind_profile_law.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_surface_is_wind PROPERTIES FIXTURES_REQUIRED "build_atmosphere_runs;wind_law_runs")
+add_test(NAME build_atmosphere_is_harness_profile COMMAND golden_compare integrated/build_atmosphere_harness.csv tests/data/atmosphere_builder_expected_ft.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME build_atmosphere_units_agree COMMAND golden_compare integrated/build_atmosphere_harness_m.csv tests/data/atmosphere_builder_expected_m.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set(BUILD_ATMOSPHERE_RUN -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere integrated/build_atmosphere_harness.csv --refraction stratified --frame_bearing 210 --ground_effect --gridstep 984 -L warn)
+add_test(NAME build_atmosphere_stratified COMMAND niceops ${BUILD_ATMOSPHERE_RUN} -o integrated/build_atmosphere_stratified.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME build_atmosphere_stratified_marched COMMAND niceops ${BUILD_ATMOSPHERE_RUN} -D integrated/build_atmosphere_stratified_dnl.csv -o integrated/build_atmosphere_stratified_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_stratified build_atmosphere_stratified_marched PROPERTIES FIXTURES_SETUP build_atmosphere_stratified_runs FIXTURES_REQUIRED build_atmosphere_runs)
+add_test(NAME build_atmosphere_stratified_windowed_is_exact COMMAND golden_compare integrated/build_atmosphere_stratified.csv integrated/build_atmosphere_stratified_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_is_harness_profile build_atmosphere_units_agree PROPERTIES FIXTURES_REQUIRED build_atmosphere_runs)
+set_tests_properties(build_atmosphere_stratified_windowed_is_exact PROPERTIES FIXTURES_REQUIRED build_atmosphere_stratified_runs)
+# --atmosphere warns, without refusing, on what it takes on trust: no level at the ground (the
+# lowest is held down), and a calm level above the ground under wind.  A built profile has
+# neither; its sidecar is recorded in the run manifest.
+add_test(NAME atmosphere_warns_no_ground_level COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere tests/data/atmosphere_no_ground_ft.csv --gridstep 1640 -L warn -o integrated/atmosphere_no_ground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_warns_no_ground_level PROPERTIES PASS_REGULAR_EXPRESSION "has no level at or below the ground: its lowest, at 50 ft, is held down to it")
+add_test(NAME atmosphere_warns_calm_floor COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy_calm_floor.csv --gridstep 1640 -L warn -o integrated/atmosphere_calm_floor.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_warns_calm_floor PROPERTIES PASS_REGULAR_EXPRESSION "example_windy_calm_floor.csv is calm at 0.1 ft, above the ground")
+add_test(NAME atmosphere_still_does_not_warn COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --gridstep 1640 -L warn -o integrated/atmosphere_still.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(atmosphere_still_does_not_warn PROPERTIES FAIL_REGULAR_EXPRESSION "is calm at;no level at or below the ground")
+add_test(NAME build_atmosphere_manifest COMMAND niceops ${BUILD_ATMOSPHERE_RUN} --manifest integrated/build_atmosphere_manifest.json -o integrated/build_atmosphere_manifest_run.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_manifest PROPERTIES FIXTURES_SETUP build_atmosphere_manifest_runs FIXTURES_REQUIRED build_atmosphere_runs FAIL_REGULAR_EXPRESSION "is calm at;no level at or below the ground")
+add_test(NAME build_atmosphere_manifest_records_provenance COMMAND ${CMAKE_COMMAND} -E cat integrated/build_atmosphere_manifest.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_manifest_records_provenance PROPERTIES FIXTURES_REQUIRED build_atmosphere_manifest_runs PASS_REGULAR_EXPRESSION "\"atmosphere_provenance\"")
+# fit_z0 gives back the roughness length of runs that follow the log law exactly (written by
+# tests/data/atmosphere_builder/fit_runs.py), leaving out the one in light wind.
+add_test(NAME fit_z0_known COMMAND niceops_build_atmosphere fit_z0 ${BUILD_ATMOSPHERE_DATA}/fit_run1.csv ${BUILD_ATMOSPHERE_DATA}/fit_run2.csv ${BUILD_ATMOSPHERE_DATA}/fit_run3.csv ${BUILD_ATMOSPHERE_DATA}/fit_run4.csv ${BUILD_ATMOSPHERE_DATA}/fit_run5.csv ${BUILD_ATMOSPHERE_DATA}/fit_run6.csv --missing 9999 --draws 200 --table integrated/fit_z0_known.csv -o integrated/fit_z0_known.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(fit_z0_known PROPERTIES FIXTURES_SETUP fit_z0_runs PASS_REGULAR_EXPRESSION "excluded fit_run6: light wind")
+add_test(NAME fit_z0_recovers_known COMMAND golden_compare integrated/fit_z0_known.csv ${BUILD_ATMOSPHERE_DATA}/fit_expected.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(fit_z0_recovers_known PROPERTIES FIXTURES_REQUIRED fit_z0_runs)
+# --z0_from takes the fit's z0_m in meters whatever --units says: the harness build in feet from
+# that fit (0.1 ft to 2e-13) is the harness profile.
+add_test(NAME build_atmosphere_z0_from COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --column ${BUILD_ATMOSPHERE_DATA}/string_ft.csv --missing 9999 --humidity 62.5 --levels 0,1,3,10,20 --z0_from integrated/fit_z0_known.json --top 5000 -o integrated/build_atmosphere_z0_from.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_from PROPERTIES FIXTURES_SETUP build_atmosphere_z0_from_runs FIXTURES_REQUIRED fit_z0_runs)
+add_test(NAME build_atmosphere_z0_from_is_harness_profile COMMAND golden_compare integrated/build_atmosphere_z0_from.csv tests/data/atmosphere_builder_expected_ft.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_from_is_harness_profile PROPERTIES FIXTURES_REQUIRED build_atmosphere_z0_from_runs)
+add_test(NAME build_atmosphere_z0_twice_refused COMMAND niceops_build_atmosphere ${BUILD_ATMOSPHERE_HARNESS} --z0_from integrated/fit_z0_known.json -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_twice_refused PROPERTIES PASS_REGULAR_EXPRESSION "give --z0 or --z0_from, not both")
+# A fit that reached an end of its search is a limit, and building from it says so; a fit
+# that would take no runs is refused.
+add_test(NAME build_atmosphere_z0_from_at_bound_warns COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --column ${BUILD_ATMOSPHERE_DATA}/string_ft.csv --missing 9999 --humidity 62.5 --levels 0,1,3,10,20 --z0_from ${BUILD_ATMOSPHERE_DATA}/fit_at_bound.json --top 5000 -o integrated/build_atmosphere_at_bound.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_from_at_bound_warns PROPERTIES PASS_REGULAR_EXPRESSION "that fit came to an end of its search")
+add_test(NAME fit_z0_needs_a_run COMMAND niceops_build_atmosphere fit_z0 ${BUILD_ATMOSPHERE_DATA}/fit_run6.csv --missing 9999 --min_runs 0 -o integrated/fit_z0_none.json WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(fit_z0_needs_a_run PROPERTIES PASS_REGULAR_EXPRESSION "--min_runs: Value 0 not in range")
+# What the builder refuses, by message.
+add_test(NAME build_atmosphere_z0_missing_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --humidity 50 --temperature 288 --top 5000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_missing_refused PROPERTIES PASS_REGULAR_EXPRESSION "give the roughness length, --z0 or --z0_from")
+add_test(NAME build_atmosphere_top_missing_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --humidity 50 --temperature 288 --z0 0.1 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_top_missing_refused PROPERTIES PASS_REGULAR_EXPRESSION "give --top")
+add_test(NAME build_atmosphere_bare_speed_refused COMMAND niceops_build_atmosphere build --wind 10,270 --humidity 50 --temperature 288 --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_bare_speed_refused PROPERTIES PASS_REGULAR_EXPRESSION "--wind: name the speed's unit")
+add_test(NAME build_atmosphere_calm_gate_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/calm_gate_ft.csv --humidity 50 --temperature 288 --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_calm_gate_refused PROPERTIES PASS_REGULAR_EXPRESSION "gives a calm wind at 125 ft, above the ground")
+add_test(NAME build_atmosphere_z0_above_gate_refused COMMAND niceops_build_atmosphere build --wind 10kt,270,5 --humidity 50 --temperature 288 --z0 8 --top 5000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_z0_above_gate_refused PROPERTIES PASS_REGULAR_EXPRESSION "the lowest wind level \\(5 ft\\) has to stand above the roughness length \\(8 ft\\)")
+add_test(NAME build_atmosphere_pressure_rises_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/pressure_rises_ft.csv --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_pressure_rises_refused PROPERTIES PASS_REGULAR_EXPRESSION "pressure from .*pressure_rises_ft.csv rises with height")
+add_test(NAME build_atmosphere_duplicate_source_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/string_ft.csv --column ${BUILD_ATMOSPHERE_DATA}/pressure_rises_ft.csv --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_duplicate_source_refused PROPERTIES PASS_REGULAR_EXPRESSION "the temperature comes from both .* name the one to take with --temperature_from")
+add_test(NAME build_atmosphere_depth_with_gates_refused COMMAND niceops_build_atmosphere ${BUILD_ATMOSPHERE_HARNESS} --surface_layer_depth 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_depth_with_gates_refused PROPERTIES PASS_REGULAR_EXPRESSION "--surface_layer_depth carries the law above a single wind level")
+add_test(NAME build_atmosphere_humidity_over_100_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/humid_ft.csv --z0 0.1 --top 3000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_humidity_over_100_refused PROPERTIES PASS_REGULAR_EXPRESSION "relative humidity of 103 percent at 100 ft, above saturation")
+add_test(NAME build_atmosphere_fill_value_refused COMMAND niceops_build_atmosphere build --column ${BUILD_ATMOSPHERE_DATA}/lidar_ft.csv --humidity 50 --temperature 288 --z0 0.1 --top 5000 -o integrated/build_atmosphere_refused.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(build_atmosphere_fill_value_refused PROPERTIES PASS_REGULAR_EXPRESSION "data row 5 gives a wind speed of 5143.93 m/s, which is not plausible. List a fill value with --missing")
 # --scattering fills shadows with scattered energy, a gain the peak search's bound has to allow: the
 # creeping-wave and scattering caps were the survivors of mutation testing, with no CTest running the option.
 add_test(NAME scattering_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --frame_bearing 210 --ground_effect --scattering 3e-6 --gridstep 492 -L warn -o integrated/scattering_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1434,7 +1611,8 @@ set_tests_properties(refraction_point_windowed_is_exact refraction_plate_windowe
 # approach's low end.  Level terrain must reproduce the run without it (point receivers, plates, and
 # scattered observers stood on it), byte for byte in fact; over the hills the peak search must still
 # equal the march, with the point receiver's ground model evaluated at each path's own height.
-set(TERRAIN_DEMO -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 -L warn)
+set(TERRAIN_BASE -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210)
+set(TERRAIN_DEMO ${TERRAIN_BASE} -L warn)
 set(TERRAIN_PLATE --ground_effect --impedance_model variable_porosity --flow_resistance 200 --plate_table plates/gr1425_vp200.nc)
 set(TERRAIN_FLAT --terrain integrated/terrain_flat.nc --terrain_offset -1250 --ground_elevation 54.2651)
 set(TERRAIN_HILLS --terrain integrated/terrain_hills.nc --ground_elevation 54.2651)
@@ -1480,6 +1658,22 @@ add_test(NAME terrain_hills_scattered_placed COMMAND niceops ${TERRAIN_DEMO} --g
 add_test(NAME terrain_hills_bare COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --no-ground_effect -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_hills_bare.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME terrain_hills_bare_placed COMMAND niceops ${TERRAIN_DEMO} --no-ground_effect -b integrated/terrain_hills_observers.csv -o integrated/terrain_hills_bare_placed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_hills_scattered terrain_hills_scattered_placed terrain_hills_bare terrain_hills_bare_placed PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_placed_runs)
+# Ground classes over the hills (each point receiver's model at its path's own height, over its
+# class): one class repeating the command line is the run without classes, byte for byte, and
+# a grass and concrete array's peak search equals the march.
+set(TERRAIN_CLASSES ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --observers_on_terrain)
+add_test(NAME terrain_class_scalar COMMAND niceops ${TERRAIN_CLASSES} -b tests/data/coyle_heights.csv -o integrated/terrain_class_scalar.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_class_single COMMAND niceops ${TERRAIN_CLASSES} --ground_classes tests/data/ground_classes_one.csv -b tests/data/coyle_heights_class7.csv -o integrated/terrain_class_single.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_classes COMMAND niceops ${TERRAIN_CLASSES} --ground_classes tests/data/ground_classes_two.csv -b tests/data/coyle_heights_classes.csv -o integrated/terrain_classes.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_classes_marched COMMAND niceops ${TERRAIN_CLASSES} --ground_classes tests/data/ground_classes_two.csv -b tests/data/coyle_heights_classes.csv -D integrated/terrain_classes_dnl.csv -o integrated/terrain_classes_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_class_scalar terrain_class_single terrain_classes terrain_classes_marched PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_class_runs)
+add_test(NAME ground_class_single_is_scalar_terrain COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_class_single.csv integrated/terrain_class_scalar.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME ground_classes_terrain_windowed_is_exact COMMAND golden_compare integrated/terrain_classes.csv integrated/terrain_classes_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_class_single_is_scalar_terrain ground_classes_terrain_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_class_runs)
+# The array's first concrete microphone is on a pole (value 5): it must differ from the all-grass run
+# there first, which an admittance taken from the wrong class along a terrain path would not.
+add_test(NAME ground_classes_terrain_impedance_is_the_observers COMMAND golden_compare integrated/terrain_classes.csv integrated/terrain_class_scalar.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ground_classes_terrain_impedance_is_the_observers PROPERTIES FIXTURES_REQUIRED terrain_class_runs PASS_REGULAR_EXPRESSION "mismatch at value 5:")
 add_test(NAME terrain_reaches_the_ground_model COMMAND golden_compare integrated/terrain_hills_scattered.csv integrated/terrain_hills_scattered_placed.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_reaches_the_ground_model PROPERTIES FIXTURES_REQUIRED terrain_placed_runs PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME terrain_without_ground_places_observers COMMAND golden_compare integrated/terrain_hills_bare.csv integrated/terrain_hills_bare_placed.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1501,3 +1695,248 @@ add_test(NAME terrain_offset_needs_terrain COMMAND niceops ${TERRAIN_DEMO} --ter
 set_tests_properties(terrain_offset_needs_terrain PROPERTIES PASS_REGULAR_EXPRESSION "need --terrain")
 add_test(NAME terrain_warns_of_observer_disagreement COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_PLATE} -b arrays/coyle_approach.csv -o integrated/terrain_disagreement.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_warns_of_observer_disagreement PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "disagree by more than")
+# --propagation_table over --terrain: each pair reads the table at its heights above, and range
+# along, its path's mean ground plane, in the frame the ground model takes there.  On level terrain
+# that is the flat read, byte for byte (point receivers, plates, and scattered observers stood on
+# it); over the hills the peak search must still equal the march, with the ground-model table
+# below (rows 0 to 25 ft, Amedee's variable-porosity ground) and with the bump table on plates.
+set(TERRAIN_TABLE_PLATE --ground_effect --flow_resistance 225 --plate_table plates/gr1425_db225.nc --propagation_table tables/ground_model_test.nc)
+set(TERRAIN_TABLE_GROUND --ground_effect --impedance_model variable_porosity --flow_resistance 200 --propagation_table tables/ground_model_terrain_test.nc)
+foreach(height RANGE 0 1400 20)
+  list(APPEND TERRAIN_TABLE_SOURCES ${height})
+endforeach()
+add_test(NAME terrain_table_build COMMAND niceops_propagation_table --method ground_model --database databases/B407_fixed_load_factor.nod --sound_speed 335.636 --impedance_model variable_porosity --flow_resistance 200
+    --source_heights ${TERRAIN_TABLE_SOURCES} --receiver_heights 0 3.93701 8 16 25 --max_range 15000 --step 20 -o tables/ground_model_terrain_test.nc
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_table_build PROPERTIES FIXTURES_SETUP terrain_table_file)
+add_test(NAME terrain_flat_table_point_reference COMMAND niceops ${TERRAIN_DEMO} --propagation_table tables/ground_model_test.nc --gridstep 492 -o integrated/terrain_flat_table_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} --propagation_table tables/ground_model_test.nc --gridstep 492 -o integrated/terrain_flat_table_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_plate_reference COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_TABLE_PLATE} --gridstep 492 -o integrated/terrain_flat_table_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_TABLE_PLATE} --gridstep 492 -o integrated/terrain_flat_table_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_scattered_reference COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_TABLE_PLATE} -b tests/data/coyle_approach_level.csv -o integrated/terrain_flat_table_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_scattered COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_FLAT} ${TERRAIN_TABLE_PLATE} -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_flat_table_scattered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_table_point_reference terrain_flat_table_plate_reference terrain_flat_table_scattered_reference PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP terrain_flat_table_runs)
+set_tests_properties(terrain_flat_table_point terrain_flat_table_plate terrain_flat_table_scattered PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" FIXTURES_SETUP terrain_flat_table_runs FAIL_REGULAR_EXPRESSION "below their mean ground plane")
+add_test(NAME terrain_flat_table_point_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_table_point.csv integrated/terrain_flat_table_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_plate_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_table_plate.csv integrated/terrain_flat_table_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_table_scattered_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_table_scattered.csv integrated/terrain_flat_table_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_table_point_is_flat terrain_flat_table_plate_is_flat terrain_flat_table_scattered_is_flat PROPERTIES FIXTURES_REQUIRED terrain_flat_table_runs)
+add_test(NAME terrain_hills_table_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_TABLE_GROUND} --gridstep 492 -o integrated/terrain_hills_table_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_point_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_TABLE_GROUND} --gridstep 492 -D integrated/terrain_hills_table_point_dnl.csv -o integrated/terrain_hills_table_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_TABLE_GROUND} --plate_table plates/gr1425_vp200.nc --gridstep 492 -o integrated/terrain_hills_table_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} ${TERRAIN_TABLE_GROUND} --plate_table plates/gr1425_vp200.nc --gridstep 492 -D integrated/terrain_hills_table_plate_dnl.csv -o integrated/terrain_hills_table_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_point terrain_hills_table_point_marched terrain_hills_table_plate terrain_hills_table_plate_marched PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" FIXTURES_SETUP terrain_hills_table_runs)
+add_test(NAME terrain_hills_table_bump_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --flow_resistance 225 --plate_table plates/gr1425_db225.nc --propagation_table tables/bump_test.nc --gridstep 492 -o integrated/terrain_hills_table_bump_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_bump_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --flow_resistance 225 --plate_table plates/gr1425_db225.nc --propagation_table tables/bump_test.nc --gridstep 492 -D integrated/terrain_hills_table_bump_plate_dnl.csv -o integrated/terrain_hills_table_bump_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_bump_plate terrain_hills_table_bump_plate_marched PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_bump_file" FIXTURES_SETUP terrain_hills_table_runs)
+add_test(NAME terrain_hills_table_point_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_table_point.csv integrated/terrain_hills_table_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_plate_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_table_plate.csv integrated/terrain_hills_table_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_table_bump_plate_windowed_is_exact COMMAND golden_compare integrated/terrain_hills_table_bump_plate.csv integrated/terrain_hills_table_bump_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_point_windowed_is_exact terrain_hills_table_plate_windowed_is_exact terrain_hills_table_bump_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_hills_table_runs)
+# A point receiver's height above a hillside's mean plane is not its pole's: a table with one
+# receiver row is warned about up front, and the pairs whose height falls outside the table's rows
+# take the ground model, counted and named, never clamped onto a row.
+add_test(NAME terrain_table_warns_one_row COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --propagation_table tables/ground_model_test.nc --gridstep 4000 -o integrated/terrain_table_rows.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_table_warns_one_row PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "but it has one receiver row")
+add_test(NAME terrain_table_warns_receiver_rows COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --propagation_table tables/ground_model_test.nc --gridstep 4000 -o integrated/terrain_table_receiver_rows.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_table_warns_receiver_rows PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "point-receiver evaluations put the microphone between .* above their path's mean ground plane, outside the table's receiver heights")
+# Pairs the table reads over the plane count toward the raised-height warning, with no ground
+# model at all: the table alone takes them onto the plane.
+add_test(NAME terrain_hills_table_warns_unscreened COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --no-ground_effect --propagation_table tables/ground_model_terrain_test.nc --receiver_height 3.93701 --gridstep 4000 -o integrated/terrain_hills_table_warns.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_warns_unscreened PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" PASS_REGULAR_EXPRESSION "observers, paths had a source or receiver below their mean ground plane")
+# ... and only those: a pair the table misses, with no ground model to fall back on, is free field
+# and never used the plane.  Every point receiver here misses the one-row table, and counting
+# those pairs as well raised the same warning at 3 of 9 observers.
+add_test(NAME terrain_hills_table_misses_are_free_field COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --no-ground_effect --propagation_table tables/ground_model_test.nc --gridstep 4000 -o integrated/terrain_hills_table_misses.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_misses_are_free_field PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "point-receiver evaluations put the microphone .* and took free-field propagation" FAIL_REGULAR_EXPRESSION "below their mean ground plane")
+add_test(NAME terrain_table_refuses_refraction COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 ${TERRAIN_FLAT} --atmosphere atmospheres/B407_uniform.csv --refraction linear --propagation_table tables/ground_model_test.nc -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_table_refuses_refraction PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "does not combine with --refraction")
+# A table that refracts is read over terrain as if its stratification followed each path's mean
+# plane; past 5 degrees of tilt (the 5.7 degree plane) the run warns.  A ground-model table has no
+# stratification to tilt and never does.  Plates, which always read the table, carry it.
+add_test(NAME terrain_refracting_table_build COMMAND niceops_unit_tests "[.refracting_table]" WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_refracting_table_build PROPERTIES FIXTURES_REQUIRED propagation_table_file FIXTURES_SETUP terrain_refracting_table_file)
+add_test(NAME terrain_steep_refracting_table_warns COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_steep.nc --ground_elevation 54.2651 --ground_effect --flow_resistance 225 --plate_table plates/gr1425_db225.nc --propagation_table tables/refracting_test.nc --gridstep 4000 -o integrated/terrain_steep_refracting.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_steep_refracting_table_warns PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_refracting_table_file" PASS_REGULAR_EXPRESSION "refracts, and over --terrain it is read by height above each path's mean ground plane.*had a plane tilted more than 5 degrees")
+add_test(NAME terrain_steep_ground_model_table_is_quiet COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_steep.nc --ground_elevation 54.2651 ${TERRAIN_TABLE_PLATE} --gridstep 4000 -o integrated/terrain_steep_ground_model.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_steep_ground_model_table_is_quiet PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" FAIL_REGULAR_EXPRESSION "refracts, and over --terrain")
+# ... and a ground-model table over the hills is the terrain ground model, to the table's
+# interpolation, which is the plumbing check: it fails if the read takes the source's height
+# above z = 0 for its height above the plane.  A plate reads the five-row table's row at 0 plus K,
+# the plate in the plane's frame (0.014 dB at worst; FIDELITY, Propagation tables).  A point
+# receiver reads between rows at its own height above the plane, where the ground's fringes in
+# receiver height are finer than any practical row spacing above a few hundred hertz, so its check
+# runs from 20 to 250 Hz over rows every half foot (0.17 dB at worst).
+set(TERRAIN_LOW_TABLE_ROWS 0)
+foreach(tenths RANGE 5 220 5)
+  math(EXPR feet "${tenths} / 10")
+  math(EXPR fraction "${tenths} % 10")
+  list(APPEND TERRAIN_LOW_TABLE_ROWS ${feet}.${fraction})
+endforeach()
+add_test(NAME terrain_low_table_build COMMAND niceops_propagation_table --method ground_model --database databases/B407_fixed_load_factor.nod --band_limits 20 250 --sound_speed 335.636 --impedance_model variable_porosity --flow_resistance 200
+    --source_heights ${TERRAIN_TABLE_SOURCES} --receiver_heights ${TERRAIN_LOW_TABLE_ROWS} --max_range 15000 --step 20 -o tables/ground_model_terrain_low_test.nc
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_low_table_build PROPERTIES FIXTURES_SETUP terrain_low_table_file)
+add_test(NAME terrain_hills_low_table_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --band_limits 20 250 --propagation_table tables/ground_model_terrain_low_test.nc --gridstep 492 -o integrated/terrain_hills_low_table_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_low_table_point PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_low_table_file" FIXTURES_SETUP terrain_hills_low_runs FAIL_REGULAR_EXPRESSION "outside the table's receiver heights")
+add_test(NAME terrain_hills_low_point_reference COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_HILLS} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --band_limits 20 250 --exact_ground --gridstep 492 -o integrated/terrain_hills_low_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_low_point_reference PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_hills_low_runs)
+add_test(NAME terrain_hills_table_point_is_the_ground_model COMMAND golden_compare integrated/terrain_hills_low_table_point.csv integrated/terrain_hills_low_point_reference.csv 0.2 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_point_is_the_ground_model PROPERTIES FIXTURES_REQUIRED terrain_hills_low_runs)
+add_test(NAME terrain_hills_table_plate_is_the_plate_model COMMAND golden_compare integrated/terrain_hills_table_plate.csv integrated/terrain_hills_plate.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_hills_table_plate_is_the_plate_model PROPERTIES FIXTURES_REQUIRED "terrain_hills_table_runs;terrain_hills_runs")
+# A plate whose source's foot lies behind it on its path's mean line (d' < 0, nearly overhead on
+# ground falling toward the source) takes K at the turned separation's azimuth.  Those pairs are
+# too few in the grids above to move them: K from the true separation's azimuth passed every other
+# test, and moves these plates, under the approach on the 5.7 degree plane, by 2e-4 to 7e-4 dB.
+add_test(NAME terrain_steep_table_plate COMMAND niceops ${TERRAIN_DEMO} --terrain integrated/terrain_steep.nc --ground_elevation 54.2651 ${TERRAIN_TABLE_PLATE} -b tests/data/steep_under_track.csv --observers_on_terrain -o integrated/terrain_steep_table_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_steep_table_plate PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" FIXTURES_SETUP terrain_steep_table_plate_run)
+add_test(NAME terrain_steep_table_plate_golden COMMAND golden_compare integrated/terrain_steep_table_plate.csv golden/terrain_steep_table_plate.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_steep_table_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_steep_table_plate_run)
+# --terrain_screening cnossos (src/screening.hpp; THEORY 6.4).  A run whose info log the test
+# matches on goes through tests/run_logged.cmake, which gives it its own log and prints it.  A
+# PASS_REGULAR_EXPRESSION makes CTest ignore the exit status, so a run that exits nonzero fails on
+# the line run_logged prints for it: a FAIL_REGULAR_EXPRESSION set later must keep it.
+set(LOGGED_RUN_FAILED "run_logged: the command exited with")
+function(add_logged_run name)
+  add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DLOG=integrated/${name}.log
+      "-DCOMMAND=$<TARGET_FILE:niceops>;${ARGN};-L;info;-l;integrated/${name}.log" -P tests/run_logged.cmake
+      WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(${name} PROPERTIES FAIL_REGULAR_EXPRESSION "${LOGGED_RUN_FAILED}")
+endfunction()
+set(SCREENING --terrain_screening cnossos)
+set(TERRAIN_RIDGE --terrain integrated/terrain_ridge.nc --terrain_offset -1250 --ground_elevation 54.2651)
+set(TERRAIN_TILTED --terrain integrated/terrain_tilted.nc --terrain_offset -1250 --ground_elevation 54.2651)
+# Level terrain screened is the run without terrain, byte for byte, with no pair screened; so is a
+# plane falling 4% under the approach, against itself unscreened; and so are the hills, where no
+# sample rises above any path's line of sight (the hills run is terrain_hills_point's).
+add_logged_run(terrain_flat_point_screened ${TERRAIN_BASE} ${TERRAIN_FLAT} --ground_effect ${SCREENING} --gridstep 492 -o integrated/terrain_flat_point_screened.csv)
+add_logged_run(terrain_flat_plate_screened ${TERRAIN_BASE} ${TERRAIN_FLAT} ${TERRAIN_PLATE} ${SCREENING} --gridstep 492 -o integrated/terrain_flat_plate_screened.csv)
+add_logged_run(terrain_flat_scattered_screened ${TERRAIN_BASE} ${TERRAIN_FLAT} ${TERRAIN_PLATE} ${SCREENING} -b arrays/coyle_approach.csv --observers_on_terrain -o integrated/terrain_flat_scattered_screened.csv)
+add_test(NAME terrain_tilted_point COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_TILTED} --ground_effect --gridstep 984 -o integrated/terrain_tilted_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_tilted_point_screened ${TERRAIN_BASE} ${TERRAIN_TILTED} --ground_effect ${SCREENING} --gridstep 984 -o integrated/terrain_tilted_point_screened.csv)
+add_test(NAME terrain_tilted_plate COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_TILTED} ${TERRAIN_PLATE} --gridstep 984 -o integrated/terrain_tilted_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_tilted_plate_screened ${TERRAIN_BASE} ${TERRAIN_TILTED} ${TERRAIN_PLATE} ${SCREENING} --gridstep 984 -o integrated/terrain_tilted_plate_screened.csv)
+add_logged_run(terrain_hills_point_screened ${TERRAIN_BASE} ${TERRAIN_HILLS} --ground_effect ${SCREENING} --gridstep 492 -o integrated/terrain_hills_point_screened.csv)
+set_tests_properties(terrain_flat_point_screened terrain_flat_plate_screened terrain_flat_scattered_screened
+    terrain_tilted_point terrain_tilted_point_screened terrain_tilted_plate terrain_tilted_plate_screened terrain_hills_point_screened
+    PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_unscreened_runs)
+set_tests_properties(terrain_flat_point_screened terrain_flat_plate_screened terrain_flat_scattered_screened
+    terrain_tilted_point_screened terrain_tilted_plate_screened terrain_hills_point_screened
+    PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: 0 evaluations were screened"
+    FAIL_REGULAR_EXPRESSION "--terrain_screening: [1-9];${LOGGED_RUN_FAILED}")
+add_test(NAME terrain_flat_point_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_point_screened.csv integrated/terrain_flat_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_plate_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_plate_screened.csv integrated/terrain_flat_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_scattered_screened_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_scattered_screened.csv integrated/terrain_flat_scattered_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_tilted_point_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_tilted_point_screened.csv integrated/terrain_tilted_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_tilted_plate_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_tilted_plate_screened.csv integrated/terrain_tilted_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_unblocked_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_hills_point_screened.csv integrated/terrain_hills_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_point_screened_is_flat terrain_flat_plate_screened_is_flat terrain_flat_scattered_screened_is_flat
+    terrain_tilted_point_is_unscreened terrain_tilted_plate_is_unscreened terrain_hills_unblocked_is_unscreened
+    PROPERTIES FIXTURES_REQUIRED "terrain_unscreened_runs;terrain_flat_runs;terrain_hills_runs")
+# Behind the ridge the peak search, with the screening's bound term, still equals the march: point
+# receivers, plates, no ground model, mixed ground classes, and a propagation table, which a
+# blocked pair leaves for the ground model (logged).
+add_logged_run(terrain_ridge_screened_point ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} --gridstep 492 -o integrated/terrain_ridge_screened_point.csv)
+add_test(NAME terrain_ridge_screened_point_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} --gridstep 492 -D integrated/terrain_ridge_screened_point_dnl.csv -o integrated/terrain_ridge_screened_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_screened_plate ${TERRAIN_BASE} ${TERRAIN_RIDGE} ${TERRAIN_PLATE} ${SCREENING} --gridstep 492 -o integrated/terrain_ridge_screened_plate.csv)
+add_test(NAME terrain_ridge_screened_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} ${TERRAIN_PLATE} ${SCREENING} --gridstep 492 -D integrated/terrain_ridge_screened_plate_dnl.csv -o integrated/terrain_ridge_screened_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_screened_noground ${TERRAIN_BASE} ${TERRAIN_RIDGE} --no-ground_effect ${SCREENING} --gridstep 492 -o integrated/terrain_ridge_screened_noground.csv)
+add_test(NAME terrain_ridge_screened_noground_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-ground_effect ${SCREENING} --gridstep 492 -D integrated/terrain_ridge_screened_noground_dnl.csv -o integrated/terrain_ridge_screened_noground_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_screened_classes ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --observers_on_terrain ${SCREENING} --ground_classes tests/data/ground_classes_two.csv -b tests/data/coyle_heights_classes.csv -o integrated/terrain_ridge_screened_classes.csv)
+add_test(NAME terrain_ridge_screened_classes_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --ground_effect --impedance_model variable_porosity --flow_resistance 200 --observers_on_terrain ${SCREENING} --ground_classes tests/data/ground_classes_two.csv -b tests/data/coyle_heights_classes.csv -D integrated/terrain_ridge_screened_classes_dnl.csv -o integrated/terrain_ridge_screened_classes_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_screened_point terrain_ridge_screened_plate terrain_ridge_screened_noground terrain_ridge_screened_classes
+    PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: [1-9][0-9]* evaluations were screened")
+set_tests_properties(terrain_ridge_screened_point terrain_ridge_screened_point_marched terrain_ridge_screened_plate terrain_ridge_screened_plate_marched
+    terrain_ridge_screened_noground terrain_ridge_screened_noground_marched terrain_ridge_screened_classes terrain_ridge_screened_classes_marched
+    PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_ridge_runs)
+add_logged_run(terrain_ridge_screened_table ${TERRAIN_BASE} ${TERRAIN_RIDGE} ${TERRAIN_TABLE_GROUND} ${SCREENING} --gridstep 492 -o integrated/terrain_ridge_screened_table.csv)
+add_test(NAME terrain_ridge_screened_table_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} ${TERRAIN_TABLE_GROUND} ${SCREENING} --gridstep 492 -D integrated/terrain_ridge_screened_table_dnl.csv -o integrated/terrain_ridge_screened_table_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_screened_table PROPERTIES PASS_REGULAR_EXPRESSION " [1-9][0-9]* of the screened evaluations were not read from the propagation table")
+set_tests_properties(terrain_ridge_screened_table terrain_ridge_screened_table_marched PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" FIXTURES_SETUP terrain_ridge_runs)
+foreach(kind point plate noground classes table)
+  add_test(NAME terrain_ridge_screened_${kind}_windowed_is_exact COMMAND golden_compare integrated/terrain_ridge_screened_${kind}.csv integrated/terrain_ridge_screened_${kind}_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(terrain_ridge_screened_${kind}_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_ridge_runs)
+endforeach()
+# The windowed/marched pairs pass with the screening term left out of the bound, so a coarse
+# ridge run checks, from its log, that the term raises the bound in some band.
+# An observer file's own z, kept without --observers_on_terrain, is where the
+# microphone is evaluated, and so where its horizon is taken from: the same
+# observers 3000 ft above their surveyed ground see over the ridge, which on
+# the terrain screens 9 of them.
+add_logged_run(terrain_ridge_screened_file_z ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} -b tests/data/coyle_heights_aloft.csv -o integrated/terrain_ridge_screened_file_z.csv)
+set_tests_properties(terrain_ridge_screened_file_z PROPERTIES FIXTURES_REQUIRED terrain_file
+    PASS_REGULAR_EXPRESSION "--terrain_screening: 0 evaluations were screened")
+add_logged_run(terrain_ridge_screened_bound ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${SCREENING} --gridstep 1968 -o integrated/terrain_ridge_screened_bound.csv)
+set_tests_properties(terrain_ridge_screened_bound PROPERTIES FIXTURES_REQUIRED terrain_file
+    PASS_REGULAR_EXPRESSION "bound's screened term is above its ground term in [1-9][0-9]* of [0-9]+ bands")
+# The windowed/marched pairs compare one binary with itself, so the ridge runs are pinned (made by
+# the build that added --terrain_screening; regenerate only with a deliberate change).
+add_test(NAME terrain_ridge_screened_point_golden COMMAND golden_compare integrated/terrain_ridge_screened_point.csv golden/terrain_ridge_screened_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_ridge_screened_plate_golden COMMAND golden_compare integrated/terrain_ridge_screened_plate.csv golden/terrain_ridge_screened_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_screened_point_golden terrain_ridge_screened_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_ridge_runs)
+# --terrain_screening kirchhoff (src/screening.hpp; THEORY 6.4): a blocked pair keeps its own ground,
+# plate or table and loses a knife edge's Fresnel-Kirchhoff loss, at least 10 lg 4.  Where nothing is
+# blocked -- level terrain, the falling plane, the hills -- it is the unscreened run byte for byte.
+set(KIRCHHOFF --terrain_screening kirchhoff)
+add_logged_run(terrain_flat_point_kirchhoff ${TERRAIN_BASE} ${TERRAIN_FLAT} --ground_effect ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_flat_point_kirchhoff.csv)
+add_logged_run(terrain_flat_plate_kirchhoff ${TERRAIN_BASE} ${TERRAIN_FLAT} ${TERRAIN_PLATE} ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_flat_plate_kirchhoff.csv)
+add_logged_run(terrain_tilted_plate_kirchhoff ${TERRAIN_BASE} ${TERRAIN_TILTED} ${TERRAIN_PLATE} ${KIRCHHOFF} --gridstep 984 -o integrated/terrain_tilted_plate_kirchhoff.csv)
+add_logged_run(terrain_hills_point_kirchhoff ${TERRAIN_BASE} ${TERRAIN_HILLS} --ground_effect ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_hills_point_kirchhoff.csv)
+set_tests_properties(terrain_flat_point_kirchhoff terrain_flat_plate_kirchhoff terrain_tilted_plate_kirchhoff terrain_hills_point_kirchhoff
+    PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_kirchhoff_unscreened_runs
+    PASS_REGULAR_EXPRESSION "--terrain_screening: 0 evaluations were screened"
+    FAIL_REGULAR_EXPRESSION "--terrain_screening: [1-9];${LOGGED_RUN_FAILED}")
+add_test(NAME terrain_flat_point_kirchhoff_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_point_kirchhoff.csv integrated/terrain_flat_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_plate_kirchhoff_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_plate_kirchhoff.csv integrated/terrain_flat_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_tilted_plate_kirchhoff_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_tilted_plate_kirchhoff.csv integrated/terrain_tilted_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_kirchhoff_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_hills_point_kirchhoff.csv integrated/terrain_hills_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_point_kirchhoff_is_flat terrain_flat_plate_kirchhoff_is_flat terrain_tilted_plate_kirchhoff_is_unscreened terrain_hills_kirchhoff_is_unscreened
+    PROPERTIES FIXTURES_REQUIRED "terrain_kirchhoff_unscreened_runs;terrain_flat_runs;terrain_unscreened_runs;terrain_hills_runs")
+# Behind the ridge the peak search, with no bound term for the knife edge, equals the march: point
+# receivers, plates, no ground model and a propagation table, which a blocked pair keeps.
+add_logged_run(terrain_ridge_kirchhoff_point ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_ridge_kirchhoff_point.csv)
+add_test(NAME terrain_ridge_kirchhoff_point_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --ground_effect ${KIRCHHOFF} --gridstep 492 -D integrated/terrain_ridge_kirchhoff_point_dnl.csv -o integrated/terrain_ridge_kirchhoff_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_kirchhoff_plate ${TERRAIN_BASE} ${TERRAIN_RIDGE} ${TERRAIN_PLATE} ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_ridge_kirchhoff_plate.csv)
+add_test(NAME terrain_ridge_kirchhoff_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} ${TERRAIN_PLATE} ${KIRCHHOFF} --gridstep 492 -D integrated/terrain_ridge_kirchhoff_plate_dnl.csv -o integrated/terrain_ridge_kirchhoff_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_kirchhoff_noground ${TERRAIN_BASE} ${TERRAIN_RIDGE} --no-ground_effect ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_ridge_kirchhoff_noground.csv)
+add_test(NAME terrain_ridge_kirchhoff_noground_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-ground_effect ${KIRCHHOFF} --gridstep 492 -D integrated/terrain_ridge_kirchhoff_noground_dnl.csv -o integrated/terrain_ridge_kirchhoff_noground_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_kirchhoff_table ${TERRAIN_BASE} ${TERRAIN_RIDGE} ${TERRAIN_TABLE_GROUND} ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_ridge_kirchhoff_table.csv)
+add_test(NAME terrain_ridge_kirchhoff_table_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} ${TERRAIN_TABLE_GROUND} ${KIRCHHOFF} --gridstep 492 -D integrated/terrain_ridge_kirchhoff_table_dnl.csv -o integrated/terrain_ridge_kirchhoff_table_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_kirchhoff_point terrain_ridge_kirchhoff_plate terrain_ridge_kirchhoff_noground
+    PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: [1-9][0-9]* evaluations were screened")
+set_tests_properties(terrain_ridge_kirchhoff_table PROPERTIES PASS_REGULAR_EXPRESSION "The screened evaluations kept the propagation table")
+set_tests_properties(terrain_ridge_kirchhoff_point terrain_ridge_kirchhoff_point_marched terrain_ridge_kirchhoff_plate terrain_ridge_kirchhoff_plate_marched
+    terrain_ridge_kirchhoff_noground terrain_ridge_kirchhoff_noground_marched
+    PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_ridge_kirchhoff_runs)
+set_tests_properties(terrain_ridge_kirchhoff_table terrain_ridge_kirchhoff_table_marched PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" FIXTURES_SETUP terrain_ridge_kirchhoff_runs)
+foreach(kind point plate noground table)
+  add_test(NAME terrain_ridge_kirchhoff_${kind}_windowed_is_exact COMMAND golden_compare integrated/terrain_ridge_kirchhoff_${kind}.csv integrated/terrain_ridge_kirchhoff_${kind}_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(terrain_ridge_kirchhoff_${kind}_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_ridge_kirchhoff_runs)
+endforeach()
+# ... the knife edge acts (the ridge's plates differ from CNOSSOS's: golden_compare's mismatch is the
+# pass), and the runs are pinned (made by the build that added kirchhoff; regenerate only with a
+# deliberate change).
+add_test(NAME terrain_ridge_kirchhoff_is_not_cnossos COMMAND golden_compare integrated/terrain_ridge_kirchhoff_plate.csv integrated/terrain_ridge_screened_plate.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_kirchhoff_is_not_cnossos PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value" FIXTURES_REQUIRED "terrain_ridge_kirchhoff_runs;terrain_ridge_runs")
+add_test(NAME terrain_ridge_kirchhoff_point_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_point.csv golden/terrain_ridge_kirchhoff_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_ridge_kirchhoff_plate_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_plate.csv golden/terrain_ridge_kirchhoff_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_kirchhoff_point_golden terrain_ridge_kirchhoff_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_ridge_kirchhoff_runs)
+# The table's and the free field's call sites, each of which a windowed/marched pair passes without
+# the loss: pinned too (the table's looser, as it is built by the test run).
+add_test(NAME terrain_ridge_kirchhoff_noground_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_noground.csv golden/terrain_ridge_kirchhoff_noground.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_ridge_kirchhoff_table_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_table.csv golden/terrain_ridge_kirchhoff_table.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_kirchhoff_noground_golden terrain_ridge_kirchhoff_table_golden PROPERTIES FIXTURES_REQUIRED terrain_ridge_kirchhoff_runs)
+add_test(NAME terrain_screening_rejects_unknown COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --terrain_screening deygout -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_rejects_unknown PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: deygout not in")
+# Refusals.
+add_test(NAME terrain_screening_needs_terrain COMMAND niceops ${TERRAIN_DEMO} ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_needs_terrain PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening needs --terrain")
+add_test(NAME screening_min_height_needs_screening COMMAND niceops --screening_min_height 1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(screening_min_height_needs_screening PROPERTIES PASS_REGULAR_EXPRESSION "--screening_min_height is for --terrain_screening")
+add_test(NAME terrain_screening_needs_spectral COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-spectral --no-ground_effect ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_needs_spectral PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "--terrain_screening is per band, and the broadband path")
+add_test(NAME terrain_screening_needs_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 ${TERRAIN_RIDGE} ${SCREENING} --gridstep 4000 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_needs_spectra PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "--terrain_screening is per band, and databases/S-76D_M3.nod carries no per-band spectra")
+add_test(NAME terrain_screening_table_needs_ground COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-ground_effect --propagation_table tables/ground_model_test.nc ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_table_needs_ground PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "--terrain_screening cnossos with --propagation_table needs a ground model")

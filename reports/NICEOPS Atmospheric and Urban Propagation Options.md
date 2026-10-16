@@ -1,4 +1,4 @@
-# NICE-OPS: Atmospheric and Urban Propagation Options
+# NICEOPS: Atmospheric and Urban Propagation Options
 
 Sep 26, 2026 · @E G
 
@@ -10,7 +10,7 @@ Use tabulated curved-ray eigenrays for the atmosphere, per-receiver reciprocity 
 - **Cities:** per-receiver urban transfer tables indexed by arrival direction, built by tracing outward from each receiver (reciprocity).
 - **PE/FFP:** an in-house GFPE and FFP to validate shadow edges and inversions, and optionally to build offline tables at low elevation angles.
 
-The deciding factor is the ground. NICE-OPS already has a spherical-wave, finite-impedance ground model with boundary loss and turbulence coherence. No published Gaussian beam code keeps any of that: all use a plane-wave reflection coefficient or rigid ground.
+The deciding factor is the ground. NICEOPS already has a spherical-wave, finite-impedance ground model with boundary loss and turbulence coherence. No published Gaussian beam code keeps any of that: all use a plane-wave reflection coefficient or rigid ground.
 
 The refraction study behind AAM found that for elevated sources the main effect is the changed ground-incidence geometry, not focusing ([Plotkin et al. 2013](https://rosap.ntl.bts.gov/view/dot/12035)). Curved-ray geometry fed into the existing ground model keeps exactly that.
 
@@ -18,7 +18,7 @@ Start with layered absorption and a wind-corrected source state, then build the 
 
 ## What shaped the choice
 
-Four properties of NICE-OPS decide which methods fit: one propagation seam, a directivity lookup that refraction moves, shadow zones inside community-scale grids, and an atmosphere that can be tabulated.
+Four properties of NICEOPS decide which methods fit: one propagation seam, a directivity lookup that refraction moves, shadow zones inside community-scale grids, and an atmosphere that can be tabulated.
 
 ### One seam, five quantities
 
@@ -169,7 +169,7 @@ The biggest risk is not the method but the input: the near-ground gradient contr
 
 - **Input uncertainty dominates.** Equivalent-linear profiles deviated from PE by up to 10 dB at 500 to 2000 Hz ([van Maercke & Salomons 2009](https://pub.dega-akustik.de/NAG_DAGA_2009/data/articles/000250.pdf)). Scenario classes or ensembles are easier to defend than one deterministic profile.
 - **The culling bounds stop being bounds.** `DirectionBounds` and the spectral bounds assume straight-line spreading and the straight-line direction. Downward refraction and caustics add gain, so each table cell needs a maximum propagation gain and each urban receiver a maximum urban gain. The SEL window itself is safe: since `9d6e986` it runs first-to-last, so a shadow dip cannot truncate it.
-- **Sphere angle convention.** In wind, the wave normal and the ray direction differ by up to 1.7° at 10 m/s. NICE-OPS looks up the emission-time straight-line direction, which equals the wave normal only in still air. panam's hemigen function confirms the spheres use that same still-air, emission-time geometry, with azimuth taken from the ground-track heading. Under refraction the lookup key is therefore the eigenray's launch wave normal.
+- **Sphere angle convention.** In wind, the wave normal and the ray direction differ by up to 1.7° at 10 m/s. NICEOPS looks up the emission-time straight-line direction, which equals the wave normal only in still air. panam's hemigen function confirms the spheres use that same still-air, emission-time geometry, with azimuth taken from the ground-track heading. Under refraction the lookup key is therefore the eigenray's launch wave normal.
 - **Table discontinuities.** Shadow boundaries, caustics and changes in branch count make naive interpolation fail. Each branch needs a validity mask.
 - **Low rotor harmonics.** At 10 to 30 Hz, wavelengths are 11 to 34 m, at the edge of ray validity near the ground and around buildings.
 - **Facade scattering.** The specular-versus-diffuse assumption can flip the sign of the urban effect, and no rotorcraft data settle it.
@@ -207,8 +207,8 @@ That order follows what each step unlocks. The refactor makes every later model 
 ### Settle the conventions first
 
 - **Sphere angles: confirmed.** panam's `hemigen` (`flight_acoustics.py`) builds the spheres from the straight line between the emission-time position and the microphone, in still air, with azimuth measured from the ground-track heading. Under refraction the lookup key becomes the launch wave normal; the heading stays as it is.
-- **Advance ratio: open.** NICE-OPS takes mu from the track's ground-frame speed (`derive_flight_parameters` in `src/trajectory.cpp`). panam's `read_vehicle_data` takes the condition speeds from the test log's indicated-airspeed column, though a later variable calls them ground speed. Wind separates the two, so decide which the database means before wind enters.
-- **Depropagation must match propagation.** panam depropagates along straight rays through a homogeneous atmosphere, so any test-day refraction is baked into the spheres. Once NICE-OPS propagates through profiles, panam should depropagate with the same model and the test-day profiles.
+- **Advance ratio: open.** NICEOPS takes mu from the track's ground-frame speed (`derive_flight_parameters` in `src/trajectory.cpp`). panam's `read_vehicle_data` takes the condition speeds from the test log's indicated-airspeed column, though a later variable calls them ground speed. Wind separates the two, so decide which the database means before wind enters.
+- **Depropagation must match propagation.** panam depropagates along straight rays through a homogeneous atmosphere, so any test-day refraction is baked into the spheres. Once NICEOPS propagates through profiles, panam should depropagate with the same model and the test-day profiles.
 
 ### Steps
 

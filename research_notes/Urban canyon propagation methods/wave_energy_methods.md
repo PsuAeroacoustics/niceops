@@ -30,7 +30,7 @@ In this literature, the full-wave reference for canyons is almost always **2-D o
 
   So 3-D wave references are realistic to about 1-2 kHz. The 2-4 kHz bands that dominate A-weighted helicopter levels need 2.5-D/2-D wave methods or energy/geometric methods.
 - Fourier PSTD needs about 2 points per wavelength against FDTD's about 10. That is why the Chalmers/TU/e group chose it for 3-D courtyards; the requirement is consistent with openPSTD's design. Its weakness is complex boundaries, which the PSTD/DG hybrid fixes. This is general knowledge consistent with the cited descriptions; the points-per-wavelength figures are not quoted from a retrieved source.
-- For NICE-OPS, the cheapest high-fidelity *offline* reference is a 2-D (or 2.5-D via Duhamel's transform) FDTD, PSTD or BEM solve of a canyon cross-section under **plane-wave incidence**. A source 50-1500 m away is effectively a plane wave across a 10-30 m canyon. The solve should be tabulated against elevation angle, azimuth relative to the street axis, band, H/W, receiver position and facade impedance.
+- For NICEOPS, the cheapest high-fidelity *offline* reference is a 2-D (or 2.5-D via Duhamel's transform) FDTD, PSTD or BEM solve of a canyon cross-section under **plane-wave incidence**. A source 50-1500 m away is effectively a plane wave across a 10-30 m canyon. The solve should be tabulated against elevation angle, azimuth relative to the street axis, band, H/W, receiver position and facade impedance.
 
 ### Gaps
 - No retrieved source gives wall-clock or CPU-hour costs for a 3-D canyon FDTD, PSTD, BEM or FEM case at a stated frequency. The "~8000 CPU-h" figure for Dragna et al. 2022 in the task brief was **not verified**: the papers could not be fetched (HAL returned bot protection, AIP returned 403), and the press release gives no cost.
@@ -51,7 +51,7 @@ The canonical hybrid is Van Renterghem & Botteldooren's **one-way FDTD → GF-PE
 - **PE plus ESM over intermediate canyons.** Schiff, Hornikx & Forssén used the PE and ESM to characterize the insertion loss of intermediate canyons between source and receiver. The result can then be applied "without the overhead of a detailed numerical calculation". The study varied canyon/rooftop absorption, variable rooftop height, multiple canyons and correlated versus uncorrelated sources. — [Schiff, Hornikx & Forssén 2008, POMA](https://doi.org/10.1121/1.2988049); [Schiff et al. 2010, Appl. Acoust.](https://doi.org/10.1016/j.apacoust.2010.01.005)
 - **FDTD + diffusion.** Pasareanu et al. use a full-wave model (FDTD) near the source, where interference matters, and outside the cluttered region, where conditions are free-field-like. A diffusion model covers regions where diffusion conditions hold. They highlight diffraction near building edges as what pure diffusion models get wrong. — [Pasareanu, Burdisso & Remillieux 2018, JASA](https://doi.org/10.1121/1.5027506); [Pasareanu 2014, Virginia Tech dissertation](http://hdl.handle.net/10919/47601)
 - **PSTD/DG.** Coupled through a buffer zone, with DG near geometric boundaries and Fourier PSTD in the bulk; extended to the full wind vector in the LEE. — [Cosnefroy & Hornikx 2021](https://research.tue.nl/en/publications/23f8c2b2-509b-43c5-ba9a-ebed02f0a051)
-- **Sonic boom (2-D Euler FDTD, an elevated source and so the closest analogue to NICE-OPS).**
+- **Sonic boom (2-D Euler FDTD, an elevated source and so the closest analogue to NICEOPS).**
   - Isolated building: an illuminated zone with amplification in front and a large reduction in the shadow behind, with levels following a geometric analysis closely.
   - Street canyons: waveforms show extra facade and street reflections plus **low-frequency oscillations from local canyon modes**, governed by the aspect ratio H/W.
   - Wider streets relative to building height are less affected. Multiple buildings "don't affect boom loudness" but prolong ground-level signals.
@@ -60,8 +60,8 @@ The canonical hybrid is Van Renterghem & Botteldooren's **one-way FDTD → GF-PE
 - **Terrain (same group, 2-D Euler FDTD, profiles longer than 10 km).** Mild slopes change the noise level by less than 1 dB. Steep slopes give +3 dB at 1% of ground positions and up to 5-6 dB near depressions, from wavefront folding. — [Emmanuelli et al. 2023, JASA](https://doi.org/10.1121/10.0019938)
 
 ### Inferences
-- For an elevated source the natural coupling runs in **reverse** of Van Renterghem's. NICE-OPS's long-range model (straight or curved ray, or its split-step Padé PE) supplies the incident field at the canyon top. A local canyon solver, or a precomputed canyon transfer table, then carries it to the receiver. By reciprocity the two directions are equivalent: putting the source at the canyon receiver and recording on a vertical line above the roofs gives Van Renterghem's configuration exactly. NICE-OPS's PE could then carry the field from the canyon top toward the aircraft along each bearing.
-- For NICE-OPS's pair count (10⁸-10⁹), a direct hybrid per pair is out of the question. The hybrid belongs **offline**: tabulate a canyon insertion loss (re free field, per band) indexed by (elevation, relative azimuth, H/W, receiver depth and offset, facade class). Wei et al. (Section 3) took the same route for traffic noise, fitting closed forms to about 20,000 FDTD runs.
+- For an elevated source the natural coupling runs in **reverse** of Van Renterghem's. NICEOPS's long-range model (straight or curved ray, or its split-step Padé PE) supplies the incident field at the canyon top. A local canyon solver, or a precomputed canyon transfer table, then carries it to the receiver. By reciprocity the two directions are equivalent: putting the source at the canyon receiver and recording on a vertical line above the roofs gives Van Renterghem's configuration exactly. NICEOPS's PE could then carry the field from the canyon top toward the aircraft along each bearing.
+- For NICEOPS's pair count (10⁸-10⁹), a direct hybrid per pair is out of the question. The hybrid belongs **offline**: tabulate a canyon insertion loss (re free field, per band) indexed by (elevation, relative azimuth, H/W, receiver depth and offset, facade class). Wei et al. (Section 3) took the same route for traffic noise, fitting closed forms to about 20,000 FDTD runs.
 
 ### Gaps
 - No quantitative error (dB) of FDTD-PE against full FDTD was retrievable beyond "very good agreement". The figures could not be read from the extracted text.
@@ -164,7 +164,7 @@ Turbulence scattering puts a **floor** under shielded-side levels. It is what fi
 - **ESM with turbulence** gave "small increases" of shielded-side level. — [Ögren 2004](https://api.openalex.org/works?search=Prediction%20of%20Traffic%20Noise%20Shielding%20by%20City%20Street%20Canyons)
 
 ### Inferences
-- NICE-OPS already has a fitted shadow-zone scattering term (`ShadowScattering`, PE phase screens). The Forssén et al. 2014 parameterization is the published counterpart for a building-shielded receiver and has the same structure: single scattering plus saturation, then a canyon correction. It is a candidate for a "scattered floor" added in energy to the geometric or wave canyon level, consistent with how NICE-OPS already treats terrain shadow.
+- NICEOPS already has a fitted shadow-zone scattering term (`ShadowScattering`, PE phase screens). The Forssén et al. 2014 parameterization is the published counterpart for a building-shielded receiver and has the same structure: single scattering plus saturation, then a canyon correction. It is a candidate for a "scattered floor" added in energy to the geometric or wave canyon level, consistent with how NICEOPS already treats terrain shadow.
 - For helicopter SEL the scattered floor matters mainly when the canyon receiver is out of line of sight *and* the source is distant (low elevation). These are low-level portions of the event and are likely outside the 10-dB-down window, so the SEL effect may be small. That is unverified.
 
 ### Gaps
@@ -191,7 +191,7 @@ Below a few hundred hertz at full scale, a canyon behaves as an **open waveguide
 
 ### Inferences
 - **Cross-canyon modes.** For W = 10-20 m the first cross-canyon modes fall at c/(2W) ≈ 8.5-17 Hz, so rotor harmonics at 10-30 Hz excite the first one to three modes. A per-band ray or image model is not trustworthy there. The 10-30 Hz problem is cheap for a wave solver (λ/10 = 1-3 m cells), so a 2-D or even 3-D wave solution of the canyon at the lowest bands is affordable offline, and arguably as a reference for every canyon class. Above roughly 200-500 Hz, energy and geometric methods with diffuse tails become adequate, and wave methods expensive.
-- **A practical split for NICE-OPS** (inference):
+- **A practical split for NICEOPS** (inference):
   1. **Wave-based tables** (2-D/2.5-D FDTD, PSTD or BEM under plane-wave incidence) for bands up to about 500 Hz-1 kHz, tabulated by (elevation, relative azimuth, H/W, receiver position, facade class).
   2. **Image-source plus reverberant tail** (Kang/Thomas/Wei forms) or radiosity/diffusion above that.
   3. The **in-house PE** as the reference for the canyon-top incident field, particularly for low-elevation, refracted, long-range cases.

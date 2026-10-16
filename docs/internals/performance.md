@@ -377,6 +377,39 @@ matter how many terms are taken, so it cannot hold the 1e-9 dB pinning against p
 cutoff in range. Roughly 9% of the ground path, for the loss of the property that proves the
 port. Not worth it; do not re-derive it.
 
+### Terrain, ground classes and screening
+
+Ground classes (the maximum over the classes present) and screening (`screen_gain_bound`) each
+add a term to the peak search's bound, so each stays exact and evaluates a little more; a table
+read over terrain adds none, since its term is the table's largest value whatever the geometry.
+`--terrain_screening kirchhoff` adds none: its loss is at least 10 lg 4, so a blocked pair lies
+below its unscreened level, and behind the ridge it evaluates what the unscreened run does.
+None adds a march condition. The terrain runs (tables over terrain, screening) are timed
+in [ground.md](ground.md#how-the-plane-is-found-groundplanecache). What the bound costs there,
+in evaluated fraction on the full demo grid: a table over the hills nothing (98.89% against
+98.90%), screening 0.7 points on the hills, where nothing is screened, and 0.8 behind the ridge.
+
+**Ground classes**, on 14,400 1.2 m pole microphones at the demo grid's points (an observer file,
+since grid observers have no class), variable-porosity grass of 200 kPa·s/m², and Delany–Bazley
+concrete of 10,000 at every other microphone. 8 threads on an M4 Pro, asserts on, best of three,
+on a shared machine (load 10 to 31):
+
+| run | CPU | acoustic loop | evaluated | peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| all grass | 24.9 s | 3.10 s | 98.48% | 231 MiB |
+| half concrete | 24.9 s | 3.10 s | 98.57% | 242 MiB |
+| all grass, `--exact_ground` | 96.2 s | 12.0 s | 98.48% | 221 MiB |
+| half concrete, `--exact_ground` | 96.2 s | 12.0 s | 98.57% | 221 MiB |
+
+- **The per-observer admittance costs nothing measurable**: the loop time does not move.
+- **The bound over both classes** evaluates 0.09 points more, which is why one
+  `DirectionBounds` table serves every class ([ground.md](ground.md#receivers)).
+- **Each further table** is 641 angles × 147 ranges × 28 bands of floats, 10.6 MB, built in
+  0.07 s; peak RSS rose by 10.3 MiB. The run warns above 16 tables.
+- Grass microphones give the same bits in both runs, tabled or exact, as the windowed search's
+  exactness requires. The tables' accuracy is in
+  [FIDELITY](../FIDELITY.md#ground-classes).
+
 ## Measured and rejected optimizations
 
 ### Rejected
@@ -450,6 +483,141 @@ The numbers are here so they are not re-derived.
   with a constant, which saves more than sharing it could, saved 0.05 s of 3.14 (1.6%) on the
   broadband demo and nothing measurable on a spectral `--full_history` run: LTO already merges
   most of it.
+
+### The residue-series tables
+
+`--refraction` with a ground model builds V, the residue series across each band's shadow
+boundary (`ShadowTransition`), and `--shadow_model resolved` builds the cramped bands' table
+(`set_cramped_ground`), both from `upward_pressure` and `upward_pressure_heights` in
+`exact_solutions.cpp`. In the validation harness's wide study the cramped table was 75% of all
+NICEOPS CPU (884 resolved runs at 74 s each, against 0.3–4 s for every other option), and V
+about two thirds of every other refracting run. Profiled with `sample`, then taken, in order:
+
+| change | cramped table, 24 bands, `-j 1` |
+| --- | ---: |
+| before | 47.9 s |
+| each range summed for its own source height only (the table reads one of six) | 32.6 s |
+| a range's terms skipped once they have stayed under 1e-17 of its largest sixteen in a row, the last sixteen still taken for the tail test | 11.4 s |
+| `airy` near the negative real axis from one series: the connection formula's two expansions share it, since zeta(w^2 z) = -zeta(w z) | 8.6 s |
+| real arithmetic for the mode weights' divides and `upper`'s square root, magnitudes as sqrt(re^2 + im^2) (std::abs outside 1e-290..1e290), Newton's divide; Ai(b) reused for a source on the ground | 6.5 s |
+
+V for a flush plate (28 bands, `-j 1`, 329 m/s) went from 2.38 to 0.95 s and for a 1.2 m pole
+from 1.30 to 0.62 s with the same changes to `modal_sum`. Whole harness runs: an AS350 approach
+with `--shadow_model resolved` from 59 to 11 s at `-j 1` (setup 1.2 s at `-j 8`, from 8.1), and
+the same with `--refraction stratified` alone from 4.5 to 2.8 s.
+
+What it moved, measured: both runs' SEL, LAmax and every time history are byte-identical. In the
+stored (float) cramped table 5 of 112,606 values moved, by at most 7.6e-6 dB, and the NaN pattern
+is unchanged. V agrees within 2e-6 dB from xi = -1 on; its deep lit side moved up to 0.4 dB at
+the nodes that are rounding noise anyway ([refraction.md](refraction.md#shadowtransition-the-level-near-a-shadow-boundary)),
+as far as clang and GCC builds of the old code differ there. The skip rests on the terms' size
+being unimodal in the mode number at a fixed range (|weight| grows as e^{c y n^{1/3}}, H0
+decays as e^{-r Im kappa}, Im kappa growing as n^{2/3}), the same assumption that sets the
+mode count. Guarded by `near the negative real axis Ai is the connection formula's two
+expansions` and `the residue series over several source heights is each height's own`
+(`tests/test_pe_shadow.cpp`), and by every resolved and stratified CTest.
+
+Not taken:
+
+- **A lower mode cap.** 566 of 576 cramped calls reach the 12,000-mode cap, driven by a
+  near-source range that ends NaN. But 648 trusted ranges never go quiet within it and trusted
+  ranges converge as late as mode 11,968, so their values and trust depend on the full count.
+- **The zeros from their neighbors.** Seeding Newton from 2 t_{n-1} - t_{n-2} would skip
+  `seeded_zero`'s fixed-point iteration, about 13% of what is left, but moves every zero's last
+  bits, which reach V's lit side as above.
+- **The PE.** A propagation table's build is 96% `pade_step`, already interleaved and fused
+  (pe.md); the factorization's complex divides are the next 4%.
+
+### The propagation models, measured as a suite
+
+Twenty-two cases, every propagation model at both of its shapes of use: the validation
+harness's (one AS350 approach at Amedee, 46 flush plates, `-j 1`, histories written) and a
+footprint's (the demo track on a 41 x 41 grid, an eighth of the demo grid, `-j 8`), plus one PE
+table build. Each case was run with the build before and after, alternately, on the same machine
+at the same load, and every output compared. The harness's own record of what its CPU went on
+set the order: in the wide study `--shadow_model resolved` was 75% of all NICEOPS CPU, and
+every refracting option's setup most of the rest.
+
+| case | before, CPU | after | × | outputs |
+| --- | ---: | ---: | ---: | --- |
+| harness, `--shadow_model resolved` | 11.0 s | 1.38 s | 7.96 | identical |
+| harness, `--refraction linear` | 1.42 s | 0.42 s | 3.35 | identical |
+| harness, `--refraction stratified` | 2.54 s | 1.37 s | 1.86 | identical |
+| harness, plate / soft ground, no refraction | 0.47 / 0.41 s | 0.41 / 0.35 s | 1.15 | identical |
+| grid, duct with `--tunneling --skip_fill` | 1779 s | 586 s | 3.04 | within 3.5e-12 dB |
+| grid, `--shadow_model resolved` | 41.4 s | 31.7 s | 1.31 | identical |
+| grid, stratified in the duct | 94.2 s | 75.5 s | 1.25 | identical |
+| grid, `--scattering` | 10.9 s | 9.9 s | 1.10 | identical |
+| grid, stratified windy (point, plate) | 35.1, 28.7 s | 35.3, 27.6 s | 1.0 | identical |
+| grid, ground, exact ground, plate, linear, table, terrain, screening, broadband | | | 1.0 | identical |
+| PE table (8 bearings, 17 bands, 5 frequencies) | 116 s | 116 s | 1.0 | identical |
+
+What did it, each bit-identical but the first:
+
+- **The wave arrivals' band mean of Ai^2 is a table** in the band center's argument
+  ([refraction.md](refraction.md#wave-arrivals---tunneling-and---skip_fill)): seven complex Airy
+  evaluations per band per arrival had been half of a duct run with both options.
+- **The shadow-boundary tables are built when first wanted**
+  ([refraction.md](refraction.md#shadowtransition-the-level-near-a-shadow-boundary)): V whole,
+  the first time a ray nears a boundary or the bound asks; the cramped series a (band, s)
+  column at a time. A validation run marches every state, so builds no bound, and on the
+  approach measured no ray came near a boundary: it built neither, and 8.5 s of the resolved
+  run's 11 and 0.9 s of every other refracting run's went. Where they are built, the values are
+  the same. `apply` fetches the tables once a pair: fetched per band (twice, through `level`
+  and `plate_offset`) the `call_once` check cost a linear run 10%. And it places each band's s
+  among the table's nodes once (`s_place`), for V and its floor alike, with the per-band helpers
+  (`level_at`, `finish_level`, `plate_offset_in`) inline: a second log10 a band and the calls
+  out of line cost a stratified grid run 5–10% of its CPU.
+- **The layer walk** (`Path::between`, stratified.cpp) forms each level's sine once, as the top
+  of one layer and the bottom of the next, and looks up its ends' level and speed once a pair
+  (`Path::fixed`: the source, receiver and ground heights it walks between for every p, looked up
+  when the path is formed) rather than by a binary search and an interpolation at both ends of
+  every walk. 10–20% in a duct, where walks are long; nothing measurable on the windy profile's
+  17 levels. A turning height moves with p, so it is looked up when asked, not kept.
+- **`--scattering`'s level is summed from parts formed once**: the run's and band's in
+  `set_scattering`, the pair's range and height before the band loop, in the original
+  expression's order so its multiply-adds fuse the same way; and 10 lg of V's largest power
+  ratio once per band. `ShadowScattering::level` is the same parts summed, so the two cannot
+  drift apart.
+- **Time and band histories are formatted by `std::to_chars`** (`append_number`), the
+  standard's definition of the %.17g (and %.10g) the streams wrote, with every NaN written
+  "nan" as the streams do. Writing 46 histories of 4780 rows was half of a plate run's loop.
+
+Tried and not taken:
+
+- **A warm start for the stratified eigenray solve from the previous state's root**: 2–4% on
+  the windy grid, with outputs moved up to 1.6e-6 dB, and the result would depend on the order
+  in which the windowed search evaluates states, so windowed and marched runs would stop
+  agreeing to the bit. The linear model's guess is already close.
+- **Secant-guided bracketing and Anderson–Björck in place of Illinois** in `solve`: 1.5%, and
+  outputs moved up to 1e-4 dB: some pairs are sensitive to which root within the tolerance
+  comes back.
+- **A tighter bound for the windowed search.** Every grid case evaluates 97–99% of its pairs;
+  the outermost 10 dB-down window covers most of the demo track for most observers, and even
+  the broadband sphere bound alone (no ground term) evaluates 94%.
+- **The PE table build** is 96% `pade_step`, already interleaved and fused (pe.md): cost goes
+  as f^2 through the grid and the step, both fixed by accuracy.
+- **The stratified solve itself** is about 11 range evaluations a solve (2 at the family's
+  ends, 3.5 bracketing the guess, 5.3 iterating) and 30 a pair, each a walk whose inner loop is
+  a square root, a divide and a dozen other instructions a layer. Batching two p values a walk
+  across a vector's lanes is what is left, for the ends and the tube's two points at most.
+
+### Interpolated rays
+
+`--ray_stride` (4 by default; [refraction.md](refraction.md#interpolated-states---ray_stride)) on
+the same suite, CPU against every state solved, same build, alternately:
+
+| case | stride 1 | stride 4 | stride 8 |
+| --- | ---: | ---: | ---: |
+| harness, `--refraction stratified` (46 plates, `-j 1`) | 1.37 s | 0.77 s | 0.77 s |
+| harness, `--shadow_model resolved` | 1.38 s | | 0.77 s |
+| grid, `example_windy.csv`, point receivers | 35 s | 17.6 s | 16.1 s |
+| grid, windy, flush plates | 27.6 s | | 18.3 s |
+| grid, windy, `--shadow_model resolved` | 31.7 s | | 15.8 s |
+| grid, `example_inversion.csv` duct | 75.5 s | 29.9 s | 27.7 s |
+| grid, duct, `--tunneling --skip_fill` | 586 s | | 542 s |
+
+Past stride 4 the solves are a small part and the rest of the evaluation is what is left.
 
 ### Taken, each exact
 
