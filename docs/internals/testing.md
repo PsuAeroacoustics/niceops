@@ -70,6 +70,8 @@ condition-bin bounds, frame alignment and common prediction coverage. It is not 
 | `urban_canyon.csv` | C++ build | `urban_table_canyon_golden` (1e-6 dB abs.) | `urban_table_canyon` | copy the run's output |
 | `urban_plate.csv` | C++ build | `urban_table_plate_golden` (1e-6 dB abs.) | `urban_table_plate` | copy the run's output |
 | `urban_wave.csv` | C++ build | `urban_table_wave_golden` (1e-5 dB abs.) | `urban_table_wave` | copy the run's output |
+| `urban_buildings.csv` | C++ build | `urban_buildings_golden` (1e-6 dB abs.) | `urban_buildings` | copy the run's output |
+| `urban_buildings_plate.csv` | C++ build | `urban_buildings_plate_golden` (1e-6 dB abs.) | `urban_buildings_plate` | copy the run's output |
 
 All files are in `golden/`; each producing run writes `integrated/<name>.csv` unless the table
 says otherwise. To regenerate a C++ golden, run its comparison with the build that carries the
@@ -152,6 +154,11 @@ Notes on each:
 - **`urban_wave.csv`** was made by the build that added `--wave_below`: the same microphones with
   the flush canyons' bands below 80 Hz from the wave solver (10 points per wavelength), blended
   through 125 Hz. Its tolerance is looser, the FDTD's round-off being compiler-dependent.
+- **`urban_buildings{,_plate}.csv`** were made by the build that added `--buildings`: the same
+  seven microphones among eleven LoD1 buildings (`tests/data/urban_buildings.csv`), as poles and
+  as plates. They pin the builder's call site: passing the tool's facades as no `run_facades`
+  (the run's first-order reflections then counted twice) fails both, with every windowed/marched
+  pair green.
 
 ## `self_test`
 
@@ -216,6 +223,8 @@ CTests are defined in `CMakeLists.txt`.
 | `urban_table_bump_windowed_is_exact` | CTest | the urban table's largest gain left out of `path_gains`. The canyon tables' own gains, at most +3 dB, sit inside the bound's slack, so the canyon and plate pairs pass with it; the bump table adds +25 dB at 3 to 20 degrees of elevation. The first-order images left out of `urban_bound_geometry` pass every CTest, including 150 random tall canyons near the end of the approach, with and without the ground: the table's own gain and the slack cover reflections leaving 10 to 40 degrees from the direct path on this database. It is kept for directional spheres and guarded by reading |
 | `urban_table_plate_golden` | CTest | an image path's separation not mirrored back before the plate reads its azimuth |
 | `urban_table_canyon_golden`, `urban_table_plate_golden` | CTest | a first-order reflection evaluated with the ground model whatever its floor partner (`first_order_floor_partner` skipped) |
+| `urban_buildings_golden`, `urban_buildings_plate_golden` | CTest | the builder's table keeping the first-order reflections the run evaluates (no `run_facades`), or their floor partners; the second also fails `[building_paths]` |
+| `the beams find every diffracted ray the unpruned search does` | `test_building_paths.cpp` | `clip_to_beam` with the window's far side reversed, or clipping 1 mm short of its boundaries |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.

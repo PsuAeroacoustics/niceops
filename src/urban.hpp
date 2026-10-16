@@ -32,6 +32,7 @@
 // This header is independent of Database, so the same geometry can serve the
 // table builder (tools/urban_table.cpp) and, later, panam.
 
+#include <complex>
 #include <cstddef>
 #include <map>
 #include <string>
@@ -174,6 +175,12 @@ void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const doubl
         const double* reflection_b, double floor_reflection, const std::vector<double>& bands, double sound_speed,
         bool diffraction, double* out);
 
+// The band average of |sum_i A_i exp(i k L_i)|^2 over k in [k1, k2], for
+// rays of complex amplitude A_i and optical length L_i sorted by length,
+// summed pair by pair (THEORY 6.5): the urban tables' coherent sum.
+double band_averaged_energy(const std::vector<std::complex<double>>& amplitude, const std::vector<double>& length,
+        double k1, double k2);
+
 // The compass bearing (degrees, toward) and elevation (degrees above the
 // horizontal) of a local-frame direction, for a run whose local +x points
 // along compass bearing `frame_bearing`.
@@ -184,6 +191,10 @@ struct CompassDirection
 };
 
 CompassDirection compass_direction(const Vec3& local, double frame_bearing);
+
+// The unit local-frame direction of a compass bearing and elevation (degrees):
+// compass_direction's inverse.
+Vec3 local_direction(double azimuth, double elevation, double frame_bearing);
 
 // The lowest gain a builder writes, dB: a direction no path reaches (the
 // canyon with its diffraction left out) is silent, which as a level is minus

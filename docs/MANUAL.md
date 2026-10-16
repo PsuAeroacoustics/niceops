@@ -1045,11 +1045,13 @@ path and the street's further reflections. Each first-order facade reflection is
 path of its own, with the sphere read in the direction the reflected sound leaves the rotor, and
 the paths are summed in energy. Microphones without a table are evaluated as without one.
 
-- **Building one.** [`niceops_urban_table`](#niceops_urban_table) builds tables for microphones in
-  ideal street canyons: two long parallel walls, by the street's bearing, width, the microphone's
-  offset and the walls' heights. A row of width 0 is an open microphone, 0 dB with no facades.
-  Above a few hundred hertz the table comes from rays; below, with `--wave_below`, from the wave
-  equation, which a street only a few wavelengths wide needs.
+- **Building one.** [`niceops_urban_table`](#niceops_urban_table) builds tables two ways. For
+  microphones in ideal street canyons, two long parallel walls, it takes the street's bearing,
+  width, the microphone's offset and the walls' heights; a row of width 0 is an open microphone,
+  0 dB with no facades. Above a few hundred hertz that table comes from rays; below, with
+  `--wave_below`, from the wave equation, which a street only a few wavelengths wide needs. For
+  microphones among real buildings it takes their footprints and roof heights (LoD1) and traces
+  the rays among them.
 - **Receivers are matched by position**, to a millimeter: a receiver is a microphone (an
   observer raised by its height) in the run's local frame. Build the table from the run's own
   observer file. A table none of whose receivers is in the run is refused; receivers the run does
@@ -1063,11 +1065,13 @@ the paths are summed in energy. Microphones without a table are evaluated as wit
   reflection often arrives where the direct sound is blocked. The table assumes hard pavement
   unless built with `--floor_absorption`; put urban microphones on a hard ground class
   ([Mixed ground](#mixed-ground)) so the open-ground prediction it scales is a street's.
-- **What the canyon model holds and leaves out.** The walls and floor reflect specularly and the
-  roof edges diffract, all summed with their phases so that the field stays continuous where a
-  reflection or the direct sound is cut off. Diffraction from one roof edge to the other,
-  diffuse reflection, the street's ends and turbulence in the shadows are not modeled, nor are
-  the low-frequency wave effects unless the table has a wave band.
+- **What the models hold and leave out.** The walls and floor reflect specularly and the
+  building edges diffract, all summed with their phases so that the field stays continuous where a
+  reflection or the direct sound is cut off. Among buildings, the roof edges and the buildings'
+  convex corners diffract, and a diffracted ray may reflect in the facades on its way to the
+  microphone. Diffraction at two edges in turn, diffuse reflection, roofs as reflectors,
+  an ideal street's ends and turbulence in the shadows are not modeled, nor are the
+  low-frequency wave effects unless the table has a wave band (ideal canyons only).
 - **Not with** `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`.
 
 A microphone in a street costs about one extra evaluation per reflecting facade.
@@ -1637,9 +1641,10 @@ Both commands take milliseconds to a second.
 
 ### `niceops_urban_table`
 
-Builds an `--urban_table` ([Urban receivers](#urban-receivers)) for microphones in ideal street
-canyons, one per row of a CSV read by column name. Lengths are in `--units`; a column may name
-its unit (`x_ft`, `height_m`), which must then be `--units`.
+Builds an `--urban_table` ([Urban receivers](#urban-receivers)), either for microphones in ideal
+street canyons (`--canyons`) or for microphones among LoD1 buildings (`--buildings` with
+`--receivers`, below). Each file is a CSV read by column name. Lengths are in `--units`; a column
+may name its unit (`x_ft`, `height_m`), which must then be `--units`.
 
 ```sh
 niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_factor.nod \
@@ -1657,7 +1662,7 @@ niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_f
 
 | Option | Meaning |
 | --- | --- |
-| `--canyons` | The CSV above. Required. |
+| `--canyons` | The CSV above. Either this or `--buildings`. |
 | `--database`, `--bands` | Band centers from a database, or given. |
 | `--azimuths` | Azimuths evenly over 360°. Default 72. |
 | `--elevations` | Elevations, degrees. Default 0 to 30 by 1.5, then 35 to 90 by 5. |
@@ -1670,7 +1675,7 @@ niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_f
 | `--wave_below` | Solve each canyon with walls of equal height by the wave equation and use its table for the bands centered at or below this frequency, Hz. Default 0, none. |
 | `--wave_blend` | Bands above `--wave_below` over which the wave table fades into the geometric one. Default 2. |
 | `--wave_ppw` | The wave solver's grid points per wavelength. Default 15. |
-| `-j`, `--threads` | Canyons solved at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
+| `-j`, `--threads` | Canyons solved at once, or a receiver's directions shared out. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`; the table to write (SI). |
 
 **The wave band.** Below a few hundred hertz a street is a few wavelengths wide, and its
@@ -1683,6 +1688,35 @@ absorption: a rigid canyon rings for seconds, and a warning says when a canyon h
 when its solution stopped. Each doubling of the frequency costs about eight times as much: with
 the default blend, `--wave_below 400` solves each canyon to 707 Hz, about a minute at 15 points per
 wavelength, and canyons are solved several at a time.
+
+**Buildings.** `--buildings` gives the buildings as footprints extruded to flat roofs, one row
+per footprint vertex; `--receivers` gives the microphones, with the run's observer-file columns
+(`x`, `y`, `z`, `height`; build from the run's own observer file). The buildings stand on the
+ground at each receiver's `z`.
+
+```sh
+niceops_urban_table --buildings district.csv --receivers observers.csv \
+    --database databases/B407_fixed_load_factor.nod --frame_bearing 210 -o tables/district.nc
+```
+
+| Column of `--buildings` | Meaning |
+| --- | --- |
+| `building` | An id. A building's rows come together, its vertices in order around it, either way. |
+| `x`, `y` | The vertex, in the run's local frame. |
+| `top` | The roof above the ground, the same on each of the building's rows. |
+| `absorption` | Optional: its walls' energy absorption coefficient, every band, the same on each of its rows. Default `--absorption`. |
+
+| Option | Meaning |
+| --- | --- |
+| `--max_order` | Facade reflections on a ray from the source, at most. Default 64: bouncing up a street is cheap, and grazing directions need it. |
+| `--max_diffracted_order` | Facade reflections on a ray after an edge diffracts it, at most. Default 6. |
+| `--radius` | The edges, and the facades a diffracted ray reflects in, within this of a microphone. Default 150 m. |
+| `--facade_radius` | The facades within this of a microphone, facing it, are written for the run's first-order reflections. Default 100 m. |
+
+A microphone inside a footprint is refused, as is `--wave_below`. A table for a street
+microphone among a hundred blocks takes a few seconds per receiver at the defaults; the time
+grows about 1.7-fold with each further order of diffracted reflection
+([FIDELITY](FIDELITY.md#buildings)), and a warning says if a receiver's search was cut short.
 
 ### `niceops_pe_compare`
 

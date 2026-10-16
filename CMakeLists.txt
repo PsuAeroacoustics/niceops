@@ -194,6 +194,8 @@ add_library(niceops_core STATIC
   src/urban.cpp
   src/canyon_wave.cpp
   src/wedge.cpp
+  src/buildings.cpp
+  src/building_paths.cpp
   src/predicates.cpp
   src/delaunay.cpp
   # interpolator.cpp was its own library in the D era, to wall off CGAL's heavy
@@ -277,6 +279,8 @@ add_executable(niceops_unit_tests
   tests/test_urban.cpp
   tests/test_canyon_wave.cpp
   tests/test_wedge.cpp
+  tests/test_buildings.cpp
+  tests/test_building_paths.cpp
   tests/test_atmosphere.cpp
   tests/test_atmosphere_profile.cpp
   tests/test_atmosphere_builder.cpp
@@ -1116,6 +1120,31 @@ set_tests_properties(urban_table_wave urban_table_wave_marched PROPERTIES FIXTUR
 add_test(NAME urban_table_wave_windowed_is_exact COMMAND golden_compare integrated/urban_wave.csv integrated/urban_wave_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME urban_table_wave_golden COMMAND golden_compare integrated/urban_wave.csv golden/urban_wave.csv 1e-5 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_table_wave_windowed_is_exact urban_table_wave_golden PROPERTIES FIXTURES_REQUIRED urban_table_wave_runs)
+# LoD1 buildings (--buildings, src/building_paths): the same seven microphones among eleven buildings
+# (tests/data/urban_buildings.csv) -- a street, an L's corner, an intersection, a wall beside a flush
+# microphone, an open one, an alley and a building between a pole and the track -- as poles and as
+# plates.  Each windowed run equals its march, and both are pinned (golden/urban_buildings.csv,
+# golden/urban_buildings_plate.csv, made by the build that added --buildings).
+add_test(NAME urban_buildings_build COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_observers.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 -j 2 -o tables/urban_buildings_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_build PROPERTIES FIXTURES_SETUP urban_buildings_file)
+add_test(NAME urban_buildings COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_buildings_test.nc -o integrated/urban_buildings.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_marched COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_buildings_test.nc -D integrated/urban_buildings_dnl.csv -o integrated/urban_buildings_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_plate COMMAND ${URBAN_RUN} ${URBAN_PLATE} --urban_table tables/urban_buildings_test.nc -o integrated/urban_buildings_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_plate_marched COMMAND ${URBAN_RUN} ${URBAN_PLATE} --urban_table tables/urban_buildings_test.nc -D integrated/urban_buildings_plate_dnl.csv -o integrated/urban_buildings_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings urban_buildings_marched urban_buildings_plate urban_buildings_plate_marched PROPERTIES FIXTURES_REQUIRED urban_buildings_file FIXTURES_SETUP urban_buildings_runs)
+add_test(NAME urban_buildings_windowed_is_exact COMMAND golden_compare integrated/urban_buildings.csv integrated/urban_buildings_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_plate_windowed_is_exact COMMAND golden_compare integrated/urban_buildings_plate.csv integrated/urban_buildings_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_golden COMMAND golden_compare integrated/urban_buildings.csv golden/urban_buildings.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_plate_golden COMMAND golden_compare integrated/urban_buildings_plate.csv golden/urban_buildings_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_windowed_is_exact urban_buildings_plate_windowed_is_exact urban_buildings_golden urban_buildings_plate_golden PROPERTIES FIXTURES_REQUIRED urban_buildings_runs)
+# The builder refuses a microphone inside a building, the wave band with buildings, and buildings
+# without receivers.
+add_test(NAME urban_buildings_refuses_inside COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_inside.csv --bands 1000 --frame_bearing 210 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "row 2: the microphone stands inside building 8")
+add_test(NAME urban_buildings_refuses_wave COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_observers.csv --bands 50 63 --wave_below 63 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_refuses_wave PROPERTIES PASS_REGULAR_EXPRESSION "--wave_below solves ideal canyons only, not --buildings")
+add_test(NAME urban_buildings_needs_receivers COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --bands 1000 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_needs_receivers PROPERTIES PASS_REGULAR_EXPRESSION "--receivers goes with --buildings, and --buildings needs it")
 # Refusals: a frame other than the table's, a run none of whose microphones it holds, the options
 # stage 1 does not combine with, and a builder column in the wrong unit.
 add_test(NAME urban_table_refuses_another_frame COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv -b tests/data/urban_observers.csv --urban_table tables/urban_open_test.nc -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

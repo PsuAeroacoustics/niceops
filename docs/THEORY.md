@@ -803,8 +803,8 @@ partner, if it arrives some other way, is the table's. A plate microphone (§6.2
 and takes the azimuth of the arrival as it reaches the microphone, the line's horizontal direction
 mirrored back.
 
-**The ideal canyon.** The tables `niceops_urban_table` builds are those of an ideal street canyon
-[67]: two parallel walls of infinite length a width $W$ apart, with heights $H_A$ and $H_B$ above
+**The ideal canyon.** The tables `niceops_urban_table --canyons` builds are those of an ideal street
+canyon [67]: two parallel walls of infinite length a width $W$ apart, with heights $H_A$ and $H_B$ above
 the floor, and the microphone $y_r$ from wall A at height $z_r$. Each entry is for a plane wave,
 the source being far compared with the street. Let the arrival direction (toward the source) have
 components $u_c$ across the canyon, positive toward wall B, and $u_z$ upward. A ray traced back
@@ -867,6 +867,37 @@ Left out: diffraction from one edge to the other and of the reflected rays at a 
 reflection, the canyon's ends, turbulent scattering into the shielded directions, and every wave
 effect below the frequencies where the street is several wavelengths wide, which the wave solution
 supplies (§6.6). A microphone above both walls, or a direction along the axis, gives $T = 1$.
+
+**Buildings.** Among LoD1 buildings (`niceops_urban_table --buildings`), footprints extruded from
+the floor to flat roofs, the table is the same coherent ratio over the rays the buildings give. A
+facade is vertical, so a reflection keeps a ray's vertical component and mirrors its horizontal
+one. A specular ray, traced back from the microphone or from $M_f$ through the floor's mirror world
+(every building standing from $-H$ to $H$), therefore leaves along one of the directions that
+reflections in the facades' orientations make of $\hat{\mathbf u}$, and is kept when it escapes along
+$\hat{\mathbf u}$. Two reflections in parallel facades cancel, so the candidates are counted in
+changes of orientation (four on a street grid) while a ray may bounce many times up a street.
+
+Every convex edge diffracts: each roof edge ($n = 3/2$) and each convex corner,
+$n = 2 - \alpha/\pi$ for the footprint's interior angle $\alpha$. A wave arriving at the angle
+$\beta_0$ to an edge of unit direction $\hat{\mathbf e}$ from $\mathbf E_0$ is diffracted onto Keller's
+cone, at the same angle [68], so the ray to a target $\mathbf T$ leaves from
+
+$$
+\mathbf Q = \mathbf E_0 + \hat{\mathbf e}\left[(\mathbf T - \mathbf E_0)\cdot\hat{\mathbf e} + \frac{(\hat{\mathbf u}\cdot\hat{\mathbf e})\,\rho_\perp}{\sin\beta_0}\right],
+$$
+
+$\rho_\perp$ being the target's distance from the edge's line; a $\mathbf Q$ off the edge drops the
+ray. The field is the wedge's in the plane normal to the edge, at the wavenumber and distance
+projected into it, $D(\theta, \theta_0)$ at $k\sin\beta_0$ and $r = s\sin\beta_0$ over
+$\sqrt{s\sin\beta_0}$ for the distance $s = |\mathbf T - \mathbf Q|$, which for a plane wave is the
+oblique-incidence form [69] with $L = s\sin^2\beta_0$. The targets are the microphone, $M_f$ and
+their images in the facades within a radius. The images are found by beam tracing in plan view:
+each carries the part of its last facade through which the microphone can be reached, a further
+facade counts only where it lies in that beam, and an edge only where it crosses it. Every
+candidate is then tested exactly in three dimensions: within each facade it reflects in, from in
+front, with no leg through a building. Among buildings the rays leave out, beyond the canyon's
+list: diffraction at two edges in turn, an edge lit only by a reflected wave or off the floor, a
+diffraction point off the end of its edge (the corner's own diffraction), and roofs as reflectors.
 
 **Separating the paths.** A table keyed on the arrival direction alone assumes every path leaves
 the rotor in the direct path's direction at the direct path's range. Close to the buildings a

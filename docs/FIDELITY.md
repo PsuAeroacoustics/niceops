@@ -814,6 +814,48 @@ at most 0.08 dB with `--wave_below 400`, the wave solution and the diffracting g
 agreeing across the crossover, and by under 0.03 dB with `--wave_below 80`, where A-weighting
 leaves little.
 
+### Buildings
+
+The general builder (`src/building_paths`, `tests/test_building_paths.cpp`) is checked against the
+ideal canyon and against the wedge, and its pruning against itself:
+
+- **The ideal canyon, from two buildings 40 km long.** With diffraction off, the specular table
+  equals the canyon's to 1e-12 (relative) for three canyons over 48 azimuths and 6 elevations;
+  with it on, to 1e-9 dB in three bands over 54 directions, through 40 reflections either way.
+  `building_gains` equals `ideal_canyon_gains` through the compass mapping to 1e-9 dB.
+- **Oblique incidence.** At a roof edge and at a vertical corner, each a right-angled wedge, the
+  field from the edge's own rays equals the 2-D wedge's at k sin(beta0) to 1e-9 (relative), for
+  three microphones and 28 directions each.
+- **The beams lose nothing.** In a district of ten buildings, one of them skewed, the rays found
+  with and without beam pruning, to three diffracted reflections, are the same rays (64
+  directions, three microphones).
+
+Convergence and cost on a synthetic district: 100 blocks 60 m square with roofs from 10 to 40 m,
+streets 20 m wide, every facade reflecting 0.9 and the floor rigid, the microphone 1.5 m up in mid
+street; 72 by 33 directions, three bands, one thread. The last column is the 95th percentile of
+the change from the most thorough table, in the cells within 10 dB of open ground:
+
+| Specular / diffracted reflections | Images | Time | Energy mean | p95 change |
+| --- | --- | --- | --- | --- |
+| 8 / 2 | 63 | 0.40 s | −0.67 dB | 13.9 dB |
+| 64 / 2 | 63 | 0.41 s | −0.46 dB | 3.4 dB |
+| 64 / 4 | 513 | 1.07 s | −0.36 dB | 1.4 dB |
+| 64 / 6 (default) | 2763 | 2.82 s | −0.34 dB | 0.52 dB |
+| 64 / 7 | 5969 | 4.67 s | −0.34 dB | 0.26 dB |
+| 64 / 9 | 25597 | 13.9 s | −0.34 dB | (reference) |
+
+Grazing directions need the specular bounces: a ray at 1.5 degrees climbs half a metre per
+crossing of a 20 m street. Walls this reflective are the slow case; the energy mean has settled
+by four diffracted reflections. Beam pruning made a 27-band table with three diffracted
+reflections 25 times faster, 44 s to 1.8 s, with the same rays.
+
+On the demo track, the seven test microphones among eleven buildings
+(`tests/data/urban_buildings.csv`), SEL against open ground: −2.09 dB in a street, +0.01 at an
+L-shaped building's corner, −1.50 at an intersection, +1.39 beside a tall wall (+1.35 as a
+plate), 0.00 in the open, −2.13 in an alley (−2.06 as a plate) and −7.25 behind a building. No
+three-dimensional wave solution or measurement has checked the builder yet: that is stage 4 of
+the plan and the Drone DigiCity data.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and

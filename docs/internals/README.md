@@ -45,7 +45,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind`, the profile builder | `atmosphere`, `propagation.hpp`, `atmosphere_profile`, `atmosphere_builder` | [atmosphere.md](atmosphere.md) |
 | `--refraction linear` / `stratified`, shadow zones, `ShadowTransition`, ducts, `--tunneling` | `refraction`, `stratified`, `airy` | [refraction.md](refraction.md) |
 | Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `tools/` | [pe.md](pe.md) |
-| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening`, `--urban_table` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `urban`, `wedge`, `canyon_wave`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
+| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening`, `--urban_table` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `urban`, `wedge`, `canyon_wave`, `buildings`, `building_paths`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
 | EPNL, reception-time band frames, LAmax/NAx/TA, DNL/Lden/CNEL, C-SEL | `pnl`, `band_frames`, `util/time_weighting.hpp` | [metrics.md](metrics.md) |
 | AC and geodetic tracks, smoothing spline, hover nose, lateral subtracks, `--nose`, `--speed_reference`, `niceops_procedure` | `trajectory`, `geodetic`, `smoothing_spline`, `util/csv.hpp`, `procedure`, `state_condition`, `tools/procedure.cpp` | [trajectory.md](trajectory.md) |
 | `--units`, input checking, the operations file (`--operations`) | `run()` in `niceops.cpp`, the readers, `operations` | [inputs.md](inputs.md) |
@@ -90,7 +90,7 @@ The C++ tools in `tools/` are built alongside `niceops` and link `niceops_core`:
 | Executable | Source | Purpose |
 | --- | --- | --- |
 | `niceops_propagation_table` | `tools/propagation_table.cpp` | Builds `--propagation_table` files, by the PE (`--method pe`, the default) or by straight rays with the ground model (`--method ground_model`). |
-| `niceops_urban_table` | `tools/urban_table.cpp` | Builds `--urban_table` files for microphones in ideal street canyons. |
+| `niceops_urban_table` | `tools/urban_table.cpp` | Builds `--urban_table` files for microphones in ideal street canyons or among LoD1 buildings. |
 | `niceops_pe_compare` | `tools/pe_compare.cpp` | The refraction models against the parabolic equation on one path. |
 | `niceops_pe_field` | `tools/pe_field.cpp` | The PE's whole field on one vertical plane, for plotting. |
 | `niceops_ray_geometry` | `tools/ray_geometry.cpp` | The refracted ray's geometry for a batch of source–receiver pairs, so ground models outside `niceops` can be evaluated on the same rays. |

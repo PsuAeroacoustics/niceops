@@ -1,0 +1,282 @@
+#include "buildings.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <string>
+
+#include "util/constants.hpp"
+
+namespace niceops {
+
+namespace {
+
+double cross2(double ax, double ay, double bx, double by)
+{
+    return ax * by - ay * bx;
+}
+
+// Whether the closed segments p1-p2 and q1-q2 meet.
+bool segments_meet(double p1x, double p1y, double p2x, double p2y, double q1x, double q1y, double q2x, double q2y)
+{
+    const double d1 = cross2(q2x - q1x, q2y - q1y, p1x - q1x, p1y - q1y);
+    const double d2 = cross2(q2x - q1x, q2y - q1y, p2x - q1x, p2y - q1y);
+    const double d3 = cross2(p2x - p1x, p2y - p1y, q1x - p1x, q1y - p1y);
+    const double d4 = cross2(p2x - p1x, p2y - p1y, q2x - p1x, q2y - p1y);
+    if (((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0)))
+        return true;
+    auto on = [](double ax, double ay, double bx, double by, double px, double py, double d) {
+        return d == 0.0 && std::min(ax, bx) <= px && px <= std::max(ax, bx) && std::min(ay, by) <= py
+                && py <= std::max(ay, by);
+    };
+    return on(q1x, q1y, q2x, q2y, p1x, p1y, d1) || on(q1x, q1y, q2x, q2y, p2x, p2y, d2)
+            || on(p1x, p1y, p2x, p2y, q1x, q1y, d3) || on(p1x, p1y, p2x, p2y, q2x, q2y, d4);
+}
+
+double distance_to_side(double px, double py, double ax, double ay, double bx, double by)
+{
+    const double dx = bx - ax, dy = by - ay;
+    const double t = std::clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0.0, 1.0);
+    return std::hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+} // namespace
+
+double Edge::angle(const Vec3& v) const
+{
+    double theta = std::atan2(v.dot(air), v.dot(face0));
+    if (theta < 0.0)
+        theta += 2.0 * pi;
+    return theta;
+}
+
+Buildings::Buildings(std::vector<Footprint> footprints)
+    : footprints_(std::move(footprints))
+{
+    x_min_ = y_min_ = std::numeric_limits<double>::infinity();
+    x_max_ = y_max_ = -std::numeric_limits<double>::infinity();
+    for (std::size_t b = 0; b < footprints_.size(); b++)
+    {
+        Footprint& f = footprints_[b];
+        const std::string which = "building " + std::to_string(b + 1);
+        const std::size_t n = f.x.size();
+        if (n < 3 || f.y.size() != n)
+            throw std::invalid_argument(which + ": a footprint needs at least three vertices");
+        if (!(f.top > 0.0) || !std::isfinite(f.top))
+            throw std::invalid_argument(which + ": its roof must be above the floor");
+        for (std::size_t i = 0; i < n; i++)
+            if (!std::isfinite(f.x[i]) || !std::isfinite(f.y[i]))
+                throw std::invalid_argument(which + ": a vertex is not a number");
+        double area = 0.0;
+        for (std::size_t i = 0; i < n; i++)
+        {
+            const std::size_t j = (i + 1) % n;
+            if (std::hypot(f.x[j] - f.x[i], f.y[j] - f.y[i]) < contact)
+                throw std::invalid_argument(which + ": two consecutive vertices coincide");
+            area += cross2(f.x[i], f.y[i], f.x[j], f.y[j]);
+        }
+        if (!(std::abs(area) > 0.0))
+            throw std::invalid_argument(which + ": its footprint has no area");
+        if (area < 0.0)
+        {
+            std::reverse(f.x.begin(), f.x.end());
+            std::reverse(f.y.begin(), f.y.end());
+        }
+        for (std::size_t i = 0; i < n; i++)
+            for (std::size_t k = i + 2; k < n; k++)
+            {
+                if (i == 0 && k == n - 1)
+                    continue; // adjacent through the closing side
+                const std::size_t j = i + 1, l = (k + 1) % n;
+                if (segments_meet(f.x[i], f.y[i], f.x[j], f.y[j], f.x[k], f.y[k], f.x[l], f.y[l]))
+                    throw std::invalid_argument(which + ": its footprint's sides cross");
+            }
+
+        double bx0 = f.x[0], bx1 = f.x[0], by0 = f.y[0], by1 = f.y[0];
+        for (std::size_t i = 0; i < n; i++)
+        {
+            bx0 = std::min(bx0, f.x[i]);
+            bx1 = std::max(bx1, f.x[i]);
+            by0 = std::min(by0, f.y[i]);
+            by1 = std::max(by1, f.y[i]);
+        }
+        bounds_.insert(bounds_.end(), {bx0, bx1, by0, by1});
+        x_min_ = std::min(x_min_, bx0);
+        x_max_ = std::max(x_max_, bx1);
+        y_min_ = std::min(y_min_, by0);
+        y_max_ = std::max(y_max_, by1);
+        max_top_ = std::max(max_top_, f.top);
+
+        for (std::size_t i = 0; i < n; i++)
+        {
+            const std::size_t j = (i + 1) % n;
+            const std::size_t h = (i + n - 1) % n;
+            // The side i -> j, counterclockwise: the building on its left.
+            Facade facade;
+            facade.x0 = f.x[j];
+            facade.y0 = f.y[j];
+            facade.x1 = f.x[i];
+            facade.y1 = f.y[i];
+            facade.bottom = 0.0;
+            facade.top = f.top;
+            facades_.push_back(facade);
+            facade_building_.push_back(b);
+
+            const double len = std::hypot(f.x[j] - f.x[i], f.y[j] - f.y[i]);
+            const Vec3 along((f.x[j] - f.x[i]) / len, (f.y[j] - f.y[i]) / len, 0.0);
+            const Vec3 outward(along.y, -along.x, 0.0);
+            // The roof edge: the roof leaves it inward, the air is above.
+            Edge roof;
+            roof.start = Vec3(f.x[i], f.y[i], f.top);
+            roof.direction = along;
+            roof.length = len;
+            roof.face0 = -1.0 * outward;
+            roof.air = Vec3(0.0, 0.0, 1.0);
+            roof.n = 1.5;
+            roof.building = b;
+            edges_.push_back(roof);
+
+            // The vertical edge at vertex i, where it is convex (a left turn
+            // from side h -> i to side i -> j).
+            const double turn = cross2(f.x[i] - f.x[h], f.y[i] - f.y[h], f.x[j] - f.x[i], f.y[j] - f.y[i]);
+            if (turn > 0.0)
+            {
+                Edge corner;
+                corner.start = Vec3(f.x[i], f.y[i], 0.0);
+                corner.direction = Vec3(0.0, 0.0, 1.0);
+                corner.length = f.top;
+                corner.face0 = along;
+                corner.air = outward;
+                const double back = std::hypot(f.x[h] - f.x[i], f.y[h] - f.y[i]);
+                const Vec3 other((f.x[h] - f.x[i]) / back, (f.y[h] - f.y[i]) / back, 0.0);
+                corner.n = corner.angle(other) / pi;
+                corner.building = b;
+                corner.vertical = true;
+                edges_.push_back(corner);
+            }
+        }
+    }
+}
+
+bool Buildings::strictly_inside(std::size_t building, double x, double y) const
+{
+    const Footprint& f = footprints_[building];
+    const std::size_t n = f.x.size();
+    bool in = false;
+    for (std::size_t i = 0, h = n - 1; i < n; h = i++)
+    {
+        if (distance_to_side(x, y, f.x[h], f.y[h], f.x[i], f.y[i]) < contact)
+            return false;
+        if ((f.y[i] > y) != (f.y[h] > y)
+                && x < f.x[h] + (y - f.y[h]) * (f.x[i] - f.x[h]) / (f.y[i] - f.y[h]))
+            in = !in;
+    }
+    return in;
+}
+
+std::size_t Buildings::inside(double x, double y) const
+{
+    for (std::size_t b = 0; b < footprints_.size(); b++)
+        if (x > bounds_[4 * b] && x < bounds_[4 * b + 1] && y > bounds_[4 * b + 2] && y < bounds_[4 * b + 3]
+                && strictly_inside(b, x, y))
+            return b;
+    return footprints_.size();
+}
+
+bool Buildings::blocked_by(std::size_t building, const Vec3& a, const Vec3& b, bool below_floor) const
+{
+    const Footprint& f = footprints_[building];
+    const double z_low = below_floor ? -f.top : 0.0;
+    const double z_high = f.top;
+    // Heights strictly inside, by more than round-off.
+    const double z_margin = 1e-9;
+    if (std::min(a.z, b.z) >= z_high - z_margin || std::max(a.z, b.z) <= z_low + z_margin)
+        return false;
+    const double* box = &bounds_[4 * building];
+    if (std::max(a.x, b.x) <= box[0] || std::min(a.x, b.x) >= box[1] || std::max(a.y, b.y) <= box[2]
+            || std::min(a.y, b.y) >= box[3])
+        return false;
+    const Vec3 d = b - a;
+    const double length = d.norm();
+    if (length < contact)
+        return false;
+
+    // Where the segment's status can change: its ends, the two heights, and
+    // each side of the footprint it meets.  Between consecutive breakpoints it
+    // is inside throughout or nowhere, so a midpoint decides each stretch.
+    thread_local std::vector<double> t_values;
+    t_values.assign({0.0, 1.0});
+    auto add = [&](double t) {
+        if (t > 0.0 && t < 1.0)
+            t_values.push_back(t);
+    };
+    if (d.z != 0.0)
+    {
+        add((z_high - a.z) / d.z);
+        add((z_low - a.z) / d.z);
+    }
+    const std::size_t n = f.x.size();
+    for (std::size_t i = 0, h = n - 1; i < n; h = i++)
+    {
+        const double ex = f.x[i] - f.x[h], ey = f.y[i] - f.y[h];
+        const double denominator = cross2(d.x, d.y, ex, ey);
+        if (denominator == 0.0)
+            continue;
+        const double px = f.x[h] - a.x, py = f.y[h] - a.y;
+        const double t = cross2(px, py, ex, ey) / denominator;
+        const double s = cross2(px, py, d.x, d.y) / denominator;
+        if (s >= -1e-12 && s <= 1.0 + 1e-12)
+            add(t);
+    }
+    std::sort(t_values.begin(), t_values.end());
+    for (std::size_t k = 0; k + 1 < t_values.size(); k++)
+    {
+        const double t0 = t_values[k], t1 = t_values[k + 1];
+        if ((t1 - t0) * length <= contact)
+            continue;
+        const double t = 0.5 * (t0 + t1);
+        const double z = a.z + t * d.z;
+        if (!(z > z_low + z_margin && z < z_high - z_margin))
+            continue;
+        if (strictly_inside(building, a.x + t * d.x, a.y + t * d.y))
+            return true;
+    }
+    return false;
+}
+
+bool Buildings::blocked(const Vec3& a, const Vec3& b, bool below_floor) const
+{
+    for (std::size_t building = 0; building < footprints_.size(); building++)
+        if (blocked_by(building, a, b, below_floor))
+            return true;
+    return false;
+}
+
+bool Buildings::escapes(const Vec3& a, const Vec3& direction, bool below_floor) const
+{
+    if (footprints_.empty())
+        return true;
+    const double inf = std::numeric_limits<double>::infinity();
+    // Past either of these nothing can block: above every roof, or outside
+    // every footprint and moving away.
+    double t_rise = inf;
+    if (direction.z > 0.0)
+        t_rise = std::max(0.0, (max_top_ - a.z) / direction.z);
+    auto exit_time = [&](double start, double speed, double low, double high) {
+        if (speed > 0.0)
+            return (high - start) / speed;
+        if (speed < 0.0)
+            return (low - start) / speed;
+        return (start <= low || start >= high) ? -inf : inf;
+    };
+    const double t_box = std::max(0.0,
+            std::min(exit_time(a.x, direction.x, x_min_ - 1.0, x_max_ + 1.0),
+                    exit_time(a.y, direction.y, y_min_ - 1.0, y_max_ + 1.0)));
+    const double t_far = std::min(t_rise, t_box);
+    if (!std::isfinite(t_far))
+        return true; // straight up or down through nothing finite: no footprint in reach
+    return !blocked(a, a + (t_far + 1.0) * direction, below_floor);
+}
+
+} // namespace niceops

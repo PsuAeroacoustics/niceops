@@ -20,6 +20,20 @@
 //   height_b
 //   absorption_a,    optional: each wall's energy absorption coefficient,
 //   absorption_b     every band (default --absorption)
+// Or, with --buildings and --receivers, microphones among LoD1 buildings
+// (src/building_paths.hpp):
+//
+//   niceops_urban_table --buildings district.csv --receivers mics.csv --database ... -o tables/district.nc
+//
+// --buildings has one row per footprint vertex, by column name, lengths in
+// --units: building (an id; a building's rows consecutive, its vertices in
+// order around it), x, y, top (its roof above the ground), and optionally
+// absorption (its walls' energy absorption coefficient, the same on each of
+// its rows; default --absorption).  --receivers has the observer file's x, y,
+// z and height; the buildings stand on the ground at each receiver's z.  Each
+// receiver's facades within --facade_radius that face it are written for the
+// run's first-order images, and left out of its table.
+//
 // The table is the canyon's under plane-wave incidence (canyon_ratio): the
 // specular rays from above and off the floor and the roof edges' diffracted
 // rays, summed coherently and band-averaged, but the first-order reflections,
@@ -35,9 +49,12 @@
 #include <cmath>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "building_paths.hpp"
+#include "buildings.hpp"
 #include "canyon_wave.hpp"
 #include "propagation_table.hpp"
 #include "sphere_database.hpp"
@@ -52,6 +69,12 @@ int main(int argc, char** argv)
 {
     CLI::App app {"Build an urban table for niceops --urban_table."};
     std::string canyons_file;
+    std::string buildings_file;
+    std::string receivers_file;
+    std::size_t max_order = 64;
+    std::size_t max_diffracted_order = 6;
+    double radius = 150.0;        // m unless given
+    double facade_radius = 100.0; // m unless given
     std::string database_file;
     std::string output;
     std::string units = "ft";
@@ -68,7 +91,22 @@ int main(int argc, char** argv)
     std::size_t wave_blend = 2;
     double wave_ppw = 15.0;
     int threads = 0;
-    app.add_option("--canyons", canyons_file, "Receivers in ideal canyons, one per row (see the header).")->required();
+    app.add_option("--canyons", canyons_file, "Receivers in ideal canyons, one per row (see the header).");
+    app.add_option("--buildings", buildings_file,
+            "LoD1 buildings, one row per footprint vertex (see the header); with --receivers.");
+    app.add_option("--receivers", receivers_file, "With --buildings: the microphones, as the run's observer file.");
+    app.add_option("--max_order", max_order,
+            "With --buildings: facade reflections on a specular ray, at most (default 64).");
+    app.add_option("--max_diffracted_order", max_diffracted_order,
+            "With --buildings: facade reflections after a diffraction, at most (default 6).");
+    app.add_option("--radius", radius,
+            "With --buildings: the edges, and the facades a diffracted ray reflects in, within this of a "
+            "microphone, in --units (default 150 m).")
+            ->check(CLI::PositiveNumber);
+    app.add_option("--facade_radius", facade_radius,
+            "With --buildings: the facades written for the run's first-order images, within this of a "
+            "microphone, in --units (default 100 m).")
+            ->check(CLI::NonNegativeNumber);
     app.add_option("--database", database_file, "Take the band centers from this database.");
     app.add_option("--bands", bands, "Band centers, Hz, instead of --database's.");
     app.add_option("--azimuths", azimuths, "Azimuths, uniform from 0 over 360 degrees (default 72).")
@@ -110,6 +148,15 @@ int main(int argc, char** argv)
     try
     {
         const double to_meters = units == "m" ? 1.0 : ft2m;
+        if (canyons_file.empty() == buildings_file.empty())
+            throw std::runtime_error("give either --canyons or --buildings");
+        if (buildings_file.empty() != receivers_file.empty())
+            throw std::runtime_error("--receivers goes with --buildings, and --buildings needs it");
+        // Defaults are lengths in metres; a value given is in --units.
+        if (app.count("--radius") > 0)
+            radius *= to_meters;
+        if (app.count("--facade_radius") > 0)
+            facade_radius *= to_meters;
         if (!bands.empty() == !database_file.empty())
             throw std::runtime_error("give either --database or --bands");
         if (!database_file.empty())
@@ -132,22 +179,16 @@ int main(int argc, char** argv)
         axes.elevations = elevations;
         axes.bands = bands;
 
-        CsvReport report;
-        const LabeledCsv csv = read_labeled_csv(canyons_file, &report);
-        if (report.dropped > 0)
-            throw std::runtime_error(canyons_file + ": line " + std::to_string(report.first_dropped_line)
-                    + " is not a row of numbers");
-        if (csv.rows.empty())
-            throw std::runtime_error(canyons_file + " holds no receivers");
         // A length column may name its unit, as an observer file's do (x_ft,
         // height_m, "width (ft)"): it must then be --units.
-        auto column = [&](const std::string& name, bool required, bool length) {
+        auto column_of = [&](const LabeledCsv& csv, const std::string& file, const std::string& name, bool required,
+                                 bool length) {
             const std::string ft = name + "_ft", m = name + "_m";
             const std::size_t c = length ? csv.column({name.c_str(), ft.c_str(), m.c_str()}) : csv.column({name.c_str()});
             if (c == LabeledCsv::npos)
             {
                 if (required)
-                    throw std::runtime_error(canyons_file + " has no '" + name + "' column");
+                    throw std::runtime_error(file + " has no '" + name + "' column");
                 return c;
             }
             std::string declared = csv.unit_token(c);
@@ -156,9 +197,156 @@ int main(int argc, char** argv)
             if (declared.empty() && csv.column_matches(c, {m.c_str()}))
                 declared = "m";
             if (length && !declared.empty() && declared != units)
-                throw std::runtime_error(canyons_file + ": column '" + csv.header[c] + "' is in " + declared
+                throw std::runtime_error(file + ": column '" + csv.header[c] + "' is in " + declared
                         + ", and --units is " + units);
             return c;
+        };
+        auto read_rows = [&](const std::string& file, const std::string& what) {
+            CsvReport report;
+            LabeledCsv csv = read_labeled_csv(file, &report);
+            if (report.dropped > 0)
+                throw std::runtime_error(file + ": line " + std::to_string(report.first_dropped_line)
+                        + " is not a row of numbers");
+            if (csv.rows.empty())
+                throw std::runtime_error(file + " holds no " + what);
+            for (std::size_t row = 0; row < csv.rows.size(); row++)
+                if (csv.rows[row].size() != csv.header.size())
+                    throw std::runtime_error(file + ": row " + std::to_string(row + 1) + " has "
+                            + std::to_string(csv.rows[row].size()) + " fields where the header names "
+                            + std::to_string(csv.header.size()));
+            return csv;
+        };
+        const std::size_t nb = bands.size();
+
+        if (!buildings_file.empty())
+        {
+            if (wave_below > 0.0)
+                throw std::runtime_error("--wave_below solves ideal canyons only, not --buildings");
+            const LabeledCsv bcsv = read_rows(buildings_file, "buildings");
+            const std::size_t cid = column_of(bcsv, buildings_file, "building", true, false);
+            const std::size_t bx = column_of(bcsv, buildings_file, "x", true, true);
+            const std::size_t by = column_of(bcsv, buildings_file, "y", true, true);
+            const std::size_t bt = column_of(bcsv, buildings_file, "top", true, true);
+            const std::size_t ba = column_of(bcsv, buildings_file, "absorption", false, false);
+            std::vector<Footprint> footprints;
+            std::vector<double> building_absorption;
+            std::vector<double> ids;
+            std::set<double> seen;
+            for (std::size_t row = 0; row < bcsv.rows.size(); row++)
+            {
+                const auto& r = bcsv.rows[row];
+                const std::string where = buildings_file + " row " + std::to_string(row + 1) + ": ";
+                const double alpha = ba == LabeledCsv::npos ? absorption : r[ba];
+                if (footprints.empty() || r[cid] != ids.back())
+                {
+                    if (!seen.insert(r[cid]).second)
+                        throw std::runtime_error(where + "building " + exact_text(r[cid])
+                                + "'s rows are not consecutive");
+                    if (!(alpha >= 0.0 && alpha <= 1.0))
+                        throw std::runtime_error(where + "an absorption coefficient must lie within [0, 1]");
+                    footprints.emplace_back();
+                    footprints.back().top = r[bt] * to_meters;
+                    building_absorption.push_back(alpha);
+                    ids.push_back(r[cid]);
+                }
+                else if (r[bt] * to_meters != footprints.back().top || alpha != building_absorption.back())
+                    throw std::runtime_error(where + "a building's rows must give one top and one absorption");
+                footprints.back().x.push_back(r[bx] * to_meters);
+                footprints.back().y.push_back(r[by] * to_meters);
+            }
+            Buildings city;
+            try
+            {
+                city = Buildings(footprints);
+            }
+            catch (const std::invalid_argument& e)
+            {
+                throw std::runtime_error(buildings_file + ": " + e.what() + " (counting buildings from 1 in file order)");
+            }
+            // Each facade's reflection, every band: its building's walls.
+            std::vector<double> reflection(city.facades().size() * nb);
+            for (std::size_t f = 0; f < city.facades().size(); f++)
+                std::fill_n(reflection.begin() + static_cast<std::ptrdiff_t>(f * nb), nb,
+                        1.0 - building_absorption[city.facade_building(f)]);
+
+            const LabeledCsv rcsv = read_rows(receivers_file, "receivers");
+            const std::size_t rx = column_of(rcsv, receivers_file, "x", true, true);
+            const std::size_t ry = column_of(rcsv, receivers_file, "y", true, true);
+            const std::size_t rz = column_of(rcsv, receivers_file, "z", true, true);
+            const std::size_t rh = column_of(rcsv, receivers_file, "height", true, true);
+            BuildingPathOptions options;
+            options.max_order = max_order;
+            options.max_diffracted_order = max_diffracted_order;
+            options.radius = radius;
+            options.diffraction = !no_diffraction;
+            std::vector<UrbanTable::Receiver> receivers;
+            std::vector<double> gains;
+            std::size_t truncated = 0;
+            const auto start = std::chrono::steady_clock::now();
+            for (std::size_t row = 0; row < rcsv.rows.size(); row++)
+            {
+                const auto& r = rcsv.rows[row];
+                const std::string where = receivers_file + " row " + std::to_string(row + 1) + ": ";
+                const double x = r[rx] * to_meters, y = r[ry] * to_meters, floor = r[rz] * to_meters;
+                const double height = r[rh] * to_meters;
+                if (!(height >= 0.0))
+                    throw std::runtime_error(where + "the microphone's height must not be negative");
+                if (city.inside(x, y) < city.size())
+                    throw std::runtime_error(where + "the microphone stands inside building "
+                            + exact_text(ids[city.inside(x, y)]));
+                // The builder's frame: the local x and y, z above this ground.
+                const Vec3 local(x, y, height);
+                const auto run = facing_facades(city, local, facade_radius);
+                const BuildingReceiver receiver(city, local, run, options);
+                truncated += receiver.truncated();
+                const auto row_gains = building_gains(receiver, axes, frame_bearing, reflection,
+                        1.0 - floor_absorption, sound_speed, tool_thread_count(threads));
+                gains.insert(gains.end(), row_gains.begin(), row_gains.end());
+                UrbanTable::Receiver out;
+                out.microphone = Vec3(x, y, floor + height);
+                for (std::size_t f : run)
+                {
+                    Facade facade = city.facades()[f];
+                    facade.bottom += floor;
+                    facade.top += floor;
+                    out.facades.push_back(facade);
+                    out.reflection.insert(out.reflection.end(), reflection.begin() + static_cast<std::ptrdiff_t>(f * nb),
+                            reflection.begin() + static_cast<std::ptrdiff_t>((f + 1) * nb));
+                }
+                receivers.push_back(std::move(out));
+            }
+            std::cerr << "Traced " << receivers.size() << " receivers among " << city.size() << " buildings in "
+                      << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << " s."
+                      << std::endl;
+            if (truncated > 0)
+                std::cerr << "niceops_urban_table: warning: for " << truncated
+                          << " receivers the diffracted rays' image search stopped at its limit; lower "
+                             "--max_diffracted_order or --radius."
+                          << std::endl;
+            std::map<std::string, std::string> provenance {
+                    {"buildings", buildings_file},
+                    {"receivers", receivers_file},
+                    {"diffraction",
+                            no_diffraction ? "none; specular rays in energy" : "UTD at roof and corner edges, coherent"},
+                    {"max_order", std::to_string(max_order)},
+                    {"max_diffracted_order", std::to_string(max_diffracted_order)},
+                    {"radius_m", exact_text(radius)},
+                    {"facade_radius_m", exact_text(facade_radius)},
+                    {"sound_speed_mps", exact_text(sound_speed)},
+                    {"floor_absorption", exact_text(floor_absorption)},
+            };
+            const UrbanTable table(axes, std::move(receivers), std::move(gains), frame_bearing, "lod1_buildings",
+                    provenance);
+            table.save(output);
+            std::cerr << "Wrote " << output << " (" << table.receivers().size() << " receivers x "
+                      << axes.azimuths.size() << " azimuths x " << axes.elevations.size() << " elevations x " << nb
+                      << " bands)." << std::endl;
+            return 0;
+        }
+
+        const LabeledCsv csv = read_rows(canyons_file, "receivers");
+        auto column = [&](const std::string& name, bool required, bool length) {
+            return column_of(csv, canyons_file, name, required, length);
         };
         const std::size_t cx = column("x", true, true), cy = column("y", true, true), cz = column("z", true, true);
         const std::size_t ch = column("height", true, true), axis_c = column("axis", true, false);
@@ -166,7 +354,6 @@ int main(int argc, char** argv)
         const std::size_t cha = column("height_a", true, true), chb = column("height_b", true, true);
         const std::size_t caa = column("absorption_a", false, false), cab = column("absorption_b", false, false);
 
-        const std::size_t nb = bands.size();
         std::vector<UrbanTable::Receiver> receivers;
         std::vector<double> gains;
         // The wave band: its weight per band, and the canyons to solve.
@@ -185,10 +372,6 @@ int main(int argc, char** argv)
         for (std::size_t row = 0; row < csv.rows.size(); row++)
         {
             const auto& r = csv.rows[row];
-            if (r.size() != csv.header.size())
-                throw std::runtime_error(canyons_file + ": row " + std::to_string(row + 1) + " has "
-                        + std::to_string(r.size()) + " fields where the header names "
-                        + std::to_string(csv.header.size()));
             const std::string where = canyons_file + " row " + std::to_string(row + 1) + ": ";
             const double floor = r[cz] * to_meters;
             if (r[cw] == 0.0)

@@ -461,34 +461,6 @@ std::vector<CanyonRay> canyon_rays(const IdealCanyon& c, double uy, double uz, i
     return rays;
 }
 
-// The band average of |sum_i A_i exp(i k L_i)|^2 over k in [k1, k2], pair by
-// pair: Re(A_i conj(A_j) exp(i k_mid dL)) sin(h dL) / (h dL), h the half
-// width.  The rays come sorted by length, and a pair whose sinc has fallen
-// below 1/30 (h dL > 30) is left out: that far apart the band has averaged it
-// away, and the all-pairs sum was most of a table's build time.
-double band_energy(const std::vector<std::complex<double>>& amplitude, const std::vector<double>& length, double k1,
-        double k2)
-{
-    const double mid = 0.5 * (k1 + k2), half = 0.5 * (k2 - k1);
-    const double reach = half > 0.0 ? 30.0 / half : std::numeric_limits<double>::infinity();
-    thread_local std::vector<std::complex<double>> phasor;
-    phasor.resize(amplitude.size());
-    for (std::size_t i = 0; i < amplitude.size(); i++)
-        phasor[i] = amplitude[i] * std::polar(1.0, mid * length[i]);
-    double sum = 0.0;
-    for (std::size_t i = 0; i < amplitude.size(); i++)
-    {
-        sum += std::norm(amplitude[i]);
-        for (std::size_t j = i + 1; j < amplitude.size() && length[j] - length[i] < reach; j++)
-        {
-            const double x = half * (length[i] - length[j]);
-            const double sinc = std::abs(x) < 1e-8 ? 1.0 : std::sin(x) / x;
-            sum += 2.0 * std::real(phasor[i] * std::conj(phasor[j])) * sinc;
-        }
-    }
-    return sum;
-}
-
 // canyon_ratio with diffraction: the field of every ray the run does not
 // evaluate itself, summed coherently and band-averaged.  The run adds its own
 // first-order pair in energy, so the pair's interference with the rest is not
@@ -535,17 +507,45 @@ void coherent_ratio(const IdealCanyon& c, double u_c, double u_z, const double* 
                 rest.push_back(amp);
                 rest_length.push_back(ray.length);
             }
-            total += band_energy(rest, rest_length, k1, k2) * (g2 - g1);
+            total += band_averaged_energy(rest, rest_length, k1, k2) * (g2 - g1);
             // Open ground: the direct ray and the floor's, 2 z_m uz apart.
             const std::vector<std::complex<double>> ground {1.0, root_floor};
             const std::vector<double> ground_length {0.0, 2.0 * c.microphone_height * uz};
-            open += band_energy(ground, ground_length, k1, k2) * (g2 - g1);
+            open += band_averaged_energy(ground, ground_length, k1, k2) * (g2 - g1);
         }
         out[band] = std::max(total / open, 1e-30);
     }
 }
 
 } // namespace
+
+// The band average of |sum_i A_i exp(i k L_i)|^2 over k in [k1, k2], pair by
+// pair: Re(A_i conj(A_j) exp(i k_mid dL)) sin(h dL) / (h dL), h the half
+// width.  The rays come sorted by length, and a pair whose sinc has fallen
+// below 1/30 (h dL > 30) is left out: that far apart the band has averaged it
+// away, and the all-pairs sum was most of a table's build time.
+double band_averaged_energy(const std::vector<std::complex<double>>& amplitude, const std::vector<double>& length, double k1,
+        double k2)
+{
+    const double mid = 0.5 * (k1 + k2), half = 0.5 * (k2 - k1);
+    const double reach = half > 0.0 ? 30.0 / half : std::numeric_limits<double>::infinity();
+    thread_local std::vector<std::complex<double>> phasor;
+    phasor.resize(amplitude.size());
+    for (std::size_t i = 0; i < amplitude.size(); i++)
+        phasor[i] = amplitude[i] * std::polar(1.0, mid * length[i]);
+    double sum = 0.0;
+    for (std::size_t i = 0; i < amplitude.size(); i++)
+    {
+        sum += std::norm(amplitude[i]);
+        for (std::size_t j = i + 1; j < amplitude.size() && length[j] - length[i] < reach; j++)
+        {
+            const double x = half * (length[i] - length[j]);
+            const double sinc = std::abs(x) < 1e-8 ? 1.0 : std::sin(x) / x;
+            sum += 2.0 * std::real(phasor[i] * std::conj(phasor[j])) * sinc;
+        }
+    }
+    return sum;
+}
 
 void canyon_ratio(const IdealCanyon& canyon, double u_c, double u_z, const double* reflection_a,
         const double* reflection_b, double floor_reflection, const std::vector<double>& bands, double sound_speed,
@@ -573,6 +573,13 @@ CompassDirection compass_direction(const Vec3& local, double frame_bearing)
         d.azimuth += 360.0;
     d.elevation = std::atan2(local.z, std::hypot(local.x, local.y)) * 180.0 / pi;
     return d;
+}
+
+Vec3 local_direction(double azimuth, double elevation, double frame_bearing)
+{
+    const double a = azimuth * pi / 180.0, e = elevation * pi / 180.0, b = frame_bearing * pi / 180.0;
+    const double east = std::cos(e) * std::sin(a), north = std::cos(e) * std::cos(a);
+    return {east * std::sin(b) + north * std::cos(b), -east * std::cos(b) + north * std::sin(b), std::sin(e)};
 }
 
 UrbanTable::UrbanTable(Axes axes, std::vector<Receiver> receivers, std::vector<double> gains, double frame_bearing,

@@ -92,7 +92,8 @@ What to keep:
   [testing.md](testing.md#mutation-guarded-tests)); keep it, since a strongly directional sphere
   can make a reflection louder than the direct path's bin bound.
 - **The roof edges diffract by UTD, and the table sums every ray coherently** (`coherent_ratio`,
-  `canyon_rays`, `band_energy` in `urban.cpp`; the kernel is `src/wedge`). Continuity across a
+  `canyon_rays` in `urban.cpp`, summed by `band_averaged_energy`, which `src/building_paths`
+  shares; the kernel is `src/wedge`). Continuity across a
   shadow or reflection boundary is a matter of phase -- the diffracted ray makes up the jump of
   the specular ray it shadows only when the two add as complex amplitudes -- so the specular
   families and the diffracted rays share one sum, band-averaged pair by pair (the exact sinc of
@@ -137,10 +138,62 @@ What to keep:
   Lifting refraction means looking the table up along each eigenray's arrival direction;
   `--db_cutoff` needs `urban_bound_geometry` in `is_culled`.
 - Tests: `[urban]` in `tests/test_urban.cpp` (two-family count and first-order images against
-  `specular_paths`, the Keller-cone path difference, the table's lookup, bound and file), the
+  `specular_paths`, the coherent field's continuity, specular limit and shadow, the table's
+  lookup, bound and file), the
   hidden `[.urban_separability]` study, and the `urban_table_*` CTests (open-sky identity,
   windowed against marched for canyons, plates and the +25 dB bump table, the pinned goldens and
   the refusals).
+
+### LoD1 buildings (`src/buildings`, `src/building_paths`)
+
+`niceops_urban_table --buildings` builds the table among footprints extruded to flat roofs:
+`Buildings` holds the geometry and the visibility test, `BuildingReceiver` one microphone's rays and
+its ratio, `building_gains` the table. It is the ideal canyon's model for any arrangement, and two
+long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What to keep:
+
+- **The visibility test is exact for prisms, so there is no ray-tracing library.** A segment is
+  blocked when a stretch of it longer than `Buildings::contact` (1 micrometre) lies strictly inside
+  a footprint below its roof: breakpoints at every side it meets and at the two heights, a
+  midpoint test between them. Touching is not blocking -- a ray ending on a wall where it
+  reflects, leaving an edge where it diffracts, or grazing a wall -- which is what lets every
+  path be tested with the same call. Embree, which the plan named, is left for LoD2 meshes.
+- **The floor is a mirror world**, `below_floor`: every building from `-top` to `top`, the same
+  trick as the canyon's walls carried below the floor, so a floor-reflected ray is one straight
+  line from the microphone's floor image.
+- **Facades run clockwise around their building**, so that `facade_side` is positive outside, as
+  `first_order_image` and the run expect.
+- **Specular rays are traced, not enumerated.** A vertical facade turns only a ray's horizontal
+  component, so a ray that leaves along u reached the microphone along one of u's reflections in
+  the facades' orientations: those candidates (`max_turns` changes of orientation, at most
+  `max_departures`, breadth first) are traced deterministically through up to `max_order`
+  bounces and kept when they leave along u. Parallel facades' mirrors cancel in pairs, so a grid
+  has four candidates however often a ray bounces up a street; at 1.5 degrees a ray needs about
+  fifty bounces to climb out of a 25 m street, which is why `max_order` is 64. A rising ray
+  enters a building only through a wall, so the first facade it meets is its first obstruction.
+- **Diffraction points are on Keller's cone, and rays whose point falls off the edge are
+  dropped.** The edge's own faces are already in its coefficient, so a diffracted ray never
+  reflects first in a facade containing its edge; `diffracted_path_open` refuses that by its
+  in-front test without a special case. Reentrant corners do not diffract.
+- **Oblique incidence is the 2-D wedge at k sin(beta) and r = s sin(beta)**, over
+  sqrt(s sin(beta)); two tests hold a roof edge and a vertical corner to `hard_wedge_field`.
+- **The images come from plan-view beam tracing, breadth first.** Each image carries the part of
+  its last facade through which the microphone can be reached; a further facade counts only
+  where it lies in that beam, and each image keeps the edges whose plan crosses it. The test
+  `the beams find every diffracted ray the unpruned search does` compares the rays with
+  `BuildingPathOptions::beams` off. Breadth first, so that a search stopped at `max_images`
+  has dropped the highest orders rather than whole branches; depth first, a stopped search
+  read 0.36 dB low in energy on the FIDELITY district. The facades' mutual visibility is a
+  sampled prefilter (20 points on each face, in the mirror world), a heuristic that a gap
+  narrower than its samples could fool; every ray is still tested exactly.
+- **Everything that does not depend on the direction is built once per microphone**: the
+  frames, the orientations, the edges within `radius`, the images and their edges. A direction
+  costs the traces, the Keller points and their tests.
+- **The run's facades are the table's exclusions.** The tool writes the facades within
+  `--facade_radius` that face the microphone, and passes the same list as `run_facades`, so the
+  table leaves out exactly the first-order reflections (and floor partners) the run evaluates.
+  Passing an empty list instead fails both `urban_buildings` goldens.
+- **Grazing and overhead are clamped as in the canyon**: elevations under 1e-3 rad are taken at
+  it, and a direction within 1e-9 of vertical is vertical.
 
 ### The canyon wave solver (`src/canyon_wave`)
 
