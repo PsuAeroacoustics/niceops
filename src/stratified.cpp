@@ -1812,7 +1812,8 @@ std::vector<Arrival> layered_wave_arrivals(const Layers& layers, double z_s, dou
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
-        bool linear_past_shadow, const WaveOptions& waves)
+        bool linear_past_shadow, const WaveOptions& waves, const LayeredSolution* given,
+        LayeredSolution* solved)
 {
     // The linear model's ray: the warm start, and the answer wherever the
     // layered solve does not apply -- straight paths, and a receiver at or
@@ -1845,40 +1846,70 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
         straight.horizontal = r;
         return straight;
     }
-    const double guess = ray.curved ? ray.direct.launch : std::atan2(z_r - z_s, r);
-    auto direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
     const double linear_boundary = ray.direct.boundary;
-    // See below.  The fit's ray then stands for every downward direct ray, so
-    // only bounced rays and those turned back from aloft are looked for; the
-    // latter exist only under a boundary_under_aloft.
-    bool handover = linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
-            && linear_boundary > direct.boundary;
-    auto arrivals = layered_arrivals(layers, z_s, z_r, r, direct, handover);
+    DirectEigenray direct;
+    bool handover = false;
+    std::vector<Arrival> arrivals;
     std::vector<Arrival> arrivals_wave;
-    // A boundary set under faster air aloft stands only where nothing from
-    // aloft or along a duct arrives (layered_direct_eigenray).  Where something
-    // does, past the direct rays' reach, this is the duct's gap and is handled
-    // as one, below, exactly as before such boundaries were set.
-    if (direct.boundary_under_aloft && !direct.lit && !arrivals.empty())
+    // Given the solves' results (interpolated between two solved states),
+    // they stand if this pair hands over as they did.
+    bool taken = false;
+    if (given != nullptr && given->solved)
     {
-        direct.boundary = std::numeric_limits<double>::infinity();
-        direct.boundary_gradient = 0.0;
-        direct.boundary_under_aloft = false;
-        if (handover)
+        direct = given->direct;
+        handover = linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
+                && linear_boundary > direct.boundary;
+        if (handover == given->handover)
         {
-            handover = false;
-            arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false);
+            arrivals = given->arrivals;
+            arrivals_wave = given->waves;
+            taken = true;
         }
     }
-    // --tunneling, --skip_fill: arrivals ray theory does not have.  Kept out
-    // of `arrivals` until now, so they take no part in the boundary's removal
-    // or the promotion to primary below: each carries a per-band loss that only
-    // an extra arrival is given.
-    if (waves.any())
+    if (!taken)
     {
-        auto added = layered_wave_arrivals(layers, z_s, z_r, r, waves);
-        for (Arrival& a : added)
-            arrivals_wave.push_back(a);
+        const double guess = ray.curved ? ray.direct.launch : std::atan2(z_r - z_s, r);
+        direct = layered_direct_eigenray(layers, z_s, z_r, r, guess);
+        // See below.  The fit's ray then stands for every downward direct ray, so
+        // only bounced rays and those turned back from aloft are looked for; the
+        // latter exist only under a boundary_under_aloft.
+        handover = linear_past_shadow && r > handover_fraction * direct.boundary && ray.curved
+                && linear_boundary > direct.boundary;
+        arrivals = layered_arrivals(layers, z_s, z_r, r, direct, handover);
+        // A boundary set under faster air aloft stands only where nothing from
+        // aloft or along a duct arrives (layered_direct_eigenray).  Where something
+        // does, past the direct rays' reach, this is the duct's gap and is handled
+        // as one, below, exactly as before such boundaries were set.
+        if (direct.boundary_under_aloft && !direct.lit && !arrivals.empty())
+        {
+            direct.boundary = std::numeric_limits<double>::infinity();
+            direct.boundary_gradient = 0.0;
+            direct.boundary_under_aloft = false;
+            if (handover)
+            {
+                handover = false;
+                arrivals = layered_arrivals(layers, z_s, z_r, r, direct, false);
+            }
+        }
+        // --tunneling, --skip_fill: arrivals ray theory does not have.  Kept out
+        // of `arrivals` until now, so they take no part in the boundary's removal
+        // or the promotion to primary below: each carries a per-band loss that only
+        // an extra arrival is given.
+        if (waves.any())
+        {
+            auto added = layered_wave_arrivals(layers, z_s, z_r, r, waves);
+            for (Arrival& a : added)
+                arrivals_wave.push_back(a);
+        }
+    }
+    if (solved != nullptr)
+    {
+        solved->solved = true;
+        solved->chord = std::hypot(r, z_s - z_r);
+        solved->direct = direct;
+        solved->handover = handover;
+        solved->arrivals = arrivals;
+        solved->waves = arrivals_wave;
     }
     // The pair's path, for the arrivals to start from: its separation is theirs.
     auto form_arrivals = [&](RefractedRay& into) {
@@ -1914,6 +1945,7 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
         ray.direct.linear_boundary = linear_boundary;
         ray.direct.boundary_gradient = direct.boundary_gradient;
         ray.from_linear_fit = true;
+        ray.interpolated = taken;
         form_arrivals(ray);
         return ray;
     }
@@ -1955,12 +1987,14 @@ RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSou
     ray.shadow_depth = direct.shadow_depth;
     // ray.profile stays the path's linear fit: the shadow's attenuation rate
     // reads its gradient as the path's overall refraction.
+    ray.interpolated = taken;
     form_arrivals(ray);
     return ray;
 }
 
 void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, GroundGeometry ground,
-        double microphone_height, std::vector<double>& scratch)
+        double microphone_height, std::vector<double>& scratch, const LayeredSolution* given,
+        LayeredSolution* solved)
 {
     if (!ray.curved)
         return;
@@ -1996,28 +2030,43 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
     }
     else if (ground == GroundGeometry::point && ray.source_z > microphone_height)
     {
-        const double r = ray.horizontal;
-        const double hx = path.separation.x / r;
-        const double hy = path.separation.y / r;
-        const auto layers = path_layers(air, hx, hy, scratch);
-        const auto reflected = direct.lit
-                ? layered_reflected_eigenray(layers, ray.source_z, microphone_height, r,
-                          -std::atan2(ray.source_z + microphone_height, r))
-                : ReflectedEigenray {};
-        double grazing = reflected.exists ? reflected.grazing : 0.0;
-        const double length = reflected.exists ? reflected.path_length : direct.path_length;
-        if (!reflected.exists && direct.lit && direct.arrival < 0.0)
+        double grazing = 0.0, length = 0.0;
+        if (given != nullptr && given->ground_set)
         {
-            // The reflected solve takes its families to be monotonic, so it
-            // misses its ray wherever the direct one is not (a source at a
-            // local maximum of the sound speed), and grazing 0 put the pair in
-            // the ground's null.  The partner of a ray arriving from above
-            // meets the ground at its own invariant's angle, as the arrivals'
-            // do, if nothing below the receiver turns it first.
-            const Path through {layers};
-            const double p = std::cos(direct.launch) / layers.at(ray.source_z);
-            if (1.0 / p > through.fastest(0.0, microphone_height))
-                grazing = std::asin(sine(p, layers.at(0.0)));
+            grazing = given->grazing;
+            length = given->length;
+        }
+        else
+        {
+            const double r = ray.horizontal;
+            const double hx = path.separation.x / r;
+            const double hy = path.separation.y / r;
+            const auto layers = path_layers(air, hx, hy, scratch);
+            const auto reflected = direct.lit
+                    ? layered_reflected_eigenray(layers, ray.source_z, microphone_height, r,
+                              -std::atan2(ray.source_z + microphone_height, r))
+                    : ReflectedEigenray {};
+            grazing = reflected.exists ? reflected.grazing : 0.0;
+            length = reflected.exists ? reflected.path_length : direct.path_length;
+            if (!reflected.exists && direct.lit && direct.arrival < 0.0)
+            {
+                // The reflected solve takes its families to be monotonic, so it
+                // misses its ray wherever the direct one is not (a source at a
+                // local maximum of the sound speed), and grazing 0 put the pair in
+                // the ground's null.  The partner of a ray arriving from above
+                // meets the ground at its own invariant's angle, as the arrivals'
+                // do, if nothing below the receiver turns it first.
+                const Path through {layers};
+                const double p = std::cos(direct.launch) / layers.at(ray.source_z);
+                if (1.0 / p > through.fastest(0.0, microphone_height))
+                    grazing = std::asin(sine(p, layers.at(0.0)));
+            }
+        }
+        if (solved != nullptr)
+        {
+            solved->ground_set = true;
+            solved->grazing = grazing;
+            solved->length = length;
         }
         path.source_height = std::max(length * std::sin(grazing) - microphone_height, 0.0);
         path.ground_distance = length * std::cos(grazing);
@@ -2026,6 +2075,130 @@ void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, Grou
     {
         finish_ground(ray, ground, microphone_height);
     }
+}
+
+namespace {
+
+double lerp(double a, double b, double t)
+{
+    return a + t * (b - a);
+}
+
+bool close_angles(double a, double b)
+{
+    return std::fabs(a - b) <= ray_interpolation_angle;
+}
+
+bool close_tubes(double a, double b)
+{
+    return a > 0.0 && b > 0.0 && std::fabs(b / a - 1.0) <= ray_interpolation_spreading;
+}
+
+// A length at a and b, each over its own chord, at t, over this chord.
+struct Chords
+{
+    double a, b, t, here;
+
+    bool close(double x, double y) const
+    {
+        return close_tubes(x / a, y / b);
+    }
+    double lerp_scaled(double x, double y) const
+    {
+        return here * lerp(x / a, y / b, t);
+    }
+};
+
+// Two arrival lists alike, and `out` the one between.
+bool interpolate_arrivals(const std::vector<Arrival>& a, const std::vector<Arrival>& b, const Chords& c,
+        std::vector<Arrival>& out)
+{
+    if (a.size() != b.size())
+        return false;
+    out = a;
+    for (std::size_t k = 0; k < a.size(); k++)
+    {
+        const Arrival& x = a[k];
+        const Arrival& y = b[k];
+        if (x.bounces != y.bounces || (x.grazing > 0.0) != (y.grazing > 0.0)
+                || (x.wave.evanescent > 0.0) != (y.wave.evanescent > 0.0) || x.wave.caustic != y.wave.caustic
+                || !close_angles(x.launch, y.launch) || !close_angles(x.arrival, y.arrival)
+                || !close_angles(x.grazing, y.grazing) || !c.close(x.spreading_range, y.spreading_range)
+                || !c.close(x.path_length, y.path_length))
+            return false;
+        Arrival& z = out[k];
+        z.launch = lerp(x.launch, y.launch, c.t);
+        z.arrival = lerp(x.arrival, y.arrival, c.t);
+        z.grazing = lerp(x.grazing, y.grazing, c.t);
+        z.spreading_range = c.lerp_scaled(x.spreading_range, y.spreading_range);
+        z.path_length = c.lerp_scaled(x.path_length, y.path_length);
+        z.travel_time = c.lerp_scaled(x.travel_time, y.travel_time);
+        z.wave.evanescent = lerp(x.wave.evanescent, y.wave.evanescent, c.t);
+        z.wave.caustic_depth = lerp(x.wave.caustic_depth, y.wave.caustic_depth, c.t);
+    }
+    return true;
+}
+
+} // namespace
+
+bool interpolate_layered(const LayeredSolution& a, const LayeredSolution& b, double t, double chord,
+        LayeredSolution& out)
+{
+    if (!a.solved || !b.solved || a.handover != b.handover || !(a.chord > 0.0) || !(b.chord > 0.0)
+            || !(chord > 0.0))
+        return false;
+    const Chords c {a.chord, b.chord, t, chord};
+    const DirectEigenray& x = a.direct;
+    const DirectEigenray& y = b.direct;
+    if (x.lit != y.lit || x.boundary_under_aloft != y.boundary_under_aloft
+            || std::isfinite(x.boundary) != std::isfinite(y.boundary)
+            || std::isfinite(x.linear_boundary) != std::isfinite(y.linear_boundary)
+            || (x.shadow_depth > 0.0) != (y.shadow_depth > 0.0) || !close_angles(x.launch, y.launch)
+            || !close_angles(x.arrival, y.arrival) || !c.close(x.spreading_range, y.spreading_range)
+            || !c.close(x.path_length, y.path_length))
+        return false;
+    if (std::isfinite(x.boundary) && !close_tubes(x.boundary, y.boundary))
+        return false;
+    LayeredSolution between;
+    if (!interpolate_arrivals(a.arrivals, b.arrivals, c, between.arrivals)
+            || !interpolate_arrivals(a.waves, b.waves, c, between.waves))
+        return false;
+    out = std::move(between);
+    out.solved = true;
+    out.chord = chord;
+    out.handover = a.handover;
+    out.direct = x;
+    DirectEigenray& z = out.direct;
+    z.launch = lerp(x.launch, y.launch, t);
+    z.arrival = lerp(x.arrival, y.arrival, t);
+    z.spreading_range = c.lerp_scaled(x.spreading_range, y.spreading_range);
+    z.path_length = c.lerp_scaled(x.path_length, y.path_length);
+    z.travel_time = c.lerp_scaled(x.travel_time, y.travel_time);
+    z.shadow_depth = lerp(x.shadow_depth, y.shadow_depth, t);
+    if (std::isfinite(x.boundary))
+    {
+        z.boundary = lerp(x.boundary, y.boundary, t);
+        z.boundary_gradient = lerp(x.boundary_gradient, y.boundary_gradient, t);
+    }
+    if (std::isfinite(x.linear_boundary))
+        z.linear_boundary = lerp(x.linear_boundary, y.linear_boundary, t);
+    out.ground_set = false;
+    return true;
+}
+
+bool interpolate_ground(const LayeredSolution& a, const LayeredSolution& b, double t, double chord,
+        LayeredSolution& out)
+{
+    if (!a.ground_set || !b.ground_set || (a.grazing > 0.0) != (b.grazing > 0.0) || !(a.chord > 0.0)
+            || !(b.chord > 0.0) || !(chord > 0.0))
+        return false;
+    const Chords c {a.chord, b.chord, t, chord};
+    if (!close_angles(a.grazing, b.grazing) || !c.close(a.length, b.length))
+        return false;
+    out.ground_set = true;
+    out.grazing = lerp(a.grazing, b.grazing, t);
+    out.length = c.lerp_scaled(a.length, b.length);
+    return true;
 }
 
 } // namespace niceops

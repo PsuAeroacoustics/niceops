@@ -784,6 +784,9 @@ struct RunOptions
     // --tunneling, --skip_fill (stratified only): arrivals ray theory leaves
     // out, with their Airy tails per band (layered_wave_arrivals).
     WaveOptions waves;
+    // --ray_stride (stratified only): the layered solves at every ray_stride-th
+    // state, the states between interpolated where the two agree (1: all solved).
+    std::size_t ray_stride = 1;
     double shadow_floor = 20.0;
     // --shadow_model resolved (stratified only): each band's shadow boundary
     // from the near-ground profile it resolves at shadow_phase radians of
@@ -3064,10 +3067,76 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> layer_scratch;
         // `transition`: the observer is a point receiver that ShadowTransition
         // serves, so past the layered boundary its lit level is the linear fit's.
+        // --ray_stride: per observer, the layered solves at its anchor states --
+        // every stride-th, and the last -- each with the unfinished ray its own
+        // ground finish starts from.  A state between two anchors takes their
+        // solves interpolated where they agree (interpolate_layered); anchors
+        // are fixed states, solved alike whichever state asked first, so a
+        // windowed run and a marched one take the same rays.
+        const std::size_t stride = layered_sound_speed && nt > 2 ? options.ray_stride : 1;
+        struct Anchor
+        {
+            bool formed = false;
+            bool finished = false;
+            LayeredSolution solution;
+            RefractedRay ray;
+        };
+        std::vector<Anchor> anchors(stride > 1 ? nt / stride + 2 : 0);
+        const Vec3* anchors_for = nullptr;
+        auto anchor_slot = [&](std::size_t state) {
+            return state == nt - 1 && state % stride != 0 ? anchors.size() - 1 : state / stride;
+        };
+        auto block_of = [&](std::size_t it, std::size_t& ia, std::size_t& ib, double& t) {
+            ia = it - it % stride;
+            ib = std::min(ia + stride, nt - 1);
+            t = ib > ia ? static_cast<double>(it - ia) / static_cast<double>(ib - ia) : 0.0;
+        };
+        // The pair's straight distance as layered_direct_ray forms it: the
+        // microphone held on the plane, as its solve is.
+        auto layered_chord = [&](std::size_t it, const Vec3& observer) {
+            const Vec3& source = source_states[it].position;
+            const double r = std::hypot(observer.x - source.x, observer.y - source.y);
+            return std::hypot(r, source.z - std::max(observer.z, 0.0));
+        };
+        auto anchor_at = [&](std::size_t state, const Vec3& observer, const EffectiveSoundSpeed::Moments& at_receiver,
+                                 bool transition) -> Anchor& {
+            Anchor& a = anchors[anchor_slot(state)];
+            if (!a.formed)
+            {
+                a.solution = LayeredSolution {};
+                a.ray = layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
+                        source_states[state].position, state_moments[state], observer, at_receiver, layer_scratch,
+                        transition, options.waves, nullptr, &a.solution);
+                a.formed = true;
+                a.finished = false;
+            }
+            return a;
+        };
         auto form_ray = [&](std::size_t it, const Vec3& observer,
                                 const EffectiveSoundSpeed::Moments& at_receiver, bool transition) {
             if (layered_sound_speed)
             {
+                if (stride > 1)
+                {
+                    if (anchors_for != &observer)
+                    {
+                        for (Anchor& a : anchors)
+                            a.formed = false;
+                        anchors_for = &observer;
+                    }
+                    std::size_t ia = 0, ib = 0;
+                    double t = 0.0;
+                    block_of(it, ia, ib, t);
+                    if (it == ia || it == ib)
+                        return anchor_at(it, observer, at_receiver, transition).ray;
+                    const Anchor& a = anchor_at(ia, observer, at_receiver, transition);
+                    const Anchor& b = anchor_at(ib, observer, at_receiver, transition);
+                    LayeredSolution between;
+                    if (interpolate_layered(a.solution, b.solution, t, layered_chord(it, observer), between))
+                        return layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
+                                source_states[it].position, state_moments[it], observer, at_receiver,
+                                layer_scratch, transition, options.waves, &between);
+                }
                 return layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
                         source_states[it].position, state_moments[it], observer, at_receiver,
                         layer_scratch, transition, options.waves);
@@ -3075,11 +3144,56 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             return direct_ray(*effective_sound_speed, source_states[it].position, state_moments[it],
                     observer, at_receiver);
         };
-        auto finish_ray = [&](RefractedRay& ray, GroundGeometry ground, double microphone) {
-            if (layered_sound_speed)
-                layered_finish_ground(*layered_sound_speed, ray, ground, microphone, layer_scratch);
-            else
+        // The ground's finish: an anchor's from its own (kept for the states
+        // around it), an interpolated ray's from its anchors' where they agree.
+        auto finish_ray = [&](std::size_t it, RefractedRay& ray, GroundGeometry ground, double microphone) {
+            if (!layered_sound_speed)
+            {
                 finish_ground(ray, ground, microphone);
+                return;
+            }
+            if (stride > 1 && anchors_for != nullptr)
+            {
+                std::size_t ia = 0, ib = 0;
+                double t = 0.0;
+                block_of(it, ia, ib, t);
+                auto finish_anchor = [&](Anchor& x, RefractedRay& into) {
+                    layered_finish_ground(*layered_sound_speed, into, ground, microphone, layer_scratch,
+                            x.finished ? &x.solution : nullptr, x.finished ? nullptr : &x.solution);
+                    x.finished = true;
+                };
+                if (it == ia || it == ib)
+                {
+                    Anchor& self = anchors[anchor_slot(it)];
+                    if (self.formed)
+                    {
+                        finish_anchor(self, ray);
+                        return;
+                    }
+                }
+                else if (ray.interpolated)
+                {
+                    Anchor& a = anchors[anchor_slot(ia)];
+                    Anchor& b = anchors[anchor_slot(ib)];
+                    if (a.formed && b.formed)
+                    {
+                        for (Anchor* x : {&a, &b})
+                            if (!x->finished)
+                            {
+                                RefractedRay copy = x->ray;
+                                finish_anchor(*x, copy);
+                            }
+                        LayeredSolution between;
+                        if (interpolate_ground(a.solution, b.solution, t, layered_chord(it, *anchors_for), between))
+                        {
+                            layered_finish_ground(*layered_sound_speed, ray, ground, microphone, layer_scratch,
+                                    &between);
+                            return;
+                        }
+                    }
+                }
+            }
+            layered_finish_ground(*layered_sound_speed, ray, ground, microphone, layer_scratch);
         };
         unsigned generation = 0;
         std::size_t culled_here = 0;
@@ -3419,7 +3533,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     if (table_level(it, table_bands_out, level, nullptr, nullptr))
                         return add_ambient ? level_with_ambient(level, ambient_energy) : level;
                 }
-                finish_ray(ray, ray_ground, microphone_height[index]);
+                finish_ray(it, ray, ray_ground, microphone_height[index]);
                 double* bands_out = record_path(it, ray.path);
                 const double* extra_loss = nullptr;
                 const double* ground_weight = nullptr;
@@ -4480,6 +4594,7 @@ int run(int argc, char* argv[])
     double shadow_phase = default_resolved_phase;
     std::string cramped_ground = "series";
     bool tunneling = false;
+    std::size_t ray_stride = 1;
     bool skip_fill = false;
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.
@@ -4787,6 +4902,12 @@ int run(int argc, char* argv[])
             "--refraction stratified: also take the rays turned back from aloft that turn again just "
             "above the microphone, which the wave reaches through the layer below them (an Airy "
             "tail per band).  Off by default.");
+    app.add_option("--ray_stride", ray_stride,
+            "--refraction stratified: solve each path's layered rays only every this many trajectory "
+            "states, and interpolate the states between wherever the two solved ones agree -- the "
+            "same arrivals, lit or shadowed alike, angles within half a degree and ray tubes within "
+            "2% -- solving the rest. 1 (default) solves every state.")
+        ->check(CLI::Range(std::size_t {1}, std::size_t {64}));
     app.add_flag("--skip_fill", skip_fill,
             "--refraction stratified: fill the skip zone short of where rays from aloft first land "
             "with the caustic's Airy tail per band.  Off by default.");
@@ -5953,6 +6074,9 @@ int run(int argc, char* argv[])
     options.stratified = refraction == "stratified";
     if ((tunneling || skip_fill) && !options.stratified)
         input_error("--tunneling and --skip_fill need --refraction stratified.");
+    if (ray_stride > 1 && !options.stratified)
+        input_error("--ray_stride needs --refraction stratified.");
+    options.ray_stride = ray_stride;
     options.waves.tunneling = tunneling;
     options.waves.skip_fill = skip_fill;
     options.shadow_floor = shadow_floor;

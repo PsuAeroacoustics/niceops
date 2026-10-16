@@ -298,11 +298,55 @@ private:
 // (3.3).
 inline constexpr double handover_fraction = 0.9;
 
+// What a pair's layered solves give -- the direct eigenray, the hand-over,
+// the arrivals (ray and wave), and for a point receiver the reflected ray's
+// grazing angle and the length the ground term takes it over -- kept, so that
+// a state between two solved ones can take it interpolated
+// (interpolate_layered) and skip the solves (--ray_stride).
+struct LayeredSolution
+{
+    bool solved = false;
+    // The pair's straight distance, source to microphone: interpolation takes
+    // the ray tubes, path lengths and travel times as fractions of it, so
+    // that a tube's growth with range is exact and only its focusing is
+    // interpolated.
+    double chord = 0.0;
+    DirectEigenray direct;
+    bool handover = false;
+    std::vector<Arrival> arrivals;
+    std::vector<Arrival> waves;
+    bool ground_set = false;
+    double grazing = 0.0;
+    double length = 0.0;
+};
+
+// `a` and `b` (two states' solutions) at t in (0, 1) between them, for a
+// pair whose straight distance is `chord`, into `out`: angles and boundaries
+// linear in t, tubes, lengths and times linear as fractions of the chord.
+// False, and `out` left as it may be, unless both were solved and alike: the
+// same lit or shadowed primary, boundary or none, hand-over, and arrivals of
+// the same bounces and wave kinds, every launch and arrival angle within
+// ray_interpolation_angle of its partner, and every tube, as a fraction of
+// its chord, within ray_interpolation_spreading -- a caustic, a family's
+// switch or a boundary passing makes them differ, and the states between are
+// solved.  The ground's part only where both have it, the reflected rays
+// alike.
+bool interpolate_layered(const LayeredSolution& a, const LayeredSolution& b, double t, double chord,
+        LayeredSolution& out);
+bool interpolate_ground(const LayeredSolution& a, const LayeredSolution& b, double t, double chord,
+        LayeredSolution& out);
+inline constexpr double ray_interpolation_angle = 0.5 * 3.14159265358979323846 / 180.0; // rad
+inline constexpr double ray_interpolation_spreading = 0.02;                               // relative
+
+// `given`: take the solves' results from it instead of solving (when its
+// hand-over agrees with this pair's); `solved`: record them there.
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
-        bool linear_past_shadow = false, const WaveOptions& waves = {});
+        bool linear_past_shadow = false, const WaveOptions& waves = {}, const LayeredSolution* given = nullptr,
+        LayeredSolution* solved = nullptr);
 void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, GroundGeometry ground,
-        double microphone_height, std::vector<double>& scratch);
+        double microphone_height, std::vector<double>& scratch, const LayeredSolution* given = nullptr,
+        LayeredSolution* solved = nullptr);
 
 } // namespace niceops

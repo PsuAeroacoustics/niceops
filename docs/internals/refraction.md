@@ -273,6 +273,39 @@ its highest band) of the fastest air, and the limiting ray's travel across it is
   10 kHz, so it is what fails if `process_trajectory` stops handing `LayeredSoundSpeed` its band
   (`a run's resolution frequency reaches every path's layers` covers `path_layers`).
 
+## Interpolated states (`--ray_stride`)
+
+`LayeredSolution` (stratified.hpp) is what a pair's layered solves give: the direct eigenray
+after the boundary's removal under aloft, the hand-over, the ray and wave arrivals, and the
+reflected ray's grazing and length for a point receiver's ground. `layered_direct_ray` and
+`layered_finish_ground` take one (`given`) in place of solving, or record one (`solved`); the
+per-observer cache of anchors is in `process_trajectory` (`anchors`, `form_ray`, `finish_ray`).
+What to keep:
+
+- **Interpolate the solves, not the levels.** The sphere's direction, the ground, the absorption
+  and the shadow transition are formed at each state from its own geometry and the interpolated
+  ray. Interpolating levels would miss the dips between anchors that move the 10 dB window, as
+  decimating the trajectory does ([performance.md](performance.md#the-sel-window-the-oversampling-and-the-windowed-peak-search)).
+- **Anchors are fixed states** (every K-th and the last), each solved exactly as without the
+  option, so a state's ray does not depend on which state the windowed search asked for first:
+  windowed equals marched byte for byte (`stratified_stride_windowed_is_exact`).
+- **Tubes, lengths and times as fractions of the chord.** Taken as they are, 14% of states
+  between anchors 8 apart were refused on the 2% tube limit by nothing but the tube's growth with
+  range; as fractions of the straight chord the growth is exact and only the focusing is
+  interpolated.
+- **The hand-over is decided afresh** from the interpolated boundary and the state's own linear
+  boundary; where it differs from the anchors' the state is solved. A state whose ray was solved
+  is finished exactly too (`RefractedRay::interpolated`).
+- **A ray from aloft, a duct's promotion, a caustic coming or going** change the arrivals' count,
+  bounces or kinds, or move angles and tubes past the limits, so those states are solved.
+- **Cost:** see [performance.md](performance.md#interpolated-rays). What is left at stride 4 is
+  the rest of the evaluation (the shadow transition, the band levels, the database load and the
+  histories), so larger strides gain little; in a duct with wave arrivals the arrivals' kinds
+  change often enough that most states are solved anyway.
+- Tests: `two states' layered solves interpolate only where they agree`
+  (`tests/test_stratified.cpp`), `stratified_stride_{windy,duct}_is_close` (the goldens at 0.005
+  and 0.02 dB), `stratified_stride_is_not_exact`, `ray_stride_needs_stratified`.
+
 ## Arrivals and ducts
 
 Every arrival is summed in energy (`layered_arrivals`, `Arrival` in refraction.hpp). The primary

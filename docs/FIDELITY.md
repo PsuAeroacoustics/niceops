@@ -946,6 +946,31 @@ under 20° of veer):
   decides, not the surface: at Eglin the apparent z₀ runs from the search's lower bound (Ri < −1)
   to 2.3 m (weakly stable).
 
+### Interpolated rays (`--ray_stride`)
+
+`--ray_stride` against every state solved, the same build. On the AS350 approach 291261 at
+Amedee (46 flush plates, 4778 states, the day's measured profile, a history per microphone):
+
+| stride | SEL, largest change | LAmax | one history sample, largest | samples over 0.1 dB |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 | 0.0004 dB | 0.0007 dB | 0.41 dB | 4 |
+| 4 | 0.0005 dB | 0.0016 dB | 1.15 dB | 21 |
+| 8 | 0.0014 dB | 0.015 dB | 1.73 dB | |
+
+of 219,788 samples. The largest sample changes fall where the solved history itself steps by
+about 2 dB between consecutive states, near the end of the approach, which the interpolation
+smooths. SEL on 1681 cells of the demo grid (41 x 41), largest change and 99th percentile:
+
+| profile | stride 4 | stride 8 |
+| --- | --- | --- |
+| `example_windy.csv`, point receivers | 0.012 / 0.0005 dB | 0.004 / 0.0006 dB |
+| `example_windy.csv`, flush plates | | 0.004 / 0.0004 dB |
+| `example_windy.csv`, `--shadow_model resolved` | | 0.003 / 0.0006 dB |
+| `example_inversion.csv` (a duct), point receivers | 0.057 / 0.003 dB | 0.27 / 0.002 dB |
+| the duct, `--tunneling --skip_fill` | | 0.004 / 0.002 dB |
+
+A windowed run equals its marched run byte for byte at any stride (`stratified_stride_windowed_is_exact`).
+
 ### Refraction against flight data
 
 **`--refraction stratified` on day 284** (`min2_no284`, plate, 729 mic-runs, SNR ≥ 10 dB,

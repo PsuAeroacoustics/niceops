@@ -597,6 +597,23 @@ Tried and not taken:
   a square root, a divide and a dozen other instructions a layer. Batching two p values a walk
   across a vector's lanes is what is left, for the ends and the tube's two points at most.
 
+### Interpolated rays
+
+`--ray_stride` (opt-in; [refraction.md](refraction.md#interpolated-states---ray_stride)) on the
+same suite, CPU against every state solved, same build, alternately:
+
+| case | stride 1 | stride 4 | stride 8 |
+| --- | ---: | ---: | ---: |
+| harness, `--refraction stratified` (46 plates, `-j 1`) | 1.37 s | 0.77 s | 0.77 s |
+| harness, `--shadow_model resolved` | 1.38 s | | 0.77 s |
+| grid, `example_windy.csv`, point receivers | 35 s | 17.6 s | 16.1 s |
+| grid, windy, flush plates | 27.6 s | | 18.3 s |
+| grid, windy, `--shadow_model resolved` | 31.7 s | | 15.8 s |
+| grid, `example_inversion.csv` duct | 75.5 s | 29.9 s | 27.7 s |
+| grid, duct, `--tunneling --skip_fill` | 586 s | | 542 s |
+
+Past stride 4 the solves are a small part and the rest of the evaluation is what is left.
+
 ### Taken, each exact
 
 Each keeps the formulas and the per-band summation order; none involves an approximation,

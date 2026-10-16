@@ -698,6 +698,93 @@ TEST_CASE("a wave arrival's loss is its band's seven Airy evaluations", "[strati
     CHECK(compared == 3200);
 }
 
+TEST_CASE("two states' layered solves interpolate only where they agree", "[stratified]")
+{
+    // interpolate_layered (--ray_stride): angles and boundaries linear in t,
+    // tubes, lengths and times linear as fractions of each state's chord, and
+    // a refusal wherever the two differ in kind or by more than the limits.
+    LayeredSolution a, b;
+    a.solved = b.solved = true;
+    a.chord = 1000.0;
+    b.chord = 1010.0;
+    a.direct.launch = -0.100;
+    b.direct.launch = -0.104;
+    a.direct.arrival = -0.090;
+    b.direct.arrival = -0.093;
+    a.direct.spreading_range = 1001.0;
+    b.direct.spreading_range = 1012.0;
+    a.direct.path_length = 1000.5;
+    b.direct.path_length = 1010.6;
+    a.direct.travel_time = 2.9;
+    b.direct.travel_time = 2.93;
+    a.direct.boundary = 3000.0;
+    b.direct.boundary = 3010.0;
+    a.direct.boundary_gradient = -0.02;
+    b.direct.boundary_gradient = -0.021;
+    Arrival arrival;
+    arrival.bounces = 1;
+    arrival.launch = 0.05;
+    arrival.arrival = -0.06;
+    arrival.grazing = 0.07;
+    arrival.spreading_range = 1100.0;
+    arrival.path_length = 1050.0;
+    arrival.travel_time = 3.1;
+    a.arrivals = {arrival};
+    arrival.launch = 0.051;
+    arrival.spreading_range = 1111.0;
+    arrival.path_length = 1060.0;
+    b.arrivals = {arrival};
+    LayeredSolution out;
+    const double chord = 1004.0;
+    REQUIRE(interpolate_layered(a, b, 0.25, chord, out));
+    CHECK(out.direct.launch == Catch::Approx(-0.101).epsilon(1e-12));
+    CHECK(out.direct.boundary == Catch::Approx(3002.5).epsilon(1e-12));
+    CHECK(out.direct.spreading_range
+            == Catch::Approx(chord * (0.75 * 1001.0 / 1000.0 + 0.25 * 1012.0 / 1010.0)).epsilon(1e-12));
+    CHECK(out.direct.travel_time == Catch::Approx(chord * (0.75 * 2.9 / 1000.0 + 0.25 * 2.93 / 1010.0)).epsilon(1e-12));
+    REQUIRE(out.arrivals.size() == 1);
+    CHECK(out.arrivals[0].launch == Catch::Approx(0.05025).epsilon(1e-12));
+    CHECK(out.arrivals[0].bounces == 1);
+    // A ray whose tube grows with its chord interpolates to the chord's own.
+    LayeredSolution c = a, d = a;
+    d.chord = 1200.0;
+    d.direct.spreading_range = a.direct.spreading_range * 1.2;
+    d.direct.path_length = a.direct.path_length * 1.2;
+    d.arrivals[0].spreading_range *= 1.2;
+    d.arrivals[0].path_length *= 1.2;
+    REQUIRE(interpolate_layered(c, d, 0.5, 1100.0, out));
+    CHECK(out.direct.spreading_range == Catch::Approx(1001.0 * 1.1).epsilon(1e-12));
+    // Refusals.
+    auto refused = [&](auto change) {
+        LayeredSolution x = a, y = b;
+        change(x, y);
+        LayeredSolution unused;
+        return !interpolate_layered(x, y, 0.5, chord, unused);
+    };
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.solved = false; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.handover = true; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.lit = false; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.boundary = std::numeric_limits<double>::infinity(); }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.launch = -0.100 - 0.6 * pi / 180.0; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.spreading_range = 1010.0 * 1.03; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.direct.boundary = 3100.0; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.arrivals.clear(); }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.arrivals[0].bounces = 2; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.arrivals[0].wave.caustic = true; }));
+    CHECK(refused([](LayeredSolution&, LayeredSolution& y) { y.arrivals[0].grazing = 0.0; }));
+    // The ground's part.
+    a.ground_set = b.ground_set = true;
+    a.grazing = 0.08;
+    b.grazing = 0.082;
+    a.length = 1001.0;
+    b.length = 1011.0;
+    REQUIRE(interpolate_ground(a, b, 0.5, chord, out));
+    CHECK(out.grazing == Catch::Approx(0.081).epsilon(1e-12));
+    CHECK(out.length == Catch::Approx(chord * 0.5 * (1001.0 / 1000.0 + 1011.0 / 1010.0)).epsilon(1e-12));
+    b.grazing = 0.0;
+    CHECK_FALSE(interpolate_ground(a, b, 0.5, chord, out));
+}
+
 TEST_CASE("a deep duct retains more than 24 arrivals", "[stratified]")
 {
     const Duct duct;

@@ -1387,6 +1387,23 @@ set_tests_properties(stratified_duct_point stratified_duct_point_marched stratif
 add_test(NAME stratified_duct_point_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_point.csv integrated/stratified_duct_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME stratified_duct_plate_windowed_is_exact COMMAND golden_compare integrated/stratified_duct_plate.csv integrated/stratified_duct_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(stratified_duct_point_windowed_is_exact stratified_duct_plate_windowed_is_exact PROPERTIES FIXTURES_REQUIRED stratified_duct_runs)
+# --ray_stride: the layered solves at every 4th state, the states between interpolated where the two
+# agree.  Close to every state solved (the stratified goldens, at the measured 0.001 and 0.005 dB, with
+# room), not equal to it (the option acts), and the windowed run equal to the marched one: anchors are
+# fixed states, whichever asks first.
+set(STRIDE_WINDY -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction stratified --frame_bearing 210 --ground_effect --gridstep 984 -L warn --ray_stride 4)
+add_test(NAME stratified_stride_windy_point COMMAND niceops ${STRIDE_WINDY} -o integrated/stratified_stride_windy_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_windy_point_marched COMMAND niceops ${STRIDE_WINDY} -D integrated/stratified_stride_windy_point_dnl.csv -o integrated/stratified_stride_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_duct_point COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_inversion.csv --refraction stratified --ground_effect --gridstep 984 -L warn --ray_stride 4 -o integrated/stratified_stride_duct_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_stride_windy_point stratified_stride_windy_point_marched stratified_stride_duct_point PROPERTIES FIXTURES_SETUP stratified_stride_runs)
+add_test(NAME stratified_stride_windowed_is_exact COMMAND golden_compare integrated/stratified_stride_windy_point.csv integrated/stratified_stride_windy_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_windy_is_close COMMAND golden_compare integrated/stratified_stride_windy_point.csv golden/stratified_windy_point.csv 0.005 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_duct_is_close COMMAND golden_compare integrated/stratified_stride_duct_point.csv golden/stratified_duct_point.csv 0.02 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME stratified_stride_is_not_exact COMMAND golden_compare integrated/stratified_stride_windy_point.csv golden/stratified_windy_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(stratified_stride_is_not_exact PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value")
+set_tests_properties(stratified_stride_windowed_is_exact stratified_stride_windy_is_close stratified_stride_duct_is_close stratified_stride_is_not_exact PROPERTIES FIXTURES_REQUIRED stratified_stride_runs)
+add_test(NAME ray_stride_needs_stratified COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json -t tracks/S-76D/197421AC.csv --atmosphere atmospheres/example_windy.csv --refraction linear --ray_stride 4 --gridstep 4000 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(ray_stride_needs_stratified PROPERTIES PASS_REGULAR_EXPRESSION "--ray_stride needs --refraction stratified")
 # --shadow_model resolved: each band's shadow boundary from the near-ground profile it resolves, and
 # cramped bands' field from the residue series at the source's own height (or the straight path's
 # ground term).  The peak search must stay exact with it on: the series and the table are capped at

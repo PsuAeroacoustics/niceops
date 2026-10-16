@@ -254,6 +254,9 @@ struct RefractedRay
     // The pair's other eigenrays (Arrival).  Empty but for --refraction
     // stratified, and there only where more than one ray arrives.
     std::vector<Arrival> extra;
+    // --ray_stride: the layered solves were interpolated between two solved
+    // states (layered_direct_ray's `given`), so the ground's may be too.
+    bool interpolated = false;
 };
 
 // The refracted path from `source` to the microphone at `receiver` --

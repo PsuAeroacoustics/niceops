@@ -1075,6 +1075,19 @@ exact slope every 1/128 from $-60$ to $64$, read by cubic Hermite interpolation)
 past $x = 72$, where every sub-frequency's $\mathrm{Ai}^2$ is below the $10^{-300}$ floor, and
 evaluated directly elsewhere.
 
+**Interpolated states.** With `--ray_stride` $K > 1$ the layered solves -- the direct eigenray,
+the arrivals and wave arrivals, and for a point receiver the reflected ray's grazing angle and
+the length its ground term takes -- are made at the anchor states $nK$ and the last state, and a
+state a fraction $t$ of the way between two anchors takes theirs interpolated, provided the two
+agree: the same lit or shadowed primary, a boundary or none, the same hand-over to the linear fit,
+the same arrivals with the same bounces and wave kinds, every launch, arrival and grazing angle
+within $0.5^\circ$ of its partner, and every ray tube and path length, as a fraction of its
+state's straight chord $d = |\mathbf{x}_s - \mathbf{x}_r|$, within 2%. Angles, boundaries and
+wave arguments are then linear in $t$, and each tube, path length and travel time $L$ is
+$L = d\,[(1-t)\,L_a/d_a + t\,L_b/d_b]$. Any other state is solved. Everything else in the
+level -- the hand-over test, the sphere's direction, the ground, the absorption and the shadow
+transition -- is formed from the state's own geometry.
+
 ### 8.3 The resolved shadow
 
 `--shadow_model resolved`, with `--refraction stratified` and a ground model, changes how each
