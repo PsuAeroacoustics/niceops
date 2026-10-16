@@ -8,6 +8,14 @@
 
 namespace niceops {
 
+// Which terrain screening a run takes (--terrain_screening).
+enum class TerrainScreening
+{
+    none,
+    cnossos,
+    kirchhoff,
+};
+
 // Terrain screening (--terrain_screening cnossos): the CNOSSOS-EU diffraction
 // of a path over a terrain profile, in the vertical plane through the
 // microphone and the source's footprint (Directive (EU) 2015/996, Annex II
@@ -119,6 +127,43 @@ struct ScreenTally
 void cnossos_screen_loss(const Screen& screen, const std::vector<double>& band_centers, double sound_speed,
         const double* source_gain, const double* receiver_gain, std::size_t first, std::size_t last,
         double* loss, ScreenTally* tally = nullptr);
+
+// --terrain_screening kirchhoff: a blocked pair keeps the level it would have
+// unscreened -- its own ground model, plate or table over the mean plane --
+// less the Fresnel-Kirchhoff loss of one equivalent knife edge.  The edge
+// stands in the aperture plane perpendicular to the line of sight above the
+// profile's highest protrusion, at the lowest point of that plane both ends
+// see over the terrain: the higher of where the source's horizon ray (through
+// the hull vertex nearest it) and the microphone's (through the vertex
+// nearest it) cross the plane.  THEORY 6.4 has the equations as run.
+struct KnifeEdge
+{
+    double d1 = 0.0;      // along the line of sight, the source to the aperture plane
+    double d2 = 0.0;      // and the microphone to it
+    double height = 0.0;  // the edge above the line of sight, perpendicular to it (> 0)
+    double delta = 0.0;   // the path difference through the edge, d1 and d2 to it less d1 + d2 (> 0)
+};
+
+// The equivalent edge of a blocked pair from rubber_band's `points` (the
+// microphone, the profile samples and the source) and `screen`.
+KnifeEdge knife_edge(const Screen& screen, const std::vector<ScreenPoint>& points);
+
+// The Fresnel integrals C(x) and S(x), each the integral from 0 to x of the
+// cosine and sine of pi t^2 / 2.
+void fresnel_integrals(double x, double& c, double& s);
+
+// |F(v)|^2, the power past a straight knife edge relative to the free field
+// (the Fresnel-Kirchhoff half-plane): ((1/2 - C(v))^2 + (1/2 - S(v))^2) / 2,
+// 1/4 at grazing (v = 0) and falling as 1/(2 pi^2 v^2) deep in the shadow.
+double knife_edge_power(double v);
+
+// The knife edge's loss, dB, into loss[band] for bands [first, last): -10 lg
+// of |F(v)|^2 averaged uniformly in frequency over each band, from
+// band_centers 2^(-1/6) to 2^(1/6), by eight-point Gauss-Legendre, with
+// v = 2 sqrt(delta f / sound_speed).  At least 10 lg 4 for an edge above the
+// line of sight, so a pair is never louder screened than unscreened.
+void knife_edge_loss(const KnifeEdge& edge, const std::vector<double>& band_centers, double sound_speed,
+        std::size_t first, std::size_t last, double* loss);
 
 // The most a screened pair's level can exceed free field, as a power ratio,
 // given bounds on its two sides' ground gains: max(1, G_S) max(1, G_R) / 3.

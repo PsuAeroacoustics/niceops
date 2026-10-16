@@ -1855,6 +1855,55 @@ set_tests_properties(terrain_ridge_screened_bound PROPERTIES FIXTURES_REQUIRED t
 add_test(NAME terrain_ridge_screened_point_golden COMMAND golden_compare integrated/terrain_ridge_screened_point.csv golden/terrain_ridge_screened_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME terrain_ridge_screened_plate_golden COMMAND golden_compare integrated/terrain_ridge_screened_plate.csv golden/terrain_ridge_screened_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_ridge_screened_point_golden terrain_ridge_screened_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_ridge_runs)
+# --terrain_screening kirchhoff (src/screening.hpp; THEORY 6.4): a blocked pair keeps its own ground,
+# plate or table and loses a knife edge's Fresnel-Kirchhoff loss, at least 10 lg 4.  Where nothing is
+# blocked -- level terrain, the falling plane, the hills -- it is the unscreened run byte for byte.
+set(KIRCHHOFF --terrain_screening kirchhoff)
+add_logged_run(terrain_flat_point_kirchhoff ${TERRAIN_BASE} ${TERRAIN_FLAT} --ground_effect ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_flat_point_kirchhoff.csv)
+add_logged_run(terrain_flat_plate_kirchhoff ${TERRAIN_BASE} ${TERRAIN_FLAT} ${TERRAIN_PLATE} ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_flat_plate_kirchhoff.csv)
+add_logged_run(terrain_tilted_plate_kirchhoff ${TERRAIN_BASE} ${TERRAIN_TILTED} ${TERRAIN_PLATE} ${KIRCHHOFF} --gridstep 984 -o integrated/terrain_tilted_plate_kirchhoff.csv)
+add_logged_run(terrain_hills_point_kirchhoff ${TERRAIN_BASE} ${TERRAIN_HILLS} --ground_effect ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_hills_point_kirchhoff.csv)
+set_tests_properties(terrain_flat_point_kirchhoff terrain_flat_plate_kirchhoff terrain_tilted_plate_kirchhoff terrain_hills_point_kirchhoff
+    PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_kirchhoff_unscreened_runs
+    PASS_REGULAR_EXPRESSION "--terrain_screening: 0 evaluations were screened"
+    FAIL_REGULAR_EXPRESSION "--terrain_screening: [1-9];${LOGGED_RUN_FAILED}")
+add_test(NAME terrain_flat_point_kirchhoff_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_point_kirchhoff.csv integrated/terrain_flat_point_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_flat_plate_kirchhoff_is_flat COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_flat_plate_kirchhoff.csv integrated/terrain_flat_plate_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_tilted_plate_kirchhoff_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_tilted_plate_kirchhoff.csv integrated/terrain_tilted_plate.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_hills_kirchhoff_is_unscreened COMMAND ${CMAKE_COMMAND} -E compare_files integrated/terrain_hills_point_kirchhoff.csv integrated/terrain_hills_point.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_flat_point_kirchhoff_is_flat terrain_flat_plate_kirchhoff_is_flat terrain_tilted_plate_kirchhoff_is_unscreened terrain_hills_kirchhoff_is_unscreened
+    PROPERTIES FIXTURES_REQUIRED "terrain_kirchhoff_unscreened_runs;terrain_flat_runs;terrain_unscreened_runs;terrain_hills_runs")
+# Behind the ridge the peak search, with no bound term for the knife edge, equals the march: point
+# receivers, plates, no ground model and a propagation table, which a blocked pair keeps.
+add_logged_run(terrain_ridge_kirchhoff_point ${TERRAIN_BASE} ${TERRAIN_RIDGE} --ground_effect ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_ridge_kirchhoff_point.csv)
+add_test(NAME terrain_ridge_kirchhoff_point_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --ground_effect ${KIRCHHOFF} --gridstep 492 -D integrated/terrain_ridge_kirchhoff_point_dnl.csv -o integrated/terrain_ridge_kirchhoff_point_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_kirchhoff_plate ${TERRAIN_BASE} ${TERRAIN_RIDGE} ${TERRAIN_PLATE} ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_ridge_kirchhoff_plate.csv)
+add_test(NAME terrain_ridge_kirchhoff_plate_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} ${TERRAIN_PLATE} ${KIRCHHOFF} --gridstep 492 -D integrated/terrain_ridge_kirchhoff_plate_dnl.csv -o integrated/terrain_ridge_kirchhoff_plate_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_kirchhoff_noground ${TERRAIN_BASE} ${TERRAIN_RIDGE} --no-ground_effect ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_ridge_kirchhoff_noground.csv)
+add_test(NAME terrain_ridge_kirchhoff_noground_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-ground_effect ${KIRCHHOFF} --gridstep 492 -D integrated/terrain_ridge_kirchhoff_noground_dnl.csv -o integrated/terrain_ridge_kirchhoff_noground_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_logged_run(terrain_ridge_kirchhoff_table ${TERRAIN_BASE} ${TERRAIN_RIDGE} ${TERRAIN_TABLE_GROUND} ${KIRCHHOFF} --gridstep 492 -o integrated/terrain_ridge_kirchhoff_table.csv)
+add_test(NAME terrain_ridge_kirchhoff_table_marched COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} ${TERRAIN_TABLE_GROUND} ${KIRCHHOFF} --gridstep 492 -D integrated/terrain_ridge_kirchhoff_table_dnl.csv -o integrated/terrain_ridge_kirchhoff_table_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_kirchhoff_point terrain_ridge_kirchhoff_plate terrain_ridge_kirchhoff_noground
+    PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: [1-9][0-9]* evaluations were screened")
+set_tests_properties(terrain_ridge_kirchhoff_table PROPERTIES PASS_REGULAR_EXPRESSION "The screened evaluations kept the propagation table")
+set_tests_properties(terrain_ridge_kirchhoff_point terrain_ridge_kirchhoff_point_marched terrain_ridge_kirchhoff_plate terrain_ridge_kirchhoff_plate_marched
+    terrain_ridge_kirchhoff_noground terrain_ridge_kirchhoff_noground_marched
+    PROPERTIES FIXTURES_REQUIRED terrain_file FIXTURES_SETUP terrain_ridge_kirchhoff_runs)
+set_tests_properties(terrain_ridge_kirchhoff_table terrain_ridge_kirchhoff_table_marched PROPERTIES FIXTURES_REQUIRED "terrain_file;terrain_table_file" FIXTURES_SETUP terrain_ridge_kirchhoff_runs)
+foreach(kind point plate noground table)
+  add_test(NAME terrain_ridge_kirchhoff_${kind}_windowed_is_exact COMMAND golden_compare integrated/terrain_ridge_kirchhoff_${kind}.csv integrated/terrain_ridge_kirchhoff_${kind}_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(terrain_ridge_kirchhoff_${kind}_windowed_is_exact PROPERTIES FIXTURES_REQUIRED terrain_ridge_kirchhoff_runs)
+endforeach()
+# ... the knife edge acts (the ridge's plates differ from CNOSSOS's: golden_compare's mismatch is the
+# pass), and the runs are pinned (made by the build that added kirchhoff; regenerate only with a
+# deliberate change).
+add_test(NAME terrain_ridge_kirchhoff_is_not_cnossos COMMAND golden_compare integrated/terrain_ridge_kirchhoff_plate.csv integrated/terrain_ridge_screened_plate.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_kirchhoff_is_not_cnossos PROPERTIES PASS_REGULAR_EXPRESSION "mismatch at value" FIXTURES_REQUIRED "terrain_ridge_kirchhoff_runs;terrain_ridge_runs")
+add_test(NAME terrain_ridge_kirchhoff_point_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_point.csv golden/terrain_ridge_kirchhoff_point.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME terrain_ridge_kirchhoff_plate_golden COMMAND golden_compare integrated/terrain_ridge_kirchhoff_plate.csv golden/terrain_ridge_kirchhoff_plate.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_ridge_kirchhoff_point_golden terrain_ridge_kirchhoff_plate_golden PROPERTIES FIXTURES_REQUIRED terrain_ridge_kirchhoff_runs)
+add_test(NAME terrain_screening_rejects_unknown COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --terrain_screening deygout -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(terrain_screening_rejects_unknown PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening: deygout not in")
 # Refusals.
 add_test(NAME terrain_screening_needs_terrain COMMAND niceops ${TERRAIN_DEMO} ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_screening_needs_terrain PROPERTIES PASS_REGULAR_EXPRESSION "--terrain_screening needs --terrain")
@@ -1865,4 +1914,4 @@ set_tests_properties(terrain_screening_needs_spectral PROPERTIES FIXTURES_REQUIR
 add_test(NAME terrain_screening_needs_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --origin 39.81043 -74.42631 --frame_bearing 210 ${TERRAIN_RIDGE} ${SCREENING} --gridstep 4000 -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(terrain_screening_needs_spectra PROPERTIES FIXTURES_REQUIRED terrain_file PASS_REGULAR_EXPRESSION "--terrain_screening is per band, and databases/S-76D_M3.nod carries no per-band spectra")
 add_test(NAME terrain_screening_table_needs_ground COMMAND niceops ${TERRAIN_DEMO} ${TERRAIN_RIDGE} --no-ground_effect --propagation_table tables/ground_model_test.nc ${SCREENING} -o integrated/never_written.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(terrain_screening_table_needs_ground PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "--terrain_screening with --propagation_table needs a ground model")
+set_tests_properties(terrain_screening_table_needs_ground PROPERTIES FIXTURES_REQUIRED "terrain_file;propagation_table_file" PASS_REGULAR_EXPRESSION "--terrain_screening cnossos with --propagation_table needs a ground model")

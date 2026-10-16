@@ -714,10 +714,11 @@ struct RunOptions
     std::string terrain_path;
     double terrain_offset = 0.0;
     double terrain_step = 0.0;
-    // --terrain_screening cnossos: a pair whose terrain profile rises above
-    // its line of sight takes the CNOSSOS-EU diffraction over it
-    // (screening.hpp) in place of its mean-plane ground term.
-    bool terrain_screening = false;
+    // --terrain_screening: a pair whose terrain profile rises above its line
+    // of sight takes the CNOSSOS-EU diffraction over it in place of its
+    // mean-plane ground term (cnossos), or keeps that term less a knife edge's
+    // Fresnel-Kirchhoff loss (kirchhoff); screening.hpp.
+    TerrainScreening terrain_screening = TerrainScreening::none;
     // --screening_min_height, m: how far terrain must rise above a path's line
     // of sight to screen it.
     double screening_min_height = 0.5;
@@ -1865,7 +1866,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
 
     // --terrain_screening: only over terrain (run() refuses it otherwise).
-    const bool screening = options.terrain_screening && terrain_raster.has_value();
+    const bool screening = options.terrain_screening != TerrainScreening::none && terrain_raster.has_value();
+    const bool kirchhoff = screening && options.terrain_screening == TerrainScreening::kirchhoff;
 
     // With --db_cutoff, skip any (observer, state) pair whose level is provably
     // below the cutoff.  The bound is per state, from the loudest sphere the
@@ -1986,7 +1988,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     bool spectral = options.spectral;
     if (spectral && !database.has_spectra())
     {
-        if (options.terrain_screening)
+        if (options.terrain_screening != TerrainScreening::none)
             input_error("--terrain_screening is per band, and ", job.database, " carries no per-band "
                         "spectra. Rebuild it with spectra, or leave out --terrain_screening.");
         if (options.spectral_explicit || options.ground_effect_given || atmosphere
@@ -2733,8 +2735,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // source side is the point model over the observer's class, a
             // plate's included; the receiver side is the point model or the
             // plate.  Without a ground model the term is 1/3 and changes
-            // nothing.
-            if (screening && ground_model != nullptr)
+            // nothing.  --terrain_screening kirchhoff needs no term: a blocked
+            // pair is its unscreened level less a knife edge's loss, at least
+            // 10 lg 4 (knife_edge_loss), and the unscreened level is bounded
+            // already.
+            if (screening && !kirchhoff && ground_model != nullptr)
             {
                 std::vector<std::size_t> classes = point_classes;
                 if (any_plate && std::find(classes.begin(), classes.end(), plate_class) == classes.end())
@@ -3087,6 +3092,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::vector<double> screen_loss(screen_bands, 0.0);
         std::vector<double> screen_source_gain(screen_bands, 1.0);
         std::vector<double> screen_receiver_gain(screen_bands, 1.0);
+        // --terrain_screening kirchhoff: the knife edge's loss for the pair at
+        // hand, and the table's loss with it added.
+        std::vector<double> knife_loss(screen_bands, 0.0);
         std::size_t screened_here = 0, capped_here = 0, source_clamped_here = 0, receiver_clamped_here = 0;
         std::size_t table_bypassed_here = 0;
         std::size_t terrain_table_here = 0, terrain_table_point_here = 0, receiver_fallback_here = 0;
@@ -3143,7 +3151,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             // line (terrain_ray), and the heights, the range and K's geometry
             // are taken in its frame (table_read); the bearing is always the
             // true separation's.  Without it they are the flat ground's.
-            auto table_level = [&](std::size_t it, double* bands_out, double& level, const RayPath* plane) {
+            auto table_level = [&](std::size_t it, double* bands_out, double& level, const RayPath* plane,
+                                       const double* added_loss) {
                 const Vec3& source = source_states[it].position;
                 const Vec3 separation = observer - source;
                 const auto east_north = compass.east_north({separation.x, separation.y});
@@ -3206,6 +3215,8 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     if (k[0] != nullptr)
                         gain += w[0] * k[0][band] + w[1] * k[1][band] + w[2] * k[2][band] + w[3] * k[3][band];
                     table_loss[band] = -gain;
+                    if (added_loss != nullptr)
+                        table_loss[band] += added_loss[band];
                 }
                 tabled_here++;
                 level = database.spectral_level_along(straight_ray(source, observer), source_states[it],
@@ -3272,7 +3283,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             auto straight_level = [&](std::size_t it, double* bands_out) {
                 // --terrain_screening: a pair whose profile rises above its line
                 // of sight is screened; every other pair goes on below, the
-                // same call as without it.
+                // same call as without it.  With kirchhoff a blocked pair goes on
+                // below too, carrying its knife edge's loss (`knife`).
+                const double* knife = nullptr;
                 if (screening)
                 {
                     const Vec3& source = source_states[it].position;
@@ -3283,7 +3296,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             && rubber_band(screen_profile.heights, screen_profile.interior, screen_profile.step,
                                     screen_profile.distance, screen_profile.microphone_height,
                                     screen_profile.source_height, screen_points, screen_hull, screen_edges, screen))
-                        return screened_level(it, pair, bands_out);
+                    {
+                        if (!kirchhoff)
+                            return screened_level(it, pair, bands_out);
+                        knife_edge_loss(knife_edge(screen, screen_points), database.band_centers(), sound_speed,
+                                first_band, last_band, knife_loss.data());
+                        knife = knife_loss.data();
+                        screened_here++;
+                        screened_at[index] = 1;
+                    }
                 }
                 double level = 0.0;
                 // Over terrain the pair's path over its mean ground line, found
@@ -3311,7 +3332,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     if (raised)
                         raised_at[index] = 1;
                 };
-                if (options.propagation_table && table_level(it, bands_out, level, plane))
+                if (options.propagation_table && table_level(it, bands_out, level, plane, knife))
                 {
                     if (plane != nullptr)
                     {
@@ -3330,9 +3351,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     take_plane();
                     return database.spectral_level_along(path, source_states[it], absorption_for(it, observer),
                             band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
-                            packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, nullptr, nullptr,
+                            packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, knife, nullptr,
                             bands_out);
                 }
+                // A knife edge with no ground model: the free field, less its loss.
+                if (knife != nullptr)
+                    return database.spectral_level_along(straight_ray(source_states[it].position, observer),
+                            source_states[it], absorption_for(it, observer), band_gains, nullptr, nullptr, sound_speed,
+                            first_band, last_band, packed_of_state[it], nullptr, 0.0, nullptr, knife, nullptr,
+                            bands_out);
                 return database.spectral_level_at_observer(observer, source_states[it], absorption_for(it, observer),
                         band_gains, ground_here, impedance_here, sound_speed, first_band, last_band,
                         packed_of_state[it], plate_receiver, plate_mic_azimuth, table_here, bands_out);
@@ -3358,7 +3385,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     double* table_bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
-                    if (table_level(it, table_bands_out, level, nullptr))
+                    if (table_level(it, table_bands_out, level, nullptr, nullptr))
                         return add_ambient ? level_with_ambient(level, ambient_energy) : level;
                 }
                 finish_ray(ray, ray_ground, microphone_height[index]);
@@ -3841,15 +3868,26 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     if (screening)
     {
         const auto observers_screened = std::count(screened_at.begin(), screened_at.end(), char(1));
-        log("--terrain_screening: ", screened_samples.load(), " evaluations were screened by the terrain, at ",
-                observers_screened, " of ", observers.size(), " observers; ", screen_capped.load(),
-                " reached the 25 dB cap in some band, and the ground weight F was held at 1 on the source "
-                "side in ", screen_source_clamped.load(), " and on the microphone's in ",
-                screen_receiver_clamped.load(), ".");
-        if (options.propagation_table)
-            log("  ", screen_table_bypassed.load(), " of the screened evaluations were not read from the "
-                    "propagation table but took the screening with the ground model; the table's physics "
-                    "holds on the unblocked paths only.");
+        if (kirchhoff)
+        {
+            log("--terrain_screening: ", screened_samples.load(), " evaluations were screened by the terrain, at ",
+                    observers_screened, " of ", observers.size(), " observers, each its unscreened level less a "
+                    "knife edge's Fresnel-Kirchhoff loss.");
+            if (options.propagation_table)
+                log("  The screened evaluations kept the propagation table where it covers them, less that loss.");
+        }
+        else
+        {
+            log("--terrain_screening: ", screened_samples.load(), " evaluations were screened by the terrain, at ",
+                    observers_screened, " of ", observers.size(), " observers; ", screen_capped.load(),
+                    " reached the 25 dB cap in some band, and the ground weight F was held at 1 on the source "
+                    "side in ", screen_source_clamped.load(), " and on the microphone's in ",
+                    screen_receiver_clamped.load(), ".");
+            if (options.propagation_table)
+                log("  ", screen_table_bypassed.load(), " of the screened evaluations were not read from the "
+                        "propagation table but took the screening with the ground model; the table's physics "
+                        "holds on the unblocked paths only.");
+        }
     }
 
     if (options.propagation_table)
@@ -4843,11 +4881,14 @@ int run(int argc, char* argv[])
             "unless --terrain_screening; not with --refraction. A --propagation_table is read at "
             "the heights above, and range along, each path's mean ground plane.");
     app.add_option("--terrain_screening", terrain_screening,
-            "With --terrain: none (default), or cnossos -- a path the terrain rises above takes "
-            "the CNOSSOS-EU diffraction over the profile's convex hull, with the ground on each "
-            "side of it, capped at 25 dB. Spectral path only. With --propagation_table a blocked "
-            "path leaves the table for the ground model, which it then needs.")
-            ->check(CLI::IsMember({"none", "cnossos"}));
+            "With --terrain: none (default); cnossos -- a path the terrain rises above takes the "
+            "CNOSSOS-EU diffraction over the profile's convex hull, with the ground on each side of "
+            "it, capped at 25 dB (with --propagation_table a blocked path leaves the table for the "
+            "ground model, which it then needs); or kirchhoff -- a blocked path keeps its ground, "
+            "plate or table and loses a knife edge's Fresnel-Kirchhoff diffraction, the edge being "
+            "the lowest point both ends see over the terrain where it rises highest. Spectral path "
+            "only.")
+            ->check(CLI::IsMember({"none", "cnossos", "kirchhoff"}));
     auto* screening_min_height_option = app.add_option("--screening_min_height", screening_min_height,
             "With --terrain_screening: how far the terrain must rise above a path's line of sight to "
             "screen it, in --units (default 0.5 m), so a terrain grid's texture beside a microphone does "
@@ -5636,10 +5677,10 @@ int run(int argc, char* argv[])
                         "bands.");
         // A blocked pair leaves the table, whose ground runs the whole path,
         // for the screening's ground on each side of the edge.
-        if (terrain_screening != "none" && !propagation_table.empty() && !ground_effect)
-            input_error("--terrain_screening with --propagation_table needs a ground model: a path the "
-                        "terrain blocks leaves the table for the ground on each side of the edge, and "
-                        "--no-ground_effect leaves it none.");
+        if (terrain_screening == "cnossos" && !propagation_table.empty() && !ground_effect)
+            input_error("--terrain_screening cnossos with --propagation_table needs a ground model: a path "
+                        "the terrain blocks leaves the table for the ground on each side of the edge, and "
+                        "--no-ground_effect leaves it none. --terrain_screening kirchhoff keeps the table.");
         if (observers_on_terrain && !scattered)
             input_error("--observers_on_terrain is for an observer file (-b); grid observers always "
                         "stand on the terrain.");
@@ -5777,7 +5818,9 @@ int run(int argc, char* argv[])
     options.terrain_path = terrain_file;
     options.terrain_offset = terrain_offset;
     options.terrain_step = terrain_step;
-    options.terrain_screening = terrain_screening == "cnossos";
+    options.terrain_screening = terrain_screening == "cnossos"   ? TerrainScreening::cnossos
+            : terrain_screening == "kirchhoff"                   ? TerrainScreening::kirchhoff
+                                                                 : TerrainScreening::none;
     options.screening_min_height = screening_min_height;
     options.observers_keep_file_z = terrain && scattered && !observers_on_terrain;
     if (!propagation_table.empty())

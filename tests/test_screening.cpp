@@ -553,3 +553,206 @@ TEST_CASE("ISO/TR 17534-4 TC05 and TC20: the mean plane over uneven ground", "[s
         CHECK(g.ground_distance == Catch::Approx(e.tr_dp).margin(e.tr_margin));
     }
 }
+
+// --terrain_screening kirchhoff: the knife edge.
+TEST_CASE("the Fresnel integrals against reference values", "[screening][kirchhoff]")
+{
+    // C(x) and S(x) from SciPy's scipy.special.fresnel (Cephes), a separate
+    // implementation: both branches, either side of the switch at 1.5, and far
+    // out where the continued fraction carries them.
+    struct Row
+    {
+        double x, c, s;
+    };
+    const Row rows[] = {
+        {-3.0, -0.60572078929768569, -0.49631299896737502},
+        {-0.5, -0.49234422587144638, -0.064732432859999287},
+        {0.0, 0.0, 0.0},
+        {0.001, 0.00099999999999975326, 5.2359877559820663e-10},
+        {0.1, 0.099997532627085065, 0.00052358954761221076},
+        {0.5, 0.49234422587144638, 0.064732432859999287},
+        {1.0, 0.77989340037682298, 0.43825914739035471},
+        {1.4999, 0.44535357300621869, 0.69754320665599856},
+        {1.5, 0.44526117603982146, 0.69750496008209295},
+        {1.5001, 0.445168797106956, 0.69746666997139084},
+        {2.0, 0.48825340607534073, 0.34341567836369824},
+        {3.0, 0.60572078929768569, 0.49631299896737502},
+        {5.0, 0.56363118870401219, 0.49919138191711687},
+        {10.0, 0.49989869420551575, 0.46816997858488224},
+        {50.0, 0.49999918943072796, 0.49363380258593875},
+        {200.0, 0.49999998733485207, 0.49840845056938343},
+    };
+    for (const Row& row : rows)
+    {
+        double c = 0.0, s = 0.0;
+        fresnel_integrals(row.x, c, s);
+        INFO("x = " << row.x);
+        CHECK(c == Catch::Approx(row.c).margin(1e-13));
+        CHECK(s == Catch::Approx(row.s).margin(1e-13));
+    }
+}
+
+TEST_CASE("the knife edge's power: grazing, the shadow and its asymptote", "[screening][kirchhoff]")
+{
+    // |F(v)|^2 from the same SciPy values.
+    const double reference[][2] = {{0.0, 0.25}, {0.5, 0.094758232940741233}, {1.0, 0.041076124227733234},
+            {2.0, 0.012328316125565821}, {5.0, 0.002024791019544787}, {20.0, 0.00012665107854758868},
+            {100.0, 5.0660591564519346e-06}};
+    for (const auto& row : reference)
+    {
+        INFO("v = " << row[0]);
+        CHECK(knife_edge_power(row[0]) == Catch::Approx(row[1]).epsilon(1e-11));
+    }
+    // It falls throughout the shadow, toward 1/(2 pi^2 v^2), and in the lit
+    // region it nears the free field, oscillating about it.
+    double previous = knife_edge_power(0.0);
+    for (double v = 0.05; v < 50.0; v += 0.05)
+    {
+        const double p = knife_edge_power(v);
+        CHECK(p < previous);
+        previous = p;
+    }
+    CHECK(knife_edge_power(200.0) * 2.0 * pi * pi * 200.0 * 200.0 == Catch::Approx(1.0).epsilon(1e-4));
+    CHECK(knife_edge_power(-20.0) == Catch::Approx(1.0).margin(0.02));
+}
+
+TEST_CASE("the knife edge against the exact half-plane", "[screening][kirchhoff]")
+{
+    // Sommerfeld's rigid half-plane at kr = 2000, as the CNOSSOS case above,
+    // against the Fresnel knife edge at the same path difference, v = 2
+    // sqrt(delta / lambda).  On the boundary both are 6.02 dB down.  The
+    // Fresnel-Kirchhoff edge is a black screen, where the rigid half-plane
+    // also sends its faces' reflection into the shadow, so it is always the
+    // deeper: by 0.11 dB half a degree in, 0.50 dB at 5 degrees, 0.94 dB at 10
+    // and 3.6 dB at 60.
+    const double kr = 2000.0, theta0 = pi / 4.0;
+    const double lambda = 1.0, r = kr * lambda / (2.0 * pi);
+    const double boundary = pi + theta0;
+    CHECK(-10.0 * std::log10(knife_edge_power(0.0)) == Catch::Approx(20.0 * std::log10(2.0)).margin(1e-9));
+    for (const double degrees : {0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 40.0, 60.0})
+    {
+        const double theta = boundary + degrees * pi / 180.0;
+        const double delta = r * (1.0 + std::cos(theta - theta0));
+        const double exact = half_plane_loss(kr, theta, theta0);
+        const double knife = -10.0 * std::log10(knife_edge_power(2.0 * std::sqrt(delta / lambda)));
+        INFO(degrees << " degrees into the shadow: exact " << exact << " dB, knife edge " << knife << " dB");
+        CHECK(knife - exact > 0.0);
+        CHECK(knife - exact < (degrees <= 5.0 ? 0.6 : 4.0));
+    }
+}
+
+TEST_CASE("the knife edge's band loss is at least 10 lg 4 and rises with delta", "[screening][kirchhoff]")
+{
+    const std::vector<double> bands {50.0, 63.0, 80.0, 100.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0};
+    std::vector<double> loss(bands.size()), previous(bands.size(), 0.0);
+    for (const double delta : {1e-9, 1e-6, 1e-3, 0.01, 0.1, 1.0, 10.0, 100.0})
+    {
+        KnifeEdge edge;
+        edge.delta = delta;
+        knife_edge_loss(edge, bands, 343.0, 0, bands.size(), loss.data());
+        for (std::size_t band = 0; band < bands.size(); band++)
+        {
+            INFO("delta " << delta << " m, " << bands[band] << " Hz: " << loss[band] << " dB");
+            CHECK(loss[band] > 20.0 * std::log10(2.0));
+            CHECK(loss[band] > previous[band]);
+            if (band > 0)
+                CHECK(loss[band] > loss[band - 1]);
+            // The band's mean lies between its edges' values.
+            const double lo = knife_edge_power(2.0 * std::sqrt(delta * bands[band] * std::pow(2.0, -1.0 / 6.0) / 343.0));
+            const double hi = knife_edge_power(2.0 * std::sqrt(delta * bands[band] * std::pow(2.0, 1.0 / 6.0) / 343.0));
+            CHECK(loss[band] >= -10.0 * std::log10(lo) - 1e-12);
+            CHECK(loss[band] <= -10.0 * std::log10(hi) + 1e-12);
+            previous[band] = loss[band];
+        }
+    }
+}
+
+namespace {
+
+// The lowest point of the aperture plane through `deepest` that both ends see
+// over every sample, by bisection along the plane's normal: the brute-force
+// reading of knife_edge's construction.
+double brute_force_edge(const std::vector<ScreenPoint>& p, std::size_t deepest)
+{
+    const ScreenPoint& r = p.front();
+    const ScreenPoint& s = p.back();
+    const double distance = std::hypot(s.s - r.s, s.z - r.z);
+    const double ts = (s.s - r.s) / distance, tz = (s.z - r.z) / distance;
+    const double a = (p[deepest].s - r.s) * ts + (p[deepest].z - r.z) * tz;
+    const auto point = [&](double b) { return ScreenPoint {r.s + a * ts - b * tz, r.z + a * tz + b * ts}; };
+    // The segment from u to w clears every interior sample between them.
+    const auto clear = [&](const ScreenPoint& u, const ScreenPoint& w) {
+        for (std::size_t k = 1; k + 1 < p.size(); k++)
+        {
+            const double lo = std::min(u.s, w.s), hi = std::max(u.s, w.s);
+            if (p[k].s <= lo || p[k].s >= hi)
+                continue;
+            const double z = u.z + (w.z - u.z) * (p[k].s - u.s) / (w.s - u.s);
+            if (p[k].z > z)
+                return false;
+        }
+        return true;
+    };
+    double lo = 0.0, hi = 1.0;
+    while (!(clear(r, point(hi)) && clear(point(hi), s)))
+        hi *= 2.0;
+    for (int i = 0; i < 200; i++)
+    {
+        const double mid = 0.5 * (lo + hi);
+        if (clear(r, point(mid)) && clear(point(mid), s))
+            hi = mid;
+        else
+            lo = mid;
+    }
+    return hi;
+}
+
+} // namespace
+
+TEST_CASE("the equivalent edge is the lowest point both ends see", "[screening][kirchhoff]")
+{
+    // A microphone 1.2 m up, a source 300 m up 2000 m away, over profiles with
+    // one sharp peak, a thick hill and random bumps: the edge from the hull's
+    // horizon rays equals the brute-force bisection, and its path difference
+    // is the two legs less the line of sight.
+    const auto run = [](std::vector<double> heights, double step) {
+        const std::size_t interior = heights.size() - 1;
+        const double distance = step * static_cast<double>(interior + 1);
+        std::vector<ScreenPoint> points, edges;
+        std::vector<std::size_t> hull;
+        Screen screen;
+        if (!rubber_band(heights, interior, step, distance, 1.2, 300.0, points, hull, edges, screen))
+            return false;
+        const KnifeEdge edge = knife_edge(screen, points);
+        std::size_t deepest = 1;
+        const double ts = (points.back().s - points.front().s), tz = (points.back().z - points.front().z);
+        const auto above = [&](const ScreenPoint& q) { return -(q.s - points.front().s) * tz + (q.z - points.front().z) * ts; };
+        for (std::size_t k = 2; k + 1 < points.size(); k++)
+            if (above(points[k]) > above(points[deepest]))
+                deepest = k;
+        CHECK(edge.height == Catch::Approx(brute_force_edge(points, deepest)).epsilon(1e-9).margin(1e-9));
+        CHECK(edge.height > 0.0);
+        CHECK(edge.d1 + edge.d2 == Catch::Approx(std::hypot(distance, 300.0 - 1.2)).epsilon(1e-12));
+        const double legs = std::hypot(edge.d1, edge.height) + std::hypot(edge.d2, edge.height) - edge.d1 - edge.d2;
+        CHECK(edge.delta == Catch::Approx(legs).epsilon(1e-9));
+        return true;
+    };
+    const double step = 10.0;
+    std::vector<double> peak(200, 0.0), hill(200, 0.0);
+    peak[30] = 80.0;                             // one sharp edge: the edge is the peak
+    for (std::size_t k = 20; k < 60; k++)        // a broad hill: two horizon rays
+        hill[k] = 100.0 - 0.1 * (double(k) - 40.0) * (double(k) - 40.0);
+    CHECK(run(peak, step));
+    CHECK(run(hill, step));
+    std::mt19937 rng(20261015);
+    std::uniform_real_distribution<double> bump(0.0, 45.0);
+    int blocked = 0;
+    for (int trial = 0; trial < 200; trial++)
+    {
+        std::vector<double> heights(200, 0.0);
+        for (std::size_t k = 1; k < heights.size(); k++)
+            heights[k] = (k > 5 && k < 120) ? bump(rng) * std::exp(-0.02 * double(k)) : 0.0;
+        blocked += run(heights, step);
+    }
+    CHECK(blocked > 100);
+}
