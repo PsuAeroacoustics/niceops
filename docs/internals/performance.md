@@ -484,6 +484,50 @@ The numbers are here so they are not re-derived.
   broadband demo and nothing measurable on a spectral `--full_history` run: LTO already merges
   most of it.
 
+### The residue-series tables
+
+`--refraction` with a ground model builds V, the residue series across each band's shadow
+boundary (`ShadowTransition`), and `--shadow_model resolved` builds the cramped bands' table
+(`set_cramped_ground`), both from `upward_pressure` and `upward_pressure_heights` in
+`exact_solutions.cpp`. In the validation harness's wide study the cramped table was 75% of all
+NICE-OPS CPU (884 resolved runs at 74 s each, against 0.3–4 s for every other option), and V
+about two thirds of every other refracting run. Profiled with `sample`, then taken, in order:
+
+| change | cramped table, 24 bands, `-j 1` |
+| --- | ---: |
+| before | 47.9 s |
+| each range summed for its own source height only (the table reads one of six) | 32.6 s |
+| a range's terms skipped once they have stayed under 1e-17 of its largest sixteen in a row, the last sixteen still taken for the tail test | 11.4 s |
+| `airy` near the negative real axis from one series: the connection formula's two expansions share it, since zeta(w^2 z) = -zeta(w z) | 8.6 s |
+| real arithmetic for the mode weights' divides and `upper`'s square root, magnitudes as sqrt(re^2 + im^2) (std::abs outside 1e-290..1e290), Newton's divide; Ai(b) reused for a source on the ground | 6.5 s |
+
+V for a flush plate (28 bands, `-j 1`, 329 m/s) went from 2.38 to 0.95 s and for a 1.2 m pole
+from 1.30 to 0.62 s with the same changes to `modal_sum`. Whole harness runs: an AS350 approach
+with `--shadow_model resolved` from 59 to 11 s at `-j 1` (setup 1.2 s at `-j 8`, from 8.1), and
+the same with `--refraction stratified` alone from 4.5 to 2.8 s.
+
+What it moved, measured: both runs' SEL, LAmax and every time history are byte-identical. In the
+stored (float) cramped table 5 of 112,606 values moved, by at most 7.6e-6 dB, and the NaN pattern
+is unchanged. V agrees within 2e-6 dB from xi = -1 on; its deep lit side moved up to 0.4 dB at
+the nodes that are rounding noise anyway ([refraction.md](refraction.md#shadowtransition-the-level-near-a-shadow-boundary)),
+as far as clang and GCC builds of the old code differ there. The skip rests on the terms' size
+being unimodal in the mode number at a fixed range (|weight| grows as e^{c y n^{1/3}}, H0
+decays as e^{-r Im kappa}, Im kappa growing as n^{2/3}), the same assumption that sets the
+mode count. Guarded by `near the negative real axis Ai is the connection formula's two
+expansions` and `the residue series over several source heights is each height's own`
+(`tests/test_pe_shadow.cpp`), and by every resolved and stratified CTest.
+
+Not taken:
+
+- **A lower mode cap.** 566 of 576 cramped calls reach the 12,000-mode cap, driven by a
+  near-source range that ends NaN. But 648 trusted ranges never go quiet within it and trusted
+  ranges converge as late as mode 11,968, so their values and trust depend on the full count.
+- **The zeros from their neighbors.** Seeding Newton from 2 t_{n-1} - t_{n-2} would skip
+  `seeded_zero`'s fixed-point iteration, about 13% of what is left, but moves every zero's last
+  bits, which reach V's lit side as above.
+- **The PE.** A propagation table's build is 96% `pade_step`, already interleaved and fused
+  (pe.md); the factorization's complex divides are the next 4%.
+
 ### Taken, each exact
 
 Each keeps the formulas and the per-band summation order; none involves an approximation,

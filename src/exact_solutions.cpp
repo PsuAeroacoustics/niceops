@@ -47,6 +47,34 @@ using complex = std::complex<double>;
 const complex I(0.0, 1.0);
 const complex w_rot = std::polar(1.0, 2.0 * pi / 3.0);
 
+// |c| as sqrt(re^2 + im^2) where the squares can neither overflow nor
+// underflow, and std::abs (a hypot) only outside that: the library's is a
+// call on every term of the mode sums.
+double magnitude(complex c)
+{
+    const double n2 = c.real() * c.real() + c.imag() * c.imag();
+    return n2 > 1e-290 && n2 < 1e290 ? std::sqrt(n2) : std::abs(c);
+}
+
+// a / b in real arithmetic: the library's divide is a call (__divdc3) that
+// rescales to recover infinities and NaN, which cannot arise here.
+complex quotient(complex a, complex b)
+{
+    const double n2 = b.real() * b.real() + b.imag() * b.imag();
+    return {(a.real() * b.real() + a.imag() * b.imag()) / n2, (a.imag() * b.real() - a.real() * b.imag()) / n2};
+}
+
+// The principal square root in real arithmetic (std::sqrt on a complex goes
+// through polar form, an atan2 and a sincos).
+complex principal_root(complex w)
+{
+    const double a = w.real(), b = w.imag();
+    const double t = std::sqrt(0.5 * (magnitude(w) + std::fabs(a)));
+    if (t == 0.0)
+        return 0.0;
+    return a >= 0.0 ? complex(t, b / (2.0 * t)) : complex(std::fabs(b) / (2.0 * t), std::copysign(t, b));
+}
+
 // Ai'(t) + q Ai(t), and its derivative, from Ai'' = t Ai.
 complex mode_equation(complex t, complex q, complex& derivative)
 {
@@ -61,11 +89,11 @@ bool newton(complex& t, complex q)
     for (int i = 0; i < 60; i++)
     {
         complex derivative;
-        const complex step = mode_equation(t, q, derivative) / derivative;
+        const complex step = quotient(mode_equation(t, q, derivative), derivative);
         t -= step;
-        if (!std::isfinite(t.real()) || !std::isfinite(t.imag()) || std::abs(t) > 1e7)
+        if (!std::isfinite(t.real()) || !std::isfinite(t.imag()) || magnitude(t) > 1e7)
             return false;
-        if (std::abs(step) <= 1e-14 * std::max(1.0, std::abs(t)))
+        if (magnitude(step) <= 1e-14 * std::max(1.0, magnitude(t)))
             return true;
     }
     return false;
@@ -260,7 +288,7 @@ struct Mode
 
 complex upper(complex kappa_squared)
 {
-    const complex kappa = std::sqrt(kappa_squared);
+    const complex kappa = principal_root(kappa_squared);
     return kappa.imag() < 0.0 ? -kappa : kappa;
 }
 
@@ -284,7 +312,7 @@ std::vector<complex> modal_sum(complex q, const std::function<Mode(complex)>& mo
     auto add = [&](complex t) {
         const Mode m = mode(t);
         modes.push_back(m);
-        const double size = std::abs(m.weight * hankel1_0(m.kappa * nearest));
+        const double size = magnitude(m.weight * hankel1_0(m.kappa * nearest));
         largest = std::max(largest, size);
         quiet = size < 1e-17 * largest ? quiet + 1 : 0;
     };
@@ -310,20 +338,27 @@ std::vector<complex> modal_sum(complex q, const std::function<Mode(complex)>& mo
     }
 
     // Each range on its own: NaN where the terms cancel by more than nine
-    // orders, or where the last few have not died away.
+    // orders, or where the last few have not died away.  As in
+    // modal_sum_heights, a range whose terms have stayed under 1e-17 of its
+    // largest sixteen in a row skips to the last sixteen.
     std::vector<complex> field(ranges.size());
     const std::size_t tail_from = modes.size() > 16 ? modes.size() - 16 : 0;
     for (std::size_t k = 0; k < ranges.size(); k++)
     {
         complex sum = 0.0;
         double biggest = 0.0, tail = 0.0;
+        int quiet_here = 0;
         for (std::size_t n = 0; n < modes.size(); n++)
         {
             const complex term = modes[n].weight * hankel1_0(modes[n].kappa * ranges[k]);
             sum += term;
-            biggest = std::max(biggest, std::abs(term));
+            const double size = magnitude(term);
+            biggest = std::max(biggest, size);
             if (n >= tail_from)
-                tail = std::max(tail, std::abs(term));
+                tail = std::max(tail, size);
+            quiet_here = size < 1e-17 * biggest ? quiet_here + 1 : 0;
+            if (quiet_here >= 16 && n + 1 < tail_from)
+                n = tail_from - 1;
         }
         const double size = std::abs(sum);
         const bool trusted = biggest <= 1e9 * size && tail <= 1e-9 * size;
@@ -333,15 +368,22 @@ std::vector<complex> modal_sum(complex q, const std::function<Mode(complex)>& mo
 }
 
 // modal_sum for several weight sets sharing the modes' wavenumbers -- one
-// source height each -- so the zeros and H0(kappa r) are formed once.  Modes
-// are taken until every set's terms at the nearest range have died away.
-std::vector<std::vector<complex>> modal_sum_heights(complex q,
+// source height each -- so the zeros are formed once.  Modes are taken until
+// every set's terms at the nearest range have died away.  Each range is
+// summed for its own set only, set_of[k], since a range belongs to one height
+// and H0(kappa r) is all the sets would share there.
+std::vector<complex> modal_sum_heights(complex q,
         const std::function<complex(complex, std::vector<complex>&)>& mode, std::size_t sets,
-        const std::vector<double>& ranges)
+        const std::vector<double>& ranges, const std::vector<std::size_t>& set_of)
 {
-    std::vector<std::vector<complex>> field(sets, std::vector<complex>(ranges.size()));
+    std::vector<complex> field(ranges.size());
     if (ranges.empty() || sets == 0)
         return field;
+    if (set_of.size() != ranges.size())
+        throw std::invalid_argument("modal_sum: one set per range");
+    for (const std::size_t m : set_of)
+        if (m >= sets)
+            throw std::invalid_argument("modal_sum: a range's set is out of range");
     const double nearest = *std::min_element(ranges.begin(), ranges.end());
     if (!(nearest > 0.0))
         throw std::invalid_argument("modal_sum: ranges must be positive");
@@ -362,10 +404,10 @@ std::vector<std::vector<complex>> modal_sum_heights(complex q,
         const complex kappa = mode(t, w);
         kappas.push_back(kappa);
         weights.push_back(w);
-        const double h = std::abs(hankel1_0(kappa * nearest));
+        const double h = magnitude(hankel1_0(kappa * nearest));
         for (std::size_t m = 0; m < sets; m++)
         {
-            const double size = std::abs(w[m]) * h;
+            const double size = magnitude(w[m]) * h;
             largest[m] = std::max(largest[m], size);
             quiet[m] = size < 1e-17 * largest[m] ? quiet[m] + 1 : 0;
         }
@@ -390,33 +432,34 @@ std::vector<std::vector<complex>> modal_sum_heights(complex q,
             previous = t;
         }
     }
+    // The mode count serves the nearest range; a farther one's terms die
+    // sooner, since H0(kappa r) falls as exp(-Im kappa r).  Once a range's
+    // terms have stayed under 1e-17 of its largest sixteen in a row -- the
+    // rule that set the count -- the rest up to the last sixteen are skipped:
+    // each is smaller still, so neither the largest term nor the sum moves
+    // beyond rounding.  The last sixteen are always taken, for the tail test.
     const std::size_t tail_from = kappas.size() > 16 ? kappas.size() - 16 : 0;
-    std::vector<complex> sum(sets);
-    std::vector<double> biggest(sets), tail(sets);
     for (std::size_t k = 0; k < ranges.size(); k++)
     {
-        std::fill(sum.begin(), sum.end(), complex(0.0));
-        std::fill(biggest.begin(), biggest.end(), 0.0);
-        std::fill(tail.begin(), tail.end(), 0.0);
+        const std::size_t m = set_of[k];
+        complex sum = 0.0;
+        double biggest = 0.0, tail = 0.0;
+        int quiet_here = 0;
         for (std::size_t n = 0; n < kappas.size(); n++)
         {
-            const complex h = hankel1_0(kappas[n] * ranges[k]);
-            for (std::size_t m = 0; m < sets; m++)
-            {
-                const complex term = weights[n][m] * h;
-                sum[m] += term;
-                const double size = std::abs(term);
-                biggest[m] = std::max(biggest[m], size);
-                if (n >= tail_from)
-                    tail[m] = std::max(tail[m], size);
-            }
+            const complex term = weights[n][m] * hankel1_0(kappas[n] * ranges[k]);
+            sum += term;
+            const double size = magnitude(term);
+            biggest = std::max(biggest, size);
+            if (n >= tail_from)
+                tail = std::max(tail, size);
+            quiet_here = size < 1e-17 * biggest ? quiet_here + 1 : 0;
+            if (quiet_here >= 16 && n + 1 < tail_from)
+                n = tail_from - 1;
         }
-        for (std::size_t m = 0; m < sets; m++)
-        {
-            const double size = std::abs(sum[m]);
-            const bool trusted = biggest[m] <= 1e9 * size && tail[m] <= 1e-9 * size;
-            field[m][k] = trusted ? sum[m] : complex(std::numeric_limits<double>::quiet_NaN(), 0.0);
-        }
+        const double size = std::abs(sum);
+        const bool trusted = biggest <= 1e9 * size && tail <= 1e-9 * size;
+        field[k] = trusted ? sum : complex(std::numeric_limits<double>::quiet_NaN(), 0.0);
     }
     return field;
 }
@@ -482,7 +525,7 @@ complex hankel1_0(complex z)
     // The series loses digits as exp(|z| + Im z) -- J0 grows where H0 decays
     // -- and the expansion's smallest term is exp(-2|z|); they cross near
     // |z| = 12 on the real axis and 9 on the imaginary one.
-    const double size = std::abs(z);
+    const double size = magnitude(z);
     if (size < 12.0 - 3.0 * z.imag() / std::max(size, 1e-300))
     {
         // J0 and Y0 by their power series (DLMF 10.2.2, 10.8.2).
@@ -534,7 +577,7 @@ complex hankel1_0(complex z)
     }
     // sqrt(2 / (pi z)), the principal root, then exp(i (z - pi/4)).
     const double a = (2.0 / pi) * inv_r, b = (2.0 / pi) * inv_i;
-    const double radius = std::hypot(a, b);
+    const double radius = magnitude(complex(a, b));
     const double t = std::sqrt(0.5 * (radius + std::fabs(a)));
     const double root_r = a >= 0.0 ? t : std::fabs(b) / (2.0 * t);
     const double root_i = a >= 0.0 ? b / (2.0 * t) : std::copysign(t, b);
@@ -568,37 +611,51 @@ std::vector<complex> upward_pressure(const ExactProblem& p, double radius,
     const complex k0 = wavenumber(p);
     const complex ell = std::pow(radius / (2.0 * k0 * k0), 1.0 / 3.0);
     const complex q = -I * k0 * ell * p.admittance * w_rot * w_rot;
+    const complex shift = quotient(w_rot, ell);
+    const complex scale = quotient(ell, w_rot);
+    const complex curvature = quotient(1.0, w_rot * ell * ell);
+    const complex k0_squared = k0 * k0;
     auto mode = [&](complex b) {
         complex a0, d0, us, ur, unused;
         airy(b, a0, d0);
-        airy(b - w_rot * p.source_height / ell, us, unused);
-        airy(b - w_rot * p.receiver_height / ell, ur, unused);
-        const complex norm = ell / w_rot * (b * a0 * a0 - d0 * d0);
-        return Mode {upper(k0 * k0 + b / (w_rot * ell * ell)), pi * I * us * ur / norm};
+        airy(b - shift * p.source_height, us, unused);
+        airy(b - shift * p.receiver_height, ur, unused);
+        const complex norm = scale * (b * a0 * a0 - d0 * d0);
+        return Mode {upper(k0_squared + b * curvature), quotient(pi * I * us * ur, norm)};
     };
     return modal_sum(q, mode, ranges);
 }
 
-std::vector<std::vector<complex>> upward_pressure_heights(const ExactProblem& p, double radius,
-        const std::vector<double>& source_heights, const std::vector<double>& ranges)
+std::vector<complex> upward_pressure_heights(const ExactProblem& p, double radius,
+        const std::vector<double>& source_heights, const std::vector<double>& ranges,
+        const std::vector<std::size_t>& height_of)
 {
     const complex k0 = wavenumber(p);
     const complex ell = std::pow(radius / (2.0 * k0 * k0), 1.0 / 3.0);
     const complex q = -I * k0 * ell * p.admittance * w_rot * w_rot;
+    // Per mode only products: w / l, l / w and 1 / (w l^2) are formed once.  A
+    // source on the ground takes Ai(b) itself.
+    const complex shift = quotient(w_rot, ell);
+    const complex scale = quotient(ell, w_rot);
+    const complex curvature = quotient(1.0, w_rot * ell * ell);
+    const complex k0_squared = k0 * k0;
     auto mode = [&](complex b, std::vector<complex>& weights) {
         complex a0, d0, us, ur, unused;
         airy(b, a0, d0);
-        airy(b - w_rot * p.receiver_height / ell, ur, unused);
-        const complex norm = ell / w_rot * (b * a0 * a0 - d0 * d0);
-        const complex common = pi * I * ur / norm;
+        airy(b - shift * p.receiver_height, ur, unused);
+        const complex norm = scale * (b * a0 * a0 - d0 * d0);
+        const complex common = quotient(pi * I * ur, norm);
         for (std::size_t m = 0; m < source_heights.size(); m++)
         {
-            airy(b - w_rot * source_heights[m] / ell, us, unused);
+            if (source_heights[m] == 0.0)
+                us = a0;
+            else
+                airy(b - shift * source_heights[m], us, unused);
             weights[m] = common * us;
         }
-        return upper(k0 * k0 + b / (w_rot * ell * ell));
+        return upper(k0_squared + b * curvature);
     };
-    return modal_sum_heights(q, mode, source_heights.size(), ranges);
+    return modal_sum_heights(q, mode, source_heights.size(), ranges, height_of);
 }
 
 std::vector<complex> downward_pressure(const ExactProblem& p, double radius,

@@ -99,6 +99,85 @@ TEST_CASE("the complex Airy function matches tabulated values and itself", "[pe_
     CHECK(airy_prime_zero(10) == Catch::Approx(-12.384788371845747).epsilon(1e-10));
 }
 
+TEST_CASE("near the negative real axis Ai is the connection formula's two expansions", "[pe_shadow]")
+{
+    // airy() evaluates Ai(z) = -w Ai(w z) - w^2 Ai(w^2 z) from one series,
+    // since zeta(w^2 z) = -zeta(w z): against the formula taken literally,
+    // two calls of airy_asymptotic, across the sector |arg z| > 2 pi / 3 and
+    // out to the mode sums' |z| of several hundred.
+    const complex w = std::polar(1.0, 2.0 * pi / 3.0);
+    int compared = 0;
+    for (const double size : {5.5, 12.0, 40.0, 150.0, 700.0})
+        for (int k = 0; k <= 20; k++)
+        {
+            // From just inside the sector's edge, across the axis, to the other edge.
+            const double angle = 2.0 * pi / 3.0 + 1e-3 + (2.0 * pi / 3.0 - 2e-3) * k / 20.0;
+            const complex z = std::polar(size, angle);
+            complex a1, d1, a2, d2, ai, aip;
+            airy_asymptotic(w * z, a1, d1);
+            airy_asymptotic(w * w * z, a2, d2);
+            const complex literal_ai = -w * a1 - w * w * a2;
+            const complex literal_aip = -w * w * d1 - w * d2;
+            airy(z, ai, aip);
+            INFO("z = " << z);
+            // Past the double range the formula overflows, and so must airy().
+            if (!std::isfinite(std::abs(literal_ai)) || !std::isfinite(std::abs(literal_aip)))
+            {
+                CHECK_FALSE((std::isfinite(std::abs(ai)) && std::isfinite(std::abs(aip))));
+                continue;
+            }
+            // Near the axis Ai is two waves of phase zeta = (2/3)|z|^(3/2)
+            // cancelling, each good to about eps |zeta|: both evaluations
+            // round within that.
+            const double tolerance = 1e-14 * (1.0 + std::pow(size, 1.5));
+            CHECK(std::abs(ai - literal_ai) <= tolerance * std::abs(literal_ai));
+            CHECK(std::abs(aip - literal_aip) <= tolerance * std::abs(literal_aip));
+            compared++;
+        }
+    CHECK(compared >= 60);
+}
+
+TEST_CASE("the residue series over several source heights is each height's own", "[pe_shadow]")
+{
+    // upward_pressure_heights sums each range for its own height, with the
+    // modes every height's series needs at the nearest range, and skips a
+    // range's terms once they have died away: against upward_pressure, one
+    // height at a time, over impedance ground, within the extra terms' share.
+    ExactProblem problem;
+    problem.frequency = 500.0;
+    problem.sound_speed = 340.0;
+    problem.admittance = complex(0.12, 0.10);
+    problem.receiver_height = 0.008;
+    const double radius = 6800.0;
+    const std::vector<double> heights {0.0, 2.0, 10.0};
+    std::vector<double> ranges;
+    std::vector<std::size_t> height_of;
+    for (std::size_t m = 0; m < heights.size(); m++)
+        for (const double r : {150.0, 400.0, 900.0, 2000.0})
+        {
+            ranges.push_back(r + 10.0 * m);
+            height_of.push_back(m);
+        }
+    const auto together = upward_pressure_heights(problem, radius, heights, ranges, height_of);
+    REQUIRE(together.size() == ranges.size());
+    int finite = 0;
+    for (std::size_t k = 0; k < ranges.size(); k++)
+    {
+        problem.source_height = heights[height_of[k]];
+        const complex alone = upward_pressure(problem, radius, {ranges[k]})[0];
+        INFO("height " << heights[height_of[k]] << " m, range " << ranges[k] << " m");
+        REQUIRE(std::isfinite(alone.real()) == std::isfinite(together[k].real()));
+        if (!std::isfinite(alone.real()))
+            continue;
+        CHECK(std::abs(together[k] - alone) <= 1e-12 * std::abs(alone));
+        finite++;
+    }
+    CHECK(finite >= 10);
+    // A range must name a height that exists.
+    CHECK_THROWS(upward_pressure_heights(problem, radius, heights, {500.0}, {3}));
+    CHECK_THROWS(upward_pressure_heights(problem, radius, heights, {500.0, 600.0}, {0}));
+}
+
 TEST_CASE("the PE matches the residue series in an upward-refraction shadow", "[pe_shadow]")
 {
     const double c0 = 340.0;

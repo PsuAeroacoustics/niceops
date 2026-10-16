@@ -91,6 +91,13 @@ is in [THEORY §8.1](../THEORY.md); the calibration against the PE is in
 - **Ray model below xi = -2, blend to -1, V beyond**, floored at V(0) - floor and capped at
   20 log10 2. `max_power_ratio` feeds the peak search's ground bound, or the windowed run stops
   being exact.
+- **V's deep lit side is rounding noise at large s.** Between xi = -2 and about -1.6, at s of a
+  few hundred and up, the series' terms cancel by up to nine orders at k0 r of 10^6-10^7, so a
+  mode zero's last bit moves V there by up to 0.4 dB: the same build under GCC and under clang
+  differs by as much at the same 460 nodes (of 52,164), and by under 2e-6 dB everywhere from
+  xi = -1 on. Those nodes enter only the blend, at a weight of 0.4 or less. The trusted test
+  (`modal_sum`) bounds the terms' sizes, not their phases, so it passes them. A fix would move
+  results; none has been made.
 - **A cramped band keeps the ray model to the boundary.** When a band's boundary is nearer the
   source than two diffraction lengths, it keeps the ray model to the boundary, blends to V over
   the next diffraction length, and takes V beyond (`cramped` in `apply`). There the source is a
@@ -385,8 +392,10 @@ What to preserve:
   source-height nodes even in sqrt(z_s), interpolated in 1/r_b so a band with no boundary is
   0). Every band whose h_f lies in one layer shares one profile, so the build costs one boundary
   solve per layer touched, about 0.01 s on `example_windy.csv`. The cramped series table costs
-  about 2–3 s of CPU per band per receiver height: 24 bands take 5–8 s on 14 threads and about a
-  minute at `-j 1`. A pair pays one table lookup per band.
+  about 0.3 s of CPU per band per receiver height: an AS350 approach at Amedee (28 bands, one
+  plate) takes 8.5 s at `-j 1` and 1.2 s at `-j 8` (58 s and 8 s before the mode sums were
+  trimmed; [performance.md](performance.md#the-residue-series-tables)). A pair pays one table
+  lookup per band.
 - **The bound stays exact**: the series and V are held to the transition's largest power ratio,
   and the straight ground term is within the ground's own bound.
   `stratified_resolved_{point,plate,straight_point,duct_point}_windowed_is_exact` check it, and

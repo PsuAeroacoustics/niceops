@@ -1004,7 +1004,7 @@ void ShadowTransition::set_cramped_ground(CrampedGround mode, const GroundModel*
             const double l = s / k0;
             const double diffraction = 2.0 * s * s / k0;
             const LinearProfile profile {sound_speed_, -a};
-            // Every height's ranges in one list: the modes and H0 are shared.
+            // Every height's ranges in one list: the modes are shared.
             std::vector<double> heights, ranges;
             std::vector<std::size_t> node_of, height_of, xi_of;
             for (int k = 0; k < cramped_root_nodes; k++)
@@ -1034,10 +1034,10 @@ void ShadowTransition::set_cramped_ground(CrampedGround mode, const GroundModel*
             problem.sound_speed = sound_speed_;
             problem.admittance = admittance_[band];
             problem.receiver_height = receiver_height_;
-            std::vector<std::vector<std::complex<double>>> field;
+            std::vector<std::complex<double>> field;
             try
             {
-                field = upward_pressure_heights(problem, sound_speed_ / a, heights, ranges);
+                field = upward_pressure_heights(problem, sound_speed_ / a, heights, ranges, height_of);
             }
             catch (const std::exception&)
             {
@@ -1046,7 +1046,7 @@ void ShadowTransition::set_cramped_ground(CrampedGround mode, const GroundModel*
             for (std::size_t q = 0; q < ranges.size(); q++)
             {
                 const double z_s = heights[height_of[q]];
-                const double db = 20.0 * std::log10(std::abs(field[height_of[q]][q])
+                const double db = 20.0 * std::log10(std::abs(field[q])
                         * std::hypot(ranges[q], z_s - receiver_height_));
                 if (std::isfinite(db))
                     tables[band][(j * cramped_root_nodes + node_of[q]) * xi_nodes + xi_of[q]] = static_cast<float>(db);
