@@ -9,16 +9,17 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
-#include <random>
 #include <functional>
 #include <limits>
+#include <random>
 #include <vector>
 
+#include "airy.hpp"
 #include "atmosphere_profile.hpp"
 #include "refraction.hpp"
-#include "airy.hpp"
 #include "stratified.hpp"
 #include "util/constants.hpp"
 
@@ -783,6 +784,91 @@ TEST_CASE("two states' layered solves interpolate only where they agree", "[stra
     CHECK(out.length == Catch::Approx(chord * 0.5 * (1001.0 / 1000.0 + 1011.0 / 1010.0)).epsilon(1e-12));
     b.grazing = 0.0;
     CHECK_FALSE(interpolate_ground(a, b, 0.5, chord, out));
+}
+
+TEST_CASE("a strided ray does not depend on the order the states are asked for", "[stratified]")
+{
+    // --ray_stride: anchors are fixed states, so a windowed run, which asks for
+    // states in its own order, some twice, and finishes them later, takes the
+    // same rays bit for bit as a marched one; and an anchor is exactly its own
+    // solve.  A descent past a microphone through the windy profile's upwind
+    // shadow and through the duct.
+    for (const char* file : {"atmospheres/example_windy.csv", "atmospheres/example_inversion.csv"})
+    {
+        const auto profile = read_atmosphere_profile(file, feet, 0.0).with_hydrostatic_pressure(101.325);
+        const LayeredSoundSpeed air(profile, 90.0);
+        const EffectiveSoundSpeed linear(profile, 90.0, 0.0, profile.top() + 20.0);
+        std::vector<Vec3> sources;
+        std::vector<EffectiveSoundSpeed::Moments> moments;
+        for (int k = 0; k <= 122; k++)
+        {
+            sources.emplace_back(-3000.0 + 25.0 * k, 50.0, 150.0 - 0.75 * k);
+            moments.push_back(linear.moments(sources.back().z));
+        }
+        const std::size_t nt = sources.size();
+        const Vec3 microphone(0.0, 0.0, 1.2);
+        const auto at_microphone = linear.moments(microphone.z);
+        struct Seen
+        {
+            double range, source_height, ground_distance, travel_time, launch;
+            std::size_t extra;
+            bool interpolated;
+            bool operator==(const Seen& o) const
+            {
+                return range == o.range && source_height == o.source_height && ground_distance == o.ground_distance
+                        && travel_time == o.travel_time && launch == o.launch && extra == o.extra
+                        && interpolated == o.interpolated;
+            }
+        };
+        auto seen = [](const RefractedRay& ray) {
+            return Seen {ray.path.range, ray.path.source_height, ray.path.ground_distance, ray.travel_time,
+                    ray.direct.launch, ray.extra.size(), ray.interpolated};
+        };
+        StridedLayeredRays marched(air, linear, sources, moments, default_ray_stride, {});
+        marched.begin_observer(microphone, at_microphone, false);
+        std::vector<Seen> in_order;
+        for (std::size_t it = 0; it < nt; it++)
+        {
+            RefractedRay ray = marched.ray(it);
+            marched.finish(it, ray, GroundGeometry::point, microphone.z);
+            in_order.push_back(seen(ray));
+        }
+        std::vector<std::size_t> order(nt);
+        for (std::size_t it = 0; it < nt; it++)
+            order[it] = it;
+        std::mt19937 shuffle(7);
+        std::shuffle(order.begin(), order.end(), shuffle);
+        StridedLayeredRays windowed(air, linear, sources, moments, default_ray_stride, {});
+        windowed.begin_observer(Vec3(5.0, 5.0, 1.2), at_microphone, false); // another observer's anchors first
+        for (std::size_t it = 0; it < nt; it += 3)
+            windowed.ray(it);
+        windowed.begin_observer(microphone, at_microphone, false);
+        std::vector<RefractedRay> rays(nt);
+        for (const std::size_t it : order)
+            rays[it] = windowed.ray(it);
+        for (std::size_t it = 0; it < nt; it += 5)
+            rays[it] = windowed.ray(it); // asked again
+        std::shuffle(order.begin(), order.end(), shuffle);
+        std::size_t interpolated = 0;
+        std::vector<double> scratch;
+        for (const std::size_t it : order)
+        {
+            windowed.finish(it, rays[it], GroundGeometry::point, microphone.z);
+            INFO(file << ", state " << it);
+            CHECK(seen(rays[it]) == in_order[it]);
+            if (rays[it].interpolated)
+                interpolated++;
+            if (it % default_ray_stride == 0 || it == nt - 1)
+            {
+                RefractedRay solved = layered_direct_ray(air, linear, sources[it], moments[it], microphone,
+                        at_microphone, scratch);
+                layered_finish_ground(air, solved, GroundGeometry::point, microphone.z, scratch);
+                CHECK(seen(rays[it]) == seen(solved));
+            }
+        }
+        INFO(file << ": " << interpolated << " of " << nt << " interpolated");
+        CHECK(interpolated > nt / 5);
+    }
 }
 
 TEST_CASE("a deep duct retains more than 24 arrivals", "[stratified]")

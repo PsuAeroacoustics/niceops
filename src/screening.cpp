@@ -6,6 +6,7 @@
 #include <complex>
 
 #include "util/constants.hpp"
+#include "util/hermite.hpp"
 
 using namespace niceops; // NOLINT(google-build-using-namespace) -- matches the rest of src/
 
@@ -378,10 +379,7 @@ struct BandLossTable
         if (!(u >= 0.0 && u < static_cast<double>(loss.size() - 1)))
             return -10.0 * std::log10(band_power(x).mean);
         const auto k = static_cast<std::size_t>(u);
-        const double s = u - static_cast<double>(k);
-        const double r = 1.0 - s;
-        return (1.0 + 2.0 * s) * r * r * loss[k] + s * r * r * step * slope[k] + s * s * (3.0 - 2.0 * s) * loss[k + 1]
-                - s * s * r * step * slope[k + 1];
+        return cubic_hermite(u - static_cast<double>(k), step, loss[k], slope[k], loss[k + 1], slope[k + 1]);
     }
 };
 

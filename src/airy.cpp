@@ -61,6 +61,32 @@ complex product(complex a, complex b)
     return {a.real() * b.real() - a.imag() * b.imag(), a.real() * b.imag() + a.imag() * b.real()};
 }
 
+// The asymptotic expansions' terms (DLMF 9.7.5, 9.7.6) in `inverse` = -1/zeta:
+// add(k, u_k, v_k, inverse^k) for k from 1, stopping before the terms grow
+// (the series is asymptotic: it stops at its smallest term) or once they are
+// negligible.
+template <class Add>
+void asymptotic_terms(complex inverse, const Add& add)
+{
+    double u_k = 1.0;
+    double last2 = 1e300;
+    complex power = 1.0;
+    for (int k = 1; k < 60; k++)
+    {
+        const double kk = static_cast<double>(k);
+        u_k *= (6 * kk - 5) * (6 * kk - 3) * (6 * kk - 1) / ((2 * kk - 1) * 216.0 * kk);
+        const double v_k = -(6 * kk + 1) / (6 * kk - 1) * u_k;
+        power = product(power, inverse);
+        const double size2 = u_k * u_k * (power.real() * power.real() + power.imag() * power.imag());
+        if (size2 > last2)
+            break;
+        last2 = size2;
+        add(k, u_k, v_k, power);
+        if (last2 < 1e-34)
+            break;
+    }
+}
+
 } // namespace
 
 void airy_asymptotic(complex z, complex& ai, complex& aip)
@@ -75,26 +101,12 @@ void airy_asymptotic(complex z, complex& ai, complex& aip)
     const double zeta2 = std::norm(zeta);
     const complex inverse(-zeta.real() / zeta2, zeta.imag() / zeta2); // -1/zeta
     double sum_u_r = 1.0, sum_u_i = 0.0, sum_v_r = 1.0, sum_v_i = 0.0;
-    double u_k = 1.0;
-    double last2 = 1e300;
-    complex power = 1.0;
-    for (int k = 1; k < 60; k++)
-    {
-        const double kk = static_cast<double>(k);
-        u_k *= (6 * kk - 5) * (6 * kk - 3) * (6 * kk - 1) / ((2 * kk - 1) * 216.0 * kk);
-        const double v_k = -(6 * kk + 1) / (6 * kk - 1) * u_k;
-        power = product(power, inverse);
-        const double size2 = u_k * u_k * (power.real() * power.real() + power.imag() * power.imag());
-        if (size2 > last2)
-            break; // the series is asymptotic: stop at its smallest term
-        last2 = size2;
+    asymptotic_terms(inverse, [&](int, double u_k, double v_k, complex power) {
         sum_u_r += u_k * power.real();
         sum_u_i += u_k * power.imag();
         sum_v_r += v_k * power.real();
         sum_v_i += v_k * power.imag();
-        if (last2 < 1e-34)
-            break;
-    }
+    });
     // exp(-zeta) / (2 sqrt(pi)), and z^(1/4) with its reciprocal conj / |.|^2.
     const double magnitude = std::exp(-zeta.real()) / (2.0 * std::sqrt(pi));
     const complex e(magnitude * std::cos(zeta.imag()), -magnitude * std::sin(zeta.imag()));
@@ -123,19 +135,7 @@ void airy_connected(complex z, complex& ai, complex& aip)
     const complex inverse(-zeta.real() / zeta2, zeta.imag() / zeta2); // -1/zeta
     double even_u_r = 1.0, even_u_i = 0.0, odd_u_r = 0.0, odd_u_i = 0.0;
     double even_v_r = 1.0, even_v_i = 0.0, odd_v_r = 0.0, odd_v_i = 0.0;
-    double u_k = 1.0;
-    double last2 = 1e300;
-    complex power = 1.0;
-    for (int k = 1; k < 60; k++)
-    {
-        const double kk = static_cast<double>(k);
-        u_k *= (6 * kk - 5) * (6 * kk - 3) * (6 * kk - 1) / ((2 * kk - 1) * 216.0 * kk);
-        const double v_k = -(6 * kk + 1) / (6 * kk - 1) * u_k;
-        power = product(power, inverse);
-        const double size2 = u_k * u_k * (power.real() * power.real() + power.imag() * power.imag());
-        if (size2 > last2)
-            break;
-        last2 = size2;
+    asymptotic_terms(inverse, [&](int k, double u_k, double v_k, complex power) {
         if (k % 2 == 0)
         {
             even_u_r += u_k * power.real();
@@ -150,9 +150,7 @@ void airy_connected(complex z, complex& ai, complex& aip)
             odd_v_r += v_k * power.real();
             odd_v_i += v_k * power.imag();
         }
-        if (last2 < 1e-34)
-            break;
-    }
+    });
     const complex u1(even_u_r + odd_u_r, even_u_i + odd_u_i), u2(even_u_r - odd_u_r, even_u_i - odd_u_i);
     const complex v1(even_v_r + odd_v_r, even_v_i + odd_v_i), v2(even_v_r - odd_v_r, even_v_i - odd_v_i);
     const double scale = 1.0 / (2.0 * std::sqrt(pi));

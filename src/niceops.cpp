@@ -201,9 +201,9 @@ std::string latlon_companion(const std::string& level_file)
 // `value` as a stream at setprecision(`precision`) writes it in the default
 // float format -- printf's %.<precision>g -- by std::to_chars, which the
 // standard defines as that same conversion; a stream's formatting was a tenth
-// of a validation run.  A NaN is "nan" whatever its sign, as the streams have
-// it (to_chars writes "-nan" for one with its sign bit set, which arithmetic
-// gives on x86).
+// of a validation run.  A NaN is "nan" whatever its sign, on every platform:
+// to_chars writes "-nan" for one with its sign bit set, which arithmetic gives
+// on x86, and so do glibc's streams, where macOS's write "nan".
 void append_number(std::string& out, double value, int precision = 17)
 {
     if (std::isnan(value))
@@ -786,7 +786,7 @@ struct RunOptions
     WaveOptions waves;
     // --ray_stride (stratified only): the layered solves at every ray_stride-th
     // state, the states between interpolated where the two agree (1: all solved).
-    std::size_t ray_stride = 4;
+    std::size_t ray_stride = default_ray_stride;
     double shadow_floor = 20.0;
     // --shadow_model resolved (stratified only): each band's shadow boundary
     // from the near-ground profile it resolves at shadow_phase radians of
@@ -2510,6 +2510,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // microphones, like everything else.
     std::optional<EffectiveSoundSpeed> effective_sound_speed;
     std::vector<EffectiveSoundSpeed::Moments> state_moments;
+    std::vector<Vec3> state_positions; // --refraction stratified's rays start here
     ShadowAttenuation shadow_attenuation;
     // Point receivers near a shadow boundary: one table per microphone height;
     // flush plate microphones, one more.
@@ -2536,6 +2537,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         state_moments.reserve(nt);
         for (const auto& state : source_states)
             state_moments.push_back(effective_sound_speed->moments(state.position.z));
+        if (layered_sound_speed)
+            for (const auto& state : source_states)
+                state_positions.push_back(state.position);
         // The creeping wave runs along the ground: over its admittance when
         // there is a ground model, over rigid ground (the old rate) when not.
         shadow_attenuation = ground_model
@@ -2577,14 +2581,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             std::vector<bool> flush_receivers;
             for (std::size_t k = 0; k < shadow_transitions.size(); k++)
             {
-                shadow_transitions[k].set_cramped_ground(options.cramped_ground, &point_models[k],
-                        options.thread_count);
+                shadow_transitions[k].set_cramped_ground(options.cramped_ground, &point_models[k]);
                 receivers.push_back(point_heights[k]);
                 flush_receivers.push_back(point_heights[k] < ShadowTransition::flush_height);
             }
             if (plate_transition)
             {
-                plate_transition->set_cramped_ground(options.cramped_ground, nullptr, options.thread_count);
+                plate_transition->set_cramped_ground(options.cramped_ground);
                 receivers.push_back(plate->thickness());
                 flush_receivers.push_back(true);
             }
@@ -3063,137 +3066,24 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             RefractedRay ray;
         };
         // The two halves of a refracted ray, from whichever model the run
-        // asked for; the layered one keeps its path's layers in `layer_scratch`.
-        std::vector<double> layer_scratch;
-        // `transition`: the observer is a point receiver that ShadowTransition
-        // serves, so past the layered boundary its lit level is the linear fit's.
-        // --ray_stride: per observer, the layered solves at its anchor states --
-        // every stride-th, and the last -- each with the unfinished ray its own
-        // ground finish starts from.  A state between two anchors takes their
-        // solves interpolated where they agree (interpolate_layered); anchors
-        // are fixed states, solved alike whichever state asked first, so a
-        // windowed run and a marched one take the same rays.
-        const std::size_t stride = layered_sound_speed && nt > 2 ? options.ray_stride : 1;
-        struct Anchor
-        {
-            bool formed = false;
-            bool finished = false;
-            LayeredSolution solution;
-            RefractedRay ray;
-        };
-        std::vector<Anchor> anchors(stride > 1 ? nt / stride + 2 : 0);
-        const Vec3* anchors_for = nullptr;
-        auto anchor_slot = [&](std::size_t state) {
-            return state == nt - 1 && state % stride != 0 ? anchors.size() - 1 : state / stride;
-        };
-        auto block_of = [&](std::size_t it, std::size_t& ia, std::size_t& ib, double& t) {
-            ia = it - it % stride;
-            ib = std::min(ia + stride, nt - 1);
-            t = ib > ia ? static_cast<double>(it - ia) / static_cast<double>(ib - ia) : 0.0;
-        };
-        // The pair's straight distance as layered_direct_ray forms it: the
-        // microphone held on the plane, as its solve is.
-        auto layered_chord = [&](std::size_t it, const Vec3& observer) {
-            const Vec3& source = source_states[it].position;
-            const double r = std::hypot(observer.x - source.x, observer.y - source.y);
-            return std::hypot(r, source.z - std::max(observer.z, 0.0));
-        };
-        auto anchor_at = [&](std::size_t state, const Vec3& observer, const EffectiveSoundSpeed::Moments& at_receiver,
-                                 bool transition) -> Anchor& {
-            Anchor& a = anchors[anchor_slot(state)];
-            if (!a.formed)
-            {
-                a.solution = LayeredSolution {};
-                a.ray = layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
-                        source_states[state].position, state_moments[state], observer, at_receiver, layer_scratch,
-                        transition, options.waves, nullptr, &a.solution);
-                a.formed = true;
-                a.finished = false;
-            }
-            return a;
-        };
+        // asked for.  The layered rays end at the observer begin_observer()
+        // was last given, which is the one at hand.
+        std::optional<StridedLayeredRays> layered_rays;
+        if (layered_sound_speed)
+            layered_rays.emplace(*layered_sound_speed, *effective_sound_speed, state_positions, state_moments,
+                    options.ray_stride, options.waves);
         auto form_ray = [&](std::size_t it, const Vec3& observer,
-                                const EffectiveSoundSpeed::Moments& at_receiver, bool transition) {
-            if (layered_sound_speed)
-            {
-                if (stride > 1)
-                {
-                    if (anchors_for != &observer)
-                    {
-                        for (Anchor& a : anchors)
-                            a.formed = false;
-                        anchors_for = &observer;
-                    }
-                    std::size_t ia = 0, ib = 0;
-                    double t = 0.0;
-                    block_of(it, ia, ib, t);
-                    if (it == ia || it == ib)
-                        return anchor_at(it, observer, at_receiver, transition).ray;
-                    const Anchor& a = anchor_at(ia, observer, at_receiver, transition);
-                    const Anchor& b = anchor_at(ib, observer, at_receiver, transition);
-                    LayeredSolution between;
-                    if (interpolate_layered(a.solution, b.solution, t, layered_chord(it, observer), between))
-                        return layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
-                                source_states[it].position, state_moments[it], observer, at_receiver,
-                                layer_scratch, transition, options.waves, &between);
-                }
-                return layered_direct_ray(*layered_sound_speed, *effective_sound_speed,
-                        source_states[it].position, state_moments[it], observer, at_receiver,
-                        layer_scratch, transition, options.waves);
-            }
+                                const EffectiveSoundSpeed::Moments& at_receiver) {
+            if (layered_rays)
+                return layered_rays->ray(it);
             return direct_ray(*effective_sound_speed, source_states[it].position, state_moments[it],
                     observer, at_receiver);
         };
-        // The ground's finish: an anchor's from its own (kept for the states
-        // around it), an interpolated ray's from its anchors' where they agree.
         auto finish_ray = [&](std::size_t it, RefractedRay& ray, GroundGeometry ground, double microphone) {
-            if (!layered_sound_speed)
-            {
+            if (layered_rays)
+                layered_rays->finish(it, ray, ground, microphone);
+            else
                 finish_ground(ray, ground, microphone);
-                return;
-            }
-            if (stride > 1 && anchors_for != nullptr)
-            {
-                std::size_t ia = 0, ib = 0;
-                double t = 0.0;
-                block_of(it, ia, ib, t);
-                auto finish_anchor = [&](Anchor& x, RefractedRay& into) {
-                    layered_finish_ground(*layered_sound_speed, into, ground, microphone, layer_scratch,
-                            x.finished ? &x.solution : nullptr, x.finished ? nullptr : &x.solution);
-                    x.finished = true;
-                };
-                if (it == ia || it == ib)
-                {
-                    Anchor& self = anchors[anchor_slot(it)];
-                    if (self.formed)
-                    {
-                        finish_anchor(self, ray);
-                        return;
-                    }
-                }
-                else if (ray.interpolated)
-                {
-                    Anchor& a = anchors[anchor_slot(ia)];
-                    Anchor& b = anchors[anchor_slot(ib)];
-                    if (a.formed && b.formed)
-                    {
-                        for (Anchor* x : {&a, &b})
-                            if (!x->finished)
-                            {
-                                RefractedRay copy = x->ray;
-                                finish_anchor(*x, copy);
-                            }
-                        LayeredSolution between;
-                        if (interpolate_ground(a.solution, b.solution, t, layered_chord(it, *anchors_for), between))
-                        {
-                            layered_finish_ground(*layered_sound_speed, ray, ground, microphone, layer_scratch,
-                                    &between);
-                            return;
-                        }
-                    }
-                }
-            }
-            layered_finish_ground(*layered_sound_speed, ray, ground, microphone, layer_scratch);
         };
         unsigned generation = 0;
         std::size_t culled_here = 0;
@@ -3522,6 +3412,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             const ShadowTransition* transition_here = flush
                     ? (plate_transition ? &*plate_transition : nullptr)
                     : (!shadow_transitions.empty() ? &shadow_transitions[point_of[index]] : nullptr);
+            // A point receiver that ShadowTransition serves takes the linear
+            // fit's ray past the layered boundary: its lit level there is the fit's.
+            if (layered_rays)
+                layered_rays->begin_observer(observer, at_receiver, transition_here != nullptr);
             auto refracted_level = [&](std::size_t it, RefractedRay ray) {
                 // With a table too, the pairs it covers take it; the rest the ray model.
                 if (options.propagation_table)
@@ -3648,7 +3542,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             skipped_numerator, skipped_squared_range, generation, evaluated_here,
                             [&](std::size_t it) {
                                 RefractedGeometry g;
-                                g.ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
+                                g.ray = form_ray(it, observer, at_receiver);
                                 const auto e = bound_geometry(it, g.ray);
                                 g.squared_range = e.squared_range;
                                 g.along = e.along;
@@ -3664,7 +3558,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                             [&](std::size_t it) {
                                 if (travel_stamp[it] == generation)
                                     return travel[it];
-                                return sound_speed * form_ray(it, observer, at_receiver, transition_here != nullptr).travel_time;
+                                return sound_speed * form_ray(it, observer, at_receiver).travel_time;
                             });
                 }
                 else
@@ -3684,7 +3578,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 for (std::size_t it = 0; it < nt; it++)
                 {
-                    auto ray = form_ray(it, observer, at_receiver, transition_here != nullptr);
+                    auto ray = form_ray(it, observer, at_receiver);
                     // Reception time from the curved ray's travel time, as the
                     // range a straight ray at the surface sound speed would take.
                     ranges[it] = sound_speed * ray.travel_time;
@@ -4594,7 +4488,7 @@ int run(int argc, char* argv[])
     double shadow_phase = default_resolved_phase;
     std::string cramped_ground = "series";
     bool tunneling = false;
-    std::size_t ray_stride = 4;
+    std::size_t ray_stride = default_ray_stride;
     bool skip_fill = false;
     double scattering = 0.0;
     // Empty follows the database's speed_reference attribute.

@@ -195,7 +195,7 @@ TEST_CASE("the cramped table is the residue series at the source's height", "[re
     ground.receiver_height = z_r;
     const auto admittance = ground_impedance(ground, f, c0);
     ShadowTransition transition(f, admittance, z_r, c0, 0, 1, nullptr, nullptr, 2);
-    transition.set_cramped_ground(CrampedGround::series, &ground, 2);
+    transition.set_cramped_ground(CrampedGround::series, &ground);
     // On a node in s and sqrt(y_s), at xi nodes: the series itself.
     const double s = ShadowTransition::s_min * std::pow(10.0, 8.0 / ShadowTransition::s_per_decade);
     const double k0 = 2.0 * pi * f[0] / c0;
@@ -262,7 +262,7 @@ TEST_CASE("a cramped source over a linear lapse follows the PE with --shadow_mod
         const auto admittance = ground_impedance(ground, f, c0);
         const ShadowAttenuation attenuation(f, admittance, 0, 1);
         ShadowTransition transition(f, admittance, z_r, c0, 0, 1, nullptr, nullptr, 2);
-        transition.set_cramped_ground(CrampedGround::series, &ground, 2);
+        transition.set_cramped_ground(CrampedGround::series, &ground);
         std::vector<ResolvedBand> resolved(1);
         resolved_shadow_bands(path, linear.fit(z_s, linear.moments(z_s), z_r, linear.moments(z_r), hx, hy), z_s,
                 z_r, f, 0, 1, 1.0, true, resolved.data());
@@ -313,7 +313,7 @@ TEST_CASE("resolved levels stay inside the peak search's bound", "[resolved][bou
     for (const CrampedGround mode : {CrampedGround::series, CrampedGround::straight, CrampedGround::ray})
     {
         ShadowTransition transition(f, admittance, z_r, c0, 0, f.size(), nullptr, nullptr, 2);
-        transition.set_cramped_ground(mode, &ground, 2);
+        transition.set_cramped_ground(mode, &ground);
         for (const double g : {-0.01, -0.05})
             for (const double z_s : {2.0, 6.0, 30.0})
                 for (double r = 20.0; r < 3000.0; r *= 1.25)

@@ -564,16 +564,21 @@ What did it, each bit-identical but the first:
   approach measured no ray came near a boundary: it built neither, and 8.5 s of the resolved
   run's 11 and 0.9 s of every other refracting run's went. Where they are built, the values are
   the same. `apply` fetches the tables once a pair: fetched per band (twice, through `level`
-  and `plate_offset`) the `call_once` check cost a linear run 10%.
+  and `plate_offset`) the `call_once` check cost a linear run 10%. And it places each band's s
+  among the table's nodes once (`s_place`), for V and its floor alike, with the per-band helpers
+  (`level_at`, `finish_level`, `plate_offset_in`) inline: a second log10 a band and the calls
+  out of line cost a stratified grid run 5–10% of its CPU.
 - **The layer walk** (`Path::between`, stratified.cpp) forms each level's sine once, as the top
   of one layer and the bottom of the next, and looks up its ends' level and speed once a pair
-  (`Path::where`, the source, receiver and ground heights it walks between for every p) rather
-  than by a binary search and an interpolation at both ends of every walk. 10–20% in a duct,
-  where walks are long; nothing measurable on the windy profile's 17 levels.
+  (`Path::fixed`: the source, receiver and ground heights it walks between for every p, looked up
+  when the path is formed) rather than by a binary search and an interpolation at both ends of
+  every walk. 10–20% in a duct, where walks are long; nothing measurable on the windy profile's
+  17 levels. A turning height moves with p, so it is looked up when asked, not kept.
 - **`--scattering`'s level is summed from parts formed once**: the run's and band's in
   `set_scattering`, the pair's range and height before the band loop, in the original
   expression's order so its multiply-adds fuse the same way; and 10 lg of V's largest power
-  ratio once per band.
+  ratio once per band. `ShadowScattering::level` is the same parts summed, so the two cannot
+  drift apart.
 - **Time and band histories are formatted by `std::to_chars`** (`append_number`), the
   standard's definition of the %.17g (and %.10g) the streams wrote, with every NaN written
   "nan" as the streams do. Writing 46 histories of 4780 rows was half of a plate run's loop.

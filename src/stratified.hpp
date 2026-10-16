@@ -40,6 +40,7 @@
 
 #include "atmosphere_profile.hpp"
 #include "refraction.hpp"
+#include "util/constants.hpp"
 
 namespace niceops {
 
@@ -115,7 +116,9 @@ struct Layers
     // 0 is plain ray theory, followed along flat air without limit.
     double resolution_frequency = default_resolution_frequency;
 
-    double at(double height) const;
+    // `upper`, if known, is the first level above `height` (std::upper_bound's
+    // answer), so that a walk that has found it does not search again.
+    double at(double height, const double* upper = nullptr) const;
     // Whether the effective sound speed is the same everywhere on the path's
     // heights, to rounding: then every ray is straight.
     bool uniform() const;
@@ -335,18 +338,78 @@ bool interpolate_layered(const LayeredSolution& a, const LayeredSolution& b, dou
         LayeredSolution& out);
 bool interpolate_ground(const LayeredSolution& a, const LayeredSolution& b, double t, double chord,
         LayeredSolution& out);
-inline constexpr double ray_interpolation_angle = 0.5 * 3.14159265358979323846 / 180.0; // rad
-inline constexpr double ray_interpolation_spreading = 0.02;                               // relative
+inline constexpr double ray_interpolation_angle = 0.5 * deg_to_rad; // rad
+inline constexpr double ray_interpolation_spreading = 0.02;          // relative
 
-// `given`: take the solves' results from it instead of solving (when its
-// hand-over agrees with this pair's); `solved`: record them there.
+// A pair's straight distance as LayeredSolution::chord takes it: the
+// microphone held on the plane, as the layered solve is.
+double layered_chord(const Vec3& source, const Vec3& receiver);
+
+// `memo`: a pair's solves' results.  Where it holds them (`solved`, and
+// `ground_set` for the ground's part) they are taken instead of solving --
+// the direct ray's only if this pair hands over as they did; where it does
+// not, the solves fill it.
 RefractedRay layered_direct_ray(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
         const Vec3& source, const EffectiveSoundSpeed::Moments& at_source, const Vec3& receiver,
         const EffectiveSoundSpeed::Moments& at_receiver, std::vector<double>& scratch,
-        bool linear_past_shadow = false, const WaveOptions& waves = {}, const LayeredSolution* given = nullptr,
-        LayeredSolution* solved = nullptr);
+        bool linear_past_shadow = false, const WaveOptions& waves = {}, LayeredSolution* memo = nullptr);
 void layered_finish_ground(const LayeredSoundSpeed& air, RefractedRay& ray, GroundGeometry ground,
-        double microphone_height, std::vector<double>& scratch, const LayeredSolution* given = nullptr,
-        LayeredSolution* solved = nullptr);
+        double microphone_height, std::vector<double>& scratch, LayeredSolution* memo = nullptr);
+
+// --ray_stride's default.
+inline constexpr std::size_t default_ray_stride = 4;
+
+// --ray_stride: one observer's layered rays, solved at its anchor states --
+// every stride-th, and the last -- and between two anchors interpolated from
+// their solves where they agree (interpolate_layered, interpolate_ground).
+// Each anchor keeps the unfinished ray its ground finish starts from.
+// Anchors are fixed states, each solved alike whichever state asks first, so
+// a ray does not depend on the order the states are asked for: a windowed
+// run and a marched one take the same.  A stride of 1, or a trajectory of two
+// states or fewer, solves every state.  One per thread.
+class StridedLayeredRays
+{
+public:
+    // Every state's source and its moments, which must outlive this.
+    StridedLayeredRays(const LayeredSoundSpeed& air, const EffectiveSoundSpeed& linear,
+            const std::vector<Vec3>& sources, const std::vector<EffectiveSoundSpeed::Moments>& moments,
+            std::size_t stride, const WaveOptions& waves);
+    // The observer the rays end at from now on; the last one's anchors go.
+    // `linear_past_shadow` as layered_direct_ray takes it.
+    void begin_observer(const Vec3& receiver, const EffectiveSoundSpeed::Moments& at_receiver,
+            bool linear_past_shadow);
+    // State it's ray, as layered_direct_ray gives it.
+    RefractedRay ray(std::size_t it);
+    // Its ground finish, as layered_finish_ground's: an anchor's from its own
+    // solve, an interpolated ray's from its anchors' where they agree.
+    void finish(std::size_t it, RefractedRay& ray, GroundGeometry ground, double microphone_height);
+
+private:
+    struct Anchor
+    {
+        bool formed = false;
+        bool finished = false;
+        LayeredSolution solution;
+        RefractedRay ray;
+    };
+    // The anchors at or before `it` and after it (one or both `it` itself
+    // when it is one), and its fraction of the way between them.
+    void block_of(std::size_t it, std::size_t& a, std::size_t& b, double& t) const;
+    Anchor& slot(std::size_t anchor) { return anchors_[(anchor + stride_ - 1) / stride_]; }
+    Anchor& formed(std::size_t anchor);
+    RefractedRay solve(std::size_t it, LayeredSolution* memo);
+
+    const LayeredSoundSpeed& air_;
+    const EffectiveSoundSpeed& linear_;
+    const std::vector<Vec3>& sources_;
+    const std::vector<EffectiveSoundSpeed::Moments>& moments_;
+    std::size_t stride_;
+    WaveOptions waves_;
+    Vec3 receiver_;
+    EffectiveSoundSpeed::Moments at_receiver_ {};
+    bool linear_past_shadow_ = false;
+    std::vector<Anchor> anchors_;
+    std::vector<double> scratch_;
+};
 
 } // namespace niceops

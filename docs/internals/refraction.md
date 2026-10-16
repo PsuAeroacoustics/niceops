@@ -278,9 +278,10 @@ its highest band) of the fastest air, and the limiting ray's travel across it is
 `LayeredSolution` (stratified.hpp) is what a pair's layered solves give: the direct eigenray
 after the boundary's removal under aloft, the hand-over, the ray and wave arrivals, and the
 reflected ray's grazing and length for a point receiver's ground. `layered_direct_ray` and
-`layered_finish_ground` take one (`given`) in place of solving, or record one (`solved`); the
-per-observer cache of anchors is in `process_trajectory` (`anchors`, `form_ray`, `finish_ray`).
-What to keep:
+`layered_finish_ground` take one (`memo`): what it holds stands in place of solving, and what it
+lacks the solves fill in. `StridedLayeredRays` keeps an observer's anchors, one per thread;
+`process_trajectory` hands it each observer (`begin_observer`) and asks it for every state's ray
+and ground finish. What to keep:
 
 - **Interpolate the solves, not the levels.** The sphere's direction, the ground, the absorption
   and the shadow transition are formed at each state from its own geometry and the interpolated
@@ -288,7 +289,10 @@ What to keep:
   decimating the trajectory does ([performance.md](performance.md#the-sel-window-the-oversampling-and-the-windowed-peak-search)).
 - **Anchors are fixed states** (every K-th and the last), each solved exactly as without the
   option, so a state's ray does not depend on which state the windowed search asked for first:
-  windowed equals marched byte for byte (`stratified_stride_windowed_is_exact`).
+  windowed equals marched byte for byte. `stratified_windowed_is_exact` and its twins run at the
+  default stride; `a strided ray does not depend on the order the states are asked for` asks for
+  the states shuffled, some twice, after another observer's anchors, and finishes them in
+  another order.
 - **Tubes, lengths and times as fractions of the chord.** Taken as they are, 14% of states
   between anchors 8 apart were refused on the 2% tube limit by nothing but the tube's growth with
   range; as fractions of the straight chord the growth is exact and only the focusing is

@@ -971,7 +971,7 @@ smooths. SEL on 1681 cells of the demo grid (41 x 41), largest change and 99th p
 | `example_inversion.csv` (a duct), point receivers | 0.057 / 0.003 dB | 0.27 / 0.002 dB |
 | the duct, `--tunneling --skip_fill` | | 0.004 / 0.002 dB |
 
-A windowed run equals its marched run byte for byte at any stride (`stratified_stride_windowed_is_exact`).
+A windowed run equals its marched run byte for byte at any stride (`stratified_windowed_is_exact`).
 
 ### Refraction against flight data
 

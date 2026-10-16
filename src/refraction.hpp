@@ -450,10 +450,9 @@ struct ShadowScattering
 
     bool on() const { return gamma_t > 0.0; }
     double level(double frequency, double slant, double source_height) const;
-    // level() in the order it sums: a band's share (the constant, gamma_t's
-    // and the frequency's terms), then a pair's (the logarithms of its range
-    // and height), so that a caller can form each once.  The same expression,
-    // so the same bits, multiply-adds fused as level()'s are.
+    // level() in two parts: a band's share (the constant, gamma_t's and the
+    // frequency's terms), then a pair's (the logarithms of its range and
+    // height), so that a caller can form each once; level_of() sums them.
     double band_part(double frequency) const;
     void pair_logs(double slant, double source_height, double& log_range, double& log_height) const;
     double level_of(double band, double log_range, double log_height) const
@@ -553,9 +552,7 @@ public:
     // ground is the plate the constructor took).  `series` makes ready the
     // cramped table below, which apply_resolved() then reads when it is given
     // no cramped_field of its own; each column is built when first read.
-    // `threads` is no longer used.
-    void set_cramped_ground(CrampedGround mode, const GroundModel* ground = nullptr,
-            unsigned threads = 0);
+    void set_cramped_ground(CrampedGround mode, const GroundModel* ground = nullptr);
     // The cramped table: per band, the residue series' level re free field at
     // the slant range, for a source y_s = z_s / l up, at xi and s (as level()),
     // the receiver this transition's.  NaN where the series is not trusted
@@ -630,10 +627,30 @@ private:
     const float* cramped_column(std::size_t band, std::size_t j) const;
     void build_cramped(Tables& t, std::size_t band, std::size_t j) const;
     double column(const Tables& t, std::size_t band, std::size_t j, double xi) const;
+    // s's place among the s nodes: the node j below it and the fraction t past.
+    struct Place
+    {
+        std::size_t j = 0;
+        double t = 0.0;
+    };
+    Place s_place(double s) const;
     // level() and plate_offset() on tables already in hand, so that a pair's
-    // bands do not each ask for them again.
-    double level_in(const Tables& tab, std::size_t band, double xi, double s) const;
+    // bands do not each ask for them again; level_at() at s's place, which
+    // the floor (finish_level) takes too.
+    double level_at(const Tables& tab, std::size_t band, double xi, Place s) const;
     double plate_offset_in(const Tables& tab, std::size_t band, double azimuth) const;
+    // A pair's scattering terms: ShadowScattering::pair_logs's, and the slant
+    // range's spreading against the ray's own, dB.
+    struct PairTerms
+    {
+        double log_range = 0.0, log_height = 0.0, spreading_db = 0.0;
+    };
+    // A shadowed band's level v re the ray's spreading, finished: at worst the
+    // boundary's own level less `floor` (without scattering), plus the plate's
+    // K, and with scattering the scattered energy added and the sum held to
+    // the table's largest.
+    double finish_level(const Tables& tab, std::size_t band, double v, Place s, double floor,
+            double plate_azimuth, const PairTerms& pair) const;
 
     std::vector<double> frequencies_;
     double receiver_height_ = 0.0;
