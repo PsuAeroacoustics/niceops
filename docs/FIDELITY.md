@@ -851,6 +851,30 @@ reflections 25 times faster, 44 s to 1.8 s, with the same rays, and the plan-vie
 the visibility tests (identical to trying every building and facade on 4000 random segments and
 rays) a further 2.8 to 4 times.
 
+**How much SEL depends on the scattering coefficient** (`tools/urban_scattering_study.py`, 31
+minutes on ten threads). Grids of 60 m blocks with 20 m streets -- roofs at H/W 0.5, 1 and 2, and
+of mixed heights -- aligned with the demo approach and turned 45°, placed under it and 1000 ft
+aside where it is near 400 ft and near 150 ft up; in each, five microphones: on the centrelines of
+the two streets mid-block, 2 m from a wall, a flush plate 1 m from a wall, and at an
+intersection. Walls absorb 0.05; the floor is rigid. The SEL change from specular walls, median
+and range over the eight placements of each:
+
+| Microphone | Street against open ground (s = 0) | s = 0.1 | s = 0.2 | s = 0.3 | s = 0.5 |
+| --- | --- | --- | --- | --- | --- |
+| Street along x | +0.43 [−1.08, +2.98] | +0.14 [−0.67, +0.57] | +0.22 [−1.50, +0.94] | +0.26 [−2.22, +1.19] | +0.31 [−3.34, +1.45] |
+| Street along y | +0.30 [−0.61, +2.69] | +0.13 [−0.73, +0.67] | +0.24 [−1.65, +0.99] | +0.30 [−2.44, +1.19] | +0.32 [−3.74, +1.41] |
+| 2 m from a wall | +0.63 [−3.76, +3.26] | +0.12 [−0.39, +0.88] | +0.17 [−0.68, +1.38] | +0.20 [−1.34, +1.78] | +0.22 [−2.59, +2.43] |
+| Plate at a wall | −0.54 [−1.78, +2.41] | +0.16 [−0.15, +0.87] | +0.26 [−0.85, +1.12] | +0.42 [−1.66, +1.46] | +0.51 [−3.10, +1.98] |
+| Intersection | +0.51 [−1.91, +2.20] | +0.17 [−0.47, +0.77] | +0.23 [−0.92, +1.29] | +0.34 [−1.41, +1.69] | +0.34 [−2.34, +2.22] |
+
+The median microphone moves by +0.14 to +0.30 dB between s = 0.1 and 0.5, but single microphones
+move as much as the street does: at s = 0.2, 35% of the 160 by more than 0.5 dB and 6% by more than
+1 dB. Scattering pulls the street's effect toward nothing. Where the street raised the SEL -- the
+deep streets (H/W 2) aside the approach, filled by specular bounces from its low, distant part --
+it lowers it, by up to 3.7 dB at s = 0.5; where the street lowered it, the median rise is +1.0 dB
+at s = 0.5, the shadow filling. So s is worth knowing for a particular site, and matters most in
+deep streets and off the track; averaged over a district it shifts levels by a few tenths.
+
 **Districts of many orientations.** 81 blocks 54 m square on an 80 m grid, each turned at random
 within ±2° or ±10°, the microphone in a street; the cost of a direction's rays:
 

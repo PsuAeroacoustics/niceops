@@ -1740,9 +1740,11 @@ reflections do not. With a scattering coefficient s the walls reflect rho (1 - s
 in the table's rays and in the run's own first-order reflections, and rho s diffusely
 ([THEORY §6.5](THEORY.md#65-urban-receivers)). Measured facade data are scarce: ISO 17497-1
 gives a random-incidence scattering coefficient, and facades measured at steep incidence hardly
-exist, so s is a modelling choice to be studied rather than a value to look up. The default leaves
-the walls specular, and tables built with it are unchanged; [FIDELITY](FIDELITY.md#buildings)
-has what s = 0.2 does. The diffuse field adds several seconds to a receiver's build on one thread.
+exist, so s is a modelling choice rather than a value to look up. It matters for a particular
+microphone more than for a district: across synthetic streets s = 0.2 moves the median
+microphone's SEL by +0.2 dB but a third of them by more than 0.5 dB, most in deep streets
+([FIDELITY](FIDELITY.md#buildings)). The default leaves the walls specular, and tables built with
+it are unchanged. The diffuse field adds several seconds to a receiver's build on one thread.
 
 A microphone inside a footprint is refused, as is `--wave_below`. A table for a street
 microphone among a hundred blocks takes a few seconds per receiver at the defaults; the time
