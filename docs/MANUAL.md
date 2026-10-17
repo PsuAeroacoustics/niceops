@@ -37,7 +37,7 @@ the code, start with the [README](../README.md); developers start at
   frames](#epnl-and-reception-time-frames)
 - [Companion tools](#companion-tools): [`niceops_procedure`](#niceops_procedure) · [`niceops_propagation_table`](#niceops_propagation_table) ·
   [`niceops_build_atmosphere`](#niceops_build_atmosphere) ·
-  [`niceops_urban_table`](#niceops_urban_table) ·
+  [`niceops_urban_table`](#niceops_urban_table) · [`niceops_point_field`](#niceops_point_field) ·
   [`niceops_pe_compare`](#niceops_pe_compare) · [`niceops_benchmark`](#niceops_benchmark) · [Plot
   scripts](#plot-scripts)
 - [Performance](#performance): [How much gets evaluated](#how-much-gets-evaluated) ·
@@ -1750,6 +1750,46 @@ A microphone inside a footprint is refused, as is `--wave_below`. A table for a 
 microphone among a hundred blocks takes a few seconds per receiver at the defaults; the time
 grows about 1.7-fold with each further order of diffracted reflection
 ([FIDELITY](FIDELITY.md#buildings)), and a warning says if a receiver's search was cut short.
+
+### `niceops_point_field`
+
+The field of a point source among LoD1 buildings, at microphones: for a source near the buildings
+-- a loudspeaker in a street, a drone among the roofs -- where an `--urban_table`'s plane wave will
+not do. It traces the source's own rays, reflected in the facades and the floor, diffracted at
+the roof edges and the corners, once or at two in turn, and writes each band's level re the
+source's level at 1 m, so a measured source spectrum at 1 m adds to it directly.
+
+```sh
+niceops_point_field --buildings district.csv --source 12.5 30 2 --microphones mics.csv \
+    --bands 160 200 250 315 400 500 630 800 1000 --units m -o levels.csv
+```
+
+`--buildings` is `niceops_urban_table`'s, CSV or GeoJSON (with `--origin` and `--frame_bearing`),
+and the buildings stand on a flat floor. `--microphones` is a CSV with `x`, `y` and `height`
+columns. Each output row is a microphone's `x`, `y` and `height`, then one level per band, dB, the
+rays summed coherently and averaged over the band. A free-field level at the microphone would be
+−20 lg r for its distance r in metres.
+
+| Option | Meaning |
+| --- | --- |
+| `--buildings` | The district. |
+| `--source` | The source's `x`, `y` and height above the floor. Refused inside a building. |
+| `--microphones` | The CSV above. A microphone inside a building is refused. |
+| `--bands`, `--database` | Band centers, given or from a database. |
+| `--absorption` | The walls' energy absorption where a building gives none. Default 0, rigid. |
+| `--floor_absorption` | The floor's. Default 0, rigid. |
+| `--max_reflections` | Facade reflections on a ray that diffracts nowhere. Default 4. |
+| `--max_edge_reflections` | Facade reflections on each side of a single diffraction. Default 2. |
+| `--radius` | Facades and edges within this horizontal distance of the source or a microphone. Default 150 m. |
+| `--no_diffraction`, `--no_double_diffraction` | Leave out every diffracted ray, or those at two edges. |
+| `--cascade` | Over a shared face (a roof from edge to edge, a wall from corner to corner), the cascade of two edge coefficients instead of the uniform form. For comparison only. |
+| `--orientation_tolerance` | As `niceops_urban_table`'s. Default 1 degree. |
+| `--sound_speed` | m/s. Default 343.2. |
+| `--units`, `-o` | `ft` (default) or `m`, for every length in and out; the file to write. |
+
+Roofs do not reflect, so a microphone above a roof misses that roof's reflection; with both the
+source and the microphone above a shared face, its double diffraction is the cascade. Accuracy
+against an exact solution is in [FIDELITY](FIDELITY.md#a-point-source-among-buildings).
 
 ### `niceops_pe_compare`
 

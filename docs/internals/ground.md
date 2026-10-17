@@ -255,6 +255,52 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
   - Patches under three of their sizes from a receiving point are summed over 4 by 4 parts;
     each patch is lit, and seen, from its centre, so shadow edges are resolved to a patch.
 
+### A point source among buildings (`src/point_paths`, `src/double_wedge`)
+
+`PointSourceField` is the tables' ray model for a source near the buildings (`niceops_point_field`,
+THEORY §6.5). It shares `image_tree` and `folded_path_open` with `BuildingReceiver`: the
+microphone's images and the source's are the same beam-traced trees, and every leg is tested
+exactly. What to keep:
+
+- **Double diffraction over a shared face is an aperture integral, not the cascade.** Measured
+  against boundary elements (`tools/thick_barrier_bem.py`, FIDELITY), the cascade of two UTD
+  coefficients is 1-4 dB low over a container stack with the source 18° below the roof and up to
+  11 dB low at 1.6°, and that does not fall away with frequency. The first edge's wave reaching
+  the second is a transition field, and no choice of distance parameters makes a ray of it:
+  - Kouyoumjian and Pathak's own parameters (`s1 s2/(s1 + s2)`, `s2 s3/(s2 + s3)`, the
+    cascade) are the ones that compensate the second edge's jump exactly, and still miss.
+  - Whole-ray parameters, each edge's taken from the whole ray before and after it
+    (`s1 (s2 + s3)/S`, `(s1 + s2) s3/S`), with the ordinary spreading gave a
+    frequency-independent step of 0.5 to 16 dB at the roof plane, and up to 24 dB high against
+    the BEM: the spreading has to change with them.
+  - The first edge's parameter from the whole ray and the second's from the cascade (a hybrid)
+    is up to 15 dB high.
+  The aperture integral holds the transition itself; its end point is the cascade, and the
+  Keller-ratio correction `c` puts the first edge's large-angle coefficient right. Slope
+  diffraction is no help here: over a hard face the incident field's normal derivative is zero.
+- **Above the face's plane, subtract the aperture's own unbounded field, not the UTD ray.**
+  Subtracting the first edge's UTD ray (its diffraction and the source's wave) was 0.1 dB from the
+  BEM near the plane but 10 dB high for microphones well above it: the correction `c` is right
+  only toward the face, so the aperture's picture of the first edge's wave in other directions
+  differs from the UTD ray by as much as the second edge's whole effect. The same integral with
+  the face continuing carries the same error, and the difference is what the second edge does.
+- **The two evaluations are weighted by depression angle, not averaged.** Each is within a few
+  tenths of the other; a plain average switches to one of them when an end crosses the plane, a
+  0.3-1 dB step. The angle weights go smoothly to the evaluation that remains, and swap with the
+  ends, so reciprocity holds to round-off.
+- **The 2-D field converts to 3-D per ray, by sin(beta)/sqrt(l_t).** At beta = 90° that is exact
+  for every kind of ray, which is what lets a 2-D BEM test the whole 3-D implementation
+  (`over a long block the point-source field is the boundary-element solution's`); it also
+  reduces the shared-face form to the 3-D cascade at its end point.
+- **The test's reference values come from `tools/thick_barrier_bem.py`** at 60 elements a
+  wavelength, converged to 0.05 dB on those points. Rerunning it reproduces them exactly.
+- **`source_reflections`** exists for the far-field test: the plane-wave builder leaves out edges
+  lit by a reflection or the floor, and the comparison needs the same ray set.
+- **Do not range-for over `PointSourceField(...).rays()`.** The temporary dies before the loop
+  runs (C++17 does not extend it through a member call); two tests did, and read garbage.
+- `tools/building_input.hpp` is the district and microphone reading both urban tools share; a
+  change to the CSV or GeoJSON rules goes there once.
+
 ### The canyon wave solver (`src/canyon_wave`)
 
 A 2-D staggered pressure-velocity FDTD of a flush-roof canyon, run by reciprocity, for the urban

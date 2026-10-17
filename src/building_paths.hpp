@@ -125,6 +125,36 @@ struct SpecularTrace
 bool trace_specular(const Buildings& buildings, const Vec3& start, const Vec3& departure, const Vec3& u,
         bool below_floor, std::size_t max_order, SpecularTrace& trace);
 
+// A point mirrored in facades: the image, and the facades it was mirrored in,
+// the point's side first.
+struct PointImage
+{
+    Vec3 point;
+    std::vector<std::size_t> facades;
+};
+
+// The images of a point through which a ray can reach it, found by beam
+// tracing in plan view: breadth first over the facades within `radius`, to
+// `max_order` reflections and at most `max_images` images, each carrying the
+// part of its last facade through which the point can be reached; a further
+// facade counts only where it lies in that beam, and of `candidate_edges` an
+// image keeps those whose plan crosses it.  The point itself is the first.
+struct ImageTree
+{
+    std::vector<PointImage> images;
+    std::vector<std::vector<std::size_t>> edges;
+    bool truncated = false; // stopped at max_images
+};
+ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radius, std::size_t max_order,
+        std::size_t max_images, bool beams, const std::vector<std::size_t>& candidate_edges);
+
+// Whether a ray from `from` reaches `point` (or, below the floor, its floor
+// image) by reflecting in `facades` (the point's side first): the unfolded
+// line crosses each, the last first, within it and from in front, and no leg
+// of the folded path passes through a building.
+bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
+        const std::vector<std::size_t>& facades, bool below_floor);
+
 // One microphone among the buildings, with what does not depend on the wave's
 // direction worked out once: the facades' frames and orientations, the edges
 // within reach, and the images a diffracted ray can reach it through.
@@ -152,13 +182,8 @@ public:
             const DiffuseFacades* diffuse = nullptr) const;
 
     // The images of the microphone the diffracted rays are tried through, the
-    // microphone itself first: each with the facades it was mirrored in, the
-    // microphone's side first.
-    struct Image
-    {
-        Vec3 point;
-        std::vector<std::size_t> facades;
-    };
+    // microphone itself first.
+    using Image = PointImage;
     const std::vector<Image>& images() const
     {
         return images_;
@@ -171,17 +196,10 @@ public:
     }
 
 private:
-    struct Frame
-    {
-        double x0, y0, ax, ay, length, nx, ny;
-    };
-    bool diffracted_path_open(const Vec3& q, const Image& image, bool below_floor) const;
-
     const Buildings* buildings_;
     Vec3 microphone_;
     std::vector<std::size_t> run_facades_;
     BuildingPathOptions options_;
-    std::vector<Frame> frames_;
     std::vector<std::size_t> edges_;    // within reach
     std::vector<std::size_t> planes_;   // the orientations within reach
     std::vector<Image> images_;

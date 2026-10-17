@@ -954,6 +954,66 @@ their own direction's numerator $n_i$ over their own squared range, so their sum
 $\max_i n_i / \left(\sum_i r_i^{-2}\right)^{-1}$, as for several eigenrays (§8.2); a reflection
 loses $\rho \le 1$ and needs nothing more.
 
+**A point source among buildings** (`niceops_point_field`). For a source near the buildings -- a
+loudspeaker in a street, a drone among the roofs -- a plane wave will not do, and the field at a
+microphone is a sum of rays from the source itself, every leg through the visibility tests above.
+Specular rays are the microphone's images in the facades and the floor, each
+$\prod\sqrt\rho\;e^{ikL}/L$ for a unit source. A ray diffracted once runs from an image of the
+source to one of the microphone, each to two facade reflections and with the floor or without, so
+that an edge lit only by a reflection or off the floor diffracts too. For the spherical wave the
+edge's coefficient is the wedge's in the plane normal to it at $k\sin\beta$, with
+$L = s s'\sin^2\beta/(s + s')$ [67]:
+
+$$
+u = \frac{D(\theta, \theta_0;\ k\sin\beta,\ L/\sin\beta)}{\sqrt{\sin\beta}}\,\frac{e^{ik(s + s')}}{\sqrt{s s'(s + s')}}.
+$$
+
+A ray diffracted twice runs between two edges, the source's and the microphone's images to one
+reflection each, through the points where the path is stationary, found by meeting Keller's
+condition at each edge in turn. In general it is the cascade of two coefficients: the first
+edge's wave reaches the second curved about the first edge across it and about the source along
+it, so the second's distance parameter is $s_2 s_3/(s_2 + s_3)$, the first's $s_1 s_2/(s_1 + s_2)$,
+and the spreading $1/\sqrt{s_1 s_2 s_3 (s_1 + s_2 + s_3)}$.
+
+**Over a shared face.** Where the two edges are parallel and share a face -- a flat roof from one
+edge to the other, a wall from one corner to the next -- the second edge lies in the first's
+transition region whenever an end is near the face's plane, and there the first edge's wave is a
+transition field, not a ray, which the cascade loses. In the plane normal to the edges, with the
+first edge at the origin, the second at $(w, 0)$, the face between them and the air above it, and
+the source $S$ below the face's plane and before the first edge, the field above the first edge is
+taken as a Kirchhoff aperture [53] on the half-line $P_t = (0, t)$, $t > 0$, each of its points a
+line source of the incident wave, and each such wave diffracted by the second wedge:
+
+$$
+u(R) = c\int_0^\infty \frac{e^{ik|P_t - S|}}{\sqrt{|P_t - S|}}\;\frac{\cos\chi_S + \cos\chi_2}{2}\sqrt{\frac{k}{2\pi}}\,e^{-i\pi/4}\;W_2(P_t; R)\,dt,
+$$
+
+where $\chi_S$ and $\chi_2$ are the angles of the waves from $S$ and toward the second edge to the
+face's normal at the aperture, and $W_2(P; R)$ is the second wedge's whole field at $R$ of the wave
+$e^{ik|x - P|}/\sqrt{|x - P|}$: its geometrical-optics waves and
+$D_2(\theta, \theta_0(P))\,e^{ik(r + s_3)}/\sqrt{r s_3}$, distance parameter $r s_3/(r + s_3)$, with
+$r = |P - E_2|$. The integral's end point at the edge is the cascade with Kirchhoff's edge
+coefficient, $\tfrac12(1 + \cos\gamma)\,e^{i\pi/4}/(\sqrt{2\pi k}\sin\gamma)$ for the source $\gamma$ below the
+face; $c$ is the first wedge's own coefficient on the face, without transition function and
+halved because the face doubles it, over that one. Both grow as $1/\gamma$ and $c \to 1$ as the
+source nears the plane, where Kirchhoff's approximation is right. The integral is taken by the
+midpoint rule at a 24th of a wavelength, out to 30 wavelengths or three Fresnel zones, its far
+half tapered.
+
+Above the face's plane the receiver sees the first edge, whose rays carry that wedge's field
+there; the same integral with the face continuing past the second edge, $W_2$ replaced by the
+incident and the face-reflected waves, is that field in the aperture's own approximation and is
+subtracted. Either end below the face's plane can be the aperture's source, the other then being
+the receiver; the two evaluations are weighted by their source's angle below the plane,
+$u = (\gamma_S u_S + \gamma_R u_R)/(\gamma_S + \gamma_R)$, which is reciprocal and gives way smoothly as either end
+reaches the plane. With both ends above it, the cascade stands. In space the ray is the field in
+the plane at $k\sin\beta$ times $\sin\beta/\sqrt{\ell_t}$, $\ell_t$ the ray's length in the plane: a
+wave $e^{ik_t\ell_t}/\sqrt{\ell_t}$ in the plane is $e^{ik\ell}/\ell$ in space, $\ell = \ell_t/\sin\beta$.
+
+The rays sum coherently, band-averaged pair by pair over three sub-bands as the table's are, and
+the band level is $10\lg$ of the result, re the source's level at 1 m. Left out: three edges or
+more, a reflection between two edges, roofs as reflectors, an edge's ends, and diffuse reflection.
+
 ### 6.6 The canyon's wave solution
 
 Below a few hundred hertz a street is a few wavelengths wide and rays stop describing it.

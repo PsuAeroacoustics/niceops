@@ -194,10 +194,12 @@ add_library(niceops_core STATIC
   src/urban.cpp
   src/canyon_wave.cpp
   src/wedge.cpp
+  src/double_wedge.cpp
   src/buildings.cpp
   src/building_paths.cpp
   src/diffuse_facades.cpp
   src/geojson_buildings.cpp
+  src/point_paths.cpp
   src/predicates.cpp
   src/delaunay.cpp
   # interpolator.cpp was its own library in the D era, to wall off CGAL's heavy
@@ -285,6 +287,7 @@ add_executable(niceops_unit_tests
   tests/test_building_paths.cpp
   tests/test_diffuse_facades.cpp
   tests/test_geojson_buildings.cpp
+  tests/test_point_paths.cpp
   tests/test_atmosphere.cpp
   tests/test_atmosphere_profile.cpp
   tests/test_atmosphere_builder.cpp
@@ -349,6 +352,8 @@ target_link_libraries(niceops_build_atmosphere niceops_core CLI11::CLI11)
 
 add_executable(niceops_urban_table tools/urban_table.cpp)
 target_link_libraries(niceops_urban_table niceops_core CLI11::CLI11)
+add_executable(niceops_point_field tools/point_field.cpp)
+target_link_libraries(niceops_point_field niceops_core CLI11::CLI11)
 # The Attenborough et al. (1995) benchmark cases by the PE and the exact
 # solutions (tools/benchmark.cpp); tools/plot_benchmark.py draws them.
 add_executable(niceops_benchmark tools/benchmark.cpp)
@@ -1185,6 +1190,12 @@ add_test(NAME urban_table_refuses_db_cutoff COMMAND ${URBAN_RUN} --urban_table t
 set_tests_properties(urban_table_refuses_db_cutoff PROPERTIES PASS_REGULAR_EXPRESSION "--urban_table does not combine with --db_cutoff")
 add_test(NAME urban_table_builder_checks_units COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --bands 1000 --units m -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_table_builder_checks_units PROPERTIES PASS_REGULAR_EXPRESSION "column 'x_ft' is in ft, and --units is m")
+# niceops_point_field (tools/point_field.cpp): a point source in the test district's street, at
+# its microphones, through the urban tools' shared district reader; and its refusal of a source
+# inside a building.
+add_test(NAME point_field_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 -o integrated/point_field.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_refuses_inside COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1060 230 10 --microphones tests/data/urban_observers.csv --bands 125 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(point_field_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "--source stands inside building 4")
 # --atmosphere through a single-level profile holding the vehicle file's own
 # atmosphere has to reproduce the homogeneous run: the whole layered-absorption
 # path (the table, the per-state and per-observer integrals, the per-path mean)

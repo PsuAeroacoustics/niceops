@@ -13,7 +13,8 @@ This page keeps three kinds of evidence apart:
 - **Numerical accuracy against a reference solver.** A model is set against an exact solution,
   or against a full-wave parabolic equation (PE). A PE reference is not a measurement.
 - **Accuracy against measurements.** Predictions are scored against the 2017 Noise Abatement
-  flight test ([Data sets](#data-sets)).
+  flight test ([Data sets](#data-sets)), and one urban case against a published measurement
+  ([NLR Drone DigiCity](#a-loudspeaker-among-buildings-nlr-drone-digicity)).
 
 The historical grazing-incidence reports in `reports/` record successive hypotheses and
 rescorings; read each in the light of its latest addendum.
@@ -936,6 +937,71 @@ plate), 0.00 in the open, −2.13 in an alley (−2.06 as a plate) and −7.25 b
 three-dimensional wave solution or measurement has checked the builder yet: that is stage 4 of
 the plan and the Drone DigiCity data.
 
+### A point source among buildings
+
+The point-source model (`src/point_paths`, `src/double_wedge`, `tests/test_point_paths.cpp`) is
+checked against the plane-wave builder and against an exact solution.
+
+- **Far away it is the plane wave.** A source 1000 km off in three directions, one building, the
+  microphone beside it, with the plane-wave builder's ray set (no reflections or floor between
+  source and edge): scaled by the range, every band equals the table's ratio times open ground's
+  energy to 2e-3 dB.
+- **It is reciprocal**, source and microphone exchanged, to 1e-9 dB in a district of four
+  buildings, through every kind of ray including the shared-face form.
+
+**Double diffraction against boundary elements** (`tools/thick_barrier_bem.py`). A rigid block on
+rigid ground, long enough to be two-dimensional, the source and microphone in one plane across it:
+there every ray is a 2-D ray times 1/sqrt(its length), so the field in that plane is a
+line source's, which boundary elements solve exactly. The solver reproduces the series for a rigid
+cylinder to 0.005 dB at 800 Hz; at 60 elements a wavelength its values here move by under 0.2 dB
+from 30 (a third of that is the error estimate, and points above 0.2 dB are left out). Blocks 1,
+2.44 and 5 m thick and 5.18 m high; receivers 2 to 25 m behind, from 1.2 m up to 8 m, below and
+above the roof's plane; 125 Hz to 1 kHz. Error re the exact level, range and rms, dB:
+
+| Block | Source | Microphone | Cascade | Shared-face form |
+| --- | --- | --- | --- | --- |
+| 1 m | 18° below the roof (10 m out, 2 m up) | below the roof | −6.9 to +0.5 (2.3) | −0.7 to +0.3 (0.28) |
+| 1 m | | above | −0.2 to +3.7 (1.4) | −0.4 to +1.7 (0.40) |
+| 1 m | 1.6° below (25 m out, 4.5 m up) | below | −16.0 to +0.0 (6.0) | −2.9 to +0.6 (0.92) |
+| 1 m | | above | −0.8 to +5.0 (2.3) | −0.3 to +1.8 (0.59) |
+| 1 m | 5° above (15 m out, 6.5 m up) | below | −0.2 to +4.0 (1.8) | −0.4 to +1.3 (0.50) |
+| 2.44 m | 18° below | below | −3.6 to +0.5 (1.1) | −0.2 to +0.4 (0.15) |
+| 2.44 m | | above | −0.4 to +2.2 (0.8) | −0.4 to +0.8 (0.18) |
+| 2.44 m | 1.6° below | below | −10.9 to +0.3 (3.9) | −0.9 to +0.4 (0.27) |
+| 2.44 m | | above | −0.5 to +4.4 (1.8) | −0.2 to +0.8 (0.23) |
+| 2.44 m | 5° above | below | −0.2 to +2.5 (1.1) | −0.2 to +0.5 (0.14) |
+| 5 m | 18° below | below | −1.9 to +0.4 (0.5) | −0.3 to +0.2 (0.12) |
+| 5 m | | above | −0.2 to +1.3 (0.4) | −0.1 to +0.6 (0.13) |
+| 5 m | 1.6° below | below | −7.2 to +0.3 (2.5) | −0.4 to +0.2 (0.14) |
+| 5 m | | above | −0.3 to +3.6 (1.3) | −0.1 to +0.6 (0.14) |
+| 5 m | 5° above | below | −0.2 to +1.4 (0.6) | −0.2 to +0.5 (0.12) |
+
+The cascade is low wherever the second edge sits in the first's transition region, by 11 dB for a
+container stack under a grazing source, and the error does not fall away with frequency: at 1 kHz
+the grazing case is still 6.7 dB low. With both ends above the roof's plane the cascade stands and
+is off by −10 to +4 dB at 125-500 Hz, mostly because roofs do not reflect in the model. Thinner
+blocks, from the first study (source 18° below, receivers below the roof), mean error of the
+shared-face form against the cascade's:
+
+| Block | 125 Hz | 250 Hz | 500 Hz | 1 kHz | 2 kHz |
+| --- | --- | --- | --- | --- | --- |
+| 0.05 m | −5.8 (−8.4) | −4.4 (−7.2) | −3.8 (−5.6) | −2.0 (−4.8) | −1.1 (−2.9) |
+| 0.2 m | −3.2 (−4.5) | −1.9 (−4.2) | −0.9 (−2.8) | −0.5 (−2.5) | +0.1 (−0.8) |
+| 0.5 m | −1.2 (−2.6) | −0.9 (−2.9) | +0.0 (−1.4) | −0.2 (−1.4) | −0.1 (−0.2) |
+
+Within a wavelength or so of each other the edges are in each other's near field, where neither
+form holds; a block that thin is a screen, and LoD1 buildings are not.
+
+**Across the roof's plane** (a block 2.44 m thick and 8 m high, no floor, the microphone 1 mm above
+and below the plane 1 to 50 m behind), the level steps by at most 0.65 dB for a source 15 m out and
+2 m up, 1.9 dB at 125 Hz for one 40 m out and 6 m up (under 0.25 dB from 1 kHz), and 0.43 dB for
+a block 10 m thick. Against the boundary elements either side of the plane the shared-face form is
+within ±0.6 dB, the exact field moving by 0.1 dB; the cascade steps by 5 to 15 dB. A source above
+the roof steps by up to 4.9 dB, where the cascade takes over above the plane.
+
+Cost: in the table builder's test district, a point source in a street, the seven test
+microphones take 0.5 s on one thread.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and
@@ -1431,6 +1497,41 @@ four detail runs the whole history is +0.29 to +0.56 dB above the window at the 
 operation, and up to +1.4 dB at a single microphone. For a day-night level meant to sit beside an
 AAM or NORAH2 contour, use `--full_history`; to match a measured SEL's convention, leave it off.
 
+### A loudspeaker among buildings: NLR Drone DigiCity
+
+Knepper, Admiraal and Lammers (ERF 2025 paper 518) measured a B&K OmniPower 4296 on a 2 m tripod
+in NLR's mock city of 24 shipping containers on a concrete slab, at microphones 1.2 m up. They
+compared it with NLR's CNOSSOS-EU ray model at four microphones. Their model agrees at the three the
+source reaches directly and by reflection (2, 8 and 10), and is 10–15 dB low at microphone 7,
+behind the central bar of containers, which the source reaches only by diffraction. The data here
+are the paper's: the layout read off its plan figure (heights from its photographs) and the spectra
+digitized from its plots. The comparison is therefore not blind, and the geometry is a
+reconstruction.
+
+The source's level at 1 m is calibrated per band on microphones 2, 8 and 10 with
+`niceops_point_field` (walls absorbing 0.05, the floor rigid, the default ray orders, chosen before
+any comparison). The three agree on it to 2.5 dB on average. Microphone 7, 160 Hz to 5 kHz,
+predicted minus measured:
+
+| Model | Mean | Rms | Range |
+| --- | --- | --- | --- |
+| `niceops_point_field` | −4.2 dB | 5.3 dB | −10.4 to +1.4 dB |
+| NLR's CNOSSOS-EU model (as published) | −12.9 dB | 13.3 dB | −19.9 to −7.3 dB |
+
+Below 1 kHz the prediction is within 3.4 dB in every band but 250 Hz (−6.9). It is 8.5–10.4 dB short
+at 1.25–1.6 kHz and 5 kHz. Most of what reaches microphone 7 is diffracted once, at the bar's
+vertical corners, after one or two reflections off the next stack's wall. Without that stack
+microphone 7 drops by 8–22 dB. Double diffraction over the bar or around its end is 8–15 dB weaker,
+and the cascade gives the same result here as the shared-face form. Walls rigid or absorbing 0.1, a
+floor absorbing 0.1, the source 0.2 m higher, or calibration on fewer microphones each move the
+mean by 0.4 dB at most. Allowing only one reflection either side of an edge loses 2.1 dB, and three
+gain nothing. Over 60 reconstructions with the figure's scale within 3% and every container group
+and microphone within 0.28 m, the mean ranges from −4.9 to −2.6 dB (10–90%).
+
+The shortfall at 1–2 kHz is larger than that spread. The source is not omnidirectional above about
+500 Hz and is calibrated in other directions. The corrugated walls scatter, which the model leaves
+out. Neither has been measured here.
+
 ## Sensitivity studies
 
 **Terrain slope.** A 1–3° slope along the path changes the grazing angle by the slope. Through
@@ -1490,5 +1591,9 @@ range-dependent source fit would confound descent state drift with path loss.
   next to the microphone and along the path decides ([Ground classes](#ground-classes)).
 - **The nose.** No shipped database records a heading-filed azimuth, and a WGS84 track's
   heading has to be given as a column.
+- **A point source among buildings** diffracts at two edges at most; roofs do not reflect; with
+  both ends above a shared face, double diffraction is the cascade, off by up to 10 dB near the
+  plane; and blocks thinner than a wavelength or so are 2-6 dB low below 500 Hz ([A point source
+  among buildings](#a-point-source-among-buildings)).
 - **Source coverage.** Every aircraft over-predicts at low elevation; the B407 hover between 3°
   and 17° below the horizon, and under the aircraft, is an interpolation.

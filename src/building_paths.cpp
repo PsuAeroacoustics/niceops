@@ -43,6 +43,31 @@ double facade_distance(const Facade& f, const Vec3& p)
     return horizontal_distance_to_segment(p, Vec3(f.x0, f.y0, 0.0), Vec3(f.x1, f.y1, 0.0));
 }
 
+// A facade's base point, unit base direction and length, and the unit normal
+// to its outside (the left of the base direction).
+struct Frame
+{
+    double x0, y0, ax, ay, length, nx, ny;
+};
+
+Frame frame_of(const Facade& f)
+{
+    const double length = std::hypot(f.x1 - f.x0, f.y1 - f.y0);
+    const double ax = (f.x1 - f.x0) / length, ay = (f.y1 - f.y0) / length;
+    return {f.x0, f.y0, ax, ay, length, -ay, ax};
+}
+
+double side_of(const Frame& fr, const Vec3& p)
+{
+    return (p.x - fr.x0) * fr.nx + (p.y - fr.y0) * fr.ny;
+}
+
+Vec3 mirror_point(const Frame& fr, const Vec3& p)
+{
+    const double d = side_of(fr, p);
+    return {p.x - 2.0 * d * fr.nx, p.y - 2.0 * d * fr.ny, p.z};
+}
+
 // A beam in plan view: the points from which a straight line to `apex`
 // crosses the window, the segment a -> b, on the window's far side from the
 // apex.  For an image of the microphone it is where a ray may come from and
@@ -174,59 +199,41 @@ bool trace_specular(const Buildings& buildings, const Vec3& start, const Vec3& d
     return std::abs(dir.x - u.x) <= 1e-7 && std::abs(dir.y - u.y) <= 1e-7;
 }
 
-BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& microphone,
-        std::vector<std::size_t> run_facades, const BuildingPathOptions& options)
-    : buildings_(&buildings)
-    , microphone_(microphone)
-    , run_facades_(std::move(run_facades))
-    , options_(options)
+ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radius, std::size_t max_order,
+        std::size_t max_images, bool beams, const std::vector<std::size_t>& candidate_edges)
 {
+    // The images a ray can reach the point through: breadth first over the
+    // facades within the radius, each a mirror in a facade the current image
+    // stands in front of, and only between facades that can see each other.
+    // Which facades see each other is a prefilter, on a few points of each
+    // face and in the floor's mirror world so that the floor images are
+    // covered too; the exact test is each ray's own.
+    ImageTree tree;
+    tree.images.push_back({point, {}});
+    tree.edges.push_back(candidate_edges);
+    if (max_order == 0)
+        return tree;
     const auto& facades = buildings.facades();
-    for (std::size_t i = 0; i < facades.size(); i++)
-    {
-        const Facade& f = facades[i];
-        const double length = std::hypot(f.x1 - f.x0, f.y1 - f.y0);
-        const double ax = (f.x1 - f.x0) / length, ay = (f.y1 - f.y0) / length;
-        frames_.push_back({f.x0, f.y0, ax, ay, length, -ay, ax});
-    }
-    for (std::size_t e = 0; e < buildings.edges().size(); e++)
-    {
-        const Edge& edge = buildings.edges()[e];
-        if (horizontal_distance_to_segment(microphone, edge.start, edge.start + edge.length * edge.direction)
-                <= options.radius)
-            edges_.push_back(e);
-    }
-    planes_ = orientations_near(buildings, microphone, options.radius);
-
-    // The images a diffracted ray can reach the microphone through: depth
-    // first over the facades within the radius, each a mirror in a facade the
-    // current image stands in front of, and only between facades that can see
-    // each other.  Which facades see each other is a prefilter, on a few
-    // points of each face and in the floor's mirror world so that the floor
-    // images are covered too; the exact test is each ray's own.
-    images_.push_back({microphone, {}});
-    image_edges_.push_back(edges_);
-    if (!options.diffraction || options.max_diffracted_order == 0)
-        return;
+    std::vector<Frame> frames;
+    frames.reserve(facades.size());
+    for (const Facade& f : facades)
+        frames.push_back(frame_of(f));
     std::vector<std::size_t> near;
     for (std::size_t i = 0; i < facades.size(); i++)
-        if (facade_distance(facades[i], microphone) <= options.radius)
+        if (facade_distance(facades[i], point) <= radius)
             near.push_back(i);
-    auto side = [&](std::size_t f, const Vec3& p) {
-        const Frame& fr = frames_[f];
-        return (p.x - fr.x0) * fr.nx + (p.y - fr.y0) * fr.ny;
-    };
+    auto side = [&](std::size_t f, const Vec3& p) { return side_of(frames[f], p); };
     std::vector<std::vector<Vec3>> samples(near.size());
     for (std::size_t a = 0; a < near.size(); a++)
     {
         const Facade& f = facades[near[a]];
-        const Frame& fr = frames_[near[a]];
+        const Frame& fr = frames[near[a]];
         for (double along : {0.05, 0.3, 0.5, 0.7, 0.95})
             for (double h : {-0.5, -0.05, 0.05, 0.5})
                 samples[a].emplace_back(fr.x0 + along * fr.length * fr.ax + 1e-3 * fr.nx,
                         fr.y0 + along * fr.length * fr.ay + 1e-3 * fr.ny, h * f.top);
     }
-    const Vec3 floor_image(microphone.x, microphone.y, -microphone.z);
+    const Vec3 floor_image(point.x, point.y, -point.z);
     auto seen_from = [&](const Vec3& p, std::size_t a) {
         if (side(near[a], p) <= Buildings::contact)
             return false;
@@ -256,25 +263,20 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
     // the prefilter and each ray's own test.
     struct Frontier
     {
-        Image image;
+        PointImage image;
         Beam beam;
         std::size_t last; // index into near
-    };
-    auto mirror = [&](std::size_t f, const Vec3& p) {
-        const Frame& fr = frames_[f];
-        const double d = side(f, p);
-        return Vec3(p.x - 2.0 * d * fr.nx, p.y - 2.0 * d * fr.ny, p.z);
     };
     auto child = [&](const Frontier& parent, std::size_t b, Frontier& out) {
         const Facade& f = facades[near[b]];
         double t0 = 0.0, t1 = 1.0;
         if (side(near[b], parent.image.point) <= Buildings::contact
-                || (options.beams && !clip_to_beam(parent.beam, f.x0, f.y0, f.x1, f.y1, t0, t1)))
+                || (beams && !clip_to_beam(parent.beam, f.x0, f.y0, f.x1, f.y1, t0, t1)))
             return false;
-        out.image.point = mirror(near[b], parent.image.point);
+        out.image.point = mirror_point(frames[near[b]], parent.image.point);
         out.image.facades = parent.image.facades;
         out.image.facades.push_back(near[b]);
-        out.beam.open = !options.beams;
+        out.beam.open = !beams;
         out.beam.px = out.image.point.x;
         out.beam.py = out.image.point.y;
         out.beam.ax = f.x0 + t0 * (f.x1 - f.x0);
@@ -287,18 +289,18 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
     // Breadth first, so that a search stopped at max_images has dropped the
     // highest orders, not whole branches.
     std::deque<Frontier> queue;
-    const Frontier root {{microphone, {}}, Beam {}, near.size()};
+    const Frontier root {{point, {}}, Beam {}, near.size()};
     for (std::size_t a = 0; a < near.size(); a++)
     {
         Frontier next;
-        if ((seen_from(microphone, a) || seen_from(floor_image, a)) && child(root, a, next))
+        if ((seen_from(point, a) || seen_from(floor_image, a)) && child(root, a, next))
             queue.push_back(std::move(next));
     }
-    while (!queue.empty() && images_.size() < options.max_images)
+    while (!queue.empty() && tree.images.size() < max_images)
     {
         Frontier f = std::move(queue.front());
         queue.pop_front();
-        if (f.image.facades.size() < options.max_diffracted_order)
+        if (f.image.facades.size() < max_order)
             for (std::size_t b = 0; b < near.size(); b++)
             {
                 Frontier next;
@@ -308,7 +310,7 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
         // The edges a ray could diffract from to reach this image: those
         // crossing its beam.
         std::vector<std::size_t> edges;
-        for (std::size_t e : edges_)
+        for (std::size_t e : candidate_edges)
         {
             const Edge& edge = buildings.edges()[e];
             const Vec3 end = edge.start + edge.length * edge.direction;
@@ -316,49 +318,67 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
             if (clip_to_beam(f.beam, edge.start.x, edge.start.y, end.x, end.y, t0, t1))
                 edges.push_back(e);
         }
-        images_.push_back(std::move(f.image));
-        image_edges_.push_back(std::move(edges));
+        tree.images.push_back(std::move(f.image));
+        tree.edges.push_back(std::move(edges));
     }
-    truncated_ = !queue.empty();
+    tree.truncated = !queue.empty();
+    return tree;
 }
 
-// Whether the diffracted ray from `q` reaches the microphone (or, below the
-// floor, its floor image) as `image` says: the unfolded line crosses each of
-// its facades, the last mirrored first, within the facade and from in front,
-// and no leg of the folded path passes through a building.
-bool BuildingReceiver::diffracted_path_open(const Vec3& q, const Image& image, bool below_floor) const
+bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
+        const std::vector<std::size_t>& facades, bool below_floor)
 {
-    const auto& facades = buildings_->facades();
-    auto side = [&](std::size_t f, const Vec3& p) {
-        const Frame& fr = frames_[f];
-        return (p.x - fr.x0) * fr.nx + (p.y - fr.y0) * fr.ny;
-    };
-    const Vec3 start = below_floor ? Vec3(microphone_.x, microphone_.y, -microphone_.z) : microphone_;
+    const auto& all = buildings.facades();
+    // The images along the chain: targets[j] is the point mirrored in the
+    // first j facades.
+    const Vec3 start = below_floor ? Vec3(point.x, point.y, -point.z) : point;
     std::vector<Vec3> targets {start};
-    for (std::size_t f : image.facades)
+    std::vector<Frame> frames;
+    for (std::size_t f : facades)
     {
-        const double d = side(f, targets.back());
-        targets.emplace_back(targets.back().x - 2.0 * d * frames_[f].nx, targets.back().y - 2.0 * d * frames_[f].ny,
-                targets.back().z);
+        frames.push_back(frame_of(all[f]));
+        targets.push_back(mirror_point(frames.back(), targets.back()));
     }
-    Vec3 cur = q;
-    for (std::size_t j = image.facades.size(); j >= 1; j--)
+    Vec3 cur = from;
+    for (std::size_t j = facades.size(); j >= 1; j--)
     {
-        const std::size_t f = image.facades[j - 1];
-        const double s0 = side(f, cur), s1 = side(f, targets[j]);
+        const std::size_t f = facades[j - 1];
+        const Frame& fr = frames[j - 1];
+        const double s0 = side_of(fr, cur), s1 = side_of(fr, targets[j]);
         if (!(s0 > Buildings::contact && s1 < -Buildings::contact))
             return false;
         const Vec3 hit = cur + (s0 / (s0 - s1)) * (targets[j] - cur);
-        const Frame& fr = frames_[f];
         const double along = (hit.x - fr.x0) * fr.ax + (hit.y - fr.y0) * fr.ay;
-        const double bottom = below_floor ? -facades[f].top : facades[f].bottom;
-        if (along < -1e-9 || along > fr.length + 1e-9 || hit.z < bottom - 1e-9 || hit.z > facades[f].top + 1e-9)
+        const double bottom = below_floor ? -all[f].top : all[f].bottom;
+        if (along < -1e-9 || along > fr.length + 1e-9 || hit.z < bottom - 1e-9 || hit.z > all[f].top + 1e-9)
             return false;
-        if (buildings_->blocked(cur, hit, below_floor))
+        if (buildings.blocked(cur, hit, below_floor))
             return false;
         cur = hit;
     }
-    return !buildings_->blocked(cur, targets[0], below_floor);
+    return !buildings.blocked(cur, targets[0], below_floor);
+}
+
+BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& microphone,
+        std::vector<std::size_t> run_facades, const BuildingPathOptions& options)
+    : buildings_(&buildings)
+    , microphone_(microphone)
+    , run_facades_(std::move(run_facades))
+    , options_(options)
+{
+    for (std::size_t e = 0; e < buildings.edges().size(); e++)
+    {
+        const Edge& edge = buildings.edges()[e];
+        if (horizontal_distance_to_segment(microphone, edge.start, edge.start + edge.length * edge.direction)
+                <= options.radius)
+            edges_.push_back(e);
+    }
+    planes_ = orientations_near(buildings, microphone, options.radius);
+    ImageTree tree = image_tree(buildings, microphone, options.radius,
+            options.diffraction ? options.max_diffracted_order : 0, options.max_images, options.beams, edges_);
+    images_ = std::move(tree.images);
+    image_edges_ = std::move(tree.edges);
+    truncated_ = tree.truncated;
 }
 
 std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
@@ -452,7 +472,7 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
                 Vec3 unused;
                 if (buildings_->first_hit(q, u, false, unused) != facades.size())
                     continue; // the wave does not reach this point of the edge
-                if (!diffracted_path_open(q, image, floor == 1))
+                if (!folded_path_open(*buildings_, q, microphone_, image.facades, floor == 1))
                     continue;
                 BuildingRay ray;
                 ray.diffracted = true;

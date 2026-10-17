@@ -45,7 +45,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind`, the profile builder | `atmosphere`, `propagation.hpp`, `atmosphere_profile`, `atmosphere_builder` | [atmosphere.md](atmosphere.md) |
 | `--refraction linear` / `stratified`, shadow zones, `ShadowTransition`, ducts, `--tunneling` | `refraction`, `stratified`, `airy` | [refraction.md](refraction.md) |
 | Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `tools/` | [pe.md](pe.md) |
-| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening`, `--urban_table` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `urban`, `wedge`, `canyon_wave`, `buildings`, `building_paths`, `diffuse_facades`, `geojson_buildings`, `plan_grid`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
+| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening`, `--urban_table` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `urban`, `wedge`, `double_wedge`, `canyon_wave`, `buildings`, `building_paths`, `point_paths`, `diffuse_facades`, `geojson_buildings`, `plan_grid`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
 | EPNL, reception-time band frames, LAmax/NAx/TA, DNL/Lden/CNEL, C-SEL | `pnl`, `band_frames`, `util/time_weighting.hpp` | [metrics.md](metrics.md) |
 | AC and geodetic tracks, smoothing spline, hover nose, lateral subtracks, `--nose`, `--speed_reference`, `niceops_procedure` | `trajectory`, `geodetic`, `smoothing_spline`, `util/csv.hpp`, `procedure`, `state_condition`, `tools/procedure.cpp` | [trajectory.md](trajectory.md) |
 | `--units`, input checking, the operations file (`--operations`) | `run()` in `niceops.cpp`, the readers, `operations` | [inputs.md](inputs.md) |
@@ -91,16 +91,18 @@ The C++ tools in `tools/` are built alongside `niceops` and link `niceops_core`:
 | --- | --- | --- |
 | `niceops_propagation_table` | `tools/propagation_table.cpp` | Builds `--propagation_table` files, by the PE (`--method pe`, the default) or by straight rays with the ground model (`--method ground_model`). |
 | `niceops_urban_table` | `tools/urban_table.cpp` | Builds `--urban_table` files for microphones in ideal street canyons or among LoD1 buildings. |
+| `niceops_point_field` | `tools/point_field.cpp` | The field of a point source among LoD1 buildings at microphones, band by band. |
 | `niceops_pe_compare` | `tools/pe_compare.cpp` | The refraction models against the parabolic equation on one path. |
 | `niceops_pe_field` | `tools/pe_field.cpp` | The PE's whole field on one vertical plane, for plotting. |
 | `niceops_ray_geometry` | `tools/ray_geometry.cpp` | The refracted ray's geometry for a batch of source–receiver pairs, so ground models outside `niceops` can be evaluated on the same rays. |
 | `niceops_benchmark` | `tools/benchmark.cpp` | The Attenborough et al. (1995) benchmark cases by the PE and, where one exists, the exact solution. |
 | `niceops_build_atmosphere` | `tools/build_atmosphere.cpp` | `--atmosphere` profiles from measured columns (`build`), and a site roughness length from wind profiles (`fit_z0`); see [atmosphere.md](atmosphere.md#the-profile-builder-niceops_build_atmosphere). |
 
-The manual covers the five that users run:
+The manual covers the six that users run:
 [niceops_propagation_table](../MANUAL.md#niceops_propagation_table),
 [niceops_build_atmosphere](../MANUAL.md#niceops_build_atmosphere),
 [niceops_urban_table](../MANUAL.md#niceops_urban_table),
+[niceops_point_field](../MANUAL.md#niceops_point_field),
 [niceops_pe_compare](../MANUAL.md#niceops_pe_compare),
 [niceops_benchmark](../MANUAL.md#niceops_benchmark).
 
@@ -110,6 +112,8 @@ The Python scripts:
   `niceops_benchmark` output in the layout of the Attenborough et al. figures.
 - `pnl_reference.py` generates the PNL/EPNL reference values that `tests/test_pnl.cpp` embeds,
   from panam's own functions (it needs a panam checkout).
+- `thick_barrier_bem.py` solves a rigid block on rigid ground by boundary elements, for a line
+  source: the reference values `tests/test_point_paths.cpp` embeds (it needs NumPy and SciPy).
 - `score_fidelity_frames.py`, `build_hover_candidate.py`, `export_emission_samples.py` and
   `regrid_emission_samples.py` are experimental source-model studies. They need NumPy, and all
   but `score_fidelity_frames.py` read the validation harness (`--harness`); each writes only to
