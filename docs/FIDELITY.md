@@ -851,6 +851,28 @@ reflections 25 times faster, 44 s to 1.8 s, with the same rays, and the plan-vie
 the visibility tests (identical to trying every building and facade on 4000 random segments and
 rays) a further 2.8 to 4 times.
 
+**Districts of many orientations.** 81 blocks 54 m square on an 80 m grid, each turned at random
+within ±2° or ±10°, the microphone in a street; the cost of a direction's rays:
+
+| Blocks turned | Tolerance | Orientations in the district | Candidate departures | Time per direction |
+| --- | --- | --- | --- | --- |
+| ±2° | 1e-5° | 162 | 4100 (the cap) | 14.5 ms |
+| ±2° | 1° (default) | 6 | 62 | 0.8 ms |
+| ±10° | 1° | 28 | 3463 | 12.8 ms |
+| ±10° | 3° | 12 | 734 | 2.0 ms |
+
+Exact orientations put every district at the cap, where the breadth-first candidates are cut off
+arbitrarily; a degree's tolerance returns a near-grid district to a grid's cost.
+
+**GeoJSON.** The demo district written as WGS84 polygons through the demo frame's inverse
+projection (`tests/data/urban_buildings.geojson`) and read back with the run's origin gives every
+table cell to 2.4e-5 dB of the CSV's, and the run to 1e-7 (`urban_buildings_geojson_is_the_csv`).
+Evaluated exactly on its azimuths, the same pair of tables disagrees in 452 of 16632 cells, by up
+to 23 dB, every one at an azimuth parallel or diagonal to the walls: there a wave grazes a wall or
+passes through a corner exactly, and the projection's 1e-8 m of round-off decides on which side.
+Taking each direction 1e-6 rad off its azimuth settles them, and moves the demo microphones' SEL
+by at most 0.006 dB.
+
 **Scattering walls** (`src/diffuse_facades`, `tests/test_diffuse_facades.cpp`):
 
 - **A lit wall's diffuse field** at a microphone 200 m in front of a face 4 km by 2 km, in 20 m

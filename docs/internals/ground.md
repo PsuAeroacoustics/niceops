@@ -144,7 +144,7 @@ What to keep:
   windowed against marched for canyons, plates and the +25 dB bump table, the pinned goldens and
   the refusals).
 
-### LoD1 buildings (`src/buildings`, `src/building_paths`, `src/diffuse_facades`, `src/plan_grid.hpp`)
+### LoD1 buildings (`src/buildings`, `src/building_paths`, `src/diffuse_facades`, `src/geojson_buildings`, `src/plan_grid.hpp`)
 
 `niceops_urban_table --buildings` builds the table among footprints extruded to flat roofs:
 `Buildings` holds the geometry and the visibility test, `BuildingReceiver` one microphone's rays and
@@ -204,6 +204,36 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
 - **Grazing and overhead are clamped as in the canyon**: elevations under 1e-3 rad are taken at
   it, and a direction within 1e-9 of vertical is vertical.
 
+- **GeoJSON footprints are projected by the run's own transform** (`src/geojson_buildings`,
+  `LocalFrame::track_aligned` with the run's origin and bearing), so a building means the same
+  place as a geodetic track. Rings lose their closing vertex and any vertex within a millimetre
+  of the last; inner rings are courtyards. Every ring keeps the solid on its left (outer
+  counterclockwise, holes clockwise), so one code path makes the facades, edges and visibility of
+  all of them. A feature raised off the ground is left out, not extruded from the floor.
+- **Shared sides are found exactly** (the same two vertices, run the other way, to a micrometre),
+  as OpenStreetMap terraces share nodes. A side shared only in part keeps its facade and edges;
+  `Buildings::buried` then keeps an edge point or a patch that lies inside the neighbour out of
+  the rays. The lower roof's edge along a taller wall would otherwise diffract as a convex
+  wedge, and it is reentrant.
+- **Round-off is the enemy of aligned geometry, three ways**, each found by reading the demo
+  district back from GeoJSON, where 1e-8 m of round-off made walls that were parallel or square
+  1e-10 rad off:
+  - Facades whose normals agree within the orientation tolerance share one orientation, for the
+    departures and for the traces' reflections both (`Buildings::reflect`). Taken one by one, the
+    near-parallel walls multiplied the candidate departures to their cap, and a seven-receiver
+    build that takes two seconds was stopped after ten minutes unfinished. The tool's default is
+    1 degree, not the 1e-5 rad round-off needs, because real streets are not exactly parallel
+    either: a ray bouncing up a street whose walls diverge by half a degree turns by a degree a
+    pair of reflections, its departure is then a composition dozens of mirrors deep, and with
+    exact orientations those long chains are never candidates (`a street half a degree out of
+    parallel keeps its long bounce chains`: none exactly, 28 reflections within a degree). The departures are also made only
+    in the orientations of the facades within the radius (`orientations_near`).
+  - Departures within 1e-6 are one, and a trace escapes "along u" within 1e-7. Two orientations
+    a hair off square compose into a rotation by round-off, not the identity, and the direct ray
+    was found three times. A path turns its departure rigidly, so no ray can be found twice.
+  - The table is evaluated 1e-6 rad clockwise of its azimuths (`building_gains`): a direction
+    exactly parallel to a wall or through a corner is a knife edge of the model, and a grid
+    district samples those lines.
 - **Scattering walls are radiosity, solved backwards** (`DiffuseFacades`, THEORY §6.5). The
   form factors and the microphone's gathering depend only on the geometry and the band, so
   w = S (I - F^T D)^-1 g is solved once per receiver and band, and a direction costs only its

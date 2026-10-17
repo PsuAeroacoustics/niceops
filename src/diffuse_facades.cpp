@@ -100,12 +100,15 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
                 p.facade = f;
                 p.center = Vec3(facade.x0, facade.y0, facade.bottom) + ((i + 0.5) * p.width) * along
                         + Vec3(0.0, 0.0, (j + 0.5) * p.height) + 1e-3 * normal;
-                patches_.push_back(p);
+                // A patch inside a neighbour is not a wall anyone sees.
+                if (!buildings.buried(p.center))
+                    patches_.push_back(p);
             }
     }
     const std::size_t n = patches_.size();
     for (std::size_t p = 0; p < n; p++)
         all_.push_back(p);
+    planes_ = orientations_near(buildings, microphone, options.radius);
     rho_.resize(n * nb);
     rho_s_.resize(n * nb);
     for (std::size_t p = 0; p < n; p++)
@@ -206,7 +209,7 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
 void DiffuseFacades::irradiance(const Vec3& u, const std::vector<std::size_t>& which, std::vector<double>& e) const
 {
     e.assign(patches_.size() * bands_, 0.0);
-    const auto departures = specular_departures(*buildings_, u, options_.max_turns, options_.max_departures);
+    const auto departures = specular_departures(*buildings_, planes_, u, options_.max_turns, options_.max_departures);
     SpecularTrace trace;
     for (std::size_t p : which)
     {

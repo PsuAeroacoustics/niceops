@@ -197,6 +197,7 @@ add_library(niceops_core STATIC
   src/buildings.cpp
   src/building_paths.cpp
   src/diffuse_facades.cpp
+  src/geojson_buildings.cpp
   src/predicates.cpp
   src/delaunay.cpp
   # interpolator.cpp was its own library in the D era, to wall off CGAL's heavy
@@ -283,6 +284,7 @@ add_executable(niceops_unit_tests
   tests/test_buildings.cpp
   tests/test_building_paths.cpp
   tests/test_diffuse_facades.cpp
+  tests/test_geojson_buildings.cpp
   tests/test_atmosphere.cpp
   tests/test_atmosphere_profile.cpp
   tests/test_atmosphere_builder.cpp
@@ -1150,6 +1152,19 @@ set_tests_properties(urban_buildings_diffuse urban_buildings_diffuse_marched PRO
 add_test(NAME urban_buildings_diffuse_windowed_is_exact COMMAND golden_compare integrated/urban_buildings_diffuse.csv integrated/urban_buildings_diffuse_marched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME urban_buildings_diffuse_golden COMMAND golden_compare integrated/urban_buildings_diffuse.csv golden/urban_buildings_diffuse.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_buildings_diffuse_windowed_is_exact urban_buildings_diffuse_golden PROPERTIES FIXTURES_REQUIRED urban_buildings_diffuse_runs)
+# GeoJSON (src/geojson_buildings): the same district as WGS84 polygons (tests/data/urban_buildings.geojson,
+# made from the CSV through the demo frame's inverse projection) gives the same run, to round-off; a
+# GeoJSON file needs the run's --origin, and buildings without a height need --default_height.
+add_test(NAME urban_buildings_geojson_build COMMAND niceops_urban_table --buildings tests/data/urban_buildings.geojson --origin 39.8104276 -74.4263086 --receivers tests/data/urban_observers.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 -j 2 -o tables/urban_buildings_geojson_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_geojson_build PROPERTIES FIXTURES_SETUP urban_buildings_geojson_file)
+add_test(NAME urban_buildings_geojson COMMAND ${URBAN_RUN} --ground_effect --urban_table tables/urban_buildings_geojson_test.nc -o integrated/urban_buildings_geojson.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_geojson PROPERTIES FIXTURES_REQUIRED urban_buildings_geojson_file FIXTURES_SETUP urban_buildings_geojson_runs)
+add_test(NAME urban_buildings_geojson_is_the_csv COMMAND golden_compare integrated/urban_buildings_geojson.csv integrated/urban_buildings.csv 1e-7 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_geojson_is_the_csv PROPERTIES FIXTURES_REQUIRED "urban_buildings_geojson_runs;urban_buildings_runs")
+add_test(NAME urban_buildings_geojson_needs_origin COMMAND niceops_urban_table --buildings tests/data/urban_buildings.geojson --receivers tests/data/urban_observers.csv --bands 1000 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_geojson_needs_origin PROPERTIES PASS_REGULAR_EXPRESSION "is GeoJSON, in longitude and latitude: give the run's --origin")
+add_test(NAME urban_buildings_geojson_needs_heights COMMAND niceops_urban_table --buildings tests/data/urban_no_height.geojson --origin 39.8104276 -74.4263086 --receivers tests/data/urban_observers.csv --bands 1000 --frame_bearing 210 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_geojson_needs_heights PROPERTIES PASS_REGULAR_EXPRESSION "1 buildings give no height \\(height, building:height or building:levels\\); give --default_height")
 # The builder refuses a microphone inside a building, the wave band with buildings, and buildings
 # without receivers.
 add_test(NAME urban_buildings_refuses_inside COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_inside.csv --bands 1000 --frame_bearing 210 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

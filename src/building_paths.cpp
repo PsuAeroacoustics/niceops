@@ -107,19 +107,37 @@ std::vector<std::size_t> facing_facades(const Buildings& buildings, const Vec3& 
     return out;
 }
 
-std::vector<Vec3> specular_departures(const Buildings& buildings, const Vec3& u, std::size_t max_turns,
-        std::size_t max_departures)
+std::vector<std::size_t> orientations_near(const Buildings& buildings, const Vec3& point, double radius)
+{
+    std::vector<std::size_t> planes;
+    const auto& facades = buildings.facades();
+    for (std::size_t f = 0; f < facades.size(); f++)
+    {
+        const std::size_t o = buildings.orientation(f);
+        if (facade_distance(facades[f], point) <= radius && std::find(planes.begin(), planes.end(), o) == planes.end())
+            planes.push_back(o);
+    }
+    return planes;
+}
+
+std::vector<Vec3> specular_departures(const Buildings& buildings, const std::vector<std::size_t>& planes,
+        const Vec3& u, std::size_t max_turns, std::size_t max_departures)
 {
     std::vector<Vec3> departures {u};
     for (std::size_t level = 0, begin = 0; level < max_turns && begin < departures.size(); level++)
     {
         const std::size_t end = departures.size();
         for (std::size_t i = begin; i < end && departures.size() < max_departures; i++)
-            for (std::size_t p : buildings.orientations())
+            for (std::size_t p : planes)
             {
+                // Two orientations not quite at right angles (or at any
+                // angle that divides a turn) compose into a rotation by
+                // round-off, not the identity: departures within 1e-6 are
+                // one.  A trace escapes "along u" within 1e-7, and a path
+                // turns its departure rigidly, so no ray is found twice.
                 const Vec3 w = buildings.reflect(p, departures[i]);
                 const bool seen = std::any_of(departures.begin(), departures.end(), [&](const Vec3& v) {
-                    return std::abs(v.x - w.x) < 1e-12 && std::abs(v.y - w.y) < 1e-12;
+                    return std::abs(v.x - w.x) < 1e-6 && std::abs(v.y - w.y) < 1e-6;
                 });
                 if (!seen)
                     departures.push_back(w);
@@ -153,7 +171,7 @@ bool trace_specular(const Buildings& buildings, const Vec3& start, const Vec3& d
         trace.facades.push_back(f);
     }
     trace.exit = pos;
-    return std::abs(dir.x - u.x) <= 1e-9 && std::abs(dir.y - u.y) <= 1e-9;
+    return std::abs(dir.x - u.x) <= 1e-7 && std::abs(dir.y - u.y) <= 1e-7;
 }
 
 BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& microphone,
@@ -178,6 +196,7 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
                 <= options.radius)
             edges_.push_back(e);
     }
+    planes_ = orientations_near(buildings, microphone, options.radius);
 
     // The images a diffracted ray can reach the microphone through: depth
     // first over the facades within the radius, each a mirror in a facade the
@@ -351,7 +370,7 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
     // Specular rays: traced back from the microphone, or from its image in the
     // floor through the floor's mirror world, along each departure up to
     // max_turns changes of orientation could turn into u.
-    const auto departures = specular_departures(*buildings_, u, options_.max_turns, options_.max_departures);
+    const auto departures = specular_departures(*buildings_, planes_, u, options_.max_turns, options_.max_departures);
     const Vec3 floor_image(microphone_.x, microphone_.y, -microphone_.z);
     SpecularTrace trace;
     for (int floor = 0; floor < 2; floor++)
@@ -422,6 +441,10 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
                 if (t < 0.0 || t > edge.length)
                     continue;
                 const Vec3 q = edge.start + t * edge.direction;
+                // A point of an edge inside a neighbour (footprints that
+                // overlap, or share a side only in part) diffracts nothing.
+                if (buildings_->buried(q))
+                    continue;
                 const Vec3 out = target - q;
                 const double theta = edge.angle(out - out.dot(edge.direction) * edge.direction);
                 if (!(theta > 0.0 && theta < edge.n * pi))
@@ -526,8 +549,9 @@ void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflec
 
 std::vector<double> building_gains(const BuildingReceiver& receiver, const UrbanTable::Axes& axes,
         double frame_bearing, const std::vector<double>& reflection, double floor_reflection, double sound_speed,
-        unsigned threads, const DiffuseFacades* diffuse)
+        unsigned threads, const DiffuseFacades* diffuse, double azimuth_offset)
 {
+    const double offset = azimuth_offset * 180.0 / pi;
     const std::size_t nb = axes.bands.size(), ne = axes.elevations.size();
     std::vector<double> gains(axes.azimuths.size() * ne * nb);
     parallel_chunks(axes.azimuths.size(), threads, [&](std::size_t begin, std::size_t end) {
@@ -535,7 +559,7 @@ std::vector<double> building_gains(const BuildingReceiver& receiver, const Urban
         for (std::size_t i = begin; i < end; i++)
             for (std::size_t j = 0; j < ne; j++)
             {
-                const Vec3 u = local_direction(axes.azimuths[i], axes.elevations[j], frame_bearing);
+                const Vec3 u = local_direction(axes.azimuths[i] + offset, axes.elevations[j], frame_bearing);
                 receiver.ratio(u, reflection, floor_reflection, axes.bands, sound_speed, ratio.data(), diffuse);
                 for (std::size_t band = 0; band < nb; band++)
                     gains[(i * ne + j) * nb + band] = std::max(10.0 * std::log10(ratio[band]), urban_gain_floor_db);

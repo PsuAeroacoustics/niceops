@@ -25,14 +25,25 @@
 
 namespace niceops {
 
-// A footprint: its vertices in the run's local frame (m), in either
-// orientation, the first not repeated at the end, and its roof's height above
-// the floor.
+// A ring of a footprint: its vertices, in either orientation, the first not
+// repeated at the end.
+struct Ring
+{
+    std::vector<double> x;
+    std::vector<double> y;
+};
+
+// A footprint: its outer ring's vertices in the run's local frame (m), in
+// either orientation, the first not repeated at the end; its roof's height
+// above the floor; and the holes it surrounds (courtyards, open to the sky).
+// Buildings orients every ring so that the solid is on its left: the outer
+// one counterclockwise, the holes clockwise.
 struct Footprint
 {
     std::vector<double> x;
     std::vector<double> y;
     double top = 0.0;
+    std::vector<Ring> holes;
 };
 
 // A straight edge where a building diffracts: the roof edge along each side of
@@ -67,9 +78,20 @@ public:
 
     Buildings() = default;
 
-    // Throws std::invalid_argument for a footprint with fewer than three
-    // vertices, a zero or negative area or top, or sides that cross.
-    explicit Buildings(std::vector<Footprint> footprints);
+    // Throws std::invalid_argument for a ring with fewer than three vertices
+    // or no area, a top not above the floor, sides that cross (within a ring
+    // or between rings), or a hole outside its footprint or inside another.
+    //
+    // Buildings that share a side exactly -- the same two vertices, as
+    // terraced houses in OpenStreetMap do -- stand against each other there:
+    // the lower one's facade, roof edge and corners on that side are inside
+    // the taller (or as tall) neighbour and are dropped, and the taller one's
+    // keep only what stands above the lower roof.  A side shared only in part
+    // keeps its facade and edges, which `buried` then keeps out of the rays.
+    //
+    // Facades whose normals agree within `orientation_tolerance` (rad) share
+    // one orientation (`reflect`).
+    explicit Buildings(std::vector<Footprint> footprints, double orientation_tolerance = 1e-5);
 
     std::size_t size() const
     {
@@ -117,8 +139,19 @@ public:
     bool escapes(const Vec3& a, const Vec3& direction, bool below_floor = false) const;
 
     // Whether (x, y) lies strictly inside a footprint, `contact` or more from
-    // its sides; the building's index, or size() for none.
+    // its sides (and outside its holes); the building's index, or size() for
+    // none.
     std::size_t inside(double x, double y) const;
+
+    // Whether `p` lies strictly inside a building's solid: inside a footprint
+    // and between the floor and its roof, by `contact` or more.
+    bool buried(const Vec3& p) const;
+
+    // The sides found shared exactly with another building.
+    std::size_t shared_sides() const
+    {
+        return shared_sides_;
+    }
 
     // The first facade a ray from `pos` along the unit `dir` meets from
     // outside, and where; facades().size() for none.  A facade `pos` lies on
@@ -128,19 +161,31 @@ public:
     // its first obstruction.
     std::size_t first_hit(const Vec3& pos, const Vec3& dir, bool below_floor, Vec3& hit) const;
 
-    // `v` reflected in a facade: its horizontal component mirrored.
+    // `v` reflected in a facade's orientation: its horizontal component
+    // mirrored.  Facades within the orientation tolerance of one another
+    // reflect a direction alike.  Projection round-off leaves walls that
+    // were parallel 1e-10 rad apart, and taken one by one they multiply the
+    // specular traces' candidates; the default 1e-5 rad turns a ray by a
+    // millimetre in 100 m.  A wider tolerance treats the walls of a street a
+    // degree out of parallel as parallel, which is what lets a ray bounce up
+    // it as it would up the canyon it nearly is.
     Vec3 reflect(std::size_t facade, const Vec3& v) const
     {
-        const FacadeFrame& fr = frames_[facade];
+        const FacadeFrame& fr = frames_[orientation_of_[facade]];
         const double d = v.x * fr.nx + v.y * fr.ny;
         return {v.x - 2.0 * d * fr.nx, v.y - 2.0 * d * fr.ny, v.z};
     }
 
-    // One facade per orientation: facades whose normals are parallel mirror
-    // alike.
+    // One facade per orientation.
     const std::vector<std::size_t>& orientations() const
     {
         return orientations_;
+    }
+
+    // The facade whose orientation a facade shares.
+    std::size_t orientation(std::size_t facade) const
+    {
+        return orientation_of_[facade];
     }
 
 private:
@@ -158,6 +203,7 @@ private:
     std::vector<Facade> facades_;
     std::vector<FacadeFrame> frames_;
     std::vector<std::size_t> orientations_;
+    std::vector<std::size_t> orientation_of_; // per facade, its orientation's facade
     // The buildings' and the facades' boxes, for the queries to walk.
     PlanGrid building_grid_;
     PlanGrid facade_grid_;
@@ -166,6 +212,8 @@ private:
     // Per building: x min, x max, y min, y max.
     std::vector<double> bounds_;
     double max_top_ = 0.0;
+    double orientation_tolerance_ = 1e-5;
+    std::size_t shared_sides_ = 0;
     double x_min_ = 0.0, x_max_ = 0.0, y_min_ = 0.0, y_max_ = 0.0;
 };
 

@@ -25,7 +25,11 @@
 //
 //   niceops_urban_table --buildings district.csv --receivers mics.csv --database ... -o tables/district.nc
 //
-// --buildings has one row per footprint vertex, by column name, lengths in
+// --buildings may also be GeoJSON (.geojson or .json): footprints in WGS84,
+// projected into the run's frame by --origin and --frame_bearing, their
+// holes courtyards, their heights in metres from OpenStreetMap's tags
+// (src/geojson_buildings.hpp).  As a CSV, --buildings has one row per
+// footprint vertex, by column name, lengths in
 // --units: building (an id; a building's rows consecutive, its vertices in
 // order around it), x, y, top (its roof above the ground), and optionally
 // absorption (its walls' energy absorption coefficient, the same on each of
@@ -48,6 +52,7 @@
 #include <chrono>
 #include <limits>
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -58,6 +63,8 @@
 #include "building_paths.hpp"
 #include "buildings.hpp"
 #include "canyon_wave.hpp"
+#include "geodetic.hpp"
+#include "geojson_buildings.hpp"
 #include "propagation_table.hpp"
 #include "sphere_database.hpp"
 #include "urban.hpp"
@@ -80,6 +87,10 @@ int main(int argc, char** argv)
     double facade_scattering = 0.0;
     double patch_size = 4.0;      // m unless given
     double diffuse_radius = 100.0; // m unless given
+    std::vector<double> origin;
+    double level_height = 3.0;
+    double default_height = 0.0;
+    double orientation_tolerance = 1.0; // degrees
     std::string database_file;
     std::string output;
     std::string units = "ft";
@@ -120,6 +131,20 @@ int main(int argc, char** argv)
             "With --buildings and scattering walls: the walls within this of a microphone scatter, in --units "
             "(default 100 m).")
             ->check(CLI::PositiveNumber);
+    app.add_option("--origin", origin,
+            "With GeoJSON --buildings: the run's WGS84 origin, latitude longitude in degrees, to project the "
+            "footprints into its frame (with --frame_bearing).")
+            ->expected(2);
+    app.add_option("--level_height", level_height,
+            "With GeoJSON --buildings: metres per storey, for buildings that give only building:levels (default 3).")
+            ->check(CLI::PositiveNumber);
+    app.add_option("--default_height", default_height,
+            "With GeoJSON --buildings: the height, metres, of buildings that give none (default: refuse them).")
+            ->check(CLI::PositiveNumber);
+    app.add_option("--orientation_tolerance", orientation_tolerance,
+            "With --buildings: walls whose orientations agree within this, degrees, reflect alike, so a ray "
+            "bounces up a street a little out of parallel as up the canyon it nearly is (default 1).")
+            ->check(CLI::NonNegativeNumber);
     app.add_option("--facade_radius", facade_radius,
             "With --buildings: the facades written for the run's first-order images, within this of a "
             "microphone, in --units (default 100 m).")
@@ -243,53 +268,104 @@ int main(int argc, char** argv)
         {
             if (wave_below > 0.0)
                 throw std::runtime_error("--wave_below solves ideal canyons only, not --buildings");
-            const LabeledCsv bcsv = read_rows(buildings_file, "buildings");
-            const std::size_t cid = column_of(bcsv, buildings_file, "building", true, false);
-            const std::size_t bx = column_of(bcsv, buildings_file, "x", true, true);
-            const std::size_t by = column_of(bcsv, buildings_file, "y", true, true);
-            const std::size_t bt = column_of(bcsv, buildings_file, "top", true, true);
-            const std::size_t ba = column_of(bcsv, buildings_file, "absorption", false, false);
-            const std::size_t bs = column_of(bcsv, buildings_file, "scattering", false, false);
             std::vector<Footprint> footprints;
             std::vector<double> building_absorption, building_scattering;
-            std::vector<double> ids;
-            std::set<double> seen;
-            for (std::size_t row = 0; row < bcsv.rows.size(); row++)
+            std::vector<std::string> ids;
+            const std::string extension = std::filesystem::path(buildings_file).extension().string();
+            if (extension == ".geojson" || extension == ".json")
             {
-                const auto& r = bcsv.rows[row];
-                const std::string where = buildings_file + " row " + std::to_string(row + 1) + ": ";
-                const double alpha = ba == LabeledCsv::npos ? absorption : r[ba];
-                const double scatter = bs == LabeledCsv::npos ? facade_scattering : r[bs];
-                if (footprints.empty() || r[cid] != ids.back())
+                // WGS84 footprints, projected into the run's frame.
+                if (origin.size() != 2)
+                    throw std::runtime_error(buildings_file + " is GeoJSON, in longitude and latitude: give the run's "
+                            "--origin (and its --frame_bearing) to project it into the run's frame");
+                const LocalFrame frame = LocalFrame::track_aligned(Geodetic {origin[0], origin[1], 0.0}, frame_bearing);
+                GeojsonOptions geojson;
+                geojson.level_height = level_height;
+                if (app.count("--default_height") > 0)
+                    geojson.default_height = default_height;
+                GeojsonReport report;
+                for (auto& building : read_geojson_buildings(buildings_file, frame, geojson, report))
                 {
-                    if (!seen.insert(r[cid]).second)
-                        throw std::runtime_error(where + "building " + exact_text(r[cid])
-                                + "'s rows are not consecutive");
-                    if (!(alpha >= 0.0 && alpha <= 1.0))
-                        throw std::runtime_error(where + "an absorption coefficient must lie within [0, 1]");
-                    if (!(scatter >= 0.0 && scatter <= 1.0))
-                        throw std::runtime_error(where + "a scattering coefficient must lie within [0, 1]");
-                    footprints.emplace_back();
-                    footprints.back().top = r[bt] * to_meters;
+                    const double alpha = std::isnan(building.absorption) ? absorption : building.absorption;
+                    const double scatter = std::isnan(building.scattering) ? facade_scattering : building.scattering;
+                    if (!(alpha >= 0.0 && alpha <= 1.0) || !(scatter >= 0.0 && scatter <= 1.0))
+                        throw std::runtime_error(buildings_file + " feature " + building.id
+                                + ": absorption and scattering coefficients must lie within [0, 1]");
+                    footprints.push_back(std::move(building.footprint));
                     building_absorption.push_back(alpha);
                     building_scattering.push_back(scatter);
-                    ids.push_back(r[cid]);
+                    ids.push_back(building.id);
                 }
-                else if (r[bt] * to_meters != footprints.back().top || alpha != building_absorption.back()
-                        || scatter != building_scattering.back())
-                    throw std::runtime_error(
-                            where + "a building's rows must give one top, one absorption and one scattering");
-                footprints.back().x.push_back(r[bx] * to_meters);
-                footprints.back().y.push_back(r[by] * to_meters);
+                std::cerr << buildings_file << ": " << report.footprints << " footprints from " << report.features
+                          << " features";
+                if (report.defaulted > 0)
+                    std::cerr << "; " << report.defaulted << " given --default_height";
+                if (report.raised > 0)
+                    std::cerr << "; " << report.raised << " raised off the ground left out";
+                if (report.not_polygons > 0)
+                    std::cerr << "; " << report.not_polygons << " not polygons left out";
+                std::cerr << "." << std::endl;
+                if (report.no_height > 0)
+                    throw std::runtime_error(buildings_file + ": " + std::to_string(report.no_height)
+                            + " buildings give no height (height, building:height or building:levels); give "
+                              "--default_height to take them at one");
+                if (footprints.empty())
+                    throw std::runtime_error(buildings_file + " holds no building footprints");
+            }
+            else
+            {
+                const LabeledCsv bcsv = read_rows(buildings_file, "buildings");
+                const std::size_t cid = column_of(bcsv, buildings_file, "building", true, false);
+                const std::size_t bx = column_of(bcsv, buildings_file, "x", true, true);
+                const std::size_t by = column_of(bcsv, buildings_file, "y", true, true);
+                const std::size_t bt = column_of(bcsv, buildings_file, "top", true, true);
+                const std::size_t ba = column_of(bcsv, buildings_file, "absorption", false, false);
+                const std::size_t bs = column_of(bcsv, buildings_file, "scattering", false, false);
+                std::set<double> seen;
+                double current = std::numeric_limits<double>::quiet_NaN();
+                for (std::size_t row = 0; row < bcsv.rows.size(); row++)
+                {
+                    const auto& r = bcsv.rows[row];
+                    const std::string where = buildings_file + " row " + std::to_string(row + 1) + ": ";
+                    const double alpha = ba == LabeledCsv::npos ? absorption : r[ba];
+                    const double scatter = bs == LabeledCsv::npos ? facade_scattering : r[bs];
+                    if (footprints.empty() || r[cid] != current)
+                    {
+                        if (!seen.insert(r[cid]).second)
+                            throw std::runtime_error(where + "building " + exact_text(r[cid])
+                                    + "'s rows are not consecutive");
+                        if (!(alpha >= 0.0 && alpha <= 1.0))
+                            throw std::runtime_error(where + "an absorption coefficient must lie within [0, 1]");
+                        if (!(scatter >= 0.0 && scatter <= 1.0))
+                            throw std::runtime_error(where + "a scattering coefficient must lie within [0, 1]");
+                        footprints.emplace_back();
+                        footprints.back().top = r[bt] * to_meters;
+                        building_absorption.push_back(alpha);
+                        building_scattering.push_back(scatter);
+                        current = r[cid];
+                        ids.push_back(exact_text(r[cid]));
+                    }
+                    else if (r[bt] * to_meters != footprints.back().top || alpha != building_absorption.back()
+                            || scatter != building_scattering.back())
+                        throw std::runtime_error(
+                                where + "a building's rows must give one top, one absorption and one scattering");
+                    footprints.back().x.push_back(r[bx] * to_meters);
+                    footprints.back().y.push_back(r[by] * to_meters);
+                }
             }
             Buildings city;
             try
             {
-                city = Buildings(footprints);
+                city = Buildings(footprints, std::max(orientation_tolerance, 1e-6) * pi / 180.0);
             }
             catch (const std::invalid_argument& e)
             {
                 throw std::runtime_error(buildings_file + ": " + e.what() + " (counting buildings from 1 in file order)");
+            }
+            if (city.shared_sides() > 0)
+            {
+                std::cerr << "Buildings stand against each other along " << city.shared_sides() / 2
+                          << " shared walls." << std::endl;
             }
             // Each facade's reflection and scattering, every band: its
             // building's walls.  The rays, and the run's own reflections,
@@ -335,7 +411,7 @@ int main(int argc, char** argv)
                     throw std::runtime_error(where + "the microphone's height must not be negative");
                 if (city.inside(x, y) < city.size())
                     throw std::runtime_error(where + "the microphone stands inside building "
-                            + exact_text(ids[city.inside(x, y)]));
+                            + ids[city.inside(x, y)]);
                 // The builder's frame: the local x and y, z above this ground.
                 const Vec3 local(x, y, height);
                 const auto run = facing_facades(city, local, facade_radius);
@@ -385,6 +461,7 @@ int main(int argc, char** argv)
                     {"diffraction",
                             no_diffraction ? "none; specular rays in energy" : "UTD at roof and corner edges, coherent"},
                     {"max_order", std::to_string(max_order)},
+                    {"orientation_tolerance_degrees", exact_text(orientation_tolerance)},
                     {"max_diffracted_order", std::to_string(max_diffracted_order)},
                     {"radius_m", exact_text(radius)},
                     {"facade_radius_m", exact_text(facade_radius)},
@@ -393,6 +470,8 @@ int main(int argc, char** argv)
                     {"sound_speed_mps", exact_text(sound_speed)},
                     {"floor_absorption", exact_text(floor_absorption)},
             };
+            if (origin.size() == 2)
+                provenance["origin"] = exact_text(origin[0]) + " " + exact_text(origin[1]);
             if (scatters)
             {
                 provenance["patch_size_m"] = exact_text(patch_size);

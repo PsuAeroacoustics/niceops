@@ -97,10 +97,15 @@ struct BuildingRay
 };
 
 // The departures a specular ray may leave a point along, for the plane wave
-// from `u`: u's reflections in the facades' orientations, to `max_turns`
-// changes of orientation and at most `max_departures` of them, breadth first.
-std::vector<Vec3> specular_departures(const Buildings& buildings, const Vec3& u, std::size_t max_turns,
-        std::size_t max_departures);
+// from `u`: u's reflections in `planes` (facades, one per orientation), to
+// `max_turns` changes of orientation and at most `max_departures` of them,
+// breadth first.
+std::vector<Vec3> specular_departures(const Buildings& buildings, const std::vector<std::size_t>& planes,
+        const Vec3& u, std::size_t max_turns, std::size_t max_departures);
+
+// One facade per orientation among the facades within `radius` (horizontal,
+// m) of `point`: the planes its specular departures are made in.
+std::vector<std::size_t> orientations_near(const Buildings& buildings, const Vec3& point, double radius);
 
 // A specular ray traced back from a point: the facades it reflected in, the
 // point's side first, how far it went to its last reflection, and where that
@@ -178,6 +183,7 @@ private:
     BuildingPathOptions options_;
     std::vector<Frame> frames_;
     std::vector<std::size_t> edges_;    // within reach
+    std::vector<std::size_t> planes_;   // the orientations within reach
     std::vector<Image> images_;
     std::vector<std::vector<std::size_t>> image_edges_; // per image, the edges whose rays can reach it
     bool truncated_ = false;
@@ -193,9 +199,18 @@ std::complex<double> ray_amplitude(const BuildingRay& ray, const std::vector<dou
 // along `frame_bearing`; the directions are shared out over `threads`.
 // `reflection` is [facade][band] for the buildings' facades, specular, and
 // `diffuse` the facades' diffuse reflection, if any.
+//
+// Each entry is evaluated `azimuth_offset` (rad) clockwise of its azimuth.  A
+// direction exactly parallel to a wall, or exactly through a corner, is a
+// knife edge of the model -- the wall's grazing reflection and its corner's
+// diffraction are there a hair to one side and not on the line -- and a table
+// of buildings on a grid samples those lines; 1e-6 rad is a tenth of a
+// millimetre in 100 m, and far more than a projection's round-off, so the
+// same district read from different files lands on the same side of every
+// one.
 std::vector<double> building_gains(const BuildingReceiver& receiver, const UrbanTable::Axes& axes,
         double frame_bearing, const std::vector<double>& reflection, double floor_reflection, double sound_speed,
-        unsigned threads = 1, const DiffuseFacades* diffuse = nullptr);
+        unsigned threads = 1, const DiffuseFacades* diffuse = nullptr, double azimuth_offset = 1e-6);
 
 // The facades the run evaluates for a microphone: those within `radius`
 // (horizontal, m) whose outer face looks at it.

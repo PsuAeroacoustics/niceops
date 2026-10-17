@@ -246,3 +246,97 @@ TEST_CASE("the plan grid finds what trying everything finds", "[buildings]")
     REQUIRE(blocked < 3600);
     REQUIRE(hits > 400);
 }
+
+TEST_CASE("a courtyard is open to the sky and walled from inside", "[buildings]")
+{
+    Footprint block = box(0.0, 0.0, 60.0, 60.0, 15.0);
+    Ring yard; // given counterclockwise; Buildings turns it clockwise
+    yard.x = {20.0, 40.0, 40.0, 20.0};
+    yard.y = {20.0, 20.0, 40.0, 40.0};
+    block.holes.push_back(yard);
+    const Buildings city({block});
+    REQUIRE(city.facades().size() == 8);
+    const Vec3 middle(30.0, 30.0, 1.5);
+    std::size_t facing_in = 0;
+    for (const auto& facade : city.facades())
+        facing_in += facade_side(facade, middle) > 0.0;
+    REQUIRE(facing_in == 4);
+    // Four outer corners diffract; the courtyard's corners are reentrant.
+    std::size_t corners = 0;
+    for (const auto& edge : city.edges())
+        corners += edge.vertical;
+    REQUIRE(corners == 4);
+    REQUIRE(city.edges().size() == 12);
+    REQUIRE(city.inside(30.0, 30.0) == city.size());
+    REQUIRE(city.inside(10.0, 30.0) == 0);
+    REQUIRE(!city.buried(middle));
+    REQUIRE(city.buried(Vec3(10.0, 30.0, 5.0)));
+    // Within the courtyard, out through the block, and over its roof.
+    REQUIRE(!city.blocked(Vec3(25.0, 30.0, 1.5), Vec3(35.0, 30.0, 1.5)));
+    REQUIRE(city.blocked(middle, Vec3(-10.0, 30.0, 1.5)));
+    REQUIRE(!city.blocked(middle, Vec3(-10.0, 30.0, 60.0)));
+    REQUIRE(city.escapes(middle, Vec3(0.0, 0.0, 1.0)));
+    REQUIRE(!city.escapes(middle, Vec3(-1.0, 0.0, 0.3).normalized()));
+}
+
+TEST_CASE("terraced buildings stand against each other where they share a side", "[buildings]")
+{
+    // A taller house and a lower one sharing the side x = 10, as OpenStreetMap
+    // gives terraces: the same two vertices, run the other way.
+    const Buildings unequal({box(0.0, 0.0, 10.0, 10.0, 20.0), box(10.0, 0.0, 20.0, 10.0, 12.0)});
+    REQUIRE(unequal.shared_sides() == 2);
+    REQUIRE(unequal.facades().size() == 7);
+    std::size_t raised = 0;
+    for (const auto& facade : unequal.facades())
+        if (facade.x0 == 10.0 && facade.x1 == 10.0)
+        {
+            raised++;
+            REQUIRE(facade.bottom == 12.0); // the taller house's wall above the lower roof
+            REQUIRE(facade.top == 20.0);
+        }
+    REQUIRE(raised == 1);
+    std::size_t roof = 0, corner = 0, raised_corners = 0;
+    for (const auto& edge : unequal.edges())
+    {
+        if (!edge.vertical)
+        {
+            roof++;
+            // The lower roof meets the taller wall there: a reentrant junction.
+            REQUIRE(!(edge.start.x == 10.0 && edge.direction.x == 0.0 && edge.start.z == 12.0));
+            continue;
+        }
+        corner++;
+        if (edge.start.x == 10.0)
+        {
+            raised_corners++;
+            REQUIRE(edge.start.z == 12.0);
+            REQUIRE(edge.length == 8.0);
+        }
+    }
+    REQUIRE(roof == 7);
+    REQUIRE(corner == 6);
+    REQUIRE(raised_corners == 2);
+    // As tall as each other they are one block there.
+    const Buildings equal({box(0.0, 0.0, 10.0, 10.0, 15.0), box(10.0, 0.0, 20.0, 10.0, 15.0)});
+    REQUIRE(equal.facades().size() == 6);
+    REQUIRE(equal.edges().size() == 10);
+    REQUIRE(equal.blocked(Vec3(-5.0, 5.0, 5.0), Vec3(25.0, 5.0, 5.0)));
+    REQUIRE(equal.buried(Vec3(15.0, 5.0, 5.0)));
+    REQUIRE(!equal.buried(Vec3(10.0, 5.0, 5.0) + Vec3(0.0, 5.0, 0.0) + Vec3(0.0, 0.0, 20.0)));
+}
+
+TEST_CASE("holes must lie inside their footprint, apart", "[buildings]")
+{
+    Footprint outside = box(0.0, 0.0, 10.0, 10.0, 5.0);
+    Ring away;
+    away.x = {20.0, 25.0, 25.0, 20.0};
+    away.y = {0.0, 0.0, 5.0, 5.0};
+    outside.holes.push_back(away);
+    REQUIRE_THROWS_AS(Buildings({outside}), std::invalid_argument);
+    Footprint crossing = box(0.0, 0.0, 10.0, 10.0, 5.0);
+    Ring across;
+    across.x = {5.0, 15.0, 15.0, 5.0};
+    across.y = {2.0, 2.0, 8.0, 8.0};
+    crossing.holes.push_back(across);
+    REQUIRE_THROWS_AS(Buildings({crossing}), std::invalid_argument);
+}

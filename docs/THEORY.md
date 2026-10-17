@@ -869,7 +869,8 @@ effect below the frequencies where the street is several wavelengths wide, which
 supplies (§6.6). A microphone above both walls, or a direction along the axis, gives $T = 1$.
 
 **Buildings.** Among LoD1 buildings (`niceops_urban_table --buildings`), footprints extruded from
-the floor to flat roofs, the table is the same coherent ratio over the rays the buildings give. A
+the floor to flat roofs and possibly enclosing courtyards, the table is the same coherent ratio
+over the rays the buildings give. A
 facade is vertical, so a reflection keeps a ray's vertical component and mirrors its horizontal
 one. A specular ray, traced back from the microphone or from $M_f$ through the floor's mirror world
 (every building standing from $-H$ to $H$), therefore leaves along one of the directions that
@@ -895,9 +896,19 @@ their images in the facades within a radius. The images are found by beam tracin
 each carries the part of its last facade through which the microphone can be reached, a further
 facade counts only where it lies in that beam, and an edge only where it crosses it. Every
 candidate is then tested exactly in three dimensions: within each facade it reflects in, from in
-front, with no leg through a building. Among buildings the rays leave out, beyond the canyon's
-list: diffraction at two edges in turn, an edge lit only by a reflected wave or off the floor, a
-diffraction point off the end of its edge (the corner's own diffraction), and roofs as reflectors.
+front, with no leg through a building. Buildings that share a side stand against each other
+there: of the shared wall only what rises above the lower roof is a facade, and the lower roof's
+edge and both corners below it are no edges. An edge point or a facade patch inside another
+building takes no part. Two exactly aligned surfaces are a knife edge for these rules -- a wave
+exactly parallel to a wall is neither reflected by it nor diffracted at its corner, and a hair
+off it is -- so the table evaluates each direction $10^{-6}$ rad clockwise of its azimuth. Walls
+whose orientations agree within a tolerance (1° by default) reflect a direction alike: in a street
+whose walls are a degree out of parallel the specular candidates stay those of a canyon, and a ray
+bounces up it as up the canyon it nearly is, at a cost of up to twice the tolerance per reflection
+in its direction. The first-order reflections the run evaluates are exact. Among buildings the rays
+leave out, beyond the canyon's list: diffraction at two edges in turn, an edge lit only by a
+reflected wave or off the floor, a diffraction point off the end of its edge (the corner's own
+diffraction), and roofs as reflectors.
 
 **Diffuse reflection** (`--facade_scattering`, among buildings). A facade reflects the fraction
 $\rho$ of the energy reaching it and scatters the share $s$ of that diffusely, by Lambert's law;

@@ -285,7 +285,7 @@ TEST_CASE("building_gains over long buildings is ideal_canyon_gains", "[building
     axes.bands = {200.0, 800.0};
     const std::vector<double> reflection(city.facades().size() * axes.bands.size(), 0.85);
     const std::vector<double> walls(axes.bands.size(), 0.85);
-    const auto general = building_gains(receiver, axes, 90.0, reflection, 0.9, 343.2, 2);
+    const auto general = building_gains(receiver, axes, 90.0, reflection, 0.9, 343.2, 2, nullptr, 0.0);
     const auto ideal = ideal_canyon_gains(c, 270.0, axes, walls, walls, 0.9, 343.2, true, 1);
     REQUIRE(general.size() == ideal.size());
     for (std::size_t i = 0; i < general.size(); i++)
@@ -339,4 +339,34 @@ TEST_CASE("the beams find every diffracted ray the unpruned search does", "[buil
             }
         REQUIRE(rays > 100);
     }
+}
+
+TEST_CASE("a street half a degree out of parallel keeps its long bounce chains", "[building_paths]")
+{
+    // Wall A along y = 0, wall B from y = 20 at x = -200 to y = 20 + 400 tan(0.5 deg) at x = 200, both
+    // 30 m tall; a wave across the street at 3 degrees has to bounce some 27 times to climb out to
+    // a microphone 1.5 m up.  Exact orientations make every one of those chains a composition of
+    // dozens of different mirrors, and none is a candidate; within a degree the street is a canyon.
+    Footprint b;
+    const double rise = 400.0 * std::tan(0.5 * pi / 180.0);
+    b.x = {-200.0, 200.0, 200.0, -200.0};
+    b.y = {20.0, 20.0 + rise, 40.0 + rise, 40.0};
+    b.top = 30.0;
+    const Vec3 microphone(0.0, 10.0, 1.5);
+    const Vec3 u = direction(90.0, 3.0);
+    std::size_t longest_exact = 0, longest_tolerant = 0;
+    for (const double tolerance : {1e-5, 1.0 * pi / 180.0})
+    {
+        const Buildings city({box(-200.0, -20.0, 200.0, 0.0, 30.0), b}, tolerance);
+        BuildingPathOptions options;
+        options.diffraction = false;
+        const BuildingReceiver receiver(city, microphone, {}, options);
+        std::size_t longest = 0;
+        for (const auto& ray : receiver.rays(u))
+            longest = std::max(longest, ray.facades.size());
+        (tolerance < 1e-3 ? longest_exact : longest_tolerant) = longest;
+    }
+    INFO("longest chain: exact " << longest_exact << ", within a degree " << longest_tolerant);
+    REQUIRE(longest_exact < 5);
+    REQUIRE(longest_tolerant > 20);
 }

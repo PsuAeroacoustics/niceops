@@ -1,8 +1,10 @@
 #include "buildings.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -52,48 +54,126 @@ double Edge::angle(const Vec3& v) const
     return theta;
 }
 
-Buildings::Buildings(std::vector<Footprint> footprints)
+namespace {
+
+// Every ring of a footprint, the outer one first.
+template <typename Fn>
+void for_each_ring(const Footprint& f, Fn fn)
+{
+    fn(f.x, f.y);
+    for (const Ring& hole : f.holes)
+        fn(hole.x, hole.y);
+}
+
+double signed_area(const std::vector<double>& x, const std::vector<double>& y)
+{
+    double area = 0.0;
+    for (std::size_t i = 0, n = x.size(); i < n; i++)
+        area += cross2(x[i], y[i], x[(i + 1) % n], y[(i + 1) % n]);
+    return 0.5 * area;
+}
+
+// Whether (px, py) is inside the ring (even-odd, boundary unspecified).
+bool in_ring(const std::vector<double>& x, const std::vector<double>& y, double px, double py)
+{
+    bool in = false;
+    for (std::size_t i = 0, n = x.size(), h = n - 1; i < n; h = i++)
+        if ((y[i] > py) != (y[h] > py) && px < x[h] + (py - y[h]) * (x[i] - x[h]) / (y[i] - y[h]))
+            in = !in;
+    return in;
+}
+
+} // namespace
+
+Buildings::Buildings(std::vector<Footprint> footprints, double orientation_tolerance)
     : footprints_(std::move(footprints))
+    , orientation_tolerance_(orientation_tolerance)
 {
     x_min_ = y_min_ = std::numeric_limits<double>::infinity();
     x_max_ = y_max_ = -std::numeric_limits<double>::infinity();
+    // Each side as built, for finding the ones two buildings share: its
+    // ends, its facade and roof edge, and the corner edges at its ends.
+    constexpr std::size_t none = static_cast<std::size_t>(-1);
+    struct Side
+    {
+        std::size_t building;
+        double x0, y0, x1, y1;
+        std::size_t facade, roof, corner0, corner1;
+    };
+    std::vector<Side> sides;
     for (std::size_t b = 0; b < footprints_.size(); b++)
     {
         Footprint& f = footprints_[b];
         const std::string which = "building " + std::to_string(b + 1);
-        const std::size_t n = f.x.size();
-        if (n < 3 || f.y.size() != n)
-            throw std::invalid_argument(which + ": a footprint needs at least three vertices");
         if (!(f.top > 0.0) || !std::isfinite(f.top))
             throw std::invalid_argument(which + ": its roof must be above the floor");
-        for (std::size_t i = 0; i < n; i++)
-            if (!std::isfinite(f.x[i]) || !std::isfinite(f.y[i]))
-                throw std::invalid_argument(which + ": a vertex is not a number");
-        double area = 0.0;
-        for (std::size_t i = 0; i < n; i++)
-        {
-            const std::size_t j = (i + 1) % n;
-            if (std::hypot(f.x[j] - f.x[i], f.y[j] - f.y[i]) < contact)
-                throw std::invalid_argument(which + ": two consecutive vertices coincide");
-            area += cross2(f.x[i], f.y[i], f.x[j], f.y[j]);
-        }
-        if (!(std::abs(area) > 0.0))
-            throw std::invalid_argument(which + ": its footprint has no area");
-        if (area < 0.0)
-        {
-            std::reverse(f.x.begin(), f.x.end());
-            std::reverse(f.y.begin(), f.y.end());
-        }
-        for (std::size_t i = 0; i < n; i++)
-            for (std::size_t k = i + 2; k < n; k++)
+        bool outer = true;
+        auto check = [&](std::vector<double>& x, std::vector<double>& y) {
+            const std::size_t n = x.size();
+            if (n < 3 || y.size() != n)
+                throw std::invalid_argument(which + ": a ring needs at least three vertices");
+            for (std::size_t i = 0; i < n; i++)
             {
-                if (i == 0 && k == n - 1)
-                    continue; // adjacent through the closing side
-                const std::size_t j = i + 1, l = (k + 1) % n;
-                if (segments_meet(f.x[i], f.y[i], f.x[j], f.y[j], f.x[k], f.y[k], f.x[l], f.y[l]))
-                    throw std::invalid_argument(which + ": its footprint's sides cross");
+                if (!std::isfinite(x[i]) || !std::isfinite(y[i]))
+                    throw std::invalid_argument(which + ": a vertex is not a number");
+                if (std::hypot(x[(i + 1) % n] - x[i], y[(i + 1) % n] - y[i]) < contact)
+                    throw std::invalid_argument(which + ": two consecutive vertices coincide");
             }
+            const double area = signed_area(x, y);
+            if (!(std::abs(area) > 0.0))
+                throw std::invalid_argument(which + ": a ring has no area");
+            // The solid on the left: the outer ring counterclockwise, holes
+            // clockwise.
+            if ((area < 0.0) == outer)
+            {
+                std::reverse(x.begin(), x.end());
+                std::reverse(y.begin(), y.end());
+            }
+            outer = false;
+        };
+        check(f.x, f.y);
+        for (Ring& hole : f.holes)
+            check(hole.x, hole.y);
+        // No side may meet another but its neighbours, within a ring or
+        // across rings.
+        std::vector<std::array<double, 4>> segments;
+        std::vector<std::pair<std::size_t, std::size_t>> position; // ring, index
+        std::size_t ring = 0;
+        for_each_ring(f, [&](const std::vector<double>& x, const std::vector<double>& y) {
+            for (std::size_t i = 0, n = x.size(); i < n; i++)
+            {
+                segments.push_back({x[i], y[i], x[(i + 1) % n], y[(i + 1) % n]});
+                position.emplace_back(ring, i);
+            }
+            ring++;
+        });
+        std::vector<std::size_t> ring_size {f.x.size()};
+        for (const Ring& hole : f.holes)
+            ring_size.push_back(hole.x.size());
+        for (std::size_t a = 0; a < segments.size(); a++)
+            for (std::size_t c = a + 1; c < segments.size(); c++)
+            {
+                const auto [ra, ia] = position[a];
+                const auto [rc, ic] = position[c];
+                if (ra == rc && (ic == ia + 1 || (ia == 0 && ic == ring_size[ra] - 1)))
+                    continue; // neighbours
+                const auto& p = segments[a];
+                const auto& q = segments[c];
+                if (segments_meet(p[0], p[1], p[2], p[3], q[0], q[1], q[2], q[3]))
+                    throw std::invalid_argument(which + (ra == rc ? ": its footprint's sides cross"
+                                                                  : ": its holes and outline cross"));
+            }
+        for (std::size_t h = 0; h < f.holes.size(); h++)
+        {
+            const Ring& hole = f.holes[h];
+            if (!in_ring(f.x, f.y, hole.x[0], hole.y[0]))
+                throw std::invalid_argument(which + ": a hole lies outside its footprint");
+            for (std::size_t k = 0; k < f.holes.size(); k++)
+                if (k != h && in_ring(f.holes[k].x, f.holes[k].y, hole.x[0], hole.y[0]))
+                    throw std::invalid_argument(which + ": a hole lies inside another");
+        }
 
+        const std::size_t n = f.x.size();
         double bx0 = f.x[0], bx1 = f.x[0], by0 = f.y[0], by1 = f.y[0];
         for (std::size_t i = 0; i < n; i++)
         {
@@ -109,54 +189,117 @@ Buildings::Buildings(std::vector<Footprint> footprints)
         y_max_ = std::max(y_max_, by1);
         max_top_ = std::max(max_top_, f.top);
 
-        for (std::size_t i = 0; i < n; i++)
-        {
-            const std::size_t j = (i + 1) % n;
-            const std::size_t h = (i + n - 1) % n;
-            // The side i -> j, counterclockwise: the building on its left.
-            Facade facade;
-            facade.x0 = f.x[j];
-            facade.y0 = f.y[j];
-            facade.x1 = f.x[i];
-            facade.y1 = f.y[i];
-            facade.bottom = 0.0;
-            facade.top = f.top;
-            facades_.push_back(facade);
-            facade_building_.push_back(b);
-
-            const double len = std::hypot(f.x[j] - f.x[i], f.y[j] - f.y[i]);
-            const Vec3 along((f.x[j] - f.x[i]) / len, (f.y[j] - f.y[i]) / len, 0.0);
-            const Vec3 outward(along.y, -along.x, 0.0);
-            // The roof edge: the roof leaves it inward, the air is above.
-            Edge roof;
-            roof.start = Vec3(f.x[i], f.y[i], f.top);
-            roof.direction = along;
-            roof.length = len;
-            roof.face0 = -1.0 * outward;
-            roof.air = Vec3(0.0, 0.0, 1.0);
-            roof.n = 1.5;
-            roof.building = b;
-            edges_.push_back(roof);
-
-            // The vertical edge at vertex i, where it is convex (a left turn
-            // from side h -> i to side i -> j).
-            const double turn = cross2(f.x[i] - f.x[h], f.y[i] - f.y[h], f.x[j] - f.x[i], f.y[j] - f.y[i]);
-            if (turn > 0.0)
+        for_each_ring(f, [&](const std::vector<double>& x, const std::vector<double>& y) {
+            const std::size_t m = x.size();
+            // The vertical edge at each vertex where the solid turns convex (a
+            // left turn from the side before it to the side after).
+            std::vector<std::size_t> corner(m, none);
+            for (std::size_t i = 0; i < m; i++)
             {
-                Edge corner;
-                corner.start = Vec3(f.x[i], f.y[i], 0.0);
-                corner.direction = Vec3(0.0, 0.0, 1.0);
-                corner.length = f.top;
-                corner.face0 = along;
-                corner.air = outward;
-                const double back = std::hypot(f.x[h] - f.x[i], f.y[h] - f.y[i]);
-                const Vec3 other((f.x[h] - f.x[i]) / back, (f.y[h] - f.y[i]) / back, 0.0);
-                corner.n = corner.angle(other) / pi;
-                corner.building = b;
-                corner.vertical = true;
-                edges_.push_back(corner);
+                const std::size_t j = (i + 1) % m, h = (i + m - 1) % m;
+                const double turn = cross2(x[i] - x[h], y[i] - y[h], x[j] - x[i], y[j] - y[i]);
+                if (turn <= 0.0)
+                    continue;
+                const double len = std::hypot(x[j] - x[i], y[j] - y[i]);
+                const Vec3 along((x[j] - x[i]) / len, (y[j] - y[i]) / len, 0.0);
+                Edge e;
+                e.start = Vec3(x[i], y[i], 0.0);
+                e.direction = Vec3(0.0, 0.0, 1.0);
+                e.length = f.top;
+                e.face0 = along;
+                e.air = Vec3(along.y, -along.x, 0.0);
+                const double back = std::hypot(x[h] - x[i], y[h] - y[i]);
+                e.n = e.angle(Vec3((x[h] - x[i]) / back, (y[h] - y[i]) / back, 0.0)) / pi;
+                e.building = b;
+                e.vertical = true;
+                corner[i] = edges_.size();
+                edges_.push_back(e);
             }
+            for (std::size_t i = 0; i < m; i++)
+            {
+                const std::size_t j = (i + 1) % m;
+                // The side i -> j, the solid on its left; its facade runs the
+                // other way, so that the outside is on the facade's left.
+                Facade facade;
+                facade.x0 = x[j];
+                facade.y0 = y[j];
+                facade.x1 = x[i];
+                facade.y1 = y[i];
+                facade.bottom = 0.0;
+                facade.top = f.top;
+                const double len = std::hypot(x[j] - x[i], y[j] - y[i]);
+                const Vec3 along((x[j] - x[i]) / len, (y[j] - y[i]) / len, 0.0);
+                const Vec3 outward(along.y, -along.x, 0.0);
+                // The roof edge: the roof leaves it inward, the air is above.
+                Edge roof;
+                roof.start = Vec3(x[i], y[i], f.top);
+                roof.direction = along;
+                roof.length = len;
+                roof.face0 = -1.0 * outward;
+                roof.air = Vec3(0.0, 0.0, 1.0);
+                roof.n = 1.5;
+                roof.building = b;
+                sides.push_back({b, x[i], y[i], x[j], y[j], facades_.size(), edges_.size(), corner[i], corner[j]});
+                facades_.push_back(facade);
+                facade_building_.push_back(b);
+                edges_.push_back(roof);
+            }
+        });
+    }
+
+    // Sides two buildings share exactly: a side's neighbour runs the other
+    // way between the same two points.
+    auto key = [](double ax, double ay, double bx, double by) {
+        auto r = [](double v) { return static_cast<long long>(std::llround(v * 1e6)); };
+        return std::array<long long, 4> {r(ax), r(ay), r(bx), r(by)};
+    };
+    std::map<std::array<long long, 4>, std::size_t> by_ends;
+    for (std::size_t k = 0; k < sides.size(); k++)
+        by_ends.emplace(key(sides[k].x0, sides[k].y0, sides[k].x1, sides[k].y1), k);
+    std::vector<char> drop_facade(facades_.size(), 0), drop_edge(edges_.size(), 0);
+    for (const Side& side : sides)
+    {
+        const auto other = by_ends.find(key(side.x1, side.y1, side.x0, side.y0));
+        if (other == by_ends.end() || sides[other->second].building == side.building)
+            continue;
+        shared_sides_++;
+        const double top = footprints_[side.building].top;
+        const double neighbour = footprints_[sides[other->second].building].top;
+        if (neighbour >= top)
+        {
+            drop_facade[side.facade] = 1;
+            drop_edge[side.roof] = 1;
+            for (std::size_t c : {side.corner0, side.corner1})
+                if (c != none)
+                    drop_edge[c] = 1;
+            continue;
         }
+        // Only what stands above the neighbour's roof is outside.
+        facades_[side.facade].bottom = std::max(facades_[side.facade].bottom, neighbour);
+        for (std::size_t c : {side.corner0, side.corner1})
+            if (c != none && edges_[c].start.z < neighbour)
+            {
+                edges_[c].start.z = neighbour;
+                edges_[c].length = top - neighbour;
+            }
+    }
+    if (shared_sides_ > 0)
+    {
+        std::vector<Facade> kept_facades;
+        std::vector<std::size_t> kept_building;
+        for (std::size_t i = 0; i < facades_.size(); i++)
+            if (!drop_facade[i])
+            {
+                kept_facades.push_back(facades_[i]);
+                kept_building.push_back(facade_building_[i]);
+            }
+        std::vector<Edge> kept_edges;
+        for (std::size_t i = 0; i < edges_.size(); i++)
+            if (!drop_edge[i])
+                kept_edges.push_back(edges_[i]);
+        facades_ = std::move(kept_facades);
+        facade_building_ = std::move(kept_building);
+        edges_ = std::move(kept_edges);
     }
 
     // The grids, their cells about one and a half typical items across.
@@ -168,10 +311,16 @@ Buildings::Buildings(std::vector<Footprint> footprints)
         const double ax = (f.x1 - f.x0) / length, ay = (f.y1 - f.y0) / length;
         frames_.push_back({f.x0, f.y0, ax, ay, length, -ay, ax});
         const FacadeFrame& fi = frames_.back();
-        if (std::none_of(orientations_.begin(), orientations_.end(), [&](std::size_t o) {
-                return std::abs(frames_[o].nx * fi.ny - frames_[o].ny * fi.nx) < 1e-12;
-            }))
+        const auto same = std::find_if(orientations_.begin(), orientations_.end(), [&](std::size_t o) {
+            return std::abs(frames_[o].nx * fi.ny - frames_[o].ny * fi.nx) < std::sin(orientation_tolerance_);
+        });
+        if (same == orientations_.end())
+        {
             orientations_.push_back(frames_.size() - 1);
+            orientation_of_.push_back(frames_.size() - 1);
+        }
+        else
+            orientation_of_.push_back(*same);
         facade_boxes.insert(facade_boxes.end(),
                 {std::min(f.x0, f.x1), std::max(f.x0, f.x1), std::min(f.y0, f.y1), std::max(f.y0, f.y1)});
         facade_size += length;
@@ -188,17 +337,17 @@ Buildings::Buildings(std::vector<Footprint> footprints)
 bool Buildings::strictly_inside(std::size_t building, double x, double y) const
 {
     const Footprint& f = footprints_[building];
-    const std::size_t n = f.x.size();
-    bool in = false;
-    for (std::size_t i = 0, h = n - 1; i < n; h = i++)
-    {
-        if (distance_to_side(x, y, f.x[h], f.y[h], f.x[i], f.y[i]) < contact)
-            return false;
-        if ((f.y[i] > y) != (f.y[h] > y)
-                && x < f.x[h] + (y - f.y[h]) * (f.x[i] - f.x[h]) / (f.y[i] - f.y[h]))
-            in = !in;
-    }
-    return in;
+    bool in = false, near = false;
+    for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+        for (std::size_t i = 0, n = rx.size(), h = n - 1; i < n; h = i++)
+        {
+            if (distance_to_side(x, y, rx[h], ry[h], rx[i], ry[i]) < contact)
+                near = true;
+            if ((ry[i] > y) != (ry[h] > y) && x < rx[h] + (y - ry[h]) * (rx[i] - rx[h]) / (ry[i] - ry[h]))
+                in = !in;
+        }
+    });
+    return in && !near;
 }
 
 std::size_t Buildings::inside(double x, double y) const
@@ -208,6 +357,17 @@ std::size_t Buildings::inside(double x, double y) const
                 && strictly_inside(b, x, y))
             return b;
     return footprints_.size();
+}
+
+bool Buildings::buried(const Vec3& p) const
+{
+    bool found = false;
+    building_grid_.walk(p.x, p.y, 0.0, 0.0, 0.0, [&](const std::uint32_t* first, const std::uint32_t* last, double) {
+        for (const std::uint32_t* i = first; i != last && !found; i++)
+            found = p.z > contact && p.z < footprints_[*i].top - contact && strictly_inside(*i, p.x, p.y);
+        return false;
+    });
+    return found;
 }
 
 bool Buildings::blocked_by(std::size_t building, const Vec3& a, const Vec3& b, bool below_floor) const
@@ -242,19 +402,20 @@ bool Buildings::blocked_by(std::size_t building, const Vec3& a, const Vec3& b, b
         add((z_high - a.z) / d.z);
         add((z_low - a.z) / d.z);
     }
-    const std::size_t n = f.x.size();
-    for (std::size_t i = 0, h = n - 1; i < n; h = i++)
-    {
-        const double ex = f.x[i] - f.x[h], ey = f.y[i] - f.y[h];
-        const double denominator = cross2(d.x, d.y, ex, ey);
-        if (denominator == 0.0)
-            continue;
-        const double px = f.x[h] - a.x, py = f.y[h] - a.y;
-        const double t = cross2(px, py, ex, ey) / denominator;
-        const double s = cross2(px, py, d.x, d.y) / denominator;
-        if (s >= -1e-12 && s <= 1.0 + 1e-12)
-            add(t);
-    }
+    for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+        for (std::size_t i = 0, n = rx.size(), h = n - 1; i < n; h = i++)
+        {
+            const double ex = rx[i] - rx[h], ey = ry[i] - ry[h];
+            const double denominator = cross2(d.x, d.y, ex, ey);
+            if (denominator == 0.0)
+                continue;
+            const double px = rx[h] - a.x, py = ry[h] - a.y;
+            const double t = cross2(px, py, ex, ey) / denominator;
+            const double s = cross2(px, py, d.x, d.y) / denominator;
+            if (s >= -1e-12 && s <= 1.0 + 1e-12)
+                add(t);
+        }
+    });
     std::sort(t_values.begin(), t_values.end());
     for (std::size_t k = 0; k + 1 < t_values.size(); k++)
     {

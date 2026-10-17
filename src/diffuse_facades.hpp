@@ -126,6 +126,7 @@ private:
     double floor_reflection_ = 1.0;
     std::vector<double> specular_;    // [facade][band], rho (1 - s)
     std::vector<std::size_t> all_;    // every patch
+    std::vector<std::size_t> planes_; // the orientations within reach
     std::vector<Patch> patches_;
     std::vector<std::vector<std::pair<std::size_t, double>>> form_factors_;
     std::vector<double> gather_;      // [patch][band]

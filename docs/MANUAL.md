@@ -1690,10 +1690,10 @@ when its solution stopped. Each doubling of the frequency costs about eight time
 the default blend, `--wave_below 400` solves each canyon to 707 Hz, about a minute at 15 points per
 wavelength, and canyons are solved several at a time.
 
-**Buildings.** `--buildings` gives the buildings as footprints extruded to flat roofs, one row
-per footprint vertex; `--receivers` gives the microphones, with the run's observer-file columns
-(`x`, `y`, `z`, `height`; build from the run's own observer file). The buildings stand on the
-ground at each receiver's `z`.
+**Buildings.** `--buildings` gives the buildings as footprints extruded to flat roofs, either as a
+CSV with one row per footprint vertex (below) or as GeoJSON; `--receivers` gives the microphones,
+with the run's observer-file columns (`x`, `y`, `z`, `height`; build from the run's own observer
+file). The buildings stand on the ground at each receiver's `z`.
 
 ```sh
 niceops_urban_table --buildings district.csv --receivers observers.csv \
@@ -1708,11 +1708,27 @@ niceops_urban_table --buildings district.csv --receivers observers.csv \
 | `absorption` | Optional: its walls' energy absorption coefficient, every band, the same on each of its rows. Default `--absorption`. |
 | `scattering` | Optional: the share of what its walls reflect that they scatter diffusely, every band, the same on each of its rows. Default `--facade_scattering`. |
 
+**GeoJSON** (a `.geojson` or `.json` file, as an OpenStreetMap export or a city's LoD1 footprints
+give it): each Polygon or MultiPolygon feature is a footprint in WGS84 longitude and latitude, its
+inner rings courtyards. It is projected into the run's frame, so give the run's own `--origin` and
+`--frame_bearing` -- for the shipped AC tracks, the origin their files were made with and 210.
+Heights are metres, from the properties `height` or `building:height` (a number, or text such as
+`12.5 m` or `40 ft`), else `building:levels` times `--level_height`; buildings with none are
+refused unless `--default_height` is given. A feature raised off the ground (`min_height` or
+`building:min_level` above zero: a bridge, an overhang) is left out and counted. Optional numeric
+properties `absorption` and `scattering` set the walls'. Buildings that share a side exactly, as
+terraced houses in OpenStreetMap do, stand against each other there: the shared wall is inside the
+taller one, which keeps only what stands above the lower roof.
+
 | Option | Meaning |
 | --- | --- |
+| `--origin` | With GeoJSON: the run's WGS84 origin, `latitude longitude`. Required. |
+| `--level_height` | With GeoJSON: metres per storey, for buildings that give only `building:levels`. Default 3. |
+| `--default_height` | With GeoJSON: the height, metres, of buildings that give none. Default: refuse them. |
 | `--max_order` | Facade reflections on a ray from the source, at most. Default 64: bouncing up a street is cheap, and grazing directions need it. |
 | `--max_diffracted_order` | Facade reflections on a ray after an edge diffracts it, at most. Default 6. |
 | `--radius` | The edges, and the facades a diffracted ray reflects in, within this of a microphone. Default 150 m. |
+| `--orientation_tolerance` | Walls whose orientations agree within this, degrees, reflect alike: a ray then bounces up a street a little out of parallel as up the canyon it nearly is, and a district of many orientations costs far less. Default 1; 3 for an irregular old town. The run's own first-order reflections stay exact. |
 | `--facade_radius` | The facades within this of a microphone, facing it, are written for the run's first-order reflections. Default 100 m. |
 | `--facade_scattering` | The share of what a wall reflects that it scatters diffusely, where a building gives none. Default 0: specular walls. |
 | `--patch_size` | With scattering walls: the walls are cut into patches no larger than this for the diffuse field. Default 4 m. |

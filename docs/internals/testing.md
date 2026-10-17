@@ -160,6 +160,10 @@ Notes on each:
   as plates. They pin the builder's call site: passing the tool's facades as no `run_facades`
   (the run's first-order reflections then counted twice) fails both, with every windowed/marched
   pair green.
+- **`urban_buildings{,_plate,_diffuse}.csv`** were regenerated when the table's directions moved
+  1e-6 rad clockwise of its azimuths, off the walls' knife edges: the demo microphones moved by at
+  most 0.006 dB. `urban_buildings_geojson_is_the_csv` runs the same district read from GeoJSON
+  against the CSV's run, to 1e-7.
 - **`urban_buildings_diffuse.csv`** was made by the build that added `--facade_scattering`: the
   same district with every wall scattering 0.2. It pins the run's reflections at rho (1 - s): written
   at rho, they count the scattered share twice and fail it, with the windowed/marched pair green.
