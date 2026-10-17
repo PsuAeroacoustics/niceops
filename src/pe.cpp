@@ -188,6 +188,8 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
     const double a = op.a;
     const complex g1 = op.g1, g2 = op.g2;
     const std::size_t m = op.m;
+    if (m < 3)
+        throw std::invalid_argument("solve_pe: the grid is too small");
     const complex i(0.0, 1.0);
     const complex alpha_lhs = 0.25 - i * k_a * dr / 4.0;
     const complex alpha_rhs = 0.25 + i * k_a * dr / 4.0;
@@ -210,8 +212,9 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
     const complex upper_0 = off_lhs + off_lhs * g2;
     auto lower_of = [&](std::size_t row) { return row > 0 ? off_lhs : complex(0.0); };
     auto upper_of = [&](std::size_t row) { return row + 1 < m ? (row == 0 ? upper_0 : off_lhs) : complex(0.0); };
-    if (m < 3)
-        throw std::invalid_argument("solve_pe: the grid is too small");
+    // With m >= 3 the meeting row has a row on either side (0 < p < m - 1),
+    // and the downward chain is never the longer: p rows go down, m - 1 - p,
+    // the same or one more, go up.
     const std::size_t p = (m - 1) / 2;
     // Downward, rows r < p:  w_r = b_r inv_r - lower_r inv_r w_{r-1},
     // x_r = w_r - (upper_r inv_r) x_{r+1}.  Upward, rows r > p: the mirror.
@@ -239,8 +242,7 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
         }
     }
     // The meeting row takes both.
-    inv[p] = 1.0 / (main[p] - lower_of(p) * (p > 0 ? back[p - 1] : complex(0.0))
-                    - upper_of(p) * (p + 1 < m ? back[p + 1] : complex(0.0)));
+    inv[p] = 1.0 / (main[p] - lower_of(p) * back[p - 1] - upper_of(p) * back[p + 1]);
     const complex lower_p = lower_of(p), upper_p = upper_of(p);
     const complex rhs_off = alpha_rhs * a;
     std::vector<complex> rhs_main(m);
@@ -258,10 +260,17 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
         };
         // e - c x, as two dependent fused multiply-adds per part: the recurrences
         // run at their latency, and the compiler otherwise leaves a subtract at the
-        // end of each.
+        // end of each.  Where the target has no fused multiply-add (x86-64 without
+        // -mfma, CI's GCC build) std::fma is a library call on that chain, so
+        // there it is the plain products.
         auto minus_mul = [](complex e, complex c, complex x) {
+#if defined(__FMA__) || defined(__aarch64__) || defined(__ARM_FEATURE_FMA)
             return complex(std::fma(c.imag(), x.imag(), std::fma(-c.real(), x.real(), e.real())),
                     std::fma(-c.imag(), x.real(), std::fma(-c.real(), x.imag(), e.imag())));
+#else
+            return complex(e.real() - c.real() * x.real() + c.imag() * x.imag(),
+                    e.imag() - c.real() * x.imag() - c.imag() * x.real());
+#endif
         };
         // Right side [1 + alpha_rhs Q] psi at a row, psi_0 from the ground
         // condition and psi_n = 0.
@@ -272,9 +281,8 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
                 return mul(rhs_off, psi[m - 2]) + mul(rhs_main[m - 1], psi[m - 1]);
             return mul(rhs_off, psi[row - 1] + psi[row + 1]) + mul(rhs_main[row], psi[row]);
         };
-        const std::size_t down = p;         // rows 0 .. p-1
-        const std::size_t up = m - 1 - p;   // rows m-1 .. p+1
-        const std::size_t both = std::min(down, up);
+        const std::size_t both = p;         // rows 0 .. p-1 down, and as many up
+        const std::size_t up = m - 1 - p;   // rows m-1 .. p+1: p, or p + 1
         // Eliminate: both chains a row at a time, from the ends inward.  The
         // end rows carry the boundary conditions and go first; inside, the
         // right side is the plain three-point stencil.
@@ -292,16 +300,13 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
             w[rt] = top;
             w[rb] = bottom;
         }
-        for (std::size_t k = both; k < down; k++)
-            w[k] = top = minus_mul(mul(rhs(k), inv[k]), chain[k], top);
         for (std::size_t k = both; k < up; k++)
         {
             const std::size_t rb = m - 1 - k;
             w[rb] = bottom = minus_mul(mul(rhs(rb), inv[rb]), chain[rb], bottom);
         }
         // The meeting row, then substitute back outward, again two chains.
-        const complex x_p = mul(rhs(p) - mul(lower_p, p > 0 ? w[p - 1] : complex(0.0))
-                        - mul(upper_p, p + 1 < m ? w[p + 1] : complex(0.0)), inv[p]);
+        const complex x_p = mul(rhs(p) - mul(lower_p, w[p - 1]) - mul(upper_p, w[p + 1]), inv[p]);
         psi[p] = x_p;
         top = x_p;
         bottom = x_p;
@@ -312,11 +317,6 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
             bottom = minus_mul(w[rb], back[rb], bottom);
             psi[rt] = top;
             psi[rb] = bottom;
-        }
-        for (std::size_t k = both; k < down; k++)
-        {
-            const std::size_t rt = p - 1 - k;
-            psi[rt] = top = minus_mul(w[rt], back[rt], top);
         }
         for (std::size_t k = both; k < up; k++)
         {
@@ -822,9 +822,9 @@ PeResult solve_pe_impl(const PeSetup& s, bool keep_field)
     const complex denominator = 3.0 - 2.0 * i * k_a * s.admittance * dz;
     const complex g1 = 4.0 / denominator;
     const complex g2 = -1.0 / denominator;
-    const std::size_t m = n - 1; // unknowns psi_1 .. psi_{n-1}
-    if (m < 3)
+    if (n < 4)
         throw std::invalid_argument("solve_pe: the grid is too small");
+    const std::size_t m = n - 1; // unknowns psi_1 .. psi_{n-1}
     op.a = a;
     op.g1 = g1;
     op.g2 = g2;
