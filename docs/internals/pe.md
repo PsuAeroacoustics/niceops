@@ -173,6 +173,9 @@ their printed digits under `--scheme cn`.
   - That multiply-add is written as two explicit `std::fma` per part (`minus_mul`). Left to
     itself the compiler contracts inside the multiply and leaves a subtract at the end, which
     puts 11 cycles of latency on the chain where 8 will do; that alone was 5.1 -> 2.7 ns.
+    Only where the target has a fused multiply-add (`__FMA__`, AArch64): on x86-64 without
+    `-mfma`, which is how CI's GCC builds, each `std::fma` is a call into libm on the chain, so
+    there it is the plain products, and the results differ from an FMA build by round-off.
 
   Output matches the plain Thomas sweep to about 1e-9 dB (the same arithmetic reordered).
 - **Crank–Nicolson's grid is 20 points per wavelength in height and 10 in range.** Ten in
