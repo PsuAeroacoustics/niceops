@@ -1196,6 +1196,14 @@ set_tests_properties(urban_table_builder_checks_units PROPERTIES PASS_REGULAR_EX
 add_test(NAME point_field_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_rays.csv -j 2 -o integrated/point_field.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME point_field_refuses_inside COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1060 230 10 --microphones tests/data/urban_observers.csv --bands 125 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "--source stands inside building 4")
+# A source that moves (--sources): each row of tests/data/point_sources.csv over every microphone, the
+# first the point_field_runs source.  The library test `a field from ends traced once is the pair's own`
+# holds the fields to the single-source ones ray for ray.
+add_test(NAME point_field_sources_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_sources_rays.csv -j 2 -o integrated/point_field_sources.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_refuses_two_sources COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(point_field_refuses_two_sources PROPERTIES PASS_REGULAR_EXPRESSION "excludes")
+add_test(NAME point_field_refuses_nonfinite COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources_nan.csv --microphones tests/data/urban_observers.csv --bands 125 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(point_field_refuses_nonfinite PROPERTIES PASS_REGULAR_EXPRESSION "row 2's y is not a finite number")
 # --atmosphere through a single-level profile holding the vehicle file's own
 # atmosphere has to reproduce the homogeneous run: the whole layered-absorption
 # path (the table, the per-state and per-observer integrals, the per-path mean)

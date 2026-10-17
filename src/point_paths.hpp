@@ -13,9 +13,11 @@
 //     the source lights only by a reflection diffracts too;
 //   - diffracted twice: between two edges, the source's and the
 //     microphone's images to one reflection each.  The two diffraction
-//     points are where the path is stationary, found by meeting the
-//     single-edge condition at each in turn; the ray between the edges
-//     reflects in nothing.  Two parallel edges that share a face -- a flat
+//     points are where the path is stationary: a fixed point of meeting
+//     the single-edge condition at each in turn, found by Steffensen's
+//     method (in closed form for parallel edges), and a pair whose point
+//     does not converge is no ray; the ray between the edges reflects in
+//     nothing.  Two parallel edges that share a face -- a flat
 //     roof between its two edges, a wall between two corners -- take the
 //     uniform form of double_wedge.hpp, in the plane normal to them, at
 //     k sin(beta), and spread along them as the ray does.  Any other pair,
@@ -37,6 +39,7 @@
 #include "buildings.hpp"
 #include "double_wedge.hpp"
 #include "vec3.hpp"
+#include "wedge.hpp"
 
 namespace niceops {
 
@@ -57,17 +60,23 @@ struct PointPathOptions
     // microphone (m).
     double radius = 150.0;
     std::size_t max_images = 20000;
+    // Rule out twice-diffracted pairs before solving them: where the source's
+    // image cannot light the first edge, or the microphone's see the second,
+    // or no point of either edge can put the other's stationary point on it.
+    // Off, every pair is solved: slower, and the reference the tests hold
+    // these to (they must find the same rays).
+    bool prune = true;
 };
 
-// One wedge on a ray: its exterior angle (n pi), the departure and arrival
-// angles in its own angle, sin(beta) of the ray to the edge, the distance
-// parameter in the plane normal to the edge, L / sin(beta), and whether the
-// incident wave grazes a face.
+// One wedge on a ray: its exterior angle (n pi) and the departure and arrival
+// angles in its own angle, as wedge_angles(n, theta, theta0) -- the part of
+// its coefficient that every wavenumber the ray is taken at shares --
+// sin(beta) of the ray to the edge, the distance parameter in the plane
+// normal to the edge, L / sin(beta), and whether the incident wave grazes a
+// face.
 struct WedgeTerm
 {
-    double n = 1.5;
-    double theta = 0.0;
-    double theta0 = 0.0;
+    WedgeAngles angles;
     double sin_beta = 1.0;
     double distance = 0.0;
     bool grazing = false;
@@ -103,12 +112,72 @@ struct PointRay
     std::vector<Vec3> path;
 };
 
+// One end of the paths, a source or a microphone, with what does not depend
+// on the other end, for a run that pairs it with many (a moving source): its
+// image tree.  `partners` are the edges near every end it will be paired
+// with -- edges_near over their points, at options.radius -- and its images
+// keep those and its own near edges (`candidates`) that cross their beams.  A
+// pair then keeps the ones near it, which are the lists the pair's own tree
+// would have; a pair whose edges an end was not traced with is refused.
+// Built and used with the same options.
+class PathEnd
+{
+public:
+    // Throws std::invalid_argument where `partners` is not ascending without
+    // repeats.
+    PathEnd(const Buildings& buildings, const Vec3& point, bool source, const PointPathOptions& options,
+            const std::vector<std::size_t>& partners);
+
+    const Vec3& point() const
+    {
+        return point_;
+    }
+    // The edges within options.radius of the point, and those and the
+    // partners', ascending.
+    const std::vector<std::size_t>& near() const
+    {
+        return near_;
+    }
+    const std::vector<std::size_t>& candidates() const
+    {
+        return candidates_;
+    }
+    const ImageTree& tree() const
+    {
+        return tree_;
+    }
+    // Which end it is, and the options its tree was traced with.
+    bool source() const
+    {
+        return source_;
+    }
+    const PointPathOptions& options() const
+    {
+        return options_;
+    }
+
+private:
+    Vec3 point_;
+    bool source_ = false;
+    PointPathOptions options_;
+    std::vector<std::size_t> near_;
+    std::vector<std::size_t> candidates_;
+    ImageTree tree_;
+};
+
 class PointSourceField
 {
 public:
     // Source and microphone in the local frame, z above the floor.  The
     // buildings must outlive this.
     PointSourceField(const Buildings& buildings, const Vec3& source, const Vec3& microphone,
+            const PointPathOptions& options = {});
+
+    // The same field from two ends traced beforehand, the same to the bit;
+    // throws std::invalid_argument where the ends are not a source and a
+    // microphone traced with these options, or one was not traced with the
+    // edges near the other.
+    PointSourceField(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
             const PointPathOptions& options = {});
 
     const std::vector<PointRay>& rays() const
@@ -125,13 +194,26 @@ public:
             double sound_speed, double* out) const;
 
 private:
+    // An end's images and, per image, the edges the pair keeps.
+    struct Ends
+    {
+        const std::vector<PointImage>& images;
+        const std::vector<std::vector<std::size_t>>& edges;
+    };
+    void trace(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
+            const PointPathOptions& options);
+
     std::vector<PointRay> rays_;
     std::size_t facade_count_ = 0;
 };
 
 // A ray's complex amplitude at wavenumber k; `reflection` is the facades'
-// energy reflection coefficients for one band, [facade].
+// energy reflection coefficients for one band, [facade].  It is what the
+// ray's spreading and reflections leave (reflected_amplitude), the same at
+// every wavenumber of the band, times what its wedges do at k.
 std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<double>& reflection,
         double floor_reflection, double k);
+double reflected_amplitude(const PointRay& ray, const std::vector<double>& reflection, double floor_reflection);
+std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, double k);
 
 } // namespace niceops

@@ -43,6 +43,7 @@
 #include "diffuse_facades.hpp"
 #include "urban.hpp"
 #include "vec3.hpp"
+#include "wedge.hpp"
 
 namespace niceops {
 
@@ -87,9 +88,10 @@ struct BuildingRay
     int floor = 0;
     bool diffracted = false;
     std::size_t edge = 0;
-    double n = 1.5;
-    double theta = 0.0;
-    double theta0 = 0.0;
+    // A diffracted ray's departure and arrival in the edge's own angle, as
+    // wedge_angles takes them: the coefficient is wanted at every sub-band's
+    // wavenumber.
+    WedgeAngles angles;
     double sin_beta = 1.0;
     double s = 0.0;
     // The run's first-order reflection or its floor partner.
@@ -106,6 +108,11 @@ std::vector<Vec3> specular_departures(const Buildings& buildings, const std::vec
 // One facade per orientation among the facades within `radius` (horizontal,
 // m) of `point`: the planes its specular departures are made in.
 std::vector<std::size_t> orientations_near(const Buildings& buildings, const Vec3& point, double radius);
+
+// The edges within `radius` (horizontal, m) of `point`, or of any of
+// `points`, ascending: the edges a ray from or to there may diffract at.
+std::vector<std::size_t> edges_near(const Buildings& buildings, const Vec3& point, double radius);
+std::vector<std::size_t> edges_near(const Buildings& buildings, const std::vector<Vec3>& points, double radius);
 
 // A specular ray traced back from a point: the facades it reflected in, the
 // point's side first, how far it went to its last reflection, and where that
@@ -138,7 +145,9 @@ struct PointImage
 // `max_order` reflections and at most `max_images` images, each carrying the
 // part of its last facade through which the point can be reached; a further
 // facade counts only where it lies in that beam, and of `candidate_edges` an
-// image keeps those whose plan crosses it.  The point itself is the first.
+// image keeps those whose plan crosses it -- an image of more than
+// `edge_order` reflections none, for a caller that diffracts nothing so deep.
+// The point itself is the first.
 struct ImageTree
 {
     std::vector<PointImage> images;
@@ -146,7 +155,8 @@ struct ImageTree
     bool truncated = false; // stopped at max_images
 };
 ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radius, std::size_t max_order,
-        std::size_t max_images, bool beams, const std::vector<std::size_t>& candidate_edges);
+        std::size_t max_images, bool beams, const std::vector<std::size_t>& candidate_edges,
+        std::size_t edge_order = static_cast<std::size_t>(-1));
 
 // Whether a ray from `from` reaches `point` (or, below the floor, its floor
 // image) by reflecting in `facades` (the point's side first): the unfolded
@@ -206,13 +216,34 @@ private:
     std::vector<std::size_t> planes_;   // the orientations within reach
     std::vector<Image> images_;
     std::vector<std::vector<std::size_t>> image_edges_; // per image, the edges whose rays can reach it
+    // Per image, edge of its list and floor (2 j + floor): where the image, or
+    // its floor image, stands about the edge -- along it from its start and
+    // across from its line -- which every direction's Keller point needs and
+    // none changes.  `low` and `high` bound cot(beta) for a Keller point on
+    // the edge, and `air` says whether the image can lie in the wedge's air,
+    // which does not depend on where along the edge it is seen from (false
+    // for an image on the edge's line); both are a hair generous, prefilters
+    // for rays()'s own tests.
+    struct Foot
+    {
+        double along = 0.0;
+        double across = 0.0;
+        double low = 0.0;
+        double high = 0.0;
+        bool air = false;
+    };
+    std::vector<std::vector<Foot>> image_feet_;
     bool truncated_ = false;
 };
 
 // A ray's complex amplitude at wavenumber k, `reflection` being the facades'
-// energy reflection coefficients for one band, [facade].
+// energy reflection coefficients for one band, [facade]: what its
+// reflections leave of it (reflected_amplitude), which is the same at every
+// wavenumber of the band, times its wedge's coefficient.
 std::complex<double> ray_amplitude(const BuildingRay& ray, const std::vector<double>& reflection,
         double floor_reflection, double k);
+double reflected_amplitude(const BuildingRay& ray, const std::vector<double>& reflection, double floor_reflection);
+std::complex<double> ray_amplitude(const BuildingRay& ray, double reflected, double k);
 
 // A receiver's table over `axes`, [azimuth][elevation][band] in dB (floored
 // at urban_gain_floor_db), its azimuths compass bearings and the local +x

@@ -108,6 +108,15 @@ What to keep:
   - **Pairs whose sinc is below 1/30 are skipped**, the rays sorted by length; that and computing
     each ray's phase once per sub-band took a seven-receiver build from 139 to 40 s of CPU,
     and moved the specular-limit test's mean by 4e-5 dB. Directions are threaded.
+  - **Each pair's sine comes from the rays' own**, sin(h dL) = sin(h L_i) cos(h L_j) - cos(h L_i)
+    sin(h L_j), so a pair costs a multiply-add and a divide, two pairs at a time through GCC/Clang
+    vector types (the compiler judges a loop of double divides not worth vectorizing; 0.5-0.7 ns
+    a pair against 1.6 on an M4 Pro). **Below h dL = 0.1 the sinc is its series instead**, and that
+    is load-bearing: the difference of products carries the absolute error of h L itself, 1e-12
+    at 10 kHz a kilometre from the frame's origin, and a district table moved by 2.4e-4 dB in one
+    direction until the near pairs took the series. With it every table is within 2e-10 dB of
+    the per-pair `sin`, and `the band-averaged sum is each pair's own sinc` holds it there
+    (without the series it fails by sixteen times its tolerance).
   - **The kernel's boundary tie:** on a shadow or reflection boundary the geometrical-optics test
     and the coefficient's limit must take the same side (`hard_wedge_field` moves theta off a
     boundary once); in floating point theta + theta0 can land a hair under pi.
@@ -193,10 +202,23 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
   has dropped the highest orders rather than whole branches; depth first, a stopped search
   read 0.36 dB low in energy on the FIDELITY district. The facades' mutual visibility is a
   sampled prefilter (20 points on each face, in the mirror world), a heuristic that a gap
-  narrower than its samples could fool; every ray is still tested exactly.
+  narrower than its samples could fool; every ray is still tested exactly. It is worked out
+  when first asked, after the beam's own test, with the samples in the same order as before:
+  most pairs are never asked, and a point source's two trees per pair went from 6.3 to 2.1 ms.
 - **Everything that does not depend on the direction is built once per microphone**: the
-  frames, the orientations, the edges within `radius`, the images and their edges. A direction
-  costs the traces, the Keller points and their tests.
+  frames, the orientations, the edges within `radius`, the images and their edges, and each
+  (image, edge, floor)'s foot on the edge (`BuildingReceiver::Foot`): its distance along and
+  across, the range of cot(beta) that puts a Keller point on the edge, and whether the image
+  can lie in the wedge's air at all, which does not depend on where along the edge it is seen
+  from. A direction costs the traces, the Keller points and their tests; 85% of the
+  (image, edge, floor) triples miss the edge, and they now cost two comparisons. The prefilters
+  are a hair generous and the exact tests stand behind them, so the tables did not change by a
+  bit.
+- **A ray's wedge angles are worked out once** (`WedgeAngles`, `wedge.hpp`): the coefficient's
+  four cotangents and cosines depend on the angles alone, and a ray is evaluated at 93
+  sub-bands. `hard_wedge_coefficient(n, theta, theta0, k, r)` is the split form to the bit. With
+  the pair sum and the foot prefilters this took a builder receiver from 1.75 to 0.77 s on the
+  49-block benchmark district (`niceops_urban_table`, 72 by 33 directions, 31 bands).
 - **The run's facades are the table's exclusions.** The tool writes the facades within
   `--facade_radius` that face the microphone, and passes the same list as `run_facades`, so the
   table leaves out exactly the first-order reflections (and floor partners) the run evaluates.
@@ -300,6 +322,126 @@ exactly. What to keep:
   runs (C++17 does not extend it through a member call); two tests did, and read garbage.
 - `tools/building_input.hpp` is the district and microphone reading both urban tools share; a
   change to the CSV or GeoJSON rules goes there once.
+
+**Where its time goes, and what not to undo.** On the 49-block benchmark district (a drone 30 m
+up, 185 street microphones, 24 bands) a pair took 1.55 s of CPU and takes 0.08 s; DigiCity's
+1427-point grid (17 bands) went from 0.33 to 0.043 s a pair. In order of what it bought:
+
+- **Twice-diffracted pairs are ruled out before they are solved**, which removes 90% of them.
+  Whether the source's image lights the first edge, and the microphone's sees the second, does
+  not depend on where along the edge (`seen_from`, a hair generous); and a stationary point lies
+  between its image's foot and the other edge's feet, at the fraction off_p / (off_p + off_q) of
+  the way, which bounds it from the edges' spans (`keller_can_reach`, the cheap
+  `keller_between` first). `PointPathOptions::prune` switches them off, and `pruning the
+  twice-diffracted pairs loses no ray` holds the rays the same to the bit with and without (a
+  slack of -0.5 m in the reach test fails it); the ray dumps of DigiCity's grid and the district
+  were byte-identical too.
+- **The fixed point is found by Steffensen's method**, in closed form for parallel edges
+  (`parallel_stationary`; the map is affine there), and a pair that does not converge in 100
+  steps is no ray. The plain alternation it replaced took 16 steps on average and stopped at
+  200 whether or not it had converged, and near a corner where a roof edge meets a vertical one
+  it was still creeping toward the corner -- 0.36 mm a step, 4 cm short -- when it stopped. Those
+  iterates were accepted as rays with s2 of a few centimetres, and their spreading made them
+  strong (what rejecting them moved is in
+  [HISTORY](../HISTORY.md#urban-receivers)). A corner's own diffraction is left out of the
+  model, and these were not it. Steffensen's step falls back to the map itself where it does not
+  bring the residual down, and reuses the map it has already taken there.
+- **The checks after a solve run cheap to dear**: the angles, then `buried`, then the legs. The
+  first leg is blocked for half of what converges.
+- **The shared-face aperture is integrated by Filon's rule** (`double_wedge.cpp`), 6 to 24 times
+  fewer integrand evaluations than the midpoint rule at a 24th of a wavelength and ten times its
+  accuracy ([FIDELITY](../FIDELITY.md#a-point-source-among-buildings) has both against a 192nd of
+  a wavelength). Three things in it are load-bearing:
+  - **A segment's end nodes sit a hair inside it.** The wedge coefficient jumps at a cut, and on
+    the cut it takes one side's value; a node exactly there put the other side's value into a
+    panel's quadratic, up to 28 dB off. A microphone in a roof's plane (theta = pi) puts both
+    boundaries at the edge, t = 0, so the first node is nudged too (6.5 dB off without).
+    `the aperture's Filon rule is the fine midpoint rule's` takes both cases, and fails by 6.8 dB
+    without the nudge.
+  - **The panels grade from the edge and the cuts only**, at 0.15 of the distance plus 1% of
+    min(w, s1); the taper's start and the aperture's end are panel ends but not features.
+    Grading from them as well cost twice the evaluations for nothing.
+  - **The moments choose series or recurrence by the panel's phase in magnitude.** Every path
+    length that counts grows along the aperture, so the phase is positive in every case met; a
+    panel along which one shrank would otherwise take the series far past the radian it holds
+    to. The Filon test's obtuse corners (n = 1.25) are what take the wave off the second
+    wedge's other face, which right-angled faces never reach.
+  Its second wedge's coefficient comes from a `WedgeSweep`: theta is fixed along the aperture,
+  so each term's angle is theta's part plus theta0's, by the angle-addition formulas, two sincos
+  calls a node instead of twelve calls. Within 1e-8 rad of a term's pole the sum of products
+  cancels, and that term takes `wedge_angles`' own path; elsewhere the two agree to 1e-9
+  (`the wedge sweep is the coefficient to round-off`).
+- **The pair sum's vectorized difference form** (above, under the canyon): with a thousand rays
+  a pair it is still a quarter of the district's time.
+- **`band_levels` sorts indices**, not a copy of the rays and their paths.
+- **Whether a direction is in a wedge's air is decided by signs** (`Edge::air_by_sign`): its
+  components along `air` and `air1`, the two faces' normals toward the air, settle it wherever it
+  lies 4e-7 rad or more from a face -- wider than onto_face's 1e-7 snap, the widest slack any
+  caller gives the angle -- and the angle is taken only inside that margin, and for the rays kept.
+  Widen a caller's slack past it and the signs would decide what the angle would not. The ray
+  dumps did not change by a byte.
+- **Each edge pair's geometry is worked out once a field** (`EdgePair`, two `Side`s, in a table
+  hashed by the pair and cleared by generation, so that its memory follows the pairs met rather
+  than the square of the edges near): each segment's span about the other's line, which the
+  pre-checks read, and its points as that line sees them, affine in their parameter. A pair was
+  met eight times on average, once per image pair. The stationary point's iteration reads the
+  source's and microphone's places from the pre-checks (`Seen`), so `keller_point` takes one
+  square root an edge, not two.
+- **A moving source traces each end once** (`PathEnd`, `--sources`). A field's image trees depend
+  on the pair only through which near edges each image keeps, so an end traced with the edges
+  near every end it will meet (its `partners`, `edges_near` over their points, ascending), each
+  pair then keeping those near it, gives the pair's own lists in the pair's own order. A pair
+  whose edges an end was not traced with is refused, as are ends in the wrong roles or traced with
+  other options, and `a field from ends traced once is the pair's own` checks all of it. The
+  single-pair constructor builds its two ends the same way, so every field goes by this road.
+  Images deeper than the edge order keep no edges (`image_tree`'s `edge_order`): nothing diffracts
+  through them. That order is `max_edge_reflections`, but at least one wherever double
+  diffraction is on, because the twice-diffracted search takes the microphone's images to one
+  reflection whatever `max_edge_reflections` is. Without the floor of one, a run at 0 loses two
+  thirds of its twice-diffracted rays; `twice-diffracted rays reflect at the microphone whatever
+  the edge order` holds it.
+  The ends are cheap -- about 3% of a pair, 2 ms against 55 ms of CPU on the district -- so
+  what `--sources` buys over a run per source is mostly being one process, with every worker
+  busy to the end. The tool runs the sources a block at a time (64, or four per worker) to bound
+  what it holds: the block's ends, levels and, for `--rays`, ray text, written out before the
+  next. Within a block the pairs go microphone by microphone, which keeps the workers busy
+  however few microphones there are, and each worker keeps the microphone's end while its pairs
+  last; across a block boundary it is traced again, which the 3% makes noise.
+- **A ray's reflections are taken once a band** (`reflected_amplitude`, both models): the square
+  roots of its facades' and the floor's reflection, which no sub-band changes; the coefficient
+  is the only per-wavenumber part. `ray_amplitude` and `point_ray_amplitude` compose the two,
+  so the table builder and the point-source model share one spelling of each.
+- With the first two (and `folded_path_open`'s scratch kept per thread, and single
+  diffraction's edges matched by one pass along both sorted lists) a pair's path search fell by
+  about a third and the whole pair by 11%. The bands are now two thirds of a pair, the shared
+  faces' integrals half of that and the pair sum most of the rest. The Filon panel's moments
+  below a radian are a fixed polynomial in phase^2 (`filon_series`), not a series summed term by
+  term, which took the shared-face integral down by a further third.
+
+Measured and left alone:
+
+- **Dropping weak rays does not pay.** Leaving out of each band the weakest rays, together under a
+  share of its energy (ranked at the middle sub-band, whose amplitudes the kept rays reuse), saved
+  1.3x at a share of 1e-4, 1.5x at 1e-3 and 1.7-1.8x at 1e-2 on the district and DigiCity, for
+  level changes of 0.09-0.21, 0.72-0.84 and 1.4-3.5 dB at worst (0.04-0.06, 0.17-0.20 and
+  0.69-0.72 dB at the 99th percentile). Two things cap it. A ray with a thousandth of the energy
+  can still be a near-twin of a strong one -- the same path off the floor, a hair longer -- and
+  its cross term is then sqrt of its share, not its share: ranking by energy plus that overlap
+  (the rays within pi / h of it) holds the change to 0.006-0.14 dB, but then little is dropped
+  and the saving is 1.1-1.2x. And the rays' bands are no longer the cost: the twice-diffracted
+  search is, and an energy test cannot prune it cheaply -- those rays are relatively strongest in
+  the lowest band, where a 60 dB floor keeps most of them, and bounding a ray's coefficient costs
+  what the visibility tests it would skip cost. A shared face's ray cannot be ranked by its
+  cascade either: on the district its uniform form is up to 53 dB stronger, a source exactly in
+  a roof's plane.
+- **Neither do cheaper ray sets.** Twice-diffracted rays off the floor at both ends carry 0.1% of
+  any band's energy but are near-twins of others: leaving them out moved levels by 1.5-2.7 dB.
+  Without double diffraction the district runs 13x faster and some microphones receive nothing;
+  those rays carry up to 41% of a band elsewhere. A 100 m `--radius` moves levels by up to 42 dB.
+- **Nor does pruning hidden edges.** Proving an edge wholly hidden by one convex building
+  (`blocked` by a building shrunk by twice `contact` at both ends means blocked between, by
+  convexity) prunes only 7-25% of the edges; even sampled every half metre, a source 30 m up sees
+  some of all but 8% of the edges within 150 m, and a street microphone some of 45-72%.
 
 ### The canyon wave solver (`src/canyon_wave`)
 

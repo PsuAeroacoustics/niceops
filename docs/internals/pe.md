@@ -91,8 +91,9 @@ and the tools `tools/pe_compare.cpp` (`niceops_pe_compare`), `tools/benchmark.cp
   p = psi exp(i k_a r)/sqrt(r) a unit point source. `tests/test_pe.cpp` holds it to the exact
   two-ray field (rigid) and to Weyl–van der Pol through NICEOPS's own
   `spherical_reflection_coefficient` (grass), which checks the ground condition's sign too.
-- **The kernel pairs terms into two-lane vectors by hand** (`Lanes`, as `Pair` in
-  `sphere_database.cpp`), with the term count a template parameter. From scalar source the
+- **The kernel pairs terms into two-lane vectors by hand** (`Lanes`, `src/util/lanes.hpp`, which
+  the band-averaged pair sum shares; as `Pair` in `sphere_database.cpp`), with the term count a
+  template parameter. From scalar source the
   compiler ran one term at a time: 11.7 ns a row against 5.9 (second order, eight terms). Each
   solve stores one complex number per row (e_r = a / pivot; the off-diagonals are all a, so the
   forward and back coefficients coincide), which halves what a step streams through the cache.

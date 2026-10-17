@@ -636,3 +636,50 @@ TEST_CASE("the wave band's weights and blend", "[urban]")
     std::vector<double> short_wave(5, 0.0);
     REQUIRE_THROWS_AS(blend_wave_band(gains, reflection, short_wave, weight), std::invalid_argument);
 }
+
+// band_averaged_energy takes each pair's sine from the rays' own and, for
+// pairs close in length, the sinc's series.  Against each pair's own sin(x) / x
+// it must agree to round-off even a kilometre from the frame's origin at 10 kHz,
+// where h L is thousands of radians and pairs a fraction of a micrometre apart
+// lost the sine's precision in the difference of products.
+TEST_CASE("the band-averaged sum is each pair's own sinc", "[urban]")
+{
+    std::mt19937 generator(11);
+    std::uniform_real_distribution<double> uniform(0.0, 1.0);
+    for (double f : {63.0, 1000.0, 10000.0})
+    {
+        std::vector<double> length;
+        std::vector<std::complex<double>> amplitude;
+        for (int i = 0; i < 300; i++)
+        {
+            const double l = 1000.0 + 300.0 * uniform(generator);
+            length.push_back(l);
+            // Near-twins, from 1e-9 m to a few mm apart.
+            if (i % 4 == 0)
+                length.push_back(l + std::pow(10.0, -9.0 + 6.5 * uniform(generator)));
+        }
+        std::sort(length.begin(), length.end());
+        for (std::size_t i = 0; i < length.size(); i++)
+            amplitude.push_back(std::polar(0.1 + uniform(generator), 2.0 * pi * uniform(generator)));
+        const double k = 2.0 * pi * f / 343.2, k1 = k / std::pow(2.0, 1.0 / 18.0), k2 = k * std::pow(2.0, 1.0 / 18.0);
+        // The reference: the same pairs, each with its own sin(x) / x.
+        const double mid = 0.5 * (k1 + k2), half = 0.5 * (k2 - k1), reach = 30.0 / half;
+        double reference = 0.0, scale = 0.0;
+        for (std::size_t i = 0; i < length.size(); i++)
+        {
+            reference += std::norm(amplitude[i]);
+            scale += std::abs(amplitude[i]);
+            for (std::size_t j = i + 1; j < length.size() && length[j] - length[i] < reach; j++)
+            {
+                const double x = half * (length[i] - length[j]);
+                const double sinc = std::abs(x) < 1e-8 ? 1.0 : std::sin(x) / x;
+                reference += 2.0
+                        * std::real(amplitude[i] * std::polar(1.0, mid * length[i])
+                                * std::conj(amplitude[j] * std::polar(1.0, mid * length[j])))
+                        * sinc;
+            }
+        }
+        INFO(f << " Hz");
+        REQUIRE(std::abs(band_averaged_energy(amplitude, length, k1, k2) - reference) < 1e-11 * scale * scale);
+    }
+}

@@ -12,6 +12,7 @@
 
 #include "pade_propagator.hpp"
 #include "util/constants.hpp"
+#include "util/lanes.hpp"
 #include "util/parallel.hpp"
 
 namespace niceops {
@@ -337,51 +338,9 @@ March crank_nicolson_march(const VerticalOperator& op, double k_a, double dr)
 // as there are terms -- throughput-bound, where Crank-Nicolson's single solve
 // waits on its own latency.  Storage is term-innermost to match, two doubles
 // of factor and two of w per term per row.
-// Two terms' worth of one real quantity.  The compiler would not vectorize the
-// march across terms from scalar code -- it came out one term at a time, a
-// third as fast -- so the pairing is explicit: the GCC/Clang vector type where
-// there is one, and a plain struct that says the same thing where there is not.
-#if defined(__GNUC__)
-
-typedef double Lanes __attribute__((vector_size(2 * sizeof(double))));
-
-#else
-
-struct Lanes
-{
-    double v[2];
-
-    double operator[](std::size_t lane) const
-    {
-        return v[lane];
-    }
-    double& operator[](std::size_t lane)
-    {
-        return v[lane];
-    }
-};
-
-inline Lanes operator+(Lanes a, Lanes b)
-{
-    return Lanes {{a.v[0] + b.v[0], a.v[1] + b.v[1]}};
-}
-
-inline Lanes operator-(Lanes a, Lanes b)
-{
-    return Lanes {{a.v[0] - b.v[0], a.v[1] - b.v[1]}};
-}
-
-inline Lanes operator*(Lanes a, Lanes b)
-{
-    return Lanes {{a.v[0] * b.v[0], a.v[1] * b.v[1]}};
-}
-
-#endif
-
-inline Lanes both(double value)
-{
-    return Lanes {value, value};
-}
+// Two terms' worth of one real quantity: util/lanes.hpp.  The compiler would
+// not vectorize the march across terms from scalar code -- it came out one term
+// at a time, a third as fast -- so the pairing is explicit.
 
 constexpr std::size_t max_pade_pairs = 12;
 

@@ -132,6 +132,28 @@ std::vector<std::size_t> facing_facades(const Buildings& buildings, const Vec3& 
     return out;
 }
 
+std::vector<std::size_t> edges_near(const Buildings& buildings, const Vec3& point, double radius)
+{
+    return edges_near(buildings, std::vector<Vec3> {point}, radius);
+}
+
+std::vector<std::size_t> edges_near(const Buildings& buildings, const std::vector<Vec3>& points, double radius)
+{
+    std::vector<std::size_t> near;
+    for (std::size_t e = 0; e < buildings.edges().size(); e++)
+    {
+        const Edge& edge = buildings.edges()[e];
+        const Vec3 end = edge.start + edge.length * edge.direction;
+        for (const Vec3& p : points)
+            if (horizontal_distance_to_segment(p, edge.start, end) <= radius)
+            {
+                near.push_back(e);
+                break;
+            }
+    }
+    return near;
+}
+
 std::vector<std::size_t> orientations_near(const Buildings& buildings, const Vec3& point, double radius)
 {
     std::vector<std::size_t> planes;
@@ -200,7 +222,7 @@ bool trace_specular(const Buildings& buildings, const Vec3& start, const Vec3& d
 }
 
 ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radius, std::size_t max_order,
-        std::size_t max_images, bool beams, const std::vector<std::size_t>& candidate_edges)
+        std::size_t max_images, bool beams, const std::vector<std::size_t>& candidate_edges, std::size_t edge_order)
 {
     // The images a ray can reach the point through: breadth first over the
     // facades within the radius, each a mirror in a facade the current image
@@ -242,9 +264,14 @@ ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radiu
                 return true;
         return false;
     };
-    std::vector<std::vector<char>> sees(near.size(), std::vector<char>(near.size(), 0));
-    for (std::size_t a = 0; a < near.size(); a++)
-        for (std::size_t b = a + 1; b < near.size(); b++)
+    // Whether two of them see each other, found when first asked: most pairs
+    // never are, the beam having ruled them out (0 not yet known, 1 no, 2 yes).
+    std::vector<char> known(near.size() * near.size(), 0);
+    auto sees = [&](std::size_t a, std::size_t b) {
+        if (a > b)
+            std::swap(a, b);
+        char& k = known[a * near.size() + b];
+        if (k == 0)
         {
             bool found = false;
             for (std::size_t i = 0; i < samples[a].size() && !found; i++)
@@ -255,8 +282,10 @@ ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radiu
                     found = side(near[a], samples[b][j]) > Buildings::contact
                             && !buildings.blocked(samples[a][i], samples[b][j], true);
             }
-            sees[a][b] = sees[b][a] = found;
+            k = found ? 2 : 1;
         }
+        return k == 2;
+    };
     // Each image carries its beam: a further mirror counts only in a facade,
     // or the part of one, that lies in it, and that part becomes the next
     // image's window.  Exact in plan view; heights and occlusion are left to
@@ -304,13 +333,14 @@ ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radiu
             for (std::size_t b = 0; b < near.size(); b++)
             {
                 Frontier next;
-                if (b != f.last && sees[f.last][b] && child(f, b, next))
+                if (b != f.last && child(f, b, next) && sees(f.last, b))
                     queue.push_back(std::move(next));
             }
         // The edges a ray could diffract from to reach this image: those
         // crossing its beam.
+        static const std::vector<std::size_t> none;
         std::vector<std::size_t> edges;
-        for (std::size_t e : candidate_edges)
+        for (std::size_t e : f.image.facades.size() <= edge_order ? candidate_edges : none)
         {
             const Edge& edge = buildings.edges()[e];
             const Vec3 end = edge.start + edge.length * edge.direction;
@@ -332,10 +362,13 @@ bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& 
         hits->clear();
     const auto& all = buildings.facades();
     // The images along the chain: targets[j] is the point mirrored in the
-    // first j facades.
+    // first j facades.  Per thread and reused: this runs for every candidate
+    // ray of the point-source search.
     const Vec3 start = below_floor ? Vec3(point.x, point.y, -point.z) : point;
-    std::vector<Vec3> targets {start};
-    std::vector<Frame> frames;
+    thread_local std::vector<Vec3> targets;
+    thread_local std::vector<Frame> frames;
+    targets.assign(1, start);
+    frames.clear();
     for (std::size_t f : facades)
     {
         frames.push_back(frame_of(all[f]));
@@ -370,19 +403,42 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
     , run_facades_(std::move(run_facades))
     , options_(options)
 {
-    for (std::size_t e = 0; e < buildings.edges().size(); e++)
-    {
-        const Edge& edge = buildings.edges()[e];
-        if (horizontal_distance_to_segment(microphone, edge.start, edge.start + edge.length * edge.direction)
-                <= options.radius)
-            edges_.push_back(e);
-    }
+    edges_ = edges_near(buildings, microphone, options.radius);
     planes_ = orientations_near(buildings, microphone, options.radius);
     ImageTree tree = image_tree(buildings, microphone, options.radius,
             options.diffraction ? options.max_diffracted_order : 0, options.max_images, options.beams, edges_);
     images_ = std::move(tree.images);
     image_edges_ = std::move(tree.edges);
     truncated_ = tree.truncated;
+    image_feet_.resize(images_.size());
+    for (std::size_t i = 0; i < images_.size(); i++)
+    {
+        const Vec3& p = images_[i].point;
+        for (std::size_t e : image_edges_[i])
+        {
+            const Edge& edge = buildings.edges()[e];
+            for (int floor = 0; floor < 2; floor++)
+            {
+                const Vec3 target = floor ? Vec3(p.x, p.y, -p.z) : p;
+                const Edge::Projection place = edge.project(target);
+                Foot foot;
+                foot.along = place.along;
+                foot.across = place.normal.norm();
+                if (foot.across >= 1e-9)
+                {
+                    // t = along - cot(beta) across within [0, length].
+                    const double low = (foot.along - edge.length) / foot.across, high = foot.along / foot.across;
+                    foot.low = low - 1e-9 * std::max(1.0, std::abs(low));
+                    foot.high = high + 1e-9 * std::max(1.0, std::abs(high));
+                    const double theta = edge.angle(place.normal);
+                    // Edge::angle is in [0, 2 pi), so the face-0 side's slack
+                    // is at the top.
+                    foot.air = theta < edge.n * pi + 1e-9 || theta > 2.0 * pi - 1e-9;
+                }
+                image_feet_[i].push_back(foot);
+            }
+        }
+    }
 }
 
 std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
@@ -428,7 +484,7 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
     struct Incidence
     {
         bool lit = false;
-        double c = 0.0, sin_beta = 0.0, theta0 = 0.0;
+        double c = 0.0, sin_beta = 0.0, theta0 = 0.0, cot = 0.0;
     };
     std::vector<Incidence> incidence(buildings_->edges().size());
     for (std::size_t e : edges_)
@@ -441,37 +497,37 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
         // Not when the wave runs along the edge, or comes from behind the
         // wedge.
         in.lit = in.sin_beta >= 1e-6 && in.theta0 > 0.0 && in.theta0 < edge.n * pi;
+        in.cot = in.lit ? in.c / in.sin_beta : 0.0;
     }
     for (std::size_t i = 0; i < images_.size(); i++)
     {
         const Image& image = images_[i];
-        for (std::size_t e : image_edges_[i])
+        for (std::size_t j = 0; j < image_edges_[i].size(); j++)
         {
+            const std::size_t e = image_edges_[i][j];
             const Incidence& in = incidence[e];
             if (!in.lit)
                 continue;
             const Edge& edge = buildings_->edges()[e];
             for (int floor = 0; floor < 2; floor++)
             {
-                const Vec3 target = floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point;
-                const Vec3 d = target - edge.start;
-                const double along = d.dot(edge.direction);
-                const double across = (d - along * edge.direction).norm();
-                if (across < 1e-9)
+                const Foot& foot = image_feet_[i][2 * j + floor];
+                if (!foot.air || in.cot < foot.low || in.cot > foot.high)
                     continue;
                 // On Keller's cone: the diffracted ray leaves at the incident
                 // ray's angle to the edge.
-                const double t = along - in.c * across / in.sin_beta;
+                const double t = foot.along - in.c * foot.across / in.sin_beta;
                 if (t < 0.0 || t > edge.length)
                     continue;
+                const Vec3 target = floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point;
                 const Vec3 q = edge.start + t * edge.direction;
-                // A point of an edge inside a neighbour (footprints that
-                // overlap, or share a side only in part) diffracts nothing.
-                if (buildings_->buried(q))
-                    continue;
                 const Vec3 out = target - q;
                 const double theta = edge.angle(out - out.dot(edge.direction) * edge.direction);
                 if (!(theta > 0.0 && theta < edge.n * pi))
+                    continue;
+                // A point of an edge inside a neighbour (footprints that
+                // overlap, or share a side only in part) diffracts nothing.
+                if (buildings_->buried(q))
                     continue;
                 Vec3 unused;
                 if (buildings_->first_hit(q, u, false, unused) != facades.size())
@@ -481,9 +537,7 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
                 BuildingRay ray;
                 ray.diffracted = true;
                 ray.edge = e;
-                ray.n = edge.n;
-                ray.theta = theta;
-                ray.theta0 = in.theta0;
+                ray.angles = wedge_angles(edge.n, theta, in.theta0);
                 ray.sin_beta = in.sin_beta;
                 ray.s = out.norm();
                 ray.length = -u.dot(q) + ray.s;
@@ -496,21 +550,31 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
     return rays;
 }
 
-std::complex<double> ray_amplitude(const BuildingRay& ray, const std::vector<double>& reflection,
-        double floor_reflection, double k)
+double reflected_amplitude(const BuildingRay& ray, const std::vector<double>& reflection, double floor_reflection)
 {
     double amplitude = 1.0;
     for (std::size_t f : ray.facades)
         amplitude *= std::sqrt(reflection[f]);
     for (int i = 0; i < ray.floor; i++)
         amplitude *= std::sqrt(floor_reflection);
+    return amplitude;
+}
+
+std::complex<double> ray_amplitude(const BuildingRay& ray, double reflected, double k)
+{
     if (!ray.diffracted)
-        return amplitude;
+        return reflected;
     // The wedge's coefficient in the plane normal to the edge, at the
     // wavenumber and distance projected into it: for a plane wave this is the
     // oblique-incidence form, L = s sin^2(beta).
     const double r = ray.s * ray.sin_beta;
-    return amplitude * hard_wedge_coefficient(ray.n, ray.theta, ray.theta0, k * ray.sin_beta, r) / std::sqrt(r);
+    return reflected * hard_wedge_coefficient(ray.angles, k * ray.sin_beta, r) / std::sqrt(r);
+}
+
+std::complex<double> ray_amplitude(const BuildingRay& ray, const std::vector<double>& reflection,
+        double floor_reflection, double k)
+{
+    return ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k);
 }
 
 void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflection, double floor_reflection,
@@ -548,13 +612,17 @@ void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflec
     const std::vector<std::complex<double>> ground {1.0, std::sqrt(floor_reflection)};
     const std::vector<double> ground_length {-u.dot(microphone_), -u.dot(microphone_) + 2.0 * microphone_.z * u.z};
     std::vector<std::complex<double>> amplitude(kept.size());
-    std::vector<double> length(kept.size());
+    std::vector<double> length(kept.size()), reflected(kept.size());
     for (std::size_t i = 0; i < kept.size(); i++)
         length[i] = kept[i].length;
     for (std::size_t band = 0; band < bands.size(); band++)
     {
         for (std::size_t f = 0; f < facade_count; f++)
             band_reflection[f] = reflection[f * bands.size() + band];
+        // What the reflections leave of each ray is the same at every
+        // wavenumber of the band.
+        for (std::size_t i = 0; i < kept.size(); i++)
+            reflected[i] = reflected_amplitude(kept[i], band_reflection, floor_reflection);
         const double f1 = bands[band] / half, f2 = bands[band] * half;
         double total = scattered[band] * (f2 - f1), open = 0.0;
         for (int part = 0; part < 3; part++)
@@ -563,7 +631,7 @@ void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflec
             const double k1 = 2.0 * pi * g1 / sound_speed, k2 = 2.0 * pi * g2 / sound_speed;
             const double kc = 0.5 * (k1 + k2);
             for (std::size_t i = 0; i < kept.size(); i++)
-                amplitude[i] = ray_amplitude(kept[i], band_reflection, floor_reflection, kc);
+                amplitude[i] = ray_amplitude(kept[i], reflected[i], kc);
             total += band_averaged_energy(amplitude, length, k1, k2) * (g2 - g1);
             open += band_averaged_energy(ground, ground_length, k1, k2) * (g2 - g1);
         }

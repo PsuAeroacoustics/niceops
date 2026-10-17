@@ -11,22 +11,20 @@ namespace {
 
 using complex = std::complex<double>;
 
-// The two terms of one beta (theta - theta0 or theta + theta0):
-//   cot((pi + beta) / 2n) F(k L a+(beta)) + cot((pi - beta) / 2n) F(k L a-(beta)),
-// a+-(beta) = 2 cos^2((2 n pi N+- - beta) / 2), N+- the integer nearest
-// (beta +- pi) / (2 n pi).  On a boundary a cotangent's pole meets F's zero;
-// the product's limit is taken a hair off it.
-complex pair(double n, double beta, double kl)
+// One term of D's sum, for one beta (theta - theta0 or theta + theta0) and
+// sign s:
+//   cot((pi + s beta) / 2n) F(k L a_s(beta)),
+// a_s(beta) = 2 cos^2((2 n pi N_s - beta) / 2), N_s the integer nearest
+// (beta + s pi) / (2 n pi): its cotangent and cosine.  On a boundary a
+// cotangent's pole meets F's zero; the product's limit is taken a hair off it.
+void term_angles(double n, double beta, int s, double& cot, double& c)
 {
-    auto one = [&](int s) {
-        double b = beta;
-        if (std::abs(std::sin((pi + s * b) / (2.0 * n))) < 1e-12)
-            b += 1e-9;
-        const double nearest = std::round((b + s * pi) / (2.0 * n * pi));
-        const double c = std::cos((2.0 * n * pi * nearest - b) / 2.0);
-        return (1.0 / std::tan((pi + s * b) / (2.0 * n))) * utd_transition(kl * 2.0 * c * c);
-    };
-    return one(+1) + one(-1);
+    double b = beta;
+    if (std::abs(std::sin((pi + s * b) / (2.0 * n))) < 1e-12)
+        b += 1e-9;
+    const double nearest = std::round((b + s * pi) / (2.0 * n * pi));
+    c = std::cos((2.0 * n * pi * nearest - b) / 2.0);
+    cot = 1.0 / std::tan((pi + s * b) / (2.0 * n));
 }
 
 } // namespace
@@ -49,15 +47,82 @@ complex utd_transition(double x)
     return complex(0.0, -1.0) * std::sqrt(pi) * root * std::polar(1.0, pi / 4.0) * faddeeva(z);
 }
 
-complex hard_wedge_coefficient(double n, double theta, double theta0, double k, double r)
+WedgeAngles wedge_angles(double n, double theta, double theta0)
 {
-    const double kl = k * r;
-    const double minus = theta - theta0;
-    const double plus = theta + theta0;
     // A hard wedge adds the incident (theta - theta0) and the reflected
     // (theta + theta0) pairs.
-    const complex sum = pair(n, minus, kl) + pair(n, plus, kl);
-    return -std::polar(1.0, pi / 4.0) / (2.0 * n * std::sqrt(2.0 * pi * k)) * sum;
+    WedgeAngles a;
+    a.n = n;
+    term_angles(n, theta - theta0, +1, a.cot[0], a.c[0]);
+    term_angles(n, theta - theta0, -1, a.cot[1], a.c[1]);
+    term_angles(n, theta + theta0, +1, a.cot[2], a.c[2]);
+    term_angles(n, theta + theta0, -1, a.cot[3], a.c[3]);
+    return a;
+}
+
+complex hard_wedge_coefficient(const WedgeAngles& a, double k, double r)
+{
+    const double kl = k * r;
+    auto term = [&](int i) { return a.cot[i] * utd_transition(kl * 2.0 * a.c[i] * a.c[i]); };
+    const complex sum = (term(0) + term(1)) + (term(2) + term(3));
+    return -std::polar(1.0, pi / 4.0) / (2.0 * a.n * std::sqrt(2.0 * pi * k)) * sum;
+}
+
+WedgeSweep::WedgeSweep(double n, double theta) : n_(n), theta_(theta)
+{
+    for (int i = 0; i < 2; i++)
+    {
+        const double s = i == 0 ? 1.0 : -1.0;
+        sin_x_[i] = std::sin((pi + s * theta) / (2.0 * n));
+        cos_x_[i] = std::cos((pi + s * theta) / (2.0 * n));
+    }
+    sin_half_ = std::sin(theta / 2.0);
+    cos_half_ = std::cos(theta / 2.0);
+    for (int N = -3; N <= 4; N++)
+    {
+        sin_npn_[N + 3] = std::sin(n * pi * N);
+        cos_npn_[N + 3] = std::cos(n * pi * N);
+    }
+}
+
+WedgeAngles WedgeSweep::at(double theta0) const
+{
+    const double phi = theta0 / (2.0 * n_);
+    const double sin_phi = std::sin(phi), cos_phi = std::cos(phi);
+    const double sin_h0 = std::sin(theta0 / 2.0), cos_h0 = std::cos(theta0 / 2.0);
+    WedgeAngles a;
+    a.n = n_;
+    // Terms 0 and 1: beta = theta - theta0, s = +1 and -1; 2 and 3: beta =
+    // theta + theta0.  Each term's cotangent argument is (pi + s theta) / 2n
+    // plus e phi, e = -s for the first beta and +s for the second.
+    for (int t = 0; t < 4; t++)
+    {
+        const bool plus = t >= 2;
+        const int i = t % 2;
+        const double s = i == 0 ? 1.0 : -1.0;
+        const double beta = plus ? theta_ + theta0 : theta_ - theta0;
+        const double e = plus ? s : -s;
+        const double sin_x = sin_x_[i] * cos_phi + e * cos_x_[i] * sin_phi;
+        const double cos_x = cos_x_[i] * cos_phi - e * sin_x_[i] * sin_phi;
+        const double nearest = std::round((beta + s * pi) / (2.0 * n_ * pi));
+        const int index = static_cast<int>(nearest) + 3;
+        if (std::abs(sin_x) < 1e-8 || index < 0 || index >= 8)
+        {
+            term_angles(n_, beta, i == 0 ? +1 : -1, a.cot[t], a.c[t]);
+            continue;
+        }
+        // c = cos(n pi N - beta / 2), beta / 2 = theta / 2 -+ theta0 / 2.
+        const double sin_hb = plus ? sin_half_ * cos_h0 + cos_half_ * sin_h0 : sin_half_ * cos_h0 - cos_half_ * sin_h0;
+        const double cos_hb = plus ? cos_half_ * cos_h0 - sin_half_ * sin_h0 : cos_half_ * cos_h0 + sin_half_ * sin_h0;
+        a.c[t] = cos_npn_[index] * cos_hb + sin_npn_[index] * sin_hb;
+        a.cot[t] = cos_x / sin_x;
+    }
+    return a;
+}
+
+complex hard_wedge_coefficient(double n, double theta, double theta0, double k, double r)
+{
+    return hard_wedge_coefficient(wedge_angles(n, theta, theta0), k, r);
 }
 
 complex hard_wedge_field(double n, double kr, double theta, double theta0)

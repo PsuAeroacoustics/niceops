@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -10,6 +11,7 @@
 
 #include "wedge.hpp"
 #include "util/constants.hpp"
+#include "util/lanes.hpp"
 #include "util/logger.hpp"
 #include "util/netcdf.hpp"
 #include "util/parallel.hpp"
@@ -319,10 +321,10 @@ struct CanyonRay
     int hits_b = 0;
     bool floor = false;
     bool diffracted = false;
-    double r = 0.0;        // edge to the (image) microphone
-    double theta = 0.0;    // departure, in the edge's own angle
-    double theta0 = 0.0;   // the source's direction, likewise
+    double r = 0.0;             // edge to the (image) microphone
     bool run_evaluates = false; // the first-order reflection and its partner
+    WedgeAngles angles;         // a right-angled roof edge's: the departure and
+                                // the source's direction in its own angle
 };
 
 // A ray traced back across the cross-section from (y, z) along the unit
@@ -449,8 +451,7 @@ std::vector<CanyonRay> canyon_rays(const IdealCanyon& c, double uy, double uz, i
                 CanyonRay ray;
                 ray.diffracted = true;
                 ray.r = std::hypot(iy - ey, iz - ez);
-                ray.theta = angle(iy - ey, iz - ez);
-                ray.theta0 = theta0;
+                ray.angles = wedge_angles(1.5, angle(iy - ey, iz - ez), theta0);
                 ray.length = -(uy * ey + uz * ez) + ray.r;
                 ray.hits_b = a ? (n + 1) / 2 : n / 2;
                 ray.hits_a = a ? n / 2 : (n + 1) / 2;
@@ -503,7 +504,7 @@ void coherent_ratio(const IdealCanyon& c, double u_c, double u_z, const double* 
                 std::complex<double> amp = std::pow(ra, ray.hits_a) * std::pow(rb, ray.hits_b)
                         * (ray.floor ? root_floor : 1.0);
                 if (ray.diffracted)
-                    amp *= hard_wedge_coefficient(1.5, ray.theta, ray.theta0, kc, ray.r) / std::sqrt(ray.r);
+                    amp *= hard_wedge_coefficient(ray.angles, kc, ray.r) / std::sqrt(ray.r);
                 rest.push_back(amp);
                 rest_length.push_back(ray.length);
             }
@@ -524,25 +525,85 @@ void coherent_ratio(const IdealCanyon& c, double u_c, double u_z, const double* 
 // width.  The rays come sorted by length, and a pair whose sinc has fallen
 // below 1/30 (h dL > 30) is left out: that far apart the band has averaged it
 // away, and the all-pairs sum was most of a table's build time.
+//
+// The pairs are the whole cost once there are a thousand rays (a point source
+// among buildings), so the sine of each pair's h dL is formed from the rays'
+// own sines and cosines of h L, which leaves a multiply-add and a divide per
+// pair.  That difference of products carries the absolute error of h L
+// itself -- 1e-12 at 10 kHz a kilometre from the frame's origin -- so where
+// h dL is under 0.1 the sinc is taken from its series instead, to 1e-17.
 double band_averaged_energy(const std::vector<std::complex<double>>& amplitude, const std::vector<double>& length, double k1,
         double k2)
 {
+    // The reach cutoff ends each ray's pairs at the first one out of reach.
+    assert(amplitude.size() == length.size() && std::is_sorted(length.begin(), length.end()));
     const double mid = 0.5 * (k1 + k2), half = 0.5 * (k2 - k1);
     const double reach = half > 0.0 ? 30.0 / half : std::numeric_limits<double>::infinity();
-    thread_local std::vector<std::complex<double>> phasor;
-    phasor.resize(amplitude.size());
-    for (std::size_t i = 0; i < amplitude.size(); i++)
-        phasor[i] = amplitude[i] * std::polar(1.0, mid * length[i]);
+    const std::size_t n = amplitude.size();
+    // Per ray: the phasor at the band's middle, and the sine and cosine of
+    // h L, as separate arrays for the pair loop.
+    thread_local std::vector<double> re, im, sine, cosine;
+    re.resize(n);
+    im.resize(n);
+    sine.resize(n);
+    cosine.resize(n);
     double sum = 0.0;
-    for (std::size_t i = 0; i < amplitude.size(); i++)
+    for (std::size_t i = 0; i < n; i++)
     {
+        const std::complex<double> phasor = amplitude[i] * std::polar(1.0, mid * length[i]);
+        re[i] = phasor.real();
+        im[i] = phasor.imag();
+        sine[i] = std::sin(half * length[i]);
+        cosine[i] = std::cos(half * length[i]);
         sum += std::norm(amplitude[i]);
-        for (std::size_t j = i + 1; j < amplitude.size() && length[j] - length[i] < reach; j++)
+    }
+    const double* L = length.data();
+    const double* pr = re.data();
+    const double* pi_ = im.data();
+    const double* sn = sine.data();
+    const double* cs = cosine.data();
+    // The pairs within reach of ray i run from i + 1 to `end`; those to `near`
+    // are close enough in length for the series.
+    const double near_length = half > 0.0 ? 0.1 / half : std::numeric_limits<double>::infinity();
+    std::size_t end = 0, near = 0;
+    for (std::size_t i = 0; i < n; i++)
+    {
+        while (end < n && L[end] - L[i] < reach)
+            end++;
+        near = std::max(near, i + 1);
+        while (near < end && L[near] - L[i] < near_length)
+            near++;
+        const double li = L[i], ri = pr[i], ii = pi_[i], si = sn[i], ci = cs[i];
+        double pairs = 0.0;
+        for (std::size_t j = i + 1; j < near; j++)
         {
-            const double x = half * (length[i] - length[j]);
-            const double sinc = std::abs(x) < 1e-8 ? 1.0 : std::sin(x) / x;
-            sum += 2.0 * std::real(phasor[i] * std::conj(phasor[j])) * sinc;
+            const double x = half * (li - L[j]), x2 = x * x;
+            const double sinc = 1.0 + x2 * (-1.0 / 6.0 + x2 * (1.0 / 120.0 + x2 * (-1.0 / 5040.0 + x2 / 362880.0)));
+            pairs += (ri * pr[j] + ii * pi_[j]) * sinc;
         }
+        auto term = [&](std::size_t j) {
+            const double x = half * (li - L[j]);
+            return (ri * pr[j] + ii * pi_[j]) * ((si * cs[j] - ci * sn[j]) / x);
+        };
+        // Two lanes at a time, in two sums: the compiler judges a loop of
+        // double divides not worth vectorizing, but on an M4 Pro the pairs
+        // run in 0.7 ns rather than 1.6.
+        std::size_t j = near;
+        const Lanes lane_li = both(li), lane_half = both(half), lane_ri = both(ri), lane_ii = both(ii),
+                    lane_si = both(si), lane_ci = both(ci);
+        Lanes lanes[2] = {both(0.0), both(0.0)};
+        for (; j + 4 <= end; j += 4)
+            for (int q = 0; q < 2; q++)
+            {
+                const std::size_t m = j + 2 * q;
+                const Lanes x = lane_half * (lane_li - load_lanes(L + m));
+                const Lanes sinc = (lane_si * load_lanes(cs + m) - lane_ci * load_lanes(sn + m)) / x;
+                lanes[q] += (lane_ri * load_lanes(pr + m) + lane_ii * load_lanes(pi_ + m)) * sinc;
+            }
+        pairs += (lanes[0][0] + lanes[1][0]) + (lanes[0][1] + lanes[1][1]);
+        for (; j < end; j++)
+            pairs += term(j);
+        sum += 2.0 * pairs;
     }
     return sum;
 }

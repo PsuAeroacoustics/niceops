@@ -4,13 +4,16 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <stdexcept>
 #include <vector>
 
 #include "building_paths.hpp"
 #include "buildings.hpp"
+#include "double_wedge.hpp"
 #include "point_paths.hpp"
 #include "urban.hpp"
 #include "util/constants.hpp"
+#include "wedge.hpp"
 
 using namespace niceops; // NOLINT
 
@@ -35,6 +38,70 @@ std::vector<double> levels(const Buildings& city, const Vec3& source, const Vec3
     std::vector<double> out(bands.size());
     field.band_levels(reflection, floor, bands, 343.2, out.data());
     return out;
+}
+
+// The shared face's aperture as it was first written, by the midpoint rule at
+// `division` points a wavelength: the reference for its Filon rule.
+std::complex<double> midpoint_aperture(const SharedFace& face, double sx, double sz, double rx, double rz, double k,
+        double division)
+{
+    auto wrap = [](double a) { return a < 0.0 ? a + 2.0 * pi : a; };
+    const double w = face.width, lambda = 2.0 * pi / k, s1 = std::hypot(sx, sz);
+    const double extent = std::max(3.0 * std::sqrt(lambda * std::max(s1, w)), 30.0 * lambda);
+    const double step = lambda / division;
+    const double theta = wrap(std::atan2(rz, -(rx - w))), s3 = std::hypot(rx - w, rz);
+    const double fx = -std::cos(face.n2 * pi), fz = std::sin(face.n2 * pi);
+    const std::complex<double> launch = std::sqrt(k / (2.0 * pi)) * std::polar(1.0, -0.25 * pi);
+    auto wave = [&](double x, double z) {
+        const double d = std::hypot(rx - x, rz - z);
+        return std::polar(1.0 / std::sqrt(d), k * d);
+    };
+    const bool above = rz > 0.0;
+    std::complex<double> sum(0.0, 0.0), unbounded(0.0, 0.0);
+    for (double t = 0.5 * step; t < extent; t += step)
+    {
+        const double taper = t < 0.5 * extent ? 1.0 : 0.5 * (1.0 + std::cos(pi * (t - 0.5 * extent) / (0.5 * extent)));
+        const double in = std::hypot(sx, t - sz), r = std::hypot(w, t);
+        const std::complex<double> amplitude
+                = taper * 0.5 * (-sx / in + w / r) * launch * std::polar(1.0 / std::sqrt(in), k * in);
+        const double theta0 = wrap(std::atan2(t, w));
+        std::complex<double> field = std::polar(1.0 / std::sqrt(r * s3), k * (r + s3))
+                * hard_wedge_coefficient(face.n2, theta, theta0, k, r * s3 / (r + s3));
+        if (std::abs(theta - theta0) < pi)
+            field += wave(0.0, t);
+        if (theta < pi - theta0)
+            field += wave(0.0, -t);
+        if (theta0 > (face.n2 - 1.0) * pi && theta > (2.0 * face.n2 - 1.0) * pi - theta0)
+        {
+            const double along = -w * fx + t * fz;
+            field += wave(w + 2.0 * along * fx + w, 2.0 * along * fz - t);
+        }
+        sum += amplitude * field;
+        if (above)
+            unbounded += amplitude * (wave(0.0, t) + wave(0.0, -t));
+    }
+    sum = step * (sum - unbounded);
+    const double sin_g = -sz / s1, cos_g = -sx / s1;
+    if (sin_g > 1e-6)
+    {
+        const std::complex<double> kirchhoff
+                = 0.5 * (1.0 + cos_g) * std::polar(1.0, 0.25 * pi) / (std::sqrt(2.0 * pi * k) * sin_g);
+        sum *= 0.5 * hard_wedge_coefficient(face.n1, 0.0, wrap(std::atan2(sz, sx)), k, 1e9) / kirchhoff;
+    }
+    return sum;
+}
+
+std::complex<double> midpoint_shared_face(const SharedFace& face, double sx, double sz, double rx, double rz, double k)
+{
+    const double forward = sz < 0.0 && sx < 0.0 ? std::atan2(-sz, -sx) : 0.0;
+    const double reverse = rz < 0.0 && rx > face.width ? std::atan2(-rz, rx - face.width) : 0.0;
+    std::complex<double> sum(0.0, 0.0);
+    if (forward > 0.0)
+        sum += forward * midpoint_aperture(face, sx, sz, rx, rz, k, 192.0);
+    if (reverse > 0.0)
+        sum += reverse
+                * midpoint_aperture({face.width, face.n2, face.n1}, face.width - rx, rz, face.width - sx, sz, k, 192.0);
+    return sum / (forward + reverse);
 }
 
 } // namespace
@@ -293,4 +360,174 @@ TEST_CASE("over a long block the point-source field is the boundary-element solu
     }
     REQUIRE(std::sqrt(square / cases.size()) < 0.3);
     REQUIRE(worst[0] > 5.0);
+}
+
+// The aperture's Filon rule against the midpoint rule at a 192nd of a
+// wavelength, on shared faces from DigiCity and a district: both ends below
+// the face's plane, the receiver above it, a source in the plane (the reverse
+// aperture's receiver at theta = pi, both boundaries at the edge), a source
+// above it.  Over 4000 such faces it is within 0.016 dB and 1.5e-3 rad; a node
+// on a cut, where the wedge's coefficient jumps, was 6-28 dB off.
+TEST_CASE("the aperture's Filon rule is the fine midpoint rule's", "[point_paths]")
+{
+    struct Face
+    {
+        double width, sx, sz, rx, rz, n;
+    };
+    // The last two are obtuse corners (n = 1.25), where the wave reflected
+    // off the second wedge's other face reaches the receiver: right-angled
+    // ones never take that path.
+    const std::vector<Face> faces {
+        {2.438, -3.9627, -3.2527, 14.3812, -29.5687, 1.5},
+        {2.438, -4.3169, -21.6163, 6.1392, 6.4313, 1.5},
+        {12.116, -4.9019, -20.0857, 19.3141, 0.9958, 1.5},
+        {60.0, -90.0, 0.0, 90.0, -28.5, 1.5},
+        {60.0, -90.0, 10.0, 70.0, -90.0, 1.5},
+        {6.0, -10.0, -5.0, 16.0, -3.64, 1.25},
+        {4.0, -12.0, -4.0, 9.0, -2.5, 1.25},
+    };
+    double worst = 0.0, worst_phase = 0.0;
+    for (const Face& f : faces)
+        for (double frequency : {125.0, 1000.0, 5000.0})
+        {
+            const SharedFace face {f.width, f.n, f.n};
+            const double k = 2.0 * pi * frequency / 343.2;
+            const std::complex<double> filon = shared_face_field(face, f.sx, f.sz, f.rx, f.rz, k);
+            const std::complex<double> midpoint = midpoint_shared_face(face, f.sx, f.sz, f.rx, f.rz, k);
+            worst = std::max(worst, std::abs(20.0 * std::log10(std::abs(filon) / std::abs(midpoint))));
+            worst_phase = std::max(worst_phase, std::abs(std::arg(filon / midpoint)));
+        }
+    INFO("worst " << worst << " dB, " << worst_phase << " rad");
+    REQUIRE(worst < 0.03);
+    REQUIRE(worst_phase < 0.005);
+}
+
+// The twice-diffracted pairs ruled out before they are solved are only those
+// that could not have been rays: among DigiCity's containers and a block of
+// a district, with the source low and high, the rays are the same with the
+// pruning off, to the bit.
+TEST_CASE("pruning the twice-diffracted pairs loses no ray", "[point_paths]")
+{
+    const Buildings containers({box(4.09, 17.66, 6.53, 23.72, 7.77), box(14.81, 17.66, 17.25, 23.72, 7.77),
+            box(1.6, 10.82, 4.04, 16.88, 7.77), box(1.6, 8.38, 13.72, 10.82, 5.18),
+            box(20.21, 3.86, 22.65, 16.0, 7.77), box(13.5, -1.84, 19.56, 0.6, 7.77)});
+    const Buildings blocks({box(0.0, 0.0, 60.0, 60.0, 20.0), box(80.0, 0.0, 140.0, 60.0, 35.0),
+            box(0.0, 80.0, 60.0, 140.0, 10.0), box(80.0, 80.0, 140.0, 140.0, 40.0)});
+    struct Case
+    {
+        const Buildings* city;
+        Vec3 source, microphone;
+    };
+    const std::vector<Case> cases {
+        {&containers, {10.5, 20.5, 2.0}, {10.5, -1.1, 1.2}},
+        {&containers, {10.5, 20.5, 2.0}, {-3.6, 6.4, 1.2}},
+        {&containers, {8.0, 12.0, 15.0}, {18.0, 2.0, 1.2}},
+        {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 1.5}},
+        {&blocks, {70.0, 30.0, 5.0}, {110.0, 150.0, 1.5}},
+    };
+    for (const Case& c : cases)
+    {
+        PointPathOptions all;
+        all.prune = false;
+        const PointSourceField pruned(*c.city, c.source, c.microphone);
+        const PointSourceField every(*c.city, c.source, c.microphone, all);
+        REQUIRE(pruned.rays().size() == every.rays().size());
+        std::size_t twice = 0;
+        for (std::size_t i = 0; i < every.rays().size(); i++)
+        {
+            REQUIRE(pruned.rays()[i].length == every.rays()[i].length);
+            REQUIRE(pruned.rays()[i].wedges == every.rays()[i].wedges);
+            twice += every.rays()[i].wedges == 2;
+        }
+        REQUIRE(twice > 0);
+    }
+}
+
+// A run over many sources traces each end's image tree once, its images
+// keeping the edges near any end it will meet, and each pair keeps those near
+// it (PathEnd): the field must be the one traced for the pair alone, ray for
+// ray.  Leaving the partners' edges out of an end's candidates gives
+// different rays, and is refused.
+TEST_CASE("a field from ends traced once is the pair's own", "[point_paths]")
+{
+    const Buildings blocks({box(0.0, 0.0, 60.0, 60.0, 20.0), box(80.0, 0.0, 140.0, 60.0, 35.0),
+            box(0.0, 80.0, 60.0, 140.0, 10.0), box(80.0, 80.0, 140.0, 140.0, 40.0),
+            box(400.0, 400.0, 460.0, 460.0, 25.0)});
+    PointPathOptions options;
+    options.radius = 120.0;
+    // The last source and microphone are far apart: each pair keeps a
+    // different set of edges.
+    const std::vector<Vec3> sources {{70.0, 70.0, 30.0}, {70.0, 30.0, 5.0}, {300.0, 300.0, 40.0}};
+    const std::vector<Vec3> microphones {{30.0, 70.0, 1.5}, {110.0, 150.0, 1.5}, {350.0, 380.0, 1.2}};
+    const std::vector<std::size_t> near_sources = edges_near(blocks, sources, options.radius),
+                                   near_microphones = edges_near(blocks, microphones, options.radius);
+    std::size_t compared = 0;
+    for (const Vec3& s : sources)
+    {
+        const PathEnd source(blocks, s, true, options, near_microphones);
+        for (const Vec3& m : microphones)
+        {
+            const PathEnd microphone(blocks, m, false, options, near_sources);
+            const PointSourceField alone(blocks, s, m, options);
+            const PointSourceField shared(blocks, source, microphone, options);
+            REQUIRE(alone.rays().size() == shared.rays().size());
+            for (std::size_t i = 0; i < alone.rays().size(); i++)
+            {
+                REQUIRE(alone.rays()[i].length == shared.rays()[i].length);
+                REQUIRE(alone.rays()[i].spreading == shared.rays()[i].spreading);
+                REQUIRE(alone.rays()[i].facades == shared.rays()[i].facades);
+            }
+            compared += alone.rays().size();
+        }
+    }
+    REQUIRE(compared > 1000);
+    // An end traced without the edges near its partner is refused.
+    const PathEnd lonely(blocks, sources[2], true, options, {});
+    const PathEnd far_microphone(blocks, microphones[0], false, options, near_sources);
+    REQUIRE_THROWS_AS(PointSourceField(blocks, lonely, far_microphone, options), std::invalid_argument);
+    // So are ends in the wrong roles, ends traced with other options, and
+    // partners out of order.
+    const PathEnd source(blocks, sources[0], true, options, near_microphones);
+    const PathEnd microphone(blocks, microphones[0], false, options, near_sources);
+    REQUIRE_THROWS_AS(PointSourceField(blocks, microphone, source, options), std::invalid_argument);
+    PointPathOptions other = options;
+    other.max_edge_reflections = 1;
+    REQUIRE_THROWS_AS(PointSourceField(blocks, source, microphone, other), std::invalid_argument);
+    std::vector<std::size_t> reversed(near_sources.rbegin(), near_sources.rend());
+    REQUIRE_THROWS_AS(PathEnd(blocks, microphones[0], false, options, reversed), std::invalid_argument);
+}
+
+// The twice-diffracted search takes the microphone's images to one
+// reflection whatever max_edge_reflections is: at 0 the rays diffracted
+// twice are the default's, with the source's side the same in both.
+TEST_CASE("twice-diffracted rays reflect at the microphone whatever the edge order", "[point_paths]")
+{
+    const Buildings containers({box(4.09, 17.66, 6.53, 23.72, 7.77), box(14.81, 17.66, 17.25, 23.72, 7.77),
+            box(1.6, 10.82, 4.04, 16.88, 7.77), box(1.6, 8.38, 13.72, 10.82, 5.18),
+            box(20.21, 3.86, 22.65, 16.0, 7.77), box(13.5, -1.84, 19.56, 0.6, 7.77)});
+    PointPathOptions deep;
+    deep.source_reflections = false;
+    PointPathOptions none = deep;
+    none.max_edge_reflections = 0;
+    std::size_t reflected = 0;
+    for (const Vec3& microphone : {Vec3(10.5, -1.1, 1.2), Vec3(-3.6, 6.4, 1.2), Vec3(18.0, 2.0, 1.2)})
+    {
+        const Vec3 source(10.5, 20.5, 2.0);
+        const PointSourceField a(containers, source, microphone, deep), b(containers, source, microphone, none);
+        std::vector<const PointRay*> twice_a, twice_b;
+        for (const PointRay& ray : a.rays())
+            if (ray.wedges == 2)
+                twice_a.push_back(&ray);
+        for (const PointRay& ray : b.rays())
+            if (ray.wedges == 2)
+                twice_b.push_back(&ray);
+        REQUIRE(twice_a.size() == twice_b.size());
+        for (std::size_t i = 0; i < twice_a.size(); i++)
+        {
+            REQUIRE(twice_a[i]->length == twice_b[i]->length);
+            REQUIRE(twice_a[i]->facades == twice_b[i]->facades);
+            reflected += !twice_b[i]->facades.empty();
+        }
+    }
+    REQUIRE(reflected > 0);
 }

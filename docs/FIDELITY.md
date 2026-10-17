@@ -948,6 +948,10 @@ checked against the plane-wave builder and against an exact solution.
   energy to 2e-3 dB.
 - **It is reciprocal**, source and microphone exchanged, to 1e-9 dB in a district of four
   buildings, through every kind of ray including the shared-face form.
+- **The shared-face integral is converged.** Filon's rule, as the model takes it, is within
+  0.016 dB (0.0015 dB rms) and 1.5e-3 rad of the midpoint rule at a 192nd of a wavelength over
+  some 4000 shared faces of DigiCity and a 49-block district; the midpoint rule at a 24th of a
+  wavelength is within 0.027 dB (0.014-0.018 dB rms).
 
 **Double diffraction against boundary elements** (`tools/thick_barrier_bem.py`). A rigid block on
 rigid ground, long enough to be two-dimensional, the source and microphone in one plane across it:
@@ -999,8 +1003,11 @@ a block 10 m thick. Against the boundary elements either side of the plane the s
 within ±0.6 dB, the exact field moving by 0.1 dB; the cascade steps by 5 to 15 dB. A source above
 the roof steps by up to 4.9 dB, where the cascade takes over above the plane.
 
-Cost: in the table builder's test district, a point source in a street, the seven test
-microphones take 0.5 s on one thread.
+Cost: in the table builder's test district, a point source 10 m up in a street, the seven test
+microphones take 0.44 s on one thread over B407's 31 bands. Among 49 blocks with roofs 10 to
+40 m, a drone 30 m up costs 0.06 s per microphone on one thread over 24 bands. 60 points of a
+drone's track 40 m up, over 185 microphones, take 46 s on 14 threads with `--sources` and 49 s as
+a run per source.
 
 ### Trajectory smoothing
 

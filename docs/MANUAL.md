@@ -1770,10 +1770,18 @@ columns. Each output row is a microphone's `x`, `y` and `height`, then one level
 rays summed coherently and averaged over the band. A free-field level at the microphone would be
 −20 lg r for its distance r in metres.
 
+For a source that moves -- a drone's states along its track -- `--sources` takes a CSV of
+positions with the same three columns, and each output row then starts with the source's row in
+it, the sources one after another over every microphone. The levels are those of one run per
+source, to the bit, and the run is quicker than those runs. The output is written as the run goes,
+a block of sources at a time, so a run that fails partway exits with an error and leaves the blocks
+it finished.
+
 | Option | Meaning |
 | --- | --- |
 | `--buildings` | The district. |
 | `--source` | The source's `x`, `y` and height above the floor. Refused inside a building. |
+| `--sources` | Instead of `--source`, a CSV of source positions, `x`, `y` and `height` by name. |
 | `--microphones` | The CSV above. A microphone inside a building is refused. |
 | `--bands`, `--database` | Band centers, given or from a database. |
 | `--absorption` | The walls' energy absorption where a building gives none. Default 0, rigid. |
@@ -1785,8 +1793,8 @@ rays summed coherently and averaged over the band. A free-field level at the mic
 | `--cascade` | Over a shared face (a roof from edge to edge, a wall from corner to corner), the cascade of two edge coefficients instead of the uniform form. For comparison only. |
 | `--orientation_tolerance` | As `niceops_urban_table`'s. Default 1 degree. |
 | `--sound_speed` | m/s. Default 343.2. |
-| `--rays` | Also write every ray: its microphone, kind, reflections, length, its level at each band center (no band averaging), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. |
-| `-j`, `--threads` | Microphones evaluated at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
+| `--rays` | Also write every ray: its source's row (with `--sources`), its microphone, kind, reflections, length, its level at each band center (no band averaging), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. |
+| `-j`, `--threads` | Pairs of source and microphone evaluated at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`, for every length in and out; the file to write. |
 
 Roofs do not reflect, so a microphone above a roof misses that roof's reflection; with both the

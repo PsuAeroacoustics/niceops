@@ -969,11 +969,14 @@ u = \frac{D(\theta, \theta_0;\ k\sin\beta,\ L/\sin\beta)}{\sqrt{\sin\beta}}\,\fr
 $$
 
 A ray diffracted twice runs between two edges, the source's and the microphone's images to one
-reflection each, through the points where the path is stationary, found by meeting Keller's
-condition at each edge in turn. In general it is the cascade of two coefficients: the first
-edge's wave reaches the second curved about the first edge across it and about the source along
-it, so the second's distance parameter is $s_2 s_3/(s_2 + s_3)$, the first's $s_1 s_2/(s_1 + s_2)$,
-and the spreading $1/\sqrt{s_1 s_2 s_3 (s_1 + s_2 + s_3)}$.
+reflection each, through the points where the path is stationary: where Keller's condition holds
+at both edges at once, a fixed point of meeting it at each in turn (by Steffensen's method, and in
+closed form for parallel edges, where the path unfolds into a line). Where the two edges meet at a
+building's corner the fixed point is the corner itself, which is no ray. In general it is the
+cascade of two coefficients: the first edge's wave reaches the second curved about the first edge
+across it and about the source along it, so the second's distance parameter is
+$s_2 s_3/(s_2 + s_3)$, the first's $s_1 s_2/(s_1 + s_2)$, and the spreading
+$1/\sqrt{s_1 s_2 s_3 (s_1 + s_2 + s_3)}$.
 
 **Over a shared face.** Where the two edges are parallel and share a face -- a flat roof from one
 edge to the other, a wall from one corner to the next -- the second edge lies in the first's
@@ -996,9 +999,16 @@ $r = |P - E_2|$. The integral's end point at the edge is the cascade with Kirchh
 coefficient, $\tfrac12(1 + \cos\gamma)\,e^{i\pi/4}/(\sqrt{2\pi k}\sin\gamma)$ for the source $\gamma$ below the
 face; $c$ is the first wedge's own coefficient on the face, without transition function and
 halved because the face doubles it, over that one. Both grow as $1/\gamma$ and $c \to 1$ as the
-source nears the plane, where Kirchhoff's approximation is right. The integral is taken by the
-midpoint rule at a 24th of a wavelength, out to 30 wavelengths or three Fresnel zones, its far
-half tapered.
+source nears the plane, where Kirchhoff's approximation is right. The integral runs out to 30
+wavelengths or three Fresnel zones, its far half tapered. Its integrand is four waves -- $W_2$'s
+diffraction, and the incident wave and its reflections off the two faces where they pass the
+second wedge -- each a smooth amplitude times $e^{ik\ell(t)}$, $\ell$ a path length that grows along
+the aperture. Each wave reaches $R$ or not, and $D_2$ jumps, only where the second wedge's shadow
+and reflection boundaries cross the aperture, so the integral is cut there, and between cuts each
+wave is taken by Filon's rule in its own $\ell$ [70]: the amplitude per unit length
+quadratic over each panel, the oscillation exact. The panels grow geometrically away from the
+edge and the cuts. How closely that reproduces the integral is in
+[FIDELITY](FIDELITY.md#a-point-source-among-buildings).
 
 Above the face's plane the receiver sees the first edge, whose rays carry that wedge's field
 there; the same integral with the face continuing past the second edge, $W_2$ replaced by the
@@ -1911,3 +1921,4 @@ than for SEL.
 67. Kouyoumjian, R. G., and Pathak, P. H., "A Uniform Geometrical Theory of Diffraction for an Edge in a Perfectly Conducting Surface," *Proceedings of the IEEE*, Vol. 62, No. 11, 1974, pp. 1448–1461. https://doi.org/10.1109/PROC.1974.9651
 68. Keller, J. B., "Geometrical Theory of Diffraction," *Journal of the Optical Society of America*, Vol. 52, No. 2, 1962, pp. 116–130. https://doi.org/10.1364/JOSA.52.000116
 69. Bowman, J. J., Senior, T. B. A., and Uslenghi, P. L. E. (eds.), *Electromagnetic and Acoustic Scattering by Simple Shapes*, North-Holland, Amsterdam, 1969, Ch. 6.
+70. Filon, L. N. G., "On a Quadrature Formula for Trigonometric Integrals," *Proceedings of the Royal Society of Edinburgh*, Vol. 49, 1930, pp. 38–47. https://doi.org/10.1017/S0370164600026262

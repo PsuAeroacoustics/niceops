@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <random>
 #include <vector>
 
 #include "faddeeva.hpp"
@@ -39,7 +40,7 @@ double half_plane_level(double kr, double theta, double theta0)
 // summed in Wolfram Language to 40 digits (m to 1.5 (kr + 60)), which
 // reproduces the plane's incident and reflected waves exactly for n = 1.
 // Order: kr in {10, 40}, theta0 in {50, 120} degrees, theta in the list below.
-const std::vector<double> wedge_angles {0, 30, 60, 90, 135, 170, 180, 190, 200, 215, 230, 245, 260, 270};
+const std::vector<double> directions_degrees {0, 30, 60, 90, 135, 170, 180, 190, 200, 215, 230, 245, 260, 270};
 const std::vector<double> wedge_exact {6.07975967, 3.23217207, 5.36821019, -6.10199301, 0.492007079, 0.660698739,
         -0.169349897, -0.0997909593, -0.121105345, -1.53458835, -3.91251894, -6.12857803, -7.46280710, -7.72382281,
         5.24715305, 0.104094917, -2.73126094, 1.48015474, 0.0884629544, -0.0852715861, -0.970003969, 0.131067558,
@@ -103,7 +104,7 @@ TEST_CASE("the hard wedge field matches the exact right-angle wedge", "[wedge]")
     const double krs[2] = {10.0, 40.0};
     for (int k = 0; k < 2; k++)
         for (double theta0 : {50.0, 120.0})
-            for (double theta : wedge_angles)
+            for (double theta : directions_degrees)
             {
                 const double utd = 20.0 * std::log10(std::abs(
                         hard_wedge_field(1.5, krs[k], theta * pi / 180.0, theta0 * pi / 180.0)));
@@ -113,4 +114,33 @@ TEST_CASE("the hard wedge field matches the exact right-angle wedge", "[wedge]")
     // 0.016 and 0.0045 dB.
     REQUIRE(worst[0] < 0.03);
     REQUIRE(worst[1] < 0.01);
+}
+
+// The sweep's angle-addition form against the coefficient computed directly,
+// over random wedges and directions: to round-off away from the boundaries,
+// and finite and close on them.
+TEST_CASE("the wedge sweep is the coefficient to round-off", "[wedge]")
+{
+    std::mt19937 generator(7);
+    std::uniform_real_distribution<double> uniform(0.0, 1.0);
+    double worst = 0.0, worst_near = 0.0;
+    for (int i = 0; i < 200000; i++)
+    {
+        const double n = i % 3 == 0 ? 1.5 : 1.0 + uniform(generator);
+        const double theta = uniform(generator) * n * pi;
+        double theta0 = uniform(generator) * n * pi;
+        const bool near = i % 5 == 0;
+        if (near) // within a micro-radian of a shadow or reflection boundary
+            theta0 = std::abs(theta - pi) + 1e-6 * (uniform(generator) - 0.5);
+        const double k = 1.0 + 200.0 * uniform(generator), r = 0.1 + 50.0 * uniform(generator);
+        const std::complex<double> direct = hard_wedge_coefficient(n, theta, theta0, k, r);
+        const std::complex<double> swept = hard_wedge_coefficient(WedgeSweep(n, theta).at(theta0), k, r);
+        REQUIRE(std::isfinite(std::abs(swept)));
+        const double difference = std::abs(swept - direct) / std::abs(direct);
+        (near ? worst_near : worst) = std::max(near ? worst_near : worst, difference);
+    }
+    INFO("worst relative difference " << worst << ", near a boundary " << worst_near);
+    // 1.3e-9; near a boundary the coefficient is a difference of large terms.
+    REQUIRE(worst < 1e-8);
+    REQUIRE(worst_near < 1e-5);
 }

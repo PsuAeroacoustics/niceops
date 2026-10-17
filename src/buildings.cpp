@@ -54,6 +54,24 @@ double Edge::angle(const Vec3& v) const
     return theta;
 }
 
+int Edge::air_by_sign(const Vec3& v) const
+{
+    if (!(n > 1.00001 && n < 1.99999))
+        return -1;
+    const double x = v.dot(face0), y = v.dot(air);
+    const double margin = 4e-7 * (std::abs(x) + std::abs(y));
+    if (!(margin > 0.0))
+        return -1;
+    if (y > margin)
+        return 1;
+    if (y < -margin)
+    {
+        const double across = v.dot(air1);
+        return across > margin ? 1 : across < -margin ? 0 : -1;
+    }
+    return x < -margin ? 1 : -1; // beside the half-turn, theta near pi
+}
+
 namespace {
 
 // Every ring of a footprint, the outer one first.
@@ -301,6 +319,8 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
         facade_building_ = std::move(kept_building);
         edges_ = std::move(kept_edges);
     }
+    for (Edge& e : edges_)
+        e.air1 = std::sin(e.n * pi) * e.face0 - std::cos(e.n * pi) * e.air;
 
     // The grids, their cells about one and a half typical items across.
     std::vector<double> facade_boxes;
@@ -336,18 +356,23 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
 
 bool Buildings::strictly_inside(std::size_t building, double x, double y) const
 {
+    // The crossings first: most points tested lie outside, and only a point
+    // inside needs its distance from every side.
     const Footprint& f = footprints_[building];
-    bool in = false, near = false;
+    bool in = false;
     for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
         for (std::size_t i = 0, n = rx.size(), h = n - 1; i < n; h = i++)
-        {
-            if (distance_to_side(x, y, rx[h], ry[h], rx[i], ry[i]) < contact)
-                near = true;
             if ((ry[i] > y) != (ry[h] > y) && x < rx[h] + (y - ry[h]) * (rx[i] - rx[h]) / (ry[i] - ry[h]))
                 in = !in;
-        }
     });
-    return in && !near;
+    if (!in)
+        return false;
+    bool near = false;
+    for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+        for (std::size_t i = 0, n = rx.size(), h = n - 1; i < n && !near; h = i++)
+            near = distance_to_side(x, y, rx[h], ry[h], rx[i], ry[i]) < contact;
+    });
+    return !near;
 }
 
 std::size_t Buildings::inside(double x, double y) const

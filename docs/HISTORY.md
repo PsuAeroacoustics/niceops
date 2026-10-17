@@ -239,6 +239,17 @@ old and new results only with them in mind.
   one), and the energy sum jumped at every boundary. The demo canyons' range went from −2.1 to
   +2.1 dB to −1.0 to +2.2 dB, and a 400 Hz wave band, which had moved them by up to 1.1 dB, now
   moves them by 0.08.
+- **Twice-diffracted rays whose stationary point does not converge are rejected.** The point
+  was found by plain alternation, which stopped at 200 steps whether or not it had converged.
+  Near a corner where a roof edge meets a vertical one it was still creeping toward the corner,
+  and those iterates were kept as rays a few centimetres long between the edges, strong for
+  their spreading: 0.1-0.2% of the point-source model's rays. Rejecting them moved DigiCity's
+  four microphones by at most 0.063 dB, the 49-block district's levels by 0.07 dB at the 99th
+  percentile and 0.37 dB at most, and 10 of DigiCity's 1427 grid points, in deep shadow west of
+  the city (−58 to −63 dB re 1 m), by 1-5.6 dB.
+- **The shared-face aperture went from the midpoint rule at a 24th of a wavelength to Filon's
+  rule**, which moved the point-source model's levels by 0.015 dB at most. With the rejection
+  above, the table builder's seven test microphones moved by at most 0.024 dB.
 
 ### Inputs
 

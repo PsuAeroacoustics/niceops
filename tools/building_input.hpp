@@ -57,10 +57,16 @@ inline LabeledCsv read_numeric_rows(const std::string& file, const std::string& 
     if (csv.rows.empty())
         throw std::runtime_error(file + " holds no " + what);
     for (std::size_t row = 0; row < csv.rows.size(); row++)
+    {
         if (csv.rows[row].size() != csv.header.size())
             throw std::runtime_error(file + ": row " + std::to_string(row + 1) + " has "
                     + std::to_string(csv.rows[row].size()) + " fields where the header names "
                     + std::to_string(csv.header.size()));
+        for (std::size_t column = 0; column < csv.rows[row].size(); column++)
+            if (!std::isfinite(csv.rows[row][column]))
+                throw std::runtime_error(file + ": row " + std::to_string(row + 1) + "'s " + csv.header[column]
+                        + " is not a finite number");
+    }
     return csv;
 }
 

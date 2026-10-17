@@ -61,12 +61,40 @@ struct Edge
     Vec3 face0;
     Vec3 air;
     double n = 1.5;
+    // The second face's unit normal toward the air, sin(n pi) face0 -
+    // cos(n pi) air, as `air` is the first's: which side of each face a
+    // direction lies on, without its angle.
+    Vec3 air1;
     std::size_t building = 0;
     bool vertical = false;
 
     // The angle of `v` about the edge, from face0 through the air, in
     // [0, 2 pi): the wedge's own angle (wedge.hpp).
     double angle(const Vec3& v) const;
+
+    // Where p stands about the edge's line: its parameter along the line from
+    // `start`, and its part normal to the line.
+    struct Projection
+    {
+        double along = 0.0;
+        Vec3 normal;
+    };
+    Projection project(const Vec3& p) const
+    {
+        const Vec3 d = p - start;
+        const double along = d.dot(direction);
+        return {along, d - along * direction};
+    }
+
+    // Whether a direction `v` normal to the edge lies in the wedge's air, from
+    // the signs of its components about the two faces (`air`, `air1`): 1 or 0
+    // where they decide it, 4e-7 rad or more from a face -- wider than any
+    // slack a caller lets the angle have (in_air's 1e-9, onto_face's 1e-7),
+    // so that the angle would decide it the same way -- and -1 where they do
+    // not, and the angle must.  On a building's edges (1 < n < 2) the air is
+    // the half-turn above face0 and whatever lies on the air side of the
+    // second face below it.
+    int air_by_sign(const Vec3& v) const;
 };
 
 class Buildings
