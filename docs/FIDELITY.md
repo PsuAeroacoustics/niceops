@@ -1519,9 +1519,10 @@ predicted minus measured:
 | NLR's CNOSSOS-EU model (as published) | −12.9 dB | 13.3 dB | −19.9 to −7.3 dB |
 
 Below 1 kHz the prediction is within 3.4 dB in every band but 250 Hz (−6.9). It is 8.5–10.4 dB short
-at 1.25–1.6 kHz and 5 kHz. Most of what reaches microphone 7 is diffracted once, at the bar's
-vertical corners, after one or two reflections off the next stack's wall. Without that stack
-microphone 7 drops by 8–22 dB. Double diffraction over the bar or around its end is 8–15 dB weaker,
+at 1.25–1.6 kHz and 5 kHz. Most of what reaches microphone 7 is diffracted once at a vertical
+corner after one or two reflections off a stack's wall: the strongest ray, a third of the energy
+with its floor partner, reflects off that wall and diffracts at the south-east stack's corner, and
+the next at the bar's own end. Without that wall's stack microphone 7 drops by 8–22 dB. Double diffraction over the bar or around its end is 8–15 dB weaker,
 and the cascade gives the same result here as the shared-face form. Walls rigid or absorbing 0.1, a
 floor absorbing 0.1, the source 0.2 m higher, or calibration on fewer microphones each move the
 mean by 0.4 dB at most. Allowing only one reflection either side of an edge loses 2.1 dB, and three
