@@ -433,7 +433,7 @@ The acoustic loop's cost with each receiver, tabled and exact, is in
 heights in meters; the validation harness's `terrain/dem_to_netcdf.py` makes one from USGS 3DEP).
 Grid observers stand on it, and each pair's ground geometry is taken over the least-squares mean
 ground line along its ground projection, observer to the source's footprint (CNOSSOS-EU's mean
-plane, NORAH2 and ECAC Doc 32's practice over terrain). Spreading, absorption and the sphere lookup
+plane, NORAH2's practice over terrain). Spreading, absorption and the sphere lookup
 keep the true 3-D path. The geometry is in [THEORY.md](../THEORY.md) §6.3.
 
 ### Things to preserve

@@ -796,7 +796,7 @@ Without `--terrain` the ground is the plane z = 0 everywhere. `--terrain FILE` g
 grid observers stand on the terrain (with the microphone at `--receiver_height` or on its plate
 above it), and each source–receiver pair's ground term is taken over its **mean ground plane**,
 the least-squares line through the terrain heights along the path's ground projection. That is
-the mean plane of CNOSSOS-EU, which NORAH2 and ECAC Doc 32 use over terrain
+the mean plane of CNOSSOS-EU, which NORAH2 uses over terrain
 ([THEORY §6.3](THEORY.md#63-terrain)). Spreading, absorption and the sphere lookup still take the
 real three-dimensional path. A level terrain file reproduces the run without it, bit for bit.
 

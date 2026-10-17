@@ -94,9 +94,10 @@ sphere gives the A-weighted level $L_\mathrm{sph}(\phi, \theta)$, an excess-atte
 $\mathrm{EAA}(\phi, \theta)$, and optionally one-third-octave band levels
 $L_{\mathrm{sph},b}(\phi, \theta)$, all on the sphere of radius $R_s$ around the rotor hub. The
 spheres are built by PANAM; the shipped spectral databases come from the 2017 Noise Abatement
-flight test [5, 6]. Measured levels are propagated back from the microphones to $R_s$
-("depropagated") through each run's own atmosphere. The received spectra keep their Doppler
-shift (§11).
+flight test [5], and the broadband AW139, B205 and S-76D databases from the medium-sized
+helicopter noise abatement flight test [6]. Measured levels are propagated back from the
+microphones to $R_s$ ("depropagated") through each run's own atmosphere. The received spectra
+keep their Doppler shift (§11).
 
 ### 2.3 Blending the spheres
 
@@ -288,7 +289,7 @@ north ($b = 90°$).
 
 **Lateral subtracks.** An operations file's `offset` $d$ (positive to the left) moves a track
 square to its horizontal direction of travel, as dispersed subtracks do in airport noise models
-[57, 58]. With $\mathbf v = (v_x, v_y)$ the horizontal velocity and $\mathbf a = (a_x, a_y)$
+[16]. With $\mathbf v = (v_x, v_y)$ the horizontal velocity and $\mathbf a = (a_x, a_y)$
 the horizontal acceleration, the left normal and the signed curvature (positive turning left)
 are
 
@@ -350,7 +351,7 @@ loss or table correction (§8, §9.3). The bands are then weighted and summed in
 
 ### 4.3 Atmospheric absorption
 
-The absorption coefficient is that of ISO 9613-1 [16], evaluated at each band's center
+The absorption coefficient is that of ISO 9613-1 [17], evaluated at each band's center
 frequency. With $T_0 = 293.15$ K, $T_{01} = 273.16$ K, $p_r = 101.325$ kPa, ambient temperature
 $T$, pressure $p_a$ and relative humidity $h_r$ in percent:
 
@@ -383,8 +384,9 @@ $$
 \bar{\alpha}_b = \frac{F_b(z_s) - F_b(z_o)}{z_s - z_o}
 $$
 
-times its length. This is the fine-layer limit of the 30 m layers of 14 CFR 36, Appendix A
-[17], and the approach of the sonAIR model [18]. Two approximations come with it. The mean is
+times its length. This is the fine-layer limit of the layered absorption of 14 CFR 36,
+Appendix A [18, A36.2.2.3], whose layers are at least 30 m deep, and the approach of the sonAIR
+model [19]. Two approximations come with it. The mean is
 taken over the whole height span, including the part inside the sphere radius that the path
 length excludes. And on a curved ray the mean is still taken over the straight span
 $[z_o, z_s]$, a first-order approximation; the ray's own arc length is what it multiplies.
@@ -397,7 +399,7 @@ $R_d = 287.05$ J/(kg K), from the surface pressure of the vehicle file or `--pre
 The ground model applies to the spectral path and is on by default there. It returns a gain,
 the ratio of the mean-square pressure over the ground to the free-field mean-square pressure.
 It is ported from PANAM's `ega()`, which follows the formulation of Stusnick, Plotkin and
-Sutherland [19], and is pinned to it at $10^{-9}$ dB. The model assumes a point
+Sutherland [20], and is pinned to it at $10^{-9}$ dB. The model assumes a point
 source over flat, locally reacting ground, with straight rays.
 
 ### 5.1 Ground impedance
@@ -408,10 +410,10 @@ default 225, grass):
 
 | Model | Impedance |
 | --- | --- |
-| Delany–Bazley [20] (default) | $Z = 1 + 9.08 X^{-0.75} + 11.9 i X^{-0.73}$ |
-| Miki [21] | $Z = 1 + 5.50 X^{-0.632} + 8.43 i X^{-0.632}$ |
-| Variable porosity [22] | $Z = (1+i)\sqrt{\dfrac{\sigma_e}{\pi \gamma \rho_0 f}} + \dfrac{i c\, \alpha_e}{8 \pi \gamma f}$ |
-| Hard-backed layer of depth $d_l$ [22] | $Z = Z_c \coth(-i k_c d_l)$ |
+| Delany–Bazley [21] (default) | $Z = 1 + 9.08 X^{-0.75} + 11.9 i X^{-0.73}$ |
+| Miki [22] | $Z = 1 + 5.50 X^{-0.632} + 8.43 i X^{-0.632}$ |
+| Variable porosity [23] | $Z = (1+i)\sqrt{\dfrac{\sigma_e}{\pi \gamma \rho_0 f}} + \dfrac{i c\, \alpha_e}{8 \pi \gamma f}$ |
+| Hard-backed layer of depth $d_l$ [23] | $Z = Z_c \coth(-i k_c d_l)$ |
 
 In the variable-porosity model $\sigma_e$ is the effective flow resistivity in Pa·s/m², 1000
 times `--flow_resistance`, which is given in kPa·s/m² for every model. $\alpha_e$ is the rate of
@@ -425,8 +427,8 @@ first-order (WKB) solution gives for porosity $\Omega_0 e^{-\alpha z}$ with isot
 compressibility, taking $\alpha_e = \alpha/\Omega_0$. The form usually quoted,
 $0.436(1+i)\sqrt{\sigma_e/f} + 19.48\,i\alpha_e/f$, has twice the coefficient, so its $\alpha_e$
 is defined differently: halve an $\alpha_e$ fitted in that form before passing it to
-`--porosity_rate`. The printed eq. (10) of [22] has not been checked. The 2017 site ground uses
-$\alpha_e = 0$.
+`--porosity_rate`. Eq. (10) of [23] has this coefficient, $b = c_0/(8\pi\gamma)$. The 2017 site
+ground uses $\alpha_e = 0$.
 
 ### 5.2 The spherical-wave reflection coefficient
 
@@ -446,7 +448,7 @@ $$
 
 where $w = p_w^2$ is the numerical distance and
 $\mathrm{w}(z) = e^{-z^2}\mathrm{erfc}(-iz)$ is the Faddeeva function. This is the
-Chien–Soroka form of the reflection coefficient [23, 24, 22]. Writing $F$
+Chien–Soroka form of the reflection coefficient [24, 25, 23]. Writing $F$
 through $\mathrm{w}(p_w)$, rather than $e^{-w}\mathrm{erfc}(-i\sqrt{w})$, keeps it stable at
 any $\lvert w\rvert$. It also keeps the branch of $p_w$ itself, so a mass-like ground
 ($\mathrm{Im}\,\beta > 0$) does not acquire a spurious growing surface wave.
@@ -456,7 +458,7 @@ $F$ takes it to about 2.02 for an ordinary soil, a gain of up to $(1 + \lvert Q\
 +9.6 dB, rather than the +6 dB of pressure doubling.
 
 **The Faddeeva function** is computed by Weideman's rational series with $N = 32$ terms
-[25]:
+[26]:
 
 $$
 \mathrm{w}(z) = \frac{2 P(Z)}{(L - iz)^2} + \frac{1}{\sqrt{\pi}(L - iz)}, \qquad
@@ -472,13 +474,13 @@ other argument. Both fast paths agree with the series to about $10^{-11}$, and t
 with SciPy's `wofz` to $3\times10^{-13}$.
 
 **Roughness.** An rms roughness height $\sigma_r$ (`--roughness`, default 0) reduces the
-coherent reflection by the Kirchhoff (Ament) factor [26]:
+coherent reflection by the Kirchhoff (Ament) factor [27]:
 $Q \leftarrow Q\, e^{-2(k\sigma_r\cos\vartheta)^2}$.
 
 ### 5.3 Band averaging and turbulence
 
 A one-third-octave band is not a pure tone. NICEOPS uses Chessell's band-averaged form
-[27], with the corrections noted by Daigle, Embleton and Piercy [28], with the path delay
+[28], with the corrections noted by Daigle, Embleton and Piercy [29], with the path delay
 $\tau = (R_2 - R_1)/c$ and range ratio $\varrho = R_2/R_1$:
 
 $$
@@ -496,14 +498,14 @@ it decorrelates even coincident paths.
 $T(f)$ is the coherence of the direct and reflected waves, reduced by atmospheric turbulence.
 It uses the direct range $R_1$ in both models:
 
-- **Chessell** (default) [27]: $T = \exp\left[-\left(\tfrac12 C f \sqrt{R_1}\right)^2\right]$,
+- **Chessell** (default) [28]: $T = \exp\left[-\left(\tfrac12 C f \sqrt{R_1}\right)^2\right]$,
   with $C$ (`--turbulence`, rad·s/√m) zero by default.
-- **HARMONOISE** [29, 22]:
+- **HARMONOISE** [30, 23]:
   $T = \exp\left[-\tfrac38\, B\, k^2 \gamma_p^{5/3} R_1\, \gamma_T\right]$, with $B = 0.364$,
   $\gamma_p = h_s h_r/(h_s + h_r)$ and the turbulence strength $\gamma_T$ below.
 
 The HARMONOISE turbulence strength combines the temperature and wind-velocity structure
-parameters $C_T^2$ and $C_v^2$ [30]:
+parameters $C_T^2$ and $C_v^2$ [31]:
 
 $$
 \gamma_T = \frac{C_T^2}{T_0^2} + \frac{22}{3}\frac{C_v^2}{c_0^2}\quad (\mathrm{m}^{-2/3}).
@@ -541,7 +543,7 @@ from the microphone: about 8 m for a 1.2 m pole with the source 150 m up and 1 k
 38 m with the source 30 m up, while the Fresnel zone reaches well past $x_s$ at grazing
 incidence and low frequency. A flush plate microphone ($h_r = 0$) reflects at the microphone, so
 a patch larger than the plate qualifies. Weighting the surfaces over the Fresnel zone, as
-Nord2000 and CNOSSOS-EU do [59, 32, 33], is not done.
+Nord2000 and HARMONOISE do [32, 30], is not done.
 
 For the peak search (§1) the point receiver's bound, $(1 + \max|Q|)^2$ per band, is the
 largest over the classes the run's point receivers stand on. It does not depend on the receiver
@@ -552,15 +554,16 @@ height, so one bound still serves every observer.
 ### 6.1 The point receiver
 
 The default receiver is a point `--receiver_height` above the ground (1.2 m, as 14 CFR 36
-prescribes [17]), or each microphone's own height from an observer file. It is §5's model
+prescribes [18]), or each microphone's own height from an observer file. It is §5's model
 with $h_r$ set to that height, over the run's ground or over the microphone's ground class
 (§5.5).
 
 ### 6.2 Ground-plane microphones
 
 `--plate_table` models a microphone mounted in a circular plate on the ground: the GRAS 67AX in a
-GR1425 plate, 0.2 m in radius, with the microphone 3/4 of the radius from the center, as in
-SAE ARP 4055 [31]. The plate's response is tabulated by PANAM's axisymmetric boundary
+GR1425 plate, 0.2 m in radius, with the microphone 3/4 of the radius from the center: the plate
+size and microphone position of SAE ARP 4055 [33], though ARP 4055's microphone is inverted
+above the plate, not flush. The plate's response is tabulated by PANAM's axisymmetric boundary
 element method as complex transfer functions of the direct and image waves, $P_d$ and $P_r$,
 over frequency, elevation and azimuth. The band gain averages the table's $N_\mathrm{sub}$
 sub-frequencies $f_j$ across the band (five in the GR1425 tables):
@@ -592,7 +595,7 @@ a different ground is refused.
 With `--terrain`, each source–observer pair takes its own mean ground plane: a least-squares
 line $z = a + b s$ fitted to the terrain heights along the pair's horizontal path, with $s$ the
 horizontal distance from the observer. This is the mean-plane construction of CNOSSOS-EU
-[32, 33], also used over terrain in NORAH2 [34] and ECAC Doc 32 [11]. The ground model then runs
+[34, 35], also used over terrain in NORAH2 [36]. The ground model then runs
 in the rotated frame of that plane:
 
 $$
@@ -623,9 +626,9 @@ With `--terrain_screening` a path the terrain blocks is screened instead (§6.4)
 
 `--terrain_screening` lowers the paths the terrain blocks, in the vertical plane through the
 microphone's foot and the source's footprint, by one of two models: `cnossos`, the CNOSSOS-EU
-diffraction over the path's terrain profile [32, 33], as amended [62, 63], with the ground on each
+diffraction over the path's terrain profile [34, 35], as amended [37, 38], with the ground on each
 side of its edges in place of the whole path's; or `kirchhoff`, the Fresnel-Kirchhoff loss of one
-equivalent knife edge [65], taken off the level the path would have unscreened. Heights are taken relative to the terrain at the microphone's foot, $s$ is
+equivalent knife edge [39], taken off the level the path would have unscreened. Heights are taken relative to the terrain at the microphone's foot, $s$ is
 the horizontal distance from it, and $\Delta$ is the terrain sampling step. The microphone is
 $R = (0, h_m)$, with $h_m$ its height above the ground (zero for a plate), the profile is
 $P_k = (k\Delta, z_k)$ for the samples strictly between the ends, $1 \le k < D/\Delta$, and the
@@ -727,7 +730,7 @@ crest is its own edge, $\delta_K = \delta$; over several, the edge sits where th
 protrusion is and is as high as the higher horizon there.
 
 **Kirchhoff: the loss.** Past a knife edge, the power relative to the free field in the
-Fresnel-Kirchhoff approximation [65] is
+Fresnel-Kirchhoff approximation [39] is
 
 $$
 |F(v)|^2 = \tfrac12\left(\left[\tfrac12 - C(v)\right]^2 + \left[\tfrac12 - S(v)\right]^2\right),
@@ -735,7 +738,7 @@ $$
 $$
 
 with $C(v) = \int_0^v \cos(\pi t^2/2)\,dt$ and $S(v) = \int_0^v \sin(\pi t^2/2)\,dt$ the
-Fresnel integrals [50], by power series to $v = 1.5$ and a continued fraction beyond [66]. It is
+Fresnel integrals [40], by power series to $v = 1.5$ and a continued fraction beyond [41]. It is
 1/4 on the shadow boundary and falls monotonically into the shadow, as $1/(2\pi^2 v^2)$ deep in
 it. A band's loss is its mean over the band, uniformly in frequency from $f_b 2^{-1/6}$ to
 $f_b 2^{1/6}$:
@@ -768,7 +771,7 @@ which the bounds of §5, §6.2 and §9.3 already cover, so the knife edge adds n
 
 Neither model has lateral paths around obstacles, the rays are straight, and an edge is resolved
 only to the sampling step, which rounds a sharp crest slightly. $\Delta_\mathrm{dif}$ and
-$|F(v)|^2$ are compared with Sommerfeld's exact solution for a rigid half-plane [64] in
+$|F(v)|^2$ are compared with Sommerfeld's exact solution for a rigid half-plane [42] in
 [FIDELITY](FIDELITY.md#terrain-screening).
 
 ### 6.5 Urban receivers
@@ -804,7 +807,8 @@ and takes the azimuth of the arrival as it reaches the microphone, the line's ho
 mirrored back.
 
 **The ideal canyon.** The tables `niceops_urban_table --canyons` builds are those of an ideal street
-canyon [67]: two parallel walls of infinite length a width $W$ apart, with heights $H_A$ and $H_B$ above
+canyon [66], here with walls of unequal height and a distant source: two parallel walls of
+infinite length a width $W$ apart, with heights $H_A$ and $H_B$ above
 the floor, and the microphone $y_r$ from wall A at height $z_r$. Each entry is for a plane wave,
 the source being far compared with the street. Let the arrival direction (toward the source) have
 components $u_c$ across the canyon, positive toward wall B, and $u_z$ upward. A ray traced back
@@ -820,7 +824,7 @@ mirrored ($m$, $m_f$).
 
 **Roof-edge diffraction.** Each roof edge is a rigid right-angle wedge ($n = 3/2$: its roof and its
 wall), lit unless the other wall stands between it and the source. The uniform theory of
-diffraction [69], which makes Keller's geometrical theory [68] uniform across the shadow and
+diffraction [67], which makes Keller's geometrical theory [68] uniform across the shadow and
 reflection boundaries, gives its diffracted wave, for the time convention $e^{-i\omega t}$, as
 
 $$
@@ -834,8 +838,8 @@ with $\theta$ and $\theta_0$ the departure and the source's direction in the edg
 $(\beta \pm \pi)/2n\pi$, and the transition function
 $F(X) = -i\sqrt{\pi X}\,e^{i\pi/4}\,w(e^{i\pi/4}\sqrt X)$ through the Faddeeva function. $F \to 1$ away
 from the shadow and reflection boundaries, where the geometrical-optics field jumps, and keeps the
-total field continuous across them. For a half-plane this is Sommerfeld's exact solution [64]; for
-the right-angle wedge it is within 0.02 dB of the exact eigenfunction series [70] at $kr = 10$. The
+total field continuous across them. For a half-plane this is Sommerfeld's exact solution [42]; for
+the right-angle wedge it is within 0.02 dB of the exact eigenfunction series [69] at $kr = 10$. The
 diffracted rays reach the microphone straight and through its images in the walls (to 40
 reflections) and the floor, an unfolded line valid while every wall it crosses stands above the
 crossing.
@@ -891,7 +895,7 @@ $\rho_\perp$ being the target's distance from the edge's line; a $\mathbf Q$ off
 ray. The field is the wedge's in the plane normal to the edge, at the wavenumber and distance
 projected into it, $D(\theta, \theta_0)$ at $k\sin\beta_0$ and $r = s\sin\beta_0$ over
 $\sqrt{s\sin\beta_0}$ for the distance $s = |\mathbf T - \mathbf Q|$, which for a plane wave is the
-oblique-incidence form [69] with $L = s\sin^2\beta_0$. The targets are the microphone, $M_f$ and
+oblique-incidence form [67] with $L = s\sin^2\beta_0$. The targets are the microphone, $M_f$ and
 their images in the facades within a radius. The images are found by beam tracing in plan view:
 each carries the part of its last facade through which the microphone can be reached, a further
 facade counts only where it lies in that beam, and an edge only where it crosses it. Every
@@ -1016,7 +1020,7 @@ $1 - w$ and the run's explicit reflections fade out as the wave table fades in.
 An `--atmosphere` profile gives temperature, relative humidity and optionally pressure and wind
 against height. Values are linear in height between levels, pressure is log-linear, and the
 lowest level is held below the profile. Sound in moving air is treated in the
-effective-sound-speed approximation [30, 35]:
+effective-sound-speed approximation [31, 43]:
 
 $$
 c_\mathrm{eff}(z) = c\left(T(z)\right) + \hat{\mathbf{h}} \cdot \mathbf{v}_w(z),
@@ -1027,7 +1031,7 @@ wind. The approximation overstates the wind's effect on steep paths by a factor
 $1/\cos(\text{elevation})$, which matters little because steep paths refract little.
 
 **A profile from one surface wind** (`--wind`). The wind follows the neutral logarithmic law
-[36] through the observation $u_\mathrm{ref}$ at height $z_\mathrm{ref}$,
+[44] through the observation $u_\mathrm{ref}$ at height $z_\mathrm{ref}$,
 
 $$
 u(z) = u_\mathrm{ref}\,\frac{\ln(z/z_0)}{\ln(z_\mathrm{ref}/z_0)}, \qquad z_0 < z \le \delta,
@@ -1039,7 +1043,7 @@ only the neutral surface layer, about a tenth of a boundary layer one to two kil
 Above it the wind turns and grows slowly toward the geostrophic wind, which a single surface
 observation says nothing about, so the profile holds the surface layer's top value rather than
 extrapolate the law or model the turning. The roughness length
-$z_0$ (`--roughness_length`) defaults to 0.03 m, the Davenport–Wieringa class "open flat terrain" [37, 38]. The
+$z_0$ (`--roughness_length`) defaults to 0.03 m, the Davenport–Wieringa class "open flat terrain" [45, 46]. The
 anemometer height $z_\mathrm{ref}$ defaults to the standard 10 m.
 
 As run, the law is sampled at levels. The ground, $z = 0$, is calm. The first level above it is
@@ -1057,9 +1061,9 @@ are the run's own: the vehicle file's, or `--temperature`, `--humidity` and `--p
 **Stability classes** (`--stability`, unvalidated). Each class replaces the log law with a power
 law $u = u_\mathrm{ref}(z/z_\mathrm{ref})^m$, held above $\delta$ as the log law is, and the lapse
 with a class temperature gradient. The class gradient holds up to $\delta$, and every class
-lapses dry-adiabatically above it. The exponents are the Klug–Manier classes of TA Luft [39],
+lapses dry-adiabatically above it. The exponents are the Klug–Manier classes of TA Luft [47],
 and the gradients are mid-range values of the $\Delta T$ classes of U.S. NRC Regulatory
-Guide 1.23 [40]:
+Guide 1.23 [48] (class A, which has no lower bound, takes −2.0 K/100 m):
 
 | Class (TA Luft) | Pasquill | Character | $m$ | $dT/dz$ below $\delta$ |
 | --- | --- | --- | --- | --- |
@@ -1097,7 +1101,7 @@ concentration), the profile is the `--wind` profile.
 
 **A site roughness length from wind profiles** (`niceops_build_atmosphere fit_z0`). Over runs
 $j$ and gates $z_i$ between two heights (46–197 ft by default), with speeds $U_{ij}$, the model
-is the log law with one roughness length for the site and a slope per run [36, 60]:
+is the log law with one roughness length for the site and a slope per run [44, 49]:
 
 $$
 U_{ij} = A_j\,(\ln z_i - \ell), \qquad \ell = \ln z_0, \quad A_j = u_{*j}/\kappa .
@@ -1106,7 +1110,7 @@ $$
 For a given $\ell$ each $A_j = \sum_i U_{ij} x_i / \sum_i x_i^2$ with $x_i = \ln z_i - \ell$, so
 the least-squares fit is a search in $\ell$ alone, over $z_0$ from $10^{-4}$ to 3 m. Its minimum
 is where $dS/d\ell = 2\sum_j A_j \sum_i (U_{ij} - A_j x_i)$ vanishes. A run enters only if it is
-near neutral, by the bulk Richardson number between the lowest and highest gate [36],
+near neutral, by the bulk Richardson number between the lowest and highest gate [44],
 
 $$
 \mathrm{Ri}_b = \frac{g}{\bar\theta}\,\frac{\Delta\theta/\Delta z}{(\Delta U/\Delta z)^2},
@@ -1115,7 +1119,7 @@ $$
 
 with $|\mathrm{Ri}_b| \le 0.05$, at least 3 m/s at the highest gate, and at most 20° of turning
 across the gates (the law has none). The interval is the 2.5 and 97.5 percentiles of the fit
-repeated over runs drawn with replacement [61]. The fit is ill-conditioned: with gates at 46 and
+repeated over runs drawn with replacement [50]. The fit is ill-conditioned: with gates at 46 and
 197 ft and $z_0$ near 0.03 m, a 1% error in the ratio of their speeds moves $z_0$ by a factor of
 about 1.4, so runs are pooled and the interval is reported with $z_0$.
 
@@ -1125,7 +1129,7 @@ about 1.4, so runs are pooled and the interval is reported with $z_0$.
 
 `--refraction linear` fits each source–observer pair's $c_\mathrm{eff}(z)$ over the pair's
 height span (at least 10 m) with a straight line $c(z) = c_0 + a z$ by least squares. This is the
-equivalent-linear approach of HARMONOISE and Nord2000 [41, 42]. The rays are
+equivalent-linear approach of HARMONOISE and Nord2000 [51, 52]. The rays are
 then arcs of circles of radius $\mathcal{L} = c_0/\lvert a\rvert$ centered at height
 $-c_0/a$. For the direct ray, with $\kappa(z) = z(2\mathcal{L} + \sigma z)$ and
 $\sigma = \mathrm{sign}\,a$, the arc's center lies a horizontal distance
@@ -1156,7 +1160,7 @@ $$
 Beyond it, sound arrives as a creeping wave diffracted along the ground. The level starts from
 the limiting ray's: its spreading range is continued in proportion to range,
 $R_\mathrm{eq} = r\mathcal{L}/h_c$ ($h_c = \mathcal{L} - z_s$), and its travel time at $c_0$. It decays at the rate of the
-first mode [43, §9-5; 44]. Over rigid ground, with $\tau_1 = 1.01879$ the first zero of
+first mode [53, §9-5; 54]. Over rigid ground, with $\tau_1 = 1.01879$ the first zero of
 $\mathrm{Ai}'(-x)$:
 
 $$
@@ -1178,7 +1182,7 @@ energy turbulence scatters into the shadow.
 diffracts smoothly from lit to shadow. Its ground term, taken at the grazing ray's straight
 equivalent geometry, sinks toward the grazing ground wave over soft ground and doubles over
 rigid ground, where the exact field does neither, and near the ground the equivalent-linear
-method can depart from a PE by up to 10 dB [45]. When a ground model is on, NICEOPS replaces
+method can depart from a PE by up to 10 dB [55]. When a ground model is on, NICEOPS replaces
 the ray model there by a tabulated field.
 
 For each band, and each microphone height, it tabulates $V(\xi, s)$: the level of the
@@ -1186,7 +1190,7 @@ residue-series field of a profile with $k^2$ linear in height over the impedance
 relative to the ray's spreading alone. Its arguments are the Fock-scaled distance past the
 boundary $\xi = (r - r_b)/F$, with the diffraction length $F = 2s^2/k_0$, and
 $s = k_0 \ell$, $\ell = (c_0/(2\lvert a\rvert k_0^2))^{1/3}$. Relative to the ray's spreading it
-hardly depends on the source's height, which is Fock's result [44], so one table serves every
+hardly depends on the source's height, which is Fock's result [54], so one table serves every
 path. The table is built with the source at $\min(20, 0.1 s^2)\,\ell$, over
 $-2 \le \xi \le 6$ in steps of 0.1 and $5 \le s \le 3000$ at 8 nodes per decade. $V$ is capped at
 $20\lg 2$, the most two coherent rays give, held at $V(0) - L_\mathrm{floor}$ deep in the
@@ -1299,16 +1303,16 @@ caustic the wave does not show. Without a transition there is no hand-over, and 
 shadow ray takes the creeping-wave loss at the fit's gradient. A boundary set by faster air
 aloft is withdrawn where a ray from aloft or along a duct does arrive.
 
-**Wave corrections.** By default a caustic's focusing gain is capped at 10 dB. Two opt-in
-Airy corrections exist. `--tunneling` adds rays that turn back at a height $z_t$ just above the
-receiver, which the wave reaches as the evanescent tail $\mathrm{Ai}^2(x)$,
+**Wave corrections.** By default a caustic's focusing gain is capped at 10 dB. Two opt-in Airy
+corrections [53, §9-4] exist. `--tunneling` adds rays that turn back at a height $z_t$ just above
+the receiver, which the wave reaches as the evanescent tail $\mathrm{Ai}^2(x)$,
 $x = (\tfrac32\omega I)^{2/3}$, $I = \int_{z_r}^{z_t}\sqrt{p^2 - 1/c^2}\,dz$; near the family's
 caustic the pair of rays is replaced by the caustic's band-averaged Airy field. `--skip_fill` adds
 a caustic's tail on the dark side of an interior extremum of a family's range,
 $I = C\,\mathrm{Ai}^2\!\left(\omega^{2/3} d\,(2/X'')^{1/3}\right)$, with $d$ the distance short of
 the caustic and $C$ matched to the two rays' energy on the lit side. Each is averaged over 7
 sub-frequencies of the third octave and normalized to the ray tube at the 10 kHz reference
-frequency, so it is never a gain over the tube [43]. Both arguments go as $\omega^{2/3}$, so a
+frequency, so it is never a gain over the tube. Both arguments go as $\omega^{2/3}$, so a
 band's mean of $\mathrm{Ai}^2$ depends only on the argument $x$ at its center, the sub-frequencies'
 being $x\,2^{(k-3)/27}$, $k = 0, \dots, 6$: it is tabulated once against $x$ (its logarithm and
 exact slope every 1/128 from $-60$ to $64$, read by cubic Hermite interpolation), taken as zero
@@ -1389,7 +1393,7 @@ $$
 
 with $k(z) = \omega/c_\mathrm{eff}(z) + i\alpha$ and the impedance condition
 $\partial\psi/\partial z = -ik\beta\psi$ at the ground. It is marched in range by the split-step
-Padé method of Collins [46]: $\exp[i k_a \Delta r(\sqrt{1+\mathcal{Q}} - 1)]$ is replaced
+Padé method of Collins [56]: $\exp[i k_a \Delta r(\sqrt{1+\mathcal{Q}} - 1)]$ is replaced
 by a rational function $r_0 + \sum_j c_j/(\mathcal{Q} - p_j)$, so a step costs one tridiagonal
 solve per term. **Departure:** the coefficients are not the Taylor–Padé coefficients. They come
 from a rational interpolant fitted at run time on Chebyshev nodes over the propagation angles
@@ -1403,15 +1407,15 @@ than that from the source is reported as NaN. The default range step is eight wa
 The depth operator is discretized to fourth order (Numerov), with a fourth-order impedance row
 at the ground and fourth-order interpolation that places the source on the grid and reads the
 receivers off it. The grid is 10 points per wavelength (20 with a second-order option or
-Crank–Nicolson). A Crank–Nicolson scheme, the Padé(1,1) case [35, App. F], is available as an
-independent check. The field starts from Collins's self-starter [47], the first range step
-applied to a delta function at the source, or from the Gaussian starter of [35]. An artificial
+Crank–Nicolson). A Crank–Nicolson scheme, the Padé(1,1) case [43, App. G], is available as an
+independent check. The field starts from Collins's self-starter [57], the first range step
+applied to a delta function at the source, or from the Gaussian starter of [43]. An artificial
 absorbing layer 100 wavelengths thick closes the top of the domain.
 
-**Turbulence** enters as random phase screens [48; 35, App. I], one every outer scale
+**Turbulence** enters as random phase screens [58; 43, App. J], one every outer scale
 $L_0$ (default 10 m) of range. Each screen's phase spectrum is that of a von Kármán spectrum
-with structure parameter $\gamma_T/4$, the value for which Ostashev's coherence and HARMONOISE's
-reduce to one form [22]:
+with structure parameter $\gamma_T/4$, the value that puts Ostashev's coherence in HARMONOISE's
+form, with $2\gamma_p$ in place of $\gamma_p$ [23, Eqs. 18–21]:
 
 $$
 S_\varphi(\kappa_z) = 2\pi k_a^2\, \Delta x\; 0.033\, \frac{\gamma_T}{4}\;
@@ -1434,7 +1438,7 @@ deep in the shadow, at points where it is 10 dB clear of the still-air field.
 
 ### 9.2 Analytic reference solutions
 
-These are the benchmark cases of Attenborough et al. [49]: a source at 5 m, a receiver at 1 m,
+These are the benchmark cases of Attenborough et al. [59]: a source at 5 m, a receiver at 1 m,
 10, 100 and 1000 Hz, a locally reacting ground with the paper's four-parameter impedances, and
 absorption entered as $\mathrm{Im}\,k_0$ from the values the paper quotes:
 
@@ -1459,13 +1463,13 @@ with $\ell = (\mathcal{R}/(2k_0^2))^{1/3}$ and $\mathrm{w}_3 = e^{2\pi i/3}$:
 - **Upward refraction:** $u_n = \mathrm{Ai}(b_n - \mathrm{w}_3 z/\ell)$, with
   $\mathrm{Ai}'(b_n) - i k_0 \ell \beta\, \mathrm{w}_3^2\, \mathrm{Ai}(b_n) = 0$.
 
-The Airy and Hankel functions follow the DLMF [50].
+The Airy and Hankel functions follow the DLMF [40].
 
-**Departure: the upward mode condition.** The condition printed in [49, Eq. 11],
+**Departure: the upward mode condition.** The condition printed in [59, Eq. 11],
 $\mathrm{Ai}'(b) + i k_0 \ell \beta\,\mathrm{w}_3\,\mathrm{Ai}(b) = 0$, differs from the one derived
 here by a factor $e^{i\pi/3}$ on the admittance term. The two agree over rigid ground. Over
 impedance ground the printed form departs from the PE and the derived form agrees with it
-([FIDELITY](FIDELITY.md#the-attenborough-et-al-benchmark)). Eq. (10) of [49] is right up to an
+([FIDELITY](FIDELITY.md#the-attenborough-et-al-benchmark)). Eq. (10) of [59] is right up to an
 overall sign.
 
 **Case 2's exact profile.** The normal-mode solution's profile, $c_0/\sqrt{1 - 2z/\mathcal{R}}$,
@@ -1520,7 +1524,7 @@ except where a height was raised to zero. A point receiver whose $h_r'$ lies out
 receiver heights is not clamped onto a row; it falls back to the run's own model. Reading a
 refracting table this way takes its stratification to follow each path's mean plane. CNOSSOS-EU
 evaluates its favorable (downward-refracting) conditions over the mean plane in the same way
-[32, 33]. For a linear profile the circular ray tangent to a plane tilted by $\alpha$ has a
+[34, 35]. For a linear profile the circular ray tangent to a plane tilted by $\alpha$ has a
 radius larger by $1/\cos\alpha$ (0.14% at 3°), so the read is a small perturbation of the
 vertical-gradient geometry on gentle slopes.
 
@@ -1533,7 +1537,7 @@ a roughness the Kirchhoff factor; a PE table's turbulence is its phase screens (
 
 ### 10.1 Frequency weighting and band summation
 
-The A and C weightings are the analytic forms of IEC 61672-1 [51]:
+The A and C weightings are the analytic forms of IEC 61672-1 [60]:
 
 $$
 W_C(f) = 10\lg\frac{K_C\, f^4}{(f^2 + f_1^2)^2 (f^2 + f_4^2)^2}, \qquad
@@ -1563,14 +1567,14 @@ $$
 
 with $\dot r_i$ a central difference. The sum runs over the 10 dB-down window, from the first to
 the last sample within 10 dB of the peak, dips between them included, as in 14 CFR 36
-[17, A36.4.5]. `--full_history` sums every sample, here and in the day metrics (§10.4). Under
+[18, A36.4.5]. `--full_history` sums every sample, here and in the day metrics (§10.4). Under
 refraction $r_i$ is $c$ times the ray's travel time. An ambient level $L_\mathrm{amb}$ (`-a`) is
 added in energy, $10\lg(10^{L/10} + 10^{L_\mathrm{amb}/10})$, before the window is found.
 
 ### 10.3 Maximum level, time above and number above
 
 The signal is piecewise constant in mean square, $P_i = 10^{L_i/10}$, over the reception-time
-durations above. The exponential time weighting of IEC 61672-1 [51] (fast, $\tau = 0.125$ s,
+durations above. The exponential time weighting of IEC 61672-1 [60] (fast, $\tau = 0.125$ s,
 by default) is applied exactly for that input:
 
 $$
@@ -1619,9 +1623,9 @@ or the penalty. An operations file's `local_time` sets the clock the penalties a
 
 | Metric | Evening | Night | Definition |
 | --- | --- | --- | --- |
-| DNL | — | 22:00–07:00, +10 dB | 14 CFR Part 150 [52] |
-| Lden | 19:00–23:00, +5 dB | 23:00–07:00, +10 dB | Directive 2002/49/EC [53] |
-| CNEL | 19:00–22:00, +10 lg 3 dB | 22:00–07:00, +10 dB | Cal. Code Regs. tit. 21, §5001 [54] |
+| DNL | — | 22:00–07:00, +10 dB | 14 CFR Part 150 [61] |
+| Lden | 19:00–23:00, +5 dB | 23:00–07:00, +10 dB | Directive 2002/49/EC [62] |
+| CNEL | 19:00–22:00, +10 lg 3 dB | 22:00–07:00, +10 dB | Cal. Code Regs. tit. 21, §5001 [63] |
 
 A period's opening hour belongs to it. The directive's form,
 
@@ -1674,8 +1678,9 @@ metric's weighting at 13:00, 21:00 and 03:00. $L_{\mathrm{Aeq},T}$ has no period
 
 ### 10.5 Effective perceived noise level
 
-EPNL follows 14 CFR 36, Appendix A, §A36.4 [17], which is identical to ICAO Annex 16
-[55]. It is ported term for term from PANAM.
+EPNL follows 14 CFR 36, Appendix A, §A36.4 [18], which is harmonized with ICAO Annex 16, Vol. I,
+Appendix 2 [64] but not identical to it; AC 36-4D calls them "nearly identical" [65, §201(b)(1)].
+It is ported term for term from PANAM.
 
 **The records.** The one-third-octave spectra are formed as linear averages over 0.5 s records
 in reception time (§A36.3). Each state's band energy is spread evenly over its reception-time
@@ -1708,11 +1713,12 @@ EPNL. For each record $k$ and band $i$:
 4. $\mathrm{PNLT}(k) = \mathrm{PNL}(k) + C(k)$ and its maximum PNLTM.
 5. The band-sharing check of §A36.4.4.2: when $C$ at PNLTM is below its mean $\bar C$ over the
    five records centered there (over the records that exist, at either end of the history),
-   $\Delta_B = \mathrm{PNL}(k_M) + \bar C - \mathrm{PNLTM}$, added to EPNL as a separate term
-   as ICAO Annex 16 [55] and FAA AC 36-4 [56] carry it; otherwise $\Delta_B = 0$. It is kept
-   separate because, read literally, 14 CFR 36 raises PNLTM by $\Delta_B$ and takes $D$ from the
-   raised PNLTM, so the two cancel in $\mathrm{PNLTM} + D$: the adjustment could never raise
-   EPNL, only lower it through a narrower duration.
+   $\Delta_B = \mathrm{PNL}(k_M) + \bar C - \mathrm{PNLTM}$, added to EPNL as a separate term;
+   otherwise $\Delta_B = 0$. This departs from Annex 16 [64, App. 2, §4.4.2–4.6.3] and AC 36-4D
+   [65, §401(d)(6)], which add $\Delta_B$ to PNLTM and use the adjusted PNLTM for the 10 dB-down
+   points and for EPNL. It is kept separate because, read literally, 14 CFR 36 raises PNLTM by
+   $\Delta_B$ and takes $D$ from the raised PNLTM, so the two cancel in $\mathrm{PNLTM} + D$: the
+   adjustment could never raise EPNL, only lower it through a narrower duration.
 6. The duration correction $D$, from the unadjusted PNLTM, over the records $k_1 \ldots k_2$
    found as follows. $k_1$ and $k_2$ start at the first and last records with
    $\mathrm{PNLT} \ge \mathrm{PNLTM} - 10$ (the longest duration when there are several peaks),
@@ -1735,7 +1741,7 @@ may have been cut off.
 enters it at its noy threshold SPL(d) and carries no tone, as in PANAM. By default
 (`--epnl_masking`), every band below its noy threshold is masked: it enters the procedure at
 that threshold and carries no tone correction itself, following the exclusion of tones in
-masked bands in FAA AC 36-4 [56]. Without masking, deeply absorbed high bands would read as
+masked bands in FAA AC 36-4 [65]. Without masking, deeply absorbed high bands would read as
 tones. PNL is unchanged by masking, since a masked band is 0 noy either way. The corrections the
 regulation applies to a measured spectrum (instrumentation, background noise, reference
 conditions, pseudo-tones from ground reflections) are not applied to a prediction, so every
@@ -1791,58 +1797,57 @@ than for SEL.
 13. Reinsch, C. H., "Smoothing by Spline Functions," *Numerische Mathematik*, Vol. 10, No. 3, 1967, pp. 177–183. https://doi.org/10.1007/BF02162161
 14. Snyder, J. P., "Map Projections — A Working Manual," U.S. Geological Survey Professional Paper 1395, U.S. Government Printing Office, Washington, DC, 1987. https://doi.org/10.3133/pp1395
 15. "Department of Defense World Geodetic System 1984: Its Definition and Relationships with Local Geodetic Systems," NIMA TR8350.2, 3rd ed., Amendment 1, National Imagery and Mapping Agency, July 1997 (amended January 2000).
-16. "Acoustics — Attenuation of Sound during Propagation Outdoors — Part 1: Calculation of the Absorption of Sound by the Atmosphere," ISO 9613-1:1993, International Organization for Standardization, Geneva, 1993.
-17. "Noise Standards: Aircraft Type and Airworthiness Certification," Title 14, Code of Federal Regulations, Part 36, Appendix A, "Aircraft Noise Measurement and Evaluation Under § 36.101." URL: https://www.ecfr.gov/current/title-14/part-36 [retrieved 8 October 2026].
-18. Zellmann, C., and Wunderli, J. M., "Influence of the Atmospheric Stratification on the Sound Propagation of Single Flights," *Proceedings of INTER-NOISE 2014*, Vol. 249, No. 4, Institute of Noise Control Engineering, Melbourne, Australia, 2014, pp. 3770–3779.
-19. Stusnick, E., Plotkin, K. J., and Sutherland, L. C., "Short-Range Acoustic Propagation Model," Wyle Laboratories Research Report WR 85-19, Wyle Laboratories, Arlington, VA, July 1985.
-20. Delany, M. E., and Bazley, E. N., "Acoustical Properties of Fibrous Absorbent Materials," *Applied Acoustics*, Vol. 3, No. 2, 1970, pp. 105–116. https://doi.org/10.1016/0003-682X(70)90031-9
-21. Miki, Y., "Acoustical Properties of Porous Materials — Modifications of Delany-Bazley Models," *Journal of the Acoustical Society of Japan (E)*, Vol. 11, No. 1, 1990, pp. 19–24. https://doi.org/10.1250/ast.11.19
-22. Attenborough, K., and Taherzadeh, S., "Prediction of Outdoor Ground Effect," *Applied Acoustics*, Vol. 242, 2026, Paper 111067. https://doi.org/10.1016/j.apacoust.2025.111067
-23. Chien, C. F., and Soroka, W. W., "Sound Propagation Along an Impedance Plane," *Journal of Sound and Vibration*, Vol. 43, No. 1, 1975, pp. 9–20. https://doi.org/10.1016/0022-460X(75)90200-X
-24. Chien, C. F., and Soroka, W. W., "A Note on the Calculation of Sound Propagation Along an Impedance Surface," *Journal of Sound and Vibration*, Vol. 69, No. 2, 1980, pp. 340–343. https://doi.org/10.1016/0022-460X(80)90618-5
-25. Weideman, J. A. C., "Computation of the Complex Error Function," *SIAM Journal on Numerical Analysis*, Vol. 31, No. 5, 1994, pp. 1497–1518. https://doi.org/10.1137/0731077
-26. Ament, W. S., "Toward a Theory of Reflection by a Rough Surface," *Proceedings of the IRE*, Vol. 41, No. 1, 1953, pp. 142–146. https://doi.org/10.1109/JRPROC.1953.274171
-27. Chessell, C. I., "Propagation of Noise Along a Finite Impedance Boundary," *Journal of the Acoustical Society of America*, Vol. 62, No. 4, 1977, pp. 825–834. https://doi.org/10.1121/1.381603
-28. Daigle, G. A., Embleton, T. F. W., and Piercy, J. E., "Some Comments on the Literature of Propagation near Boundaries of Finite Acoustical Impedance," *Journal of the Acoustical Society of America*, Vol. 66, No. 3, 1979, pp. 918–919. https://doi.org/10.1121/1.383207
-29. van Maercke, D., and Defrance, J., "Development of an Analytical Model for Outdoor Sound Propagation Within the Harmonoise Project," *Acta Acustica united with Acustica*, Vol. 93, No. 2, 2007, pp. 201–212.
-30. Ostashev, V. E., and Wilson, D. K., *Acoustics in Moving Inhomogeneous Media*, 2nd ed., CRC Press, Boca Raton, FL, 2015. https://doi.org/10.1201/b18922
-31. "Ground-Plane Microphone Configuration for Propeller-Driven Light-Aircraft Noise Measurement," SAE ARP4055A, SAE International, Warrendale, PA, 2020.
-32. "Commission Directive (EU) 2015/996 of 19 May 2015 Establishing Common Noise Assessment Methods According to Directive 2002/49/EC of the European Parliament and of the Council," *Official Journal of the European Union*, L 168, 1 July 2015, pp. 1–823.
-33. Kephalopoulos, S., Paviotti, M., and Anfosso-Lédée, F., "Common Noise Assessment Methods in Europe (CNOSSOS-EU)," JRC Reference Report EUR 25379 EN, Publications Office of the European Union, Luxembourg, 2012. https://doi.org/10.2788/31776
-34. Olsen, H., Tuinstra, M., and van Oosten, N., "D1.5d Rotorcraft Noise Modelling Guidance," Research Project NOISE, EASA.2020.FC.06, Royal Netherlands Aerospace Centre (NLR), for the European Union Aviation Safety Agency, Cologne, January 2024.
-35. Salomons, E. M., *Computational Atmospheric Acoustics*, Kluwer Academic Publishers, Dordrecht, 2001. https://doi.org/10.1007/978-94-010-0660-6
-36. Stull, R. B., *An Introduction to Boundary Layer Meteorology*, Kluwer Academic Publishers, Dordrecht, 1988. https://doi.org/10.1007/978-94-009-3027-8
-37. Wieringa, J., "Updating the Davenport Roughness Classification," *Journal of Wind Engineering and Industrial Aerodynamics*, Vol. 41, Nos. 1–3, 1992, pp. 357–368. https://doi.org/10.1016/0167-6105(92)90434-C
-38. "Guide to Instruments and Methods of Observation," WMO-No. 8, 2024 ed., World Meteorological Organization, Geneva, 2024.
-39. "Erste Allgemeine Verwaltungsvorschrift zum Bundes-Immissionsschutzgesetz (Technische Anleitung zur Reinhaltung der Luft — TA Luft)," 27 February 1986, *Gemeinsames Ministerialblatt*, No. 7, 28 February 1986, p. 95.
-40. "Meteorological Monitoring Programs for Nuclear Power Plants," Regulatory Guide 1.23, Rev. 1, U.S. Nuclear Regulatory Commission, Office of Nuclear Regulatory Research, Washington, DC, March 2007.
-41. Salomons, E., van Maercke, D., Defrance, J., and de Roo, F., "The Harmonoise Sound Propagation Model," *Acta Acustica united with Acustica*, Vol. 97, No. 1, 2011, pp. 62–74. https://doi.org/10.3813/AAA.918387
-42. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 2: Propagation in an Atmosphere with Refraction," DELTA Acoustics & Vibration Report AV 1851/00 (revised), Hørsholm, Denmark, 2006.
-43. Pierce, A. D., *Acoustics: An Introduction to Its Physical Principles and Applications*, 3rd ed., ASA Press/Springer, Cham, Switzerland, 2019. https://doi.org/10.1007/978-3-030-11214-1
-44. Fock, V. A., *Electromagnetic Diffraction and Propagation Problems*, International Series of Monographs on Electromagnetic Waves, Vol. 1, Pergamon Press, Oxford, 1965.
-45. van Maercke, D., and Salomons, E., "The Harmonoise Sound Propagation Model: Further Developments and Comparison with Other Models," *Proceedings of NAG/DAGA 2009 International Conference on Acoustics*, Deutsche Gesellschaft für Akustik, Berlin, 2009, pp. 1622–1625.
-46. Collins, M. D., "A Split-Step Padé Solution for the Parabolic Equation Method," *Journal of the Acoustical Society of America*, Vol. 93, No. 4, 1993, pp. 1736–1742. https://doi.org/10.1121/1.406739
-47. Collins, M. D., "A Self-Starter for the Parabolic Equation Method," *Journal of the Acoustical Society of America*, Vol. 92, No. 4, 1992, pp. 2069–2074. https://doi.org/10.1121/1.405258
-48. Gilbert, K. E., Raspet, R., and Di, X., "Calculation of Turbulence Effects in an Upward-Refracting Atmosphere," *Journal of the Acoustical Society of America*, Vol. 87, No. 6, 1990, pp. 2428–2437. https://doi.org/10.1121/1.399088
-49. Attenborough, K., Taherzadeh, S., Bass, H. E., Di, X., Raspet, R., Becker, G. R., Güdesen, A., Chrestman, A., Daigle, G. A., L'Espérance, A., Gabillet, Y., Gilbert, K. E., Li, Y. L., White, M. J., Naz, P., Noble, J. M., and van Hoof, H. A. J. M., "Benchmark Cases for Outdoor Sound Propagation Models," *Journal of the Acoustical Society of America*, Vol. 97, No. 1, 1995, pp. 173–191. https://doi.org/10.1121/1.412302
-50. Olver, F. W. J., Olde Daalhuis, A. B., Lozier, D. W., et al. (eds.), "NIST Digital Library of Mathematical Functions," Release 1.2.8, National Institute of Standards and Technology, 15 September 2026. URL: https://dlmf.nist.gov/ [retrieved 8 October 2026].
-51. "Electroacoustics — Sound Level Meters — Part 1: Specifications," IEC 61672-1:2013, Ed. 2.0, International Electrotechnical Commission, Geneva, 2013.
-52. "Airport Noise Compatibility Planning," Title 14, Code of Federal Regulations, Part 150, Appendix A, "Noise Exposure Maps." URL: https://www.ecfr.gov/current/title-14/part-150 [retrieved 8 October 2026].
-53. "Directive 2002/49/EC of the European Parliament and of the Council of 25 June 2002 Relating to the Assessment and Management of Environmental Noise," *Official Journal of the European Communities*, L 189, 18 July 2002, pp. 12–25.
-54. "Noise Standards: Definitions," California Code of Regulations, Title 21, Sec. 5001.
-55. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
-56. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
-57. "Report on Standard Method of Computing Noise Contours around Civil Airports, Volume 2: Technical Guide," ECAC.CEAC Doc 29, 4th ed., European Civil Aviation Conference, Neuilly-sur-Seine, France, December 2016.
-58. "Procedure for the Calculation of Airplane Noise in the Vicinity of Airports," SAE AIR1845A, SAE International, Warrendale, PA, 2012.
-59. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 1: Propagation in an Atmosphere without Significant Refraction," DELTA Acoustics & Vibration Report AV 1849/00 (revised), Hørsholm, Denmark, 2006.
-60. Wieringa, J., "Representative Roughness Parameters for Homogeneous Terrain," *Boundary-Layer Meteorology*, Vol. 63, No. 4, 1993, pp. 323–363. https://doi.org/10.1007/BF00705357
-61. Efron, B., and Tibshirani, R. J., *An Introduction to the Bootstrap*, Chapman & Hall, New York, 1993. https://doi.org/10.1201/9780429246593
-62. "Commission Delegated Directive (EU) 2021/1226 of 21 December 2020 Amending, for the Purposes of Adapting to Scientific and Technical Progress, Annex II to Directive 2002/49/EC of the European Parliament and of the Council as Regards Common Noise Assessment Methods," *Official Journal of the European Union*, L 269, 28 July 2021, pp. 65–142.
-63. Kok, A., and van Beek, A., "Amendments for CNOSSOS-EU: Description of Issues and Proposed Solutions," RIVM Letter Report 2019-0023, National Institute for Public Health and the Environment, Bilthoven, Netherlands, 2019. https://doi.org/10.21945/RIVM-2019-0023
-64. Sommerfeld, A., "Mathematische Theorie der Diffraction," *Mathematische Annalen*, Vol. 47, Nos. 2–3, 1896, pp. 317–374. https://doi.org/10.1007/BF01447273
-65. "Propagation by Diffraction," Recommendation ITU-R P.526-16, International Telecommunication Union, Geneva, November 2025.
-66. Press, W. H., Teukolsky, S. A., Vetterling, W. T., and Flannery, B. P., *Numerical Recipes in C: The Art of Scientific Computing*, 2nd ed., Cambridge University Press, Cambridge, 1992, Sec. 6.9.
-67. Li, K. M., and Lai, C. Y. C., "A Note on Noise Propagation in Street Canyons," *Journal of the Acoustical Society of America*, Vol. 126, No. 2, 2009, pp. 644–655. https://doi.org/10.1121/1.3158599
+16. "Report on Standard Method of Computing Noise Contours around Civil Airports, Volume 2: Technical Guide," ECAC.CEAC Doc 29, 4th ed., European Civil Aviation Conference, Neuilly-sur-Seine, France, December 2016.
+17. "Acoustics — Attenuation of Sound during Propagation Outdoors — Part 1: Calculation of the Absorption of Sound by the Atmosphere," ISO 9613-1:1993, International Organization for Standardization, Geneva, 1993.
+18. "Noise Standards: Aircraft Type and Airworthiness Certification," Title 14, Code of Federal Regulations, Part 36, Appendix A, "Aircraft Noise Measurement and Evaluation Under § 36.101." URL: https://www.ecfr.gov/current/title-14/part-36 [retrieved 8 October 2026].
+19. Zellmann, C., and Wunderli, J. M., "Influence of the Atmospheric Stratification on the Sound Propagation of Single Flights," *Proceedings of INTER-NOISE 2014*, Vol. 249, No. 4, Institute of Noise Control Engineering, Melbourne, Australia, 2014, pp. 3770–3779.
+20. Stusnick, E., Plotkin, K. J., and Sutherland, L. C., "Short-Range Acoustic Propagation Model," Wyle Laboratories Research Report WR 85-19, Wyle Laboratories, Arlington, VA, July 1985.
+21. Delany, M. E., and Bazley, E. N., "Acoustical Properties of Fibrous Absorbent Materials," *Applied Acoustics*, Vol. 3, No. 2, 1970, pp. 105–116. https://doi.org/10.1016/0003-682X(70)90031-9
+22. Miki, Y., "Acoustical Properties of Porous Materials — Modifications of Delany-Bazley Models," *Journal of the Acoustical Society of Japan (E)*, Vol. 11, No. 1, 1990, pp. 19–24. https://doi.org/10.1250/ast.11.19
+23. Attenborough, K., and Taherzadeh, S., "Prediction of Outdoor Ground Effect," *Applied Acoustics*, Vol. 242, 2026, Paper 111067. https://doi.org/10.1016/j.apacoust.2025.111067
+24. Chien, C. F., and Soroka, W. W., "Sound Propagation Along an Impedance Plane," *Journal of Sound and Vibration*, Vol. 43, No. 1, 1975, pp. 9–20. https://doi.org/10.1016/0022-460X(75)90200-X
+25. Chien, C. F., and Soroka, W. W., "A Note on the Calculation of Sound Propagation Along an Impedance Surface," *Journal of Sound and Vibration*, Vol. 69, No. 2, 1980, pp. 340–343. https://doi.org/10.1016/0022-460X(80)90618-5
+26. Weideman, J. A. C., "Computation of the Complex Error Function," *SIAM Journal on Numerical Analysis*, Vol. 31, No. 5, 1994, pp. 1497–1518. https://doi.org/10.1137/0731077
+27. Ament, W. S., "Toward a Theory of Reflection by a Rough Surface," *Proceedings of the IRE*, Vol. 41, No. 1, 1953, pp. 142–146. https://doi.org/10.1109/JRPROC.1953.274171
+28. Chessell, C. I., "Propagation of Noise Along a Finite Impedance Boundary," *Journal of the Acoustical Society of America*, Vol. 62, No. 4, 1977, pp. 825–834. https://doi.org/10.1121/1.381603
+29. Daigle, G. A., Embleton, T. F. W., and Piercy, J. E., "Some Comments on the Literature of Propagation near Boundaries of Finite Acoustical Impedance," *Journal of the Acoustical Society of America*, Vol. 66, No. 3, 1979, pp. 918–919. https://doi.org/10.1121/1.383207
+30. van Maercke, D., and Defrance, J., "Development of an Analytical Model for Outdoor Sound Propagation Within the Harmonoise Project," *Acta Acustica united with Acustica*, Vol. 93, No. 2, 2007, pp. 201–212.
+31. Ostashev, V. E., and Wilson, D. K., *Acoustics in Moving Inhomogeneous Media*, 2nd ed., CRC Press, Boca Raton, FL, 2015. https://doi.org/10.1201/b18922
+32. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 1: Propagation in an Atmosphere without Significant Refraction," DELTA Acoustics & Vibration Report AV 1849/00 (revised), Hørsholm, Denmark, 2006.
+33. "Ground-Plane Microphone Configuration for Propeller-Driven Light-Aircraft Noise Measurement," SAE ARP4055A, SAE International, Warrendale, PA, 2020.
+34. "Commission Directive (EU) 2015/996 of 19 May 2015 Establishing Common Noise Assessment Methods According to Directive 2002/49/EC of the European Parliament and of the Council," *Official Journal of the European Union*, L 168, 1 July 2015, pp. 1–823.
+35. Kephalopoulos, S., Paviotti, M., and Anfosso-Lédée, F., "Common Noise Assessment Methods in Europe (CNOSSOS-EU)," JRC Reference Report EUR 25379 EN, Publications Office of the European Union, Luxembourg, 2012. https://doi.org/10.2788/31776
+36. Olsen, H., Tuinstra, M., and van Oosten, N., "D1.5d Rotorcraft Noise Modelling Guidance," Research Project NOISE, EASA.2020.FC.06, Royal Netherlands Aerospace Centre (NLR), for the European Union Aviation Safety Agency, Cologne, January 2024.
+37. "Commission Delegated Directive (EU) 2021/1226 of 21 December 2020 Amending, for the Purposes of Adapting to Scientific and Technical Progress, Annex II to Directive 2002/49/EC of the European Parliament and of the Council as Regards Common Noise Assessment Methods," *Official Journal of the European Union*, L 269, 28 July 2021, pp. 65–142.
+38. Kok, A., and van Beek, A., "Amendments for CNOSSOS-EU: Description of Issues and Proposed Solutions," RIVM Letter Report 2019-0023, National Institute for Public Health and the Environment, Bilthoven, Netherlands, 2019. https://doi.org/10.21945/RIVM-2019-0023
+39. "Propagation by Diffraction," Recommendation ITU-R P.526-16, International Telecommunication Union, Geneva, November 2025.
+40. Olver, F. W. J., Olde Daalhuis, A. B., Lozier, D. W., et al. (eds.), "NIST Digital Library of Mathematical Functions," Release 1.2.8, National Institute of Standards and Technology, 15 September 2026. URL: https://dlmf.nist.gov/ [retrieved 8 October 2026].
+41. Press, W. H., Teukolsky, S. A., Vetterling, W. T., and Flannery, B. P., *Numerical Recipes in C: The Art of Scientific Computing*, 2nd ed., Cambridge University Press, Cambridge, 1992, Sec. 6.9.
+42. Sommerfeld, A., "Mathematische Theorie der Diffraction," *Mathematische Annalen*, Vol. 47, Nos. 2–3, 1896, pp. 317–374. https://doi.org/10.1007/BF01447273
+43. Salomons, E. M., *Computational Atmospheric Acoustics*, Kluwer Academic Publishers, Dordrecht, 2001. https://doi.org/10.1007/978-94-010-0660-6
+44. Stull, R. B., *An Introduction to Boundary Layer Meteorology*, Kluwer Academic Publishers, Dordrecht, 1988. https://doi.org/10.1007/978-94-009-3027-8
+45. Wieringa, J., "Updating the Davenport Roughness Classification," *Journal of Wind Engineering and Industrial Aerodynamics*, Vol. 41, Nos. 1–3, 1992, pp. 357–368. https://doi.org/10.1016/0167-6105(92)90434-C
+46. "Guide to Instruments and Methods of Observation," WMO-No. 8, 2024 ed., World Meteorological Organization, Geneva, 2024.
+47. "Erste Allgemeine Verwaltungsvorschrift zum Bundes-Immissionsschutzgesetz (Technische Anleitung zur Reinhaltung der Luft — TA Luft)," 27 February 1986, *Gemeinsames Ministerialblatt*, No. 7, 28 February 1986, p. 95.
+48. "Meteorological Monitoring Programs for Nuclear Power Plants," Regulatory Guide 1.23, Rev. 1, U.S. Nuclear Regulatory Commission, Office of Nuclear Regulatory Research, Washington, DC, March 2007.
+49. Wieringa, J., "Representative Roughness Parameters for Homogeneous Terrain," *Boundary-Layer Meteorology*, Vol. 63, No. 4, 1993, pp. 323–363. https://doi.org/10.1007/BF00705357
+50. Efron, B., and Tibshirani, R. J., *An Introduction to the Bootstrap*, Chapman & Hall, New York, 1993. https://doi.org/10.1201/9780429246593
+51. Salomons, E., van Maercke, D., Defrance, J., and de Roo, F., "The Harmonoise Sound Propagation Model," *Acta Acustica united with Acustica*, Vol. 97, No. 1, 2011, pp. 62–74. https://doi.org/10.3813/AAA.918387
+52. Plovsing, B., "Nord2000. Comprehensive Outdoor Sound Propagation Model. Part 2: Propagation in an Atmosphere with Refraction," DELTA Acoustics & Vibration Report AV 1851/00 (revised), Hørsholm, Denmark, 2006.
+53. Pierce, A. D., *Acoustics: An Introduction to Its Physical Principles and Applications*, 3rd ed., ASA Press/Springer, Cham, Switzerland, 2019. https://doi.org/10.1007/978-3-030-11214-1
+54. Fock, V. A., *Electromagnetic Diffraction and Propagation Problems*, International Series of Monographs on Electromagnetic Waves, Vol. 1, Pergamon Press, Oxford, 1965.
+55. van Maercke, D., and Salomons, E., "The Harmonoise Sound Propagation Model: Further Developments and Comparison with Other Models," *Proceedings of NAG/DAGA 2009 International Conference on Acoustics*, Deutsche Gesellschaft für Akustik, Berlin, 2009, pp. 1622–1625.
+56. Collins, M. D., "A Split-Step Padé Solution for the Parabolic Equation Method," *Journal of the Acoustical Society of America*, Vol. 93, No. 4, 1993, pp. 1736–1742. https://doi.org/10.1121/1.406739
+57. Collins, M. D., "A Self-Starter for the Parabolic Equation Method," *Journal of the Acoustical Society of America*, Vol. 92, No. 4, 1992, pp. 2069–2074. https://doi.org/10.1121/1.405258
+58. Gilbert, K. E., Raspet, R., and Di, X., "Calculation of Turbulence Effects in an Upward-Refracting Atmosphere," *Journal of the Acoustical Society of America*, Vol. 87, No. 6, 1990, pp. 2428–2437. https://doi.org/10.1121/1.399088
+59. Attenborough, K., Taherzadeh, S., Bass, H. E., Di, X., Raspet, R., Becker, G. R., Güdesen, A., Chrestman, A., Daigle, G. A., L'Espérance, A., Gabillet, Y., Gilbert, K. E., Li, Y. L., White, M. J., Naz, P., Noble, J. M., and van Hoof, H. A. J. M., "Benchmark Cases for Outdoor Sound Propagation Models," *Journal of the Acoustical Society of America*, Vol. 97, No. 1, 1995, pp. 173–191. https://doi.org/10.1121/1.412302
+60. "Electroacoustics — Sound Level Meters — Part 1: Specifications," IEC 61672-1:2013, Ed. 2.0, International Electrotechnical Commission, Geneva, 2013.
+61. "Airport Noise Compatibility Planning," Title 14, Code of Federal Regulations, Part 150, Appendix A, "Noise Exposure Maps." URL: https://www.ecfr.gov/current/title-14/part-150 [retrieved 8 October 2026].
+62. "Directive 2002/49/EC of the European Parliament and of the Council of 25 June 2002 Relating to the Assessment and Management of Environmental Noise," *Official Journal of the European Communities*, L 189, 18 July 2002, pp. 12–25.
+63. "Noise Standards: Definitions," California Code of Regulations, Title 21, Sec. 5001.
+64. "Environmental Protection, Volume I — Aircraft Noise," Annex 16 to the Convention on International Civil Aviation, 8th ed., International Civil Aviation Organization, Montréal, July 2017.
+65. "Noise Standards: Aircraft Type and Airworthiness Certification," Advisory Circular AC 36-4D, Federal Aviation Administration, Washington, DC, 12 October 2017.
+66. Li, K. M., and Lai, C. Y. C., "A Note on Noise Propagation in Street Canyons," *Journal of the Acoustical Society of America*, Vol. 126, No. 2, 2009, pp. 644–655. https://doi.org/10.1121/1.3158599
+67. Kouyoumjian, R. G., and Pathak, P. H., "A Uniform Geometrical Theory of Diffraction for an Edge in a Perfectly Conducting Surface," *Proceedings of the IEEE*, Vol. 62, No. 11, 1974, pp. 1448–1461. https://doi.org/10.1109/PROC.1974.9651
 68. Keller, J. B., "Geometrical Theory of Diffraction," *Journal of the Optical Society of America*, Vol. 52, No. 2, 1962, pp. 116–130. https://doi.org/10.1364/JOSA.52.000116
-69. Kouyoumjian, R. G., and Pathak, P. H., "A Uniform Geometrical Theory of Diffraction for an Edge in a Perfectly Conducting Surface," *Proceedings of the IEEE*, Vol. 62, No. 11, 1974, pp. 1448–1461. https://doi.org/10.1109/PROC.1974.9651
-70. Bowman, J. J., Senior, T. B. A., and Uslenghi, P. L. E. (eds.), *Electromagnetic and Acoustic Scattering by Simple Shapes*, North-Holland, Amsterdam, 1969, Ch. 6.
+69. Bowman, J. J., Senior, T. B. A., and Uslenghi, P. L. E. (eds.), *Electromagnetic and Acoustic Scattering by Simple Shapes*, North-Holland, Amsterdam, 1969, Ch. 6.
