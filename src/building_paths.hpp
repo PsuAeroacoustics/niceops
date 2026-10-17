@@ -151,9 +151,11 @@ ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radiu
 // Whether a ray from `from` reaches `point` (or, below the floor, its floor
 // image) by reflecting in `facades` (the point's side first): the unfolded
 // line crosses each, the last first, within it and from in front, and no leg
-// of the folded path passes through a building.
+// of the folded path passes through a building.  `hits`, when given, receives
+// the reflection points in order from `from` (below the floor, in its mirror
+// world).
 bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
-        const std::vector<std::size_t>& facades, bool below_floor);
+        const std::vector<std::size_t>& facades, bool below_floor, std::vector<Vec3>* hits = nullptr);
 
 // One microphone among the buildings, with what does not depend on the wave's
 // direction worked out once: the facades' frames and orientations, the edges

@@ -83,6 +83,20 @@ TEST_CASE("the point-source field is reciprocal", "[point_paths]")
         {
             wedges[ray.wedges]++;
             shared += ray.shared;
+            // The path drawn is the ray: it runs from the source to the
+            // microphone through its points, and off the floor's mirror it is
+            // as long as the ray.
+            REQUIRE(ray.path.size() >= 2);
+            REQUIRE((ray.path.front() - s).norm() == 0.0);
+            REQUIRE((ray.path.back() - m).norm() == 0.0);
+            REQUIRE(ray.path.size() == 2 + ray.facades.size() + static_cast<std::size_t>(ray.wedges));
+            if (ray.floor == 0)
+            {
+                double length = 0.0;
+                for (std::size_t v = 1; v < ray.path.size(); v++)
+                    length += (ray.path[v] - ray.path[v - 1]).norm();
+                REQUIRE(length == Catch::Approx(ray.length).epsilon(1e-9));
+            }
         }
     }
     // Every kind was exercised, the uniform form over a shared face too.

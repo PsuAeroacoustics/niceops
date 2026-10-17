@@ -93,9 +93,13 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
             continue;
         for (int floor = 0; floor < 2; floor++)
         {
-            if (!folded_path_open(buildings, source, microphone, image.facades, floor == 1))
+            std::vector<Vec3> hits;
+            if (!folded_path_open(buildings, source, microphone, image.facades, floor == 1, &hits))
                 continue;
             PointRay ray;
+            ray.path.push_back(source);
+            ray.path.insert(ray.path.end(), hits.begin(), hits.end());
+            ray.path.push_back(microphone);
             ray.length = ((floor ? below(image.point) : image.point) - source).norm();
             ray.spreading = 1.0 / ray.length;
             ray.facades = image.facades;
@@ -135,8 +139,9 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
                         const double theta = edge.angle(normal_part(edge, out));
                         if (!in_air(theta0, edge.n, false) || !in_air(theta, edge.n, false))
                             continue;
-                        if (!folded_path_open(buildings, q, source, a.facades, fa == 1)
-                                || !folded_path_open(buildings, q, microphone, b.facades, fb == 1))
+                        std::vector<Vec3> to_source, to_microphone;
+                        if (!folded_path_open(buildings, q, source, a.facades, fa == 1, &to_source)
+                                || !folded_path_open(buildings, q, microphone, b.facades, fb == 1, &to_microphone))
                             continue;
                         const double s_in = in.norm(), s_out = out.norm();
                         const double sin_beta = normal_part(edge, in).norm() / s_in;
@@ -148,6 +153,11 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
                         ray.floor = fa + fb;
                         ray.wedges = 1;
                         ray.wedge[0] = {edge.n, theta, theta0, sin_beta, s_in * s_out * sin_beta / (s_in + s_out), false};
+                        ray.path = {source};
+                        ray.path.insert(ray.path.end(), to_source.rbegin(), to_source.rend());
+                        ray.path.push_back(q);
+                        ray.path.insert(ray.path.end(), to_microphone.begin(), to_microphone.end());
+                        ray.path.push_back(microphone);
                         rays_.push_back(std::move(ray));
                     }
             }
@@ -218,9 +228,10 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
                             if (!in_air(theta0_1, g1.n, false) || !in_air(theta_1, g1.n, true)
                                     || !in_air(theta0_2, g2.n, true) || !in_air(theta_2, g2.n, false))
                                 continue;
-                            if (!folded_path_open(buildings, q1, source, a.facades, fa == 1)
+                            std::vector<Vec3> to_source, to_microphone;
+                            if (!folded_path_open(buildings, q1, source, a.facades, fa == 1, &to_source)
                                     || buildings.blocked(q1, q2)
-                                    || !folded_path_open(buildings, q2, microphone, b.facades, fb == 1))
+                                    || !folded_path_open(buildings, q2, microphone, b.facades, fb == 1, &to_microphone))
                                 continue;
                             const double sb1 = normal_part(g1, in1).norm() / s1;
                             const double sb2 = normal_part(g2, out2).norm() / s3;
@@ -237,6 +248,12 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
                             // second.  Wedge 1's observer is wedge 2.
                             ray.wedge[0] = {g1.n, theta_1, theta0_1, sb1, s1 * s2 * sb1 / (s1 + s2), false};
                             ray.wedge[1] = {g2.n, theta_2, theta0_2, sb2, s2 * s3 * sb2 / (s2 + s3), grazing};
+                            ray.path = {source};
+                            ray.path.insert(ray.path.end(), to_source.rbegin(), to_source.rend());
+                            ray.path.push_back(q1);
+                            ray.path.push_back(q2);
+                            ray.path.insert(ray.path.end(), to_microphone.begin(), to_microphone.end());
+                            ray.path.push_back(microphone);
                             if (grazing && options.shared_face && std::abs(g1.direction.dot(g2.direction)) > 1.0 - 1e-9)
                             {
                                 // The plane normal to the edges: x from edge 1 toward

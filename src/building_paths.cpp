@@ -326,8 +326,10 @@ ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radiu
 }
 
 bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
-        const std::vector<std::size_t>& facades, bool below_floor)
+        const std::vector<std::size_t>& facades, bool below_floor, std::vector<Vec3>* hits)
 {
+    if (hits)
+        hits->clear();
     const auto& all = buildings.facades();
     // The images along the chain: targets[j] is the point mirrored in the
     // first j facades.
@@ -354,6 +356,8 @@ bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& 
             return false;
         if (buildings.blocked(cur, hit, below_floor))
             return false;
+        if (hits)
+            hits->push_back(hit);
         cur = hit;
     }
     return !buildings.blocked(cur, targets[0], below_floor);

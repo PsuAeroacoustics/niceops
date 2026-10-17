@@ -1191,9 +1191,9 @@ set_tests_properties(urban_table_refuses_db_cutoff PROPERTIES PASS_REGULAR_EXPRE
 add_test(NAME urban_table_builder_checks_units COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --bands 1000 --units m -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_table_builder_checks_units PROPERTIES PASS_REGULAR_EXPRESSION "column 'x_ft' is in ft, and --units is m")
 # niceops_point_field (tools/point_field.cpp): a point source in the test district's street, at
-# its microphones, through the urban tools' shared district reader; and its refusal of a source
-# inside a building.
-add_test(NAME point_field_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 -o integrated/point_field.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# its microphones on two threads with every ray written out, through the urban tools' shared
+# district reader; and its refusal of a source inside a building.
+add_test(NAME point_field_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_rays.csv -j 2 -o integrated/point_field.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME point_field_refuses_inside COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1060 230 10 --microphones tests/data/urban_observers.csv --bands 125 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "--source stands inside building 4")
 # --atmosphere through a single-level profile holding the vehicle file's own

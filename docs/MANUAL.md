@@ -1785,6 +1785,8 @@ rays summed coherently and averaged over the band. A free-field level at the mic
 | `--cascade` | Over a shared face (a roof from edge to edge, a wall from corner to corner), the cascade of two edge coefficients instead of the uniform form. For comparison only. |
 | `--orientation_tolerance` | As `niceops_urban_table`'s. Default 1 degree. |
 | `--sound_speed` | m/s. Default 343.2. |
+| `--rays` | Also write every ray: its microphone, kind, reflections, length, its level at each band center (no band averaging), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. |
+| `-j`, `--threads` | Microphones evaluated at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`, for every length in and out; the file to write. |
 
 Roofs do not reflect, so a microphone above a roof misses that roof's reflection; with both the

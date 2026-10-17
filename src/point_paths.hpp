@@ -97,6 +97,10 @@ struct PointRay
     WedgeTerm wedge[2];
     bool shared = false;
     SharedFaceTerm shared_face;
+    // Where it goes, for drawing: the source, its reflection and diffraction
+    // points in order, the microphone.  A leg off the floor is unfolded below
+    // it, so only x and y are the ray's own there.
+    std::vector<Vec3> path;
 };
 
 class PointSourceField

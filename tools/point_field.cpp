@@ -17,12 +17,18 @@
 // 1/r.  Open floor at the same points is the floor's ray and the direct
 // ray's; a level re free field at the microphone is the output less
 // -20 lg r.
+//
+// --rays writes every ray too, for drawing: the microphone's row, the ray's
+// kind, reflections and length, its level at each band center (20 lg of its
+// amplitude, no band averaging), and its path from the source as
+// "x y z;x y z;..." (a leg off the floor unfolded below it).
 
 #include <CLI/CLI.hpp>
 
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <sstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -32,6 +38,7 @@
 #include "point_paths.hpp"
 #include "sphere_database.hpp"
 #include "util/constants.hpp"
+#include "util/parallel.hpp"
 #include "util/paths.hpp"
 
 using namespace niceops; // NOLINT
@@ -60,6 +67,8 @@ int main(int argc, char** argv)
     bool no_diffraction = false;
     bool no_double_diffraction = false;
     bool cascade = false;
+    std::string rays_file;
+    int threads = 0;
     app.add_option("--buildings", buildings_file, "The district: CSV of footprint vertices, or GeoJSON.")->required();
     app.add_option("--source", source, "The source's x, y and height above the floor.")->required()->expected(3);
     app.add_option("--microphones", microphones_file, "The microphones: x, y and height columns.")->required();
@@ -87,6 +96,9 @@ int main(int argc, char** argv)
     app.add_option("--orientation_tolerance", orientation_tolerance,
             "Walls within this many degrees of one orientation reflect alike (default 1).");
     app.add_option("--sound_speed", sound_speed, "m/s (default 343.2).");
+    app.add_option("--rays", rays_file, "Also write every ray, with its level per band and its path.");
+    app.add_option("-j,--threads", threads, "Microphones evaluated at once. Default the environment's "
+                                            "NICEOPS_THREADS, else one per hardware thread.");
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
     app.add_option("-o,--output", output, "The levels file to write.")->required();
     CLI11_PARSE(app, argc, argv);
@@ -153,15 +165,7 @@ int main(int argc, char** argv)
         options.shared_face = !cascade;
         options.radius = radius;
 
-        ensure_parent_directory(output);
-        std::ofstream out(output);
-        if (!out)
-            throw std::runtime_error("cannot write " + output);
-        out << std::setprecision(10) << "x,y,height";
-        for (double f : bands)
-            out << "," << f;
-        out << "\n";
-        std::vector<double> levels(nb);
+        std::vector<Vec3> points(mics.rows.size());
         for (std::size_t row = 0; row < mics.rows.size(); row++)
         {
             const auto& r = mics.rows[row];
@@ -172,13 +176,82 @@ int main(int argc, char** argv)
             if (city.inside(m.x, m.y) < city.size() && m.z < city.footprints()[city.inside(m.x, m.y)].top)
                 throw std::runtime_error(where + "the microphone stands inside building "
                         + district.ids[city.inside(m.x, m.y)]);
-            const PointSourceField field(city, s, m, options);
-            field.band_levels(reflection, 1.0 - floor_absorption, bands, sound_speed, levels.data());
+            points[row] = m;
+        }
+        std::vector<double> levels(points.size() * nb);
+        std::vector<std::size_t> counts(points.size());
+        std::vector<std::string> ray_rows(points.size());
+        const double from_meters = 1.0 / to_meters;
+        parallel_chunks(points.size(), tool_thread_count(threads), [&](std::size_t begin, std::size_t end) {
+            std::vector<double> band_reflection(city.facades().size());
+            for (std::size_t row = begin; row < end; row++)
+            {
+                const PointSourceField field(city, s, points[row], options);
+                field.band_levels(reflection, 1.0 - floor_absorption, bands, sound_speed, &levels[row * nb]);
+                counts[row] = field.rays().size();
+                if (rays_file.empty())
+                    continue;
+                std::ostringstream text;
+                text << std::setprecision(8);
+                for (std::size_t i = 0; i < field.rays().size(); i++)
+                {
+                    const PointRay& ray = field.rays()[i];
+                    const char* kind = ray.wedges == 0 ? "specular"
+                            : ray.wedges == 1           ? "diffracted"
+                            : ray.shared                ? "diffracted twice over a shared face"
+                                                        : "diffracted twice";
+                    text << row + 1 << "," << i + 1 << "," << kind << "," << ray.facades.size() << "," << ray.floor
+                         << "," << ray.length * from_meters;
+                    for (std::size_t b = 0; b < nb; b++)
+                    {
+                        for (std::size_t f = 0; f < band_reflection.size(); f++)
+                            band_reflection[f] = reflection[f * nb + b];
+                        const double k = 2.0 * pi * bands[b] / sound_speed;
+                        const double a = std::abs(point_ray_amplitude(ray, band_reflection, 1.0 - floor_absorption, k));
+                        text << "," << 20.0 * std::log10(std::max(a, 1e-15));
+                    }
+                    text << ",";
+                    for (std::size_t v = 0; v < ray.path.size(); v++)
+                        text << (v ? ";" : "") << ray.path[v].x * from_meters << " " << ray.path[v].y * from_meters
+                             << " " << ray.path[v].z * from_meters;
+                    text << "\n";
+                }
+                ray_rows[row] = text.str();
+            }
+        });
+
+        ensure_parent_directory(output);
+        std::ofstream out(output);
+        if (!out)
+            throw std::runtime_error("cannot write " + output);
+        out << std::setprecision(10) << "x,y,height";
+        for (double f : bands)
+            out << "," << f;
+        out << "\n";
+        for (std::size_t row = 0; row < mics.rows.size(); row++)
+        {
+            const auto& r = mics.rows[row];
             out << r[mx] << "," << r[my] << "," << r[mh];
-            for (double level : levels)
-                out << "," << level;
+            for (std::size_t b = 0; b < nb; b++)
+                out << "," << levels[row * nb + b];
             out << "\n";
-            std::cerr << "microphone " << row + 1 << ": " << field.rays().size() << " rays" << std::endl;
+        }
+        std::size_t total = 0;
+        for (std::size_t c : counts)
+            total += c;
+        std::cerr << mics.rows.size() << " microphones, " << total << " rays" << std::endl;
+        if (!rays_file.empty())
+        {
+            ensure_parent_directory(rays_file);
+            std::ofstream rays(rays_file);
+            if (!rays)
+                throw std::runtime_error("cannot write " + rays_file);
+            rays << "microphone,ray,kind,reflections,floor,length";
+            for (double f : bands)
+                rays << "," << f;
+            rays << ",path\n";
+            for (const std::string& text : ray_rows)
+                rays << text;
         }
     }
     catch (const std::exception& e)
