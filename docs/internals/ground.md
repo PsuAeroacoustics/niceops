@@ -493,9 +493,41 @@ it bought:
   faces' integrals half of that and the pair sum most of the rest. The Filon panel's moments
   below a radian are a fixed polynomial in phase^2 (`filon_series`), not a series summed term by
   term, which took the shared-face integral down by a further third.
+- **The transition function is a table below X = 50** (`utd_transition`, `wedge.cpp`). Its
+  argument is real, so F / sqrt(X) is w along a line in the upper half-plane, smooth and slowly
+  varying: a polynomial of degree 10 in sqrt(X) on each of 32 intervals of [0, sqrt(50)], fitted to
+  the Faddeeva form at each interval's Chebyshev nodes the first time it is wanted. It agrees with
+  that form to 7e-12, which is the form's own error along the line (SciPy's `wofz` puts it at 5e-12
+  below sqrt(X) = 1 and near 7), and costs 3 ns a call against 15. The Faddeeva form and the
+  transition around it had been a third of a `--buildings` run; the demo approach went from 70 to
+  54 s. It is built on first use, not at load, because the Faddeeva form reads a constant that
+  `faddeeva.cpp` initializes at load, in an order across translation units the language leaves
+  open. `the tabulated transition function is the Faddeeva form` holds it at 2e-11; a degree of 5
+  fails it at 8e-9.
+- **A shared face's nodes are worked out once for all of a ray's sub-bands** (`shared_face_spectrum`;
+  `Aperture` and `NodeTable` in `double_wedge.cpp`). Each wavenumber keeps its own nodes, ending at
+  its own taper and extent, but they are graded from the same edge and cuts, so most of them fall
+  on points, to the bit, that another wavenumber has taken already. A node's geometry -- its path
+  lengths, rates and weights, and the second wedge's angles and distance parameter there -- does
+  not depend on the wavenumber, and is found by its t in a table instead of being worked out again.
+  The arithmetic is the same either way, so the spectrum is `shared_face_field` at each wavenumber
+  to the bit (`the shared face's spectrum is its field at each wavenumber`, 72 sub-bands over the
+  Filon test's faces), and the demo approach's levels did not change by a byte: 54 to 37 s. A
+  node's wave counts follow from the cuts that bound it, so they agree wherever its t does; the
+  table compares them anyway, and taking the comparison out passes the test.
 
 Measured and left alone:
 
+- **The GPU's aperture on the CPU.** `shared_face_geometry` works one set of nodes out for every
+  wavenumber, ending panels at every one's taper and extent (it is more accurate, 0.006 dB from the
+  fine midpoint rule against 0.017). On the CPU the demo approach took 70 s with it against 54 s
+  without: each wavenumber then integrates over the other wavenumbers' panel ends as well, and the
+  extra nodes cost more than the geometry they share. Sharing the geometry of each wavenumber's
+  own nodes (above) keeps the CPU's integral and is faster than either.
+- **Phases measured from the reference path**, as the GPU's are. The profile showed `sincos`
+  reaching into a second routine, which looked like the reduction for phases of 1e4-1e5 radians;
+  measured from the reference, the phases are small and the run took the same time (37.5 s against
+  37.3). The calls are many, not slow.
 - **Dropping weak rays does not pay.** Leaving out of each band the weakest rays, together under a
   share of its energy (ranked at the middle sub-band, whose amplitudes the kept rays reuse), saved
   1.3x at a share of 1e-4, 1.5x at 1e-3 and 1.7-1.8x at 1e-2 on the district and DigiCity, for
@@ -568,8 +600,12 @@ which marches them. What to keep:
   absorbing everything give the run without a ground model, at 1e-9 (in fact to the printed digit).
 - **No peak search.** A coherent sum of a source's rays can exceed the straight path's bound by
   20 lg N, so every state is evaluated, as under the options that need a full history.
-- Cost: 16 ms of CPU a pair; the demo track's 6,551 states at seven microphones take 60 s on 14
-  threads. What it changes is in FIDELITY.
+- Cost: 9.4 ms of CPU a pair; the demo track's 6,551 states at seven microphones take 37 s on 14
+  threads (70 s before the transition table and the shared nodes above). Sampled, the shared
+  faces' integrals are still most of it: roughly a fifth the transition function's table, a
+  quarter the Filon panels with their sines and cosines, a fifth the rest of the aperture's loop
+  and 6% the wedge coefficient; the ray sum is 7% and the path search 1%. What it changes is in
+  FIDELITY.
 - Tests: `buildings_far_is_open_without_ground`, the refusals `buildings_refuses_*`, and the
   launch test above.
 
@@ -925,9 +961,11 @@ half-plane. The boxes' edges scatter alike and leave s alone.
 
 ## Faddeeva function
 
-`src/faddeeva.{hpp,cpp}` computes w(z) = exp(−z²) erfc(−iz). It exists solely for the ground
-model's boundary-loss term, which panam writes as `exp(-w)(1 - erf(-i sqrt w))` using SciPy's
-complex `erf`. With z = √w that *is* w(z), and evaluating it as written overflows.
+`src/faddeeva.{hpp,cpp}` computes w(z) = exp(−z²) erfc(−iz). It exists for the ground model's
+boundary-loss term, which panam writes as `exp(-w)(1 - erf(-i sqrt w))` using SciPy's complex
+`erf`. With z = √w that *is* w(z), and evaluating it as written overflows. The UTD transition
+function's table (`wedge.cpp`) is fitted to it, on the line arg z = 45°, the first time a wedge
+coefficient is wanted.
 
 - **Three methods, chosen by the argument** (`faddeeva()`):
   - |z| ≥ 6 with Im z ≥ 0, or x² − y² ≥ 36: a 12-term asymptotic series, 1e-11 relative.

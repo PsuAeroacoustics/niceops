@@ -1264,15 +1264,9 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, 
     std::complex<double> amplitude = reflected;
     if (ray.shared)
     {
-        // The 2-D field at k sin(beta), its phase along the in-plane length
-        // taken out (the ray's length carries it), spread along the edges:
-        // a wave exp(i k_t l_t) / sqrt(l_t) in the plane is exp(i k l) / l in
-        // space, l = l_t / sin(beta), so the factor is sin(beta) / sqrt(l_t).
         const SharedFaceTerm& t = ray.shared_face;
-        const double kt = k * t.sin_beta;
-        return amplitude * t.sin_beta
-                * shared_face_field(t.face, t.sx, t.sz, t.rx, t.rz, kt)
-                * std::polar(1.0, -kt * ray.length * t.sin_beta);
+        return shared_face_amplitude(
+                ray, reflected, k, shared_face_field(t.face, t.sx, t.sz, t.rx, t.rz, k * t.sin_beta));
     }
     for (int w = 0; w < ray.wedges; w++)
     {
@@ -1286,6 +1280,17 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, 
     for (const MadeEdge& s : ray.made_edges)
         amplitude *= made_edge_factor(s, k);
     return amplitude;
+}
+
+std::complex<double> shared_face_amplitude(const PointRay& ray, double reflected, double k, std::complex<double> field)
+{
+    // The 2-D field at k sin(beta), its phase along the in-plane length taken
+    // out (the ray's length carries it), spread along the edges: a wave
+    // exp(i k_t l_t) / sqrt(l_t) in the plane is exp(i k l) / l in space,
+    // l = l_t / sin(beta), so the factor is sin(beta) / sqrt(l_t).
+    const SharedFaceTerm& t = ray.shared_face;
+    const double kt = k * t.sin_beta;
+    return std::complex<double>(reflected) * t.sin_beta * field * std::polar(1.0, -kt * ray.length * t.sin_beta);
 }
 
 std::array<SubBand, 3> sub_bands(double band, double sound_speed)
@@ -1529,14 +1534,26 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     std::vector<double> band_reflection(facade_count_), reflected(order.size());
     // The edge-source integral's factors, every sub-band at once.
     std::vector<std::vector<std::complex<double>>> factors(order.size());
+    std::vector<double> wavenumbers;
+    for (double band : bands)
+        for (const SubBand& part : sub_bands(band, sound_speed))
+            wavenumbers.push_back(0.5 * (part.k1 + part.k2));
     if (edge_source_)
-    {
-        std::vector<double> wavenumbers;
-        for (double band : bands)
-            for (const SubBand& part : sub_bands(band, sound_speed))
-                wavenumbers.push_back(0.5 * (part.k1 + part.k2));
         for (std::size_t i = 0; i < order.size(); i++)
             factors[i] = edge_source_factors(*buildings_, rays_[order[i]], wavenumbers);
+    // A shared face's field at every sub-band at once, its nodes' geometry
+    // shared between them (shared_face_spectrum).
+    std::vector<std::vector<std::complex<double>>> shared(order.size());
+    std::vector<double> in_plane(wavenumbers.size());
+    for (std::size_t i = 0; i < order.size(); i++)
+    {
+        const PointRay& ray = rays_[order[i]];
+        if (!ray.shared || !factors[i].empty())
+            continue;
+        const SharedFaceTerm& t = ray.shared_face;
+        for (std::size_t j = 0; j < wavenumbers.size(); j++)
+            in_plane[j] = wavenumbers[j] * t.sin_beta;
+        shared[i] = shared_face_spectrum(t.face, t.sx, t.sz, t.rx, t.rz, in_plane);
     }
     for (std::size_t band = 0; band < bands.size(); band++)
     {
@@ -1551,8 +1568,15 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
         {
             const double kc = 0.5 * (parts[part].k1 + parts[part].k2);
             for (std::size_t i = 0; i < order.size(); i++)
-                amplitude[i] = factors[i].empty() ? point_ray_amplitude(rays_[order[i]], reflected[i], kc)
-                                                  : reflected[i] * factors[i][3 * band + part];
+            {
+                const PointRay& ray = rays_[order[i]];
+                if (!factors[i].empty())
+                    amplitude[i] = reflected[i] * factors[i][3 * band + part];
+                else if (!shared[i].empty())
+                    amplitude[i] = shared_face_amplitude(ray, reflected[i], kc, shared[i][3 * band + part]);
+                else
+                    amplitude[i] = point_ray_amplitude(ray, reflected[i], kc);
+            }
             if (!absorption.empty())
                 for (std::size_t i = 0; i < order.size(); i++)
                     amplitude[i] *= std::exp(-absorption[3 * band + part] * length[i]);

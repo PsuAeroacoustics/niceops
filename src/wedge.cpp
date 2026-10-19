@@ -1,5 +1,6 @@
 #include "wedge.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include "faddeeva.hpp"
@@ -37,6 +38,78 @@ void term_angles(double n, double beta, int s, bool reflected, double& cot, doub
     cot = 1.0 / std::tan((pi + s * b) / (2.0 * n));
 }
 
+// Below X = 50, F(X) = -i sqrt(pi) e^(i pi/4) u w(u e^(i pi/4)), u = sqrt(X).
+// The argument is real, so F is a function of one variable, and F / u is w
+// along a line in the upper half-plane, where w is smooth and slowly varying:
+// a polynomial in u on each of 32 intervals of [0, sqrt(50)], of degree 10,
+// fitted to the Faddeeva form at the interval's Chebyshev nodes once, the
+// first time it is wanted.  It agrees with the Faddeeva form to 7e-12
+// relative, which is that form's own error along the line (against SciPy's
+// wofz, 5e-12 at u below 1 and near 7); the fit's own is under 1e-14.  It
+// costs 3 ns a call where the Faddeeva form costs 15, and that form was a
+// third of a --buildings run.  Built on first use rather than at load,
+// because the Faddeeva form reads a constant faddeeva.cpp initializes at
+// load, in an order across translation units the language leaves open.
+struct TransitionTable
+{
+    static constexpr int intervals = 32;
+    static constexpr int degree = 10;
+    double width = 0.0, inverse_width = 0.0;
+    // Each interval's polynomial in t in [-1, 1] across it, lowest power first.
+    double re[intervals][degree + 1] = {}, im[intervals][degree + 1] = {};
+
+    TransitionTable()
+    {
+        width = std::sqrt(50.0) / intervals;
+        inverse_width = 1.0 / width;
+        // T_k's coefficients, to turn the Chebyshev series into one in t.
+        double chebyshev[degree + 1][degree + 1] = {};
+        chebyshev[0][0] = 1.0;
+        chebyshev[1][1] = 1.0;
+        for (int k = 2; k <= degree; k++)
+            for (int p = 0; p <= k; p++)
+                chebyshev[k][p] = (p > 0 ? 2.0 * chebyshev[k - 1][p - 1] : 0.0) - chebyshev[k - 2][p];
+        const complex scale = complex(0.0, -1.0) * std::sqrt(pi) * std::polar(1.0, pi / 4.0);
+        for (int i = 0; i < intervals; i++)
+        {
+            complex value[degree + 1];
+            for (int j = 0; j <= degree; j++)
+            {
+                const double u = (i + 0.5 + 0.5 * std::cos(pi * (j + 0.5) / (degree + 1))) * width;
+                value[j] = scale * faddeeva(std::polar(u, pi / 4.0));
+            }
+            for (int k = 0; k <= degree; k++)
+            {
+                complex c(0.0, 0.0);
+                for (int j = 0; j <= degree; j++)
+                    c += value[j] * std::cos(pi * k * (j + 0.5) / (degree + 1));
+                c *= (k == 0 ? 1.0 : 2.0) / (degree + 1);
+                for (int p = 0; p <= k; p++)
+                {
+                    re[i][p] += c.real() * chebyshev[k][p];
+                    im[i][p] += c.imag() * chebyshev[k][p];
+                }
+            }
+        }
+    }
+
+    complex operator()(double x) const
+    {
+        const double u = std::sqrt(x);
+        const int i = std::min(static_cast<int>(u * inverse_width), intervals - 1);
+        const double t = (u - (i + 0.5) * width) * (2.0 * inverse_width);
+        const double* a = re[i];
+        const double* b = im[i];
+        double r = a[degree], m = b[degree];
+        for (int p = degree - 1; p >= 0; p--)
+        {
+            r = std::fma(r, t, a[p]);
+            m = std::fma(m, t, b[p]);
+        }
+        return complex(r * u, m * u);
+    }
+};
+
 } // namespace
 
 complex utd_transition(double x)
@@ -52,9 +125,8 @@ complex utd_transition(double x)
         return complex(1.0 - 0.75 * i2 + 105.0 / 16.0 * i2 * i2,
                 -0.5 * i1 + 15.0 / 8.0 * i2 * i1 - 945.0 / 32.0 * i2 * i2 * i1);
     }
-    const double root = std::sqrt(x);
-    const complex z = std::polar(root, pi / 4.0);
-    return complex(0.0, -1.0) * std::sqrt(pi) * root * std::polar(1.0, pi / 4.0) * faddeeva(z);
+    static const TransitionTable table;
+    return table(x);
 }
 
 WedgeAngles wedge_angles(double n, double theta, double theta0)

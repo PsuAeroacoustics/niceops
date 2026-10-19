@@ -153,6 +153,19 @@ Measured and left alone:
 ## Not on the GPU
 
 - **The path search** (`PointSourceField::trace`): branchy, and most of the workers' time.
+- **Ray-tracing hardware** (RT cores; Metal's intersection API, in hardware on M3 and later;
+  OptiX; Vulkan's ray queries) accelerates what a renderer spends its time on: walking a bounding
+  volume hierarchy and testing rays against triangles. Here that is the visibility tests inside
+  the path search, and the path search is 1-2% of a `--buildings` run (the demo approach among
+  the test district's eleven buildings, measured by sampling) and 12% of a pair on the 49-block
+  district; the rest is each ray's wave arithmetic at each sub-band, which no ray-tracing unit
+  does. With `niceops_point_field --gpu` the search is most of the workers' time, but the GPU
+  sets that run's pace. Two places it could pay later: scenes of many triangles (pitched LoD2
+  roofs, terrain meshes, trees), where the exact test for extruded footprints no longer applies;
+  and a diffuse field traced stochastically, as game-audio engines use it, for scattering beyond
+  the first facade. Either needs the path tests' contact rules (a segment ending on a wall,
+  grazing one, leaving an edge) in float: a conservative filter, with the double test deciding
+  what lies near a surface.
 - **The edge-source integral** (`--edge_source`, [ground.md](ground.md#the-edge-source-integral-srcedge_source---edge_source)),
   refused with `--gpu`. Its factors are the same at every sub-band from one set of nodes, so the
   natural split is the host forming each ray's amplitudes and the GPU summing them as a `RaySet`

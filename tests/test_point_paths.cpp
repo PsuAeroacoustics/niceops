@@ -874,6 +874,48 @@ TEST_CASE("the aperture worked out once is every wavenumber's", "[point_paths]")
     REQUIRE(worst_phase < 0.005);
 }
 
+// shared_face_spectrum shares its nodes' geometry between wavenumbers but not
+// its nodes: at every one of a run's 72 sub-bands (24 bands, 50 Hz to 10 kHz)
+// it is shared_face_field to the bit, on the Filon test's faces -- which take
+// the forward aperture alone, the reverse alone, and both.
+TEST_CASE("the shared face's spectrum is its field at each wavenumber", "[point_paths]")
+{
+    struct Face
+    {
+        double width, sx, sz, rx, rz, n;
+    };
+    const std::vector<Face> faces {
+        {2.438, -3.9627, -3.2527, 14.3812, -29.5687, 1.5},
+        {2.438, -4.3169, -21.6163, 6.1392, 6.4313, 1.5},
+        {12.116, -4.9019, -20.0857, 19.3141, 0.9958, 1.5},
+        {60.0, -90.0, 0.0, 90.0, -28.5, 1.5},
+        {60.0, -90.0, 10.0, 70.0, -90.0, 1.5},
+        {6.0, -10.0, -5.0, 16.0, -3.64, 1.25},
+        {4.0, -12.0, -4.0, 9.0, -2.5, 1.25},
+    };
+    std::vector<double> wavenumbers;
+    for (int b = 17; b <= 40; b++)
+        for (const SubBand& part : sub_bands(std::pow(10.0, b / 10.0), 343.2))
+            wavenumbers.push_back(0.5 * (part.k1 + part.k2));
+    std::size_t compared = 0;
+    for (const Face& f : faces)
+    {
+        const SharedFace face {f.width, f.n, f.n};
+        const std::vector<std::complex<double>> spectrum
+                = shared_face_spectrum(face, f.sx, f.sz, f.rx, f.rz, wavenumbers);
+        REQUIRE(spectrum.size() == wavenumbers.size());
+        for (std::size_t j = 0; j < wavenumbers.size(); j++)
+        {
+            const std::complex<double> field = shared_face_field(face, f.sx, f.sz, f.rx, f.rz, wavenumbers[j]);
+            INFO("width " << f.width << ", k " << wavenumbers[j]);
+            REQUIRE(spectrum[j].real() == field.real());
+            REQUIRE(spectrum[j].imag() == field.imag());
+            compared++;
+        }
+    }
+    REQUIRE(compared == 7 * 72);
+}
+
 // The diffracted paths ruled out before they are solved or checked are only
 // those that could not have been rays: among DigiCity's containers, a block
 // of a district, and a grid of blocks of mixed heights over several of

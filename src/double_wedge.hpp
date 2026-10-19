@@ -53,6 +53,14 @@ bool shared_face_applies(const SharedFace& face, double sx, double sz, double rx
 // its own.
 std::complex<double> shared_face_field(const SharedFace& face, double sx, double sz, double rx, double rz, double k);
 
+// shared_face_field at each of the wavenumbers, to the bit, for a ray taken at
+// every sub-band of a run.  Each wavenumber's aperture keeps its own nodes, but
+// most of them fall on points another's already has -- they are graded from
+// the same edge and cuts -- and a node's geometry (its path lengths, and the
+// second wedge's angles there) is worked out once for all that share it.
+std::vector<std::complex<double>> shared_face_spectrum(const SharedFace& face, double sx, double sz, double rx,
+        double rz, const std::vector<double>& wavenumbers);
+
 // shared_face_field split into what does not depend on the wavenumber, worked
 // out once for a set of wavenumbers, and what does: for a band's sub-bands,
 // or a GPU, that take the same face at many wavenumbers.  The nodes run to the

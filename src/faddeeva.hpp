@@ -2,8 +2,10 @@
 
 // The Faddeeva function w(z) = exp(-z^2) erfc(-i z), for complex z.
 //
-// This exists for one caller: the boundary-loss term of the excess ground
-// attenuation model in ground_effect.cpp.  panam writes that term as
+// It exists for the boundary-loss term of the excess ground attenuation model
+// in ground_effect.cpp, and the UTD transition function's table (wedge.cpp) is
+// fitted to it the first time a wedge coefficient is wanted.  panam writes that
+// term as
 //
 //     exp(-w) * (1 - erf(-i sqrt(w)))
 //

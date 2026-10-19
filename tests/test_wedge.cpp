@@ -1,6 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -44,9 +45,38 @@ TEST_CASE("the transition function's limits", "[wedge]")
     const double x = 1e-6;
     const auto small = utd_transition(x);
     REQUIRE(std::abs(small / (std::sqrt(pi * x) * std::polar(1.0, -pi / 4.0)) - 1.0) < 1e-2);
-    // The asymptotic series and the Faddeeva form meet at X = 50, within the
+    // The asymptotic series and the table meet at X = 50, within the
     // series' sixth term (1e-8); F's own slope there is 2e-4.
     REQUIRE(std::abs(utd_transition(50.0 - 1e-9) - utd_transition(50.0 + 1e-9)) < 3e-8);
+}
+
+// Below X = 50 F is tabulated, a polynomial in sqrt(X) per interval: the
+// Faddeeva form it was fitted to, from X = 1e-12 up, on a log and a uniform
+// sweep and either side of every interval's ends (32 across sqrt(50)).
+TEST_CASE("the tabulated transition function is the Faddeeva form", "[wedge]")
+{
+    const auto faddeeva_form = [](double x) {
+        const double root = std::sqrt(x);
+        return std::complex<double>(0.0, -1.0) * std::sqrt(pi) * root * std::polar(1.0, pi / 4.0)
+                * faddeeva(std::polar(root, pi / 4.0));
+    };
+    std::vector<double> xs;
+    for (double e = -12.0; e < std::log10(50.0); e += 0.001)
+        xs.push_back(std::pow(10.0, e));
+    for (int i = 1; i <= 50000; i++)
+        xs.push_back(50.0 * i / 50000.0);
+    for (int i = 1; i <= 32; i++)
+    {
+        const double u = std::sqrt(50.0) * i / 32.0;
+        for (double d : {-1e-12, 0.0, 1e-12})
+            if ((u + d) * (u + d) <= 50.0)
+                xs.push_back((u + d) * (u + d));
+    }
+    double worst = 0.0;
+    for (double x : xs)
+        worst = std::max(worst, std::abs(utd_transition(x) - faddeeva_form(x)) / std::abs(faddeeva_form(x)));
+    INFO("worst relative " << worst);
+    REQUIRE(worst < 2e-11);
 }
 
 // UTD against Sommerfeld's half-plane, across the shadow and reflection

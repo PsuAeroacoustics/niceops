@@ -394,5 +394,8 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<
         double floor_reflection, double k);
 double reflected_amplitude(const PointRay& ray, const std::vector<double>& reflection, double floor_reflection);
 std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, double k);
+// point_ray_amplitude for a ray over a shared face, given its face's field at
+// k sin(beta) (shared_face_field, or shared_face_spectrum for many k at once).
+std::complex<double> shared_face_amplitude(const PointRay& ray, double reflected, double k, std::complex<double> field);
 
 } // namespace niceops
