@@ -772,6 +772,10 @@ struct RunOptions
     std::optional<RaySum> ray_sum;
     double coherence_angle = SourceCoherence::default_cone;
     double phase_interval = 0.0;
+    // --state_tolerance: dB the buildings' transfer, interpolated between the
+    // states evaluated, may miss a state's level by (UrbanDistrict::levels);
+    // 0 evaluates every state.
+    double state_tolerance = 0.02;
     // --terrain, read once for the run: the ground models take each path's
     // mean ground line from it (terrain_ray), resampled per trajectory onto the
     // local frame every terrain_step meters with terrain_offset (m) added.
@@ -3111,16 +3115,18 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (options.phase_interval > 0.0)
             interval.percent = options.phase_interval;
         const auto started = std::chrono::steady_clock::now();
-        district.levels(database, source_states, microphones, absorption.data(), band_gains, first_band, last_band,
-                sound_speed, options.thread_count > 0 ? options.thread_count : default_thread_count(), coherence,
-                point_levels, record_bands || want_frames ? &point_bands : nullptr,
-                spectral ? &packed_of_state : nullptr, options.phase_interval > 0.0 ? &interval : nullptr);
+        const std::size_t evaluated = district.levels(database, source_states, microphones, absorption.data(),
+                band_gains, first_band, last_band, sound_speed,
+                options.thread_count > 0 ? options.thread_count : default_thread_count(), coherence, point_levels,
+                record_bands || want_frames ? &point_bands : nullptr, spectral ? &packed_of_state : nullptr,
+                options.phase_interval > 0.0 ? &interval : nullptr, options.state_tolerance);
         point_lower = std::move(interval.lower);
         point_upper = std::move(interval.upper);
         log("--buildings ", options.buildings_path, ": the rays from ", nt, " states to ", observer_count,
                 " microphones among ", district.building_count(), " buildings (", district.facade_count(),
                 " facades) in ", std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(),
-                " s.");
+                " s, ", evaluated, " of the ", nt * observer_count, " pairs evaluated (--state_tolerance ",
+                options.state_tolerance, " dB).");
     }
     std::atomic<std::size_t> evaluated_samples {0};
     std::atomic<std::size_t> shadowed_samples {0};
@@ -4838,6 +4844,8 @@ int run(int argc, char* argv[])
     std::string buildings_file;
     double wall_absorption = 0.0;
     double floor_absorption = 0.0;
+    bool exact_shared_faces = false;
+    double state_tolerance = 0.02;
     std::string ray_coherence;
     double coherence_angle = SourceCoherence::default_cone;
     double phase_interval = 0.0;
@@ -5324,6 +5332,15 @@ int run(int argc, char* argv[])
             "With --buildings: the walls' energy absorption coefficient where a building gives none (default 0).");
     app.add_option("--floor_absorption", floor_absorption,
             "With --buildings: the floor's energy absorption coefficient (default 0, rigid).");
+    app.add_flag("--exact_shared_faces", exact_shared_faces,
+            "With --buildings: take the integral over a flat roof between its two edges at every wavenumber, not "
+            "only where the cascade of the two edges' coefficients cannot stand in for it; the reference, about "
+            "four times as slow.");
+    app.add_option("--state_tolerance", state_tolerance,
+            "With --buildings: evaluate the rays at states 32 apart and wherever the buildings' effect, taken "
+            "linearly between them, misses a state's A-weighted level by more than this many dB (default 0.02); "
+            "the other states take the source exactly and the buildings' effect interpolated. 0 evaluates every "
+            "state.");
     app.add_option("--ray_coherence", ray_coherence,
             "With --buildings: how rays leaving the source in different directions add. 'cone': in energy, "
             "except those leaving within --coherence_angle of each other, which add with their phases; "
@@ -6093,6 +6110,8 @@ int run(int argc, char* argv[])
     }
     else if (app.count("--wall_absorption") > 0 || app.count("--floor_absorption") > 0)
         input_error("--wall_absorption and --floor_absorption go with --buildings.");
+    else if (exact_shared_faces || app.count("--state_tolerance") > 0)
+        input_error("--exact_shared_faces and --state_tolerance go with --buildings.");
     else if (app.count("--ray_coherence") > 0 || app.count("--coherence_angle") > 0
             || app.count("--phase_interval") > 0)
         input_error("--ray_coherence, --coherence_angle and --phase_interval go with --buildings.");
@@ -6398,6 +6417,7 @@ int run(int argc, char* argv[])
         input.frame_bearing = std::isnan(frame_bearing) ? 90.0 : frame_bearing;
         input.wall_absorption = wall_absorption;
         input.floor_absorption = floor_absorption;
+        input.exact_shared_faces = exact_shared_faces;
         try
         {
             options.buildings = UrbanDistrict::read(buildings_file, input);
@@ -6421,6 +6441,9 @@ int run(int argc, char* argv[])
             options.ray_sum = RaySum::energy;
         options.coherence_angle = coherence_angle;
         options.phase_interval = phase_interval;
+        if (!(state_tolerance >= 0.0) || !std::isfinite(state_tolerance))
+            input_error("--state_tolerance is a non-negative number of dB; given ", state_tolerance, ".");
+        options.state_tolerance = state_tolerance;
     }
     if (!plate_table.empty())
     {

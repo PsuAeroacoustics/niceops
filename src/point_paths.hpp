@@ -104,6 +104,14 @@ struct PointPathOptions
     // over the edge carries, so that a ray leaving the edge fades rather than
     // stops.  point_field sets it to 100 radians at the lowest band.
     double edge_source_reach = 10.0;
+    // Over a shared face, the aperture's integral only where the cascade of
+    // the two wedges cannot stand in for it (THEORY 6.5): at wavenumbers two
+    // thirds of an octave apart, below where the first wedge's transition
+    // parameter at the second reaches 30, the ratio of the two taken between
+    // them in log k and the cascade itself beyond.  Within 0.1 dB of the
+    // integral at every wavenumber.  Off, the integral at every wavenumber:
+    // the reference, and what the GPU takes.
+    bool sample_shared_faces = true;
 };
 
 // The diffracted ray the model does not trace at a boundary, made from the
@@ -194,6 +202,10 @@ struct PointRay
     WedgeTerm wedge[2];
     bool shared = false;
     SharedFaceTerm shared_face;
+    // Over a shared face, the cascade's spreading, which `spreading` then
+    // replaces: the cascade of its two wedge terms (`wedge`, kept) is what
+    // the face's field is taken relative to where it is sampled.
+    double cascade_spreading = 0.0;
     // For a diffracted ray (wedges > 0).
     EdgeSourceTerm edge_source;
     // The height of the horizontal plane the ray reflects in on its source
@@ -357,6 +369,7 @@ private:
     std::size_t facade_count_ = 0;
     const Buildings* buildings_ = nullptr;
     bool edge_source_ = false;
+    bool sample_shared_faces_ = true;
 };
 
 // The diffraction factor a ray's edge-source integral gives it at each

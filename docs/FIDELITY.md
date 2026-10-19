@@ -753,6 +753,28 @@ The large per-state differences come at 60–150 m slant range, and over a movin
 in the exposure; over a hover or a slow pass by the same buildings they would not. On this track
 roofs move none of the seven SELs, the microphones standing below every roof.
 
+**What the run's sampling costs** (THEORY §6.5), on the same demo track and district, against the
+same run unsampled:
+
+- **The states sampled** (`--state_tolerance 0.02`, the default) against every state evaluated:
+  12,453 of the 45,857 pairs evaluated. SEL within 0.003 dB and LAmax within 0.007 dB at every
+  microphone. State by state within each microphone's 10-dB window, the 99th percentile is 0.13 dB
+  at worst; one state in the alley is 2.1 dB off, a feature narrower than the stretch's middle
+  sees. With one building 1000 km off and the floor absorbing, the sampled run is the run without a
+  ground model to 1e-12 dB.
+- **The shared faces sampled** against their integral at every wavenumber: no state's level moves
+  by more than 0.002 dB, nor any SEL by 0.0001. Ray by ray, on long blocks 1 to 10 m thick with
+  sources low, grazing, in the roof's plane and just above it and microphones through its plane,
+  from 20 Hz to 10 kHz, within 0.07 dB and 0.012 rad; the samples an octave apart left 0.13 dB.
+  Where the transition parameter is 30 or more the cascade alone is within 0.04 dB and 0.02 rad of
+  the integral; under 0.1 it is up to 16 dB off, and with an end in the roof's plane its sign is
+  wrong. `niceops_point_field`'s band levels over the test district stay within 0.1 dB of the
+  integral's.
+- **Cost**, 14 threads on an M4 Pro: 70 s for the run at the start, 37 s with the transition
+  function tabulated and each shared face's nodes worked out once for every wavenumber, 10 s with
+  the shared faces sampled, 3.3 s with the states sampled too. The run without buildings takes
+  0.2 s.
+
 ### Roof-edge diffraction
 
 The UTD wedge kernel (`src/wedge`, `tests/test_wedge.cpp`), a unit plane wave on a rigid wedge,
@@ -1087,7 +1109,8 @@ Cost: in the table builder's test district, a point source 10 m up in a street, 
 microphones take 0.44 s on one thread over B407's 31 bands. Among 49 blocks with roofs 10 to
 40 m, a drone 30 m up costs 0.042 s per microphone on one thread over 24 bands. 60 points of a
 drone's track 40 m up, over 185 microphones, take 30 s on 14 threads with `--sources` (34 s as a
-run per source), and 3.9 s with `--gpu`.
+run per source), and 3.9 s with `--gpu`. These were measured with every shared face's integral at
+every wavenumber, before the shared faces were sampled.
 
 **The edge-source integral** (`--edge_source`; `src/edge_source`, `tests/test_edge_source.cpp`).
 First order, against exact solutions:

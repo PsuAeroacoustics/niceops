@@ -132,6 +132,18 @@ Commands and options are in `README.md`; rationale is in
   effective length, the wrap a one-turn shift, and holds only to 4.5 blade-passage frequencies.
   `--ray_coherence coherent` keeps the old coherent sum to the bit. Do not use `std::polar` with
   the sinc as its magnitude: it can be negative, and libc++ returns NaN.
+- **`--buildings` samples states, not the source** (`--state_tolerance`, 0.02 dB; ground.md "In a
+  run"). Each band's transfer -- its level less the direct ray's in free field at that state -- is
+  evaluated at some states and interpolated; every state keeps its own sphere. The transfer is NaN
+  where unknown (a band buried 120 dB or at band_level's -300 dB floor) and -infinity where no ray
+  arrives; do not merge the two, and do not drop the outright evaluation of a state whose loud band
+  has no known transfer (the B407 database's top bands jump by 1000 dB between states).
+  `--state_tolerance 0` is the old every-state path, byte for byte.
+- **Shared faces are sampled** (`PointPathOptions::sample_shared_faces`): the cascade times the
+  integral's ratio to it, taken two thirds of an octave apart while the transition parameter is
+  under 30. An end's angle off the face's plane counts on either side: with an end in the plane
+  the cascade has the wrong sign. `--exact_shared_faces` (and the GPU) take the integral at every
+  wavenumber; the GPU comparisons run with the sampling off.
 - **Scattering walls in `niceops_point_field` reuse the urban tables' radiosity**, lit by the
   source's own specular paths to each patch; with s = 0 nothing is built and the run is byte for
   byte the specular one.

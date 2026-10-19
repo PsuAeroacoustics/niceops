@@ -110,6 +110,7 @@ int main(int argc, char** argv)
     bool no_diffraction = false;
     bool no_double_diffraction = false;
     bool no_roofs = false;
+    bool exact_shared_faces = false;
     bool cascade = false;
     std::string rays_file;
     int threads = 0;
@@ -149,6 +150,9 @@ int main(int argc, char** argv)
             "checking the pruning.");
     app.add_flag("--cascade", cascade, "Over a shared face, the cascade of two UTD coefficients instead of the "
                                        "uniform form (double_wedge.hpp), for comparison.");
+    app.add_flag("--exact_shared_faces", exact_shared_faces,
+            "Over a shared face, the uniform form's integral at every wavenumber, not only where the cascade cannot "
+            "stand in for it: the reference, and what --gpu takes.");
     app.add_flag("--edge_source", edge_source,
             "Diffraction by the edge-source integral over each edge's whole length (edge_source.hpp), which keeps "
             "the edges' ends that UTD leaves out: every once-diffracted ray, and the twice-diffracted ones near a "
@@ -360,6 +364,7 @@ int main(int argc, char** argv)
         options.double_diffraction = !no_double_diffraction;
         options.roofs = !no_roofs;
         options.shared_face = !cascade;
+        options.sample_shared_faces = !exact_shared_faces;
         options.prune = !no_prune;
         options.edge_source = edge_source;
         options.edge_source_reach = 100.0 / (2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed);

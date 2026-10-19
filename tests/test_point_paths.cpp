@@ -874,6 +874,68 @@ TEST_CASE("the aperture worked out once is every wavenumber's", "[point_paths]")
     REQUIRE(worst_phase < 0.005);
 }
 
+// Sampled (PointPathOptions::sample_shared_faces), a shared face's amplitude is
+// the cascade's times the integral's ratio to it, taken two thirds of an octave apart while
+// the first wedge's transition parameter is under 30: against the integral at
+// every one of 84 sub-bands from 20 Hz to 10 kHz, over long blocks 1 to 10 m
+// thick with sources low, grazing, in the roof's plane and just above it and
+// microphones behind at heights through its plane.  There the cascade alone
+// is up to 16 dB off, and of the wrong sign with an end in the plane.
+TEST_CASE("a sampled shared face is its integral at every wavenumber", "[point_paths]")
+{
+    std::vector<double> bands;
+    for (int b = 13; b <= 40; b++)
+        bands.push_back(std::pow(10.0, b / 10.0));
+    const double c = 343.2;
+    double worst = 0.0, worst_phase = 0.0;
+    std::size_t shared = 0;
+    for (double width : {1.0, 2.44, 5.0, 10.0})
+    {
+        Footprint block;
+        block.x = {-2000.0, 2000.0, 2000.0, -2000.0};
+        block.y = {0.0, 0.0, width, width};
+        block.top = 5.18;
+        const Buildings city({block});
+        const std::vector<double> reflection(city.facades().size() * bands.size(), 1.0);
+        for (const Vec3& s : {Vec3(0.0, -25.0, 4.5), Vec3(0.0, -10.0, 2.0), Vec3(0.0, -200.0, 4.0),
+                     Vec3(0.0, -15.0, 6.5), Vec3(30.0, -60.0, 5.1), Vec3(0.0, -140.0, 5.18), Vec3(10.0, -80.0, 5.3)})
+            for (double behind : {2.0, 25.0})
+                for (double z : {1.2, 5.26, 6.5})
+                {
+                    const Vec3 m(0.0, width + behind, z);
+                    PointPathOptions exact;
+                    exact.sample_shared_faces = false;
+                    const PointSourceField sampled_field(city, s, m), exact_field(city, s, m, exact);
+                    std::vector<std::vector<std::complex<double>>> amplitude[2];
+                    std::vector<std::size_t> order;
+                    for (int which = 0; which < 2; which++)
+                        (which ? exact_field : sampled_field)
+                                .sub_band_problems(
+                                        reflection, 1.0, bands, c,
+                                        [&](std::size_t, int, const std::vector<std::complex<double>>& a,
+                                                const std::vector<double>&, const SubBand&) { amplitude[which].push_back(a); },
+                                        {}, nullptr, &order);
+                    REQUIRE(amplitude[0].size() == amplitude[1].size());
+                    for (std::size_t r = 0; r < order.size(); r++)
+                    {
+                        if (!sampled_field.rays()[order[r]].shared)
+                            continue;
+                        shared++;
+                        for (std::size_t q = 0; q < amplitude[0].size(); q++)
+                        {
+                            const std::complex<double> ratio = amplitude[0][q][r] / amplitude[1][q][r];
+                            worst = std::max(worst, std::abs(20.0 * std::log10(std::abs(ratio))));
+                            worst_phase = std::max(worst_phase, std::abs(std::arg(ratio)));
+                        }
+                    }
+                }
+    }
+    INFO(shared << " rays over shared faces; worst " << worst << " dB, " << worst_phase << " rad");
+    REQUIRE(shared > 50);
+    REQUIRE(worst < 0.1);
+    REQUIRE(worst_phase < 0.03);
+}
+
 // shared_face_spectrum shares its nodes' geometry between wavenumbers but not
 // its nodes: at every one of a run's 72 sub-bands (24 bands, 50 Hz to 10 kHz)
 // it is shared_face_field to the bit, on the Filon test's faces -- which take

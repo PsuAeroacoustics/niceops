@@ -515,9 +515,41 @@ it bought:
   Filon test's faces), and the demo approach's levels did not change by a byte: 54 to 37 s. A
   node's wave counts follow from the cuts that bound it, so they agree wherever its t does; the
   table compares them anyway, and taking the comparison out passes the test.
+- **The shared faces are sampled** (`sampled_shared_face_factors`,
+  `PointPathOptions::sample_shared_faces`; THEORY 6.5). Measured per ray on the demo approach, the
+  shared faces were 16% of the rays, 98% of a pair's cost (865 us each) and 2% of its A-weighted
+  energy, and the cascade in their place moved no state by more than 0.014 dB. But on long blocks
+  with grazing sources the cascade is up to 16 dB off, so it cannot simply replace the integral:
+  the field is the cascade times the integral's ratio to it, taken where the first edge's
+  transition parameter at the second is under 30 and interpolated in log k. Things to keep:
+  - **An end's angle off the plane counts above it as well as below.** The face's reflection
+    boundary leaves the edge as far above the face as the shadow boundary below. Counting only
+    ends below the plane let a source exactly in a roof's plane take the cascade, whose sign is
+    wrong there (R near -1): 1.1 dB in a band of `niceops_point_field`'s test. The test's sources
+    in and just above the plane fail by 3.14 rad without it.
+  - **Two thirds of an octave between samples**: an octave left 0.13 dB on the long blocks, two
+    octaves 0.48; two thirds leaves 0.07. Raising the cutoff from 30 to 60 changed nothing.
+  - **A sample's cascade zero, or a ratio not finite, takes the integral everywhere** for that ray.
+  - **The GPU takes the integral at every wavenumber**, so the CPU's GPU comparisons
+    (`the GPU's point rays are the CPU's`, `point_field_gpu_matches_cpu`) run with the sampling
+    off.
+  On the demo approach it took the run from 37 to 10 s. Tests: `a sampled shared face is its
+  integral at every wavenumber` (0.1 dB, 0.03 rad), `point_field_shared_faces_sampled` (band levels
+  within 0.1 dB).
 
 Measured and left alone:
 
+- **The coherence sum by the sinc's reach.** A pair whose sinc's argument passes 30 adds nothing,
+  so a sub-band could visit only the pairs within 30 over its half width. Over the demo approach
+  the sum visits 7.0e9 pairs, and the reach removed 18% of them: the pairs inside the cone are
+  near-twins, close in length even at 10 kHz. It took 4% off the run; sorting the pairs by length
+  difference to find them cost as much as it saved, and walking the rays in length order instead
+  bought the 4%. Not kept. What would pay is the band integral's form for groups that are fully
+  coherent, which the cone's taper makes awkward.
+- **Closed forms for the shared face** (Capolino, Albani, Maci and Tiberio, IEEE TAP 45, 1997;
+  Albani, IEEE TAP 53, 2005; Pierce, JASA 55, 1974) would replace the integral outright at a few
+  transition functions a wavenumber. Not tried: the sampling leaves the integral a small part of a
+  pair, and the integral is the model validated against boundary elements.
 - **The GPU's aperture on the CPU.** `shared_face_geometry` works one set of nodes out for every
   wavenumber, ending panels at every one's taper and extent (it is more accurate, 0.006 dB from the
   fine midpoint rule against 0.017). On the CPU the demo approach took 70 s with it against 54 s
@@ -599,15 +631,45 @@ which marches them. What to keep:
   is what makes `buildings_far_is_open_without_ground` hold -- one building 1000 km off and a floor
   absorbing everything give the run without a ground model, at 1e-9 (in fact to the printed digit).
 - **No peak search.** A coherent sum of a source's rays can exceed the straight path's bound by
-  20 lg N, so every state is evaluated, as under the options that need a full history.
-- Cost: 9.4 ms of CPU a pair; the demo track's 6,551 states at seven microphones take 37 s on 14
-  threads (70 s before the transition table and the shared nodes above). Sampled, the shared
-  faces' integrals are still most of it: roughly a fifth the transition function's table, a
-  quarter the Filon panels with their sines and cosines, a fifth the rest of the aperture's loop
-  and 6% the wedge coefficient; the ray sum is 7% and the path search 1%. What it changes is in
-  FIDELITY.
-- Tests: `buildings_far_is_open_without_ground`, the refusals `buildings_refuses_*`, and the
-  launch test above.
+  20 lg N, so no state is skipped on a bound.
+- **The states are sampled, the source is not** (`--state_tolerance`; THEORY 6.5). What varies from
+  state to state on a track is mostly the source: its blend follows the track's noisy load factor,
+  and the level without buildings moves 0.1-0.3 dB (median) between states 0.02 s apart. What the
+  buildings add, each band's level less the direct ray's in free field, moves 0.01-0.07 dB. So
+  the transfer is what is interpolated, and every state takes its own sphere along its own direct
+  ray. Interpolating the A-weighted level itself instead lost LAmax (0.3 dB at every 4th state,
+  0.7 at every 8th). Things to keep:
+  - **Stretches are judged at their middle**, which is then known: an accepted stretch splits
+    there for the estimates. Rounds of middles are evaluated together, in parallel, as one list
+    sorted by state, so each source end is built once a round.
+  - **The transfer is NaN where it is not known, -infinity where nothing arrives.** A band 120 dB
+    or more under the state's loudest free-field band, or whose rays' sum sits at band_level's
+    floor of -300 dB, has no meaningful transfer. Treating those as silent interpolated toward
+    nothing in energy, 6 dB off in a band; treating them as numbers added +1000 dB. Between a
+    known and an unknown end the known one stands, and a band unknown at both borrows the nearest
+    band's that is known at both.
+  - **The B407 database's top bands sit near -1350 dB at some conditions and jump by about 1000 dB
+    at a neighbouring state's** (the 8 and 10 kHz bands at states 9, 15, 27 ... of the demo
+    approach). A state where the direct ray puts a band within 30 dB of the loudest A-weighted one
+    whose transfer is known at neither end is evaluated outright, or the estimate would leave the
+    source's own jump silent. Without it the far building's sampled run missed the reference by
+    2.6e-4 dB; with it, 1e-12.
+  - **`--state_tolerance 0` takes the old path**, every state in blocks, and is byte-identical to
+    the run before sampling; the sampled path shares its pair evaluation.
+  - **What it can miss:** a feature narrower than half a stretch, which no middle lands on. On the
+    demo approach one state in the alley is 2.1 dB off; the 99th percentile is 0.13 dB.
+  - The defaults (32 apart, 0.02 dB, loud bands within 30 dB at 15 times the tolerance) were
+    chosen from a simulation over every state's band levels: 0.05 dB evaluated 16% of the pairs
+    for LAmax within 0.22 dB, 0.02 dB 27% for LAmax within 0.01.
+- Cost: the demo track's 6,551 states at seven microphones take 3.3 s on 14 threads, 12,453 pairs
+  evaluated (10 s with every state, 37 s with every shared face's integral at every wavenumber,
+  70 s before the transition table and the shared nodes above). The run without buildings takes
+  0.2 s. Of an evaluated pair, the coherence sum is about a fifth, the transition function and
+  wedge coefficients another, the sampled shared faces' integrals another, the path search about 6%.
+  What it changes is in FIDELITY.
+- Tests: `buildings_far_is_open_without_ground` (every state), `buildings_far_sampled_is_open`
+  (sampled, at 1e-6 dB), `buildings_states_sampled` (the demo approach sampled against every
+  state, within 0.01 dB), the refusals `buildings_refuses_*`, and the launch test above.
 
 **How its rays add** (`src/source_coherence`, `partially_coherent_energies` in
 `src/urban_point.cpp`; THEORY 6.5). The model came out of the harness's `coherence/`, which says how

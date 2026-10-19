@@ -574,7 +574,10 @@ PathEnd::PathEnd(const Buildings& buildings, const Vec3& point, bool source, con
 
 PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& source, const Vec3& microphone,
         const PointPathOptions& options)
-    : facade_count_(buildings.facades().size()), buildings_(&buildings), edge_source_(options.edge_source)
+    : facade_count_(buildings.facades().size())
+    , buildings_(&buildings)
+    , edge_source_(options.edge_source)
+    , sample_shared_faces_(options.sample_shared_faces)
 {
     trace(buildings, PathEnd(buildings, source, true, options, edges_near(buildings, microphone, options.radius)),
             PathEnd(buildings, microphone, false, options, edges_near(buildings, source, options.radius)), options);
@@ -582,7 +585,10 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
 
 PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
         const PointPathOptions& options)
-    : facade_count_(buildings.facades().size()), buildings_(&buildings), edge_source_(options.edge_source)
+    : facade_count_(buildings.facades().size())
+    , buildings_(&buildings)
+    , edge_source_(options.edge_source)
+    , sample_shared_faces_(options.sample_shared_faces)
 {
     trace(buildings, source, microphone, options);
 }
@@ -1174,6 +1180,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 {
                                     ray.shared = true;
                                     ray.shared_face = term;
+                                    ray.cascade_spreading = ray.spreading;
                                     ray.spreading = 1.0 / std::sqrt(ray.length * ray.wedge[0].sin_beta);
                                 }
                             }
@@ -1513,6 +1520,141 @@ std::vector<double> sub_band_absorption(const Atmosphere& air, const std::vector
     return a;
 }
 
+namespace {
+
+// A shared face's transition parameter at its far edge, per unit wavenumber:
+// X / k, X = k sin(beta) L (1 - cos g), g an end's angle off the face's plane,
+// above or below it -- the face's reflection boundary leaves the end's edge
+// as far above the face as its shadow boundary does below -- and
+// L = s w / (s + w) its distance parameter there, s its distance from its
+// edge and w the face's width; the smaller of the two ends'.  An end in the
+// plane has X = 0 at every wavenumber, and there the cascade has the wrong
+// sign.
+double shared_face_transition_rate(const SharedFaceTerm& t)
+{
+    const double w = t.face.width;
+    double rate = std::numeric_limits<double>::infinity();
+    auto end = [&](double along, double off) {
+        const double s = std::hypot(along, off);
+        rate = std::min(rate, t.sin_beta * s * w / (s + w) * (1.0 - along / s));
+    };
+    if (t.sx < 0.0)
+        end(-t.sx, t.sz);
+    if (t.rx > w)
+        end(t.rx - w, t.rz);
+    return rate;
+}
+
+// Past this transition parameter the cascade is the aperture's integral to
+// 0.04 dB and 0.02 rad, over the test district's shared faces and long blocks
+// with grazing sources (where at 0.1 it is 16 dB low).
+constexpr double cascade_stands = 30.0;
+// The ratio's samples are two thirds of an octave apart, 2^(2/3): an octave
+// apart they left 0.13 dB on the long blocks, two thirds 0.07.
+constexpr double probe_spacing = 1.5874010519681994;
+
+// A shared face's factor on its reflected amplitude at each wavenumber (what
+// shared_face_amplitude gives at reflected = 1), sampled: the cascade of its
+// two wedge terms times R, the integral's ratio to the cascade.  R is taken
+// by the integral at the lowest wavenumber and then at one probe_spacing or
+// more above the last, while the transition parameter is under
+// cascade_stands, and at the last such; it is 1 from the first wavenumber
+// past that, and in between it goes linearly in log k, in |R|'s log and R's
+// unwrapped phase.  Against the integral at every wavenumber this is within
+// 0.07 dB and 0.012 rad on long blocks from 20 Hz to 10 kHz (`a sampled shared
+// face is its integral at every wavenumber`).  Empty where a probe's cascade
+// is zero or the ratio is not finite: the caller takes the integral
+// everywhere then.
+std::vector<std::complex<double>> sampled_shared_face_factors(const PointRay& ray, const std::vector<double>& k)
+{
+    using complex = std::complex<double>;
+    const SharedFaceTerm& t = ray.shared_face;
+    const std::size_t n = k.size();
+    // The cascade: the ray's own wedge terms, as point_ray_amplitude takes
+    // them, at the cascade's spreading.
+    PointRay cascade;
+    cascade.wedges = ray.wedges;
+    cascade.wedge[0] = ray.wedge[0];
+    cascade.wedge[1] = ray.wedge[1];
+    std::vector<complex> out(n);
+    const double ratio = ray.cascade_spreading / ray.spreading;
+    for (std::size_t j = 0; j < n; j++)
+        out[j] = point_ray_amplitude(cascade, ratio, k[j]);
+    std::vector<std::size_t> by_k(n);
+    for (std::size_t j = 0; j < n; j++)
+        by_k[j] = j;
+    std::sort(by_k.begin(), by_k.end(), [&](std::size_t a, std::size_t b) { return k[a] < k[b]; });
+    const double rate = shared_face_transition_rate(t);
+    // The probes, in ascending k, and the first wavenumber the cascade stands at.
+    std::vector<std::size_t> probes;
+    std::size_t first_free = n;
+    for (std::size_t r = 0; r < n; r++)
+    {
+        const std::size_t j = by_k[r];
+        if (rate * k[j] >= cascade_stands)
+        {
+            first_free = j;
+            if (!probes.empty() && probes.back() != by_k[r - 1])
+                probes.push_back(by_k[r - 1]);
+            break;
+        }
+        if (probes.empty() || k[j] >= probe_spacing * k[probes.back()])
+            probes.push_back(j);
+        if (r + 1 == n && probes.back() != j)
+            probes.push_back(j);
+    }
+    if (probes.empty())
+        return out;
+    std::vector<double> in_plane(probes.size());
+    for (std::size_t p = 0; p < probes.size(); p++)
+        in_plane[p] = k[probes[p]] * t.sin_beta;
+    const std::vector<complex> field = shared_face_spectrum(t.face, t.sx, t.sz, t.rx, t.rz, in_plane);
+    // The points R goes through: log k, log |R| and R's phase, unwrapped.
+    std::vector<double> x, magnitude, phase;
+    for (std::size_t p = 0; p < probes.size(); p++)
+    {
+        const std::size_t j = probes[p];
+        const complex r = shared_face_amplitude(ray, 1.0, k[j], field[p]) / out[j];
+        if (!(std::isfinite(r.real()) && std::isfinite(r.imag()) && std::abs(r) > 0.0))
+            return {};
+        double arg = std::arg(r);
+        if (!phase.empty())
+            arg += 2.0 * pi * std::round((phase.back() - arg) / (2.0 * pi));
+        x.push_back(std::log(k[j]));
+        magnitude.push_back(std::log(std::abs(r)));
+        phase.push_back(arg);
+    }
+    if (first_free < n)
+    {
+        x.push_back(std::log(k[first_free]));
+        magnitude.push_back(0.0);
+        phase.push_back(2.0 * pi * std::round(phase.back() / (2.0 * pi)));
+    }
+    for (std::size_t j = 0; j < n; j++)
+    {
+        const double at = std::log(k[j]);
+        if (at >= x.back())
+        {
+            if (first_free < n)
+                continue;
+            out[j] *= std::polar(std::exp(magnitude.back()), phase.back());
+            continue;
+        }
+        if (at <= x.front())
+        {
+            out[j] *= std::polar(std::exp(magnitude.front()), phase.front());
+            continue;
+        }
+        const std::size_t hi = static_cast<std::size_t>(std::upper_bound(x.begin(), x.end(), at) - x.begin());
+        const double f = (at - x[hi - 1]) / (x[hi] - x[hi - 1]);
+        out[j] *= std::polar(std::exp(magnitude[hi - 1] + f * (magnitude[hi] - magnitude[hi - 1])),
+                phase[hi - 1] + f * (phase[hi] - phase[hi - 1]));
+    }
+    return out;
+}
+
+} // namespace
+
 void PointSourceField::sub_band_problems(const std::vector<double>& reflection, double floor_reflection,
         const std::vector<double>& bands, double sound_speed, const SubBandProblem& problem,
         const std::vector<double>& absorption, const double* weights, std::vector<std::size_t>* order_out) const
@@ -1541,8 +1683,9 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     if (edge_source_)
         for (std::size_t i = 0; i < order.size(); i++)
             factors[i] = edge_source_factors(*buildings_, rays_[order[i]], wavenumbers);
-    // A shared face's field at every sub-band at once, its nodes' geometry
-    // shared between them (shared_face_spectrum).
+    // A shared face's field at every sub-band at once: sampled where that is
+    // allowed and works, or its nodes' geometry shared between them
+    // (shared_face_spectrum).
     std::vector<std::vector<std::complex<double>>> shared(order.size());
     std::vector<double> in_plane(wavenumbers.size());
     for (std::size_t i = 0; i < order.size(); i++)
@@ -1550,6 +1693,12 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
         const PointRay& ray = rays_[order[i]];
         if (!ray.shared || !factors[i].empty())
             continue;
+        if (sample_shared_faces_)
+        {
+            factors[i] = sampled_shared_face_factors(ray, wavenumbers);
+            if (!factors[i].empty())
+                continue;
+        }
         const SharedFaceTerm& t = ray.shared_face;
         for (std::size_t j = 0; j < wavenumbers.size(); j++)
             in_plane[j] = wavenumbers[j] * t.sin_beta;

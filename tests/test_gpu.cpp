@@ -314,7 +314,11 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     {
         const Buildings& city = *cases[i].city;
         std::vector<double> reflection(city.facades().size() * bands.size(), 0.9);
-        fields.push_back(std::make_unique<PointSourceField>(city, cases[i].source, cases[i].microphone));
+        // The GPU takes a shared face's integral at every wavenumber, so the
+        // CPU's amplitudes here do too.
+        PointPathOptions exact;
+        exact.sample_shared_faces = false;
+        fields.push_back(std::make_unique<PointSourceField>(city, cases[i].source, cases[i].microphone, exact));
         const PointSourceField& field = *fields.back();
         const std::vector<double> absorption = i % 2 ? absorbing : std::vector<double> {};
         field.band_levels(reflection, 1.0, bands, c, cpu[i].data(), absorption);

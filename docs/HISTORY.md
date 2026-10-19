@@ -297,6 +297,18 @@ old and new results only with them in mind.
   window taking a uniformly random phase (behind environment switches, now gone), which put a wide
   spread on broadband bands that add in energy; `--phase_interval` takes the measured spread
   instead.
+- **The UTD transition function comes from a table below X = 50**, fitted to the Faddeeva form it
+  replaced at Chebyshev nodes; it agrees with that form to 7e-12, its own error, and the demo
+  approach's `--buildings` levels moved by under 1e-9 dB.
+- **The shared faces are sampled** (`niceops --buildings` and `niceops_point_field`): the uniform
+  form's integral only where the cascade cannot stand in for it, at wavenumbers two thirds of an
+  octave apart, the cascade carrying it elsewhere. It was taken at every wavenumber, which
+  `--exact_shared_faces` keeps to the bit. The demo approach's states moved by 0.002 dB at most and
+  its SELs by under 0.0001; `niceops_point_field`'s test district by up to 0.1 dB in a band.
+- **`niceops --buildings` samples the states** (`--state_tolerance`, 0.02 dB by default): the
+  buildings' transfer is evaluated at some states and interpolated between them, the source exact
+  at every state. Every state was evaluated, which `--state_tolerance 0` keeps to the bit. The demo
+  approach's SELs moved by 0.003 dB at most and its LAmax by 0.007, for a third of the pairs.
 
 ### Inputs
 

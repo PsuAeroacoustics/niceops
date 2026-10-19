@@ -76,6 +76,9 @@ public:
         double frame_bearing = 90.0;
         double wall_absorption = 0.0;
         double floor_absorption = 0.0;
+        // A shared face's aperture at every wavenumber, not sampled
+        // (PointPathOptions::sample_shared_faces).
+        bool exact_shared_faces = false;
     };
     static std::shared_ptr<const UrbanDistrict> read(const std::string& file, const Input& input);
     ~UrbanDistrict();
@@ -99,13 +102,23 @@ public:
     // packed spectra per state.  `interval`, when given, gets each level's
     // interval over the source's phases (the gamma distribution with the
     // A-weighted energy's mean and variance); -infinity where no ray arrives.
-    void levels(const Database& database, const std::vector<Database::SourceState>& states,
+    //
+    // With a `state_tolerance` (dB), not every state is evaluated: per
+    // microphone, the buildings' transfer -- each band's level less the direct
+    // ray's in free field from the sphere at that state -- is taken at states
+    // 32 apart and at the middle of any stretch where it taken linearly
+    // between the stretch's ends misses the level there by more than the
+    // tolerance, or a band within 30 dB of the loudest A-weighted one by 15
+    // times it; the other states are their direct ray's free-field levels plus
+    // the transfer interpolated (THEORY 6.5).  0 evaluates every state.
+    // Returns the pairs evaluated.
+    std::size_t levels(const Database& database, const std::vector<Database::SourceState>& states,
             const std::vector<Vec3>& microphones, const double* absorption, const std::vector<double>& gains,
             std::size_t first_band, std::size_t last_band, double sound_speed, unsigned threads,
             const SourceCoherence& coherence, std::vector<double>& levels,
             std::vector<double>* band_levels = nullptr,
             const std::vector<const Database::PackedSpectra*>* packed = nullptr,
-            PhaseInterval* interval = nullptr) const;
+            PhaseInterval* interval = nullptr, double state_tolerance = 0.0) const;
 
 private:
     UrbanDistrict();

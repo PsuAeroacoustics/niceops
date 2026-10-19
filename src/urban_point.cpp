@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <map>
+#include <memory>
 #include <numeric>
 #include <unordered_map>
 
@@ -419,6 +421,7 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
     for (std::size_t f = 0; f < d.reflection.size(); f++)
         d.reflection[f] = 1.0 - d.input.absorption[d.city.facade_building(f)];
     d.floor_reflection = 1.0 - input.floor_absorption;
+    d.paths.sample_shared_faces = !input.exact_shared_faces;
     return district;
 }
 
@@ -449,11 +452,12 @@ std::string UrbanDistrict::misplaced(const Vec3& p) const
     return "";
 }
 
-void UrbanDistrict::levels(const Database& database, const std::vector<Database::SourceState>& states,
+std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Database::SourceState>& states,
         const std::vector<Vec3>& microphones, const double* absorption, const std::vector<double>& gains,
         std::size_t first_band, std::size_t last_band, double sound_speed, unsigned threads,
         const SourceCoherence& coherence, std::vector<double>& levels, std::vector<double>* band_levels,
-        const std::vector<const Database::PackedSpectra*>* packed, PhaseInterval* interval) const
+        const std::vector<const Database::PackedSpectra*>* packed, PhaseInterval* interval,
+        double state_tolerance) const
 {
     const Impl& d = *impl_;
     const Buildings& city = d.city;
@@ -472,7 +476,7 @@ void UrbanDistrict::levels(const Database& database, const std::vector<Database:
         interval->upper.assign(ns * nm, silence);
     }
     if (nb == 0 || nm == 0 || ns == 0)
-        return;
+        return 0;
 
     // The metric's bands, their facades' reflections, and the air's
     // attenuation of amplitude per metre in each of their sub-bands.
@@ -500,90 +504,441 @@ void UrbanDistrict::levels(const Database& database, const std::vector<Database:
                                    near_microphones = edges_near(city, microphones, d.paths.radius);
     const unsigned workers = std::max(1u, threads);
     const std::size_t block = std::max<std::size_t>(64, 4 * workers);
-    std::vector<std::unique_ptr<PathEnd>> source_ends;
-    for (std::size_t first = 0; first < ns; first += block)
+
+    // One pair: its band levels over the metric's bands, its A-weighted level
+    // and its interval's ends, all -infinity where no ray arrives.
+    struct Pair
     {
-        const std::size_t nk = std::min(block, ns - first);
-        source_ends.clear();
-        source_ends.resize(nk);
-        parallel_chunks(nk, workers, [&](std::size_t begin, std::size_t end) {
-            for (std::size_t k = begin; k < end; k++)
-                source_ends[k] = std::make_unique<PathEnd>(city, sources[first + k], true, d.paths, near_microphones);
-        });
-        // Microphone by microphone, so a worker keeps the microphone's end
-        // while its pairs last.
-        parallel_chunks(nm * nk, workers, [&](std::size_t begin, std::size_t end) {
-            std::unique_ptr<PathEnd> microphone;
-            std::size_t microphone_row = nm;
-            std::vector<double> weights, spectrum(all), out(nb), full(all), energy(3 * nb), variance(nb);
-            for (std::size_t index = begin; index < end; index++)
+        std::vector<double> bands;
+        double level = silence, lower = silence, upper = silence;
+    };
+    struct Scratch
+    {
+        std::vector<double> weights, spectrum, full, energy, variance;
+    };
+    auto evaluate = [&](const PathEnd& source, const PathEnd& microphone, std::size_t state, Scratch& w, Pair& out) {
+        out.bands.assign(nb, silence);
+        out.level = out.lower = out.upper = silence;
+        const PointSourceField field(city, source, microphone, d.paths);
+        const auto& rays = field.rays();
+        if (rays.empty())
+            return;
+        // Each ray's amplitude at 1 m along its launch, from the sphere at its
+        // radius; no spreading gain inside the sphere, and no absorption there.
+        w.spectrum.resize(all);
+        w.weights.assign(rays.size() * nb, 0.0);
+        for (std::size_t r = 0; r < rays.size(); r++)
+        {
+            database.spectrum_along(states[state], point_ray_launch(rays[r]), w.spectrum.data(), first_band,
+                    last_band, packed != nullptr ? (*packed)[state] : nullptr);
+            const double inside = std::min(rays[r].length, radius);
+            for (std::size_t b = 0; b < nb; b++)
             {
-                const std::size_t m = index / nk, k = index % nk, state = first + k;
-                if (m != microphone_row)
+                const double level = w.spectrum[first_band + b];
+                if (std::isfinite(level))
+                    w.weights[r * nb + b] = std::pow(10.0, (level + at_one_metre) / 20.0) * (inside / radius)
+                            * std::exp(nepers[b] * inside);
+            }
+        }
+        if (coherence.sum == RaySum::coherent)
+            field.band_levels(reflection, d.floor_reflection, bands, sound_speed, out.bands.data(), sub_band_air,
+                    w.weights.data());
+        else
+        {
+            w.energy.resize(3 * nb);
+            w.variance.resize(nb);
+            partially_coherent_energies(field, reflection, d.floor_reflection, bands, first_band, sound_speed,
+                    sub_band_air, w.weights.data(), coherence, states[state].frame, w.energy.data(),
+                    interval != nullptr ? w.variance.data() : nullptr);
+            for (std::size_t b = 0; b < nb; b++)
+                out.bands[b] = band_level(bands[b], sub_bands(bands[b], sound_speed), &w.energy[3 * b]);
+        }
+        w.full.assign(all, silence);
+        std::copy(out.bands.begin(), out.bands.end(), w.full.begin() + static_cast<std::ptrdiff_t>(first_band));
+        out.level = weighted_level(w.full.data(), gains);
+        if (interval != nullptr)
+        {
+            // The A-weighted energy's mean and variance (the bands' phases
+            // independent) and the gamma distribution with them.
+            double mean = 0.0, spread = 0.0;
+            for (std::size_t b = 0; b < nb; b++)
+            {
+                const double g = gains[first_band + b];
+                if (std::isfinite(out.bands[b]))
+                    mean += g * std::pow(10.0, 0.1 * out.bands[b]);
+                spread += g * g * w.variance[b];
+            }
+            if (mean > 0.0)
+            {
+                out.lower = 10.0 * std::log10(gamma_quantile(mean, spread, low_q));
+                out.upper = 10.0 * std::log10(gamma_quantile(mean, spread, high_q));
+            }
+        }
+    };
+    // A pair's results into the outputs.
+    auto store = [&](std::size_t state, std::size_t m, const Pair& p) {
+        levels[state * nm + m] = p.level;
+        if (interval != nullptr)
+        {
+            interval->lower[state * nm + m] = p.lower;
+            interval->upper[state * nm + m] = p.upper;
+        }
+        if (band_levels != nullptr)
+            std::copy(p.bands.begin(), p.bands.end(),
+                    band_levels->begin() + static_cast<std::ptrdiff_t>((state * nm + m) * all + first_band));
+    };
+    // The pairs `todo` (state, microphone), sorted by state, into `out`
+    // alike: the sources' ends a block at a time, built in parallel, and
+    // the pairs microphone by microphone, so a worker keeps the
+    // microphone's end while its pairs last.
+    auto evaluate_pairs = [&](const std::vector<std::pair<std::size_t, std::size_t>>& todo, std::vector<Pair>& out) {
+        out.resize(todo.size());
+        std::vector<std::unique_ptr<PathEnd>> source_ends;
+        std::vector<std::size_t> block_states, slot(ns, 0), work;
+        for (std::size_t first = 0; first < todo.size();)
+        {
+            // The pairs of the next `block` distinct states.
+            block_states.clear();
+            std::size_t last = first;
+            while (last < todo.size()
+                    && (block_states.size() < block || todo[last].first == block_states.back()))
+            {
+                if (block_states.empty() || todo[last].first != block_states.back())
+                    block_states.push_back(todo[last].first);
+                last++;
+            }
+            for (std::size_t k = 0; k < block_states.size(); k++)
+                slot[block_states[k]] = k;
+            source_ends.clear();
+            source_ends.resize(block_states.size());
+            parallel_chunks(block_states.size(), workers, [&](std::size_t begin, std::size_t end) {
+                for (std::size_t k = begin; k < end; k++)
+                    source_ends[k] = std::make_unique<PathEnd>(
+                            city, sources[block_states[k]], true, d.paths, near_microphones);
+            });
+            work.resize(last - first);
+            std::iota(work.begin(), work.end(), first);
+            std::stable_sort(work.begin(), work.end(),
+                    [&](std::size_t a, std::size_t b) { return todo[a].second < todo[b].second; });
+            parallel_chunks(work.size(), workers, [&](std::size_t begin, std::size_t end) {
+                std::unique_ptr<PathEnd> microphone;
+                std::size_t microphone_row = nm;
+                Scratch w;
+                for (std::size_t i = begin; i < end; i++)
                 {
-                    microphone = std::make_unique<PathEnd>(city, microphones[m], false, d.paths, near_sources);
-                    microphone_row = m;
-                }
-                const PointSourceField field(city, *source_ends[k], *microphone, d.paths);
-                const auto& rays = field.rays();
-                if (rays.empty())
-                    continue;
-                // Each ray's amplitude at 1 m along its launch, from the
-                // sphere at its radius; no spreading gain inside the sphere,
-                // and no absorption there.
-                weights.assign(rays.size() * nb, 0.0);
-                for (std::size_t r = 0; r < rays.size(); r++)
-                {
-                    database.spectrum_along(states[state], point_ray_launch(rays[r]), spectrum.data(), first_band,
-                            last_band, packed != nullptr ? (*packed)[state] : nullptr);
-                    const double inside = std::min(rays[r].length, radius);
-                    for (std::size_t b = 0; b < nb; b++)
+                    const auto [state, m] = todo[work[i]];
+                    if (m != microphone_row)
                     {
-                        const double level = spectrum[first_band + b];
-                        if (std::isfinite(level))
-                            weights[r * nb + b] = std::pow(10.0, (level + at_one_metre) / 20.0) * (inside / radius)
-                                    * std::exp(nepers[b] * inside);
+                        microphone = std::make_unique<PathEnd>(city, microphones[m], false, d.paths, near_sources);
+                        microphone_row = m;
+                    }
+                    evaluate(*source_ends[slot[state]], *microphone, state, w, out[work[i]]);
+                }
+            });
+            first = last;
+        }
+    };
+
+    if (!(state_tolerance > 0.0) || ns < 3)
+    {
+        // Every state, a block at a time.
+        std::vector<std::pair<std::size_t, std::size_t>> todo;
+        std::vector<Pair> out;
+        for (std::size_t first = 0; first < ns; first += block)
+        {
+            todo.clear();
+            for (std::size_t state = first; state < std::min(ns, first + block); state++)
+                for (std::size_t m = 0; m < nm; m++)
+                    todo.emplace_back(state, m);
+            evaluate_pairs(todo, out);
+            for (std::size_t i = 0; i < todo.size(); i++)
+                store(todo[i].first, todo[i].second, out[i]);
+        }
+        return ns * nm;
+    }
+
+    // Along the track, per microphone: the buildings' transfer -- each band's
+    // level less the direct ray's in free field, which carries the source --
+    // at states every `spacing`, then at the middle of any stretch where the
+    // transfer taken linearly between its ends misses the level there by more
+    // than state_tolerance, or a band within 30 dB of the loudest A-weighted
+    // one by 15 times that, or where a loud band is silent at one and not the
+    // other.  The other states take the direct ray's free-field levels, from
+    // the sphere at their own state, plus the transfer interpolated.
+    constexpr std::size_t spacing = 32;
+    constexpr double loud = 30.0, band_factor = 15.0;
+    // A band more than `buried` under the state's loudest free-field band
+    // carries nothing to any level, and its transfer means nothing: the
+    // database's top bands sit near -1300 dB at some conditions and jump to
+    // -300 at the next state's, and band_level floors a level at -300 dB.
+    // Such a band is silent in the transfer and the estimates.
+    constexpr double buried = 120.0;
+    // The direct ray's band levels in free field, dB: as a lone ray's, its
+    // weight over its length and the air's attenuation along it.
+    auto direct = [&](std::size_t state, std::size_t m, Scratch& w, double* out) {
+        const Vec3 path = microphones[m] - sources[state];
+        const double r = path.norm();
+        w.spectrum.resize(all);
+        database.spectrum_along(states[state], path / r, w.spectrum.data(), first_band, last_band,
+                packed != nullptr ? (*packed)[state] : nullptr);
+        const double inside = std::min(r, radius);
+        double top = silence;
+        for (std::size_t b = 0; b < nb; b++)
+        {
+            const double level = w.spectrum[first_band + b];
+            out[b] = std::isfinite(level) ? level + at_one_metre + 20.0 * std::log10(inside / radius)
+                            - 20.0 * std::log10(r) - 20.0 / std::log(10.0) * nepers[b] * (r - inside)
+                                          : silence;
+            top = std::max(top, out[b]);
+        }
+        for (std::size_t b = 0; b < nb; b++)
+            if (!(out[b] >= top - buried))
+                out[b] = silence;
+    };
+    // A band's transfer is NaN where it is not known -- the band buried in
+    // the free field there, or its rays' sum at band_level's floor of
+    // -300 dB -- and -infinity where no ray reaches.  Between two states' at
+    // fraction f: in dB where both are known, in energy where one is silent,
+    // the known one where the other is not known, NaN where neither is.
+    auto between = [](double a, double b, double f) {
+        if (std::isfinite(a) && std::isfinite(b))
+            return a + f * (b - a);
+        if (std::isnan(a))
+            return b;
+        if (std::isnan(b))
+            return a;
+        const double e = (1.0 - f) * (std::isfinite(a) ? std::pow(10.0, 0.1 * a) : 0.0)
+                + f * (std::isfinite(b) ? std::pow(10.0, 0.1 * b) : 0.0);
+        return e > 0.0 && std::isfinite(e) ? 10.0 * std::log10(e) : silence;
+    };
+    constexpr double band_floor = -299.0;
+    struct Known
+    {
+        Pair pair;
+        std::vector<double> transfer;
+    };
+    std::vector<std::map<std::size_t, Known>> known(nm);
+    auto take = [&](const std::vector<std::pair<std::size_t, std::size_t>>& todo, std::vector<Pair>& out) {
+        Scratch w;
+        std::vector<double> free(nb);
+        for (std::size_t i = 0; i < todo.size(); i++)
+        {
+            const auto [state, m] = todo[i];
+            direct(state, m, w, free.data());
+            Known k;
+            k.transfer.resize(nb);
+            for (std::size_t b = 0; b < nb; b++)
+            {
+                const double level = out[i].bands[b];
+                k.transfer[b] = !std::isfinite(free[b]) || (std::isfinite(level) && level <= band_floor)
+                        ? std::numeric_limits<double>::quiet_NaN()
+                        : std::isfinite(level) ? level - free[b]
+                                               : silence;
+            }
+            k.pair = std::move(out[i]);
+            known[m][state] = std::move(k);
+        }
+    };
+    // The estimate at `state` between two known states: band levels into
+    // `out` (the metric's bands), its A-weighted level returned.
+    auto estimate = [&](std::size_t state, std::size_t m, const Known& a, std::size_t sa, const Known& b,
+                            std::size_t sb, Scratch& w, double* out) {
+        direct(state, m, w, out);
+        const double f = static_cast<double>(state - sa) / static_cast<double>(sb - sa);
+        // A band whose transfer is known at neither end (buried there) takes
+        // the nearest band's that is known at both: the transfer varies
+        // smoothly across bands, and such a band is 30 dB or more under the
+        // loudest here, or the state would have been evaluated.  What is
+        // still not known is silent.
+        auto known_both = [&](std::size_t q) { return std::isfinite(a.transfer[q]) && std::isfinite(b.transfer[q]); };
+        for (std::size_t q = 0; q < nb; q++)
+        {
+            std::size_t from = q;
+            if (std::isnan(a.transfer[q]) && std::isnan(b.transfer[q]))
+                for (std::size_t step = 1; step < nb; step++)
+                {
+                    if (q >= step && known_both(q - step))
+                    {
+                        from = q - step;
+                        break;
+                    }
+                    if (q + step < nb && known_both(q + step))
+                    {
+                        from = q + step;
+                        break;
                     }
                 }
-                if (coherence.sum == RaySum::coherent)
-                    field.band_levels(reflection, d.floor_reflection, bands, sound_speed, out.data(), sub_band_air,
-                            weights.data());
+            const double t = between(a.transfer[from], b.transfer[from], f);
+            const double v = out[q] + t;
+            out[q] = std::isfinite(v) ? v : silence;
+        }
+        w.full.assign(all, silence);
+        std::copy(out, out + nb, w.full.begin() + static_cast<std::ptrdiff_t>(first_band));
+        return weighted_level(w.full.data(), gains);
+    };
+
+    std::vector<std::pair<std::size_t, std::size_t>> todo;
+    std::vector<Pair> out;
+    std::vector<std::vector<std::pair<std::size_t, std::size_t>>> pending(nm), accepted(nm);
+    for (std::size_t state = 0; state < ns; state += spacing)
+        for (std::size_t m = 0; m < nm; m++)
+            todo.emplace_back(state, m);
+    if ((ns - 1) % spacing != 0)
+        for (std::size_t m = 0; m < nm; m++)
+            todo.emplace_back(ns - 1, m);
+    std::size_t evaluated = 0;
+    for (std::size_t m = 0; m < nm; m++)
+        for (std::size_t a = 0; a + 1 < ns; a = std::min(a + spacing, ns - 1))
+            pending[m].emplace_back(a, std::min(a + spacing, ns - 1));
+    while (!todo.empty())
+    {
+        std::sort(todo.begin(), todo.end());
+        evaluate_pairs(todo, out);
+        evaluated += todo.size();
+        take(todo, out);
+        // Each pending stretch's middle is known now: split the stretch where
+        // the estimate there misses, and ask for the middles of the halves.
+        todo.clear();
+        std::vector<std::vector<std::pair<std::size_t, std::size_t>>> next(nm);
+        Scratch w;
+        std::vector<double> guess(nb);
+        for (std::size_t m = 0; m < nm; m++)
+        {
+            for (const auto& [a, b] : pending[m])
+            {
+                if (b - a < 2)
+                {
+                    accepted[m].emplace_back(a, b);
+                    continue;
+                }
+                const std::size_t mid = a + (b - a) / 2;
+                const auto known_mid = known[m].find(mid);
+                if (known_mid == known[m].end())
+                {
+                    // Its middle is asked for in this round.
+                    next[m].emplace_back(a, b);
+                    todo.emplace_back(mid, m);
+                    continue;
+                }
+                const Known& at = known_mid->second;
+                const double level = estimate(mid, m, known[m].at(a), a, known[m].at(b), b, w, guess.data());
+                bool good = std::isfinite(level) == std::isfinite(at.pair.level)
+                        && (!std::isfinite(level) || std::abs(level - at.pair.level) <= state_tolerance);
+                // The bands within `loud` of the loudest A-weighted one.
+                double top = silence;
+                for (std::size_t q = 0; q < nb; q++)
+                    top = std::max(top, at.pair.bands[q] + 10.0 * std::log10(gains[first_band + q]));
+                for (std::size_t q = 0; q < nb && good; q++)
+                {
+                    if (!(at.pair.bands[q] + 10.0 * std::log10(gains[first_band + q]) >= top - loud))
+                        continue;
+                    good = std::isfinite(guess[q]) && std::isfinite(at.pair.bands[q])
+                            && std::abs(guess[q] - at.pair.bands[q]) <= band_factor * state_tolerance;
+                }
+                if (good)
+                {
+                    // Its middle, known, splits it for the estimates.
+                    accepted[m].emplace_back(a, mid);
+                    accepted[m].emplace_back(mid, b);
+                }
                 else
                 {
-                    partially_coherent_energies(field, reflection, d.floor_reflection, bands, first_band, sound_speed,
-                            sub_band_air, weights.data(), coherence, states[state].frame, energy.data(),
-                            interval != nullptr ? variance.data() : nullptr);
-                    for (std::size_t b = 0; b < nb; b++)
-                        out[b] = band_level(bands[b], sub_bands(bands[b], sound_speed), &energy[3 * b]);
+                    next[m].emplace_back(a, mid);
+                    next[m].emplace_back(mid, b);
+                    // Each half's middle, unless the half is a step.
+                    for (const auto& [lo, hi] : {std::make_pair(a, mid), std::make_pair(mid, b)})
+                        if (hi - lo >= 2)
+                            todo.emplace_back(lo + (hi - lo) / 2, m);
                 }
-                std::fill(full.begin(), full.end(), silence);
-                std::copy(out.begin(), out.end(), full.begin() + static_cast<std::ptrdiff_t>(first_band));
-                levels[state * nm + m] = weighted_level(full.data(), gains);
-                if (interval != nullptr)
-                {
-                    // The A-weighted energy's mean and variance (the bands'
-                    // phases independent) and the gamma distribution with
-                    // them.
-                    double mean = 0.0, spread = 0.0;
-                    for (std::size_t b = 0; b < nb; b++)
-                    {
-                        const double g = gains[first_band + b];
-                        if (std::isfinite(out[b]))
-                            mean += g * std::pow(10.0, 0.1 * out[b]);
-                        spread += g * g * variance[b];
-                    }
-                    if (mean > 0.0)
-                    {
-                        interval->lower[state * nm + m] = 10.0 * std::log10(gamma_quantile(mean, spread, low_q));
-                        interval->upper[state * nm + m] = 10.0 * std::log10(gamma_quantile(mean, spread, high_q));
-                    }
-                }
-                if (band_levels != nullptr)
-                    std::copy(full.begin(), full.end(),
-                            band_levels->begin() + static_cast<std::ptrdiff_t>((state * nm + m) * all));
             }
-        });
+            // Every pending stretch of two steps or more has its middle
+            // asked for; a step has no state inside to estimate.
+            pending[m] = std::move(next[m]);
+        }
     }
+
+    // A state where the source makes a band loud whose transfer is known at
+    // neither end of its stretch -- buried there, or reached by no ray -- is
+    // evaluated outright: the database's top bands jump by 1000 dB for a
+    // state now and then, and an estimate would leave such a band silent.
+    {
+        std::vector<std::vector<std::pair<std::size_t, std::size_t>>> unknown(nm);
+        parallel_chunks(nm, workers, [&](std::size_t begin, std::size_t end) {
+            Scratch w;
+            std::vector<double> free(nb);
+            for (std::size_t m = begin; m < end; m++)
+                for (const auto& [a, b] : accepted[m])
+                {
+                    const Known& ka = known[m].at(a);
+                    const Known& kb = known[m].at(b);
+                    for (std::size_t state = a + 1; state < b; state++)
+                    {
+                        direct(state, m, w, free.data());
+                        double top = silence;
+                        for (std::size_t q = 0; q < nb; q++)
+                            top = std::max(top, free[q] + 10.0 * std::log10(gains[first_band + q]));
+                        for (std::size_t q = 0; q < nb; q++)
+                            if (free[q] + 10.0 * std::log10(gains[first_band + q]) >= top - loud
+                                    && std::isnan(ka.transfer[q]) && std::isnan(kb.transfer[q]))
+                            {
+                                unknown[m].emplace_back(state, m);
+                                break;
+                            }
+                    }
+                }
+        });
+        todo.clear();
+        for (const auto& list : unknown)
+            todo.insert(todo.end(), list.begin(), list.end());
+        if (!todo.empty())
+        {
+            std::sort(todo.begin(), todo.end());
+            evaluate_pairs(todo, out);
+            evaluated += todo.size();
+            take(todo, out);
+        }
+    }
+
+    // Every state: a known one as it was evaluated, the others estimated
+    // within their accepted stretch.
+    parallel_chunks(nm, workers, [&](std::size_t begin, std::size_t end) {
+        Scratch w;
+        std::vector<double> guess(nb);
+        Pair p;
+        for (std::size_t m = begin; m < end; m++)
+        {
+            for (const auto& [state, k] : known[m])
+                store(state, m, k.pair);
+            for (const auto& [a, b] : accepted[m])
+            {
+                const Known& ka = known[m].at(a);
+                const Known& kb = known[m].at(b);
+                for (std::size_t state = a + 1; state < b; state++)
+                {
+                    if (known[m].count(state))
+                        continue;
+                    const double f = static_cast<double>(state - a) / static_cast<double>(b - a);
+                    p.level = estimate(state, m, ka, a, kb, b, w, guess.data());
+                    p.bands.assign(guess.begin(), guess.end());
+                    // The interval's ends as offsets from the level, taken alike.
+                    auto offset = [&](const Known& k, double end) {
+                        return std::isfinite(end) && std::isfinite(k.pair.level) ? end - k.pair.level
+                                                                                : std::numeric_limits<double>::quiet_NaN();
+                    };
+                    const double lo_a = offset(ka, ka.pair.lower), lo_b = offset(kb, kb.pair.lower);
+                    const double hi_a = offset(ka, ka.pair.upper), hi_b = offset(kb, kb.pair.upper);
+                    p.lower = std::isfinite(p.level) && std::isfinite(lo_a) && std::isfinite(lo_b)
+                            ? p.level + lo_a + f * (lo_b - lo_a)
+                            : silence;
+                    p.upper = std::isfinite(p.level) && std::isfinite(hi_a) && std::isfinite(hi_b)
+                            ? p.level + hi_a + f * (hi_b - hi_a)
+                            : silence;
+                    store(state, m, p);
+                }
+            }
+        }
+    });
+    return evaluated;
 }
 
 } // namespace niceops

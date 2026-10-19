@@ -82,16 +82,21 @@ above a 45 ft roof, and one 0.66 ft off a wall at 20 ft, both run. Neither has b
 
 ## 3. Cost, the barrier to district-scale maps
 
-**The numbers.** A pair costs about 9.4 ms of CPU. The demo approach (6,551 states × 7 microphones) takes 37 s on 14
-threads, so a district grid of 10,000 receivers is out of reach. The time is the shared faces' integrals at every
-sub-band; the path search is 1–2% of it.
+**The numbers.** The demo approach (6,551 states × 7 microphones) takes 3.3 s on 14 threads, against 0.2 s without
+buildings; an evaluated pair costs about 3 ms of CPU, so a district grid of 10,000 receivers is still far off.
 
-**Done (Oct 19).** Two exact changes took the demo approach from 70 to 37 s: the UTD transition function from a table
-(it agrees with the Faddeeva form to its own error, 7e-12), and a shared face's node geometry worked out once for all
-of a ray's sub-bands (the levels are the same to the byte). See `docs/internals/ground.md`.
+**Done (Oct 19).** 70 s → 3.3 s on the demo approach (`docs/internals/ground.md`, FIDELITY):
+- the UTD transition function from a table, and a shared face's node geometry worked out once for every wavenumber
+  (exact; 70 → 37 s);
+- the shared faces sampled: the integral only where the cascade cannot stand in for it, two thirds of an octave
+  apart, the cascade times the interpolated ratio elsewhere (within 0.1 dB per ray; 37 → 10 s);
+- the states sampled: the buildings' transfer at adaptively chosen states, the source exact at every state (SEL within
+  0.003 dB, LAmax within 0.007; 10 → 3.3 s).
+Measured and left out: windowing the coherence sum by the sinc's reach (4%).
 
 **Ray-tracing hardware does not help yet.** RT cores accelerate ray–triangle tests, which here are the path search's
-visibility tests: 1–2% of a `--buildings` run, 12% of a pair on the 49-block district. It could pay later for scenes
+visibility tests: 1–2% of a `--buildings` run before the sampling below, about 6% of an evaluated pair after it, and
+12% of a pair on the 49-block district. It could pay later for scenes
 of many triangles (LoD2, terrain, trees) or a stochastic diffuse field (`docs/internals/gpu.md`).
 
 In order of payoff:

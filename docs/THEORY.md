@@ -994,6 +994,27 @@ as the straight path is (§4.2). $\hat d$ is $-\nabla_S \ell$, the ray's length 
 every point between its ends. With no buildings and a floor that absorbs everything, the one ray
 left is the straight path and the level is the run's without a ground model.
 
+**Along a track** the rays are not evaluated at every state. Per microphone, band $b$'s transfer at
+state $s$ is its level less the direct ray's in free field,
+
+$$
+T_b(s) = L_b(s) - D_b(s),\qquad
+D_b = L_b(\hat d_0) + 20\lg r_s + 20\lg\min(1, r/r_s) - 20\lg r - 20\lg(e)\,a_b\,(r - \min(r, r_s)),
+$$
+
+$\hat d_0$ and $r$ the straight path's direction and length. The rays are evaluated at every 32nd state
+and the last. A stretch $[s_a, s_b]$ between evaluated states is accepted where, at its middle $s_m$,
+$\hat L_b(s_m) = D_b(s_m) + T_b(s_a) + \frac{s_m - s_a}{s_b - s_a}\bigl(T_b(s_b) - T_b(s_a)\bigr)$ gives an
+A-weighted level within $\tau$ (`--state_tolerance`) of the evaluated one, and every band within
+30 dB of its loudest A-weighted band within $15\tau$; otherwise each half is a stretch. The states
+inside accepted stretches take $\hat L_b$. A band's transfer is not known where it lies more than
+120 dB under the state's loudest $D_b$, or where its rays' sum is at the band level's floor of
+$-300$ dB; it is silent where no ray arrives. Between a known and an unknown end the known one
+stands; with neither known, the nearest band known at both ends lends its transfer; a state where
+$D_b$ puts such a band within 30 dB of the loudest is evaluated outright. Between a known and a
+silent end the transfer goes in energy. The phase interval's ends go linearly as offsets from the
+level. With $\tau = 0$ every state is evaluated.
+
 **How rays leaving the source apart add.** The spheres carry band levels, not phases, so what two
 rays share is a model of the source's coherency between their launch directions $\hat d_i$,
 $\hat d_j$. Rays that leave together are one emission and must stay coherent, or the field jumps at
@@ -1137,6 +1158,23 @@ $u = (\gamma_S u_S + \gamma_R u_R)/(\gamma_S + \gamma_R)$, which is reciprocal a
 reaches the plane. With both ends above it, the cascade stands. In space the ray is the field in
 the plane at $k\sin\beta$ times $\sin\beta/\sqrt{\ell_t}$, $\ell_t$ the ray's length in the plane: a
 wave $e^{ik_t\ell_t}/\sqrt{\ell_t}$ in the plane is $e^{ik\ell}/\ell$ in space, $\ell = \ell_t/\sin\beta$.
+
+**The shared face sampled.** The integral is needed only where the second edge lies in the first's
+transition region. Its transition parameter there is
+
+$$
+X(k) = k\sin\beta\;\frac{s\,w}{s + w}\,(1 - \cos g),
+$$
+
+$g$ an end's angle off the face's plane -- above it or below, the face's reflection boundary leaving
+the edge as far above as its shadow boundary below -- and $s$ its distance from its edge, taken over
+the ends before the first edge and past the second, the smaller. The field is the cascade's $u_c$
+times $R = u/u_c$, the integral taken at the run's wavenumbers $k_j$: the lowest, then each the first
+at least $2^{2/3}$ times the last taken, while $X < 30$, and the last with $X < 30$. $R$ is 1 from the
+first wavenumber with $X \ge 30$, and between these points $\ln|R|$ and the unwrapped $\arg R$ go
+linearly in $\ln k$. With an end in the plane, $X = 0$ and $R \approx -1$: the cascade has the wrong
+sign there. Where a sampled cascade vanishes, or $R$ is not finite, the integral is taken at every
+wavenumber, as `--exact_shared_faces` takes it always.
 
 **The edge-source integral** (`--edge_source`). UTD is the high-frequency limit of an exact
 solution: the field a rigid wedge diffracts is the integral along its edge of secondary sources

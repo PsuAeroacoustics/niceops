@@ -153,6 +153,9 @@ Measured and left alone:
 ## Not on the GPU
 
 - **The path search** (`PointSourceField::trace`): branchy, and most of the workers' time.
+- **The shared faces' sampling** (`PointPathOptions::sample_shared_faces`, ground.md): the GPU
+  takes every shared face's integral at every wavenumber, which is cheap there, so its levels are
+  held to the CPU's with the sampling off.
 - **Ray-tracing hardware** (RT cores; Metal's intersection API, in hardware on M3 and later;
   OptiX; Vulkan's ray queries) accelerates what a renderer spends its time on: walking a bounding
   volume hierarchy and testing rays against triangles. Here that is the visibility tests inside

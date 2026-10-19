@@ -190,6 +190,8 @@ is a physical quantity, given here in meters with its value in feet.
 | `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--coherence_angle` | With `--buildings`: the cone's half-angle, degrees, within which rays leaving the source add with their phases. Default 1. Given alone, it selects `cone`. |
 | `--phase_interval` | With `--buildings`, under `cone` or `measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
+| `--state_tolerance` | With `--buildings`: dB by which the buildings' effect, taken linearly between the states evaluated, may miss a state's A-weighted level. Default 0.02; 0 evaluates every state ([Buildings around the microphones](#buildings-around-the-microphones)). |
+| `--exact_shared_faces` | With `--buildings`: take the integral over a flat roof between its two edges at every wavenumber, not only where the cascade of the two edges cannot stand in for it. The reference; much slower. |
 | `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
@@ -1141,8 +1143,21 @@ over a pass as it does in an exposure.
   rotor, where the source's tones may keep a stable but unknown phase between directions that the
   energy sum leaves out; broadband rays far apart leave nothing to be unsure of. It costs more
   than the level alone.
-- **Every state is evaluated**, with no peak search. Each state and microphone costs far more than
-  the open-ground model, so this is for a street's microphones, not a grid.
+- **Not every state is evaluated.** The buildings' effect on each band -- the band's level less the
+  direct ray's in free field -- changes slowly along a track, while the source's own level changes
+  from one state to the next. So per microphone the rays are evaluated at states 32 apart, and
+  then wherever the effect taken linearly between two evaluated states misses the level halfway
+  between by more than `--state_tolerance` (0.02 dB by default), until it does not. The other
+  states take the source exactly, from the sphere at their own state along the direct ray, plus
+  the effect interpolated. A state where the source makes a band loud whose effect is known at
+  neither evaluated state around it is evaluated outright. `--state_tolerance 0` evaluates every
+  state. There is no peak search. Each evaluation still costs far more than the open-ground model,
+  so this is for a street's microphones, not a grid.
+- **Flat roofs and walls between two corners** are crossed by the uniform form's integral only
+  where the cascade of the two edges' coefficients cannot stand in for it -- the lower bands, and
+  sources or microphones near the roof's plane -- at wavenumbers two thirds of an octave apart,
+  and the cascade carries it in between and beyond. `--exact_shared_faces` takes the integral at
+  every wavenumber.
 - **Not with** `--urban_table`, `--terrain`, `--refraction`, `--propagation_table`,
   `--plate_table`, `--ground_classes`, `--atmosphere`, `--wind` or `--db_cutoff`.
 
@@ -1916,6 +1931,7 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--no_diffraction`, `--no_double_diffraction` | Leave out every diffracted ray, or those at two edges. |
 | `--no_roofs` | Roofs do not reflect, for comparison. |
 | `--cascade` | Over a shared face (a roof from edge to edge, a wall from corner to corner), the cascade of two edge coefficients instead of the uniform form. For comparison only. |
+| `--exact_shared_faces` | Over a shared face, the uniform form's integral at every wavenumber rather than only where the cascade cannot stand in for it, as `niceops --buildings` takes it. The reference, and what `--gpu` always takes; much slower on the CPU. |
 | `--edge_source` | Diffraction by the edge-source integral, which keeps the edges' ends, as above. Not with `--gpu`. |
 | `--orientation_tolerance` | As `niceops_urban_table`'s. Default 1 degree. |
 | `--sound_speed` | m/s. Default 343.2. |
