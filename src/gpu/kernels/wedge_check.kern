@@ -1,0 +1,39 @@
+// Checks of wedge.h against the host's double-precision functions
+// (tests/test_gpu.cpp): one thread per argument.  Needs wedge.h before it.
+
+// x[i] -> F(x[i]), as (re, im).
+NK_KERNEL(check_utd_transition)(NK_IN(float, x, 0), NK_OUT(float, out, 1), NK_VALUE(uint, count, 2) NK_GROUP_ARGS)
+{
+    const uint i = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (i >= count)
+        return;
+    const nk_complex f = nk_utd_transition(x[i]);
+    out[2u * i] = f.re;
+    out[2u * i + 1u] = f.im;
+}
+
+// Per argument: cot[4], c[4], n, k, r -> D, as (re, im).
+NK_KERNEL(check_wedge_coefficient)(NK_IN(float, args, 0), NK_OUT(float, out, 1), NK_VALUE(uint, count, 2) NK_GROUP_ARGS)
+{
+    const uint i = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (i >= count)
+        return;
+    NK_GLOBAL_IN float* a = args + 11u * i;
+    const nk_complex d = nk_wedge_coefficient(a, a + 4, a[8], a[9], a[10]);
+    out[2u * i] = d.re;
+    out[2u * i + 1u] = d.im;
+}
+
+// Per argument: k and u0 as float-float pairs, d1, d2, and g0, g1, g2 as
+// (re, im) -> the panel's integral.
+NK_KERNEL(check_filon_panel)(NK_IN(float, args, 0), NK_OUT(float, out, 1), NK_VALUE(uint, count, 2) NK_GROUP_ARGS)
+{
+    const uint i = NK_GROUP * NK_THREADS + NK_THREAD;
+    if (i >= count)
+        return;
+    NK_GLOBAL_IN float* a = args + 12u * i;
+    const nk_complex v = nk_filon_panel(a[0], a[1], a[2], a[3], a[4], a[5], nk_make(a[6], a[7]), nk_make(a[8], a[9]),
+            nk_make(a[10], a[11]));
+    out[2u * i] = v.re;
+    out[2u * i + 1u] = v.im;
+}

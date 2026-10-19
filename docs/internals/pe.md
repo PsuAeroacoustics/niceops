@@ -155,6 +155,29 @@ and the tools `tools/pe_compare.cpp` (`niceops_pe_compare`), `tools/benchmark.cp
   cost goes as f^2 and a band at a time left the 2 kHz band on a 2-thread share. A five-band
   `pe_compare` case went from 194 s to 14 s that way under Crank–Nicolson. Summing is in
   frequency order afterwards, so any thread count gives the same bits, under either scheme.
+- **Single precision costs too much accuracy at the default step, and the cure costs the
+  speed** (measured for a GPU port; Apple's GPUs have no double). With the march's stored
+  values rounded to float -- the factors once, the sweeps' running values row by row, the field
+  every step -- against double, on the upward-refraction shadow of `test_pe_shadow` (rigid,
+  250 Hz to 1 kHz, to 47 dB down), still air over grass (500 Hz and 1 kHz, 2 km) and downward
+  refraction over grass (125 Hz, 5 km):
+
+  | Range step | Padé terms | Lit field, worst | To −47 dB, worst | Cost |
+  | --- | --- | --- | --- | --- |
+  | 8 wavelengths (default) | 8–11 | 0.41 dB | 5.6 dB | 1 |
+  | 2 | 6 | 0.057 dB | 0.45 dB | 2.4 |
+  | 1 | 5 | 0.017 dB | 0.15 dB | 4.6 |
+  | 0.5 | 5 | 0.006 dB | 0.08 dB | 9 |
+  | Crank–Nicolson | 1 | 0.020 dB | 0.14 dB | 23 |
+
+  Rounding the factors alone and the march alone each cost about as much as both: a long
+  step's partial fractions are large and cancel, so whatever float drops from any of them shows.
+  Shorter steps need fewer, smaller terms. In a deep shadow 115 dB down (upward refraction over
+  grass, unphysical without `--gamma_t`) float loses the field altogether, by 30–70 dB. Accurate float
+  therefore costs four times the arithmetic or more, and a march is a chain of tridiagonal
+  recurrences, sequential in height, whose only parallelism is across terms and marches: a
+  GPU would need thousands of marches at once (a table's sources and frequencies, a turbulent
+  ensemble) to fill it. Not done.
 
 ## Crank–Nicolson, the independent check
 

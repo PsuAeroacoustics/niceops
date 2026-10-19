@@ -67,7 +67,10 @@ struct CanyonWaveSetup
     double decay_db = 30.0;           // run until the field has fallen this far
     double max_duration = 4.0;        // s, whatever the decay
     double frequency_step = 0.25;     // Hz, at most, after zero padding
+    // For the march's rows on the CPU, and the transforms after either march.
     unsigned threads = 1;
+    // March on the GPU (gpu/gpu.hpp), in float; refused where there is none.
+    bool gpu = false;
 };
 
 // What a run leaves: the opening's velocity per unit source volume velocity,
@@ -123,8 +126,9 @@ double canyon_wave_ratio(const ApertureSpectrum& spectrum, double u_c, double u_
 // each the band ratio over the third-octave band around bands[b] (edges at
 // 2^(+-1/6)) at the reduced frequencies of that direction.  Only the first
 // `band_count` bands are filled; the rest are left at 0 dB for the caller.
+// Each entry is its own sum, so `threads` (over the azimuths) leave the same bits.
 std::vector<double> canyon_wave_gains(const ApertureSpectrum& spectrum, double axis_bearing,
         const std::vector<double>& azimuths, const std::vector<double>& elevations, const std::vector<double>& bands,
-        std::size_t band_count, double floor_frequency);
+        std::size_t band_count, double floor_frequency, unsigned threads = 1);
 
 } // namespace niceops

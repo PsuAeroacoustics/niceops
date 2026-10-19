@@ -355,8 +355,12 @@ ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radiu
     return tree;
 }
 
-bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
-        const std::vector<std::size_t>& facades, bool below_floor, std::vector<Vec3>* hits)
+namespace {
+
+// folded_path_open, each leg's openness decided by `leg_open(leg, a, b)`.
+template <typename LegOpen>
+bool folded_path_with(const Buildings& buildings, const Vec3& from, const Vec3& point,
+        const std::vector<std::size_t>& facades, bool below_floor, std::vector<Vec3>* hits, const LegOpen& leg_open)
 {
     if (hits)
         hits->clear();
@@ -387,13 +391,88 @@ bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& 
         const double bottom = below_floor ? -all[f].top : all[f].bottom;
         if (along < -1e-9 || along > fr.length + 1e-9 || hit.z < bottom - 1e-9 || hit.z > all[f].top + 1e-9)
             return false;
-        if (buildings.blocked(cur, hit, below_floor))
+        if (!leg_open(facades.size() - j, cur, hit))
             return false;
         if (hits)
             hits->push_back(hit);
         cur = hit;
     }
-    return !buildings.blocked(cur, targets[0], below_floor);
+    return leg_open(facades.size(), cur, targets[0]);
+}
+
+} // namespace
+
+bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
+        const std::vector<std::size_t>& facades, bool below_floor, std::vector<Vec3>* hits)
+{
+    return folded_path_with(buildings, from, point, facades, below_floor, hits,
+            [&](std::size_t, const Vec3& a, const Vec3& b) { return !buildings.blocked(a, b, below_floor); });
+}
+
+bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
+        const std::vector<std::size_t>& facades, bool below_floor, std::vector<Vec3>* hits, const LegTest& leg_open)
+{
+    return folded_path_with(buildings, from, point, facades, below_floor, hits, leg_open);
+}
+
+bool folded_roof_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
+        const std::vector<std::size_t>& facades, std::size_t building, std::vector<Vec3>* hits, Vec3* bounce)
+{
+    if (hits)
+        hits->clear();
+    const double h = buildings.footprints()[building].top;
+    if (!(from.z > h + 1e-9 && point.z > h + 1e-9))
+        return false;
+    const auto& all = buildings.facades();
+    // A point of the unfolded line in the real world: past the roof, its
+    // mirror in the roof's plane.
+    auto real = [h](const Vec3& p) { return p.z < h ? Vec3(p.x, p.y, 2.0 * h - p.z) : p; };
+    thread_local std::vector<Vec3> targets;
+    thread_local std::vector<Frame> frames;
+    targets.assign(1, Vec3(point.x, point.y, 2.0 * h - point.z));
+    frames.clear();
+    for (std::size_t f : facades)
+    {
+        frames.push_back(frame_of(all[f]));
+        targets.push_back(mirror_point(frames.back(), targets.back()));
+    }
+    bool crossed = false;
+    // One leg of the unfolded line: where it crosses the roof's plane, the
+    // crossing is on the roof and the two real pieces are open.
+    auto leg = [&](const Vec3& a, const Vec3& b) {
+        if ((a.z - h) * (b.z - h) < 0.0)
+        {
+            Vec3 p = a + ((a.z - h) / (a.z - b.z)) * (b - a);
+            p.z = h;
+            if (!buildings.on_roof(building, p.x, p.y))
+                return false;
+            crossed = true;
+            if (bounce)
+                *bounce = p;
+            return !buildings.blocked(real(a), p) && !buildings.blocked(p, real(b));
+        }
+        return !buildings.blocked(real(a), real(b));
+    };
+    Vec3 cur = from;
+    for (std::size_t j = facades.size(); j >= 1; j--)
+    {
+        const std::size_t f = facades[j - 1];
+        const Frame& fr = frames[j - 1];
+        const double s0 = side_of(fr, cur), s1 = side_of(fr, targets[j]);
+        if (!(s0 > Buildings::contact && s1 < -Buildings::contact))
+            return false;
+        const Vec3 hit = cur + (s0 / (s0 - s1)) * (targets[j] - cur);
+        const double along = (hit.x - fr.x0) * fr.ax + (hit.y - fr.y0) * fr.ay;
+        const double z = real(hit).z;
+        if (along < -1e-9 || along > fr.length + 1e-9 || z < all[f].bottom - 1e-9 || z > all[f].top + 1e-9)
+            return false;
+        if (!leg(cur, hit))
+            return false;
+        if (hits)
+            hits->push_back(hit);
+        cur = hit;
+    }
+    return leg(cur, targets[0]) && crossed;
 }
 
 BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& microphone,

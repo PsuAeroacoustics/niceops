@@ -47,6 +47,8 @@ Commands and options are in `README.md`; rationale is in
   error far from its cause.
 - Plotting needs `python3-venv`. Without it the build's environment step only warns and falls
   back to the system interpreter's packages, so CI checks the environment explicitly.
+- **CI never builds the Metal backend** (it runs on Linux, where `NICEOPS_GPU=AUTO` is `OFF`).
+  Build and test a GPU change on a Mac; the GCC check above covers the disabled backend.
 - **Keep the C++ sources in one static library.** A separate target that calls back into
   `niceops_core` makes a cycle, which breaks Linux only. `-DNICEOPS_PLOTTING=OFF` is the only
   build that compiles `src/plotting_disabled.cpp`.
@@ -94,6 +96,44 @@ Commands and options are in `README.md`; rationale is in
   broadband path, because `S-76D_M3.nod` has no spectra (`regression_default` also passes
   `--no-spectral --no-ground_effect` explicitly). `eval` and `eval_spectrum` share their
   cell and stencil, so any disagreement between them is physics, not interpolation.
+- **GPU paths are opt-in (`--gpu`) and the CPU is their reference.** They work in float (phases
+  in float-float), are tested against the CPU at a stated tolerance, never bit-for-bit, and never
+  feed a golden. Kernels are written once, in the dialect of `src/gpu/kernels`, so another backend
+  takes the same source: [docs/internals/gpu.md](docs/internals/gpu.md).
+- **`--edge_source` is the point-source model's exact diffraction, and is held to exact
+  solutions**, not to the UTD rays it replaces: Sommerfeld's half-plane, the wedge series, the
+  long block's boundary elements. Its second order is localized by partner corrections that
+  subtract the first-order model's own ray, and a vertical edge on the floor is integrated through
+  it; both are what make it consistent with the ray set, and removing either moves real cases by
+  decibels. See [ground.md](docs/internals/ground.md#the-edge-source-integral-srcedge_source---edge_source).
+- **`niceops_fdtd_field` is a reference, never a prediction path.** It is held to exact
+  solutions (two rays over a floor, the wedge, an impedance wall) and the GPU march to the CPU's.
+  Judge a run's length band by band (`truncation_db`), not by the tail's raw energy, and give
+  parallel walls their absorption: a rigid canyon's reflections die away as 1/n. Each step
+  marches only its light cones' box, which must grow at the scheme's fastest group speed (1.23 c
+  at fourth order), not at c; the GPU kernels are bound by memory, so cut cells, not arithmetic. See
+  [ground.md](docs/internals/ground.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field).
+- **The point-source model's roofs are the floor at their own height**: a ray reflects in one
+  horizontal surface at most, a roof's bounce is tested to round-off (`Buildings::on_roof`, not
+  `inside()`) so it meets its edge's reflection boundary, and no ray off a roof diffracts at that
+  roof's own edges, whose coefficients carry it already. Each ray's directivity is read along
+  `point_ray_launch`, minus its length's gradient in the source position.
+- **`niceops --buildings` with one far building and a floor absorbing everything is the run without
+  a ground model** (`buildings_far_is_open_without_ground`); keep each ray's sphere weight on the
+  sphere's own spreading and absorption conventions. `niceops.cpp` cannot include `buildings.hpp`
+  (its `Ring` clashes with `contour.hpp`'s), so the district stays behind `UrbanDistrict`.
+- **`--buildings` weights each pair of rays by the source's measured coherence between their
+  launches** (`src/source_coherence`, fitted in the harness's `coherence/`; THEORY 6.5). Rays
+  leaving together must stay coherent, or the field jumps at boundaries. The main rotor's delay
+  rides on the rays as an effective length, the wrap a one-turn shift, and holds only to
+  4.5 blade-passage frequencies: beyond that it makes the phase worse than none. A database's
+  record (`main_rotor_*`, `coherence_*` root attributes, written by panam's `directional_coherence`)
+  goes as a whole, never mixed with the vehicle file's rotor. `--ray_coherence coherent` keeps the
+  old coherent sum to the bit. Do not use `std::polar` with the sinc as its magnitude: it can be
+  negative, and libc++ returns NaN.
+- **Scattering walls in `niceops_point_field` reuse the urban tables' radiosity**, lit by the
+  source's own specular paths to each patch; with s = 0 nothing is built and the run is byte for
+  byte the specular one.
 - **The ground model returns a gain, not a loss.**
 - **Compass bearings** are turned into the local frame by `--frame_bearing` through one
   rotation, `CompassToLocal`. The shipped AC tracks need 210.

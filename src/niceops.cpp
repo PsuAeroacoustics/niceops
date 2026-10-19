@@ -51,6 +51,8 @@
 #include "plate_receiver.hpp"
 #include "propagation_table.hpp"
 #include "urban.hpp"
+#include "urban_point.hpp"
+#include "source_coherence.hpp"
 #include "raster.hpp"
 #include "terrain.hpp"
 #include "weighting.hpp"
@@ -196,6 +198,17 @@ std::string latlon_companion(const std::string& level_file)
     const std::string extension = path.extension().string();
     return (path.parent_path()
             / (path.stem().string() + "_latlon" + (extension.empty() ? ".csv" : extension)))
+            .string();
+}
+
+// The file beside a level file for one end of --phase_interval: "_phase_lower"
+// or "_phase_upper" before its extension.
+std::string phase_companion(const std::string& level_file, const char* end)
+{
+    const std::filesystem::path path(level_file);
+    const std::string extension = path.extension().string();
+    return (path.parent_path()
+            / (path.stem().string() + "_phase_" + end + (extension.empty() ? ".csv" : extension)))
             .string();
 }
 
@@ -746,6 +759,16 @@ struct RunOptions
     // its first-order reflections (urban.hpp).
     std::shared_ptr<const UrbanTable> urban_table;
     std::string urban_table_path;
+    // --buildings, read once for the run: every microphone hears the source's
+    // own rays among them, each reading the sphere along its launch
+    // (urban_point.hpp), in place of the open-ground model.
+    std::shared_ptr<const UrbanDistrict> buildings;
+    std::string buildings_path;
+    // --ray_coherence: how its rays leaving the source apart add
+    // (source_coherence.hpp); --phase_interval: the percent interval over the
+    // source's unknown phases, 0 for none.
+    RaySum ray_sum = RaySum::measured;
+    double phase_interval = 0.0;
     // --terrain, read once for the run: the ground models take each path's
     // mean ground line from it (terrain_ray), resampled per trajectory onto the
     // local frame every terrain_step meters with terrain_offset (m) added.
@@ -2096,8 +2119,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::cout << "Physics: "
                   << (spectral ? "spectral, per-band ISO 9613-1 absorption" : "broadband, database EAA factor")
                   << "; ground "
-                  << (ground_effect ? "on, receiver " + std::to_string(receiver) + " " + options.unit.name + " up"
-                                    : std::string("off"))
+                  << (options.buildings ? std::string("the buildings' floor (--buildings)")
+                             : ground_effect
+                             ? "on, receiver " + std::to_string(receiver) + " " + options.unit.name + " up"
+                             : std::string("off"))
                   << "; air " << air.temperature << " K, " << air.pressure << " kPa, "
                   << air.relative_humidity << " % RH (" << humidity_from << ")"
                   << (profile ? (options.surface_wind ? ", layered profile from --wind" : ", layered profile")
@@ -2980,7 +3005,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // straight line the table is read along and the ray's launch direction --
     // which the bounds were not built for, so every state is evaluated.
     const bool expand_from_peak = direction_bounds.usable() && !culling && !needs_full_history
-            && !(options.propagation_table && options.refraction);
+            && !(options.propagation_table && options.refraction) && !options.buildings;
 
     // Each blend's spectra packed contiguously (Database::pack_spectra), one
     // copy per distinct blend the track visits, so the observer loop's reads
@@ -3021,6 +3046,72 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 static_cast<double>(packed_spectra.size() * packed_spectra.front().values.size())
                         * sizeof(double) / 1048576.0,
                 " MiB).");
+    }
+    // --buildings: every state's level at every microphone, from the source's
+    // own rays among the buildings, each reading the sphere along its launch;
+    // the observer loop marches these.  The floor is the buildings' own, the
+    // plane z = 0 the microphones stand on.
+    std::vector<double> point_levels, point_bands, point_lower, point_upper;
+    if (options.buildings)
+    {
+        const UrbanDistrict& district = *options.buildings;
+        const LengthUnit& unit = options.unit;
+        for (std::size_t i = 0; i < observer_count; i++)
+        {
+            const double z = microphones[i].z - microphone_height[i];
+            if (std::abs(z) > 1e-9)
+                input_error("--buildings ", options.buildings_path, ": observer ", i + 1, " stands at z = ",
+                        z / unit.to_meters, " ", unit.name,
+                        "; the buildings and their floor stand on the plane z = 0, so every observer must too.");
+            const std::string why = district.misplaced(microphones[i]);
+            if (!why.empty())
+                input_error("--buildings ", options.buildings_path, ": observer ", i + 1, "'s microphone stands ",
+                        why, ".");
+        }
+        for (std::size_t it = 0; it < nt; it++)
+        {
+            const std::string why = district.misplaced(source_states[it].position);
+            if (!why.empty())
+                input_error("--buildings ", options.buildings_path, ": the source at state ", it + 1, " stands ",
+                        why, ".");
+        }
+        // How the rays add: what the database records of its vehicle's
+        // coherence, the vehicle file's rotor where it records none, the
+        // measured defaults for the rest.  The rotor turns at the database's
+        // rpm where it gives one.
+        const dimensional_data& vehicle = trajectory.vehicle;
+        const double rotation_rate = database.rotor_rpm() ? *database.rotor_rpm() * 2.0 * pi / 60.0
+                : vehicle.radius > 0.0                    ? vehicle.tip_speed / vehicle.radius
+                                                          : 0.0;
+        SourceCoherence coherence = source_coherence(database.coherence_record(), rotation_rate, vehicle.blades,
+                vehicle.rotation_sense);
+        coherence.sum = options.ray_sum;
+        if (options.ray_sum == RaySum::measured)
+        {
+            if (coherence.rotation_rate > 0.0)
+                log("--buildings: rays add with ", coherence.source, ": the main rotor's delay at ",
+                        coherence.rotation_rate, " rad/s (", coherence.rotation_sense > 0 ? "counter" : "",
+                        "clockwise seen from above) to ", coherence.rotation_limit, " Hz, decay ", coherence.scale,
+                        " Hz deg to the power ", coherence.exponent, ".");
+            else
+                log("--buildings: rays add with ", coherence.source, " (neither the database nor the vehicle file ",
+                        job.vehicle, " gives the main rotor's blades and rotation): decay ", coherence.scale,
+                        " Hz deg to the power ", coherence.exponent, ".");
+        }
+        PhaseInterval interval;
+        if (options.phase_interval > 0.0)
+            interval.percent = options.phase_interval;
+        const auto started = std::chrono::steady_clock::now();
+        district.levels(database, source_states, microphones, absorption.data(), band_gains, first_band, last_band,
+                sound_speed, options.thread_count > 0 ? options.thread_count : default_thread_count(), coherence,
+                point_levels, record_bands || want_frames ? &point_bands : nullptr,
+                spectral ? &packed_of_state : nullptr, options.phase_interval > 0.0 ? &interval : nullptr);
+        point_lower = std::move(interval.lower);
+        point_upper = std::move(interval.upper);
+        log("--buildings ", options.buildings_path, ": the rays from ", nt, " states to ", observer_count,
+                " microphones among ", district.building_count(), " buildings (", district.facade_count(),
+                " facades) in ", std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(),
+                " s.");
     }
     std::atomic<std::size_t> evaluated_samples {0};
     std::atomic<std::size_t> shadowed_samples {0};
@@ -3067,6 +3158,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
 
     // This trajectory's C-weighted SEL per observer (--csel_file).
     std::vector<double> csel_levels(options.want_csel ? observers.size() : 0);
+    // --phase_interval: each observer's SEL with every state at the lower end
+    // of its interval, and at the upper.
+    std::vector<double> phase_lower(point_lower.empty() ? 0 : observers.size()),
+            phase_upper(phase_lower.size());
     // Per observer, each written only by the worker that owns the observer.
     std::vector<EpnlRow> epnl_rows(want_epnl ? observers.size() : 0);
     std::vector<ObserverFrames> observer_frames(want_band_frames ? observers.size() : 0);
@@ -3573,6 +3668,15 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 return reflected ? 10.0 * std::log10(energy) : level;
             };
+            // --buildings: the state's level here, and its bands, as worked out
+            // before the loop.
+            auto point_level = [&](std::size_t it, double* bands_out) {
+                const std::size_t at = it * observer_count + index;
+                if (bands_out != nullptr)
+                    std::copy_n(point_bands.data() + at * database.band_centers().size(),
+                            database.band_centers().size(), bands_out);
+                return point_levels[at];
+            };
             // The peak search's geometry for an urban microphone: the direct
             // path and each first-order image, each bounded by its own
             // direction's numerator over its own squared range, so the largest
@@ -3836,9 +3940,10 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                     double* bands_out = keep_bands
                             ? record_path(it, straight_ray(source_states[it].position, observer))
                             : nullptr;
-                    double level = spectral ? (urban_here != nullptr ? urban_level(it, bands_out)
-                                                                     : straight_level(it, bands_out))
-                                            : database.level_at_observer(observer, source_states[it]);
+                    double level = !point_levels.empty() ? point_level(it, bands_out)
+                            : spectral ? (urban_here != nullptr ? urban_level(it, bands_out)
+                                                                : straight_level(it, bands_out))
+                                       : database.level_at_observer(observer, source_states[it]);
                     if (add_ambient)
                     {
                         // Add ambient noise
@@ -3864,6 +3969,24 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 integrated_levels[index] = options.full_history
                         ? full_sound_exposure_level(levels, integration_step, ranges, sound_speed)
                         : sound_exposure_level(levels, integration_step, ranges, sound_speed);
+            }
+            if (!point_lower.empty())
+            {
+                // The SEL of the history whose every state sits at the end of
+                // its interval, by the same rule: the states' phases are one
+                // vehicle's, so they are taken to move together.
+                std::vector<double> history(nt);
+                for (const auto& [ends, out] : {std::pair {&point_lower, &phase_lower}, {&point_upper, &phase_upper}})
+                {
+                    for (std::size_t it = 0; it < nt; it++)
+                    {
+                        const double level = (*ends)[it * observer_count + index];
+                        history[it] = add_ambient ? level_with_ambient(level, ambient_energy) : level;
+                    }
+                    (*out)[index] = options.full_history
+                            ? full_sound_exposure_level(history, integration_step, ranges, sound_speed)
+                            : sound_exposure_level(history, integration_step, ranges, sound_speed);
+                }
             }
             if (options.want_csel)
             {
@@ -4243,6 +4366,13 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     log("Acoustic calculations completed in ", elapsed / 1000.0, " seconds.");
     write_levels(x_obs, y_obs, integrated_levels, job.output, options.scattered,
             options.unit);
+    if (!phase_lower.empty())
+    {
+        log("--phase_interval: the ", options.phase_interval, " percent interval's ends to ",
+                phase_companion(job.output, "lower"), " and ", phase_companion(job.output, "upper"), ".");
+        write_levels(x_obs, y_obs, phase_lower, phase_companion(job.output, "lower"), options.scattered, options.unit);
+        write_levels(x_obs, y_obs, phase_upper, phase_companion(job.output, "upper"), options.scattered, options.unit);
+    }
     if (options.latlon)
     {
         write_geodetic_levels(x_obs, y_obs, integrated_levels, *options.geodetic.frame,
@@ -4696,6 +4826,11 @@ int run(int argc, char* argv[])
     std::string plate_table;
     std::string propagation_table;
     std::string urban_table;
+    std::string buildings_file;
+    double wall_absorption = 0.0;
+    double floor_absorption = 0.0;
+    std::string ray_coherence = "measured";
+    double phase_interval = 0.0;
     std::string terrain_file;
     double terrain_offset = 0.0;  // meters
     double terrain_step = 0.0;    // meters; 0 follows the terrain's own spacing
@@ -5167,6 +5302,29 @@ int run(int argc, char* argv[])
             "Receivers are matched to the run's microphones by position; the rest are evaluated as "
             "without it. Spectral path only; not with --terrain, --refraction, --propagation_table "
             "or --db_cutoff.");
+    app.add_option("--buildings", buildings_file,
+            "LoD1 buildings, a CSV of footprint vertices (building, x, y, top, optionally absorption) or GeoJSON "
+            "in the run's frame (--origin, --frame_bearing): every microphone hears the source's own rays among "
+            "them, reflected in the facades and the floor and diffracted at their edges once or at two in turn, "
+            "each reading the sphere in the direction it leaves the source, summed with their phases. The floor is "
+            "theirs, rigid unless --floor_absorption, and every state is evaluated. Spectral path only; not with "
+            "--urban_table, --terrain, --refraction, --propagation_table, --plate_table, --ground_classes, "
+            "--atmosphere, --wind, --ground_effect or --db_cutoff.");
+    app.add_option("--wall_absorption", wall_absorption,
+            "With --buildings: the walls' energy absorption coefficient where a building gives none (default 0).");
+    app.add_option("--floor_absorption", floor_absorption,
+            "With --buildings: the floor's energy absorption coefficient (default 0, rigid).");
+    app.add_option("--ray_coherence", ray_coherence,
+            "With --buildings: how rays leaving the source in different directions add. 'measured' (default): "
+            "each pair's cross term times the coherence measured on rotorcraft between emission directions, "
+            "which falls with frequency times their angle, and below 4.5 blade-passage frequencies with the "
+            "main rotor's delay between them where the vehicle file gives its blades and rotation; 'coherent': "
+            "all with their phases; 'energy': in energy.")
+            ->check(CLI::IsMember({"measured", "coherent", "energy"}));
+    app.add_option("--phase_interval", phase_interval,
+            "With --buildings: also write the SEL at each end of this percent interval (90 for the 5th to the "
+            "95th percentile) over the source's unknown phases between directions, beside the output as "
+            "<name>_phase_lower and <name>_phase_upper; every state is put at the same end.");
     app.add_option("--terrain", terrain_file,
             "A bare-earth elevation grid (netCDF: latitude, longitude, elevation(latitude, "
             "longitude) in meters, e.g. USGS 3DEP). Grid observers stand on it, and the ground "
@@ -5878,6 +6036,42 @@ int run(int argc, char* argv[])
             input_error("--urban_table does not combine with --db_cutoff: the cutoff's bound covers the direct "
                         "path alone, and not the first-order reflections.");
     }
+    if (!buildings_file.empty())
+    {
+        if (!spectral)
+            input_error("--buildings needs the spectral path: its rays are summed band by band.");
+        const std::pair<bool, const char*> clashes[] {
+                {!urban_table.empty(), "--urban_table: both model the same microphones' streets; use one"},
+                {!terrain_file.empty(), "--terrain: the buildings and their floor stand on the plane z = 0"},
+                {refraction != "none", "--refraction: its rays are straight"},
+                {!propagation_table.empty(), "--propagation_table: each replaces the open-ground model"},
+                {!plate_table.empty(), "--plate_table: the floor among the buildings is theirs (--floor_absorption)"},
+                {!ground_classes_file.empty(),
+                        "--ground_classes: the floor among the buildings is theirs (--floor_absorption)"},
+                {!atmosphere_files.empty() || !wind_texts.empty(),
+                        "--atmosphere or --wind: its rays absorb at the run's one set of coefficients"},
+                {app.count("--ground_effect") > 0,
+                        "--ground_effect: the floor among the buildings is theirs (--floor_absorption)"},
+                {!std::isnan(db_cutoff), "--db_cutoff: the cutoff's bound covers the straight path alone"}};
+        for (const auto& [clash, why] : clashes)
+            if (clash)
+                input_error("--buildings does not combine with ", why, ".");
+        if (!(wall_absorption >= 0.0 && wall_absorption <= 1.0) || !(floor_absorption >= 0.0 && floor_absorption <= 1.0))
+            input_error("--wall_absorption and --floor_absorption are energy coefficients within [0, 1]; given ",
+                    wall_absorption, " and ", floor_absorption, ".");
+        if (app.count("--phase_interval") > 0)
+        {
+            if (!(phase_interval > 0.0 && phase_interval < 100.0))
+                input_error("--phase_interval is a percent within (0, 100); given ", phase_interval, ".");
+            if (ray_coherence != "measured")
+                input_error("--phase_interval goes with --ray_coherence measured: under '", ray_coherence,
+                        "' the phases are taken as known.");
+        }
+    }
+    else if (app.count("--wall_absorption") > 0 || app.count("--floor_absorption") > 0)
+        input_error("--wall_absorption and --floor_absorption go with --buildings.");
+    else if (app.count("--ray_coherence") > 0 || app.count("--phase_interval") > 0)
+        input_error("--ray_coherence and --phase_interval go with --buildings.");
     for (const auto& [names, option] : {std::pair {&epnl_files, "--epnl_file"},
                  std::pair {&band_frames_files, "--band_frames"}})
     {
@@ -6167,6 +6361,35 @@ int run(int argc, char* argv[])
                     " degrees, and this run's +x is along ", run_frame, " degrees",
                     std::isnan(frame_bearing) ? " (east, as no --frame_bearing was given)" : "",
                     ". Give --frame_bearing ", table_frame, ", or rebuild the table with the run's.");
+    }
+    if (!buildings_file.empty())
+    {
+        // In the run's frame and units: a GeoJSON district is projected about
+        // the run's origin, turned by its frame bearing.
+        UrbanDistrict::Input input;
+        input.units = unit.name;
+        input.to_meters = unit.to_meters;
+        if (reference)
+            input.origin = {reference->latitude, reference->longitude};
+        input.frame_bearing = std::isnan(frame_bearing) ? 90.0 : frame_bearing;
+        input.wall_absorption = wall_absorption;
+        input.floor_absorption = floor_absorption;
+        try
+        {
+            options.buildings = UrbanDistrict::read(buildings_file, input);
+        }
+        catch (const std::exception& e)
+        {
+            input_error("--buildings ", buildings_file, ": ", e.what());
+        }
+        if (options.buildings->scatters())
+            warn("--buildings ", buildings_file, ": its scattering coefficients are left out; a run's walls reflect "
+                    "specularly (niceops_point_field --scattering carries the diffuse field).");
+        options.buildings_path = buildings_file;
+        options.ray_sum = ray_coherence == "coherent" ? RaySum::coherent
+                : ray_coherence == "energy"           ? RaySum::energy
+                                                      : RaySum::measured;
+        options.phase_interval = phase_interval;
     }
     if (!plate_table.empty())
     {

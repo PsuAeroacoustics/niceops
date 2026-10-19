@@ -3,8 +3,12 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstring>
+#include <deque>
 #include <stdexcept>
 
+#include "gpu/gpu.hpp"
+#include "gpu/kernels/canyon_wave_types.h"
 #include "util/constants.hpp"
 #include "util/parallel.hpp"
 
@@ -255,6 +259,189 @@ Recording run(const Grid& g, const CanyonWaveSetup& s)
     return out;
 }
 
+// run() on the GPU, in float: the same grid, coefficients, pulse and stopping
+// rule, two dispatches a step and the energy every 32 steps as partial sums
+// per group.  The steps go over 1024 at a time, two such batches in flight; a
+// batch past the stop runs on harmlessly (the field never depends on when the
+// run stops), and the recording is cut at the step run() would stop at.
+Recording run_gpu(const Grid& g, const CanyonWaveSetup& s)
+{
+    gpu::Device* device = gpu::Device::get();
+    if (!device)
+        throw std::runtime_error("canyon wave: no GPU (" + std::string(gpu::Device::backend()) + " backend)");
+    const double c = s.sound_speed;
+    const double rho = s.density;
+    const double h = g.h;
+    const double dt = 0.9 * h / (c * std::sqrt(2.0));
+    const std::size_t nx = g.nx, nz = g.nz;
+
+    const double depth = static_cast<double>(g.pml) * h;
+    const double sigma_max = g.pml > 0 ? 3.0 * c * std::log(1e5) / (2.0 * depth) : 0.0;
+    auto sigma = [&](double d) { return d <= 0.0 ? 0.0 : sigma_max * (d / depth) * (d / depth); };
+    const double left = static_cast<double>(g.pml) * h;
+    const double right = static_cast<double>(nx - g.pml) * h;
+    const double top = static_cast<double>(nz - g.pml) * h;
+    // ay_c, by_c, ay_f, by_f, az_c, bz_c, az_f, bz_f, as canyon_wave.kern reads them.
+    std::vector<float> coefficient;
+    auto put = [&](double sig) {
+        coefficient.push_back(static_cast<float>((1.0 - 0.5 * sig * dt) / (1.0 + 0.5 * sig * dt)));
+        return static_cast<float>(dt / (1.0 + 0.5 * sig * dt));
+    };
+    std::vector<float> b;
+    for (std::size_t i = 0; i < nx; i++)
+        b.push_back(put(sigma(std::max(left - (static_cast<double>(i) + 0.5) * h, (static_cast<double>(i) + 0.5) * h - right))));
+    coefficient.insert(coefficient.end(), b.begin(), b.end());
+    b.clear();
+    for (std::size_t i = 0; i <= nx; i++)
+        b.push_back(put(sigma(std::max(left - static_cast<double>(i) * h, static_cast<double>(i) * h - right))));
+    coefficient.insert(coefficient.end(), b.begin(), b.end());
+    b.clear();
+    for (std::size_t j = 0; j < nz; j++)
+        b.push_back(put(sigma((static_cast<double>(j) + 0.5) * h - top)));
+    coefficient.insert(coefficient.end(), b.begin(), b.end());
+    b.clear();
+    for (std::size_t j = 0; j <= nz; j++)
+        b.push_back(put(sigma(static_cast<double>(j) * h - top)));
+    coefficient.insert(coefficient.end(), b.begin(), b.end());
+
+    CanyonGridGpu grid {};
+    grid.nx = static_cast<uint32_t>(nx);
+    grid.nz = static_cast<uint32_t>(nz);
+    grid.pml = static_cast<uint32_t>(g.pml);
+    grid.wall_rows = static_cast<uint32_t>(g.wall_rows);
+    grid.record_row = static_cast<uint32_t>(g.record_row);
+    grid.record_lo = static_cast<uint32_t>(g.record_lo);
+    grid.record_hi = static_cast<uint32_t>(g.record_hi);
+    grid.source_i = static_cast<uint32_t>(g.source_i);
+    grid.source_j = static_cast<uint32_t>(g.source_j);
+    grid.energy_top = static_cast<uint32_t>(g.energy_top);
+    grid.wall_a = g.zeta_a > 0.0;
+    grid.wall_b = g.zeta_b > 0.0;
+    grid.inv_rho_h = static_cast<float>(1.0 / (rho * h));
+    grid.rc2_h = static_cast<float>(rho * c * c / h);
+    grid.inject = static_cast<float>(dt * rho * c * c / (h * h));
+    auto keep = [&](double zeta) { return (rho / dt - zeta * rho * c / h) / (rho / dt + zeta * rho * c / h); };
+    auto push = [&](double zeta) { return (2.0 / h) / (rho / dt + zeta * rho * c / h); };
+    grid.keep_a = static_cast<float>(keep(g.zeta_a));
+    grid.push_a = static_cast<float>(push(g.zeta_a));
+    grid.keep_b = static_cast<float>(keep(g.zeta_b));
+    grid.push_b = static_cast<float>(push(g.zeta_b));
+
+    const double tau = 1.0 / (2.0 * pi * 0.4 * s.max_frequency);
+    const double t0 = 6.0 * tau;
+    const std::size_t max_steps = static_cast<std::size_t>(std::ceil(s.max_duration / dt));
+    const double span = std::hypot(static_cast<double>(nx), static_cast<double>(nz)) * h;
+    const std::size_t min_steps = static_cast<std::size_t>(std::ceil((2.0 * t0 + 2.0 * span / c) / dt));
+    const double stop_ratio = std::pow(10.0, -0.1 * s.decay_db);
+    const std::size_t points = g.record_hi - g.record_lo;
+
+    Recording out;
+    out.dt = dt;
+    for (std::size_t j = 0; j < nz; j++)
+        out.cells += g.hi[j] - g.lo[j];
+    out.source.resize(max_steps);
+    std::vector<float> q(max_steps);
+    for (std::size_t n = 0; n < max_steps; n++)
+    {
+        const double u = ((static_cast<double>(n) + 0.5) * dt - t0) / tau;
+        out.source[n] = u * std::exp(-0.5 * u * u);
+        q[n] = static_cast<float>(out.source[n]);
+    }
+
+    const std::vector<std::string> program {"canyon_wave_types.h", "canyon_wave.kern"};
+    const gpu::Kernel step_kernel = device->kernel(program, "canyon_step");
+    // canyon_step's tiles, 32 by 8 cells.
+    const std::size_t tiles = ((nx + 31) / 32) * ((nz + 7) / 8), checks = max_steps / 32 + 1;
+    gpu::Buffer grid_buffer = device->buffer(sizeof(grid));
+    std::memcpy(grid_buffer.data(), &grid, sizeof(grid));
+    gpu::Buffer extent = device->buffer(2 * nz * sizeof(uint32_t));
+    for (std::size_t j = 0; j < nz; j++)
+    {
+        extent.as<uint32_t>()[j] = static_cast<uint32_t>(g.lo[j]);
+        extent.as<uint32_t>()[nz + j] = static_cast<uint32_t>(g.hi[j]);
+    }
+    gpu::Buffer coefficients = device->buffer(coefficient.size() * sizeof(float));
+    std::copy(coefficient.begin(), coefficient.end(), coefficients.as<float>());
+    // Every field twice, old and new, swapped each step.
+    gpu::Buffer py[2], pz[2], vy[2], vz[2];
+    for (int k = 0; k < 2; k++)
+    {
+        py[k] = device->buffer(nx * nz * sizeof(float));
+        pz[k] = device->buffer(nx * nz * sizeof(float));
+        vy[k] = device->buffer((nx + 1) * nz * sizeof(float));
+        vz[k] = device->buffer(nx * (nz + 1) * sizeof(float));
+    }
+    gpu::Buffer pulse = device->buffer(max_steps * sizeof(float));
+    std::copy(q.begin(), q.end(), pulse.as<float>());
+    gpu::Buffer recording = device->buffer(max_steps * points * sizeof(float));
+    gpu::Buffer partial = device->buffer(checks * tiles * sizeof(float));
+
+    const std::size_t chunk = 1024;
+    struct InFlight
+    {
+        gpu::Batch batch;
+        std::size_t begin, end;
+    };
+    std::deque<InFlight> flight;
+    double peak_energy = 0.0, last_energy = 0.0;
+    std::size_t steps = max_steps;
+    bool stopped = false;
+    // The checks of a finished batch, in order, by run()'s rule.
+    auto judge = [&](const InFlight& f) {
+        for (std::size_t n = f.begin; n < f.end && !stopped; n++)
+        {
+            if (n % 32 != 31)
+                continue;
+            double e = 0.0;
+            for (std::size_t k = 0; k < tiles; k++)
+                e += partial.as<float>()[(n / 32) * tiles + k];
+            peak_energy = std::max(peak_energy, e);
+            last_energy = e;
+            if (n >= min_steps && e <= stop_ratio * peak_energy)
+            {
+                steps = n + 1;
+                stopped = true;
+            }
+        }
+    };
+    for (std::size_t begin = 0; begin < max_steps && !stopped; begin += chunk)
+    {
+        const std::size_t end = std::min(begin + chunk, max_steps);
+        gpu::Batch batch = device->batch();
+        for (std::size_t n = begin; n < end; n++)
+        {
+            const int in = static_cast<int>(n % 2), out_ = 1 - in;
+            const uint32_t check = n % 32 == 31 ? static_cast<uint32_t>(n / 32) : 0xffffffffu;
+            batch.dispatch(step_kernel,
+                    {gpu::Arg(grid_buffer), gpu::Arg(extent), gpu::Arg(coefficients), gpu::Arg(py[in]),
+                            gpu::Arg(pz[in]), gpu::Arg(vy[in]), gpu::Arg(vz[in]), gpu::Arg(py[out_]),
+                            gpu::Arg(pz[out_]), gpu::Arg(vy[out_]), gpu::Arg(vz[out_]), gpu::Arg(recording),
+                            gpu::Arg(pulse), gpu::Arg(partial), gpu::Arg::value(static_cast<uint32_t>(n)),
+                            gpu::Arg::value(check)},
+                    tiles, 256);
+        }
+        batch.commit();
+        flight.push_back({batch, begin, end});
+        if (flight.size() == 2)
+        {
+            flight.front().batch.wait();
+            judge(flight.front());
+            flight.pop_front();
+        }
+    }
+    while (!flight.empty())
+    {
+        flight.front().batch.wait();
+        judge(flight.front());
+        flight.pop_front();
+    }
+    out.steps = steps;
+    out.residual_db = peak_energy > 0.0 ? 10.0 * std::log10(std::max(last_energy, 1e-300) / peak_energy) : 0.0;
+    out.source.resize(steps);
+    out.velocity.assign(recording.as<float>(), recording.as<float>() + steps * points);
+    return out;
+}
+
 // The opening's spectra, per unit source volume velocity, from a run.
 ApertureSpectrum spectra(const Recording& r, const Grid& g, const CanyonWaveSetup& s)
 {
@@ -279,17 +466,24 @@ ApertureSpectrum spectra(const Recording& r, const Grid& g, const CanyonWaveSetu
     for (std::size_t n = 0; n < r.steps; n++)
         buffer[n] = r.source[n];
     transform(buffer);
-    std::vector<complex> source(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(a.bins));
-    for (std::size_t p = 0; p < points; p++)
-    {
-        std::fill(buffer.begin(), buffer.end(), complex(0.0, 0.0));
-        for (std::size_t n = 0; n < r.steps; n++)
-            buffer[n] = r.velocity[n * points + p];
-        transform(buffer);
-        // Bin 0 has no source to divide by (the pulse has no mean).
-        for (std::size_t bin = 1; bin < a.bins; bin++)
-            a.spectrum[bin * points + p] = buffer[bin] / source[bin];
-    }
+    const std::vector<complex> source(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(a.bins));
+    // One transform per recording point, each on its own, so on any number of
+    // threads the same bits: the caller's (the table builder gives a canyon
+    // on the CPU one, and one on the GPU its share of the run's).
+    parallel_chunks(points, std::max(1u, s.threads),
+            [&](std::size_t begin, std::size_t end) {
+                std::vector<complex> line(size);
+                for (std::size_t p = begin; p < end; p++)
+                {
+                    std::fill(line.begin(), line.end(), complex(0.0, 0.0));
+                    for (std::size_t n = 0; n < r.steps; n++)
+                        line[n] = r.velocity[n * points + p];
+                    transform(line);
+                    // Bin 0 has no source to divide by (the pulse has no mean).
+                    for (std::size_t bin = 1; bin < a.bins; bin++)
+                        a.spectrum[bin * points + p] = line[bin] / source[bin];
+                }
+            });
     return a;
 }
 
@@ -395,7 +589,7 @@ ApertureSpectrum solve_canyon(const CanyonWaveSetup& s)
     g.zeta_b = zeta(std::isnan(s.wall_absorption_b) ? s.wall_absorption : s.wall_absorption_b);
     g.wall_rows = n_h;
 
-    const Recording r = run(g, s);
+    const Recording r = s.gpu ? run_gpu(g, s) : run(g, s);
     ApertureSpectrum a = spectra(r, g, s);
     a.opening_height = static_cast<double>(n_h) * g.h;
     a.source_height = (static_cast<double>(g.source_j) + 0.5) * g.h;
@@ -429,7 +623,7 @@ ApertureSpectrum solve_open_ground(const CanyonWaveSetup& s, double recording_he
     g.record_hi = g.record_lo + line;
     g.energy_top = g.nz - g.pml;
 
-    const Recording r = run(g, s);
+    const Recording r = s.gpu ? run_gpu(g, s) : run(g, s);
     ApertureSpectrum a = spectra(r, g, s);
     a.opening_height = static_cast<double>(g.record_row) * g.h;
     a.source_height = (static_cast<double>(g.source_j) + 0.5) * g.h;
@@ -458,25 +652,27 @@ double canyon_wave_ratio(const ApertureSpectrum& spectrum, double u_c, double u_
 
 std::vector<double> canyon_wave_gains(const ApertureSpectrum& spectrum, double axis_bearing,
         const std::vector<double>& azimuths, const std::vector<double>& elevations, const std::vector<double>& bands,
-        std::size_t band_count, double floor_frequency)
+        std::size_t band_count, double floor_frequency, unsigned threads)
 {
     const std::size_t nb = bands.size();
     std::vector<double> gains(azimuths.size() * elevations.size() * nb, 0.0);
     const double a = axis_bearing * pi / 180.0;
     const double half = std::pow(2.0, 1.0 / 6.0);
-    for (std::size_t i = 0; i < azimuths.size(); i++)
-        for (std::size_t j = 0; j < elevations.size(); j++)
-        {
-            const double e = elevations[j] * pi / 180.0;
-            const double u_c = std::cos(e) * std::sin(azimuths[i] * pi / 180.0 - a);
-            const double u_z = std::sin(e);
-            for (std::size_t b = 0; b < std::min(band_count, nb); b++)
+    parallel_chunks(azimuths.size(), std::max(1u, threads), [&](std::size_t begin, std::size_t end) {
+        for (std::size_t i = begin; i < end; i++)
+            for (std::size_t j = 0; j < elevations.size(); j++)
             {
-                const double ratio = canyon_wave_ratio(spectrum, u_c, u_z, bands[b] / half, bands[b] * half,
-                        floor_frequency);
-                gains[(i * elevations.size() + j) * nb + b] = 10.0 * std::log10(ratio);
+                const double e = elevations[j] * pi / 180.0;
+                const double u_c = std::cos(e) * std::sin(azimuths[i] * pi / 180.0 - a);
+                const double u_z = std::sin(e);
+                for (std::size_t b = 0; b < std::min(band_count, nb); b++)
+                {
+                    const double ratio = canyon_wave_ratio(spectrum, u_c, u_z, bands[b] / half, bands[b] * half,
+                            floor_frequency);
+                    gains[(i * elevations.size() + j) * nb + b] = 10.0 * std::log10(ratio);
+                }
             }
-        }
+    });
     return gains;
 }
 

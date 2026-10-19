@@ -38,7 +38,7 @@ the code, start with the [README](../README.md); developers start at
 - [Companion tools](#companion-tools): [`niceops_procedure`](#niceops_procedure) · [`niceops_propagation_table`](#niceops_propagation_table) ·
   [`niceops_build_atmosphere`](#niceops_build_atmosphere) ·
   [`niceops_urban_table`](#niceops_urban_table) · [`niceops_point_field`](#niceops_point_field) ·
-  [`niceops_pe_compare`](#niceops_pe_compare) · [`niceops_benchmark`](#niceops_benchmark) · [Plot
+  [`niceops_fdtd_field`](#niceops_fdtd_field) · [`niceops_pe_compare`](#niceops_pe_compare) · [`niceops_benchmark`](#niceops_benchmark) · [Plot
   scripts](#plot-scripts)
 - [Performance](#performance): [How much gets evaluated](#how-much-gets-evaluated) ·
   [`--db_cutoff`](#--db_cutoff) · [Threads](#threads) · [Relative cost](#relative-cost)
@@ -186,6 +186,9 @@ is a physical quantity, given here in meters with its value in feet.
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state rather than from per-trajectory tables. Slower; for checking the tables. |
 | `--propagation_table` | A propagation loss table (netCDF) that replaces the ground and ray models wherever it covers a pair ([Propagation loss tables](#propagation-loss-tables)). Spectral path only. |
 | `--urban_table` | Urban receivers: for each microphone it holds, what the street around it does to the direct path, and its facades' first-order reflections ([Urban receivers](#urban-receivers)). Built by `niceops_urban_table`. Spectral path only; not with `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`. |
+| `--buildings`, `--wall_absorption`, `--floor_absorption` | LoD1 buildings around the microphones: every microphone hears the source's own rays among them at every state, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)). Spectral path only. |
+| `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `measured` (default), `coherent` or `energy` ([Buildings around the microphones](#buildings-around-the-microphones)). |
+| `--phase_interval` | With `--buildings` and `--ray_coherence measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
 | `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
@@ -387,8 +390,8 @@ clock of its own, so `-D`, `--lden_file`, `--cnel_file` and the period levels re
 
 ### Vehicle file
 
-JSON; values may be numbers or numeric strings. Other keys (the tail rotor, blade counts, drag)
-are ignored. For example:
+JSON; values may be numbers or numeric strings. Other keys (the tail rotor, drag) are ignored.
+For example:
 
 ```json
 { "Main Rotor": { "radius": "6.705", "tip speed": "220.0" },
@@ -400,6 +403,7 @@ are ignored. For example:
 | Key | Meaning |
 | --- | --- |
 | `Main Rotor.radius`, `Main Rotor.tip speed` | m and m/s. Required. |
+| `Main Rotor.blades`, `Main Rotor.rotation` | The blade count, and `counterclockwise` or `clockwise` seen from above. Optional; `--buildings` takes the main rotor's delay between emission directions from them where the database records no coherence of its own ([Buildings around the microphones](#buildings-around-the-microphones)). The shipped AW139, B205, B407 and S-76D files give both. |
 | `Vehicle.weight` | Mass, kg. Required. |
 | `Atmosphere.density` | kg/m³, for C<sub>T</sub>. Required. |
 | `Atmosphere.temperature` | K. Optional; 293.15 K if absent. |
@@ -440,6 +444,19 @@ scattered (φ, θ) channels of the overall A-weighted level and of the EAA exces
 factor, and optionally per-band spectra. A `fixed_load_factor` database stores 1 g spheres only
 and carries the load factor by an analytic law. Databases are built by panam, from measured or
 computed hemispheres. [THEORY §2](THEORY.md#2-the-source) describes how they are read.
+
+### Source coherence
+
+A database may record its vehicle's coherence between emission directions, which `--buildings`
+weights its rays by, as optional root attributes written by panam
+(`directional_coherence`, `build_empirical_database(coherence=...)`; panam's
+`docs/file_formats.md` lists them): the main rotor's blades and sense of rotation, the band up to
+which its delay holds, the decay of the mean coherency and of the coherence with frequency times
+angle, and each band's coherence between distant directions. A database that records some of them
+takes the defaults for the rest; one that records none takes the vehicle file's rotor and the
+defaults. The rotor turns at the database's `rotor_rpm` where it gives one, and at the vehicle
+file's tip speed over radius otherwise. A value NICEOPS cannot use, such as a band count that is not
+the database's, is refused when the database loads.
 
 ### Shipped databases
 
@@ -1077,6 +1094,53 @@ the paths are summed in energy. Microphones without a table are evaluated as wit
 
 A microphone in a street costs about one extra evaluation per reflecting facade.
 
+### Buildings around the microphones
+
+`--buildings district.csv` evaluates every microphone, at every state, with the point-source model
+of [`niceops_point_field`](#niceops_point_field): the rotor's own rays among LoD1 buildings,
+reflected in the facades, the roofs and the floor and diffracted at their edges once or at two in
+turn, each reading the sphere in the direction it leaves the rotor, summed with their phases
+([THEORY §6.5](THEORY.md#65-urban-receivers)). Where `--urban_table` takes the source as a distant
+plane wave arriving from its direction, this follows the source among the buildings. Use it for a
+source near them -- a drone among the roofs, a slow approach to a vertiport -- and for metrics of a
+moment, such as LAmax and the numbers above a level, where the table's error does not average out
+over a pass as it does in an exposure.
+
+- **The district** is `niceops_point_field`'s: a CSV of footprint vertices (`building`, `x`, `y`,
+  `top`, optionally `absorption`) in the run's `--units` and frame, or GeoJSON with `--origin` and
+  `--frame_bearing`. A building's absorption applies to its walls and its roof, and
+  `--wall_absorption` to those that give none. Scattering coefficients are left out, with a
+  warning: a run's walls reflect specularly.
+- **The floor** is the buildings', rigid unless `--floor_absorption`. The ground model is not used,
+  and `--ground_effect` given by name is refused.
+- **Every microphone** must stand on the plane z = 0 and outside the buildings, and every source
+  position above the floor and outside them.
+- **How the rays add.** The spheres carry levels, not phases, so how coherent the source is
+  between two rays' launch directions is a model, measured on rotorcraft
+  ([THEORY §6.5](THEORY.md#65-urban-receivers)). Under `--ray_coherence measured`, the default,
+  each pair's cross term is weighted by a coherency that falls with frequency times the angle
+  between their launches, so rays leaving together (a flush microphone's direct ray and the
+  floor's) stay coherent and rays far apart at high frequency add in energy. In the bands up to
+  4.5 blade-passage frequencies the pair also carries the delay a pattern turning with the main
+  rotor puts between them, where the database or the vehicle file gives the blades and the sense
+  of rotation. `coherent` adds every ray with its phase, as if the rotor radiated in phase in
+  every direction; `energy` adds them in energy.
+- **What the database records comes first.** A database may carry the vehicle's own coherence
+  ([Source coherence](#source-coherence)); the run's log says which it used. Without it, the
+  vehicle file's `blades` and `rotation`, and the measured defaults for the rest.
+- **The phase interval.** `--phase_interval 90` writes, beside the output, the SEL with every
+  state at the 5th percentile of its level over the phases the model leaves unknown
+  (`<output>_phase_lower`), and at the 95th (`<output>_phase_upper`). The states are put at the
+  same end together, since one vehicle's phases do not change from moment to moment, so for a
+  pass the interval is wide rather than narrow. It is widest at low frequency and close to the
+  rotor, where the source's tones keep a stable but unknown phase between directions; broadband
+  rays far apart add in energy and leave nothing to be unsure of. It costs more than the level
+  alone.
+- **Every state is evaluated**, with no peak search. Each state and microphone costs far more than
+  the open-ground model, so this is for a street's microphones, not a grid.
+- **Not with** `--urban_table`, `--terrain`, `--refraction`, `--propagation_table`,
+  `--plate_table`, `--ground_classes`, `--atmosphere`, `--wind` or `--db_cutoff`.
+
 ## Metrics and output files
 
 ### Output files
@@ -1140,6 +1204,8 @@ others:
   fill value, NaN, where the text files write `-inf`.
 - `--latlon`: a `_latlon` companion beside every level file (`out.csv` → `out_latlon.csv`), one
   row per observer of latitude, longitude and level, always scattered.
+- `--phase_interval`: `_phase_lower` and `_phase_upper` companions beside the output
+  ([Buildings around the microphones](#buildings-around-the-microphones)), laid out as it is.
 - `--epnl_file`, `--band_frames` ([EPNL](#epnl-and-reception-time-frames)); `--write_atmosphere`
   ([A profile from the surface wind](#a-profile-from-the-surface-wind)); `--powerfile`;
   `--export_sphere` and `--export_aam` (a whole sphere, as a one-group `.nod` or in AAM/RNM
@@ -1676,6 +1742,7 @@ niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_f
 | `--wave_below` | Solve each canyon with walls of equal height by the wave equation and use its table for the bands centered at or below this frequency, Hz. Default 0, none. |
 | `--wave_blend` | Bands above `--wave_below` over which the wave table fades into the geometric one. Default 2. |
 | `--wave_ppw` | The wave solver's grid points per wavelength. Default 15. |
+| `--gpu` | March the wave equation on the GPU (Metal, on a Mac), as below. Refused without one. |
 | `-j`, `--threads` | Canyons solved at once, or a receiver's directions shared out. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`; the table to write (SI). |
 
@@ -1688,7 +1755,10 @@ height keep the geometric table, with a warning naming the row. Give the walls a
 absorption: a rigid canyon rings for seconds, and a warning says when a canyon had not decayed
 when its solution stopped. Each doubling of the frequency costs about eight times as much: with
 the default blend, `--wave_below 400` solves each canyon to 707 Hz, about a minute at 15 points per
-wavelength, and canyons are solved several at a time.
+wavelength, and canyons are solved several at a time. `--gpu` marches the wave equation on the GPU
+instead, in single precision, two canyons at a time, and `--wave_below` must be given with it;
+[FIDELITY](FIDELITY.md#canyon-wave-solver) has how much faster that is and how closely its tables
+agree with the CPU's.
 
 **Buildings.** `--buildings` gives the buildings as footprints extruded to flat roofs, either as a
 CSV with one row per footprint vertex (below) or as GeoJSON; `--receivers` gives the microphones,
@@ -1755,20 +1825,29 @@ grows about 1.7-fold with each further order of diffracted reflection
 
 The field of a point source among LoD1 buildings, at microphones: for a source near the buildings
 -- a loudspeaker in a street, a drone among the roofs -- where an `--urban_table`'s plane wave will
-not do. It traces the source's own rays, reflected in the facades and the floor, diffracted at
+not do. It traces the source's own rays, reflected in the facades, the roofs and the floor, diffracted at
 the roof edges and the corners, once or at two in turn, and writes each band's level re the
 source's level at 1 m, so a measured source spectrum at 1 m adds to it directly.
 
 ```sh
 niceops_point_field --buildings district.csv --source 12.5 30 2 --microphones mics.csv \
-    --bands 160 200 250 315 400 500 630 800 1000 --units m -o levels.csv
+    --bands 160 200 250 315 400 500 630 800 1000 --humidity 70 --units m -o levels.csv
 ```
 
 `--buildings` is `niceops_urban_table`'s, CSV or GeoJSON (with `--origin` and `--frame_bearing`),
-and the buildings stand on a flat floor. `--microphones` is a CSV with `x`, `y` and `height`
+and the buildings stand on a flat floor. Roofs reflect as the floor does, with their building's
+absorption: a ray reflects in one of them or in the floor at most, and from a roof it reaches only
+a microphone above that roof, directly or by an edge that stands higher still. `--microphones` is a CSV with `x`, `y` and `height`
 columns. Each output row is a microphone's `x`, `y` and `height`, then one level per band, dB, the
-rays summed coherently and averaged over the band. A free-field level at the microphone would be
-−20 lg r for its distance r in metres.
+rays summed coherently and averaged over the band, each absorbed by the air along its length
+(ISO 9613-1, as the spectral path's). A free-field level at the microphone would be −20 lg r for
+its distance r in metres, less that absorption.
+
+The absorption depends strongly on the humidity, so a run without `--humidity` is refused rather
+than given one nobody chose; `--no_air_absorption` leaves the air out instead. The temperature
+and pressure default to the standard's reference, 293.15 K and 101.325 kPa. Over a few tens of
+metres the absorption is small below a few kilohertz; over hundreds it takes most of the top
+bands.
 
 For a source that moves -- a drone's states along its track -- `--sources` takes a CSV of
 positions with the same three columns, and each output row then starts with the source's row in
@@ -1776,6 +1855,42 @@ it, the sources one after another over every microphone. The levels are those of
 source, to the bit, and the run is quicker than those runs. The output is written as the run goes,
 a block of sources at a time, so a run that fails partway exits with an error and leaves the blocks
 it finished.
+
+`--gpu` forms each ray's amplitude at every band and sums the bands on the GPU (Metal, on a Mac),
+while the CPU traces the next pairs' rays. The rays are the same, and the levels agree closely with
+the CPU's ([FIDELITY](FIDELITY.md#a-point-source-among-buildings) has the comparison): in the low
+bands, where every pair of rays interferes, the GPU averages over the band exactly,
+while the CPU leaves out the pairs that the averaging has all but cancelled. The GPU works in
+single precision. A build without a GPU backend refuses the flag, as does a machine without a GPU.
+
+`--edge_source` takes the diffracted rays' fields from the edge-source integral
+([THEORY §6.5](THEORY.md#65-urban-receivers)) instead of UTD's coefficients. The integral runs over
+each edge's whole length, so a building's corners and the ends of its roof edges diffract too, and a
+ray fades rather than stops as its diffraction point leaves its edge. Every once-diffracted ray
+takes it. A twice-diffracted ray takes it where the cascade of two coefficients cannot be trusted --
+near either edge's shadow or reflection boundary, near an edge's end, over a shared face -- and the
+cascade elsewhere, the two blended smoothly band by band. The run is much slower, and CPU only:
+`--edge_source` is refused with `--gpu`. Its accuracy and cost are in
+[FIDELITY](FIDELITY.md#a-point-source-among-buildings).
+
+Walls with relief -- corrugated cladding, balconies, ribs, window bays -- send part of what they
+reflect in every direction rather than specularly. A wall's scattering coefficient `s`, from a
+building's `scattering` column or `--scattering` for those that give none, takes that share of its
+reflection off the rays and returns it diffusely, by Lambert's law: the walls within
+`--diffuse_radius` of each microphone are cut into patches of at most `--patch_size`, each lit by
+the source's own reflections and the floor's, and the energy they scatter among themselves and to
+the microphone adds to the rays' in each band
+([THEORY §6.5](THEORY.md#65-urban-receivers)). A shadowed microphone gains most: the patches it
+can see may be lit when it is not. Where the source and the microphone see each other along a
+street, a relief mostly redirects the reflections it changes, which Lambert's law does not hold,
+and the coefficient does little good there
+([FIDELITY](FIDELITY.md#scattering-walls-point-source)). The coefficient depends strongly on frequency and on the
+relief's depth against the wavelength: `tools/profile_scattering.py` computes a relief's from its
+profile, band by band, and `--scattering_spectrum` takes that file. Each band's coefficient is then
+the spectrum's, interpolated in log frequency, times the building's own value, which defaults to 1:
+give 1 to the buildings with that relief and 0 to plain ones. A run whose bands the spectrum does
+not cover is refused. The patches cost time and memory as the square of their number, so keep
+`--patch_size` near a tenth of the street's width. Diffraction lights no patch.
 
 | Option | Meaning |
 | --- | --- |
@@ -1786,20 +1901,95 @@ it finished.
 | `--bands`, `--database` | Band centers, given or from a database. |
 | `--absorption` | The walls' energy absorption where a building gives none. Default 0, rigid. |
 | `--floor_absorption` | The floor's. Default 0, rigid. |
-| `--max_reflections` | Facade reflections on a ray that diffracts nowhere. Default 4. |
+| `--scattering` | The walls' scattering coefficient where a building gives none, 0 to 1. Default 0, specular; 1 with `--scattering_spectrum`. |
+| `--scattering_spectrum` | A CSV of `band_hz` and `s`: the coefficient band by band, each building's weighting it, as above. |
+| `--patch_size` | With scattering walls, the diffuse field's patches' size at most. Default 4 m. |
+| `--diffuse_radius` | With scattering walls, the walls within this horizontal distance of a microphone that scatter; those beyond reflect specularly. Default `--radius`. |
+| `--max_reflections` | Facade reflections on a ray that diffracts nowhere, and on a path that lights a patch. Default 4. |
 | `--max_edge_reflections` | Facade reflections on each side of a single diffraction. Default 2. |
 | `--radius` | Facades and edges within this horizontal distance of the source or a microphone. Default 150 m. |
 | `--no_diffraction`, `--no_double_diffraction` | Leave out every diffracted ray, or those at two edges. |
+| `--no_roofs` | Roofs do not reflect, for comparison. |
 | `--cascade` | Over a shared face (a roof from edge to edge, a wall from corner to corner), the cascade of two edge coefficients instead of the uniform form. For comparison only. |
+| `--edge_source` | Diffraction by the edge-source integral, which keeps the edges' ends, as above. Not with `--gpu`. |
 | `--orientation_tolerance` | As `niceops_urban_table`'s. Default 1 degree. |
 | `--sound_speed` | m/s. Default 343.2. |
-| `--rays` | Also write every ray: its source's row (with `--sources`), its microphone, kind, reflections, length, its level at each band center (no band averaging), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. |
+| `--humidity` | Relative humidity, percent, for the air's absorption. Required, unless `--no_air_absorption`. |
+| `--temperature`, `--pressure` | For the absorption: K, default 293.15; kPa, default 101.325. |
+| `--no_air_absorption` | Leave the air's absorption out. Not with the three above. |
+| `--rays` | Also write every ray: its source's row (with `--sources`), its microphone, kind, reflections, length, its level at each band center (no band averaging; absorbed at the band center's coefficient), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. |
+| `--gpu` | Form the rays' amplitudes and sum the bands on the GPU, as above. |
 | `-j`, `--threads` | Pairs of source and microphone evaluated at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`, for every length in and out; the file to write. |
 
 Roofs do not reflect, so a microphone above a roof misses that roof's reflection; with both the
-source and the microphone above a shared face, its double diffraction is the cascade. Accuracy
+source and the microphone above a shared face, its double diffraction is the cascade (the
+integral, with `--edge_source`). The field is
+continuous across a boundary wherever the diffracted ray that takes over there is one of the
+orders traced. Where it would need more reflections about its edge than `--max_edge_reflections`,
+a third edge, or a reflection between two edges, the level steps over a few centimetres; a map
+shows these as thin lines, and a microphone that sits on one is uncertain by the step. Accuracy
 against an exact solution is in [FIDELITY](FIDELITY.md#a-point-source-among-buildings).
+
+### `niceops_fdtd_field`
+
+The full-wave field of a point source among rigid buildings, at microphones: the wave equation
+marched on a grid in three dimensions ([THEORY §9.4](THEORY.md#94-a-full-wave-field-among-buildings)),
+the reference `niceops_point_field` is checked against where no exact solution exists. It takes the
+same `--buildings`, `--source`, `--microphones` and `--bands` and writes the same rows, each band's
+level re the source's at 1 m, so the two subtract. It is meant for small scenes: a scale model, or a
+street at low frequency.
+
+```sh
+niceops_fdtd_field --buildings case/buildings.csv --source -2 0 1.5 --microphones mics.csv \
+    --bands 1600 2000 2500 3150 --units m --mirror --gpu -o levels.csv
+```
+
+The domain is the box around the buildings, the source and the microphones, `--margin` wider on
+every side and above (default a wavelength at the lowest band's lower edge), then an absorbing
+layer. Buildings cut by the box carry on through that layer. The differences are fourth order
+(`--order 2` gives Yee's second order, kept for comparison), and the cell (`--cell`) defaults to
+an eighth of a wavelength at the top band's upper edge (a twelfth at second order). Fourth order
+is the more accurate of the two at fewer cells, over long paths most of all. The cost goes as the
+inverse fourth power of the cell, and memory as the cube, 17 bytes a cell. Each step marches only
+the cells the pulse can have reached and from which a microphone can still hear before the run
+ends; the line the run writes to the standard error gives the share of the cell-steps that
+leaves. `--mirror` takes the plane `y` = the source's `y` as one of symmetry and grids half the
+space: right only where the buildings are symmetric about it. A microphone on the far side is
+taken at its mirror point.
+
+The walls are rigid unless `--wall_absorption` gives their absorption at normal incidence, the same
+at every frequency; the floor stays rigid. The air is lossless in the march, and `--humidity`
+(with `--temperature` and `--pressure`) applies its absorption to every arrival afterwards by its
+delay, as `niceops_point_field` absorbs each ray along its length. `--solids` adds rigid prisms,
+from a CSV of `solid`, `x`, `y`, `bottom` and `top` (each solid's vertices in order around it), for
+geometry LoD1 buildings cannot hold, such as a facade's relief.
+
+The run lasts `--duration` (default twice the time sound takes across the domain's diagonal), and
+a microphone whose bands still move by more than 0.02 dB over the run's last tenth is named on the
+standard error: lengthen the run. Between parallel rigid walls the reflections die away slowly;
+give such walls their absorption. `--gpu` marches on the GPU (Metal, on a Mac), in single
+precision as the CPU's march; the CPU is for small grids. Check a result by repeating it with a
+finer `--cell`.
+
+| Option | Meaning |
+| --- | --- |
+| `--buildings`, `--source`, `--microphones`, `--bands`, `--units`, `-o` | As `niceops_point_field`'s. |
+| `--solids` | More rigid prisms, as above. |
+| `--cell`, `--points_per_wavelength` | The grid's cell, or how many make a wavelength at the top band's upper edge. Default 8 (12 with `--order 2`). |
+| `--order` | The differences' order, 4 (default) or 2. |
+| `--margin` | Air beyond everything each way before the absorbing layer. |
+| `--pml` | The absorbing layer's thickness, cells. Default 20. |
+| `--mirror` | Grid half the space, the plane `y` = the source's `y` one of symmetry. |
+| `--wall_absorption` | The walls' absorption at normal incidence. Default 0, rigid. |
+| `--humidity`, `--temperature`, `--pressure` | The air's absorption, applied by delay. Default none. |
+| `--duration` | Simulated time, s. |
+| `--courant` | The time step as a fraction of the scheme's limit. Default 0.99. |
+| `--pulse_frequency` | Where the pulse's spectrum peaks, Hz. Default the top band's upper edge over 2.25. |
+| `--sound_speed` | m/s. Default 343.2. |
+| `--spectrum` | Also write the transfer function at every frequency the bands average over: microphone, frequency, real and imaginary parts. |
+| `--recording` | Also write the pulse and every microphone's pressure at every step. |
+| `--gpu`, `-j` | March on the GPU; CPU threads. |
 
 ### `niceops_pe_compare`
 

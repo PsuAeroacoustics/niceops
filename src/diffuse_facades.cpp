@@ -77,11 +77,13 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
     specular_.resize(reflection.size());
     for (std::size_t i = 0; i < reflection.size(); i++)
         specular_[i] = reflection[i] * (1.0 - scattering[i]);
+    in_reach_.assign(facades.size(), 0);
     for (std::size_t f = 0; f < facades.size(); f++)
     {
         const Facade& facade = facades[f];
         if (horizontal_distance_to_facade(facade, microphone) > options.radius)
             continue;
+        in_reach_[f] = 1;
         const double length = std::hypot(facade.x1 - facade.x0, facade.y1 - facade.y0);
         const Vec3 along((facade.x1 - facade.x0) / length, (facade.y1 - facade.y0) / length, 0.0);
         const Vec3 normal(-along.y, along.x, 0.0);
@@ -149,13 +151,15 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
             const double e2 = floor_reflection > 0.0 && !buildings.blocked(pp.center, image, true)
                     ? floor_reflection * transfer(pp, image, none, 1.0)
                     : 0.0;
-            const double delta = (image - pp.center).norm() - (microphone - pp.center).norm();
+            const double d1 = (microphone - pp.center).norm(), d2 = (image - pp.center).norm(), delta = d2 - d1;
             for (std::size_t b = 0; b < nb; b++)
             {
                 const double k1 = 2.0 * pi * bands[b] / half / sound_speed, k2 = 2.0 * pi * bands[b] * half / sound_speed;
                 const double x = 0.5 * (k2 - k1) * delta;
                 const double sinc = std::abs(x) < 1e-8 ? 1.0 : std::sin(x) / x;
-                gather_[p * nb + b] = e1 + e2 + 2.0 * std::sqrt(e1 * e2) * std::cos(0.5 * (k1 + k2) * delta) * sinc;
+                const double a1 = options.air.empty() ? e1 : e1 * std::exp(-2.0 * options.air[b] * d1);
+                const double a2 = options.air.empty() ? e2 : e2 * std::exp(-2.0 * options.air[b] * d2);
+                gather_[p * nb + b] = a1 + a2 + 2.0 * std::sqrt(a1 * a2) * std::cos(0.5 * (k1 + k2) * delta) * sinc;
             }
         }
     });
@@ -237,14 +241,99 @@ void DiffuseFacades::irradiance(const Vec3& u, const std::vector<std::size_t>& w
     }
 }
 
-void DiffuseFacades::energy(const Vec3& u, double* out) const
+void DiffuseFacades::gathered(const std::vector<double>& e, double* out) const
 {
-    std::vector<double> e;
-    irradiance(u, active_, e);
     std::fill(out, out + bands_, 0.0);
     for (std::size_t p : active_)
         for (std::size_t b = 0; b < bands_; b++)
             out[b] += weight_[p * bands_ + b] * e[p * bands_ + b];
+}
+
+void DiffuseFacades::energy(const Vec3& u, double* out) const
+{
+    std::vector<double> e;
+    irradiance(u, active_, e);
+    gathered(e, out);
+}
+
+const std::vector<DiffuseFacades::PatchImage>& DiffuseFacades::patch_images(std::size_t a, std::size_t max_order,
+        std::vector<PatchImage>& scratch) const
+{
+    if (!patch_images_.empty() && patch_image_order_ == max_order)
+        return patch_images_[a];
+    const ImageTree tree = image_tree(*buildings_, patches_[active_[a]].center, options_.radius, max_order,
+            options_.max_images, true, {}, 0);
+    scratch.clear();
+    for (const PointImage& image : tree.images)
+        // The patch's own face reflects what arrives, it does not light the
+        // patch a second time.
+        if (image.facades.size() <= max_order
+                && (image.facades.empty() || image.facades[0] != patches_[active_[a]].facade))
+            scratch.push_back({image.point, image.facades});
+    return scratch;
+}
+
+void DiffuseFacades::prepare_point_lighting(std::size_t max_order, unsigned threads)
+{
+    patch_images_.clear();
+    std::vector<std::vector<PatchImage>> images(active_.size());
+    parallel_chunks(active_.size(), threads, [&](std::size_t begin, std::size_t end) {
+        for (std::size_t a = begin; a < end; a++)
+            patch_images(a, max_order, images[a]);
+    });
+    patch_images_ = std::move(images);
+    patch_image_order_ = max_order;
+}
+
+void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order, const std::vector<double>& air,
+        std::vector<double>& e, unsigned threads) const
+{
+    e.assign(patches_.size() * bands_, 0.0);
+    parallel_chunks(active_.size(), threads, [&](std::size_t begin, std::size_t end) {
+        std::vector<Vec3> hits;
+        std::vector<PatchImage> scratch;
+        for (std::size_t a = begin; a < end; a++)
+        {
+            const std::size_t p = active_[a];
+            const Patch& patch = patches_[p];
+            for (const PatchImage& image : patch_images(a, max_order, scratch))
+            {
+                for (int floor = 0; floor < 2; floor++)
+                {
+                    if (floor == 1 && floor_reflection_ == 0.0)
+                        continue;
+                    if (!folded_path_open(*buildings_, source, patch.center, image.facades, floor == 1, &hits))
+                        continue;
+                    const Vec3 target = floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point;
+                    const double length = (target - source).norm();
+                    // The last leg, toward the patch: arriving from in front.
+                    const Vec3 last = hits.empty() ? source : hits.back();
+                    const Vec3 end_point = floor ? Vec3(patch.center.x, patch.center.y, -patch.center.z) : patch.center;
+                    const Vec3 back = last - end_point;
+                    const double c = patch.normal.dot(back) / back.norm();
+                    if (!(c > 0.0) || !(length > 0.0))
+                        continue;
+                    for (std::size_t b = 0; b < bands_; b++)
+                    {
+                        double carried = c / (length * length) * (floor ? floor_reflection_ : 1.0);
+                        for (std::size_t f : image.facades)
+                            carried *= specular_[f * bands_ + b];
+                        if (!air.empty())
+                            carried *= std::exp(-2.0 * air[b] * length);
+                        e[p * bands_ + b] += carried;
+                    }
+                }
+            }
+        }
+    });
+}
+
+void DiffuseFacades::point_energy(const Vec3& source, std::size_t max_order, const std::vector<double>& air,
+        double* out, unsigned threads) const
+{
+    std::vector<double> e;
+    point_irradiance(source, max_order, air, e, threads);
+    gathered(e, out);
 }
 
 void DiffuseFacades::energy_forward(const Vec3& u, double* out) const

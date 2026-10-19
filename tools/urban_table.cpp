@@ -66,6 +66,7 @@
 #include "canyon_wave.hpp"
 #include "geodetic.hpp"
 #include "geojson_buildings.hpp"
+#include "gpu/gpu.hpp"
 #include "propagation_table.hpp"
 #include "sphere_database.hpp"
 #include "urban.hpp"
@@ -108,6 +109,7 @@ int main(int argc, char** argv)
     std::size_t wave_blend = 2;
     double wave_ppw = 15.0;
     int threads = 0;
+    bool use_gpu = false;
     app.add_option("--canyons", canyons_file, "Receivers in ideal canyons, one per row (see the header).");
     app.add_option("--buildings", buildings_file,
             "LoD1 buildings, one row per footprint vertex (see the header); with --receivers.");
@@ -180,6 +182,9 @@ int main(int argc, char** argv)
             "Bands above --wave_below over which the wave table fades into the geometric one (default 2).");
     app.add_option("--wave_ppw", wave_ppw, "The wave solver's grid points per wavelength (default 15).")
             ->check(CLI::Range(6.0, 40.0));
+    app.add_flag("--gpu", use_gpu,
+            "March --wave_below's wave equation on the GPU (Metal on macOS), in single precision, two canyons at a "
+            "time; refused without --wave_below.");
     app.add_option("-j,--threads", threads,
             "Worker threads, for the geometric table's directions and the canyons the wave equation solves "
             "(default: NICEOPS_THREADS when set, else one per hardware thread); the table is the same bits at "
@@ -193,6 +198,13 @@ int main(int argc, char** argv)
         const double to_meters = units == "m" ? 1.0 : ft2m;
         if (canyons_file.empty() == buildings_file.empty())
             throw std::runtime_error("give either --canyons or --buildings");
+        // Before any work: the GPU marches the wave equation and nothing else.
+        if (use_gpu)
+        {
+            if (wave_below <= 0.0)
+                throw std::runtime_error("--gpu marches --wave_below's wave equation, and there is none to march");
+            gpu::Device::require("--gpu");
+        }
         if (buildings_file.empty() != receivers_file.empty())
             throw std::runtime_error("--receivers goes with --buildings, and --buildings needs it");
         // Defaults are lengths in metres; a value given is in --units.
@@ -489,7 +501,13 @@ int main(int argc, char** argv)
             }
             const double top = bands[wave_bands - 1] * std::pow(2.0, 1.0 / 6.0);
             std::vector<ApertureSpectrum> spectra(distinct.size());
-            parallel_chunks(distinct.size(), tool_thread_count(threads), [&](std::size_t begin, std::size_t end) {
+            // On the GPU two canyons at a time: each march fills the device, and
+            // one canyon's transforms (on the CPU) overlap the next's march,
+            // the two sharing the run's threads.
+            const unsigned workers = tool_thread_count(threads);
+            const unsigned marching = use_gpu ? std::min(2u, workers) : workers;
+            parallel_chunks(distinct.size(), marching,
+                    [&](std::size_t begin, std::size_t end) {
                 for (std::size_t d = begin; d < end; d++)
                 {
                     const WaveJob& job = jobs[distinct[d]];
@@ -503,6 +521,9 @@ int main(int argc, char** argv)
                     setup.sound_speed = sound_speed;
                     setup.wall_absorption = job.alpha_a;
                     setup.wall_absorption_b = job.alpha_b;
+                    setup.gpu = use_gpu;
+                    if (use_gpu)
+                        setup.threads = std::max(1u, workers / marching);
                     spectra[d] = solve_canyon(setup);
                 }
             });
@@ -513,7 +534,7 @@ int main(int argc, char** argv)
             {
                 const WaveJob& job = jobs[k];
                 const auto wave = canyon_wave_gains(spectra[solve_of[k]], job.axis, axes.azimuths, axes.elevations,
-                        bands, wave_bands, 5.0);
+                        bands, wave_bands, 5.0, tool_thread_count(threads));
                 std::vector<double> slice(gains.begin() + static_cast<std::ptrdiff_t>(job.receiver * cells * nb),
                         gains.begin() + static_cast<std::ptrdiff_t>((job.receiver + 1) * cells * nb));
                 blend_wave_band(slice, receivers[job.receiver].reflection, wave, weight);

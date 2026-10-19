@@ -1,0 +1,108 @@
+// The band average of |sum_i A_i exp(i k L_i)|^2 over k in [k_mid - h,
+// k_mid + h] (band_averaged_energy's quantity), one problem per group.  The
+// host packs the amplitudes A_i, per problem and ray, and per ray its length
+// as a float-float pair and less the set's shortest (rel); band_phasors then
+// forms, per problem and ray,
+//   phasor  A_i exp(i k_mid L_i), as (re, im);
+//   trig    sin(h L_i) and cos(h L_i) (the pair sum only).
+// Needs band_energy_types.h before it.
+
+NK_KERNEL(band_phasors)(NK_IN(BandProblem, problems, 0), NK_IN(float, amplitude, 1), NK_IN(float, length, 2),
+        NK_OUT(float, phasor, 3), NK_OUT(float, trig, 4) NK_GROUP_ARGS)
+{
+    const BandProblem p = problems[NK_GROUP];
+    for (uint i = NK_THREAD; i < p.n; i += NK_THREADS)
+    {
+        const float l_hi = length[2u * (p.rays + i)], l_lo = length[2u * (p.rays + i) + 1u];
+        const uint at = p.first + i;
+        const nk_complex a = nk_make(amplitude[2u * at], amplitude[2u * at + 1u]);
+        const nk_complex v = nk_mul(a, nk_cis(nk_phase(p.k_hi, p.k_lo, l_hi, l_lo)));
+        phasor[2u * at] = v.re;
+        phasor[2u * at + 1u] = v.im;
+        if (p.nodes == 0u)
+        {
+            float c;
+            const float s = nk_sincos(nk_phase(p.h_hi, p.h_lo, l_hi, l_lo), c);
+            trig[2u * at] = s;
+            trig[2u * at + 1u] = c;
+        }
+    }
+}
+
+// Pair by pair, as band_averaged_energy does: each ray with the longer ones
+// within reach, Re(p_i conj p_j) sin(h dL) / (h dL), the sine by its
+// difference formula from the rays' own sines and cosines, and by its series
+// where h dL is under 0.1.  Each thread takes rays tid, tid + T, ...;
+// Kahan-compensated, then summed over the group.
+NK_KERNEL(band_pair_sum)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1), NK_IN(float, phasor, 2),
+        NK_IN(float, trig, 3), NK_IN(float, rel, 4), NK_OUT(float, energy, 5) NK_GROUP_ARGS)
+{
+    NK_SHARED_ARRAY(float, scratch, 256);
+    const uint q = which[NK_GROUP];
+    const BandProblem p = problems[q];
+    NK_GLOBAL_IN float* ph = phasor + 2u * p.first;
+    NK_GLOBAL_IN float* tr = trig + 2u * p.first;
+    NK_GLOBAL_IN float* L = rel + p.rays;
+    float acc = 0.0f, carry = 0.0f;
+    for (uint i = NK_THREAD; i < p.n; i += NK_THREADS)
+    {
+        const float pr = ph[2u * i], pi = ph[2u * i + 1u];
+        const float si = tr[2u * i], ci = tr[2u * i + 1u];
+        const float li = L[i];
+        float sum = pr * pr + pi * pi;
+        for (uint j = i + 1u; j < p.n; j++)
+        {
+            const float d = L[j] - li;
+            if (d > p.reach)
+                break;
+            const float x = p.h * d;
+            float sinc;
+            if (x < 0.1f)
+            {
+                const float x2 = x * x;
+                sinc = 1.0f - x2 * (1.0f / 6.0f - x2 * (1.0f / 120.0f - x2 * (1.0f / 5040.0f)));
+            }
+            else
+                sinc = (tr[2u * j] * ci - tr[2u * j + 1u] * si) / x;
+            sum += 2.0f * (pr * ph[2u * j] + pi * ph[2u * j + 1u]) * sinc;
+        }
+        const float y = sum - carry, t = acc + y;
+        carry = (t - acc) - y;
+        acc = t;
+    }
+    const float total = nk_group_sum(scratch, acc, NK_THREAD, NK_THREADS);
+    if (NK_THREAD == 0u)
+        energy[q] = total;
+}
+
+// As a Gauss-Legendre integral over the band: per node t,
+// S(t) = sum_i p_i exp(i h t (L_i - centre)), and the energy is half the
+// weighted sum of |S|^2 -- every pair, no cutoff.  Each thread takes nodes
+// tid, tid + T, ...
+NK_KERNEL(band_quadrature)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1), NK_IN(float, phasor, 2),
+        NK_IN(float, rule, 3), NK_IN(float, rel, 4), NK_OUT(float, energy, 5) NK_GROUP_ARGS)
+{
+    NK_SHARED_ARRAY(float, scratch, 256);
+    const uint q = which[NK_GROUP];
+    const BandProblem p = problems[q];
+    NK_GLOBAL_IN float* ph = phasor + 2u * p.first;
+    NK_GLOBAL_IN float* L = rel + p.rays;
+    float acc = 0.0f;
+    for (uint m = NK_THREAD; m < p.nodes; m += NK_THREADS)
+    {
+        const float a = p.h * rule[2u * (p.rule + m)], w = rule[2u * (p.rule + m) + 1u];
+        float re = 0.0f, im = 0.0f;
+        for (uint i = 0u; i < p.n; i++)
+        {
+            float c;
+            const float s = nk_sincos(a * (L[i] - p.centre), c);
+            const float vr = ph[2u * i], vi = ph[2u * i + 1u];
+            re += vr * c - vi * s;
+            im += vr * s + vi * c;
+        }
+        acc += w * (re * re + im * im);
+    }
+    const float total = nk_group_sum(scratch, acc, NK_THREAD, NK_THREADS);
+    if (NK_THREAD == 0u)
+        energy[q] = 0.5f * total;
+}

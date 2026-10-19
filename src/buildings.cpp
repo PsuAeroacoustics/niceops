@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -352,6 +353,15 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
         building_grid_ = PlanGrid(bounds_, std::max(1.0, 1.5 * building_size / footprints_.size()));
         facade_grid_ = PlanGrid(facade_boxes, std::max(1.0, 1.5 * facade_size / facades_.size()));
     }
+    // The edges were made building by building, and dropping the shared ones
+    // kept their order.
+    edge_begin_.assign(footprints_.size() + 1, edges_.size());
+    for (std::size_t i = edges_.size(); i-- > 0;)
+        edge_begin_[edges_[i].building] = i;
+    for (std::size_t b = footprints_.size(); b-- > 0;)
+        edge_begin_[b] = std::min(edge_begin_[b], edge_begin_[b + 1]);
+    for (std::size_t i = 0; i + 1 < edges_.size(); i++)
+        assert(edges_[i].building <= edges_[i + 1].building);
 }
 
 bool Buildings::strictly_inside(std::size_t building, double x, double y) const
@@ -373,6 +383,21 @@ bool Buildings::strictly_inside(std::size_t building, double x, double y) const
             near = distance_to_side(x, y, rx[h], ry[h], rx[i], ry[i]) < contact;
     });
     return !near;
+}
+
+bool Buildings::on_roof(std::size_t building, double x, double y) const
+{
+    const Footprint& f = footprints_[building];
+    bool in = false, side = false;
+    for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+        for (std::size_t i = 0, n = rx.size(), h = n - 1; i < n; h = i++)
+        {
+            if ((ry[i] > y) != (ry[h] > y) && x < rx[h] + (y - ry[h]) * (rx[i] - rx[h]) / (ry[i] - ry[h]))
+                in = !in;
+            side = side || distance_to_side(x, y, rx[h], ry[h], rx[i], ry[i]) < 1e-9;
+        }
+    });
+    return in || side;
 }
 
 std::size_t Buildings::inside(double x, double y) const
@@ -503,6 +528,18 @@ bool Buildings::blocked(const Vec3& a, const Vec3& b, bool below_floor) const
                 return true;
             });
     return hit;
+}
+
+void Buildings::near_box(double x_min, double x_max, double y_min, double y_max, std::vector<std::uint32_t>& out) const
+{
+    thread_local Stamps seen;
+    seen.next(footprints_.size());
+    out.clear();
+    building_grid_.box(x_min, x_max, y_min, y_max, [&](const std::uint32_t* first, const std::uint32_t* last) {
+        for (const std::uint32_t* i = first; i != last; i++)
+            if (seen.first(*i))
+                out.push_back(*i);
+    });
 }
 
 std::size_t Buildings::first_hit(const Vec3& pos, const Vec3& dir, bool below_floor, Vec3& hit) const

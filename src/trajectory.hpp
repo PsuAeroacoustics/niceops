@@ -157,6 +157,11 @@ struct dimensional_data
     double radius = 0.0; // m
     double weight = 0.0; // kg (converted to Newtons)
     double rho = 0.0; // kg/m^3
+    // The main rotor's blades and its sense, +1 counterclockwise seen from
+    // above, -1 clockwise, 0 not given: what the rotor's delay between
+    // emission directions needs (source_coherence.hpp).
+    double blades = 0.0;
+    int rotation_sense = 0;
     // Atmospheric state for the spectral propagation path, from the same file's
     // "Atmosphere" section.  Unused by CT and mu, which need only rho.
     Atmosphere atmosphere;

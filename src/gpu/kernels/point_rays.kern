@@ -1,0 +1,131 @@
+// The point-source model's ray amplitudes (point_ray_amplitude) at each
+// problem's wavenumber, into the amplitude array band_energy.kern reads.
+// Needs band_energy_types.h, point_rays_types.h and wedge.h before it.
+
+// The rays that are not over a shared face: their amplitude after
+// reflections times each wedge term's coefficient at k sin(beta).  One
+// problem per group, its threads over the rays.
+NK_KERNEL(ray_amplitudes)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1), NK_IN(GpuRay, rays, 2),
+        NK_IN(GpuWedge, wedges, 3), NK_IN(float, reflected, 4), NK_OUT(float, amplitude, 5) NK_GROUP_ARGS)
+{
+    const BandProblem p = problems[which[NK_GROUP]];
+    const float k = p.k_hi + p.k_lo;
+    for (uint i = NK_THREAD; i < p.n; i += NK_THREADS)
+    {
+        const GpuRay r = rays[p.rays + i];
+        if (r.kind == 3u)
+            continue;
+        nk_complex a = nk_make(reflected[r.reflected + p.band] * exp(-p.absorption * r.length), 0.0f);
+        for (uint w = 0u; w < r.kind; w++)
+        {
+            NK_GLOBAL_IN GpuWedge* t = wedges + r.term + w;
+            a = nk_mul(a, nk_scale(nk_wedge_coefficient(t->cot, t->c, t->n, k * t->sin_beta, t->distance), t->scale));
+        }
+        amplitude[2u * (p.first + i)] = a.re;
+        amplitude[2u * (p.first + i) + 1u] = a.im;
+    }
+}
+
+// The aperture's extent at wavenumber k (aperture_extent).
+NK_FN float nk_aperture_extent(float scale, float k)
+{
+    const float lambda = 6.283185307179586477f / k;
+    return fmax(3.0f * sqrt(lambda * scale), 30.0f * lambda);
+}
+
+// Its far half's taper at t.
+NK_FN float nk_taper(float t, float extent)
+{
+    if (t < 0.5f * extent)
+        return 1.0f;
+    if (t >= extent)
+        return 0.0f;
+    return 0.5f * (1.0f + nk_cis(3.14159265358979323846f * (t - 0.5f * extent) / (0.5f * extent)).re);
+}
+
+// The rays over a shared face (shared_face_field_at): each end's aperture
+// integral at k_t = k sin(beta), its Filon panels split among the group's
+// threads, then the launch factor and the end correction, the ends' weighted
+// mean, and the phase the aperture's lengths leave out.  One (problem, ray)
+// per group of 32 threads.
+NK_KERNEL(face_amplitudes)(NK_IN(GpuFaceItem, items, 0), NK_IN(BandProblem, problems, 1), NK_IN(GpuRay, rays, 2),
+        NK_IN(GpuFace, faces, 3), NK_IN(GpuPanel, panels, 4), NK_IN(float, reflected, 5), NK_OUT(float, amplitude, 6)
+        NK_GROUP_ARGS)
+{
+    NK_SHARED_ARRAY(float, scratch, 32);
+    const GpuFaceItem item = items[NK_GROUP];
+    const BandProblem p = problems[item.problem];
+    NK_GLOBAL_IN GpuFace* f = faces + item.face;
+    const float s = f->sin_beta;
+    const float kt = p.k_hi * s, kt_lo = fma(p.k_hi, s, -kt) + p.k_lo * s;
+    nk_complex sum[2];
+    for (int e = 0; e < 2; e++)
+    {
+        sum[e] = nk_make(0.0f, 0.0f);
+        if (f->end[e].weight <= 0.0f)
+            continue;
+        const float extent = nk_aperture_extent(f->end[e].extent_scale, kt);
+        for (uint q = NK_THREAD; q < f->end[e].panels; q += NK_THREADS)
+        {
+            NK_GLOBAL_IN GpuPanel* panel = panels + f->end[e].panel + q;
+            if (panel->t[0] >= extent)
+                continue;
+            float taper[3];
+            nk_complex d2[3];
+            for (int m = 0; m < 3; m++)
+            {
+                taper[m] = nk_taper(panel->t[m], extent);
+                d2[m] = nk_wedge_coefficient(panel->cot[m], panel->c[m], panel->n2, kt, panel->distance[m]);
+            }
+            for (int j = 0; j < 4; j++)
+            {
+                if ((panel->waves & (1u << j)) == 0u)
+                    continue;
+                nk_complex g[3];
+                for (int m = 0; m < 3; m++)
+                {
+                    const float v = taper[m] * panel->g[j][m];
+                    g[m] = j == 0 ? nk_scale(d2[m], v) : nk_make(v, 0.0f);
+                }
+                sum[e] = nk_add(sum[e], nk_filon_panel(kt, kt_lo, panel->u0[j], panel->u0_lo[j], panel->d1[j],
+                                                panel->d2[j], g[0], g[1], g[2]));
+            }
+        }
+    }
+    const float r0 = nk_group_sum(scratch, sum[0].re, NK_THREAD, NK_THREADS);
+    const float i0 = nk_group_sum(scratch, sum[0].im, NK_THREAD, NK_THREADS);
+    const float r1 = nk_group_sum(scratch, sum[1].re, NK_THREAD, NK_THREADS);
+    const float i1 = nk_group_sum(scratch, sum[1].im, NK_THREAD, NK_THREADS);
+    if (NK_THREAD != 0u)
+        return;
+    const nk_complex total[2] = {nk_make(r0, i0), nk_make(r1, i1)};
+    const float pi = 3.14159265358979323846f, half_root2 = 0.707106781186547524f;
+    // launch = sqrt(k / 2 pi) exp(-i pi/4)
+    const float l = sqrt(kt / (2.0f * pi)) * half_root2;
+    const nk_complex launch = nk_make(l, -l);
+    nk_complex field = nk_make(0.0f, 0.0f);
+    float weights = 0.0f;
+    for (int e = 0; e < 2; e++)
+    {
+        NK_GLOBAL_IN GpuAperture* end = &f->end[e];
+        if (end->weight <= 0.0f)
+            continue;
+        nk_complex v = nk_mul(total[e], launch);
+        if (end->sin_g > 1e-6f)
+        {
+            // kirchhoff = (1 + cos g) / 2 exp(i pi/4) / (sqrt(2 pi k) sin g)
+            const float kk = 0.5f * (1.0f + end->cos_g) / (sqrt(2.0f * pi * kt) * end->sin_g) * half_root2;
+            const nk_complex kirchhoff = nk_make(kk, kk);
+            const nk_complex keller = nk_wedge_coefficient(end->keller_cot, end->keller_c, end->n1, kt, 1e9f);
+            v = nk_mul(v, nk_scale(nk_div(keller, kirchhoff), 0.5f));
+        }
+        field = nk_add(field, nk_scale(v, end->weight));
+        weights += end->weight;
+    }
+    field = nk_scale(field, 1.0f / weights);
+    const GpuRay r = rays[p.rays + item.ray];
+    const nk_complex a = nk_mul(nk_scale(field, reflected[r.reflected + p.band] * exp(-p.absorption * r.length) * s),
+            nk_cis(nk_phase(kt, kt_lo, f->offset_hi, f->offset_lo)));
+    amplitude[2u * (p.first + item.ray)] = a.re;
+    amplitude[2u * (p.first + item.ray) + 1u] = a.im;
+}

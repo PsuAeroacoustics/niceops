@@ -731,6 +731,28 @@ validated against
 measurements in streets; none of the measured data sets ([Data sets](#data-sets)) has buildings
 near the microphones.
 
+**The point-source model in a run** (`--buildings`) against the plane-wave table
+(`--urban_table`, built by `niceops_urban_table` for the same district and microphones): the demo
+track over the eleven-building test district (`tests/data/urban_buildings.csv`), B407 database,
+seven microphones 4 ft up; the table run on ground of 10^6 kPa s/m^2, which the two models' open
+references agree on to 0.16 dB. The two agree in SEL to 0.2 dB at every microphone (behind a
+building −6.88 dB against −6.92, re open ground), but not state by state, within 10 dB of each
+microphone's peak:
+
+| Microphone | SEL, point − table | LAmax | Per state: rms, p95, worst |
+| --- | --- | --- | --- |
+| In a street | −0.03 | −2.30 | 0.94, 2.39, 3.26 |
+| At an L-shaped building's corner | +0.04 | −0.02 | 0.15, 0.34, 0.63 |
+| At an intersection | −0.18 | +0.19 | 1.67, 4.01, 5.32 |
+| Beside a tall wall | +0.02 | −0.24 | 0.29, 0.43, 2.35 |
+| In the open | +0.16 | +0.09 | 0.19, 0.32, 0.46 |
+| In an alley | +0.15 | −0.17 | 4.21, 10.9, 11.7 |
+| Behind a building | +0.09 | +0.45 | 0.34, 0.53, 2.71 |
+
+The large per-state differences come at 60–150 m slant range, and over a moving pass they cancel
+in the exposure; over a hover or a slow pass by the same buildings they would not. On this track
+roofs move none of the seven SELs, the microphones standing below every roof.
+
 ### Roof-edge diffraction
 
 The UTD wedge kernel (`src/wedge`, `tests/test_wedge.cpp`), a unit plane wave on a rigid wedge,
@@ -814,6 +836,15 @@ On the demo track the wave band moves the seven test canyons' SEL changes agains
 at most 0.08 dB with `--wave_below 400`, the wave solution and the diffracting geometric table
 agreeing across the crossover, and by under 0.03 dB with `--wave_below 80`, where A-weighting
 leaves little.
+
+**On the GPU** (`niceops_urban_table --gpu`, single precision, an M4 Pro). Against the march in
+double: the band ratios of a 12 m canyon with walls of absorption 0.05 and 0.2, 25 to 200 Hz,
+within 7.6e-6 dB, and open ground's gain within 5.7e-6 dB, each run stopping at the same step;
+a 20 m canyon's table to 707 Hz within 3.4e-5 dB, and fourteen 20 m canyons' to 354 Hz within
+1.6e-5 dB; the seven test canyons' SEL within 0.001 dB. Cost: the 20 m canyon to 707 Hz at 15
+points per wavelength is 1.08 million cells and 66,764 steps, 10.8 s of GPU time, against about
+67 s on one core; the fourteen canyons to 354 Hz take 22 s with `--gpu` against 34 s on 14
+threads.
 
 ### Buildings
 
@@ -1003,11 +1034,464 @@ a block 10 m thick. Against the boundary elements either side of the plane the s
 within ±0.6 dB, the exact field moving by 0.1 dB; the cascade steps by 5 to 15 dB. A source above
 the roof steps by up to 4.9 dB, where the cascade takes over above the plane.
 
+**On the GPU** (`--gpu`, an M4 Pro), which works in single precision:
+
+- **The sums.** Against double-precision sums of the same amplitudes, over ray sets of 200 to 1100
+  rays with lengths from 120 m to 2 km and bands from 50 Hz to 10 kHz, the GPU's pair sums agree
+  with the CPU's to 1.1e-5 dB, and its Gauss–Legendre integrals with every pair summed to
+  3.4e-6 dB.
+- **The amplitudes.** The UTD transition function agrees with the CPU's to 6e-7 and the wedge
+  coefficient to 3e-5 (relative, wedges of n = 1 to 2 including angles within a hair of a
+  boundary), and a Filon panel with its exact integral to 4e-5 of the panel. The shared face's
+  aperture is worked out once for all of a run's wavenumbers rather than for each, its panels
+  ending at each one's taper and extent: on the Filon test's faces it is within 0.006 dB of the
+  fine midpoint rule from 50 Hz to 10 kHz, where the CPU's own is within 0.017 dB. Band by band,
+  amplitudes the GPU forms give levels within 2.3e-4 dB of the same batch given the CPU's (five
+  pairs among containers and blocks, 104 rays over shared faces, 50 Hz to 10 kHz).
+- **The levels** differ from the CPU's by what the CPU's cutoff leaves out, the pairs whose sinc
+  has fallen below 1/30, which the integral keeps:
+
+| Case | Band levels | Median | 99th percentile | Worst |
+| --- | --- | --- | --- | --- |
+| 49-block district, a drone 30 m up, 20 microphones, 3 bands | 60 | 4e-5 dB | 0.012 dB | 0.012 dB |
+| DigiCity, the loudspeaker at hover spot 5, 100 grid points, 3 bands | 300 | 5e-5 dB | 0.015 dB | 0.030 dB |
+| 49-block district, 60 points of a drone's track 40 m up, 185 microphones, 24 bands | 266,400 | 2e-5 dB | 0.022 dB | 0.090 dB |
+
+**Continuity.** Where every boundary's partner is traced the field is continuous: west of a tall
+box, lines of microphones 2.5 cm apart across its corner's shadow and reflection boundaries step
+by 0.32 dB at most between neighbours (125 Hz to 2 kHz). Across a city it is not. A sweep of
+DigiCity (80 random lines of microphones 2.5 cm apart, 1.2 m up, the source at hover spot 5 and at
+four points of flights 5 and 8.5 m up, 79,460 positions, 160 Hz to 5 kHz summed flat, walls
+absorbing 0.05, 70% RH) finds 434 steps of more than 1 dB between neighbours, 0.55% of positions,
+1.7 dB at the median and 9.5 dB at most. By the ray that appears or vanishes there, and why:
+
+| Class | Steps |
+| --- | --- |
+| A diffracted ray's leg meets another edge, or its reflection leaves its wall: the ray that would take over needs a second edge with those reflections, or a third | 265 |
+| A specular ray's first or last leg meets an edge: the diffracted ray that would take over needs 3 or 4 reflections on one side, beyond `--max_edge_reflections` 2 | 90 |
+| A diffraction point leaves the end of its edge | 23 |
+| A twice-diffracted ray's point reaches the floor at a wall's foot: it would carry on with the floor between its edges | 13 |
+| The same rays, summed with a sign flipped | 15 |
+| None of these found (the partner traced: 7) | 28 |
+
+With `--max_edge_reflections 4` the second class goes but the diffracted rays it adds have their
+own: 490 steps, 10.1 dB at most, for 20% more time.
+
+The cutoff itself, against every pair summed, moves the district's band levels by 0.002 dB at the
+median and 0.037 dB at worst (40 microphones, the drone 30 m up, 24 bands). The ray dumps are
+identical either way. The table's runs leave the air's absorption out; with it (70% RH, the
+district's first row), the GPU's levels are within 0.012 dB of the CPU's, as without, and the
+GPU's amplitudes within 2.3e-4 dB of the CPU's over the amplitude test's five pairs.
+
 Cost: in the table builder's test district, a point source 10 m up in a street, the seven test
 microphones take 0.44 s on one thread over B407's 31 bands. Among 49 blocks with roofs 10 to
-40 m, a drone 30 m up costs 0.06 s per microphone on one thread over 24 bands. 60 points of a
-drone's track 40 m up, over 185 microphones, take 46 s on 14 threads with `--sources` and 49 s as
-a run per source.
+40 m, a drone 30 m up costs 0.042 s per microphone on one thread over 24 bands. 60 points of a
+drone's track 40 m up, over 185 microphones, take 30 s on 14 threads with `--sources` (34 s as a
+run per source), and 3.9 s with `--gpu`.
+
+**The edge-source integral** (`--edge_source`; `src/edge_source`, `tests/test_edge_source.cpp`).
+First order, against exact solutions:
+
+- **The plane-wave limit** (a point source receding along the incidence direction, extrapolated from
+  1e8 and 2e8 m): Sommerfeld's rigid half-plane within 8e-7 of the field (k r from 0.5 to 200, four
+  incidences, every 7.5°, boundaries included); the right-angle wedge's eigenfunction series
+  (n = 3/2, k r 10 and 40) within 1.5e-6 dB.
+- **Against UTD** over 300 random wedges, a third within a few degrees of a boundary: 0.16, 0.021
+  and 0.0005 dB at k = 5, 50 and 500 m⁻¹. Reciprocal to 1e-13. Across a boundary and as the apex crosses an edge's end, steps of
+  2e-9 rad or m move the field by 8e-8 and 4e-8, its own slope.
+- **The quadrature**: the steepest-descent tails within 1.4e-8 of direct integration along the edge;
+  the 72-wavenumber spectrum (Filon's rule in the path) within 4.4e-5, 0.0004 dB, of the field at
+  each.
+
+Second order:
+
+- **The level curves are the nested integral** to 4e-6 (two screens, a block's roof with the plane
+  factor 1/2, and a screen's top with a perpendicular edge whose boundaries cross it; k = 1 to 30).
+- **Over the long block** of the table above (2.44 m, all 80 cases), through the whole model, the
+  field is within 0.28 dB of the boundary elements, 0.10 dB rms, where the shared-face form is
+  within 0.94 dB, 0.21 rms. Without the plane factor of 1/2 over the roof the integral is the
+  cascade without UTD's grazing half, to 0.01-0.1 dB at k = 20.
+- **The cascade is the integral away from transitions**: two screens with the second edge at 0, 45
+  and 90° to the first, k = 50 and 100, within 0.007 dB and 0.005 rad.
+- **The partners' corrections are what make it localized.** On the perpendicular pair, in a window
+  of 40, 80 and 160 radians about the least path, the second order alone gives −68.94, −69.84 and
+  −70.44 dB (k = 20) as the boundary point enters; with the corrections, −68.944, −68.945 and
+  −68.948, the corrected cascade −68.963.
+
+**What it changes in DigiCity** (11 microphone positions across the city, the loudspeaker at hover
+spot 5, 250 Hz and 2 kHz; 1241 once- and 4825 twice-diffracted rays). Once-diffracted, UTD against the
+integral along the edge's infinite line: 0.001 dB at the median, 0.01 at the 90th percentile,
+transitions included. Against the integral over the edge's own length, the ends counting (a
+vertical edge on the floor taken through it): 0.25 dB at the median and 1.6 at the 90th percentile
+at 250 Hz, 0.10 and 0.69 at 2 kHz; by the excess of the path through the nearer end, in radians:
+
+| End's excess | Rays | Median | 90th percentile |
+| --- | --- | --- | --- |
+| under 1 | 179 | 3.0 dB | 5.5 dB |
+| 1-3 | 191 | 1.0 | 1.7 |
+| 3-10 | 547 | 0.29 | 0.99 |
+| 10-30 | 642 | 0.14 | 0.58 |
+| 30-100 | 592 | 0.10 | 0.33 |
+| over 100 | 331 | 0.03 | 0.15 |
+
+Twice-diffracted, over parallel edges, the cascade against the integral over infinite lines: 0.01
+to 0.03 dB at the median and at most 0.06 at the 90th percentile wherever the smaller transition
+parameter is 0.3 or more; below 0.3, 0.025 at the median and 3.3 dB at the 90th percentile, 15% of
+rays over 1 dB. Over the edges' own lengths (in a window of 40 radians) the median ray moves by
+0.89 dB at 250 Hz and 0.06 dB at 2 kHz. DigiCity's four microphones, the loudspeaker at hover
+spot 5, 160 Hz to 6.3 kHz:
+
+| Microphone | Up to 500 Hz | From 2 kHz | Most |
+| --- | --- | --- | --- |
+| 2 | −0.01 to +0.03 | 0.00 | +0.03 dB at 315 Hz |
+| 7 | −0.50 to +0.64 | −0.16 to +0.28 | +0.64 dB at 250 Hz |
+| 8 | −0.32 to +0.10 | 0.00 to +0.03 | −0.32 dB at 400 Hz |
+| 10 | −0.45 to 0.00 | −0.01 to +0.01 | −0.45 dB at 200 Hz |
+
+**Against measured scale models** (RWTH's EDGE database: 12 LoD1 scenes at 1/5 to 1/20 scale in a
+hemi-anechoic room, rigid floor, receivers on the floor mostly in the buildings' shadow; each ray
+given its loudspeaker's measured directivity at its emission angle and the air's absorption,
+summed coherently over the band; pairs at least 15 dB over noise whose repeats agree to 0.5 dB,
+1.6-20 kHz at model scale; one gain per loudspeaker fitted, the archive's being undocumented),
+the two are the same: 4.22 dB rms over 1124 band levels either way, 4.52 and 4.51 dB rms over the
+845 in shadow, and 0.00 dB apart at the median there. At model scale the buildings are many
+wavelengths long, so their ends matter little, and what is left is not diffraction's form. Read
+with the archive's UE06 and UE07 measurements swapped, as the full-wave runs suggest (below; not
+confirmed), the two models are 4.01 and 4.02 dB rms over all, 4.26 and 4.27 in shadow.
+
+**Continuity.** On 20 of the sweep's lines (3771 positions, the loudspeaker at hover spot 5 only),
+`--edge_source` leaves 30 steps of more than 1 dB where the model without it leaves 31 (9.1 and
+9.5 dB at most): the steps are partners the orders leave out -- a leg meeting a third edge, a
+reflection past `--max_edge_reflections` -- which neither model traces.
+
+**Cost.** DigiCity's four microphones, 17 bands, on one thread: 0.22 s without `--edge_source`,
+58 s with it. The long block's 40 cases in its test: 4.9 s, against 0.01 s for the uniform form's 80.
+
+Taken over [0, L], a vertical edge on the floor has a false end there, a metre or so from every
+street-level ray, which moved microphone 7 by −1.5 dB at 160 Hz. Leaving the integral only to rays
+within 45 dB of the band's energy moved microphone 7 by up to 0.48 dB: hundreds of rays each under
+that carry half a decibel between them.
+
+**The plane-wave table under a hover.** DigiCity (six container stacks 5.2-7.8 m tall,
+`urban/digicity` in the harness), its 22 microphones at 1.2 m, a hover at each of its seven hover
+spots at 15, 30 and 60 m, the B407's hover sphere as a directional source (there is no drone
+database), rigid floor: the plane-wave table (`--urban_table`, on ground of 10^6 kPa s/m^2) differs
+from the point model, its rays summed coherently, by 0.42 dB rms at 60 m, 0.89 at 30 m and 2.34 at
+15 m. The table's distant-source approximation recovers only as the source rises well clear of the
+buildings.
+
+**Roofs as reflectors** (`niceops_point_field`, `--no_roofs` to compare). A microphone 1.5 m above
+a 200 m roof, its edges 90 m off, the source 30 m above the roof: the direct ray and the roof's are
+two rays over a rigid floor to within 0.05 dB in every band, and without roofs the level is 1.5 dB
+or more lower. Where a roof's edge hides its reflection the field is continuous to 0.01 dB from
+1 µm either side of the boundary. On EDGE's scenes (model − FDTD in [the full-wave reference](#the-full-wave-reference-among-buildings)), roofs move only the
+drone over rows of unequal houses, where the low roof reflects up to its taller neighbours' edges:
+UE07's drone from 2.54 to 2.29 dB rms with UTD and from 0.93 to 0.76 with the edge source, its
+worst band from 3.3 to 2.1 dB; UE06's from 1.97 to 2.00 and from 2.71 to 2.73. The floor
+sources, and the drone over the even rows, do not move: a ray off a roof reaches only what stands
+above that roof, or an edge higher still. UE06's floor source, 5 dB low where the FDTD's
+strongest arrival crosses a roof between two edges, needs a reflection between edges, which the
+model does not have.
+
+### Coherence between emission directions
+
+How `--buildings` adds rays that leave the source apart (THEORY §6.5) was fitted to flight tests in
+the harness's `coherence/` (its README has the method and every table): the 2017 Bell 407 level
+passes 283104-05 (60 kt) and 283108-09 (100 kt), 47-48 ground boards within 1500 ft, its high
+hovers H7-H10 (runs 283427-30 and 283437-40, 13 boards on a 500 ft semicircle), and PANAM's
+hexacopter flyover (13 boards). Each board's pressure is de-Dopplerized onto emission time, and per
+pair of boards, window and third-octave band the band coherency is the cross power over the root of
+the two auto powers, segment lengths following the band so the geometry is taken while it holds.
+A model is scored by the mean of |ρ − model|², which sets the mean square error of two rays' band
+energy at an unknown relative path phase:
+
+| | coherent (ρ = 1) | energy (ρ = 0) | the rotor's delay alone | the model | each band and separation's own mean |
+| --- | --- | --- | --- | --- | --- |
+| B407 passes | 1.156 | 0.294 | 0.439 | 0.278 | 0.276 |
+| B407 hovers | 1.130 | 0.247 | 0.423 | 0.227 | 0.212 |
+| Hexacopter, its rotors' delays half each way for the delay | 1.039 | 0.214 | 0.358 | 0.210 | 0.191 |
+
+The model here is the B407 fit, applied to the hexacopter without its delay. Its gain is where a
+ray sum feels it: B407 passes at 25-63 Hz and 10-20°, 1.26 coherent, 0.86 energy, 0.60 the model.
+What the fit rests on:
+
+- **The decorrelation is the source's.** At a fixed angle the passes' coherence does not fall with
+  range from 100 to 500 m, though the boards' spacing grows fivefold: at 500 Hz and 5-10°, 0.37,
+  0.47, 0.45, 0.37 and 0.41 from 0-100 m out to 300-500 m.
+- **The rotor's delay holds to about 4.5 blade-passage frequencies.** Scaled by κ, the best κ is 1
+  in hover and 0.75-1 in the passes in the main rotor's bands to 125 Hz, and 0 from 160 Hz, where it
+  turns in-phase pairs out of phase (passes, 250 Hz, 1-5°: +0.64 without it, −0.16 with it). Applied
+  at every frequency it scores worse than none (0.439 against 0.284 on the passes); where it stops,
+  between 2.5 and 7 blade-passage frequencies, moves the score by 0.0005. In hover, 70 % of 1219
+  pair-windows' fitted delays lie within 3 ms of δψ/Ω (chance: 17 %).
+- **The decay.** g = exp(−(fθ/θ₀)^p): θ₀ = 850 Hz deg, p = 1.61 with the delay (passes 725/1.84,
+  hovers 940/1.75, the joint fit weighting the two equally); 475/2.33 without it, fitted to all
+  three, which scores 0.2836 on the passes, 0.2457 on the hovers and 0.2132 on the hexacopter where
+  the with-delay pair would score 0.2866, 0.2588 (worse than energy) and 0.2104.
+- **Not the hexacopter's layout.** Its rotors as mutually incoherent point sources on a ring of
+  radius R, each coherent between directions, predict near-full coherence at 50-250 Hz and 10-40°
+  for R = 0.5-1 m, where the measured mean is 0 to +0.5; the best R runs to the bound (20 m) and
+  scores 0.221, worse than energy.
+- **The spread** σ² = γ² − g², γ² = T + (1 − T) exp(−fθ/2120 Hz deg), T each band's coherence
+  beyond 40° (the B407's: 0.89 at 25 Hz, 0.74 at 50, 0.39 at 80, 0.09 at 125, 0.14 at 250, 0.01 at
+  500), reproduces the measured spread to 0.09-0.12 rms over bins of band and separation on all
+  three cases. A uniformly random phase (σ² = 1) misses it by 0.76-0.82, and T(1 − g²) alone by 0.22
+  on the passes: at 500 Hz within 10° the coherence is 0.4-0.6 where the mean is 0.2-0.3.
+- **Limits.** Only the passes resolve separations below 10° (to under 2.5°); one helicopter and one
+  multirotor; the hexacopter's T stays 0.23-0.40 from 125 to 315 Hz where the default law gives
+  0.05-0.20. The measured coherence carries the air over the paths, so it bounds the source's own
+  from below.
+
+PANAM's `directional_coherence.fit_coherence`, given the passes and the hovers as two cases,
+reproduces these parameters to the digits quoted. Written into a copy of the B407 database, its
+record gives the DigiCity hovers below within 0.011 dB of the defaults.
+
+**What it does to levels.** The DigiCity hovers above (154 microphone-hovers per height), the
+measured model against the coherent and the energy sums, and its 90 % interval:
+
+| Hover height | measured − coherent, rms (max) dB | measured − energy, rms (max) | interval width, median (p90) | coherent sum inside |
+| --- | --- | --- | --- | --- |
+| 15 m | 0.69 (2.11) | 1.00 (4.23) | 0.84 (1.55) | 55 % |
+| 30 m | 0.42 (2.03) | 0.63 (3.14) | 0.58 (1.31) | 85 % |
+| 60 m | 0.23 (1.34) | 0.49 (2.85) | 0.35 (0.87) | 95 % |
+
+The level stays close to the coherent sum, mostly because rays leaving together (a flush or low
+microphone's direct ray and the floor's) stay coherent. For A-weighted levels the rotor's delay is
+a refinement: without the blades or the sense the hovers move by 0.07-0.21 dB rms (0.64 at worst),
+mostly through the other default decay, and with the sense reversed by 0.05 at most; it acts only
+below 124 Hz. On the demo approach over `tests/data/urban_buildings.csv` the pass SEL is within
+0.13 dB of the coherent sum at all seven microphones, its 90 % interval 0.4-1.6 dB wide, where the
+energy sum loses the floor's doubling at flush microphones (up to 3 dB). The measured sum costs
+1.4 times the coherent one on the hovers (0.29 s against 0.21 s for the rays from three states to
+22 microphones, 14 threads), and with the interval 3.1 times.
+
+### The full-wave reference among buildings
+
+`niceops_fdtd_field` (`src/fdtd`, `tests/test_fdtd.cpp`) against exact solutions, at 1 cm cells
+(25 cells a wavelength at the top band's upper edge, 500 Hz to 1.25 kHz), band levels, worst
+error, second order and fourth:
+
+| Case | Second order | Fourth order |
+| --- | --- | --- |
+| Two rays over a rigid floor: four receivers, near, far, on the floor and across the plane of symmetry | 0.081 dB | 0.005 dB |
+| The same with the plane of symmetry gridded as one, against the whole space | within 0.02 | within 0.02 |
+| The air applied by delay (0.4 Np/m), against each ray absorbed along its length | 0.066 | 0.006 |
+| A right-angled wedge with no floor, against the edge-source integral over the whole line plus geometrical optics: three receivers deep in the shadow, one lit, one where the wall reflects | 0.083 | 0.034 |
+| A concave right-angled corner, a floor and a wall through the whole domain, against the source and its three images | 0.036 | 0.002 |
+| A wall absorbing 0.36 at normal incidence, against its plane-wave reflection (ζ = 9), on its normal and off it | 0.098 | 0.072 |
+| The same wall's absorption alone, from its reflected pulse gated from the direct one (1-3.15 kHz, 5 mm cells), at α = 0.05, 0.2 and 0.36 | 0.0497-0.0499, 0.1987-0.1996, 0.3579-0.3594 | 0.0495-0.0499, 0.1979-0.1994, 0.3567-0.3591 |
+| The GPU's march against the CPU's (absorbing walls, every PML slab) | 1e-4 of the peak pressure; band levels within 1e-3 dB | the same |
+| Marching only the light cones' boxes, against every cell (a block and a wall along a 1.8 m strip) | 3e-7 of each receiver's peak | 5e-7 |
+
+Second order's bias is the source's and the receivers' trilinear spreading over their cells, low
+by an amount that grows with frequency; fourth order's tricubic stencils remove it. The absorbing
+wall's impedance condition is second order in either. Between EDGE's canyon walls (UE23, α = 0.05) the fourth
+order at 6 mm agrees with the second at 4 mm to 0.03 dB mean, 0.28 rms, and the second at 6 mm
+with it to 0.24 rms.
+
+**Over many wavelengths** the scheme's phase error decides. Two rays over a floor out to 2.3 m,
+2-5 kHz (13 to 33 wavelengths), the cell set by the 5 kHz band's upper edge; band levels' worst
+error and rms over four receivers:
+
+| Cells a wavelength | Second order | Fourth order | Fourth order, warped |
+| --- | --- | --- | --- |
+| 6 | 9.6 dB, 2.61 rms | 1.64, 0.47 | 1.23, 0.34 |
+| 8 | 4.8, 1.33 | 0.63, 0.19 | 0.39, 0.12 |
+| 12 | 1.77, 0.53 | 0.20, 0.06 | 0.09, 0.03 |
+
+Warping second order makes it slightly worse (0.58 dB rms at 12): its error depends on direction.
+A face off the grid is moved to the nearest cell face: the same corner with both planes 4 mm off,
+at 8 mm cells, is out by up to 0.56 dB at 500-800 Hz.
+
+**On a scene.** EDGE's UE00 (one row, four receivers on the floor behind it, 1.6-6.3 kHz, 28 band
+levels), on the M4 Pro's GPU. For the drone, against the Richardson extrapolation of second order's
+3 and 4 mm runs; for the floor source, against fourth order at 4 mm:
+
+| Run | Drone: worst, mean, rms (dB) | Floor source | Time, floor and drone |
+| --- | --- | --- | --- |
+| Second order, 3 mm | 0.23, −0.05, 0.07 | 0.10, −0.02, 0.05 | 505 s, 1453 s |
+| Second order, 4 mm | 0.40, −0.08, 0.13 | | 467 s (drone) |
+| Fourth order, 4 mm | 0.10, −0.01, 0.02 | | 221 s, 681 s |
+| Fourth order, 6 mm | 0.04, +0.00, 0.02 | 0.17, +0.04, 0.06 | 40 s, 116 s |
+| The same, marching only the light cones' boxes | 0.04, +0.00, 0.02 | 0.17, +0.04, 0.06 | 28.5 s, 81 s |
+
+Second order converges from below, worst at 6.3 kHz behind the row; fourth order at 6 mm, 8 cells
+a wavelength at the top band's upper edge, is the nearer of the two to the limit at an eighteenth
+of the time. Culling moves no band by more than 5e-6 dB. The tables that follow are second-order runs
+at 3 or 4 mm; at 3 mm that is within 0.23 dB of the limit.
+
+**The point-source model against it on EDGE's scale models** (omnidirectional source, no air,
+the model's default orders; second order, 1.6-8 kHz at 3 mm cells, 1.6-6.3 kHz at 4 mm; four
+receivers each, on the floor). Model − FDTD over every band level, mean and rms (range), dB:
+
+| Scene, source | Run | UTD | Edge source | What it shows |
+| --- | --- | --- | --- | --- |
+| UE00 (one row 0.49 m high), floor | rigid, 3 mm | −0.25, 0.35 (−0.9 to 0.0) | −0.20, 0.33 | Over one long row the model is the full-wave field |
+| UE00, drone | | +0.03, 0.05 (−0.07 to +0.16) | +0.02, 0.05 | |
+| UE23 (deep canyon), floor | walls 0.05, 4 mm, 90 ms; line of sight | −0.23, 0.37 (−0.8 to +0.4) | −0.24, 0.37 | With 12 reflections −0.3 to +0.6: a canyon's field is right with orders enough |
+| UE06 (five houses, the middle tall), floor | rigid, 3 mm | −4.24, 5.29 (−9.3 to +3.5) | −5.25, 6.03 | A roof's reflection, which the model does not have (below) |
+| UE06, drone | | −0.26, 2.00 (−3.3 to +3.8) | +0.81, 2.73 | |
+| UE07 (the middle low), floor | | −0.97, 4.42 (−11.1 to +9.6) | −0.96, 3.81 | |
+| UE07, drone | | −0.10, 2.29 (−4.2 to +5.2) | +0.03, 0.76 (−1.1 to +2.1) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
+| UE13 (two rows, the first higher), floor | walls 0.05, 4 mm, 90 ms | −4.28, 5.62 | −4.09, 5.17 | Behind the second row −12.4 to −8.0 dB at 1.6-3.15 kHz: no ray crosses three edges |
+| | | between the rows: −3.56, 4.47 (−9.4 to −0.4) | −3.51, 4.43 | Short of the reflections between the rows after the roof |
+| UE12 (two rows of one height), floor | walls 0.05, 4 mm, 90 ms | −0.71, 3.38 (−6.3 to +5.2) | −0.60, 3.33 | Behind the second row 2.7-5.2 dB high: two roofs of one height taken for one |
+| UE14 (one house 0.96 by 1 m), floor | rigid, 3 mm | −0.21, 1.22 (−3.9 to +2.1) | +0.07, 0.74 (−2.0 to +1.7) | A house a few wavelengths long: its edges' ends count |
+| UE14, drone | | −0.17, 0.67 (−2.0 to +1.1) | +0.37, 0.92 (−0.8 to +2.6) | The edge source is 2.6 dB high at 1.6 kHz at the receiver 0.15 m from a wall |
+| UE12, drone | | +0.20, 0.33 (−0.4 to +0.7) | +0.21, 0.34 | From above, one edge to each receiver: the model is the field |
+| UE13, drone | | +0.31, 0.46 (−0.3 to +1.3) | +0.31, 0.46 | |
+
+Behind UE12's second row the model's strongest ray diffracts at the first row's front edge and the
+second row's back edge, over a "shared face": the two roofs lie in one plane, and the model takes
+them for one roof, the street between them included, so the two edges at the street lose nothing.
+The model tests only that its leg grazes the second edge's face, not that the face runs on between
+the edges. Rows of one height across a street are common; of the twelve shared-face rays without
+reflections at DigiCity's four microphones (the loudspeaker at hover spot 5), none crosses a gap.
+
+Between UE13's rows the model is 0.4-3.1 dB short at 1.6-3.15 kHz and up to 9.4 dB at 4-5 kHz.
+What reaches those receivers crosses the first roof and reflects between the two rows' facades,
+and the model's twice-diffracted rays carry one reflection each side; with only those few paths,
+all leaving the floor source at one angle, the null of its floor reflection stays deep at 5 kHz,
+where the full-wave field's many paths fill it. Rigid, the same canyon had not settled in 36 ms:
+1.6-2.1 dB still moved over the run's last tenth.
+
+**Two of EDGE's scenes may be swapped.** UE06 (a row of five 1 m houses, the middle one tall) and
+UE07 (the middle one low): the archive's drawings, photographs and geometry agree with each other
+scene by scene, but each scene's measurements fit the other's geometry. Against UE00 (the uniform
+low row, same source and receivers), the FDTD's change for UE06's geometry is the measured change
+for UE07, and the reverse, within about 1 dB at all four receivers (floor source, 1.6-3.15 kHz,
+8 mm cells); behind the tall middle house, for instance, +10.4, +11.4, +10.6 and +8.1 dB from
+the FDTD against +10.0, +9.9, +10.1 and +7.4 measured in "UE07", where "UE06" measured −0.6 to
++6.9. This is an inference from the full-wave runs, not a confirmation: the archive's authors have
+not said so, the models measured may not be the ones documented, and a different fault in the
+experiment could give the same pattern. The comparisons here read the two swapped unless marked,
+and the table below gives both readings.
+
+**EDGE against the FDTD** (each ray reads the loudspeaker's directivity along the direction it
+leaves the source, each FDTD run given the ray model's correction for the loudspeaker's
+directivity and the air, the model's coherent ray sum with them less without; one calibration per
+loudspeaker and band from the line-of-sight pairs, as above). Measured − predicted:
+
+| Scene, source | Band levels | FDTD | UTD | Edge source |
+| --- | --- | --- | --- | --- |
+| UE00, floor | 32, shadow | +0.04 dB mean, 1.80 rms | +0.28, 1.96 | +0.23, 1.98 |
+| UE00, drone | 32, shadow | −0.18, 0.66 | −0.20, 0.65 | −0.20, 0.65 |
+| UE23, floor | 28, line of sight | +0.37, 0.83 | +0.36, 0.80 | +0.36, 0.80 |
+| UE06 (read swapped), floor | 32, shadow | −1.15, 2.20 | +3.10, 4.52 | +3.99, 5.01 |
+| UE06 (read swapped), drone | 31, shadow | −0.12, 0.72 | +0.21, 1.84 | −0.82, 2.57 |
+| UE07 (read swapped), floor | 32, shadow | −1.03, 2.32 | −0.06, 3.71 | −0.08, 3.28 |
+| UE07 (read swapped), drone | 32, shadow | −0.32, 1.14 | −0.22, 2.13 | −0.33, 1.16 |
+| UE06 (as labelled), floor | 32, shadow | −1.90, 5.00 | +2.34, 3.93 | +3.24, 4.84 |
+| UE06 (as labelled), drone | 32, shadow | +2.40, 3.89 | +2.66, 4.33 | +1.68, 3.81 |
+| UE07 (as labelled), floor | 32, shadow | −0.28, 4.30 | +0.70, 4.82 | +0.67, 3.98 |
+| UE07 (as labelled), drone | 31, shadow | −2.82, 4.10 | −2.77, 3.36 | −2.77, 4.15 |
+| UE13, floor (walls 0.05, 90 ms) | 26, shadow | +2.51, 5.65 | +6.47, 9.11 | +6.36, 8.99 |
+| UE12, floor (walls 0.05, 90 ms) | 27, shadow | +1.14, 3.73 | +1.91, 4.83 | +1.84, 4.79 |
+| UE12, drone | 21, shadow | +0.23, 1.10 | −0.13, 1.01 | −0.14, 1.01 |
+| UE14, floor | 32, shadow | −0.07, 1.36 | +0.14, 1.44 | −0.14, 1.51 |
+| UE14, drone | 24, shadow | +0.06, 0.74 | +0.32, 0.91 | −0.46, 1.37 |
+| UE13, drone | 28, shadow | −0.35, 1.60 | −0.78, 1.71 | −0.78, 1.69 |
+
+Behind the second row of both UE12 and UE13 the measurement is louder than the full-wave field of
+the LoD1 rows, by 3-5 dB at 1.6-2.5 kHz and more above (+4.4 dB mean in UE12, +8.5 in UE13); that
+is not explained.
+
+The drone's runs are the cleanest test, the source far from the floor and from anything that
+might be under it: over UE00, UE06 and UE07 (the last two read swapped) the full-wave field is
+the measurement to 0.7, 0.7 and 1.1 dB rms, band by band. Where one edge brings the drone's sound
+to each receiver -- UE00, UE12, UE13 -- the ray model is as good; over UE06 and UE07, where the
+paths cross several houses' edges and ends, it is 1.8 and 2.1. As labelled, the full-wave field
+misses UE06 and UE07 by 3.9 and 4.1 dB rms and the ray model by 4.3 and 3.4, so the full-wave
+field favours the swap and the ray model does not decide it.
+
+In UE06 the FDTD's strongest arrival behind the tall house is a reflection the ray model does not
+have: off the low neighbour's roof and the next tall house's side wall, a corner whose double
+reflection misses its wall by 1.4 cm and so arrives at about half its strength. Roofs do not
+reflect in the model; there it is 5 dB low.
+
+What is left after the FDTD is mostly the floor source itself. Its own floor reflection makes a
+null where the path over the first roof leaves at θ, near c / (4 h sin θ) (h = 29 mm): 4.9 kHz in
+UE13, 6.6-7.0 kHz in UE06 and UE12, 10 kHz in UE00. In the nine floor-source pairs whose null
+falls within 1.6-8 kHz, the measured level at the null's band is 7.8 dB above the pair's mean
+residual (median), and in the low bands it keeps the reflection: leaving the source's floor
+reflection out lowers 1.6-2.5 kHz by 4-5 dB, which the measurements do not do. Something under
+the loudspeaker absorbs at high frequency and not at low; the archive's photographs show each
+floor loudspeaker on a black pad.
+
+### Scattering walls (point source)
+
+`niceops_point_field --scattering` (`DiffuseFacades::point_energy`). A source and microphone
+together 1 m in front of a 10 m square wall, patches of 0.2 m: within 0.2% of Lambert's law,
+ρs d²/π ∫ dA/r⁶ over the wall.
+
+**The reliefs' coefficients** (`tools/profile_scattering.py`, boundary elements at 10 a
+wavelength, four frequencies a band, incidence every 5° from −85 to 85°):
+
+| Band (Hz) | 1600 | 2000 | 2500 | 3150 | 4000 | 5000 | 6300 | 8000 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| EDGE scatter_1, sawtooth 0.12 m deep on a 0.36 m pitch | 0.91 | 0.94 | 0.95 | 0.96 | 0.97 | 0.98 | 0.98 | 0.99 |
+| EDGE scatter_2, ribs 24 mm deep on an 80 mm pitch | 0.05 | 0.06 | 0.30 | 0.62 | 0.76 | 0.53 | 0.19 | 0.15 |
+
+A 20 ft container's side wall (trapezoids 36 mm deep on a 278 mm pitch, as one owner describes his;
+the standard does not fix it): s under 0.01 to 500 Hz, then 0.10 at 630 Hz, 0.26 at 800, 0.35 at
+1 kHz, 0.45 at 1.25, 0.55 at 1.6, 0.69 at 2, 0.83 at 2.5, 0.91 at 3.15, 0.88 at 4, 0.80 at 5 and
+0.82 at 6.3 kHz.
+
+**EDGE's deep canyon with relief** (UE24, UE25 and UE26 against UE23: walls 1.92 m high and 2 m
+apart, sources and receivers on the floor in the canyon, all in line of sight; S2, 1.6-8 kHz; the
+change from UE23, which needs no calibration). The model's walls take the relief's s(f), the rest
+of the canyon its UE23 geometry, eight reflections:
+
+| Scene | Pairs | Measured | Model | Specular rays alone (the diffuse energy left out) | Error, model | Error, no change |
+| --- | --- | --- | --- | --- | --- | --- |
+| UE24 (sawtooth on one wall) | 64 | −1.03 dB mean, 1.80 rms | −0.25, 0.82 | −3.46, 3.58 | +0.78 mean, 1.46 rms | +1.03, 1.80 |
+| UE25 (ribs on the other) | 64 | −1.11, 1.92 | −0.04, 0.32 | −1.13, 1.47 | +1.07, 1.84 | +1.11, 1.92 |
+| UE26 (both) | 64 | −1.62, 2.50 | −0.13, 0.83 | −4.05, 4.20 | +1.49, 2.23 | +1.62, 2.50 |
+
+In a canyon Lambert's law returns almost all that the reliefs take from the specular rays, where
+the measured levels fall by 1-1.6 dB: the model lies between keeping the energy and losing it, and
+nearer keeping it. The full-wave field says why. With the sawtooth as rigid geometry (UE24, its
+teeth facing one way along the canyon, which the archive does not give, walls absorbing 0.05, 4 mm cells, 1.6-6.3
+kHz, the floor source at the canyon's middle; 28 band levels), the FDTD's change from UE23 is
+−1.03 dB mean, 1.52 rms, against the measured −0.52 and 1.35: it is within 1.02 dB rms of the
+measured change band by band, where Lambert's model is within 1.19 (+0.57 mean). The large
+changes are a single receiver's in a single band -- −3.1 measured at 1.6 kHz against −3.0 from the
+FDTD and −0.2 from Lambert's law; −2.5 at 2 kHz against −2.9 and −0.7 -- the relief redirecting
+the reflections rather than diffusing them, which a coefficient cannot hold. The ribs (UE25, the
+same way): the FDTD's change is −0.64 dB mean, 1.07 rms, against the measured −0.63 and 1.45,
+within 1.30 dB rms band by band; Lambert's model, +0.04 mean, is within 1.46, which is no better
+than assuming no change at all (1.45). The largest measured changes there, +2.8 and +3.3 dB at
+1.6 kHz where the ribs scatter almost nothing, are in neither. The second source, half a metre
+off the canyon's middle, says the same (28 band levels each): the sawtooth's measured change is
+−1.77 dB mean, the FDTD's −1.67, within 1.45 dB rms, and Lambert's model −0.50, within 1.83; the
+ribs' −1.68, −1.21 within 1.85, and −0.10 within 2.31. Both reliefs together (UE26, the first
+source): −0.87 measured, −1.16 from the FDTD within 1.60, +0.16 from Lambert's within 1.89.
+
+So the coefficient does what it is for where the diffuse energy is a path the rays lack -- a
+microphone in a building's shadow, as DigiCity's below -- and not where it only redistributes
+what the specular rays already carry, as in a street with the source and the microphone in it.
+
+**EDGE's park with relief** (UE28 against UE27; scatter_2 on the two facades that face each other
+across the park, read from the archive's photographs, each a 1 cm slab carrying s(f)): measured
+changes are small, 0.86 dB rms in line of sight and +0.40 dB mean in shadow; the model's error is
+0.75 dB rms and −0.38 dB mean. The largest measured change, the drone to receiver 3, −2 to −3 dB at
+2.5-5 kHz, the model has at −0.5 to −1.4 dB, peaking in the same bands as the ribs' s.
+
+**DigiCity's microphone 7** (the loudspeaker at hover spot 5; the source calibrated band by band
+on microphones 2, 8 and 10, as the validation harness's DigiCity comparison does; walls absorbing
+0.05, 70% RH, patches of 1 m):
+
+| Walls | Microphone 7, predicted − measured, 160 Hz-5 kHz | Calibration microphones' spread |
+| --- | --- | --- |
+| Specular | −4.4 dB mean, 5.5 rms (−10.5 to +1.2) | 2.55 dB |
+| s = 0.1 in every band | −3.6, 4.3 | 2.38 |
+| s = 0.3 | −3.2, 3.6 | 2.34 |
+| s = 0.5 | −3.2, 3.6 | 2.42 |
+| The corrugation's s(f) | −2.6, 3.3 (−6.9 to +1.2) | 2.20 |
+
+With the corrugation's coefficients microphone 7 rises by 1.6-7.9 dB from 800 Hz up (1.25 kHz
+−8.7 → −2.9 dB, 5 kHz −10.0 → −2.7), and the calibration microphones by 0.2-1.0 dB. Below 630 Hz
+nothing moves, so the 250 Hz shortfall (−6.9 dB) stays.
 
 ### Trajectory smoothing
 

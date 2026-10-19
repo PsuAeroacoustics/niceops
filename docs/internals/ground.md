@@ -276,6 +276,27 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
     `urban_buildings_diffuse_golden` fails if they carry rho.
   - Patches under three of their sizes from a receiving point are summed over 4 by 4 parts;
     each patch is lit, and seen, from its centre, so shadow edges are resolved to a patch.
+  - **A point source lights the same patches** (`point_irradiance`, `niceops_point_field
+    --scattering`): the source's specular paths to each patch are the patch's own images
+    (`image_tree` from its centre, to `--max_reflections`) checked by `folded_path_open`, exactly
+    as the microphone's specular rays are found, each cos(incidence) / L^2 times its rho (1 - s)
+    and the floor's. An image whose first reflection is the patch's own wall is skipped: that is
+    the wall reflecting what arrives, not a second arrival. Only the active patches (weights not
+    negligible) are lit, in parallel over patches. The weights are built once per microphone for
+    every source, and so are the patches' images (`prepare_point_lighting`): 20 positions of
+    DigiCity's loudspeaker at its four microphones take 2.2 s on one thread, against 1.0 s with
+    specular walls, where tracing the images afresh for each source took 20 s. The lighting paths
+    and the gathering take the air's absorption (`DiffuseOptions::air`); the patches' exchange
+    does not.
+  - **Only walls in reach scatter.** A wall beyond `--diffuse_radius` of a microphone has no
+    patches to return its share, so for that microphone it keeps its whole rho: the rays' reflections
+    are per microphone (`reflection_for`), and `point_field_scattering_out_of_reach_is_specular`
+    holds a run with none in reach to the specular run. `point_energy` is tested against Lambert's law for a source and microphone
+    together in front of a wall, rho s / 2 d^2 (0.2% at patches of d / 5).
+  - **The coefficient is the relief's, band by band** (`--scattering_spectrum`, from
+    `tools/profile_scattering.py`): a constant s is a poor stand-in, the relief scattering nothing
+    where it is shallow against the wavelength and nearly everything above. A building's own
+    coefficient then weights the spectrum, so one run holds plain and relieved buildings.
 
 ### A point source among buildings (`src/point_paths`, `src/double_wedge`)
 
@@ -324,18 +345,45 @@ exactly. What to keep:
   change to the CSV or GeoJSON rules goes there once.
 
 **Where its time goes, and what not to undo.** On the 49-block benchmark district (a drone 30 m
-up, 185 street microphones, 24 bands) a pair took 1.55 s of CPU and takes 0.08 s; DigiCity's
-1427-point grid (17 bands) went from 0.33 to 0.043 s a pair. In order of what it bought:
+up, 185 street microphones, 24 bands) a pair took 1.55 s of CPU and takes 0.04 s, 88% of it the
+bands; DigiCity's 1427-point grid (17 bands) went from 0.33 to 0.043 s a pair. In order of what
+it bought:
 
-- **Twice-diffracted pairs are ruled out before they are solved**, which removes 90% of them.
-  Whether the source's image lights the first edge, and the microphone's sees the second, does
-  not depend on where along the edge (`seen_from`, a hair generous); and a stationary point lies
-  between its image's foot and the other edge's feet, at the fraction off_p / (off_p + off_q) of
-  the way, which bounds it from the edges' spans (`keller_can_reach`, the cheap
-  `keller_between` first). `PointPathOptions::prune` switches them off, and `pruning the
-  twice-diffracted pairs loses no ray` holds the rays the same to the bit with and without (a
-  slack of -0.5 m in the reach test fails it); the ray dumps of DigiCity's grid and the district
-  were byte-identical too.
+- **Each end proves which stretch of each edge it cannot see** (`visible_stretch`,
+  `edge_visibility.cpp`), once for all its partners (`PathEnd::View`), and both diffracted
+  searches drop a stationary point outside the stretch before checking its legs; the
+  twice-diffracted search's reach tests bound the point by the stretch rather than the edge, so
+  most such pairs are never solved. For an image to one reflection the path from the edge's
+  point q unfolds into the segment from q to the end's mirror; a convex building, shrunk by
+  1e-4 m, blocks it for one interval of q (a polygon clipped in two parameters, u along the
+  segment and w = u t), and the stretch runs from the first point the intervals of the buildings
+  near leave uncovered to the last. On the district a source's search over its 185 microphones
+  costs 3.3 s on one thread without it and 1.1 s with it; on a generated city of 900 blocks, a
+  source 40 m up over 40 street microphones, 10.7 and 2.2 s. The rays are the same to the byte
+  there, on the district and on DigiCity's grid. What it rests on:
+  - **It errs one way only.** A point outside the stretch is one `folded_path_open` refuses:
+    `a point of an edge proved hidden is hidden` samples every 2 cm and finds every point it sees
+    inside the stretch, and `pruning the diffracted paths loses no ray` holds the rays the same
+    with pruning off. Footprints that are not convex, or have courtyards, are left out, which
+    only widens a stretch; images of two facades or more are not tried.
+  - **The union and the stretch are what pay.** Proving whole edges hidden one building at a time
+    prunes only 7-25% of them: a source 30 m up sees some of all but 8% of the edges within
+    150 m, and a street microphone some of 45-72%. Covered by every building's interval at once,
+    per image and floor, the test's edges that no sample sees are proved hidden 97% of the time,
+    and the stretch excludes 84% of the unseen points on the rest.
+  - **The buildings come from the plan grid** (`Buildings::near_box`), not a scan of all of
+    them, which a city of thousands would make cost more than it saves.
+
+- **Twice-diffracted pairs are ruled out before they are solved**, which removes 90% of them
+  before the stretches above. Whether the source's image lights the first edge, and the
+  microphone's the second, does not depend on where along the edge (`PathEnd::View::lit`, a hair
+  generous); and a stationary point lies between its image's foot and the other edge's feet, at
+  the fraction off_p / (off_p + off_q) of the way, which bounds it from the edges' spans
+  (`keller_can_reach`, the cheap `keller_between` first). The search runs over the lit edges'
+  lists, not every edge with a test. `PointPathOptions::prune` switches these and the stretches
+  off, and `pruning the diffracted paths loses no ray` holds the rays the same to the bit with
+  and without (a slack of -0.5 m in the reach test fails it, as does the stretch pulled in by
+  0.5 m); the ray dumps of DigiCity's grid and the district were byte-identical too.
 - **The fixed point is found by Steffensen's method**, in closed form for parallel edges
   (`parallel_stationary`; the map is affine there), and a pair that does not converge in 100
   steps is no ray. The plain alternation it replaced took 16 steps on average and stopped at
@@ -351,7 +399,7 @@ up, 185 street microphones, 24 bands) a pair took 1.55 s of CPU and takes 0.08 s
 - **The shared-face aperture is integrated by Filon's rule** (`double_wedge.cpp`), 6 to 24 times
   fewer integrand evaluations than the midpoint rule at a 24th of a wavelength and ten times its
   accuracy ([FIDELITY](../FIDELITY.md#a-point-source-among-buildings) has both against a 192nd of
-  a wavelength). Three things in it are load-bearing:
+  a wavelength). Four things in it are load-bearing:
   - **A segment's end nodes sit a hair inside it.** The wedge coefficient jumps at a cut, and on
     the cut it takes one side's value; a node exactly there put the other side's value into a
     panel's quadratic, up to 28 dB off. A microphone in a roof's plane (theta = pi) puts both
@@ -366,6 +414,12 @@ up, 185 street microphones, 24 bands) a pair took 1.55 s of CPU and takes 0.08 s
     panel along which one shrank would otherwise take the series far past the radian it holds
     to. The Filon test's obtuse corners (n = 1.25) are what take the wave off the second
     wedge's other face, which right-angled faces never reach.
+  - **The end nodes' hair matters at high k.** A geometrical-optics wave's stationary point lies
+    on its cut, where its amplitude per unit length goes as 1/sqrt(u − u_c); how much of it the
+    first panel misses depends on how far in the node sits. 1e-7 of each wavenumber's own short
+    segment is fine; 1e-7 of a 200 m one is not, at 10 kHz, which is why
+    `shared_face_geometry` (the `--gpu` path's aperture, worked out once for every wavenumber)
+    takes a hair of the shortest aperture instead ([gpu.md](gpu.md)).
   Its second wedge's coefficient comes from a `WedgeSweep`: theta is fixed along the aperture,
   so each term's angle is theta's part plus theta0's, by the angle-addition formulas, two sincos
   calls a node instead of twelve calls. Within 1e-8 rad of a term's pole the sum of products
@@ -385,8 +439,9 @@ up, 185 street microphones, 24 bands) a pair took 1.55 s of CPU and takes 0.08 s
   than the square of the edges near): each segment's span about the other's line, which the
   pre-checks read, and its points as that line sees them, affine in their parameter. A pair was
   met eight times on average, once per image pair. The stationary point's iteration reads the
-  source's and microphone's places from the pre-checks (`Seen`), so `keller_point` takes one
-  square root an edge, not two.
+  source's and microphone's places from their ends (`PathEnd::View`), so `keller_point` takes
+  one square root an edge, not two, and a once-diffracted ray's Keller point takes none: both
+  ends' places are the views', worked out once an end rather than once a pair of images.
 - **A moving source traces each end once** (`PathEnd`, `--sources`). A field's image trees depend
   on the pair only through which near edges each image keeps, so an end traced with the edges
   near every end it will meet (its `partners`, `edges_near` over their points, ascending), each
@@ -400,13 +455,34 @@ up, 185 street microphones, 24 bands) a pair took 1.55 s of CPU and takes 0.08 s
   reflection whatever `max_edge_reflections` is. Without the floor of one, a run at 0 loses two
   thirds of its twice-diffracted rays; `twice-diffracted rays reflect at the microphone whatever
   the edge order` holds it.
-  The ends are cheap -- about 3% of a pair, 2 ms against 55 ms of CPU on the district -- so
+  The ends are cheap -- about 5% of a pair, 2 ms against 42 ms of CPU on the district -- so
   what `--sources` buys over a run per source is mostly being one process, with every worker
   busy to the end. The tool runs the sources a block at a time (64, or four per worker) to bound
   what it holds: the block's ends, levels and, for `--rays`, ray text, written out before the
   next. Within a block the pairs go microphone by microphone, which keeps the workers busy
   however few microphones there are, and each worker keeps the microphone's end while its pairs
   last; across a block boundary it is traced again, which the 3% makes noise.
+- **On a boundary the coefficient takes the side its ray is kept on** (`term_angles` in
+  `wedge.cpp`): the incident wave's where |beta| < pi, face 0's reflection's where beta < pi, face
+  n's where beta > (2n - 1) pi. The path tests count a path through an edge as open, so a ray
+  grazing the edge exactly is kept, and its edge's term must be the lit side's -1/2. A hair above
+  every boundary, whatever its side, put 1 + 1/2 on two of the four: 9 dB on a corner's shadow
+  boundary. `the field is continuous across a corner's shadow and reflection boundaries` holds a
+  tall box's corner to 0.5 dB between neighbours 2.5 cm apart. `hard_wedge_field` instead moves
+  its direction off a boundary once, for both of its tests.
+- **Continuity is the model's own test of its ray set.** Every boundary needs its partner traced
+  (THEORY 6.5), and where the orders run out the field steps. The validation harness's
+  `urban/continuity.py` sweeps a city for steps and classifies each by the ray that appears or
+  vanishes and why; [FIDELITY](../FIDELITY.md#a-point-source-among-buildings) has DigiCity's.
+  Raising `--max_edge_reflections` moves the gap up an order rather than closing it.
+- **The air's absorption is a factor on each ray's amplitude** (`sub_band_absorption`, Np/m at
+  each sub-band's middle frequency), taken where `sub_band_problems` forms the amplitudes and
+  only when one is given, so a run without it is the same bits as a build without absorption (the ray
+  dumps and levels of DigiCity's grid and the district were compared). On the GPU each problem
+  carries its coefficient and each ray its length (`BandProblem::absorption`, `GpuRay::length`),
+  and both amplitude kernels multiply by exp(-a L). `--rays` gives each ray's level at the band
+  centre, so its absorption is the band centre's. `the air absorbs each ray along its length`
+  holds the levels to the closed form for a lone ray.
 - **A ray's reflections are taken once a band** (`reflected_amplitude`, both models): the square
   roots of its facades' and the floor's reflection, which no sub-band changes; the coefficient
   is the only per-wavenumber part. `ray_amplitude` and `point_ray_amplitude` compose the two,
@@ -428,20 +504,227 @@ Measured and left alone:
   can still be a near-twin of a strong one -- the same path off the floor, a hair longer -- and
   its cross term is then sqrt of its share, not its share: ranking by energy plus that overlap
   (the rays within pi / h of it) holds the change to 0.006-0.14 dB, but then little is dropped
-  and the saving is 1.1-1.2x. And the rays' bands are no longer the cost: the twice-diffracted
-  search is, and an energy test cannot prune it cheaply -- those rays are relatively strongest in
-  the lowest band, where a 60 dB floor keeps most of them, and bounding a ray's coefficient costs
-  what the visibility tests it would skip cost. A shared face's ray cannot be ranked by its
+  and the saving is 1.1-1.2x. (Those savings were measured with the twice-diffracted search the
+  larger cost; with the stretches above the bands are most of a pair again.) Nor can an energy
+  test prune that search cheaply: those rays are relatively strongest in the lowest band, where a
+  60 dB floor keeps most of them, and bounding a ray's coefficient costs what the visibility
+  tests it would skip cost. A shared face's ray cannot be ranked by its
   cascade either: on the district its uniform form is up to 53 dB stronger, a source exactly in
   a roof's plane.
+- **Nor does the band average's integral form on the CPU.** Where every pair of rays is within
+  the pair sum's reach (the bands up to about 200 Hz on the district), Gauss-Legendre over the
+  sub-band, as `--gpu` takes it, would agree to 1e-12 dB, but the vectorized pair sum takes 0.42 ns
+  a pair there -- 0.54 s for 1.3 billion pairs over the district's 185 microphones -- and the
+  integral would take 49 million sincos calls for the same problems.
 - **Neither do cheaper ray sets.** Twice-diffracted rays off the floor at both ends carry 0.1% of
   any band's energy but are near-twins of others: leaving them out moved levels by 1.5-2.7 dB.
   Without double diffraction the district runs 13x faster and some microphones receive nothing;
   those rays carry up to 41% of a band elsewhere. A 100 m `--radius` moves levels by up to 42 dB.
-- **Nor does pruning hidden edges.** Proving an edge wholly hidden by one convex building
-  (`blocked` by a building shrunk by twice `contact` at both ends means blocked between, by
-  convexity) prunes only 7-25% of the edges; even sampled every half metre, a source 30 m up sees
-  some of all but 8% of the edges within 150 m, and a street microphone some of 45-72%.
+
+- **Roofs reflect, one horizontal surface to a ray** (`PointPathOptions::roofs`,
+  `folded_roof_path_open`, `Buildings::on_roof`). Among vertical walls a ray that leaves a roof
+  keeps rising, so the floor and the roofs exclude each other and a roof is the floor at its own
+  height for that ray; the facades' mirrors commute with it. What to keep:
+  - **The bounce is tested on the roof to round-off, not by `inside()`**, which keeps 1 µm off a
+    footprint's sides. The roof's ray has to appear exactly where its edge's diffracted ray changes
+    sign, at the roof's reflection boundary; tested by `inside()` it stopped short and the field
+    stepped by 0.19 dB 1 µm off the boundary.
+  - **The edge must stand above the roof.** A roof's own edges carry its reflection in their wedge
+    coefficients, the roof being one of the wedge's faces; a ray off the roof to them would count it
+    twice.
+  - **A roof counts as one of a side's `max_edge_reflections`**, and its candidates come from
+    `near_box` over the plan box from the image to the edge (or from the source to the
+    microphone's image), sorted so the rays come in a fixed order.
+  - **Roof rays skip the visibility proof**: their views take the whole edge, since the proof knows
+    facades' apertures and not a roof's outline. The exact path tests decide.
+  - **They take UTD under `--edge_source`** (`edge_source_factors` returns nothing for them): the
+    roof's outline bounds the stretch of the edge its image sees, which the integral does not know.
+  - **`point_ray_launch` reads `source_plane`**, which floor rays set to 0 as well. Telling a floor
+    bounce by the source image's sign could not tell a roof, whose image may lie above z = 0.
+  - Cost: 4% on `--buildings`' district run (60.0 to 62.5 s).
+  - Not done: twice-diffracted rays off a roof; roofs in the plane-wave tables, where a street
+    microphone would see a roof's ray only through an edge lit by a reflected wave, which they leave
+    out; and a reflection between two edges, which UE06's floor source needs (FIDELITY).
+  - Tests: `a roof reflects as the floor does`, `the field is continuous where a roof's edge hides
+    its reflection`, `on a wide roof the field is the direct ray and the roof's`, and `rays off a
+    roof are reciprocal and leave along minus their length's gradient`.
+- **`point_ray_launch` is minus the length's gradient**, and `a point ray leaves the source along
+  minus its length's gradient` checks it so, by nudging the source, over every kind of ray; it fails
+  without either floor rule. It is what a directional source is read along.
+
+### In a run (`--buildings`, `src/urban_point`)
+
+`UrbanDistrict::levels` gives every state's level at every microphone before the observer loop,
+which marches them. What to keep:
+
+- **The district is opaque to `niceops.cpp`.** `buildings.hpp`'s `Ring` is not `contour.hpp`'s, and
+  both live in `niceops`, so the run's translation unit sees `UrbanDistrict` (a pimpl) and never
+  `Buildings`. `building_input.hpp` moved from `tools/` to `src/` for it.
+- **Sources go in blocks, their trees built in parallel, and pairs microphone by microphone**, as
+  `niceops_point_field --sources` takes them.
+- **Each ray carries the sphere's band amplitude along its launch** (`Database::spectrum_along`, at
+  1 m), with the sphere's conventions: no spreading gain and no absorption inside its radius. That
+  is what makes `buildings_far_is_open_without_ground` hold -- one building 1000 km off and a floor
+  absorbing everything give the run without a ground model, at 1e-9 (in fact to the printed digit).
+- **No peak search.** A coherent sum of a source's rays can exceed the straight path's bound by
+  20 lg N, so every state is evaluated, as under the options that need a full history.
+- Cost: 16 ms of CPU a pair; the demo track's 6,551 states at seven microphones take 60 s on 14
+  threads. What it changes is in FIDELITY.
+- Tests: `buildings_far_is_open_without_ground`, the refusals `buildings_refuses_*`, and the
+  launch test above.
+
+**How its rays add** (`src/source_coherence`, `partially_coherent_energies` in
+`src/urban_point.cpp`; THEORY 6.5). The model came out of the harness's `coherence/`, which says how
+each part was measured; what to keep in the code:
+
+- **The rotor's delay rides on the rays, not the pairs.** A ray carries its effective length
+  L + (c s / Omega) psi, so the pair's path difference and delay are one difference, and the sine and
+  cosine of the half width times it come from the rays' own (`band_averaged_energy`'s trick). The
+  pair's wrap to +-pi is then a shift by one turn's length on the pairs whose raw azimuth difference
+  passes pi, whose phase, sine and cosine are per sub-band constants. A pair needs no trigonometry.
+  Doing it per pair (a polar and a sin per pair per sub-band) was most of the sum's time.
+- **The decay is taken at the band's centre, once per pair per band**, as it was measured (on
+  band coherency), not per sub-band, and a pair once below e^-14 is dropped for the bands above:
+  its decay only grows with frequency.
+- **No sort.** An early version sorted the pairs by separation to break early; at 724 rays that is
+  a sort of 262,000 pairs per field, and the shrinking live list does the job.
+- **The chord, not the angle.** |d_i - d_j| in degrees needs no acos, and a decay in the chord is a
+  positive-definite kernel on the sphere, which a decay in the great-circle angle with an exponent
+  above 1 is not; they differ by hundredths of a degree where the decay is not yet complete.
+- **Buffers per thread, bound once.** The pair arrays live in a `thread_local` `PairScratch`, bound
+  to references at the top: each use of a `thread_local` itself is a lookup on macOS, and in the
+  pair loops that cost 15% more than the allocations it saved.
+- **The interval's groups.** Rays with mean coherency 0.99 or more are one group (single linkage,
+  per band), and each pair of groups adds half the square of its summed cross terms, each weighted
+  by the root of its pair's spread. Treating every pair of rays as independent instead understates
+  the variance wherever rays travel together: a flush microphone's direct ray and the floor's, with
+  a facade's reflection and its floor partner, give four pairs that deviate as one, a factor of 4.
+  A pair of rays each alone in its group is its own slot, outside the hash map.
+- **Coherent mode keeps the old code path** (`PointSourceField::band_levels`), so its output is
+  the earlier coherent sum to the bit; `partially_coherent_energies` under `RaySum::coherent`
+  agrees with it to 1e-9 dB (`test_source_coherence.cpp`).
+- **What the database records goes as a whole** (`source_coherence()`). A record's fits were made
+  with its own rotor's delay removed or not, so a record holding fits and no rotor does not take
+  the vehicle file's; the defaults for the rest follow the rotation it ends with.
+- **Rejected** (measured in the harness): the delay at every frequency (worse than none above about
+  160 Hz); an effective rotation scaled by kappa (0.75 in the passes, 1 in hover, within 0.03 of
+  kappa = 1 in the score); the hexacopter's rotors as mutually incoherent sources on a ring
+  (worse than energy for any radius); and a uniformly random phase beyond a window for the
+  interval, which put a wide spread on broadband bands that add in energy.
+- Cost: the measured sum 1.4 times the coherent one on the DigiCity hovers, 3.1 times with
+  `--phase_interval` (most of it the per-band spread and group slots, run over every pair).
+- Tests: `[source_coherence]` (the delay's sign and wrap; coherency 1 and spread 0 at no
+  separation; rays leaving together staying coherent; the measured sum within the coherent and the
+  energy sums sub-band by sub-band; the variance against its formula for two rays; the record's
+  precedence; the record's round trip through an exported sphere and its refusals), and
+  `buildings_far_phase_*_is_the_level` (one ray: both ends are the level). panam's
+  `test_directional_coherence.py` pins the estimator's sign against a synthetic turning pattern,
+  and its `test_niceops_loads_databases.py` that NICEOPS reads the record and refuses a bad one.
+
+### The edge-source integral (`src/edge_source`, `--edge_source`)
+
+The Biot-Tolstoy-Medwin solution as Svensson's line of secondary sources (THEORY 6.5), in the
+frequency domain, for the point-source model's diffracted rays. What to keep:
+
+- **First order is integrated in eta, not z**, with the peak closed. Near a boundary a
+  directivity term is a peak of width psi at eta = 0, and its integral is the closed arctangent;
+  the rest is smooth. The two sides of the apex share eta's integrand. The denominator is
+  2 sinh^2(nu eta/2) + 2 sin^2(nu phi/2): written cosh - cos it cancels at the apex within 1.5e-8
+  of a boundary, where cos rounds to 1, and returned inf there.
+- **eta(z) and z(eta) are written so nothing cancels.** cosh eta - 1 =
+  (r_S b + r_R a)^2 / (r_S r_R (m l - a b + r_S r_R)), with r_S b + r_R a = (r_S + r_R)(z - apex) and,
+  where a b > 0, m l - a b by its conjugate. Far out along an edge m l - a b is a difference of two
+  numbers of 1e30 for a source 1e7 m off, which put 1e-3 dB on the plane-wave check. The edge's point
+  at eta comes from a quadratic whose discriminant factors as (8 d r_S r_R sinh eta)^2.
+- **Past a dozen radians of phase the single-wavenumber field goes along steepest-descent paths**
+  (`descent`, 20 Gauss-Laguerre points). Every singularity of that integrand -- beta's poles, the
+  branch points at h = 0 and i pi -- has R(h) real and at most R0, so it lies at least the window's
+  phase from the Laguerre variable's axis however near a boundary the terms are.
+- **For many wavenumbers, Filon's rule of degree four in R** (`edge_source_spectrum`): the
+  integrand there does not depend on k. Panels geometric at 1.25 from the apex, the first one
+  included (at 1.5 the error was 4.6e-4, from the 1/sqrt the integrand has at the apex); moments by
+  the recurrence from a radian of phase and a Horner series below (36 terms summed per call took
+  432 us a ray for 72 wavenumbers; 82 us now, against 880 us for 72 descent calls).
+- **Second order is integrated over its level curves** (`LevelCurves`, `twice_diffracted_spectrum`):
+  G(Lambda) does not depend on k, so one set of curves serves every sub-band. Rejected before it:
+  a nested integral per wavenumber in a smooth window, whose taper needs 40 to 80 radians to be
+  within 2e-3 to 4e-5 and so costs milliseconds a sub-band; steepest descent in two dimensions,
+  which needs beta1 continued into complex z2 and risks crossing its poles; and a semi-cascade
+  (the exact first order at the second edge, UTD after), which fails when the edges are near.
+  Load-bearing in it:
+  - **Chebyshev points of the first kind.** At u = 0 the curve is a point and G only a limit; a
+    Lobatto node there returned 0, the interpolant never converged, and a pair took two minutes.
+  - **u G is interpolated, not G.** Past a boundary point G goes as 1/sqrt(Lambda - B).
+  - **The breaks include the boundary points** (`boundary_points`): where a directivity term's
+    pole meets the real line on its edge's ridge, G steps. Without them the perpendicular pair
+    was 1-11% off.
+  - **A piece is judged against the whole transform's integral of |G|, estimated first from three
+    points a segment.** Judged against its own segment, a small segment where G crosses zero was
+    held to 1e-6 of almost nothing: one DigiCity pair took 3.9 s, 24 ms now.
+  - **What is held still near a break, and how near two breaks are one**, is a hundredth of a
+    radian at the largest wavenumber or a thousandth of the directivity peak's own scale
+    (psi^2 r/4), whichever is smaller, floored at 1e-10 of the least path. A millionth of the span
+    -- 4 mm on the long block's 4000 m edges -- smeared its grazing roof's transition and put the
+    block 4.5 dB off at 1 kHz; a hundredth of a radian alone put it 0.62 dB rms off. Two breaks a
+    floor-standing pair puts 1.5e-7 apart cost 26 pieces and 1.2 s until merged (5 ms).
+  - **From the least path the pieces start geometric in u, a factor of eight apiece**, because
+    what G does near it is on the scale of how near; one piece over the whole segment never
+    sampled the small u where the long block's structure lies. Only the first segment needs it:
+    applied at every break, the fine hold and the geometric pieces took DigiCity's four
+    microphones from 61 s to 137 s on one thread for nothing.
+  - **Directivities by angle addition** (`HalfAngle`): one sincos for each angle that varies along
+    the curve, the four terms' half-angles from it; for parallel edges both are built once.
+- **The plane factor is a half over a shared face.** Without it the integral over a block's roof
+  is the cascade without UTD's grazing half, to 0.01-0.1 dB at k = 20: twice the field. With it the
+  long block is within 0.10 dB rms of the BEM.
+- **A twice-diffracted ray over edges that are not parallel takes its partners' corrections**
+  (`twice_diffracted_partners`, `localized_twice_diffracted_*`). A boundary plane of one edge
+  crosses the other, and there the second order carries half a once-diffracted field that only
+  the cut-off first order cancels. In a window about the stationary point the raw integral drifted
+  from -68.94 to -70.44 dB as the window grew from 40 to 160 radians on the perpendicular pair;
+  with the corrections it holds -68.944 to -68.948 and is the corrected cascade's within 0.02 dB.
+  The subtracted partner is the model's own ray for it (`PartnerModel`): with `--edge_source`
+  the edge-source integral over the whole edge.
+- **A point on the other edge's own line has no angle about it.** Where a roof edge meets the
+  vertical corner below it, `where_along` skips the shared vertex and a partner's part must have
+  length; without both the vertex read as a wave's boundary, and its stretch of no length gave
+  every band of 20 of RWTH EDGE's source-receiver pairs a NaN. A factor that is not finite falls back to the
+  cascade (zero for a ray past an end) as a last guard.
+- **Vertical edges on the floor go through it** (`through_floor` in `point_paths.cpp`). The
+  floor's images split one doubled edge between a ray and its mirror, and the tracer keeps the one
+  above the floor; integrated over [0, L] each kept ray had a false end at the floor, a metre or
+  so from every street-level Keller point, which moved DigiCity's microphone 7 by -1.5 dB where
+  the edges' real ends move it by +0.6. `with the edge source a corner on the floor is one edge
+  with its image` holds the kept pair to the doubled edge's field.
+- **Once-diffracted rays past an end are kept** within `edge_source_reach` (100 radians at the
+  lowest band) and faded between 50 and 100 radians of the end's excess, so the tracer's cut is
+  no step; a point below the floor is its mirror's and is not. Twice-diffracted rays past an
+  end are not kept: it would loosen the pair prune and cost a level-curve integral per kept
+  ray, and none of the 30 steps above 1 dB in a 3771-position DigiCity sweep was one. Every
+  step there was a partner the tracer has no edge, reflection or floor leg for.
+- **Weights, not switches**: once-diffracted rays always take the integral, which matches UTD on
+  long edges to p90 0.01 dB; twice-diffracted ones blend into the cascade in each wavenumber's
+  transition parameter (0.3 to 1) and path excess (100 to 1000 radians).
+- **Do not gate by a ray's share of the energy.** Leaving the integral to rays above 45 dB down
+  moved DigiCity's microphone 7 by up to 0.48 dB: hundreds of twice-diffracted rays each under
+  that share carry half a dB of end effects between them. (The near-twin effect above is the same
+  lesson for dropping rays outright.)
+- **The cascade's spreading for edges that are not parallel** is the second edge's own curvature
+  along it (`twice_diffracted_ray`); its distance parameters stay the point-source ones, because
+  the astigmatic one the curvature gives the second edge broke `the point-source field is
+  reciprocal` by 0.04 dB.
+- **CPU only.** `--edge_source` with `--gpu` is refused.
+- **Where its time goes.** DigiCity's four microphones (17 bands, one thread) take 58 s against
+  0.22 s for UTD, nearly all of it the level curves' integrand: two `atan2`, two `sinh` and the
+  `asinh` of the two etas, and the directivities' half-angles. `std::nearbyint` in the
+  directivity build and `std::hypot` in the geometry together cost 5% of the run.
+
+Guard tests (`tests/test_edge_source.cpp`, and two in `test_point_paths.cpp`): the plane-wave
+limits against Sommerfeld and the n = 3/2 series; the descent against the direct integral; UTD at
+high k; reciprocity; continuity across a boundary and an end; the spectrum against the field; the
+level curves against the nested integral on parallel, shared-face and perpendicular pairs; the
+cascade against the localized integral at 0, 45 and 90 degrees; the long block through the field;
+the floor's mirror pairs; a corner's adjacent edges.
 
 ### The canyon wave solver (`src/canyon_wave`)
 
@@ -468,6 +751,11 @@ tables' low band (THEORY §6.6). What to keep:
   40,000 steps, 15 s on one thread and 8 s on eight. Threading per half step costs a thread
   start each time, so the table builder runs receivers in parallel instead. Each doubling of
   the top frequency costs eight times as much.
+- **What follows the march is threaded too, and has to be.** Each recording point's transform
+  (`spectra`) and each azimuth of a canyon's gains (`canyon_wave_gains`) go to the run's
+  threads, the same bits at any count. Serially the gains alone are 11 s of a 20 m canyon's
+  79 s to 707 Hz, and fourteen such canyons to 354 Hz take 65 s on 14 threads against 34 s
+  threaded. With `--gpu` the march itself is the GPU's ([gpu.md](gpu.md)).
 - **15 points per wavelength for tables**: 15 against 20 agree within 0.3 dB, 10 within 1.4.
 - **The far-field sum steps its phase by recurrence** over the evenly spaced points: one complex
   multiply per point instead of a sine and a cosine. It is the table build's inner loop.
@@ -482,6 +770,135 @@ tables' low band (THEORY §6.6). What to keep:
   margins), and the hidden studies `[.canyon_wave_study]` (convergence, the geometric limit) and
   `[.canyon_tone_study]` (rotor tones against band tables, the stage-2 gate), whose results are
   in FIDELITY under Canyon wave solver.
+
+### The full-wave reference (`src/fdtd`, `niceops_fdtd_field`)
+
+A 3-D staggered pressure-velocity FDTD (THEORY §9.4) of a point source among rigid solids: the
+reference the point-source model is held to on scenes no exact solution covers, such as EDGE's
+scale models. It is not part of any prediction. What to keep:
+
+- **Fourth order is the default, and its walls are mirrors.** The staggered 9/8 and -1/24
+  differences reach two cells; beyond a closed face the pressure takes its mirror value and the
+  velocity its negative (`pressure_difference`, `velocity_difference`, `fdtd_dp4`, `fdtd_dv4`).
+  With that rule the two differences are exact negative transposes of each other on any
+  arrangement of open and closed faces -- checked on random 1-D layouts, |G + D^T| = 0 -- so the
+  march conserves the discrete energy and is stable to C = 6/(7 sqrt 3), whatever the solids.
+  Do not "simplify" a ghost to zero or to the near value: that breaks the transpose.
+- **The warp is what makes fourth order pay.** Its phase error is fast by nearly the same amount
+  in every direction (0.45-0.61% at 8 cells a wavelength), so reading each frequency where the
+  grid carries the physical wavenumber, averaged over directions (`grid_frequency`), leaves only
+  the spread. Yee's error runs from 0 on the diagonals to its worst on the axes; warping it made
+  the 30-wavelength test worse, so it is not warped.
+- **Fourth order's sources and receivers are tricubic** over 4 by 4 by 4 cells, folded across
+  the floor and the plane of symmetry, and trilinear where a solid is among the 64. Trilinear
+  spreading alone cost second order 0.04-0.09 dB at 25 cells a wavelength, an error that grows as
+  the square of the cell.
+- **Voxels by the cell's centre, faces by flags.** One byte a cell: air, and whether each of its
+  three low faces is open (air both sides) or a solid's (air one side). A box whose faces fall on
+  multiples of the cell is exact, which is why the grid snaps its origin to a multiple of the cell;
+  EDGE's LoD1 coordinates are whole millimetres, so 3 and 4 mm cells grid them exactly.
+- **The PML is convolutional and lives in slabs** (Roden and Gedney, `Axis::slab`): one auxiliary
+  field per axis and per face or cell, only within that axis's slab. A split-field PML, as the
+  canyon solver has, would store three pressures in every cell of a 3-D grid.
+- **The floor and the plane of symmetry are rigid faces, not PML.** `--mirror` halves the grid;
+  a source on the plane injects half its strength, its image the other half.
+- **Sources and receivers spread over their eight cells by trilinear weights, renormalised over
+  the air among them.** The spreading filters what a point would radiate: the levels come out
+  0.01-0.09 dB low at 25 cells a wavelength, rising with frequency (`tests/test_fdtd.cpp`).
+- **Absorbing walls are the canyon solver's half-cell impedance** (stable for any Z), on the faces
+  flagged as a solid's, from the air cell's side. The floor stays rigid. At fourth order two
+  things go with it, and both are needed (`velocity_difference`, `wall_pressure`, `fdtd_dv4`,
+  `fdtd_wall_p4`):
+  - **Beyond a closed face the velocity is reflected about that face's own value**, 2 v_face - v,
+    not negated. A rigid face's is zero, so nothing changes there; an absorbing one's is not, and
+    negating gave its velocity 13/12 of its weight over the two cells' divergences. The wall then
+    absorbed 7% too much (0.0537 for 0.05), a fraction of a dB in one reflection but more in a
+    reverberant street.
+  - **The face's update reads 25/24 of its cell's pressure less 1/24 of the next**, the transpose
+    of those weights, so the march still dissipates for any impedance.
+  A gated reflection at normal incidence measures it (FIDELITY); the unit test's direct-plus-
+  reflected levels cannot see 7% of 0.05.
+- **The air is applied after the march, by delay**: exp(-a c (t - t_peak)) on every sample is
+  exp(-a L) on every arrival, which is how the ray model absorbs. Putting the loss in the march
+  would need a frequency-dependent term per cell.
+- **Truncation is judged band by band**: a band's level with and without the run's last tenth. The
+  raw tail energy is no guide; it is mostly the pulse's content below the bands, which leaves the
+  PML slowly.
+- **Rigid canyons ring.** Between parallel rigid walls the image sources' energies fall only as
+  1/n^2 and the tail as 1/n: in EDGE's UE13 the bands between the rows still moved 1.6-2.1 dB in
+  the last tenth of a 36 ms run. MDF absorbs about 0.05 (EDGE's `mdf.json`); with that and 90 ms
+  they settle.
+- **The GPU march is four dispatches a step** (velocity, pressure, injection, recording), 256
+  steps a batch, two batches in flight; `nk_u8` entered the kernel dialect for the flags. It
+  matches the CPU's float march to 1e-4 of the peak. The injection covers every cell of the
+  source's stencil, 64 for a tricubic one: dispatched for 32, it injected half the source of every
+  fourth-order run without a plane of symmetry (which folds the stencil to 32 cells), 6 dB low.
+  The GPU test runs both with the plane and without it for that reason. Throughput on the M4 Pro: 4.2-4.4e9
+  cell-steps a second (600 M cells, 7158 steps in 1033 s). Memory is 17 bytes a cell.
+- **Fourth order costs what second order does per cell-step on the GPU**: 4.2e9 either way on
+  a 512 by 512 by 256 box. A step moves about 50 bytes a cell (the flags twice, p, and the three
+  velocities read and written), so 4.2e9 is 210 GB/s against the M4 Pro's 273: the march is
+  bound by memory, and the wider stencil's extra reads come from cache. Everything fourth order
+  gains is therefore fewer cells and steps. On EDGE's UE00, order 2 at 3 mm took 505 s (floor
+  source, 356 M cells) and 1453 s (drone, 900 M); order 4 at 6 mm takes 40 and 116 s, 12.5 times
+  less, and is the closer of the two to the converged level ([FIDELITY](../FIDELITY.md)).
+- **The CPU skips the general path where it can** (`FDTD_CLEAN`): a cell whose neighbours two
+  deep along every axis are open air, outside every PML slab, takes the plain differences in a
+  vectorisable loop over its run of the row (`clean_velocity`, `clean_pressure`), 1.4-1.6 times
+  faster. The GPU kernels ignore the flag: being bound by memory, they have no arithmetic to save.
+- **Each step marches only its light cones' box** (`FdtdSetup::cull`, `cone_boxes`): the cells
+  the source's stencil can have reached by the step's end, and from which a receiver's stencil
+  can still be reached by the last, both growing at the scheme's fastest group speed plus 16
+  cells. A cell outside the first holds zeros it would only have added to; one outside the
+  second holds values that can no longer arrive. Three things to keep:
+  - **The speed is the dispersion relation's, not c** (`fdtd_fastest_group_speed`). Fourth
+    order's leapfrog outruns sound: 1.01 c along an axis at 7.5 cells a wavelength, and 1.23 c
+    near the Nyquist wavenumber on a diagonal. The pulse carries nothing up there, but a frozen
+    cell is a sharp edge in a full field, which excites every wavenumber, so the receivers' cone
+    has to shrink at the fastest. Second order's is c, at k -> 0.
+  - **The margin is the dispersive front's tail.** Against full marches (a block and a wall
+    along a strip, 310 and 620 cells long), no margin left 1e-5 (order 4) to 2e-4 (order 2) of
+    each receiver's peak, and 4 cells reached the float floor of a few 1e-7 (1e-6 on the GPU) at
+    either order and either length; band levels moved by under 1e-5 dB. 16 is four times that,
+    and costs 2% of the cell-steps.
+  - **What it saves depends on the run's length.** It cuts only the first and last domain
+    crossings, so a run of the default length (twice the box's diagonal) on UE00 marches 70% of
+    its cell-steps, 28.5 and 81 s instead of 40 and 116, its levels within 5e-6 dB of the full
+    march's. UE13's 90 ms canyon run would keep about 89%, by the boxes alone.
+  `culling the march to its light cones` compares culled and full marches at 4e-6 of each peak,
+  which no margin, or a receivers' cone shrinking at half the speed, fails; `the FDTD's fastest
+  waves` pins the speed itself, which a margin this wide would otherwise hide.
+- **Rejected: marching the GPU a column to a thread.** Carrying a column's pressures in
+  registers, so each is read once, ran at 3.0e9 cell-steps a second with the columns in rows and
+  2.66e9 in 16 by 16 tiles, against the cell kernel's 4.2e9; a fast path for clean cells added
+  3%. With the cell kernel already at the memory's bandwidth there is nothing for reuse to save,
+  and a column's serial walk hides less latency.
+- **Rejected: stopping a run when its recordings fall quiet.** A receiver deep in a shadow can
+  still be gaining 1e-5 of the emitted energy, and some arrivals are late (UE00's ends diffract
+  at 17 ms), so any threshold is a guess at what is still to come. `truncation_db` reports what
+  the last tenth moved instead.
+- **Rejected: a thinner PML.** With receivers 5 cells inside it, 8 to 20 cells all leave 5-6e-3
+  of the peak (0.07-0.13 dB in a band) and 6 cells three times that; the residue is the low
+  frequencies, for which 20 cells is less than a wavelength, not the depth. Ten cells would save
+  11% of UE00's cells for nearly twice the worst band's error.
+- **Rejected**: a 2.5-D boundary-element solve (a 2-D BEM per wavenumber along the rows, then the
+  transform). It is exact for rows of constant section but EDGE's stepped rows (UE06/07) vary
+  along them, and a canyon's near-trapped modes need a fine wavenumber grid. A scalar 7-point
+  scheme halves the memory but has no simple PML in second-order form, and a sponge needs a
+  wavelength of depth.
+- **Keep test geometry on the grid.** A face between cell faces is moved to the nearest one: a
+  concave corner with both planes 4 mm off the grid, at 8 mm cells, was 0.56 dB out at 500-800 Hz,
+  and 0.01 dB once they were on it.
+- Tests: `[fdtd]` -- the two rays over a floor (and the plane of symmetry, and the air applied by
+  delay), the exact wedge (`edge_source_field` over the whole line plus geometrical optics), a
+  concave corner against its three images, an impedance wall's plane-wave reflection, a point a
+  fraction of a cell inside a solid refused, fourth order's phase over twenty wavelengths, the
+  culled march against the full one, the fastest group speed, and the GPU against the CPU.
+
+`tools/profile_scattering.py` gives a relief's scattering coefficient for `--scattering_spectrum`
+from the same 2-D boundary elements as `thick_barrier_bem.py`: two closed boxes of one outline, the
+relief on one, CHIEF points inside both, the correlation of their far fields over the front
+half-plane. The boxes' edges scatter alike and leave s alone.
 
 ## Weighting
 

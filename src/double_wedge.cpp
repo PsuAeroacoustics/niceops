@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include "util/constants.hpp"
@@ -111,6 +112,132 @@ struct Wave
     complex amplitude;
 };
 
+// The taper of the aperture's far half at t, for an aperture of `extent`.
+double taper(double t, double extent)
+{
+    if (t < 0.5 * extent)
+        return 1.0;
+    if (t >= extent)
+        return 0.0;
+    return 0.5 * (1.0 + std::cos(pi * (t - 0.5 * extent) / (0.5 * extent)));
+}
+
+// What the aperture's integrand has at its point t that no wavenumber
+// changes: the incident leg `in`, the leg r to the second edge and its
+// obliquity factor, the angle theta0 at the second wedge, and for each wave
+// its path length, that length's rate along the aperture and the square root
+// its amplitude is divided by (`root`).  Only the waves `count` holds are
+// filled.  aperture() and aperture_geometry() both take their nodes from
+// here, so the CPU's and the GPU's integrands cannot part.
+struct NodeGeometry
+{
+    double in = 0.0, r = 0.0, obliquity = 0.0, theta0 = 0.0;
+    double length[4] = {}, rate[4] = {}, root[4] = {};
+};
+
+// The aperture's fixed geometry: the second wedge's receiver angle theta and
+// distance s3, and the direction of its other face.
+struct ApertureFrame
+{
+    double w = 0.0, sx = 0.0, sz = 0.0, rx = 0.0, rz = 0.0;
+    double s1 = 0.0, theta = 0.0, s3 = 0.0, fx = 0.0, fz = 0.0;
+    bool above = false;
+};
+
+ApertureFrame aperture_frame(const SharedFace& face, double sx, double sz, double rx, double rz)
+{
+    ApertureFrame f;
+    f.w = face.width;
+    f.sx = sx;
+    f.sz = sz;
+    f.rx = rx;
+    f.rz = rz;
+    f.s1 = std::hypot(sx, sz);
+    f.theta = angle2(rx - f.w, rz);
+    f.s3 = std::hypot(rx - f.w, rz);
+    // The second wedge's other face, for the reflection off it.
+    f.fx = -std::cos(face.n2 * pi);
+    f.fz = std::sin(face.n2 * pi);
+    f.above = rz > 0.0;
+    return f;
+}
+
+NodeGeometry node_geometry(const ApertureFrame& f, double t, const int* count)
+{
+    NodeGeometry n;
+    n.in = std::hypot(f.sx, t - f.sz);
+    n.r = std::hypot(f.w, t);
+    n.obliquity = 0.5 * (-f.sx / n.in + f.w / n.r);
+    const double rate = (t - f.sz) / n.in;
+    n.theta0 = std::atan2(t, f.w);
+    n.length[0] = n.in + n.r + f.s3;
+    n.rate[0] = rate + t / n.r;
+    n.root[0] = std::sqrt(n.r * f.s3);
+    if (count[1])
+    {
+        const double d = std::hypot(f.rx, f.rz - t);
+        n.length[1] = n.in + d;
+        n.rate[1] = rate + (t - f.rz) / d;
+        n.root[1] = std::sqrt(d);
+    }
+    if (count[2])
+    {
+        const double d = std::hypot(f.rx, f.rz + t);
+        n.length[2] = n.in + d;
+        n.rate[2] = rate + (t + f.rz) / d;
+        n.root[2] = std::sqrt(d);
+    }
+    if (count[3])
+    {
+        // The aperture point mirrored in the other face's plane.
+        const double along = -f.w * f.fx + t * f.fz;
+        const double ix = f.w + 2.0 * along * f.fx + f.w, iz = 2.0 * along * f.fz - t;
+        const double d = std::hypot(f.rx - ix, f.rz - iz);
+        const double rate_d = -((f.rx - ix) * 2.0 * f.fz * f.fx + (f.rz - iz) * (2.0 * f.fz * f.fz - 1.0)) / d;
+        n.length[3] = n.in + d;
+        n.rate[3] = rate + rate_d;
+        n.root[3] = std::sqrt(d);
+    }
+    return n;
+}
+
+// The cuts, where theta0 crosses one of hard_wedge_field's boundaries, out to
+// `extent`, added to `cuts` and `features`.
+void boundary_cuts(const SharedFace& face, const ApertureFrame& f, double extent, std::vector<double>& cuts,
+        std::vector<double>& features)
+{
+    const double theta = f.theta;
+    for (double boundary : {theta - pi, pi - theta, (face.n2 - 1.0) * pi, (2.0 * face.n2 - 1.0) * pi - theta})
+        if (boundary > 0.0 && boundary < 0.5 * pi && f.w * std::tan(boundary) < extent)
+        {
+            cuts.push_back(f.w * std::tan(boundary));
+            features.push_back(cuts.back());
+        }
+}
+
+// Which waves reach the receiver between the cuts a and b (hard_wedge_field's
+// tests), each +1, -1 or 0: above the face's plane the incident and
+// face-reflected waves count one less (aperture() has why).
+void wave_counts(const SharedFace& face, const ApertureFrame& f, double a, double b, int* count)
+{
+    const double middle = std::atan2(0.5 * (a + b), f.w);
+    const double theta = f.theta;
+    count[0] = 1;
+    count[1] = (std::abs(theta - middle) < pi ? 1 : 0) - (f.above ? 1 : 0);
+    count[2] = (theta < pi - middle ? 1 : 0) - (f.above ? 1 : 0);
+    count[3] = middle > (face.n2 - 1.0) * pi && theta > (2.0 * face.n2 - 1.0) * pi - middle ? 1 : 0;
+}
+
+// A panel's length from t: a sixth to a seventh of the distance from the
+// nearest feature, and at most the distance from the second edge.
+double panel_step(const std::vector<double>& features, double t, double smallest, double w)
+{
+    double near = std::abs(t - features[0]);
+    for (double f : features)
+        near = std::min(near, std::abs(t - f));
+    return std::min(0.15 * (near + smallest), t + w);
+}
+
 // The source below the face's plane and before the first edge.  The aperture
 // is the half-line x = 0, z > 0, out to 30 wavelengths or three Fresnel zones,
 // its far half tapered.  Each of its points sends a line source's wave to the
@@ -132,14 +259,9 @@ struct Wave
 // was within 0.027 dB (0.014-0.018 dB rms), for 6 to 24 times the evaluations.
 complex aperture(const SharedFace& face, double sx, double sz, double rx, double rz, double k)
 {
-    const double w = face.width;
-    const double lambda = 2.0 * pi / k;
-    const double s1 = std::hypot(sx, sz);
-    const double extent = std::max(3.0 * std::sqrt(lambda * std::max(s1, w)), 30.0 * lambda);
-    const double theta = angle2(rx - w, rz);
-    const double s3 = std::hypot(rx - w, rz);
-    // The second wedge's other face, for the reflection off it.
-    const double fx = -std::cos(face.n2 * pi), fz = std::sin(face.n2 * pi);
+    const ApertureFrame f = aperture_frame(face, sx, sz, rx, rz);
+    const double w = f.w, s1 = f.s1;
+    const double extent = aperture_extent(std::max(s1, w), k);
     const complex launch = std::sqrt(k / (2.0 * pi)) * std::polar(1.0, -0.25 * pi);
     // Above the face's plane the receiver sees the first edge, and the
     // aperture's waves past the second edge hold that wedge's whole field --
@@ -149,55 +271,28 @@ complex aperture(const SharedFace& face, double sx, double sz, double rx, double
     // past the second edge is that field alone, in the aperture's own
     // approximation, and is taken back out: what remains is what the second
     // edge does to it.  So above the plane the incident and face-reflected
-    // waves are counted less one, the unbounded field's.
-    const bool above = rz > 0.0;
+    // waves are counted less one, the unbounded field's (wave_counts).
 
     // The cuts: where theta0, the aperture point's angle at the second wedge,
     // crosses one of hard_wedge_field's boundaries.  The taper's start is a
     // panel end too, though the amplitude changes smoothly there.
     std::vector<double> cuts {0.0, 0.5 * extent, extent};
     std::vector<double> features {0.0};
-    for (double boundary : {theta - pi, pi - theta, (face.n2 - 1.0) * pi, (2.0 * face.n2 - 1.0) * pi - theta})
-        if (boundary > 0.0 && boundary < 0.5 * pi && w * std::tan(boundary) < extent)
-        {
-            cuts.push_back(w * std::tan(boundary));
-            features.push_back(cuts.back());
-        }
+    boundary_cuts(face, f, extent, cuts, features);
     std::sort(cuts.begin(), cuts.end());
 
     // The waves at t, those of `count` (+1, -1 or 0) only.  The second
     // wedge's coefficient is wanted at one theta and many theta0.
-    const WedgeSweep sweep(face.n2, theta);
+    const WedgeSweep sweep(face.n2, f.theta);
     auto waves = [&](double t, const int* count, Wave* out) {
-        const double taper = t < 0.5 * extent ? 1.0 : 0.5 * (1.0 + std::cos(pi * (t - 0.5 * extent) / (0.5 * extent)));
-        const double in = std::hypot(sx, t - sz);
-        const double r = std::hypot(w, t);
-        const double obliquity = 0.5 * (-sx / in + w / r);
-        const complex amplitude = taper * obliquity * launch / std::sqrt(in);
-        const double rate = (t - sz) / in;
-        const double theta0 = std::atan2(t, w);
-        out[0].length = in + r + s3;
-        out[0].rate = rate + t / r;
-        out[0].amplitude = amplitude * hard_wedge_coefficient(sweep.at(theta0), k, r * s3 / (r + s3)) / std::sqrt(r * s3);
-        if (count[1])
-        {
-            const double d = std::hypot(rx, rz - t);
-            out[1] = {in + d, rate + (t - rz) / d, double(count[1]) * amplitude / std::sqrt(d)};
-        }
-        if (count[2])
-        {
-            const double d = std::hypot(rx, rz + t);
-            out[2] = {in + d, rate + (t + rz) / d, double(count[2]) * amplitude / std::sqrt(d)};
-        }
-        if (count[3])
-        {
-            // The aperture point mirrored in the other face's plane.
-            const double along = -w * fx + t * fz;
-            const double ix = w + 2.0 * along * fx + w, iz = 2.0 * along * fz - t;
-            const double d = std::hypot(rx - ix, rz - iz);
-            const double rate_d = -((rx - ix) * 2.0 * fz * fx + (rz - iz) * (2.0 * fz * fz - 1.0)) / d;
-            out[3] = {in + d, rate + rate_d, double(count[3]) * amplitude / std::sqrt(d)};
-        }
+        const NodeGeometry n = node_geometry(f, t, count);
+        const complex amplitude = taper(t, extent) * n.obliquity * launch / std::sqrt(n.in);
+        out[0].length = n.length[0];
+        out[0].rate = n.rate[0];
+        out[0].amplitude = amplitude * hard_wedge_coefficient(sweep.at(n.theta0), k, n.r * f.s3 / (n.r + f.s3)) / n.root[0];
+        for (int j = 1; j < 4; j++)
+            if (count[j])
+                out[j] = {n.length[j], n.rate[j], double(count[j]) * amplitude / n.root[j]};
     };
 
     const double smallest = std::max(0.01 * std::min(w, s1), 1e-6 * extent);
@@ -207,20 +302,12 @@ complex aperture(const SharedFace& face, double sx, double sz, double rx, double
         const double a = cuts[c], b = cuts[c + 1];
         if (b - a < 1e-9 * extent)
             continue;
-        // Which waves reach the receiver here (hard_wedge_field's tests).
-        const double middle = std::atan2(0.5 * (a + b), w);
-        const int count[4] = {1, (std::abs(theta - middle) < pi ? 1 : 0) - (above ? 1 : 0),
-                (theta < pi - middle ? 1 : 0) - (above ? 1 : 0),
-                middle > (face.n2 - 1.0) * pi && theta > (2.0 * face.n2 - 1.0) * pi - middle ? 1 : 0};
-        // Panels a sixth to a seventh of their distance from the nearest
-        // feature, and at most the distance from the second edge.
+        int count[4];
+        wave_counts(face, f, a, b, count);
         std::vector<double> ends {a};
         for (double t = a; t < b;)
         {
-            double near = std::abs(t - features[0]);
-            for (double f : features)
-                near = std::min(near, std::abs(t - f));
-            const double h = std::min(0.15 * (near + smallest), t + w);
+            const double h = panel_step(features, t, smallest, w);
             double next = t + h;
             if (next > b || b - next < 0.3 * h)
                 next = b;
@@ -265,6 +352,124 @@ complex aperture(const SharedFace& face, double sx, double sz, double rx, double
     return sum;
 }
 
+// aperture()'s integrand and grading, worked out once for the wavenumbers
+// given (none of them zero).
+ApertureGeometry aperture_geometry(const SharedFace& face, double sx, double sz, double rx, double rz,
+        const std::vector<double>& wavenumbers)
+{
+    ApertureGeometry g;
+    const ApertureFrame f = aperture_frame(face, sx, sz, rx, rz);
+    const double w = f.w, s1 = f.s1;
+    g.extent_scale = std::max(s1, w);
+    const double extent = aperture_extent(g.extent_scale, *std::min_element(wavenumbers.begin(), wavenumbers.end()));
+    const double shortest = aperture_extent(g.extent_scale, *std::max_element(wavenumbers.begin(), wavenumbers.end()));
+    g.reference = s1 + w + f.s3;
+    std::vector<double> cuts {0.0, extent};
+    std::vector<double> features {0.0};
+    boundary_cuts(face, f, extent, cuts, features);
+    // Each wavenumber's taper start and extent end a panel; they are not
+    // features, which would grade the panels around them.
+    std::vector<double> ends_fixed;
+    for (double k : wavenumbers)
+        for (double e : {0.5 * aperture_extent(g.extent_scale, k), aperture_extent(g.extent_scale, k)})
+            if (e > 0.0 && e < extent)
+                ends_fixed.push_back(e);
+    std::sort(cuts.begin(), cuts.end());
+    std::sort(ends_fixed.begin(), ends_fixed.end());
+    const WedgeSweep sweep(face.n2, f.theta);
+    auto node = [&](double t, const int* count) {
+        const NodeGeometry geometry = node_geometry(f, t, count);
+        ApertureNode n;
+        n.t = t;
+        const double base = geometry.obliquity / std::sqrt(geometry.in);
+        for (int j = 0; j < 4; j++)
+            if (count[j])
+            {
+                n.length[j] = geometry.length[j] - g.reference;
+                n.rate[j] = geometry.rate[j];
+                n.weight[j] = count[j] * base / geometry.root[j];
+            }
+        n.angles = sweep.at(geometry.theta0);
+        n.distance = geometry.r * f.s3 / (geometry.r + f.s3);
+        g.nodes.push_back(n);
+    };
+    const double smallest = std::max(0.01 * std::min(w, s1), 1e-6 * extent);
+    for (std::size_t c = 0; c + 1 < cuts.size(); c++)
+    {
+        const double a = cuts[c], b = cuts[c + 1];
+        if (b - a < 1e-9 * extent)
+            continue;
+        int count[4];
+        wave_counts(face, f, a, b, count);
+        std::vector<double> ends {a};
+        for (double t = a; t < b;)
+        {
+            const double h = panel_step(features, t, smallest, w);
+            double next = t + h;
+            if (next > b || b - next < 0.3 * h)
+                next = b;
+            // A taper's start or an extent before the step's end ends the
+            // panel there instead.
+            const auto fixed = std::upper_bound(ends_fixed.begin(), ends_fixed.end(), t + 1e-9 * (b - a));
+            if (fixed != ends_fixed.end() && *fixed < next - 1e-9 * (b - a))
+                next = *fixed;
+            ends.push_back(next);
+            t = next;
+        }
+        // A hair inside, as aperture() takes it, but never more than a hair of
+        // the shortest aperture: a geometrical-optics wave's stationary point
+        // is on its cut, where its amplitude per unit length goes as
+        // 1 / sqrt(u - u_c), and how much of that the first panel misses
+        // depends on how far in the node sits.  1e-7 of a 200 m segment moved
+        // a 10 kHz field by 0.06 dB.
+        const double inside = 1e-7 * std::min(b - a, shortest);
+        g.segments.push_back(g.nodes.size());
+        node(a + inside, count);
+        for (std::size_t p = 0; p + 1 < ends.size(); p++)
+        {
+            node(0.5 * (ends[p] + ends[p + 1]), count);
+            node(p + 2 == ends.size() ? b - inside : ends[p + 1], count);
+        }
+    }
+    g.segments.push_back(g.nodes.size());
+    g.sin_g = -sz / s1;
+    g.cos_g = -sx / s1;
+    g.keller = wedge_angles(face.n1, 0.0, angle1(sx, sz));
+    return g;
+}
+
+complex aperture_at(const ApertureGeometry& g, double k)
+{
+    const double extent = aperture_extent(g.extent_scale, k);
+    complex sum(0.0, 0.0);
+    for (std::size_t s = 0; s + 1 < g.segments.size(); s++)
+        for (std::size_t i = g.segments[s]; i + 2 < g.segments[s + 1]; i += 2)
+        {
+            const ApertureNode* n = &g.nodes[i];
+            if (n[0].t >= extent)
+                break;
+            complex d2[3];
+            for (int m = 0; m < 3; m++)
+                d2[m] = hard_wedge_coefficient(n[m].angles, k, n[m].distance);
+            for (int j = 0; j < 4; j++)
+            {
+                if (n[0].weight[j] == 0.0 && n[2].weight[j] == 0.0)
+                    continue;
+                complex v[3];
+                for (int m = 0; m < 3; m++)
+                    v[m] = taper(n[m].t, extent) * n[m].weight[j] / n[m].rate[j] * (j == 0 ? d2[m] : complex(1.0, 0.0));
+                sum += filon_panel(k, n[0].length[j], n[1].length[j], n[2].length[j], v[0], v[1], v[2]);
+            }
+        }
+    sum *= std::sqrt(k / (2.0 * pi)) * std::polar(1.0, -0.25 * pi);
+    if (g.sin_g > 1e-6)
+    {
+        const complex kirchhoff = 0.5 * (1.0 + g.cos_g) * std::polar(1.0, 0.25 * pi) / (std::sqrt(2.0 * pi * k) * g.sin_g);
+        sum *= 0.5 * hard_wedge_coefficient(g.keller, k, 1e9) / kirchhoff;
+    }
+    return sum;
+}
+
 } // namespace
 
 bool shared_face_applies(const SharedFace& face, double sx, double sz, double rx, double rz)
@@ -288,6 +493,39 @@ std::complex<double> shared_face_field(const SharedFace& face, double sx, double
     if (reverse > 0.0)
         sum += reverse * aperture({face.width, face.n2, face.n1}, face.width - rx, rz, face.width - sx, sz, k);
     return sum / (forward + reverse);
+}
+
+double aperture_extent(double extent_scale, double k)
+{
+    const double lambda = 2.0 * pi / k;
+    return std::max(3.0 * std::sqrt(lambda * extent_scale), 30.0 * lambda);
+}
+
+SharedFaceGeometry shared_face_geometry(const SharedFace& face, double sx, double sz, double rx, double rz,
+        const std::vector<double>& wavenumbers)
+{
+    if (wavenumbers.empty() || *std::min_element(wavenumbers.begin(), wavenumbers.end()) <= 0.0)
+        throw std::invalid_argument("shared_face_geometry: the wavenumbers must be positive, and there must be some");
+    SharedFaceGeometry g;
+    g.forward_weight = sz < 0.0 && sx < 0.0 ? std::atan2(-sz, -sx) : 0.0;
+    g.reverse_weight = rz < 0.0 && rx > face.width ? std::atan2(-rz, rx - face.width) : 0.0;
+    if (g.forward_weight > 0.0)
+        g.forward = aperture_geometry(face, sx, sz, rx, rz, wavenumbers);
+    if (g.reverse_weight > 0.0)
+        g.reverse = aperture_geometry({face.width, face.n2, face.n1}, face.width - rx, rz, face.width - sx, sz, wavenumbers);
+    return g;
+}
+
+std::complex<double> shared_face_field_at(const SharedFaceGeometry& g, double k)
+{
+    if (g.forward_weight + g.reverse_weight <= 0.0)
+        return {std::numeric_limits<double>::quiet_NaN(), 0.0};
+    complex sum(0.0, 0.0);
+    if (g.forward_weight > 0.0)
+        sum += g.forward_weight * aperture_at(g.forward, k);
+    if (g.reverse_weight > 0.0)
+        sum += g.reverse_weight * aperture_at(g.reverse, k);
+    return sum / (g.forward_weight + g.reverse_weight);
 }
 
 } // namespace niceops

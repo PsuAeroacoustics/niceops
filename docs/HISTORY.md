@@ -250,6 +250,51 @@ old and new results only with them in mind.
 - **The shared-face aperture went from the midpoint rule at a 24th of a wavelength to Filon's
   rule**, which moved the point-source model's levels by 0.015 dB at most. With the rejection
   above, the table builder's seven test microphones moved by at most 0.024 dB.
+- **A receiver exactly on a shadow or reflection boundary takes the edge's term from the lit
+  side.** On a boundary the coefficient's limit was taken a hair above the boundary's angle
+  whichever side that was, which is the shadow side for the incident wave's boundary and face 0's
+  reflection; the path tests keep a grazing ray there, so the two added, 1 + 1/2 where the field
+  is 1/2, about 9 dB high. Only receivers exactly on a boundary moved, which round-numbered
+  geometry puts many on: the 49-block district's 20 test microphones by 0.015 dB at the median and
+  4.0 dB at most (each now nearer the mean of its neighbours 1 cm away: 0.034 dB at the median,
+  from 0.13), DigiCity's grid by 1e-8 dB, the urban tables (which step off exact boundaries) not
+  at all.
+- **The point-source model absorbs the air**, ISO 9613-1 along each ray in each sub-band, and
+  `niceops_point_field` needs `--humidity` (or `--no_air_absorption`). It had no absorption at
+  all. At 70% RH and 20 °C, DigiCity's 22 microphones with the loudspeaker at hover spot 5 fall
+  by up to 0.22 dB at 1 kHz, 0.86 dB at 4 kHz and 1.8 dB at 6.3 kHz; on the 49-block district,
+  microphones 240-290 m from a drone 30 m up fall by 1.2-1.9 dB at 1 kHz and 5-9 dB at 4 kHz.
+- **A twice-diffracted ray over edges that are not parallel spreads by the second edge's own
+  curvature.** Its spreading was the parallel edges' $1/\sqrt{s_1 s_2 s_3 (s_1 + s_2 + s_3)}$
+  whatever the edges' angle. The wave reaching the second edge is curved about the first edge
+  across it and about the source along it, and past the second edge it spreads by its curvature
+  along that edge, which for perpendicular edges is the first edge's, $s_2$, not $s_1 + s_2$
+  ([THEORY §6.5](THEORY.md#65-urban-receivers)). Over a screen's top and a perpendicular
+  screen's edge the ray was 1.45 dB high against the edge-source integral, and is within 0.007 dB
+  of it. DigiCity's four microphones moved by at most 0.12 dB.
+- **`niceops_point_field --edge_source`** takes the diffracted rays from the edge-source integral,
+  which keeps the edges' ends. Without it nothing changes.
+- **`niceops_point_field --scattering` and `--scattering_spectrum`** let walls reflect part of what
+  reaches them diffusely, and read a building's `scattering` column, which the tool used to ignore.
+  With every coefficient 0 nothing changes.
+- **`niceops_fdtd_field`** is new: the full-wave reference for a point source among buildings.
+- **`niceops_point_field`'s roofs reflect**, as the floor does, on specular rays and on either side
+  of a once-diffracted one. Only what stands above a roof hears it, directly or by a higher edge:
+  over EDGE's rows of unequal houses the drone's levels moved by up to 3.4 dB in a band (UE07),
+  and nothing at a microphone below every roof moved. `--no_roofs` leaves them out.
+- **`niceops --buildings`** is new: every microphone hears the source's own rays among the
+  buildings, each reading the sphere along its launch, in place of the open-ground model.
+- **`--buildings` adds its rays with the source's measured coherence between emission
+  directions** (`--ray_coherence measured`, the default), with the main rotor's delay where the
+  database or the vehicle file gives its blades and sense. It first summed every ray with its phase,
+  as if the rotor radiated in phase in every direction, which `--ray_coherence coherent` keeps to
+  the bit. The DigiCity hovers moved by 0.69, 0.42 and 0.23 dB rms at 15, 30 and 60 m, and the demo
+  approach's pass SEL by at most 0.13 dB. The level's spread over the unknown phases was first
+  studied with every group of rays within a launch-angle window taking a uniformly random phase
+  (behind environment switches, now gone), which put a wide spread on broadband bands that add in
+  energy; `--phase_interval` takes the measured spread instead. The vehicle files for the AW139,
+  B205, B407 and S-76D gained `"rotation": "counterclockwise"`, and a database may record the
+  coherence (panam's `directional_coherence`).
 
 ### Inputs
 

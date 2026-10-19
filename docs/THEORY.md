@@ -838,7 +838,10 @@ with $\theta$ and $\theta_0$ the departure and the source's direction in the edg
 $(\beta \pm \pi)/2n\pi$, and the transition function
 $F(X) = -i\sqrt{\pi X}\,e^{i\pi/4}\,w(e^{i\pi/4}\sqrt X)$ through the Faddeeva function. $F \to 1$ away
 from the shadow and reflection boundaries, where the geometrical-optics field jumps, and keeps the
-total field continuous across them. For a half-plane this is Sommerfeld's exact solution [42]; for
+total field continuous across them. On a boundary itself a cotangent's pole meets $F$'s zero, and
+the product's limit is taken from the side where that boundary's geometrical-optics wave exists,
+the side a ray grazing the edge is kept on: the diffracted wave is then $-\tfrac12$ of it, and the
+two make the half the field has there. For a half-plane this is Sommerfeld's exact solution [42]; for
 the right-angle wedge it is within 0.02 dB of the exact eigenfunction series [69] at $kr = 10$. The
 diffracted rays reach the microphone straight and through its images in the walls (to 40
 reflections) and the floor, an unfolded line valid while every wall it crosses stands above the
@@ -968,15 +971,110 @@ $$
 u = \frac{D(\theta, \theta_0;\ k\sin\beta,\ L/\sin\beta)}{\sqrt{\sin\beta}}\,\frac{e^{ik(s + s')}}{\sqrt{s s'(s + s')}}.
 $$
 
+**Roofs reflect.** Among vertical walls a ray changes its vertical direction only at a horizontal
+surface, and once it leaves one rising it keeps rising, so it reflects in one horizontal surface
+at most: the floor, or a roof below both ends of its stretch. A roof at height $h$ takes the
+floor's place, its image $(x, y, 2h - z)$, the bounce on the roof's footprint, and
+$\sqrt{1 - \alpha}$ for its building's absorption, on a specular ray and on either side of a
+once-diffracted one, where it counts as one of that side's reflections. The edge must stand above
+the roof, since a roof's own edges carry its reflection in their coefficients. Under
+`--edge_source` a ray off a roof takes UTD: the roof's outline bounds the stretch of the edge its
+image sees.
+
+**In a run** (`niceops --buildings`) the source is the rotor's sphere, and each ray's amplitude in
+band $b$ is multiplied by the sphere's along the direction $\hat d$ the ray leaves the source,
+
+$$
+A_b(\hat d) = 10^{(L_b(\hat d) + 20\lg r_s)/20}\,\min(1, \ell/r_s)\,e^{a_b \min(\ell, r_s)},
+$$
+
+$L_b(\hat d)$ the sphere's level at its radius $r_s$, $\ell$ the ray's length and $a_b$ the air's
+attenuation of amplitude per metre, so each ray spreads from the sphere and is absorbed beyond it,
+as the straight path is (§4.2). $\hat d$ is $-\nabla_S \ell$, the ray's length being stationary in
+every point between its ends. With no buildings and a floor that absorbs everything, the one ray
+left is the straight path and the level is the run's without a ground model.
+
+**How rays leaving the source apart add.** The spheres carry band levels, not phases, so what two
+rays share is the source's coherency between their launch directions $\hat d_i$, $\hat d_j$,
+measured on rotorcraft rather than assumed
+([FIDELITY](FIDELITY.md#coherence-between-emission-directions)). Rays that leave together must stay
+coherent, or the field jumps at every shadow and reflection boundary, where a diffracted ray makes
+up for the ray it replaces. In sub-band $p$ of band $b$ (wavenumber $k_p$ at its middle, half
+width $h_p$) the energy is
+
+$$
+E_p = \sum_i |A_i|^2 + \sum_{i<j} 2\,\bar g_{ij}\,\mathrm{Re}\!\left(A_i A_j^* e^{ik_p \Delta_{ij}}\right)
+\mathrm{sinc}(h_p \Delta_{ij}),
+\qquad
+\bar g_{ij} = \exp\!\left[-\left(\frac{f_b\,\theta_{ij}}{\theta_0}\right)^{p_0}\right],
+$$
+
+$A_i$ ray $i$'s amplitude without its path phase, $f_b$ the band's centre and
+$\theta_{ij} = (180/\pi)\,\lvert\hat d_i - \hat d_j\rvert$ the separation as a chord in degrees
+(within a few hundredths of a degree of the angle while $\bar g$ is not negligible, and so a
+positive-definite kernel on the sphere). A pair whose $\bar g$ is below $e^{-14}$ is left out. The
+path difference $\Delta_{ij} = L_i - L_j$ carries, in bands up to $f_{\mathrm{rot}}$, the delay a
+pattern turning rigidly with the main rotor puts between the two directions: it reaches azimuth
+$\psi + \delta\psi$ about the shaft $\delta\psi/\Omega$ later, so
+
+$$
+\Delta_{ij} = L_i - L_j + \frac{c\,s}{\Omega}\,\mathrm{wrap}(\psi_i - \psi_j),
+$$
+
+$\psi$ the launch's azimuth about the tip-path plane's normal from the nose, $s = +1$ for a rotor
+turning counterclockwise seen from above and $-1$ clockwise, $\Omega$ its rate (the database's
+`rotor_rpm`, else the vehicle file's tip speed over radius), and wrap to $(-\pi, \pi]$. At a
+blade-passage harmonic $mB\Omega/2\pi$ that is the spinning mode's phase $mB\,\delta\psi$. The delay
+holds to $f_{\mathrm{rot}} = 4.5\,B\Omega/2\pi$ and not beyond, where the field is not a pattern
+turning rigidly with the blades. With the delay, $\theta_0 = 850$ Hz deg and $p_0 = 1.6$; without it
+(no blades or sense given) $\theta_0 = 475$ Hz deg and $p_0 = 2.3$, since the unremoved rotation
+reads as a faster decay. A database's record of its vehicle's coherence replaces any of these
+(MANUAL, Source coherence). Under `--ray_coherence coherent` $\bar g = 1$ and there is no delay;
+under `energy` no pair adds.
+
+**The phase interval.** About its mean $\bar g_{ij}$ a pair's coherency spreads by
+
+$$
+\sigma_{ij}^2 = \max\!\left(\gamma_{ij}^2 - \bar g_{ij}^2,\; 0\right),
+\qquad
+\gamma_{ij}^2 = T_b + (1 - T_b)\exp\!\left[-\left(\frac{f_b\,\theta_{ij}}{\theta_s}\right)^{p_s}\right],
+$$
+
+$\gamma^2$ the coherence, which tends to the band's coherence between distant directions $T_b$ (its
+tonal fraction; by default $1/(1 + (f_b/58\,\mathrm{Hz})^{1.67})$), with $\theta_s = 2120$ Hz deg and
+$p_s = 1$. Rays whose $\bar g \ge 0.99$, by single linkage, deviate together, so each pair of such
+groups $G$, $H$ contributes one term to the band energy's variance:
+
+$$
+\mathrm{Var}\,E_b = \sum_{G<H} \tfrac12 \Bigl\lvert \sum_p w_p \sum_{i\in G,\, j\in H} 2\,\sigma_{ij}\,
+A_i A_j^* e^{ik_p \Delta_{ij}} \mathrm{sinc}(h_p \Delta_{ij}) \Bigr\rvert^2,
+\qquad w_p = \frac{g_{2,p} - g_{1,p}}{f_2 - f_1},
+$$
+
+the sub-bands sharing the band's deviation, and the bands independent. The A-weighted energy then
+has mean $\mu = \sum_b G_b E_b$ and variance $\sigma^2 = \sum_b G_b^2\,\mathrm{Var}\,E_b$, and the
+interval's ends are the quantiles of the gamma distribution with shape $\mu^2/\sigma^2$ and scale
+$\sigma^2/\mu$. `--phase_interval` takes the SEL of the history whose every state sits at the same
+end: one vehicle's phases do not change from state to state.
+
 A ray diffracted twice runs between two edges, the source's and the microphone's images to one
 reflection each, through the points where the path is stationary: where Keller's condition holds
 at both edges at once, a fixed point of meeting it at each in turn (by Steffensen's method, and in
 closed form for parallel edges, where the path unfolds into a line). Where the two edges meet at a
 building's corner the fixed point is the corner itself, which is no ray. In general it is the
 cascade of two coefficients: the first edge's wave reaches the second curved about the first edge
-across it and about the source along it, so the second's distance parameter is
-$s_2 s_3/(s_2 + s_3)$, the first's $s_1 s_2/(s_1 + s_2)$, and the spreading
-$1/\sqrt{s_1 s_2 s_3 (s_1 + s_2 + s_3)}$.
+across it (radius $s_2$) and about the source along it ($s_1 + s_2$). Past the second edge it spreads
+by its curvature along that edge, $1/\rho_e = c^2/(s_1 + s_2) + (1 - c^2)/s_2$ by Euler's formula,
+$c$ the cosine between the two edges' directions projected normal to the ray between them [67], as
+$\sqrt{\rho_e/(s_3(\rho_e + s_3))}$, so the spreading is
+
+$$
+\frac{1}{\sqrt{s_1 s_3\left((s_1 + s_2)(s_2 + s_3) - s_1 s_3 c^2\right)}},
+$$
+
+$1/\sqrt{s_1 s_2 s_3 (s_1 + s_2 + s_3)}$ for parallel edges, and the same from either end. The
+distance parameters are the first's $s_1 s_2/(s_1 + s_2)$ and the second's $s_2 s_3/(s_2 + s_3)$, which
+are reciprocal too.
 
 **Over a shared face.** Where the two edges are parallel and share a face -- a flat roof from one
 edge to the other, a wall from one corner to the next -- the second edge lies in the first's
@@ -1020,9 +1118,153 @@ reaches the plane. With both ends above it, the cascade stands. In space the ray
 the plane at $k\sin\beta$ times $\sin\beta/\sqrt{\ell_t}$, $\ell_t$ the ray's length in the plane: a
 wave $e^{ik_t\ell_t}/\sqrt{\ell_t}$ in the plane is $e^{ik\ell}/\ell$ in space, $\ell = \ell_t/\sin\beta$.
 
-The rays sum coherently, band-averaged pair by pair over three sub-bands as the table's are, and
-the band level is $10\lg$ of the result, re the source's level at 1 m. Left out: three edges or
-more, a reflection between two edges, roofs as reflectors, an edge's ends, and diffuse reflection.
+**The edge-source integral** (`--edge_source`). UTD is the high-frequency limit of an exact
+solution: the field a rigid wedge diffracts is the integral along its edge of secondary sources
+[71, 72, 74], which holds an edge's ends, and edges a wavelength apart, where the coefficient's
+asymptotics do not. For a unit point source at $S$ the field the stretch $[z_\mathrm{lo}, z_\mathrm{hi}]$
+of the edge diffracts to $R$ is
+
+$$
+p_1 = -\frac{\nu}{4\pi}\sum_{i=1}^{4}\int_{z_\mathrm{lo}}^{z_\mathrm{hi}} \beta_i\,\frac{e^{ik(m + l)}}{m\,l}\,dz,
+\qquad
+\beta_i = \frac{\sin\nu\varphi_i}{\cosh\nu\eta - \cos\nu\varphi_i},
+$$
+
+$\nu = 1/n$, $\varphi_i = \pi \pm \theta_S \pm \theta_R$,
+$\cosh\eta = (m l + (z - z_S)(z - z_R))/(r_S r_R)$, with $m$ and $l$ the distances from $S$ and $R$ to
+the edge's point $z$ and $\theta$, $r$, $z$ each end's angle from face 0, distance from the edge's
+line and parameter along it. Over the whole line it is the wedge's exact diffracted field; its
+stationary point, $\eta = 0$, is UTD's ray. It is integrated in $\eta$, with $dz/(m l) = d\eta/R$ and
+$R = m + l = \sqrt{R_0^2 + 4 r_S r_R \sinh^2(\eta/2)}$, the two sides of the stationary point sharing one
+integrand. The denominator is taken as $2\sinh^2(\nu\eta/2) + 2\sin^2(\nu\varphi_i/2)$, which does not
+cancel at the apex. Near a boundary a $\beta_i$ is a narrow peak at $\eta = 0$ whose integral is closed,
+
+$$
+\int_0^{\eta}\beta_i\,d\eta' = \frac{2}{\nu}\arctan\frac{\tanh(\nu\eta/2)}{\tan(\nu\varphi_i/2)},
+$$
+
+taken against the integrand's value at the start; on the boundary it is $\mp\tfrac12$ the
+geometrical-optics wave, which keeps the sum continuous there. The smooth rest is taken by
+Gauss–Legendre near the start and, beyond, either along the integrand's steepest-descent paths
+[73], $R(h) = R(\eta) + ip$, by Gauss–Laguerre at each wavenumber, or for many wavenumbers at once by
+Filon's rule [70] of degree four in $R$, on panels geometric in $R - R_0$, the integrand there,
+$\beta/(r_S r_R\sinh\eta)$, being the same at every $k$.
+
+A ray diffracted twice takes the integral's second order,
+
+$$
+p_2 = f\,\frac{\nu_1\nu_2}{16\pi^2}\sum_{i,j}\iint \beta_{1,i}\,\beta_{2,j}\,\frac{e^{ik(m + n + l)}}{m\,n\,l}\,dz_1\,dz_2,
+$$
+
+$\beta_1$ the first edge's directivity for the source and the second edge's point, $\beta_2$ the
+second's for the first edge's point and the receiver, $n$ the distance between the two points, and
+$f = \tfrac12$ where the path between the edges runs along a face both share -- each edge's directivity
+there counts that face's reflection, and the pair would count it twice -- else 1. It is taken over
+its level curves: with $\Lambda = m + n + l$,
+
+$$
+p_2 = f\,\frac{\nu_1\nu_2}{16\pi^2}\int G(\Lambda)\,e^{ik\Lambda}\,d\Lambda,
+\qquad
+G(\Lambda) = \oint_{m + n + l = \Lambda}\frac{\beta_1\beta_2}{m\,n\,l\,|\nabla\Lambda|}\,ds,
+$$
+
+and $G$ does not depend on $k$. $\Lambda$ is jointly convex in $(z_1, z_2)$, a sum of distances between
+points that move linearly, so each curve is one closed curve, clipped by the rectangle of the two
+stretches. For each $z_1$ on it the two points of the second edge with $n + l = \Lambda - m$ are
+$\eta_2 = 2\,\mathrm{arsinh}\sqrt{((\Lambda - m)^2 - R_{2,0}^2)/(4 r_1 r_R)}$, in closed form, and
+
+$$
+G(\Lambda) = \sum_\pm\int \frac{\beta_1\,\beta_2}{m\,r_1 r_R\sinh\eta_2}\,dz_1
+$$
+
+over the interval of $z_1$ where the curve lies, its ends' inverse square root taken out by
+$z_1 = c + (d - c)(1 - \cos\pi t)/2$. Between breaks $B$ -- the least path, the least along each side
+of the rectangle, its corners, and the points where a directivity term's pole meets its ridge, where
+a boundary of one edge crosses the other -- $u\,G$ is smooth in $u = \sqrt{\Lambda - B}$; it is
+interpolated in Chebyshev points of $u$ and the transform taken by Filon's rule in $\Lambda$, for every
+wavenumber from the one set of curves.
+
+For edges that are not parallel a boundary of the first edge -- the plane through it and the source,
+or the source's image in one of its faces -- crosses the second edge at a point, and there $p_2$
+carries half that wave's once-diffracted field by the second edge, which in the exact sum of orders
+is cancelled by that once-diffracted field cut off where the wave stops. The ray model keeps a
+partner ray whole or leaves it out, so the twice-diffracted field it takes is
+
+$$
+p_2 + \sum_w\left[p_1^{(w)}(\mathcal P_w) - [z_w^\ast \in \mathcal P_w]\;p_1^{(w)}(\text{edge})\right],
+$$
+
+over each wave $w$ of either edge whose boundary crosses the other edge: $p_1^{(w)}(\mathcal P_w)$ its
+once-diffracted field by the other edge over the part $\mathcal P_w$ of it the wave reaches, and
+$z_w^\ast$ that field's own Keller point (the second edge's waves toward the receiver, from its images
+in the second edge's faces, likewise over the first edge). A partner the model traces adds back the
+part subtracted; one it does not trace was never in the field.
+
+A vertical edge standing on the floor goes on below it as its image, and the floor's images split
+that doubled edge between a ray and its mirror -- the ray from the source's image to the
+microphone's is the one from the source to the microphone by the edge's image -- of which the tracer
+keeps the one whose point stands above the floor. With the integral each such ray takes the edge
+with its image, $[-L, L]$, so the floor is no end. A once-diffracted ray whose Keller point lies past
+an end of its edge still has that end's wave, which the integral over the edge carries; it is kept
+while the path through the end exceeds the Keller path by no more than 100 radians at the lowest
+band, weighted by $T(k\Delta_\mathrm{end};\ 50, 100)$, $\Delta_\mathrm{end}$ that excess.
+
+Once-diffracted rays take the integral over the whole edge always. A twice-diffracted ray takes, at
+each wavenumber,
+
+$$
+w\,p_2^\mathrm{loc} + (1 - w)\,p_\mathrm{casc},
+\qquad
+w = \max\left(T(k\bar X;\ 0.3, 1),\ T(k\bar\Delta;\ 100, 1000)\right),
+$$
+
+with $T(x; a, b) = 1$ for $x \le a$, 0 for $x \ge b$, and $\cos^2\!\left(\tfrac\pi2\ln(x/a)/\ln(b/a)\right)$
+between; $\bar X$ the smaller wedge's transition parameter per unit wavenumber,
+$L\sin\beta\,\min_\pm a_\pm$, and $\bar\Delta$ the least excess over the ray's path of a path through
+either edge's end or a partner's boundary point; and $w = 1$ over a shared face.
+
+The air absorbs each ray along its length: in each sub-band its amplitude is multiplied by
+$e^{-a L_r}$, $a = \alpha \ln 10 / 20$ with $\alpha$ the ISO 9613-1 coefficient (dB/m, §5) at the
+sub-band's middle frequency, $\tfrac12(f_1 + f_2)$. The rays sum coherently, band-averaged pair by
+pair over three sub-bands as the table's are, and the band level is $10\lg$ of the result, re the
+source's level at 1 m. The same average is the
+integral of the sum's square over the sub-band,
+
+$$
+\left\langle|S|^2\right\rangle = \tfrac12\int_{-1}^{1}\left|S(\bar k + h t)\right|^2 dt
+\approx \tfrac12\sum_m w_m \left|S(\bar k + h t_m)\right|^2,
+\qquad S(k) = \sum_r A_r\,e^{ikL_r},
+$$
+
+with the amplitudes held at the sub-band's center, which `--gpu` takes by Gauss–Legendre
+quadrature wherever it needs fewer operations than the pairs. $|S|^2$ is a sum of
+$e^{ik\,\Delta L}$ with $|\Delta L|$ at most the rays' spread of lengths $\Delta$, so with
+$M \ge h\Delta/2 + 4\,(h\Delta)^{1/3} + 6$ nodes the rule is exact to round-off, and it keeps every
+pair. Left out: three edges or more, a reflection between two edges (the floor included), more than
+one reflection on either side of two edges, roofs as reflectors, and an edge's ends (except with
+`--edge_source`). Continuity across
+a ray's boundary rests on the diffracted ray that takes over there being traced: one with the same
+reflections, split about the boundary's edge, which a specular ray of more reflections than
+`--max_edge_reflections` on one side, or a diffracted ray whose own leg meets another edge, does not
+have. There the field steps
+([FIDELITY](FIDELITY.md#a-point-source-among-buildings) has how often and how far).
+
+**Diffuse reflection from a point source** (`niceops_point_field --scattering`). The radiosity of
+the plane wave's diffuse reflection above, lit by the source instead: a unit source, whose free
+field is $|p|^2 = 1/r^2$, delivers to patch $p$
+
+$$
+E_p = \sum_{\text{paths}} \frac{\cos\theta_p}{L^2}\,\prod\rho(1 - s)\;\rho_f^{\,[\text{floor}]}\;e^{-2aL},
+$$
+
+the sum over the specular paths from the source to the patch's centre, to `--max_reflections`
+facades and the floor or not -- the patch's images, traced as the microphone's are, less those whose
+first reflection is the patch's own wall -- with $L$ each path's length, $\theta_p$ its incidence on
+the patch and $a$ the air's attenuation at the band's centre, which the gathering $g_q$ takes too,
+as $e^{-2ad}$ along each of its two paths. $\mathbf w\cdot\mathbf E$ is then energy in $|p|^2$ and
+adds to each band's energy of the rays, which carry $\rho(1 - s)$ per reflection at the walls
+within the radius and $\rho$ beyond it. For a source and microphone together at $d$ from an infinite wall, it is
+$\rho s / 2d^2$, against the specular image's $\rho(1-s)/4d^2$.
 
 ### 6.6 The canyon's wave solution
 
@@ -1603,6 +1845,87 @@ Chessell's $C$ or HARMONOISE's $\gamma_T$ carries the coherence $T(f)$ of §5, a
 a roughness the Kirchhoff factor; a PE table's turbulence is its phase screens (§9.1). The run's
 `--turbulence`, `--gamma_t` and `--roughness` reach only the pairs that fall back.
 
+### 9.4 A full-wave field among buildings
+
+`niceops_fdtd_field` solves the linear acoustic equations of §6.6 in three dimensions, for a point
+source among rigid solids, as the reference for the point-source model of §6.5. Pressure lives at
+the cells' centres and each velocity component on the faces normal to it (Yee [77]), cubic cells of
+side $h$:
+
+$$
+v^{n+1/2} = v^{n-1/2} - \frac{\Delta t}{\rho h}\,\delta p^n, \qquad
+p^{n+1} = p^n - \frac{\rho c^2\Delta t}{h}\,\delta\!\cdot\mathbf v^{n+1/2} + \frac{\rho c^2\Delta t}{h^3}\,Q^{n+1/2},
+$$
+
+with $\delta$ the difference across a cell or a face and $\Delta t = C\,h/(c\sqrt3)$, $C \le 1$, for
+Yee's second-order differences. The default is fourth order,
+
+$$
+\delta f_{i+1/2} = \tfrac98\,(f_{i+1} - f_i) - \tfrac1{24}\,(f_{i+2} - f_{i-1}),
+\qquad \Delta t = \frac{C\,h}{c\sqrt3\,(9/8 + 1/24)},
+$$
+
+with each far value that lies beyond a closed face replaced by its mirror in that face: the
+pressure's even, and the velocity's $2v_f - v$, $v_f$ the face's own (odd about a rigid face).
+The two differences are then each other's negative transpose on any arrangement of solids, so the
+march conserves the discrete energy and is stable up to the limit; an absorbing face takes its
+update from $\tfrac{25}{24}p_1 - \tfrac1{24}p_2$, its cell's pressure and the next one's where that
+face is open, the transpose of its velocity's weights, and so only dissipates. Its phase error,
+$\sin(\omega\Delta t/2) = (c\Delta t/h)\sqrt{\sum_d D(k_d h)^2}$ with
+$D(x) = (27\sin(x/2) - \sin(3x/2))/24$, makes the grid fast by nearly the same amount in every
+direction, so the transform reads each frequency $f$ at $\bar\omega(2\pi f/c)/2\pi$, the
+direction average of the $\omega$ at which the grid carries the physical wavenumber: what is left
+is the error's spread over directions. Yee's error, $D(x) = \sin(x/2)$, is slow along the axes,
+where the phase speed is $c\,(1 - (kh)^2(1 - C^2/3)/24)$, and exact along the diagonals at $C = 1$;
+it is not warped. A
+cell is solid or air by its centre; a face between two air cells is open, and one at a solid is
+rigid ($v = 0$) or, with an absorption $\alpha$, the impedance face of §6.6. The floor and a plane
+of symmetry are rigid. The other sides are a convolutional PML [75]: in a slab
+normal to $x$, $\delta_x p$ becomes $\delta_x p + \psi$ with
+$\psi^n = b\,\psi^{n-1} + a\,\delta_x p^n$, $b = e^{-(\sigma + \alpha_c)\Delta t}$,
+$a = \sigma(b - 1)/(\sigma + \alpha_c)$, $\sigma$ graded as the cube of the depth to
+$\sigma_\mathrm{max} = 4c\ln(10^6)/2Nh$ over $N$ cells and $\alpha_c$ falling linearly from
+$2\pi \times 100$ Hz, and the same for each divergence term.
+
+Step $n$ marches only a box: the cells within $v_g\,t_{n+1} + 16h$ of the source's stencil along
+every axis and within $v_g\,(t_N - t_n) + 16h$ of the receivers' stencils, over $N$ steps, where
+
+$$
+v_g = \max_{\mathbf k}\,|\nabla_{\mathbf k}\,\omega|
+= \max_{\mathbf k}\,\frac{2c\,\sqrt{\sum_d \big(D(k_d h)\,D'(k_d h)\big)^2}}
+{\sqrt{\sum_d D(k_d h)^2}\,\cos(\omega\Delta t/2)}
+$$
+
+is the dispersion relation's fastest group speed: $c$ for Yee's, as $k \to 0$, and $1.23\,c$ for
+the fourth order at $C = 0.99$, near the Nyquist wavenumber on a diagonal. Outside the first box
+nothing has arrived, and from outside the second nothing can reach a receiver within the run.
+
+The source is a monopole of volume velocity $Q(t) = e^{-(t - t_0)^2/\tau^2}$,
+$\tau = \sqrt2/2\pi f_p$, injected into the cells around it by the weights that read the
+receivers: tricubic Lagrange over 4 by 4 by 4 cells at fourth order (trilinear over 2 by 2 by 2
+near a solid, and at second order), a node beyond the floor or a plane of symmetry folded onto
+its mirror cell. Its free field is $\rho\,Q'(t - r/c)/4\pi r$, so
+
+$$
+H(f) = \frac{4\pi\,P(f)}{-i\omega\rho\,Q(f)}, \qquad P(f) = \sum_n p^n e^{i\omega t_n}\Delta t,
+$$
+
+is the transfer re the source's field at 1 m, $|H| = 1/r$ in free field, and a band's level is
+$10\lg$ of $|H|^2$ averaged over it, as the ray model's band average (§6.5). The air is lossless
+in the march; its absorption is applied afterwards, each sample after the pulse's peak scaled by
+$e^{-a\,c\,(t - t_0)}$ per sub-band, which is $e^{-aL}$ for every arrival of path $L$.
+
+**A relief's scattering coefficient** (`tools/profile_scattering.py`). A facade's relief extruded
+along one direction scatters in the plane of its profile. By boundary elements in that plane
+(as `tools/thick_barrier_bem.py`), for a plane wave from $\psi$, the far fields $p_1$ of the
+sample and $p_0$ of a flat reference of the same outline give the correlation coefficient [76]
+
+$$
+s(\psi) = 1 - \frac{\left|\sum_\theta p_1 p_0^*\right|^2}{\sum_\theta|p_1|^2\,\sum_\theta|p_0|^2},
+$$
+
+averaged over $\psi$ with weight $\cos\psi$ and over the frequencies of a band.
+
 ## 10. Noise metrics
 
 ### 10.1 Frequency weighting and band summation
@@ -1922,3 +2245,10 @@ than for SEL.
 68. Keller, J. B., "Geometrical Theory of Diffraction," *Journal of the Optical Society of America*, Vol. 52, No. 2, 1962, pp. 116–130. https://doi.org/10.1364/JOSA.52.000116
 69. Bowman, J. J., Senior, T. B. A., and Uslenghi, P. L. E. (eds.), *Electromagnetic and Acoustic Scattering by Simple Shapes*, North-Holland, Amsterdam, 1969, Ch. 6.
 70. Filon, L. N. G., "On a Quadrature Formula for Trigonometric Integrals," *Proceedings of the Royal Society of Edinburgh*, Vol. 49, 1930, pp. 38–47. https://doi.org/10.1017/S0370164600026262
+71. Svensson, U. P., Fred, R. I., and Vanderkooy, J., "An Analytic Secondary Source Model of Edge Diffraction Impulse Responses," *Journal of the Acoustical Society of America*, Vol. 106, No. 5, 1999, pp. 2331–2344.
+72. Svensson, U. P., Calamia, P. T., and Nakanishi, S., "Frequency-Domain Edge Diffraction for Finite and Infinite Edges," *Acta Acustica united with Acustica*, Vol. 95, No. 3, 2009, pp. 568–572.
+73. Huybrechs, D., and Vandewalle, S., "On the Evaluation of Highly Oscillatory Integrals by Analytic Continuation," *SIAM Journal on Numerical Analysis*, Vol. 44, No. 3, 2006, pp. 1026–1048. https://doi.org/10.1137/050636814
+74. Biot, M. A., and Tolstoy, I., "Formulation of Wave Propagation in Infinite Media by Normal Coordinates with an Application to Diffraction," *Journal of the Acoustical Society of America*, Vol. 29, No. 3, 1957, pp. 381–391.
+75. Roden, J. A., and Gedney, S. D., "Convolution PML (CPML): An Efficient FDTD Implementation of the CFS–PML for Arbitrary Media," *Microwave and Optical Technology Letters*, Vol. 27, No. 5, 2000, pp. 334–339.
+76. Mommertz, E., "Determination of Scattering Coefficients from the Reflection Directivity of Architectural Surfaces," *Applied Acoustics*, Vol. 60, No. 2, 2000, pp. 201–203.
+77. Yee, K. S., "Numerical Solution of Initial Boundary Value Problems Involving Maxwell's Equations in Isotropic Media," *IEEE Transactions on Antennas and Propagation*, Vol. 14, No. 3, 1966, pp. 302–307. https://doi.org/10.1109/TAP.1966.1138693

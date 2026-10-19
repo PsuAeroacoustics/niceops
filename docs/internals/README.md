@@ -45,7 +45,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | ISO 9613-1, the `RayPath` seam, `--atmosphere`, `--wind`, the profile builder | `atmosphere`, `propagation.hpp`, `atmosphere_profile`, `atmosphere_builder` | [atmosphere.md](atmosphere.md) |
 | `--refraction linear` / `stratified`, shadow zones, `ShadowTransition`, ducts, `--tunneling` | `refraction`, `stratified`, `airy` | [refraction.md](refraction.md) |
 | Parabolic equation (split-step Padé, Crank–Nicolson), benchmark exact solutions, `--propagation_table` | `pe`, `pade_propagator`, `exact_solutions`, `propagation_table`, `pe_table`, `tools/` | [pe.md](pe.md) |
-| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening`, `--urban_table` | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `urban`, `wedge`, `double_wedge`, `canyon_wave`, `buildings`, `building_paths`, `point_paths`, `diffuse_facades`, `geojson_buildings`, `plan_grid`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
+| Receivers (plates, poles), ground effect, Faddeeva, weighting, `--terrain`, `--terrain_screening`, `--urban_table`, the FDTD reference (`niceops_fdtd_field`) | `ground_effect`, `faddeeva`, `weighting`, `terrain`, `screening`, `plate_receiver`, `urban`, `wedge`, `double_wedge`, `edge_source`, `canyon_wave`, `fdtd`, `buildings`, `building_paths`, `point_paths`, `edge_visibility`, `diffuse_facades`, `geojson_buildings`, `plan_grid`, `terrain_ray` in `propagation.hpp` | [ground.md](ground.md) |
 | EPNL, reception-time band frames, LAmax/NAx/TA, DNL/Lden/CNEL, C-SEL | `pnl`, `band_frames`, `util/time_weighting.hpp` | [metrics.md](metrics.md) |
 | AC and geodetic tracks, smoothing spline, hover nose, lateral subtracks, `--nose`, `--speed_reference`, `niceops_procedure` | `trajectory`, `geodetic`, `smoothing_spline`, `util/csv.hpp`, `procedure`, `state_condition`, `tools/procedure.cpp` | [trajectory.md](trajectory.md) |
 | `--units`, input checking, the operations file (`--operations`) | `run()` in `niceops.cpp`, the readers, `operations` | [inputs.md](inputs.md) |
@@ -56,6 +56,7 @@ Sources are in `src/`; a name without an extension means its `.cpp` and `.hpp`.
 | Energy by sphere (`--provenance_spheres`) | `sphere_energy` | [metrics.md](metrics.md#source-provenance) |
 | Build, link layout, shared helpers, the run manifest | `CMakeLists.txt`, `util/paths.hpp`, `util/netcdf.hpp`, `util/netcdf_write.hpp`, `util/constants.hpp`, `manifest`, `build_info`, `util/sha256.hpp`, `cmake/build_info.cmake` | [build.md](build.md) |
 | Plotting (pybind11-embedded matplotlib, created lazily, `Agg` backend) | `plotting`, `plotting_disabled.cpp` | [build.md](build.md#plotting) |
+| GPU backends, the kernel dialect, band energies on the GPU, `niceops_point_field --gpu` | `gpu/gpu.hpp`, `gpu/gpu_metal.mm`, `gpu/gpu_disabled.cpp`, `gpu/band_energy`, `gpu/kernels/`, `cmake/embed_kernels.cmake` | [gpu.md](gpu.md) |
 
 ## Repository layout
 

@@ -37,6 +37,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <functional>
 #include <vector>
 
 #include "buildings.hpp"
@@ -166,6 +167,25 @@ ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radiu
 // world).
 bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
         const std::vector<std::size_t>& facades, bool below_floor, std::vector<Vec3>* hits = nullptr);
+// The same, each leg's openness decided by `leg_open(leg, a, b)` instead of
+// blocked(): leg 0 leaves `from` and leg facades.size() reaches the point,
+// a and b its ends in the folded world (below the floor, its mirror's).
+using LegTest = std::function<bool(std::size_t leg, const Vec3& a, const Vec3& b)>;
+bool folded_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
+        const std::vector<std::size_t>& facades, bool below_floor, std::vector<Vec3>* hits, const LegTest& leg_open);
+
+// The same with the ray's one horizontal reflection in the roof of `building`
+// instead of the floor: the line from `from` to `point` mirrored in the roof's
+// plane and then in `facades` crosses that plane once, on the roof
+// (Buildings::on_roof), and every leg of the real path is open.  Among vertical walls a
+// ray that leaves a roof keeps rising, so it reflects in one roof at most and
+// never in the floor too, and both ends stand above the roof.  `hits` receives
+// the reflection points in order from `from`, those past the roof in its
+// plane's mirror world (as the floor's are below it), and `bounce` the point
+// on the roof.
+bool folded_roof_path_open(const Buildings& buildings, const Vec3& from, const Vec3& point,
+        const std::vector<std::size_t>& facades, std::size_t building, std::vector<Vec3>* hits = nullptr,
+        Vec3* bounce = nullptr);
 
 // One microphone among the buildings, with what does not depend on the wave's
 // direction worked out once: the facades' frames and orientations, the edges

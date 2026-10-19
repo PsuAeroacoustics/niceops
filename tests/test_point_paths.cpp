@@ -4,12 +4,14 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <map>
 #include <stdexcept>
 #include <vector>
 
 #include "building_paths.hpp"
 #include "buildings.hpp"
 #include "double_wedge.hpp"
+#include "edge_source.hpp"
 #include "point_paths.hpp"
 #include "urban.hpp"
 #include "util/constants.hpp"
@@ -130,6 +132,42 @@ TEST_CASE("over open ground a point source's field is the direct ray and the flo
     }
 }
 
+// The air absorbs each ray along its length, in each sub-band at that
+// sub-band's middle frequency: with the floor absorbing everything, the field
+// over open ground is the direct ray alone, whose band level then falls by
+// exactly the sub-bands' mean of exp(-2 a L).
+TEST_CASE("the air absorbs each ray along its length", "[point_paths]")
+{
+    const Buildings none;
+    const Vec3 s(0.0, 0.0, 20.0), m(400.0, 30.0, 1.2);
+    const PointSourceField field(none, s, m);
+    const double r = (m - s).norm();
+    Atmosphere air;
+    air.relative_humidity = 40.0;
+    air.temperature = 283.15;
+    const std::vector<double> a = sub_band_absorption(air, bands, 343.2);
+    std::vector<double> plain(bands.size()), absorbed(bands.size());
+    field.band_levels({}, 0.0, bands, 343.2, plain.data());
+    field.band_levels({}, 0.0, bands, 343.2, absorbed.data(), a);
+    for (std::size_t b = 0; b < bands.size(); b++)
+    {
+        const auto parts = sub_bands(bands[b], 343.2);
+        double kept = 0.0, all = 0.0;
+        for (int part = 0; part < 3; part++)
+        {
+            const double width = parts[part].g2 - parts[part].g1;
+            kept += std::exp(-2.0 * a[3 * b + part] * r) * width;
+            all += width;
+            // The coefficient is ISO 9613-1's at the sub-band's middle, as
+            // nepers of amplitude.
+            const double middle = 0.5 * (parts[part].g1 + parts[part].g2);
+            REQUIRE(a[3 * b + part] == Catch::Approx(air.attenuation_coefficient(middle) * std::log(10.0) / 20.0));
+        }
+        REQUIRE(absorbed[b] - plain[b] == Catch::Approx(10.0 * std::log10(kept / all)).margin(1e-9));
+    }
+    REQUIRE(plain.back() - absorbed.back() > 5.0);
+}
+
 TEST_CASE("the point-source field is reciprocal", "[point_paths]")
 {
     // A small district: rays reflect, diffract at roof edges and corners, at
@@ -173,6 +211,276 @@ TEST_CASE("the point-source field is reciprocal", "[point_paths]")
     REQUIRE(shared > 0);
 }
 
+TEST_CASE("a point ray leaves the source along minus its length's gradient", "[point_paths]")
+{
+    // The reciprocity test's district, sources high and low, so that rays
+    // leave toward facades, the floor and edges, and reflect in the floor
+    // before an edge.  A ray's length is stationary in every point between
+    // its ends, so moving the source by d moves it by -d . launch; rays are
+    // matched across the three nudges by their facades, floors and edges.
+    const Buildings city({box(0.0, 0.0, 6.0, 2.4, 7.8), box(8.0, 4.0, 10.4, 16.0, 7.8), box(-2.0, 8.0, 4.0, 10.4, 5.2),
+            box(0.0, 14.0, 2.4, 20.0, 7.8)});
+    const std::vector<std::pair<Vec3, Vec3>> pairs {{Vec3(3.0, 12.0, 2.0), Vec3(4.0, -3.0, 1.2)},
+            {Vec3(6.0, 6.0, 2.0), Vec3(13.0, 10.0, 1.2)}, {Vec3(-4.0, 4.0, 1.5), Vec3(6.0, 18.0, 1.2)},
+            {Vec3(-5.0, 4.0, 12.0), Vec3(6.0, 6.0, 1.2)}, {Vec3(5.0, 22.0, 30.0), Vec3(7.0, 6.0, 1.5)}};
+    auto key = [](const PointRay& ray) {
+        std::vector<std::size_t> k(ray.facades);
+        k.push_back(1000000 + static_cast<std::size_t>(ray.floor));
+        k.push_back(2000000 + static_cast<std::size_t>(ray.wedges));
+        if (ray.wedges > 0)
+        {
+            k.push_back(3000000 + ray.edge_source.edges[0]);
+            k.push_back(ray.edge_source.source.z < 0.0 ? 4000001 : 4000000);
+        }
+        if (ray.wedges > 1)
+            k.push_back(5000000 + ray.edge_source.edges[1]);
+        return k;
+    };
+    auto unique_rays = [&](const PointSourceField& field) {
+        std::map<std::vector<std::size_t>, const PointRay*> found;
+        std::map<std::vector<std::size_t>, int> count;
+        for (const PointRay& ray : field.rays())
+        {
+            found[key(ray)] = &ray;
+            count[key(ray)]++;
+        }
+        for (const auto& [k, n] : count)
+            if (n > 1)
+                found.erase(k);
+        return found;
+    };
+    const double h = 1e-4;
+    std::size_t checked[3] {0, 0, 0}, floor_first = 0;
+    for (const auto& [s, m] : pairs)
+    {
+        const PointSourceField field(city, s, m);
+        std::vector<PointSourceField> nudged_up, nudged_down;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            Vec3 d(axis == 0 ? h : 0.0, axis == 1 ? h : 0.0, axis == 2 ? h : 0.0);
+            nudged_up.emplace_back(city, s + d, m);
+            nudged_down.emplace_back(city, s - d, m);
+        }
+        const auto here = unique_rays(field);
+        std::vector<std::map<std::vector<std::size_t>, const PointRay*>> up, down;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            up.push_back(unique_rays(nudged_up[static_cast<std::size_t>(axis)]));
+            down.push_back(unique_rays(nudged_down[static_cast<std::size_t>(axis)]));
+        }
+        for (const auto& [k, ray] : here)
+        {
+            double gradient[3];
+            bool matched = true;
+            for (int axis = 0; axis < 3 && matched; axis++)
+            {
+                const auto a = up[static_cast<std::size_t>(axis)].find(k), b = down[static_cast<std::size_t>(axis)].find(k);
+                matched = a != up[static_cast<std::size_t>(axis)].end() && b != down[static_cast<std::size_t>(axis)].end();
+                if (matched)
+                    gradient[axis] = (a->second->length - b->second->length) / (2.0 * h);
+            }
+            if (!matched)
+                continue;
+            const Vec3 launch = point_ray_launch(*ray);
+            INFO("ray with " << ray->facades.size() << " reflections, floor " << ray->floor << ", " << ray->wedges
+                             << " wedges: launch " << launch.x << " " << launch.y << " " << launch.z << ", -gradient "
+                             << -gradient[0] << " " << -gradient[1] << " " << -gradient[2]);
+            CHECK(std::abs(launch.norm() - 1.0) < 1e-12);
+            CHECK(std::abs(launch.x + gradient[0]) < 1e-6);
+            CHECK(std::abs(launch.y + gradient[1]) < 1e-6);
+            CHECK(std::abs(launch.z + gradient[2]) < 1e-6);
+            checked[std::min(ray->wedges, 2)]++;
+            floor_first += ray->wedges > 0 && ray->edge_source.source.z < 0.0;
+        }
+    }
+    INFO("checked " << checked[0] << " specular, " << checked[1] << " once and " << checked[2]
+                    << " twice diffracted, " << floor_first << " off the floor before an edge");
+    CHECK(checked[0] > 5);
+    CHECK(checked[1] > 10);
+    CHECK(checked[2] > 2);
+    CHECK(floor_first > 5);
+}
+
+TEST_CASE("a ray's weight multiplies its amplitude in its band", "[point_paths]")
+{
+    // Unit weights are no weights, to the bit; a weight of 2 on every ray in
+    // one band adds 20 lg 2 to that band alone; and a weight on one ray alone
+    // is that ray's amplitude scaled, which a field with only it shows.
+    const Buildings city({box(0.0, 0.0, 6.0, 2.4, 7.8), box(8.0, 4.0, 10.4, 16.0, 7.8)});
+    const PointSourceField field(city, Vec3(-4.0, 1.0, 3.0), Vec3(12.0, 2.0, 1.5));
+    REQUIRE(field.rays().size() > 3);
+    const std::vector<double> reflection(city.facades().size() * bands.size(), 0.8);
+    std::vector<double> plain(bands.size()), unit(bands.size()), doubled(bands.size());
+    field.band_levels(reflection, 1.0, bands, 343.2, plain.data());
+    std::vector<double> weights(field.rays().size() * bands.size(), 1.0);
+    field.band_levels(reflection, 1.0, bands, 343.2, unit.data(), {}, weights.data());
+    for (std::size_t r = 0; r < field.rays().size(); r++)
+        weights[r * bands.size() + 2] = 2.0;
+    field.band_levels(reflection, 1.0, bands, 343.2, doubled.data(), {}, weights.data());
+    for (std::size_t b = 0; b < bands.size(); b++)
+    {
+        CHECK(unit[b] == plain[b]);
+        CHECK(doubled[b] - plain[b] == Catch::Approx(b == 2 ? 20.0 * std::log10(2.0) : 0.0).margin(1e-9));
+    }
+    // One ray weighted 0 is that ray left out: the energy of the rest, as a
+    // field of the others by sub-band problems says.
+    std::vector<double> one(field.rays().size() * bands.size(), 1.0);
+    for (std::size_t b = 0; b < bands.size(); b++)
+        one[0 * bands.size() + b] = 0.0;
+    std::vector<double> without(bands.size());
+    field.band_levels(reflection, 1.0, bands, 343.2, without.data(), {}, one.data());
+    std::vector<double> energy(3 * bands.size());
+    field.sub_band_problems(reflection, 1.0, bands, 343.2,
+            [&](std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
+                    const std::vector<double>& length, const SubBand& sub) {
+                std::vector<std::complex<double>> kept;
+                std::vector<double> kept_length;
+                for (std::size_t i = 0; i < amplitude.size(); i++)
+                    if (std::abs(amplitude[i]) > 0.0)
+                    {
+                        kept.push_back(amplitude[i]);
+                        kept_length.push_back(length[i]);
+                    }
+                energy[3 * band + part] = band_averaged_energy(kept, kept_length, sub.k1, sub.k2);
+            },
+            {}, one.data());
+    for (std::size_t b = 0; b < bands.size(); b++)
+        CHECK(without[b] == Catch::Approx(band_level(bands[b], sub_bands(bands[b], 343.2), &energy[3 * b])).margin(1e-12));
+}
+
+TEST_CASE("a roof reflects as the floor does", "[point_paths]")
+{
+    // A 6 m block, the source and the microphone above it: the roof's ray is
+    // the microphone's image in the roof's plane, and it is the only new one;
+    // with roofs off it is gone.
+    const Buildings city({box(0.0, 0.0, 10.0, 10.0, 6.0)});
+    const Vec3 s(2.0, 5.0, 20.0), m(8.0, 5.0, 10.0);
+    PointPathOptions without;
+    without.roofs = false;
+    const PointSourceField on(city, s, m), off(city, s, m, without);
+    std::size_t roof_rays = 0;
+    for (const PointRay& ray : on.rays())
+        if (!ray.roof_facades.empty())
+        {
+            roof_rays++;
+            CHECK(ray.wedges == 0);
+            CHECK(ray.length == Catch::Approx((Vec3(m.x, m.y, 12.0 - m.z) - s).norm()).epsilon(1e-12));
+            CHECK(ray.source_plane == 6.0);
+        }
+    CHECK(roof_rays == 1);
+    CHECK(on.rays().size() == off.rays().size() + 1);
+    for (const PointRay& ray : off.rays())
+        CHECK(ray.roof_facades.empty());
+    // Below the roof's height either end leaves it out.
+    for (const Vec3& low : {Vec3(8.0, 5.0, 5.0), Vec3(14.0, 5.0, 3.0)})
+        for (const PointRay& ray : PointSourceField(city, s, low).rays())
+            CHECK((ray.roof_facades.empty() || ray.wedges > 0));
+}
+
+TEST_CASE("the field is continuous where a roof's edge hides its reflection", "[point_paths]")
+{
+    // A microphone rising past the roof's reflection boundary at its edge:
+    // the edge's diffracted ray changes sign there by the roof's ray, so the
+    // two together are continuous.  Source (3, 20, 15) above a 6 m block whose
+    // east edge is at x = 10; the boundary at x = 14 is the line from the
+    // source's image (3, 20, -3) through (10, 20, 6).  (Without the roof's ray
+    // the band-averaged energy hardly steps there -- the sign flip is
+    // incoherent with rays several wavelengths shorter -- but misses the
+    // reflection's energy throughout the zone it lights.)
+    const Buildings city({box(0.0, 0.0, 10.0, 40.0, 6.0)});
+    const Vec3 s(3.0, 20.0, 15.0);
+    const double boundary = -3.0 + 9.0 * 11.0 / 7.0;
+    for (const double eps : {1e-6, 1e-4})
+    {
+        const auto below = levels(city, s, Vec3(14.0, 20.0, boundary - eps), 1.0, 1.0),
+                   above = levels(city, s, Vec3(14.0, 20.0, boundary + eps), 1.0, 1.0);
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            INFO(bands[b] << " Hz, " << eps << " m either side: " << above[b] - below[b] << " dB");
+            CHECK(std::abs(above[b] - below[b]) < 0.01);
+        }
+    }
+}
+
+TEST_CASE("on a wide roof the field is the direct ray and the roof's", "[point_paths]")
+{
+    // A microphone on a 200 m roof, its edges 90 m off: the direct ray and
+    // its reflection in the roof, as two rays over a rigid floor; without
+    // roofs, the reflection's 3 dB or so is missing.
+    const Buildings city({box(0.0, 0.0, 200.0, 200.0, 10.0)});
+    const Vec3 s(100.0, 100.0, 40.0), m(110.0, 100.0, 11.5);
+    const PointSourceField field(city, s, m);
+    PointPathOptions without;
+    without.roofs = false;
+    const auto on = levels(city, s, m, 1.0, 1.0), off = levels(city, s, m, 1.0, 1.0, without);
+    const Vec3 image(m.x, m.y, 20.0 - m.z);
+    for (std::size_t b = 0; b < bands.size(); b++)
+    {
+        const auto parts = sub_bands(bands[b], 343.2);
+        double energy[3];
+        for (int part = 0; part < 3; part++)
+        {
+            const std::vector<std::complex<double>> amplitude {1.0 / (m - s).norm(), 1.0 / (image - s).norm()};
+            const std::vector<double> length {(m - s).norm(), (image - s).norm()};
+            energy[part] = band_averaged_energy(amplitude, length, parts[static_cast<std::size_t>(part)].k1,
+                    parts[static_cast<std::size_t>(part)].k2);
+        }
+        const double exact = band_level(bands[b], parts, energy);
+        INFO(bands[b] << " Hz: " << on[b] - exact << " dB off the two rays, " << on[b] - off[b] << " over no roofs");
+        CHECK(std::abs(on[b] - exact) < 0.05);
+        CHECK(on[b] - off[b] > 1.5);
+    }
+}
+
+TEST_CASE("rays off a roof are reciprocal and leave along minus their length's gradient", "[point_paths]")
+{
+    // A low block, a street and a tall one: from above the low roof the
+    // sound reflects up to the tall roof's near edge and diffracts down into
+    // the street, with and without the floor and a facade.
+    const Buildings city({box(0.0, 0.0, 10.0, 40.0, 6.0), box(20.0, 0.0, 30.0, 40.0, 20.0)});
+    const Vec3 s(0.0, 20.0, 15.0), m(15.0, 20.0, 1.5);
+    const auto forward = levels(city, s, m, 0.8, 0.9), back = levels(city, m, s, 0.8, 0.9);
+    for (std::size_t b = 0; b < bands.size(); b++)
+        CHECK(forward[b] == Catch::Approx(back[b]).margin(1e-9));
+    const PointSourceField field(city, s, m);
+    const double h = 1e-4;
+    std::size_t checked = 0;
+    for (const PointRay& ray : field.rays())
+    {
+        if (ray.roof_facades.empty())
+            continue;
+        auto same = [&](const PointRay& other) {
+            return other.facades == ray.facades && other.floor == ray.floor && other.wedges == ray.wedges
+                    && other.roof_facades == ray.roof_facades && other.source_plane == ray.source_plane
+                    && (ray.wedges == 0 || other.edge_source.edges[0] == ray.edge_source.edges[0]);
+        };
+        double gradient[3];
+        bool matched = true;
+        for (int axis = 0; axis < 3 && matched; axis++)
+        {
+            const Vec3 d(axis == 0 ? h : 0.0, axis == 1 ? h : 0.0, axis == 2 ? h : 0.0);
+            const PointSourceField up(city, s + d, m), down(city, s - d, m);
+            const PointRay *u = nullptr, *w = nullptr;
+            for (const PointRay& r : up.rays())
+                if (same(r))
+                    u = &r;
+            for (const PointRay& r : down.rays())
+                if (same(r))
+                    w = &r;
+            matched = u != nullptr && w != nullptr;
+            if (matched)
+                gradient[axis] = (u->length - w->length) / (2.0 * h);
+        }
+        REQUIRE(matched);
+        const Vec3 launch = point_ray_launch(ray);
+        CHECK(std::abs(launch.x + gradient[0]) < 1e-6);
+        CHECK(std::abs(launch.y + gradient[1]) < 1e-6);
+        CHECK(std::abs(launch.z + gradient[2]) < 1e-6);
+        checked++;
+    }
+    CHECK(checked >= 3);
+}
+
 TEST_CASE("a far point source is the plane wave", "[point_paths]")
 {
     // One building, the microphone near it; the source a thousand kilometres
@@ -203,6 +511,61 @@ TEST_CASE("a far point source is the plane wave", "[point_paths]")
     }
 }
 
+// Where every boundary's partner is traced the field is continuous: a ray
+// that appears or vanishes there hands its share to an edge's diffracted
+// ray.  West of a tall box, a source; north of it, lines of microphones 2.5 cm
+// apart crossing the reflection boundary of the box's west wall and the
+// shadow boundary of its north-west corner, directly and off the floor, near
+// the corner and further off.  The box is tall enough that its roof's edges,
+// and the corner's end, are far from every path, and the near line stops
+// short of where the north-east corner's twice-diffracted ray reaches the
+// floor: carrying it on would need the floor between the two edges, which the
+// model leaves out (a 1.3 dB step at 125 Hz, 22.5 m along).  A receiver
+// exactly on a boundary, as the lines' round numbers put some, takes the side
+// its ray is kept on; it took the other, 1 + 1/2 for 1/2, 9 dB high.  A step
+// between neighbours above a fraction of a dB in any band is a boundary
+// handled wrong; the largest the field takes on its own is under 0.35 dB.
+// (urban/continuity.py in the validation harness sweeps whole cities the same
+// way, and finds where the model's ray set is not complete.)
+TEST_CASE("the field is continuous across a corner's shadow and reflection boundaries", "[point_paths]")
+{
+    const Buildings tower({box(0.0, 0.0, 10.0, 10.0, 200.0)});
+    const Vec3 source(-10.0, 5.0, 2.0);
+    const std::vector<double> continuity_bands {125.0, 500.0, 2000.0};
+    const std::vector<double> reflection(tower.facades().size() * continuity_bands.size(), 0.9);
+    double worst = 0.0;
+    std::size_t lit = 0, reflected = 0, shadowed = 0;
+    for (const auto& [y, last] : {std::pair {12.0, 15.0}, std::pair {20.0, 40.0}})
+    {
+        std::vector<double> previous;
+        for (double x = -30.0; x <= last + 1e-9; x += 0.025)
+        {
+            const PointSourceField field(tower, source, Vec3(x, y, 1.2));
+            bool direct = false, specular = false;
+            for (const PointRay& ray : field.rays())
+            {
+                direct |= ray.wedges == 0 && ray.facades.empty();
+                specular |= ray.wedges == 0 && !ray.facades.empty();
+            }
+            lit += direct;
+            reflected += specular;
+            shadowed += !direct;
+            std::vector<double> out(continuity_bands.size());
+            field.band_levels(reflection, 0.9, continuity_bands, 343.2, out.data());
+            if (!previous.empty())
+                for (std::size_t b = 0; b < out.size(); b++)
+                    worst = std::max(worst, std::abs(out[b] - previous[b]));
+            previous = out;
+        }
+    }
+    INFO("largest step between neighbours " << worst << " dB; " << lit << " lit, " << reflected << " reflected, "
+                                            << shadowed << " in the corner's shadow");
+    // Both boundaries are crossed on both lines.
+    REQUIRE(reflected > 0);
+    REQUIRE(shadowed > 0);
+    REQUIRE(worst < 0.5);
+}
+
 TEST_CASE("the field is continuous where a thick building's roof plane hides its far edge", "[point_paths]")
 {
     // A long building 10 m thick and 8 m high, the source low before it, the
@@ -227,23 +590,19 @@ TEST_CASE("the field is continuous where a thick building's roof plane hides its
     }
 }
 
-TEST_CASE("over a long block the point-source field is the boundary-element solution's", "[point_paths]")
+namespace {
+
+// The long block's boundary-element solutions (tools/thick_barrier_bem.py):
+// frequency, the source's y and height, the microphone's distance behind the
+// block and height, and the level, dB re the free field.
+struct BlockCase
 {
-    // A block 2.44 m thick and 5.18 m high -- two stacked shipping containers,
-    // DigiCity's (FIDELITY) -- on rigid ground, long enough to be two-
-    // dimensional, the source and the microphone in one plane across it.
-    // There every ray is a 2-D ray times 1/sqrt(its length), and the field in
-    // that plane is the line source's: the exact values are a boundary-element
-    // solution for one (tools/thick_barrier_bem.py, 60 elements a wavelength,
-    // converged to 0.05 dB here), in dB re the free field.  Sources low, near
-    // grazing and above the roof; microphones deep in the shadow, at the roof
-    // plane and above it.  The uniform form is within 1 dB everywhere; the
-    // cascade misses by up to 10.
-    struct Case
-    {
-        double f, source_y, source_z, behind, z, exact;
-    };
-    const std::vector<Case> cases {
+    double f, source_y, source_z, behind, z, exact;
+};
+
+const std::vector<BlockCase>& long_block_cases()
+{
+    static const std::vector<BlockCase> cases {
         {125, -25, 4.5, 5, 1.2, -17.01},
         {125, -25, 4.5, 5, 4.8, -7.37},
         {125, -25, 4.5, 5, 5.26, -7.20},
@@ -325,6 +684,24 @@ TEST_CASE("over a long block the point-source field is the boundary-element solu
         {1000, -10, 2, 25, 5.26, -17.71},
         {1000, -10, 2, 25, 6.5, -18.45},
     };
+    return cases;
+}
+
+} // namespace
+
+TEST_CASE("over a long block the point-source field is the boundary-element solution's", "[point_paths]")
+{
+    // A block 2.44 m thick and 5.18 m high -- two stacked shipping containers,
+    // DigiCity's (FIDELITY) -- on rigid ground, long enough to be two-
+    // dimensional, the source and the microphone in one plane across it.
+    // There every ray is a 2-D ray times 1/sqrt(its length), and the field in
+    // that plane is the line source's: the exact values are a boundary-element
+    // solution for one (tools/thick_barrier_bem.py, 60 elements a wavelength,
+    // converged to 0.05 dB here), in dB re the free field.  Sources low, near
+    // grazing and above the roof; microphones deep in the shadow, at the roof
+    // plane and above it.  The uniform form is within 1 dB everywhere; the
+    // cascade misses by up to 10.
+    const std::vector<BlockCase>& cases = long_block_cases();
     const double width = 2.44, height = 5.18;
     Footprint block;
     block.x = {-2000.0, 2000.0, 2000.0, -2000.0};
@@ -333,7 +710,7 @@ TEST_CASE("over a long block the point-source field is the boundary-element solu
     const Buildings city({block});
     const std::vector<double> reflection(city.facades().size(), 1.0);
     double worst[2] {0.0, 0.0}, square = 0.0;
-    for (const Case& c : cases)
+    for (const BlockCase& c : cases)
     {
         const double k = 2.0 * pi * c.f / 343.2;
         const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, width + c.behind, c.z);
@@ -360,6 +737,54 @@ TEST_CASE("over a long block the point-source field is the boundary-element solu
     }
     REQUIRE(std::sqrt(square / cases.size()) < 0.3);
     REQUIRE(worst[0] > 5.0);
+}
+
+// The same block with the edge-source integral (edge_source.hpp): the field
+// that crosses the roof is its second order over the shared face, which holds
+// the transition the uniform form approximates and the cascade misses.  Every
+// other case.  Within 0.28 dB, rms 0.10, where the uniform form is within
+// 0.94 dB, rms 0.21; the BEM's own convergence is 0.05 dB and the point
+// source's 2-D equivalent (each ray times the root of its length) is good to
+// O(1/kL), most of what is left at 125 Hz.
+TEST_CASE("over a long block the edge-source field is the boundary-element solution's", "[point_paths][edge_source]")
+{
+    const double width = 2.44, height = 5.18;
+    Footprint block;
+    block.x = {-2000.0, 2000.0, 2000.0, -2000.0};
+    block.y = {0.0, 0.0, width, width};
+    block.top = height;
+    const Buildings city({block});
+    const std::vector<double> reflection(city.facades().size(), 1.0);
+    double worst = 0.0, square = 0.0;
+    int count = 0;
+    const std::vector<BlockCase>& cases = long_block_cases();
+    for (std::size_t i = 0; i < cases.size(); i += 2)
+    {
+        const BlockCase& c = cases[i];
+        const double k = 2.0 * pi * c.f / 343.2;
+        const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, width + c.behind, c.z);
+        const double free = 1.0 / std::sqrt((m - s).norm());
+        PointPathOptions options;
+        options.edge_source = true;
+        const PointSourceField field(city, s, m, options);
+        std::complex<double> sum(0.0, 0.0);
+        for (const PointRay& ray : field.rays())
+        {
+            const std::vector<std::complex<double>> f = edge_source_factors(city, ray, {k});
+            const std::complex<double> a = f.empty() ? point_ray_amplitude(ray, reflection, 1.0, k)
+                                                     : reflected_amplitude(ray, reflection, 1.0) * f[0];
+            sum += a * std::sqrt(ray.length) * std::polar(1.0, k * ray.length);
+        }
+        const double error = 20.0 * std::log10(std::abs(sum) / free) - c.exact;
+        INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
+                  << " m behind, " << c.z << " m up");
+        REQUIRE(std::abs(error) < 0.35);
+        worst = std::max(worst, std::abs(error));
+        square += error * error;
+        count++;
+    }
+    INFO("worst " << worst << " dB");
+    REQUIRE(std::sqrt(square / count) < 0.15);
 }
 
 // The aperture's Filon rule against the midpoint rule at a 192nd of a
@@ -402,17 +827,72 @@ TEST_CASE("the aperture's Filon rule is the fine midpoint rule's", "[point_paths
     REQUIRE(worst_phase < 0.005);
 }
 
-// The twice-diffracted pairs ruled out before they are solved are only those
-// that could not have been rays: among DigiCity's containers and a block of
-// a district, with the source low and high, the rays are the same with the
-// pruning off, to the bit.
-TEST_CASE("pruning the twice-diffracted pairs loses no ray", "[point_paths]")
+// The aperture worked out once for every wavenumber from the lowest band's
+// (shared_face_geometry), its nodes no longer ending at each k's taper and
+// extent, still gives each k's field as the fine midpoint rule does, on the
+// Filon test's faces from 50 Hz to 10 kHz.
+TEST_CASE("the aperture worked out once is every wavenumber's", "[point_paths]")
+{
+    struct Face
+    {
+        double width, sx, sz, rx, rz, n;
+    };
+    const std::vector<Face> faces {
+        {2.438, -3.9627, -3.2527, 14.3812, -29.5687, 1.5},
+        {2.438, -4.3169, -21.6163, 6.1392, 6.4313, 1.5},
+        {12.116, -4.9019, -20.0857, 19.3141, 0.9958, 1.5},
+        {60.0, -90.0, 0.0, 90.0, -28.5, 1.5},
+        {60.0, -90.0, 10.0, 70.0, -90.0, 1.5},
+        {6.0, -10.0, -5.0, 16.0, -3.64, 1.25},
+        {4.0, -12.0, -4.0, 9.0, -2.5, 1.25},
+    };
+    const double c = 343.2;
+    const std::vector<double> frequencies {50.0, 125.0, 400.0, 1000.0, 2500.0, 5000.0, 10000.0};
+    std::vector<double> wavenumbers;
+    for (double frequency : frequencies)
+        wavenumbers.push_back(2.0 * pi * frequency / c);
+    double worst = 0.0, worst_phase = 0.0, worst_cpu = 0.0;
+    for (const Face& f : faces)
+    {
+        const SharedFace face {f.width, f.n, f.n};
+        const SharedFaceGeometry geometry = shared_face_geometry(face, f.sx, f.sz, f.rx, f.rz, wavenumbers);
+        const double reference = std::hypot(f.sx, f.sz) + f.width + std::hypot(f.rx - f.width, f.rz);
+        for (double frequency : frequencies)
+        {
+            const double k = 2.0 * pi * frequency / c;
+            const std::complex<double> once = shared_face_field_at(geometry, k) * std::polar(1.0, k * reference);
+            const std::complex<double> midpoint = midpoint_shared_face(face, f.sx, f.sz, f.rx, f.rz, k);
+            const std::complex<double> cpu = shared_face_field(face, f.sx, f.sz, f.rx, f.rz, k);
+            worst = std::max(worst, std::abs(20.0 * std::log10(std::abs(once) / std::abs(midpoint))));
+            worst_phase = std::max(worst_phase, std::abs(std::arg(once / midpoint)));
+            worst_cpu = std::max(worst_cpu, std::abs(20.0 * std::log10(std::abs(once) / std::abs(cpu))));
+        }
+    }
+    INFO("worst " << worst << " dB, " << worst_phase << " rad against the midpoint rule; " << worst_cpu
+                  << " dB against shared_face_field");
+    REQUIRE(worst < 0.03);
+    REQUIRE(worst_phase < 0.005);
+}
+
+// The diffracted paths ruled out before they are solved or checked are only
+// those that could not have been rays: among DigiCity's containers, a block
+// of a district, and a grid of blocks of mixed heights over several of
+// Buildings' grid cells, with the source low and high, the rays are the same
+// with the pruning off, to the bit.
+TEST_CASE("pruning the diffracted paths loses no ray", "[point_paths]")
 {
     const Buildings containers({box(4.09, 17.66, 6.53, 23.72, 7.77), box(14.81, 17.66, 17.25, 23.72, 7.77),
             box(1.6, 10.82, 4.04, 16.88, 7.77), box(1.6, 8.38, 13.72, 10.82, 5.18),
             box(20.21, 3.86, 22.65, 16.0, 7.77), box(13.5, -1.84, 19.56, 0.6, 7.77)});
     const Buildings blocks({box(0.0, 0.0, 60.0, 60.0, 20.0), box(80.0, 0.0, 140.0, 60.0, 35.0),
             box(0.0, 80.0, 60.0, 140.0, 10.0), box(80.0, 80.0, 140.0, 140.0, 40.0)});
+    std::vector<Footprint> grid_blocks;
+    const double heights[] = {6.0, 15.0, 9.0, 24.0, 12.0, 30.0, 9.0};
+    for (int i = 0; i < 5; i++)
+        for (int j = 0; j < 5; j++)
+            grid_blocks.push_back(box(36.0 * i, 36.0 * j, 36.0 * i + 22.0 + 2.0 * (j % 3), 36.0 * j + 24.0 - 3.0 * (i % 2),
+                    heights[(3 * i + j) % 7]));
+    const Buildings grid(grid_blocks);
     struct Case
     {
         const Buildings* city;
@@ -424,6 +904,8 @@ TEST_CASE("pruning the twice-diffracted pairs loses no ray", "[point_paths]")
         {&containers, {8.0, 12.0, 15.0}, {18.0, 2.0, 1.2}},
         {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 1.5}},
         {&blocks, {70.0, 30.0, 5.0}, {110.0, 150.0, 1.5}},
+        {&grid, {101.0, 31.0, 40.0}, {29.0, 140.0, 1.5}},
+        {&grid, {66.0, 101.0, 2.0}, {140.0, 29.0, 1.2}},
     };
     for (const Case& c : cases)
     {
@@ -530,4 +1012,101 @@ TEST_CASE("twice-diffracted rays reflect at the microphone whatever the edge ord
         }
     }
     REQUIRE(reflected > 0);
+}
+
+
+// A vertical edge standing on the floor goes on below it as its image, and the
+// floor's images split that doubled edge between rays and their mirrors: of
+// the four once-diffracted rays around a corner (the source or its image, the
+// microphone or its), the tracer keeps the two whose points stand above the
+// floor, and with the edge-source integral each takes the doubled edge.  Their
+// sum is the doubled edge's field from the source and from its image.
+TEST_CASE("with the edge source a corner on the floor is one edge with its image", "[point_paths][edge_source]")
+{
+    Footprint box;
+    box.x = {0.0, 10.0, 10.0, 0.0};
+    box.y = {0.0, 0.0, 10.0, 10.0};
+    box.top = 8.0;
+    const Buildings city({box});
+    const Vec3 s(-6.0, 8.0, 1.5), m(8.0, -6.0, 1.0);
+    PointPathOptions options;
+    options.edge_source = true;
+    options.double_diffraction = false;
+    const PointSourceField field(city, s, m, options);
+    const std::vector<double> reflection(city.facades().size(), 1.0);
+    // The corner at the origin.
+    std::size_t corner = city.edges().size();
+    for (std::size_t e = 0; e < city.edges().size(); e++)
+        if (city.edges()[e].vertical && std::hypot(city.edges()[e].start.x, city.edges()[e].start.y) < 1e-9)
+            corner = e;
+    REQUIRE(corner < city.edges().size());
+    const Edge& g = city.edges()[corner];
+    Edge doubled = g;
+    doubled.start = g.start - g.length * g.direction;
+    doubled.length = 2.0 * g.length;
+    const Vec3 image(s.x, s.y, -s.z);
+    for (double k : {3.0, 30.0})
+    {
+        std::complex<double> sum = 0.0;
+        int count = 0;
+        for (const PointRay& ray : field.rays())
+            if (ray.wedges == 1 && ray.edge_source.edges[0] == corner && ray.facades.empty())
+            {
+                sum += reflected_amplitude(ray, reflection, 1.0) * edge_source_factors(city, ray, {k})[0]
+                        * std::polar(1.0, k * ray.length);
+                count++;
+            }
+        REQUIRE(count == 2);
+        const std::complex<double> exact = edge_source_field(g.n, edge_frame_ends(doubled, s, m), k, 0.0, doubled.length)
+                + edge_source_field(g.n, edge_frame_ends(doubled, image, m), k, 0.0, doubled.length);
+        INFO("k " << k << ": " << std::abs(sum) << " against " << std::abs(exact));
+        REQUIRE(std::abs(sum - exact) < 1e-4 * std::abs(exact));
+    }
+}
+
+// Where a roof edge meets the vertical corner below it, the two edges share a
+// vertex, and a twice-diffracted ray down the wall between them has a point of
+// one edge on the other's line, which has no angle about it.  The partner
+// search once took that point for a wave's boundary there, a stretch of no
+// length whose once-diffracted field was not a number, and the whole band
+// with it.  (RWTH EDGE's detached house, UE14, at model scale.)
+TEST_CASE("with the edge source a corner's adjacent edges give a finite field", "[point_paths][edge_source]")
+{
+    Footprint house;
+    house.x = {0.0, 0.96, 0.96, 0.0};
+    house.y = {0.0, 0.0, 1.0, 1.0};
+    house.top = 0.492;
+    const Buildings city({house});
+    PointPathOptions options;
+    options.edge_source = true;
+    const PointSourceField field(city, Vec3(-2.0, 0.5, 1.5), Vec3(1.46, 0.5, 0.0032), options);
+    const std::vector<double> ks {2.0 * pi * 2000.0 / 343.2, 2.0 * pi * 10000.0 / 343.2};
+    // The field's own factors fall back to the cascade where not finite, so
+    // the integral is held directly, its vertical edge through the floor as
+    // the factors take it.
+    const auto through_floor = [](Edge g) {
+        if (std::abs(g.direction.z) > 1.0 - 1e-12 && std::abs(g.start.z) < 1e-9)
+        {
+            g.start = g.start - g.length * g.direction;
+            g.length *= 2.0;
+        }
+        return g;
+    };
+    int adjacent = 0;
+    for (const PointRay& ray : field.rays())
+    {
+        if (ray.wedges != 2)
+            continue;
+        const Edge g1 = through_floor(city.edges()[ray.edge_source.edges[0]]);
+        const Edge g2 = through_floor(city.edges()[ray.edge_source.edges[1]]);
+        const Vec3 a1 = g1.start, b1 = g1.start + g1.length * g1.direction;
+        const Vec3 a2 = g2.start, b2 = g2.start + g2.length * g2.direction;
+        if (std::min({(a1 - a2).norm(), (a1 - b2).norm(), (b1 - a2).norm(), (b1 - b2).norm()}) > 1e-9)
+            continue;
+        adjacent++;
+        for (const std::complex<double>& v : localized_twice_diffracted_spectrum(g1, g2, ray.edge_source.source,
+                     ray.edge_source.microphone, ray.wedge[1].grazing ? 0.5 : 1.0, ks, PartnerModel::edge_source))
+            REQUIRE((std::isfinite(v.real()) && std::isfinite(v.imag())));
+    }
+    REQUIRE(adjacent > 0);
 }

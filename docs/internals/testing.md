@@ -233,7 +233,15 @@ CTests are defined in `CMakeLists.txt`.
 | `urban_table_canyon_golden`, `urban_table_plate_golden` | CTest | a first-order reflection evaluated with the ground model whatever its floor partner (`first_order_floor_partner` skipped) |
 | `urban_buildings_golden`, `urban_buildings_plate_golden` | CTest | the builder's table keeping the first-order reflections the run evaluates (no `run_facades`), or their floor partners; the second also fails `[building_paths]` |
 | `the beams find every diffracted ray the unpruned search does` | `test_building_paths.cpp` | `clip_to_beam` with the window's far side reversed, or clipping 1 mm short of its boundaries |
+| `the field is continuous across a corner's shadow and reflection boundaries` | `test_point_paths.cpp` | `term_angles` taking every pole's limit a hair above it (9.3 dB on the corner's shadow boundary, at the receivers exactly on it) |
+| `away from transitions the twice-diffracted cascade is the edge-source integral` | `test_edge_source.cpp` | the cascade's spreading for edges that are not parallel taken as the parallel one (1.45 dB on the perpendicular pair) |
+| `with the edge source a corner's adjacent edges give a finite field` | `test_point_paths.cpp` | `where_along` taking a point on the edge's own line (the corner two edges share) for a wave's boundary, with no least length for a partner's part: a stretch of no length whose spectrum is not a number |
+| `the level-curve spectrum is the nested integral` | `test_edge_source.cpp` | the level curves' breaks without the boundary points, where a directivity term's pole meets its ridge (the perpendicular pair 1-11% off) |
+| `a point of an edge proved hidden is hidden` | `test_edge_visibility.cpp` | the buildings grown by 5 cm rather than shrunk by `visible_stretch`'s margin (209,070 points seen yet proved hidden). A margin of zero passes: no sampled path grazes a corner closely enough |
+| `pruning the diffracted paths loses no ray` | `test_point_paths.cpp` | each visible stretch pulled in by 0.5 m at both ends (466 rays of 628 on one case); the buildings grown by 5 cm |
 | `urban_buildings_diffuse_golden` | CTest | the run's first-order reflections written at rho rather than rho (1 - s) |
+| `rays that leave together deviate together` | `test_source_coherence.cpp` | the interval's groups never linked (every pair alone); the rotor's delay with its sense reversed on the rays; the one-turn shift of a pair whose azimuth difference wraps left out |
+| `rays leaving apart lose their coherence as frequency times angle grows` | `test_source_coherence.cpp` | every pair's mean coherency 1 (the coherent sum) under `--ray_coherence measured` |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.

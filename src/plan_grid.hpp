@@ -114,6 +114,23 @@ public:
         }
     }
 
+    // The cells the box [x_min, x_max] by [y_min, y_max] overlaps:
+    // visit(begin, end) for each with its items.  An item spans several
+    // cells, so it can be visited more than once.
+    template <typename Visit>
+    void box(double x_min, double x_max, double y_min, double y_max, Visit visit) const
+    {
+        if (start_.empty() || x_max < x0_ || y_max < y0_ || x_min > x0_ + nx_ * cell_ || y_min > y0_ + ny_ * cell_)
+            return;
+        const std::size_t ia = column(x_min), ib = column(x_max), ja = row(y_min), jb = row(y_max);
+        for (std::size_t b = ja; b <= jb; b++)
+            for (std::size_t a = ia; a <= ib; a++)
+            {
+                const std::size_t c = b * nx_ + a;
+                visit(items_.data() + start_[c], items_.data() + start_[c + 1]);
+            }
+    }
+
 private:
     std::size_t column(double x) const
     {

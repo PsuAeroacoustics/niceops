@@ -1,0 +1,123 @@
+// The canyon wave solver's step (run() in canyon_wave.cpp) in float.  Needs
+// canyon_wave_types.h before it.  coefficient holds, in order, ay_c[nx],
+// by_c[nx], ay_f[nx + 1], by_f[nx + 1], az_c[nz], bz_c[nz], az_f[nz + 1],
+// bz_f[nz + 1]; extent holds lo[nz] then hi[nz].
+
+// One step fused: each group owns a TX by TY tile of cells, loads the old
+// pressure over the tile and a cell around it, forms the new velocity on every
+// face its pressures need (the faces it owns -- the left and bottom of each of
+// its cells -- and, again, its neighbours' faces on its right and top), writes
+// the faces it owns, then its cells' new pressure.  Every field is
+// double-buffered, old in and new out, so a group reads its neighbours' old
+// faces and cells while they write their new ones.  Where `check` is not
+// 0xffffffff, the tile's share of the energy goes to
+// partial[check * groups + group].
+#define NK_TX 32u
+#define NK_TY 8u
+NK_KERNEL(canyon_step)(NK_IN(CanyonGridGpu, grid, 0), NK_IN(uint, extent, 1), NK_IN(float, coefficient, 2),
+        NK_IN(float, py_in, 3), NK_IN(float, pz_in, 4), NK_IN(float, vy_in, 5), NK_IN(float, vz_in, 6),
+        NK_OUT(float, py_out, 7), NK_OUT(float, pz_out, 8), NK_OUT(float, vy_out, 9), NK_OUT(float, vz_out, 10),
+        NK_OUT(float, recording, 11), NK_IN(float, q, 12), NK_OUT(float, partial, 13), NK_VALUE(uint, step, 14),
+        NK_VALUE(uint, check, 15) NK_GROUP_ARGS)
+{
+    NK_SHARED_ARRAY(float, p, (NK_TY + 2u) * (NK_TX + 2u));
+    NK_SHARED_ARRAY(float, vy_new, NK_TY * (NK_TX + 1u));
+    NK_SHARED_ARRAY(float, vz_new, (NK_TY + 1u) * NK_TX);
+    NK_SHARED_ARRAY(float, scratch, NK_TX * NK_TY);
+    const CanyonGridGpu g = grid[0];
+    const uint tiles_x = (g.nx + NK_TX - 1u) / NK_TX;
+    const uint x0 = (NK_GROUP % tiles_x) * NK_TX, y0 = (NK_GROUP / tiles_x) * NK_TY;
+    NK_GLOBAL_IN float* ay_c = coefficient;
+    NK_GLOBAL_IN float* by_c = ay_c + g.nx;
+    NK_GLOBAL_IN float* ay_f = by_c + g.nx;
+    NK_GLOBAL_IN float* by_f = ay_f + g.nx + 1u;
+    NK_GLOBAL_IN float* az_c = by_f + g.nx + 1u;
+    NK_GLOBAL_IN float* bz_c = az_c + g.nz;
+    NK_GLOBAL_IN float* az_f = bz_c + g.nz;
+    NK_GLOBAL_IN float* bz_f = az_f + g.nz + 1u;
+
+    // The old pressure over the tile and its rim, zero off the grid.
+    const uint wide = NK_TX + 2u;
+    for (uint k = NK_THREAD; k < (NK_TY + 2u) * wide; k += NK_THREADS)
+    {
+        const int i = int(x0) + int(k % wide) - 1, j = int(y0) + int(k / wide) - 1;
+        float v = 0.0f;
+        if (i >= 0 && j >= 0 && uint(i) < g.nx && uint(j) < g.nz)
+            v = py_in[uint(j) * g.nx + uint(i)] + pz_in[uint(j) * g.nx + uint(i)];
+        p[k] = v;
+    }
+    NK_BARRIER();
+    // The new vy on faces x0 .. x0 + TX of the tile's rows, as run() forms it.
+    for (uint k = NK_THREAD; k < NK_TY * (NK_TX + 1u); k += NK_THREADS)
+    {
+        const uint i = x0 + k % (NK_TX + 1u), j = y0 + k / (NK_TX + 1u);
+        float v = 0.0f;
+        if (j < g.nz && i <= g.nx)
+        {
+            const uint lo = extent[j], hi = extent[g.nz + j];
+            const uint at = j * (g.nx + 1u) + i;
+            // The cell left of the face is column i - 1, at k % (TX + 1) in p's row.
+            const uint left = (j - y0 + 1u) * wide + (i - x0), right = left + 1u;
+            v = vy_in[at];
+            if (i > lo && i < hi)
+                v = ay_f[i] * v - by_f[i] * g.inv_rho_h * (p[right] - p[left]);
+            else if (j < g.wall_rows && i == lo && g.wall_a != 0u)
+                v = g.keep_a * v - g.push_a * p[right];
+            else if (j < g.wall_rows && i == hi && g.wall_b != 0u)
+                v = g.keep_b * v + g.push_b * p[left];
+            if (i < x0 + NK_TX)
+                vy_out[at] = v;
+        }
+        vy_new[k] = v;
+    }
+    // The new vz on faces y0 .. y0 + TY of the tile's columns.
+    for (uint k = NK_THREAD; k < (NK_TY + 1u) * NK_TX; k += NK_THREADS)
+    {
+        const uint i = x0 + k % NK_TX, j = y0 + k / NK_TX;
+        float v = 0.0f;
+        if (i < g.nx && j <= g.nz)
+        {
+            const uint at = j * g.nx + i;
+            v = vz_in[at];
+            if (j >= 1u && j < g.nz)
+            {
+                const uint vlo = max(extent[j], extent[j - 1u]), vhi = min(extent[g.nz + j], extent[g.nz + j - 1u]);
+                if (i >= vlo && i < vhi)
+                {
+                    const uint above = (j - y0 + 1u) * wide + (i - x0 + 1u), below = above - wide;
+                    v = az_f[j] * v - bz_f[j] * g.inv_rho_h * (p[above] - p[below]);
+                    if (j == g.record_row && i >= g.record_lo && i < g.record_hi && j < y0 + NK_TY)
+                        recording[step * (g.record_hi - g.record_lo) + (i - g.record_lo)] = v;
+                }
+            }
+            if (j < y0 + NK_TY)
+                vz_out[at] = v;
+        }
+        vz_new[k] = v;
+    }
+    NK_BARRIER();
+    // The tile's own cell: its new pressure from the new velocities around it.
+    const uint tx = NK_THREAD % NK_TX, ty = NK_THREAD / NK_TX;
+    const uint i = x0 + tx, j = y0 + ty;
+    float energy = 0.0f;
+    if (i < g.nx && j < g.nz && i >= extent[j] && i < extent[g.nz + j])
+    {
+        const uint at = j * g.nx + i;
+        const float dy = vy_new[ty * (NK_TX + 1u) + tx + 1u] - vy_new[ty * (NK_TX + 1u) + tx];
+        const float dz = vz_new[(ty + 1u) * NK_TX + tx] - vz_new[ty * NK_TX + tx];
+        float y = ay_c[i] * py_in[at] - by_c[i] * g.rc2_h * dy;
+        const float z = az_c[j] * pz_in[at] - bz_c[j] * g.rc2_h * dz;
+        if (i == g.source_i && j == g.source_j)
+            y += g.inject * q[step];
+        py_out[at] = y;
+        pz_out[at] = z;
+        if (j < g.energy_top && i >= g.pml && i < g.nx - g.pml)
+            energy = (y + z) * (y + z);
+    }
+    if (check != 0xffffffffu)
+    {
+        const float total = nk_group_sum(scratch, energy, NK_THREAD, NK_THREADS);
+        if (NK_THREAD == 0u)
+            partial[check * ((g.nz + NK_TY - 1u) / NK_TY) * tiles_x + NK_GROUP] = total;
+    }
+}

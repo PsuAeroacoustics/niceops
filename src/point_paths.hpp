@@ -31,12 +31,18 @@
 // (image_tree).  Left out: three edges or more, a reflection between two
 // edges, diffuse reflection, and an edge's ends.
 
+#include <array>
 #include <complex>
+#include <functional>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <vector>
 
+#include "atmosphere.hpp"
 #include "building_paths.hpp"
 #include "buildings.hpp"
+#include "edge_source.hpp"
 #include "double_wedge.hpp"
 #include "vec3.hpp"
 #include "wedge.hpp"
@@ -56,17 +62,73 @@ struct PointPathOptions
     // edge diffracts only what reaches it straight from the source, as in the
     // plane-wave tables (building_paths.hpp), for comparison with them.
     bool source_reflections = true;
+    // Roofs reflect, as the floor does.  Among vertical walls a ray reflects
+    // in one horizontal surface at most -- once it leaves a roof it keeps
+    // rising -- so a roof below both ends of the ray's stretch takes the
+    // floor's place: on a specular ray, and on either side of a once-
+    // diffracted one, where it counts as one of max_edge_reflections and the
+    // edge must stand above it (the roof's own edges carry its reflection in
+    // their coefficients already).  Off, for comparison.
+    bool roofs = true;
     // Facades and edges within this horizontal distance of the source or the
     // microphone (m).
     double radius = 150.0;
     std::size_t max_images = 20000;
-    // Rule out twice-diffracted pairs before solving them: where the source's
-    // image cannot light the first edge, or the microphone's see the second,
-    // or no point of either edge can put the other's stationary point on it.
-    // Off, every pair is solved: slower, and the reference the tests hold
-    // these to (they must find the same rays).
+    // Rule out diffracted paths before solving or checking them: where an
+    // image cannot see the point of the edge the path would take (from the
+    // proof in edge_visibility.hpp), and for twice-diffracted pairs where the
+    // source's image cannot light the first edge, or the microphone's the
+    // second, or no point of either edge can put the other's stationary point
+    // on the stretch of it its end sees.  Off, every path is solved and
+    // checked: slower, and the reference the tests hold these to (they must
+    // find the same rays).
     bool prune = true;
+    // Make the diffracted partner the orders above do not trace at a
+    // boundary (THEORY 6.5), for edges within this detour of a leg, m: 0 for
+    // none.  Specular and once-diffracted rays; a twice-diffracted ray's
+    // partner would need a third edge.
+    double fade_reach = 0.0;
+    // The partner's coefficient with the incident wave's terms only.
+    bool fade_incident = false;
+    // Make partners even where they are traced, for holding them to those.
+    bool fade_traced = false;
+    // Diffraction by the edge-source integral (edge_source.hpp) over each
+    // edge's whole length, where UTD takes it infinite: once-diffracted rays
+    // always, twice-diffracted ones where the cascade cannot be trusted (a
+    // transition, an edge's end or a partner's boundary a few Fresnel zones
+    // off), blended into it as each wavenumber leaves that.  CPU only.
+    bool edge_source = false;
+    // With edge_source, once-diffracted rays whose Keller point lies past an
+    // end of the edge are kept while the path through the end is no longer
+    // than this past the Keller path (m): the end's wave, which the integral
+    // over the edge carries, so that a ray leaving the edge fades rather than
+    // stops.  point_field sets it to 100 radians at the lowest band.
+    double edge_source_reach = 10.0;
 };
+
+// The diffracted ray the model does not trace at a boundary, made from the
+// ray it partners (THEORY 6.5): one leg of that ray diffracted at an edge it
+// passes, the rest kept, by the cascade.  The edge's coefficient (its angles
+// at the edge, sin(beta) and distance parameter, as WedgeTerm's) and the
+// spreading's ratio, the partner's over the ray's; its detour, which its
+// length carries, and the fade's reach, beyond which it is tapered off.
+// `incident` keeps only the incident wave's pair of terms.
+struct MadeEdge
+{
+    WedgeAngles angles;
+    double sin_beta = 1.0;
+    double distance = 0.0;
+    double ratio = 1.0;
+    double detour = 0.0;
+    double reach = 0.0;
+    bool incident = false;
+};
+// The partner's factor on the ray's amplitude at wavenumber k: the edge's
+// coefficient, the spreading's ratio and the taper.
+std::complex<double> made_edge_factor(const MadeEdge& screen, double k);
+// The fade's reach for a run whose lowest wavenumber is k_min: where the
+// Fresnel parameter sqrt(2 k d / pi) reaches 3 there, at most `cap` m.
+double fade_reach(double k_min, double cap = 0.5);
 
 // One wedge on a ray: its exterior angle (n pi) and the departure and arrival
 // angles in its own angle, as wedge_angles(n, theta, theta0) -- the part of
@@ -91,11 +153,37 @@ struct SharedFaceTerm
     double sin_beta = 1.0;
 };
 
+// One of the three sub-bands, equal in log frequency, that a band's level
+// averages over: its frequencies, Hz, and wavenumbers, 1/m.
+struct SubBand
+{
+    double g1 = 0.0, g2 = 0.0, k1 = 0.0, k2 = 0.0;
+};
+std::array<SubBand, 3> sub_bands(double band, double sound_speed);
+// A band's level, dB, from its sub-bands' band-averaged energies.
+double band_level(double band, const std::array<SubBand, 3>& parts, const double* energy);
+// The air's attenuation of a ray's amplitude per metre of its length, Np/m,
+// at each sub-band's middle frequency (ISO 9613-1): [3 band + part].  A ray's
+// amplitude in a sub-band is multiplied by exp(-a L).
+std::vector<double> sub_band_absorption(const Atmosphere& air, const std::vector<double>& bands, double sound_speed);
+
 // A ray of the field: its length (the phase is k times it), its geometric
 // spreading (1/r for a specular ray, 1/sqrt(s s' (s + s')) once diffracted,
 // 1/sqrt(s1 s2 s3 (s1 + s2 + s3)) twice through the cascade), its reflections
 // and its wedges.  A ray over a shared face carries the face instead of its
 // two wedge terms, and its spreading is 1/sqrt(the in-plane length).
+// A diffracted ray as the edge-source integral (edge_source.hpp) takes it:
+// its edges, in order, the images of the source and the microphone it is
+// unfolded between (reflected in the facades and the floor it meets before
+// the first edge and after the last), and the stretch of each edge outside
+// which its end is proved blind to it.
+struct EdgeSourceTerm
+{
+    std::size_t edges[2] = {0, 0};
+    Vec3 source, microphone;
+    Stretch stretches[2];
+};
+
 struct PointRay
 {
     double length = 0.0;
@@ -106,6 +194,20 @@ struct PointRay
     WedgeTerm wedge[2];
     bool shared = false;
     SharedFaceTerm shared_face;
+    // For a diffracted ray (wedges > 0).
+    EdgeSourceTerm edge_source;
+    // The height of the horizontal plane the ray reflects in on its source
+    // side -- anywhere along it for a specular ray, before its first edge for
+    // a diffracted one -- 0 for the floor, NaN for none (point_ray_launch).
+    double source_plane = std::numeric_limits<double>::quiet_NaN();
+    // For each roof it reflects in, a facade of the roof's building, whose
+    // reflection coefficient the roof takes (the building's walls and roof
+    // absorb alike); no_facade for a building with none, a rigid roof.
+    static constexpr std::size_t no_facade = static_cast<std::size_t>(-1);
+    std::vector<std::size_t> roof_facades;
+    // A partner made by the fade: the edges it diffracts at besides the
+    // ray's own (its length includes their detours).
+    std::vector<MadeEdge> made_edges;
     // Where it goes, for drawing: the source, its reflection and diffraction
     // points in order, the microphone.  A leg off the floor is unfolded below
     // it, so only x and y are the ray's own there.
@@ -146,6 +248,28 @@ public:
     {
         return tree_;
     }
+    // How an image, or its mirror in the floor, stands about one of its edges,
+    // which does not depend on the partner: its parameter along the edge's
+    // line and its distance off it, which place keller's point; the stretch
+    // [from, to] of the edge outside which the end is proved not to see it
+    // along the image's path (edge_visibility.hpp; the whole edge where
+    // nothing is proved, and always without options.prune), and whether it
+    // sees any of it; and whether it also lies in the wedge's air, strictly,
+    // a hair wider than in_air for the angle taken from the edge's start.
+    struct View
+    {
+        double along = 0.0;
+        double off = 0.0;
+        double from = 0.0;
+        double to = 0.0;
+        bool visible = true;
+        bool lit = false;
+    };
+    // Per image, [2 k + floor] for the image's k-th edge, floor 1 the mirror.
+    const std::vector<std::vector<View>>& views() const
+    {
+        return views_;
+    }
     // Which end it is, and the options its tree was traced with.
     bool source() const
     {
@@ -163,6 +287,7 @@ private:
     std::vector<std::size_t> near_;
     std::vector<std::size_t> candidates_;
     ImageTree tree_;
+    std::vector<std::vector<View>> views_;
 };
 
 class PointSourceField
@@ -189,23 +314,77 @@ public:
     // coherently, pair by pair, over three sub-bands, as the urban tables
     // are), for a unit point source, |p| = 1/r in free field: dB re the
     // source's level at 1 m.  `reflection` is the facades' energy reflection
-    // coefficients, [facade][band].
+    // coefficients, [facade][band].  `absorption` is the air's, per metre of
+    // path (sub_band_absorption), or empty for none.  `weights`, when given,
+    // multiplies each ray's amplitude in each band, [ray][band] in rays()'s
+    // order: a directional source's amplitude along the ray's launch
+    // (point_ray_launch), the same at every wavenumber of the band.
     void band_levels(const std::vector<double>& reflection, double floor_reflection, const std::vector<double>& bands,
-            double sound_speed, double* out) const;
+            double sound_speed, double* out, const std::vector<double>& absorption = {},
+            const double* weights = nullptr) const;
+
+    // What band_levels sums, for a caller that sums it elsewhere (a GPU):
+    // per band and sub-band, in order, the rays' amplitudes at the sub-band's
+    // middle wavenumber and their lengths, ascending, with the sub-band.
+    // band_level() turns the three sub-bands' energies into the band's level.
+    // `order`, when given, gets each amplitude's index in rays() before the
+    // first problem.
+    using SubBandProblem = std::function<void(std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
+            const std::vector<double>& length, const SubBand& sub_band)>;
+    void sub_band_problems(const std::vector<double>& reflection, double floor_reflection, const std::vector<double>& bands,
+            double sound_speed, const SubBandProblem& problem, const std::vector<double>& absorption = {},
+            const double* weights = nullptr, std::vector<std::size_t>* order = nullptr) const;
 
 private:
-    // An end's images and, per image, the edges the pair keeps.
+    // An end's images and, per image, the edges the pair keeps, where each
+    // stands in the image's own list (`at`), and the end's views of them.
     struct Ends
     {
         const std::vector<PointImage>& images;
         const std::vector<std::vector<std::size_t>>& edges;
+        const std::vector<std::vector<std::uint32_t>>& at;
+        const std::vector<std::vector<PathEnd::View>>& views;
+        // The view of the image's kept edge `kept`, from the floor or not.
+        const PathEnd::View& view(std::size_t image, std::size_t kept, int floor) const
+        {
+            return views[image][2 * at[image][kept] + floor];
+        }
     };
     void trace(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
             const PointPathOptions& options);
 
     std::vector<PointRay> rays_;
     std::size_t facade_count_ = 0;
+    const Buildings* buildings_ = nullptr;
+    bool edge_source_ = false;
 };
+
+// The diffraction factor a ray's edge-source integral gives it at each
+// wavenumber, what point_ray_amplitude's wedges give it at reflected = 1:
+// its field over its spreading, the phase of its length taken out (a sub-
+// band problem's lengths carry that).  Empty for a twice-diffracted ray the
+// cascade is trusted on at every wavenumber, and for a ray that diffracts
+// nowhere.  (A ray's share of the energy is no guide to skipping it: in
+// DigiCity hundreds of twice-diffracted rays each 45 dB down move a
+// microphone by half a dB together.)
+std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings, const PointRay& ray,
+        const std::vector<double>& wavenumbers);
+
+// A twice-diffracted ray's cascade from the source's image pa by g1 at q1 and
+// g2 at q2 to the microphone's image pb: its length, spreading and wedge
+// terms; the rest of the record is the caller's.
+PointRay twice_diffracted_ray(const Edge& g1, const Edge& g2, const Vec3& pa, const Vec3& pb, const Vec3& q1,
+        const Vec3& q2);
+
+// The unit direction a ray leaves the source in, which a directional source
+// is read along.  A specular ray leaves toward its first hit, or toward the
+// microphone or its floor image where it hits nothing; a diffracted one
+// toward the first point on its source side, mirrored in the floor where that
+// side reflects in it (its source image lies below the floor): the path holds
+// a leg off the floor unfolded below it.  The ray's length is stationary in
+// every point between, so this is minus its gradient in the source's
+// position, which is how it is tested.
+Vec3 point_ray_launch(const PointRay& ray);
 
 // A ray's complex amplitude at wavenumber k; `reflection` is the facades'
 // energy reflection coefficients for one band, [facade].  It is what the

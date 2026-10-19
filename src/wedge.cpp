@@ -16,12 +16,22 @@ using complex = std::complex<double>;
 //   cot((pi + s beta) / 2n) F(k L a_s(beta)),
 // a_s(beta) = 2 cos^2((2 n pi N_s - beta) / 2), N_s the integer nearest
 // (beta + s pi) / (2 n pi): its cotangent and cosine.  On a boundary a
-// cotangent's pole meets F's zero; the product's limit is taken a hair off it.
-void term_angles(double n, double beta, int s, double& cot, double& c)
+// cotangent's pole meets F's zero; the product's limit is taken a hair off it,
+// on the side where that boundary's geometrical-optics wave exists, because
+// that is the side the path tests put a ray grazing it on (a path through an
+// edge is open): the incident wave where |beta| < pi (`reflected` false),
+// the reflection off face 0 where beta < pi and off face n where
+// beta > (2n - 1) pi.  On the other side the ray would be kept and its
+// edge's term would add to it, not stand in for it: 1 + 1/2 where the
+// field is 1/2.
+void term_angles(double n, double beta, int s, bool reflected, double& cot, double& c)
 {
     double b = beta;
     if (std::abs(std::sin((pi + s * b) / (2.0 * n))) < 1e-12)
-        b += 1e-9;
+    {
+        const bool down = reflected ? std::abs(b - pi) <= std::abs(b - (2.0 * n - 1.0) * pi) : b > 0.0;
+        b += down ? -1e-9 : 1e-9;
+    }
     const double nearest = std::round((b + s * pi) / (2.0 * n * pi));
     c = std::cos((2.0 * n * pi * nearest - b) / 2.0);
     cot = 1.0 / std::tan((pi + s * b) / (2.0 * n));
@@ -53,10 +63,10 @@ WedgeAngles wedge_angles(double n, double theta, double theta0)
     // (theta + theta0) pairs.
     WedgeAngles a;
     a.n = n;
-    term_angles(n, theta - theta0, +1, a.cot[0], a.c[0]);
-    term_angles(n, theta - theta0, -1, a.cot[1], a.c[1]);
-    term_angles(n, theta + theta0, +1, a.cot[2], a.c[2]);
-    term_angles(n, theta + theta0, -1, a.cot[3], a.c[3]);
+    term_angles(n, theta - theta0, +1, false, a.cot[0], a.c[0]);
+    term_angles(n, theta - theta0, -1, false, a.cot[1], a.c[1]);
+    term_angles(n, theta + theta0, +1, true, a.cot[2], a.c[2]);
+    term_angles(n, theta + theta0, -1, true, a.cot[3], a.c[3]);
     return a;
 }
 
@@ -108,7 +118,7 @@ WedgeAngles WedgeSweep::at(double theta0) const
         const int index = static_cast<int>(nearest) + 3;
         if (std::abs(sin_x) < 1e-8 || index < 0 || index >= 8)
         {
-            term_angles(n_, beta, i == 0 ? +1 : -1, a.cot[t], a.c[t]);
+            term_angles(n_, beta, i == 0 ? +1 : -1, plus, a.cot[t], a.c[t]);
             continue;
         }
         // c = cos(n pi N - beta / 2), beta / 2 = theta / 2 -+ theta0 / 2.

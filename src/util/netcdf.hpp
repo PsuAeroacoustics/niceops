@@ -106,4 +106,26 @@ inline Single single_value(int ncid, int varid, const char* name, int& value)
     return Single::ok;
 }
 
+enum class Values
+{
+    ok,
+    missing,
+    not_numbers, // text, or unreadable as numbers
+};
+
+// Every value of a numeric attribute, as double.
+inline Values attribute_values(int ncid, int varid, const char* name, std::vector<double>& values)
+{
+    nc_type type = NC_NAT;
+    std::size_t length = 0;
+    if (nc_inq_att(ncid, varid, name, &type, &length) != NC_NOERR)
+        return Values::missing;
+    if (type == NC_CHAR || type == NC_STRING)
+        return Values::not_numbers;
+    values.resize(length);
+    if (length > 0 && nc_get_att_double(ncid, varid, name, values.data()) != NC_NOERR)
+        return Values::not_numbers;
+    return Values::ok;
+}
+
 } // namespace niceops::netcdf

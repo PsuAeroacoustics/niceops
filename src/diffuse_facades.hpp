@@ -57,6 +57,13 @@ struct DiffuseOptions
     std::size_t max_order = 64;
     std::size_t max_turns = 4;
     std::size_t max_departures = 4096;
+    // The images of a patch a point source's specular paths may reach it
+    // through (point_energy), at most.
+    std::size_t max_images = 20000;
+    // The air's attenuation per band, Np/m of amplitude, on the paths from the
+    // patches to the microphone; empty for none.  Between patches it is left
+    // out.
+    std::vector<double> air;
 };
 
 class DiffuseFacades
@@ -84,6 +91,25 @@ public:
     // The diffuse energy at the microphone per band, relative to the plane
     // wave's intensity, for the wave from `u` (unit, toward the source).
     void energy(const Vec3& u, double* out) const;
+
+    // The same for a point source (point_paths.hpp): a unit source, whose
+    // free field is |p|^2 = 1/r^2, lights each patch by every specular path
+    // from it to `max_order` reflections (the patch's images, beam traced as
+    // the microphone's are), each cos(incidence) / L^2 times its reflections'
+    // rho (1 - s) and the floor's reflection, and exp(-2 a L) of the air
+    // (`air`, Np/m of amplitude per band; empty for none).  Diffracted waves
+    // light nothing, as for the plane wave.  The energy is in |p|^2, to add to
+    // the rays' band energy.  The patches are shared out over `threads`.
+    void point_energy(const Vec3& source, std::size_t max_order, const std::vector<double>& air, double* out,
+            unsigned threads = 1) const;
+    // The irradiance point_energy gathers, [patch][band].
+    void point_irradiance(const Vec3& source, std::size_t max_order, const std::vector<double>& air,
+            std::vector<double>& e, unsigned threads = 1) const;
+    // Trace each active patch's images to `max_order` once, for every source
+    // point_energy is then given at that order: what a moving source would
+    // otherwise trace again at every position.  Not thread-safe against
+    // point_energy; call it before.
+    void prepare_point_lighting(std::size_t max_order, unsigned threads = 1);
 
     // The same by the forward solve, B = S E + D F B per band: the reference the
     // reverse solve is tested against, and far slower.
@@ -114,7 +140,17 @@ public:
         return converged_;
     }
 
+    // Whether a facade is within the radius, cut into patches: one whose
+    // scattered share this field returns.  A facade outside it reflects its
+    // whole rho specularly.
+    bool scatters(std::size_t facade) const
+    {
+        return facade < in_reach_.size() && in_reach_[facade] != 0;
+    }
+
 private:
+    // What the microphone gathers from an irradiance [patch][band].
+    void gathered(const std::vector<double>& e, double* out) const;
     // The irradiance on `which` patches per band, [patch][band]: each specular
     // arrival's cos(incidence) times its reflections' rho (1 - s) and the
     // floor's reflection.
@@ -134,7 +170,21 @@ private:
     std::vector<double> rho_s_;       // [patch][band]
     std::vector<double> weight_;      // [patch][band], w
     std::vector<std::size_t> active_; // patches whose weight is not negligible
+    std::vector<char> in_reach_;      // [facade], within the radius
     bool converged_ = true;
+    // prepare_point_lighting's images of each active patch (in active_'s
+    // order), and their order.
+    struct PatchImage
+    {
+        Vec3 point;
+        std::vector<std::size_t> facades;
+    };
+    std::vector<std::vector<PatchImage>> patch_images_;
+    std::size_t patch_image_order_ = 0;
+    // The images of active patch `a` to `max_order`: the prepared ones, or
+    // traced into `scratch`.
+    const std::vector<PatchImage>& patch_images(std::size_t a, std::size_t max_order,
+            std::vector<PatchImage>& scratch) const;
 };
 
 } // namespace niceops

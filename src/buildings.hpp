@@ -17,6 +17,7 @@
 // starts on an edge where it diffracts, or grazes along a wall -- is not.
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "plan_grid.hpp"
@@ -151,6 +152,17 @@ public:
         return edges_;
     }
 
+    // A building's box in plan: x min, x max, y min, y max.
+    const double* bounds(std::size_t building) const
+    {
+        return &bounds_[4 * building];
+    }
+    // A building's edges: [edge_begin(b), edge_begin(b + 1)) of edges().
+    std::size_t edge_begin(std::size_t building) const
+    {
+        return edge_begin_[building];
+    }
+
     // The tallest roof.
     double max_top() const
     {
@@ -160,6 +172,12 @@ public:
     // Whether the segment from a to b passes through a building: some stretch
     // longer than `contact` lies strictly inside one.
     bool blocked(const Vec3& a, const Vec3& b, bool below_floor = false) const;
+    // The same for one building.
+    bool blocked_by(std::size_t building, const Vec3& a, const Vec3& b, bool below_floor) const;
+    // The buildings whose boxes may meet the box [x_min, x_max] by
+    // [y_min, y_max], each once, in no particular order: the grid's
+    // candidates, which the caller tests.
+    void near_box(double x_min, double x_max, double y_min, double y_max, std::vector<std::uint32_t>& out) const;
 
     // Whether a ray from `a` along `direction` reaches infinity without
     // passing through a building.  A ray that does not rise escapes once past
@@ -170,6 +188,11 @@ public:
     // its sides (and outside its holes); the building's index, or size() for
     // none.
     std::size_t inside(double x, double y) const;
+
+    // Whether (x, y) lies on a building's roof: within its footprint, its
+    // sides included to round-off.  A roof's reflection ends where its edge's
+    // reflection boundary is, and must not stop short of it as inside() does.
+    bool on_roof(std::size_t building, double x, double y) const;
 
     // Whether `p` lies strictly inside a building's solid: inside a footprint
     // and between the floor and its roof, by `contact` or more.
@@ -217,7 +240,6 @@ public:
     }
 
 private:
-    bool blocked_by(std::size_t building, const Vec3& a, const Vec3& b, bool below_floor) const;
     bool strictly_inside(std::size_t building, double x, double y) const;
 
     // A facade's base point, unit base direction and length, and the unit
@@ -237,6 +259,7 @@ private:
     PlanGrid facade_grid_;
     std::vector<std::size_t> facade_building_;
     std::vector<Edge> edges_;
+    std::vector<std::size_t> edge_begin_;
     // Per building: x min, x max, y min, y max.
     std::vector<double> bounds_;
     double max_top_ = 0.0;

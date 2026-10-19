@@ -246,3 +246,40 @@ TEST_CASE("every specular reflection lights the facades, carrying rho (1 - s)", 
     }
     REQUIRE(checked == 2 * 20 * 15);
 }
+
+TEST_CASE("a point source lights a wall's diffuse field as Lambert's law says", "[diffuse]")
+{
+    // A wall 10 m square, the source and the microphone together 1 m in front
+    // of its middle, nothing else lit and no floor.  The microphone gathers
+    //   rho s d^2 / pi  integral over the wall of dA / r^6,
+    // which over an infinite wall is rho s / (2 d^2); here it is taken over the
+    // square itself, by the midpoint rule.
+    const double d = 1.0;
+    const Buildings city({box(0.0, -5.0, 10.0, 5.0, 10.0)});
+    const Vec3 point(-d, 0.0, 5.0);
+    const std::vector<double> bands {1000.0};
+    const std::vector<double> rho(city.facades().size(), 0.9), s(city.facades().size(), 0.5);
+    DiffuseOptions options;
+    options.radius = 50.0;
+    options.patch_size = 0.2;
+    const DiffuseFacades diffuse(city, point, rho, s, 0.0, bands, 343.2, options, 4);
+    double energy = 0.0;
+    diffuse.point_energy(point, 4, {}, &energy, 4);
+    double integral = 0.0;
+    const int n = 1000;
+    const double step = 10.0 / n;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+        {
+            const double y = -5.0 + (i + 0.5) * step, z = -5.0 + (j + 0.5) * step;
+            integral += step * step / std::pow(d * d + y * y + z * z, 3);
+        }
+    const double exact = 0.9 * 0.5 * d * d / pi * integral;
+    REQUIRE(exact == Catch::Approx(0.9 * 0.5 / (2.0 * d * d)).epsilon(2e-3));
+    REQUIRE(energy == Catch::Approx(exact).epsilon(5e-3));
+    // The air's absorption along the lighting paths only lowers it.
+    double absorbed = 0.0;
+    diffuse.point_energy(point, 4, {0.05}, &absorbed, 4);
+    REQUIRE(absorbed < energy);
+    REQUIRE(absorbed > energy * std::exp(-2.0 * 0.05 * 8.0));
+}
