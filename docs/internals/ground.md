@@ -603,16 +603,24 @@ each part was measured; what to keep in the code:
 - **Coherent mode keeps the old code path** (`PointSourceField::band_levels`), so its output is
   the earlier coherent sum to the bit; `partially_coherent_energies` under `RaySum::coherent`
   agrees with it to 1e-9 dB (`test_source_coherence.cpp`).
-- **What the database records goes as a whole** (`source_coherence()`). A record's fits were made
-  with its own rotor's delay removed or not, so a record holding fits and no rotor does not take
-  the vehicle file's; the defaults for the rest follow the rotation it ends with.
+- **The default is the cone, not a fit** (`cone_coherence()`). Weighted by A-weighted power, the
+  flight data cannot tell any cone up to 2.5° from the energy sum, and the energy sum assumes
+  nothing of the source; the cone is there for the one emission (shared launches, diffraction
+  partners). Its mean does not depend on the band, so it is formed once per field and the live
+  list is the pairs inside the cone: the cone costs what the coherent sum does.
+- **The rotor's delay comes from the database alone** (`measured_coherence()`). A vehicle file's
+  blade count and sense were briefly taken as switching it on; but a delay is an assumption about
+  the source's phase, so only a database that records it, where someone fitted it, applies it.
+  The record's fits were made with its rotor's delay removed or not, and the defaults for what it
+  leaves out follow the same.
 - **Rejected** (measured in the harness): the delay at every frequency (worse than none above about
   160 Hz); an effective rotation scaled by kappa (0.75 in the passes, 1 in hover, within 0.03 of
   kappa = 1 in the score); the hexacopter's rotors as mutually incoherent sources on a ring
   (worse than energy for any radius); and a uniformly random phase beyond a window for the
   interval, which put a wide spread on broadband bands that add in energy.
-- Cost: the measured sum 1.4 times the coherent one on the DigiCity hovers, 3.1 times with
-  `--phase_interval` (most of it the per-band spread and group slots, run over every pair).
+- Cost on the DigiCity hovers: the cone the coherent sum's, the measured sum 1.4 times it; with
+  `--phase_interval` 2.7 and 3.1 times (most of it the per-band spread and group slots, run over
+  every pair).
 - Tests: `[source_coherence]` (the delay's sign and wrap; coherency 1 and spread 0 at no
   separation; rays leaving together staying coherent; the measured sum within the coherent and the
   energy sums sub-band by sub-band; the variance against its formula for two rays; the record's

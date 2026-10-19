@@ -54,9 +54,20 @@ std::vector<double> sum(const PointSourceField& field, const SourceCoherence& co
     return energy;
 }
 
+// A database's rotor: four blades, counterclockwise.
+CoherenceRecord rotor(double blades = 4.0, int sense = 1)
+{
+    CoherenceRecord r;
+    r.blades = blades;
+    r.rotation_sense = sense;
+    return r;
+}
+
+// The cone, or the measured model with the B407's rotor (and under it the
+// coherent and energy sums).
 SourceCoherence with(RaySum how)
 {
-    SourceCoherence c = default_source_coherence(43.25, 4.0, 1);
+    SourceCoherence c = how == RaySum::cone ? cone_coherence() : measured_coherence(rotor(), 43.25);
     c.sum = how;
     return c;
 }
@@ -69,7 +80,7 @@ SourceCoherence with(RaySum how)
 // side of the nose's opposite are a small angle apart, not nearly a turn.
 TEST_CASE("the rotor's delay is the time its pattern takes to turn between two directions", "[source_coherence]")
 {
-    SourceCoherence c = default_source_coherence(40.0, 4.0, 1);
+    SourceCoherence c = measured_coherence(rotor(), 40.0);
     const SphereFrame f = level_frame();
     REQUIRE(c.delay_length(at_azimuth(30.0), at_azimuth(0.0), f.normal, f.nose, c0)
             == Catch::Approx(c0 * (pi / 6.0) / 40.0));
@@ -87,9 +98,9 @@ TEST_CASE("the rotor's delay is the time its pattern takes to turn between two d
     REQUIRE(c.rotation_limit == Catch::Approx(4.5 * 4.0 * 40.0 / (2.0 * pi)));
     REQUIRE(c.rotates(100.0));
     REQUIRE(!c.rotates(125.0));
-    // Without the blades or the sense there is no delay, and the decay is the
-    // fit made without it.
-    const SourceCoherence none = default_source_coherence(40.0, 4.0, 0);
+    // Without the database's blades or sense there is no delay, and the decay
+    // is the fit made without it.
+    const SourceCoherence none = measured_coherence(rotor(4.0, 0), 40.0);
     REQUIRE(none.rotation_rate == 0.0);
     REQUIRE(none.scale == SourceCoherence::default_scale_without_rotation);
     REQUIRE(none.delay_length(at_azimuth(30.0), at_azimuth(0.0), f.normal, f.nose, c0) == 0.0);
@@ -98,7 +109,7 @@ TEST_CASE("the rotor's delay is the time its pattern takes to turn between two d
 TEST_CASE("a pair's coherency is one at no separation, and its spread falls to the band's distant coherence",
         "[source_coherence]")
 {
-    const SourceCoherence c = default_source_coherence();
+    const SourceCoherence c = measured_coherence();
     for (double f : {25.0, 250.0, 2500.0})
     {
         const double t = c.tonal(99, f);
@@ -134,16 +145,19 @@ TEST_CASE("rays that leave the source together add with their phases", "[source_
     std::vector<double> reference(bands.size());
     flush.band_levels({}, 1.0, bands, c0, reference.data());
     const auto coherent = band_levels_of(sum(flush, with(RaySum::coherent)));
-    const auto measured = band_levels_of(sum(flush, with(RaySum::measured)));
-    for (std::size_t b = 0; b < bands.size(); b++)
+    for (RaySum how : {RaySum::measured, RaySum::cone})
     {
-        REQUIRE(coherent[b] == Catch::Approx(reference[b]).margin(1e-9));
-        REQUIRE(measured[b] == Catch::Approx(reference[b]).margin(1e-9));
+        const auto levels = band_levels_of(sum(flush, with(how)));
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            REQUIRE(coherent[b] == Catch::Approx(reference[b]).margin(1e-9));
+            REQUIRE(levels[b] == Catch::Approx(reference[b]).margin(1e-9));
+        }
+        std::vector<double> variance;
+        sum(flush, with(how), 1.0, &variance);
+        for (double v : variance)
+            REQUIRE(v == 0.0);
     }
-    std::vector<double> variance;
-    sum(flush, with(RaySum::measured), 1.0, &variance);
-    for (double v : variance)
-        REQUIRE(v == 0.0);
 }
 
 // A microphone 1 m up, 300 m out from a source 100 m up: the floor's ray
@@ -216,25 +230,23 @@ TEST_CASE("the band's variance is the pair's cross term squared times its spread
     REQUIRE(variance[0] > 0.0);
 }
 
-// The database's record first; its fits come with its own rotor, so a record
-// that holds fits but no rotor keeps the vehicle file's out; what the record
-// leaves out is the default for the rotation it ends with.
-TEST_CASE("a database's coherence comes before the vehicle file's rotor and the defaults", "[source_coherence]")
+// The measured model is the database's record: its rotor gives the delay,
+// its fits the decay, and what it leaves out is the B407's fit for the
+// rotation it ends with.
+TEST_CASE("the measured model takes the database's rotor and fits, and the defaults for the rest",
+        "[source_coherence]")
 {
-    const CoherenceRecord none;
-    const SourceCoherence vehicle = source_coherence(none, 40.0, 4.0, -1);
-    REQUIRE(vehicle.rotation_rate == 40.0);
-    REQUIRE(vehicle.rotation_sense == -1);
-    REQUIRE(vehicle.scale == SourceCoherence::default_scale);
-    REQUIRE(vehicle.source == "the default coherence, the vehicle file's rotor");
+    const SourceCoherence defaults = measured_coherence({}, 40.0);
+    REQUIRE(defaults.sum == RaySum::measured);
+    REQUIRE(defaults.rotation_rate == 0.0);
+    REQUIRE(defaults.scale == SourceCoherence::default_scale_without_rotation);
+    REQUIRE(defaults.source == "the measured defaults, no rotor delay");
 
-    CoherenceRecord rotor;
-    rotor.blades = 2.0;
-    rotor.rotation_sense = 1;
-    const SourceCoherence database_rotor = source_coherence(rotor, 40.0, 4.0, -1);
-    REQUIRE(database_rotor.rotation_sense == 1);
-    REQUIRE(database_rotor.rotation_limit == Catch::Approx(4.5 * 2.0 * 40.0 / (2.0 * pi)));
-    REQUIRE(database_rotor.scale == SourceCoherence::default_scale);
+    const SourceCoherence turning = measured_coherence(rotor(2.0, 1), 40.0);
+    REQUIRE(turning.rotation_sense == 1);
+    REQUIRE(turning.rotation_limit == Catch::Approx(4.5 * 2.0 * 40.0 / (2.0 * pi)));
+    REQUIRE(turning.scale == SourceCoherence::default_scale);
+    REQUIRE(turning.source == "the measured defaults, the database's rotor");
 
     CoherenceRecord fits;
     fits.scale = 600.0;
@@ -243,29 +255,72 @@ TEST_CASE("a database's coherence comes before the vehicle file's rotor and the 
     fits.spread_exponent = 0.8;
     fits.tonal_fraction = {0.9, 0.5, 0.1};
     fits.source = "a hexacopter, 2023";
-    const SourceCoherence multirotor = source_coherence(fits, 40.0, 4.0, -1);
+    const SourceCoherence multirotor = measured_coherence(fits, 40.0);
     REQUIRE(multirotor.rotation_rate == 0.0);
     REQUIRE(multirotor.scale == 600.0);
     REQUIRE(multirotor.exponent == 2.0);
     REQUIRE(multirotor.spread_scale == 1500.0);
     REQUIRE(multirotor.spread_exponent == 0.8);
     REQUIRE(multirotor.tonal(1, 1000.0) == 0.5);
-    REQUIRE(multirotor.source == "the database's coherence (a hexacopter, 2023), no rotor delay");
-
-    // Where it gives none of the fits, they are the defaults for no rotation.
-    CoherenceRecord tonal_only;
-    tonal_only.tonal_fraction = {0.3};
-    const SourceCoherence partial = source_coherence(tonal_only, 40.0, 4.0, -1);
-    REQUIRE(partial.rotation_rate == 0.0);
-    REQUIRE(partial.scale == SourceCoherence::default_scale_without_rotation);
+    REQUIRE(multirotor.source == "the database's measured coherence (a hexacopter, 2023), no rotor delay");
+    REQUIRE(fits.specifies());
+    REQUIRE(!CoherenceRecord().specifies());
 
     fits.blades = 4.0;
     fits.rotation_sense = 1;
     fits.rotation_limit = 100.0;
-    const SourceCoherence helicopter = source_coherence(fits, 40.0, 0.0, 0);
+    const SourceCoherence helicopter = measured_coherence(fits, 40.0);
     REQUIRE(helicopter.rotation_rate == 40.0);
     REQUIRE(helicopter.rotation_limit == 100.0);
     REQUIRE(helicopter.scale == 600.0);
+}
+
+// The default: rays within the cone of each other add with their phases,
+// those beyond it in energy, whatever the frequency, with a cos^2 taper over a
+// quarter of the angle either side of its edge.  The pair 0.35 degrees apart
+// stays coherent at 4 kHz, where the measured model has all but let it go;
+// the pair 11 degrees apart adds in energy at 125 Hz, where the measured
+// model keeps much of it.
+TEST_CASE("within the cone rays add with their phases and beyond it in energy", "[source_coherence]")
+{
+    const SourceCoherence c = cone_coherence(2.0);
+    REQUIRE(c.sum == RaySum::cone);
+    for (double f : {25.0, 1000.0, 8000.0})
+    {
+        REQUIRE(c.mean(f, 0.0) == 1.0);
+        REQUIRE(c.mean(f, 1.5) == 1.0);
+        REQUIRE(c.mean(f, 2.0) == Catch::Approx(0.5));
+        REQUIRE(c.mean(f, 2.5) == 0.0);
+    }
+    // Continuous and falling across the taper.
+    double last = 1.0;
+    for (double d = 1.5; d <= 2.5; d += 0.001)
+    {
+        const double m = c.mean(1000.0, d);
+        REQUIRE(m <= last + 1e-15);
+        REQUIRE(last - m < 2e-3);
+        last = m;
+    }
+    REQUIRE(!c.rotates(25.0));
+    REQUIRE(cone_coherence().cone == 1.0);
+
+    const Buildings none;
+    const PointSourceField near(none, Vec3(0.0, 0.0, 100.0), Vec3(300.0, 0.0, 1.0));
+    const PointSourceField apart(none, Vec3(0.0, 0.0, 30.0), Vec3(40.0, 10.0, 6.0));
+    const auto near_cone = band_levels_of(sum(near, with(RaySum::cone)));
+    const auto near_coherent = band_levels_of(sum(near, with(RaySum::coherent)));
+    const auto apart_cone = band_levels_of(sum(apart, with(RaySum::cone)));
+    const auto apart_energy = band_levels_of(sum(apart, with(RaySum::energy)));
+    for (std::size_t b = 0; b < bands.size(); b++)
+    {
+        REQUIRE(near_cone[b] == Catch::Approx(near_coherent[b]).margin(1e-9));
+        REQUIRE(apart_cone[b] == Catch::Approx(apart_energy[b]).margin(1e-9));
+    }
+    // Beyond the cone the mean is energy, but a tonal band's phase between
+    // the two directions may be stable: the interval keeps that spread.
+    std::vector<double> variance;
+    sum(apart, with(RaySum::cone), 1.0, &variance);
+    REQUIRE(variance[0] > 0.0);
 }
 
 // Written at a database's root and read back; an exported sphere carries it,

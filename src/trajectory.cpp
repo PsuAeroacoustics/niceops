@@ -13,7 +13,6 @@
 #include <nlohmann/json.hpp>
 
 #include "smoothing_spline.hpp"
-#include "source_coherence.hpp"
 #include "util/constants.hpp"
 #include "util/csv.hpp"
 #include "util/logger.hpp"
@@ -699,18 +698,6 @@ dimensional_data configure_vehicle(const std::string& filename)
     vehicle.tip_speed = json_to_double(config["Main Rotor"]["tip speed"]);
     vehicle.weight = json_to_double(config["Vehicle"]["weight"]) * standard_gravity; // Actually a mass (kg), so convert to Newtons
     vehicle.rho = json_to_double(config["Atmosphere"]["density"]);
-    const auto& rotor = config["Main Rotor"];
-    if (rotor.contains("blades"))
-        vehicle.blades = json_to_double(rotor["blades"]);
-    if (rotor.contains("rotation"))
-    {
-        const auto sense = rotor["rotation"].is_string() ? parse_rotation_sense(rotor["rotation"].get<std::string>())
-                                                         : std::nullopt;
-        if (!sense)
-            input_error("Vehicle file ", filename, ": Main Rotor rotation is ", rotor["rotation"].dump(),
-                    "; expected \"counterclockwise\" or \"clockwise\", seen from above.");
-        vehicle.rotation_sense = *sense;
-    }
 
     // Atmospheric state, for the optional spectral path.  Only density is
     // required -- it is what CT needs -- so each of these falls back rather

@@ -122,15 +122,16 @@ Commands and options are in `README.md`; rationale is in
   a ground model** (`buildings_far_is_open_without_ground`); keep each ray's sphere weight on the
   sphere's own spreading and absorption conventions. `niceops.cpp` cannot include `buildings.hpp`
   (its `Ring` clashes with `contour.hpp`'s), so the district stays behind `UrbanDistrict`.
-- **`--buildings` weights each pair of rays by the source's measured coherence between their
-  launches** (`src/source_coherence`, fitted in the harness's `coherence/`; THEORY 6.5). Rays
-  leaving together must stay coherent, or the field jumps at boundaries. The main rotor's delay
-  rides on the rays as an effective length, the wrap a one-turn shift, and holds only to
-  4.5 blade-passage frequencies: beyond that it makes the phase worse than none. A database's
-  record (`main_rotor_*`, `coherence_*` root attributes, written by panam's `directional_coherence`)
-  goes as a whole, never mixed with the vehicle file's rotor. `--ray_coherence coherent` keeps the
-  old coherent sum to the bit. Do not use `std::polar` with the sinc as its magnitude: it can be
-  negative, and libc++ returns NaN.
+- **`--buildings` adds rays in energy beyond a 1° cone by default** (`src/source_coherence`;
+  THEORY 6.5). Do not assume the source's phase: weighted by A-weighted power the flight data
+  (harness `coherence/`) cannot tell any cone up to 2.5° from the energy sum. The cone is there
+  because rays leaving together are one emission: without it the field jumps at shadow boundaries
+  and a flush microphone loses its doubling. A database's record (`main_rotor_*`, `coherence_*`,
+  written by panam's `directional_coherence`) switches to the measured model; the main rotor's
+  delay comes from that record only, never the vehicle file. The delay rides on the rays as an
+  effective length, the wrap a one-turn shift, and holds only to 4.5 blade-passage frequencies.
+  `--ray_coherence coherent` keeps the old coherent sum to the bit. Do not use `std::polar` with
+  the sinc as its magnitude: it can be negative, and libc++ returns NaN.
 - **Scattering walls in `niceops_point_field` reuse the urban tables' radiosity**, lit by the
   source's own specular paths to each patch; with s = 0 nothing is built and the run is byte for
   byte the specular one.

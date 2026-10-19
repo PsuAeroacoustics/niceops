@@ -995,44 +995,64 @@ every point between its ends. With no buildings and a floor that absorbs everyth
 left is the straight path and the level is the run's without a ground model.
 
 **How rays leaving the source apart add.** The spheres carry band levels, not phases, so what two
-rays share is the source's coherency between their launch directions $\hat d_i$, $\hat d_j$,
-measured on rotorcraft rather than assumed
-([FIDELITY](FIDELITY.md#coherence-between-emission-directions)). Rays that leave together must stay
-coherent, or the field jumps at every shadow and reflection boundary, where a diffracted ray makes
-up for the ray it replaces. In sub-band $p$ of band $b$ (wavenumber $k_p$ at its middle, half
-width $h_p$) the energy is
+rays share is a model of the source's coherency between their launch directions $\hat d_i$,
+$\hat d_j$. Rays that leave together are one emission and must stay coherent, or the field jumps at
+every shadow and reflection boundary, where a diffracted ray makes up for the ray it replaces, and
+a flush microphone's pressure does not double. In sub-band $p$ of band $b$ (wavenumber $k_p$ at its
+middle, half width $h_p$) the energy is
 
 $$
 E_p = \sum_i |A_i|^2 + \sum_{i<j} 2\,\bar g_{ij}\,\mathrm{Re}\!\left(A_i A_j^* e^{ik_p \Delta_{ij}}\right)
 \mathrm{sinc}(h_p \Delta_{ij}),
-\qquad
+$$
+
+$A_i$ ray $i$'s amplitude without its path phase, $\Delta_{ij}$ the pair's path difference, and
+$\theta_{ij} = (180/\pi)\,\lvert\hat d_i - \hat d_j\rvert$ the separation as a chord in degrees
+(within a few hundredths of a degree of the angle while $\bar g$ is not negligible, and so a
+positive-definite kernel on the sphere).
+
+By default nothing is assumed of the source (`cone`): with $\theta_c$ = `--coherence_angle`
+(1°),
+
+$$
+\bar g_{ij} = \begin{cases} 1, & \theta_{ij} \le \tfrac34\theta_c \\
+\cos^2\!\left(\dfrac{\pi}{2}\,\dfrac{\theta_{ij} - \tfrac34\theta_c}{\tfrac12\theta_c}\right), & \tfrac34\theta_c < \theta_{ij} < \tfrac54\theta_c \\
+0, & \theta_{ij} \ge \tfrac54\theta_c, \end{cases}
+$$
+
+the same in every band, and $\Delta_{ij} = L_i - L_j$. Measured on rotorcraft, nothing simple adds
+A-weighted levels better than the energy sum
+([FIDELITY](FIDELITY.md#coherence-between-emission-directions)); the cone keeps the one emission
+together.
+
+Where a database records its vehicle's coherence (MANUAL, Source coherence), or under
+`--ray_coherence measured`, the mean is the measured decay
+
+$$
 \bar g_{ij} = \exp\!\left[-\left(\frac{f_b\,\theta_{ij}}{\theta_0}\right)^{p_0}\right],
 $$
 
-$A_i$ ray $i$'s amplitude without its path phase, $f_b$ the band's centre and
-$\theta_{ij} = (180/\pi)\,\lvert\hat d_i - \hat d_j\rvert$ the separation as a chord in degrees
-(within a few hundredths of a degree of the angle while $\bar g$ is not negligible, and so a
-positive-definite kernel on the sphere). A pair whose $\bar g$ is below $e^{-14}$ is left out. The
-path difference $\Delta_{ij} = L_i - L_j$ carries, in bands up to $f_{\mathrm{rot}}$, the delay a
-pattern turning rigidly with the main rotor puts between the two directions: it reaches azimuth
+$f_b$ the band's centre, with a pair whose $\bar g$ is below $e^{-14}$ left out. Where the database
+gives the main rotor's blades $B$ and sense $s$ ($+1$ counterclockwise seen from above, $-1$
+clockwise), $\Delta_{ij}$ also carries, in bands up to $f_{\mathrm{rot}}$, the delay a pattern
+turning rigidly with the rotor puts between the two directions: it reaches azimuth
 $\psi + \delta\psi$ about the shaft $\delta\psi/\Omega$ later, so
 
 $$
 \Delta_{ij} = L_i - L_j + \frac{c\,s}{\Omega}\,\mathrm{wrap}(\psi_i - \psi_j),
 $$
 
-$\psi$ the launch's azimuth about the tip-path plane's normal from the nose, $s = +1$ for a rotor
-turning counterclockwise seen from above and $-1$ clockwise, $\Omega$ its rate (the database's
-`rotor_rpm`, else the vehicle file's tip speed over radius), and wrap to $(-\pi, \pi]$. At a
-blade-passage harmonic $mB\Omega/2\pi$ that is the spinning mode's phase $mB\,\delta\psi$. The delay
-holds to $f_{\mathrm{rot}} = 4.5\,B\Omega/2\pi$ and not beyond, where the field is not a pattern
-turning rigidly with the blades. With the delay, $\theta_0 = 850$ Hz deg and $p_0 = 1.6$; without it
-(no blades or sense given) $\theta_0 = 475$ Hz deg and $p_0 = 2.3$, since the unremoved rotation
-reads as a faster decay. A database's record of its vehicle's coherence replaces any of these
-(MANUAL, Source coherence). Under `--ray_coherence coherent` $\bar g = 1$ and there is no delay;
-under `energy` no pair adds.
+$\psi$ the launch's azimuth about the tip-path plane's normal from the nose, $\Omega$ the rotor's
+rate (the database's `rotor_rpm`, else the vehicle file's tip speed over radius), and wrap to
+$(-\pi, \pi]$. At a blade-passage harmonic $mB\Omega/2\pi$ that is the spinning mode's phase
+$mB\,\delta\psi$. The delay holds to $f_{\mathrm{rot}} = 4.5\,B\Omega/2\pi$ and not beyond, where
+the field is not a pattern turning rigidly with the blades. With the delay $\theta_0 = 850$ Hz deg
+and $p_0 = 1.6$; without it $\theta_0 = 475$ Hz deg and $p_0 = 2.3$, since the unremoved rotation
+reads as a faster decay; the database's own fits replace these. Under `--ray_coherence coherent`
+$\bar g = 1$; under `energy` no pair adds.
 
-**The phase interval.** About its mean $\bar g_{ij}$ a pair's coherency spreads by
+**The phase interval.** About its mean $\bar g_{ij}$, the cone's or the measured model's, a pair's
+coherency spreads by
 
 $$
 \sigma_{ij}^2 = \max\!\left(\gamma_{ij}^2 - \bar g_{ij}^2,\; 0\right),

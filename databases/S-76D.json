@@ -2,7 +2,6 @@
     "Main Rotor": {
         "radius": "6.705",
         "tip speed": "220.0",
-        "rotation": "counterclockwise",
         "blades": "4"
     },
     "Tail Rotor": {

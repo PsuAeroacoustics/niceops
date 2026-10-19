@@ -765,9 +765,12 @@ struct RunOptions
     std::shared_ptr<const UrbanDistrict> buildings;
     std::string buildings_path;
     // --ray_coherence: how its rays leaving the source apart add
-    // (source_coherence.hpp); --phase_interval: the percent interval over the
-    // source's unknown phases, 0 for none.
-    RaySum ray_sum = RaySum::measured;
+    // (source_coherence.hpp), nullopt for the database's record where it has
+    // one and the cone otherwise; --coherence_angle: the cone's, degrees;
+    // --phase_interval: the percent interval over the source's unknown
+    // phases, 0 for none.
+    std::optional<RaySum> ray_sum;
+    double coherence_angle = SourceCoherence::default_cone;
     double phase_interval = 0.0;
     // --terrain, read once for the run: the ground models take each path's
     // mean ground line from it (terrain_ray), resampled per trajectory onto the
@@ -3075,18 +3078,23 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 input_error("--buildings ", options.buildings_path, ": the source at state ", it + 1, " stands ",
                         why, ".");
         }
-        // How the rays add: what the database records of its vehicle's
-        // coherence, the vehicle file's rotor where it records none, the
-        // measured defaults for the rest.  The rotor turns at the database's
-        // rpm where it gives one.
+        // How the rays add: in energy beyond a cone, unless the database
+        // records its vehicle's coherence, which then takes the cone's place
+        // with its rotor's delay where it gives one (at the database's rpm,
+        // or the vehicle file's tip speed over radius).  --ray_coherence
+        // decides over both.
+        const CoherenceRecord& record = database.coherence_record();
+        const RaySum sum = options.ray_sum.value_or(record.specifies() ? RaySum::measured : RaySum::cone);
         const dimensional_data& vehicle = trajectory.vehicle;
         const double rotation_rate = database.rotor_rpm() ? *database.rotor_rpm() * 2.0 * pi / 60.0
                 : vehicle.radius > 0.0                    ? vehicle.tip_speed / vehicle.radius
                                                           : 0.0;
-        SourceCoherence coherence = source_coherence(database.coherence_record(), rotation_rate, vehicle.blades,
-                vehicle.rotation_sense);
-        coherence.sum = options.ray_sum;
-        if (options.ray_sum == RaySum::measured)
+        SourceCoherence coherence = sum == RaySum::measured ? measured_coherence(record, rotation_rate)
+                                                            : cone_coherence(options.coherence_angle);
+        coherence.sum = sum;
+        if (sum == RaySum::cone)
+            log("--buildings: rays add in ", coherence.source, ", with their phases within it.");
+        else if (sum == RaySum::measured)
         {
             if (coherence.rotation_rate > 0.0)
                 log("--buildings: rays add with ", coherence.source, ": the main rotor's delay at ",
@@ -3094,10 +3102,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                         "clockwise seen from above) to ", coherence.rotation_limit, " Hz, decay ", coherence.scale,
                         " Hz deg to the power ", coherence.exponent, ".");
             else
-                log("--buildings: rays add with ", coherence.source, " (neither the database nor the vehicle file ",
-                        job.vehicle, " gives the main rotor's blades and rotation): decay ", coherence.scale,
+                log("--buildings: rays add with ", coherence.source, ": decay ", coherence.scale,
                         " Hz deg to the power ", coherence.exponent, ".");
         }
+        else
+            log("--buildings: rays add ", sum == RaySum::coherent ? "with their phases" : "in energy", ".");
         PhaseInterval interval;
         if (options.phase_interval > 0.0)
             interval.percent = options.phase_interval;
@@ -4829,7 +4838,8 @@ int run(int argc, char* argv[])
     std::string buildings_file;
     double wall_absorption = 0.0;
     double floor_absorption = 0.0;
-    std::string ray_coherence = "measured";
+    std::string ray_coherence;
+    double coherence_angle = SourceCoherence::default_cone;
     double phase_interval = 0.0;
     std::string terrain_file;
     double terrain_offset = 0.0;  // meters
@@ -5315,12 +5325,17 @@ int run(int argc, char* argv[])
     app.add_option("--floor_absorption", floor_absorption,
             "With --buildings: the floor's energy absorption coefficient (default 0, rigid).");
     app.add_option("--ray_coherence", ray_coherence,
-            "With --buildings: how rays leaving the source in different directions add. 'measured' (default): "
-            "each pair's cross term times the coherence measured on rotorcraft between emission directions, "
-            "which falls with frequency times their angle, and below 4.5 blade-passage frequencies with the "
-            "main rotor's delay between them where the vehicle file gives its blades and rotation; 'coherent': "
-            "all with their phases; 'energy': in energy.")
-            ->check(CLI::IsMember({"measured", "coherent", "energy"}));
+            "With --buildings: how rays leaving the source in different directions add. 'cone': in energy, "
+            "except those leaving within --coherence_angle of each other, which add with their phases; "
+            "'measured': each pair's cross term times the coherence the database records for its vehicle, "
+            "or the rotorcraft measurements' where it records none, with the main rotor's delay where the "
+            "database gives it; 'coherent': all with their phases; 'energy': all in energy. Default: "
+            "'measured' where the database records its vehicle's coherence, 'cone' otherwise.")
+            ->check(CLI::IsMember({"cone", "measured", "coherent", "energy"}));
+    app.add_option("--coherence_angle", coherence_angle,
+            "With --buildings: the cone's half-angle, degrees, within which rays leaving the source add with "
+            "their phases (tapered over a quarter of it either side). Default 1. Selects 'cone' when "
+            "--ray_coherence is not given.");
     app.add_option("--phase_interval", phase_interval,
             "With --buildings: also write the SEL at each end of this percent interval (90 for the 5th to the "
             "95th percentile) over the source's unknown phases between directions, beside the output as "
@@ -6063,15 +6078,24 @@ int run(int argc, char* argv[])
         {
             if (!(phase_interval > 0.0 && phase_interval < 100.0))
                 input_error("--phase_interval is a percent within (0, 100); given ", phase_interval, ".");
-            if (ray_coherence != "measured")
-                input_error("--phase_interval goes with --ray_coherence measured: under '", ray_coherence,
+            if (ray_coherence == "coherent" || ray_coherence == "energy")
+                input_error("--phase_interval goes with --ray_coherence cone or measured: under '", ray_coherence,
                         "' the phases are taken as known.");
+        }
+        if (app.count("--coherence_angle") > 0)
+        {
+            if (!(coherence_angle > 0.0 && coherence_angle < 180.0))
+                input_error("--coherence_angle is a half-angle within (0, 180) degrees; given ", coherence_angle,
+                        ".");
+            if (!ray_coherence.empty() && ray_coherence != "cone")
+                input_error("--coherence_angle goes with --ray_coherence cone, not '", ray_coherence, "'.");
         }
     }
     else if (app.count("--wall_absorption") > 0 || app.count("--floor_absorption") > 0)
         input_error("--wall_absorption and --floor_absorption go with --buildings.");
-    else if (app.count("--ray_coherence") > 0 || app.count("--phase_interval") > 0)
-        input_error("--ray_coherence and --phase_interval go with --buildings.");
+    else if (app.count("--ray_coherence") > 0 || app.count("--coherence_angle") > 0
+            || app.count("--phase_interval") > 0)
+        input_error("--ray_coherence, --coherence_angle and --phase_interval go with --buildings.");
     for (const auto& [names, option] : {std::pair {&epnl_files, "--epnl_file"},
                  std::pair {&band_frames_files, "--band_frames"}})
     {
@@ -6386,9 +6410,16 @@ int run(int argc, char* argv[])
             warn("--buildings ", buildings_file, ": its scattering coefficients are left out; a run's walls reflect "
                     "specularly (niceops_point_field --scattering carries the diffuse field).");
         options.buildings_path = buildings_file;
-        options.ray_sum = ray_coherence == "coherent" ? RaySum::coherent
-                : ray_coherence == "energy"           ? RaySum::energy
-                                                      : RaySum::measured;
+        // Unset, the database decides; an angle asks for the cone.
+        if (ray_coherence == "cone" || (ray_coherence.empty() && app.count("--coherence_angle") > 0))
+            options.ray_sum = RaySum::cone;
+        else if (ray_coherence == "measured")
+            options.ray_sum = RaySum::measured;
+        else if (ray_coherence == "coherent")
+            options.ray_sum = RaySum::coherent;
+        else if (ray_coherence == "energy")
+            options.ray_sum = RaySum::energy;
+        options.coherence_angle = coherence_angle;
         options.phase_interval = phase_interval;
     }
     if (!plate_table.empty())

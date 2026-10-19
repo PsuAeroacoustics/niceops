@@ -284,17 +284,19 @@ old and new results only with them in mind.
   and nothing at a microphone below every roof moved. `--no_roofs` leaves them out.
 - **`niceops --buildings`** is new: every microphone hears the source's own rays among the
   buildings, each reading the sphere along its launch, in place of the open-ground model.
-- **`--buildings` adds its rays with the source's measured coherence between emission
-  directions** (`--ray_coherence measured`, the default), with the main rotor's delay where the
-  database or the vehicle file gives its blades and sense. It first summed every ray with its phase,
-  as if the rotor radiated in phase in every direction, which `--ray_coherence coherent` keeps to
-  the bit. The DigiCity hovers moved by 0.69, 0.42 and 0.23 dB rms at 15, 30 and 60 m, and the demo
-  approach's pass SEL by at most 0.13 dB. The level's spread over the unknown phases was first
-  studied with every group of rays within a launch-angle window taking a uniformly random phase
-  (behind environment switches, now gone), which put a wide spread on broadband bands that add in
-  energy; `--phase_interval` takes the measured spread instead. The vehicle files for the AW139,
-  B205, B407 and S-76D gained `"rotation": "counterclockwise"`, and a database may record the
-  coherence (panam's `directional_coherence`).
+- **`--buildings` adds rays leaving the source apart in energy** (`--ray_coherence cone`, the
+  default), except those within `--coherence_angle` (1°) of each other. It first summed every ray
+  with its phase, as if the rotor radiated in phase in every direction, which
+  `--ray_coherence coherent` keeps to the bit. The DigiCity hovers moved by 0.77, 0.44 and
+  0.22 dB rms at 15, 30 and 60 m, and the demo approach's pass SEL by at most 0.08 dB. A database
+  may record its vehicle's coherence (panam's `directional_coherence`), which the run then takes
+  (`measured`), with the main rotor's delay where it gives one. In between, the measured model
+  was the default, with the delay switched on by the vehicle file's blade count and sense; a delay
+  is an assumption about the source's phase, so it is now the database's to make. The level's
+  spread over the unknown phases was first studied with every group of rays within a launch-angle
+  window taking a uniformly random phase (behind environment switches, now gone), which put a wide
+  spread on broadband bands that add in energy; `--phase_interval` takes the measured spread
+  instead.
 
 ### Inputs
 

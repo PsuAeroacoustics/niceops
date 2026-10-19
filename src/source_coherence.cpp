@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <sstream>
 
 #include "util/constants.hpp"
 
@@ -10,6 +11,27 @@ namespace niceops {
 
 double SourceCoherence::mean(double frequency, double degrees) const
 {
+    switch (sum)
+    {
+    case RaySum::coherent:
+        return 1.0;
+    case RaySum::energy:
+        return 0.0;
+    case RaySum::cone:
+    {
+        // cos^2 from a quarter inside the cone to a quarter outside: a half at
+        // its edge.
+        const double inner = cone * (1.0 - cone_taper), outer = cone * (1.0 + cone_taper);
+        if (degrees <= inner)
+            return 1.0;
+        if (degrees >= outer)
+            return 0.0;
+        const double c = std::cos(0.5 * pi * (degrees - inner) / (outer - inner));
+        return c * c;
+    }
+    case RaySum::measured:
+        break;
+    }
     return std::exp(-std::pow(std::max(frequency * degrees, 0.0) / scale, exponent));
 }
 
@@ -49,37 +71,32 @@ double SourceCoherence::delay_length(const Vec3& first, const Vec3& second, cons
     return sound_speed * rotation_sense * d / rotation_rate;
 }
 
-SourceCoherence default_source_coherence(double rotation_rate, double blades, int sense)
+SourceCoherence cone_coherence(double degrees)
 {
     SourceCoherence c;
+    c.sum = RaySum::cone;
+    c.cone = degrees;
+    std::ostringstream text;
+    text << "energy beyond a cone of " << degrees << " deg";
+    c.source = text.str();
+    return c;
+}
+
+SourceCoherence measured_coherence(const CoherenceRecord& record, double rotation_rate)
+{
+    SourceCoherence c;
+    c.sum = RaySum::measured;
+    const double blades = record.blades.value_or(0.0);
+    const int sense = record.rotation_sense.value_or(0);
     if (rotation_rate > 0.0 && blades > 0.0 && (sense == 1 || sense == -1))
     {
         c.rotation_rate = rotation_rate;
         c.rotation_sense = sense;
-        c.rotation_limit = SourceCoherence::default_rotation_harmonics * blades * rotation_rate / (2.0 * pi);
+        c.rotation_limit = record.rotation_limit.value_or(
+                SourceCoherence::default_rotation_harmonics * blades * rotation_rate / (2.0 * pi));
         c.scale = SourceCoherence::default_scale;
         c.exponent = SourceCoherence::default_exponent;
     }
-    else
-    {
-        c.scale = SourceCoherence::default_scale_without_rotation;
-        c.exponent = SourceCoherence::default_exponent_without_rotation;
-    }
-    return c;
-}
-
-SourceCoherence source_coherence(const CoherenceRecord& record, double rotation_rate, double vehicle_blades,
-        int vehicle_sense)
-{
-    const bool database_rotor = record.blades || record.rotation_sense;
-    const bool from_database = database_rotor || record.fitted();
-    const double blades = from_database ? record.blades.value_or(0.0) : vehicle_blades;
-    const int sense = from_database ? record.rotation_sense.value_or(0) : vehicle_sense;
-    SourceCoherence c = default_source_coherence(rotation_rate, blades, sense);
-    std::string rotor = c.rotation_rate > 0.0 ? (from_database ? "the database's rotor" : "the vehicle file's rotor")
-                                              : "no rotor delay";
-    if (c.rotation_rate > 0.0 && record.rotation_limit)
-        c.rotation_limit = *record.rotation_limit;
     if (record.scale)
     {
         c.scale = *record.scale;
@@ -91,10 +108,10 @@ SourceCoherence source_coherence(const CoherenceRecord& record, double rotation_
         c.spread_exponent = *record.spread_exponent;
     }
     c.tonal_fraction = record.tonal_fraction;
-    std::string fits = record.fitted() ? "the database's coherence" : "the default coherence";
+    c.source = record.fitted() ? "the database's measured coherence" : "the measured defaults";
     if (record.fitted() && !record.source.empty())
-        fits += " (" + record.source + ")";
-    c.source = fits + ", " + rotor;
+        c.source += " (" + record.source + ")";
+    c.source += c.rotation_rate > 0.0 ? ", the database's rotor" : ", no rotor delay";
     return c;
 }
 

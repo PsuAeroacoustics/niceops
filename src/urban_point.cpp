@@ -102,6 +102,8 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
     const auto& rays = field.rays();
     const std::size_t n = rays.size();
     const bool measured = coherence.sum == RaySum::measured;
+    // The cone's mean coherency is the same in every band.
+    const bool cone = coherence.sum == RaySum::cone;
     const bool rotor = measured && coherence.rotation_rate > 0.0;
     // The rotor's delay as a length per radian of azimuth about the shaft.
     // A ray's own delay is that times its azimuth (counterclockwise seen
@@ -175,7 +177,8 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
     // the decay only grows with the band, so it never comes back.
     constexpr double negligible = 14.0; // exp(-14) = 8e-7
     // Per band: each pair's mean coherency (at the band's centre, as it was
-    // measured) and the pairs it leaves anything of; with the variance, each
+    // measured; the cone's is every band's) and the pairs it leaves anything
+    // of; with the variance, each
     // pair's root spread and its group pair's slot (none within a group).
     auto& mean = scratch.mean;
     auto& root_spread = scratch.root_spread;
@@ -209,7 +212,21 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
                 if (part == 0)
                 {
                     const double decay = measured ? std::pow(centre / coherence.scale, coherence.exponent) : 0.0;
-                    if (variance == nullptr)
+                    if (cone)
+                    {
+                        if (band == 0)
+                        {
+                            std::size_t kept = 0;
+                            for (std::size_t q = 0; q < pairs; q++)
+                            {
+                                mean[q] = coherence.mean(centre, degrees[q]);
+                                if (mean[q] > 0.0)
+                                    live[kept++] = static_cast<std::uint32_t>(q);
+                            }
+                            live.resize(kept);
+                        }
+                    }
+                    else if (variance == nullptr)
                     {
                         std::size_t kept = 0;
                         for (std::uint32_t q : live)
@@ -224,12 +241,13 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
                         live.resize(kept);
                     }
                     else
-                    {
                         for (std::size_t q = 0; q < pairs; q++)
                         {
                             const double e = decay * power[q];
                             mean[q] = e <= negligible ? std::exp(-e) : 0.0;
                         }
+                    if (variance != nullptr)
+                    {
                         // Rays whose mean coherency is 0.99 or more, by single
                         // linkage, deviate together.
                         std::iota(parent.begin(), parent.end(), 0);

@@ -7,7 +7,9 @@
 // sphere along the direction it leaves the source (point_ray_launch), not
 // along the blocked straight line, and summed over three sub-bands as
 // niceops_point_field sums them, each pair's cross term weighted by how
-// coherent the source is between their launch directions (source_coherence.hpp).
+// coherent the source is taken to be between their launch directions
+// (source_coherence.hpp): by default, coherent within a cone and in energy
+// beyond.
 // A ray keeps the sphere's
 // conventions (eval_spectrum): it spreads from the sphere's radius, so one
 // shorter than that gains nothing, and absorbs over its length beyond it.
@@ -42,8 +44,9 @@ struct PhaseInterval
 // The band energies of a field's rays partially coherent (THEORY 6.5): each
 // pair's cross term, band-averaged over its sub-band as band_averaged_energy
 // forms it, times the mean coherency of their launch directions
-// (point_ray_launch), the main rotor's delay added to its path difference in
-// the bands it holds -- about `frame`'s normal, from its nose.  The
+// (point_ray_launch): the cone's, or the measured model's with the main
+// rotor's delay added to its path difference in the bands it holds -- about
+// `frame`'s normal, from its nose.  The
 // arguments up to `weights` are PointSourceField::band_levels's, `bands`
 // starting at the database's band `first_band`.  `energy` gets three per
 // band, as band_level() takes them.  `variance`, when given, gets each band's

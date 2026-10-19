@@ -1244,26 +1244,42 @@ What the fit rests on:
 
 PANAM's `directional_coherence.fit_coherence`, given the passes and the hovers as two cases,
 reproduces these parameters to the digits quoted. Written into a copy of the B407 database, its
-record gives the DigiCity hovers below within 0.011 dB of the defaults.
+record gives the DigiCity hovers below within 0.011 dB of the measured model with the B407's rotor
+and the fits quoted.
 
-**What it does to levels.** The DigiCity hovers above (154 microphone-hovers per height), the
-measured model against the coherent and the energy sums, and its 90 % interval:
+**Why the default is energy beyond a cone.** Scored as above, but each pair-window weighted by its
+A-weighted band power (for the B407 that power lies between 160 Hz and 2 kHz), over pairs under
+20°: the energy sum scores 0.379 on the passes and 0.081 on the hovers, a cone of any half-angle
+from 0.5° to 2.5° the same (0.378-0.379; 0.081), a 5° cone 0.421, and the measured decay 0.370
+(0.081). Nothing simple adds A-weighted levels measurably better than the energy sum, which
+assumes nothing of the source's phase. No fixed angle suits every band: unweighted, under 10°, a 5°
+cone serves 25-63 Hz (0.61 against energy's 0.93) and costs at 800-2000 Hz (0.43 against 0.14).
+The cone is not fitted. It keeps together what must be: rays that leave the source together are
+one emission, below any separation the arrays resolve, and the point model's continuity at shadow
+boundaries and a flush microphone's doubling rest on adding them with their phases.
 
-| Hover height | measured − coherent, rms (max) dB | measured − energy, rms (max) | interval width, median (p90) | coherent sum inside |
+**What it does to levels.** The DigiCity hovers above (154 microphone-hovers per height). The
+default against the coherent, energy and measured sums (the last without a rotor, as a database
+that records none takes it), and its 90 % interval:
+
+| Hover height | cone − coherent, rms (max) dB | cone − energy, rms (max) | cone − measured, rms (max) | interval width, median (p90) |
 | --- | --- | --- | --- | --- |
-| 15 m | 0.69 (2.11) | 1.00 (4.23) | 0.84 (1.55) | 55 % |
-| 30 m | 0.42 (2.03) | 0.63 (3.14) | 0.58 (1.31) | 85 % |
-| 60 m | 0.23 (1.34) | 0.49 (2.85) | 0.35 (0.87) | 95 % |
+| 15 m | 0.77 (2.46) | 1.24 (7.08) | 0.49 (3.60) | 0.74 (1.34) |
+| 30 m | 0.44 (2.10) | 0.73 (3.89) | 0.29 (1.61) | 0.62 (1.23) |
+| 60 m | 0.22 (1.43) | 0.56 (3.11) | 0.15 (0.68) | 0.10 (0.66) |
 
-The level stays close to the coherent sum, mostly because rays leaving together (a flush or low
-microphone's direct ray and the floor's) stay coherent. For A-weighted levels the rotor's delay is
-a refinement: without the blades or the sense the hovers move by 0.07-0.21 dB rms (0.64 at worst),
-mostly through the other default decay, and with the sense reversed by 0.05 at most; it acts only
-below 124 Hz. On the demo approach over `tests/data/urban_buildings.csv` the pass SEL is within
-0.13 dB of the coherent sum at all seven microphones, its 90 % interval 0.4-1.6 dB wide, where the
-energy sum loses the floor's doubling at flush microphones (up to 3 dB). The measured sum costs
-1.4 times the coherent one on the hovers (0.29 s against 0.21 s for the rays from three states to
-22 microphones, 14 threads), and with the interval 3.1 times.
+The energy sum's 7 dB is the pairs the cone keeps together. The measured model with the B407's
+rotor, as a database recording it would give, against the coherent sum: 0.69, 0.42 and 0.23 dB rms
+at 15, 30 and 60 m (2.11 at worst), its interval 0.84, 0.58 and 0.35 dB wide (median). For
+A-weighted levels the rotor's delay is a refinement: leaving it out moves the hovers by 0.07-0.21 dB
+rms (0.64 at worst), mostly through the other decay, and reversing its sense by 0.05 at most; it
+acts only below 124 Hz.
+
+On the demo approach over `tests/data/urban_buildings.csv` the default's pass SEL is within 0.08 dB
+of the coherent sum at all seven microphones, its 90 % interval 0.07-1.43 dB wide, where the energy
+sum loses the floor's doubling at the flush microphones (up to 3 dB). The cone costs what the
+coherent sum does (0.200 s against 0.202 s for the rays from three states to 22 microphones on 14
+threads, at 15 m), the interval 2.7 times that; the measured sum 1.4 times.
 
 ### The full-wave reference among buildings
 

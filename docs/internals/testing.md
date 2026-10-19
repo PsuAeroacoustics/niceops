@@ -242,6 +242,7 @@ CTests are defined in `CMakeLists.txt`.
 | `urban_buildings_diffuse_golden` | CTest | the run's first-order reflections written at rho rather than rho (1 - s) |
 | `rays that leave together deviate together` | `test_source_coherence.cpp` | the interval's groups never linked (every pair alone); the rotor's delay with its sense reversed on the rays; the one-turn shift of a pair whose azimuth difference wraps left out |
 | `rays leaving apart lose their coherence as frequency times angle grows` | `test_source_coherence.cpp` | every pair's mean coherency 1 (the coherent sum) under `--ray_coherence measured` |
+| `within the cone rays add with their phases and beyond it in energy` | `test_source_coherence.cpp` | the pair sum not told it is the cone (every pair coherent) |
 
 **A mutation check that restores a file with `mv` leaves it older than the objects built from the
 mutant, and make then considers it up to date.** `touch` it, or `cp` it back.

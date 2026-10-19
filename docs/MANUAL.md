@@ -187,8 +187,9 @@ is a physical quantity, given here in meters with its value in feet.
 | `--propagation_table` | A propagation loss table (netCDF) that replaces the ground and ray models wherever it covers a pair ([Propagation loss tables](#propagation-loss-tables)). Spectral path only. |
 | `--urban_table` | Urban receivers: for each microphone it holds, what the street around it does to the direct path, and its facades' first-order reflections ([Urban receivers](#urban-receivers)). Built by `niceops_urban_table`. Spectral path only; not with `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`. |
 | `--buildings`, `--wall_absorption`, `--floor_absorption` | LoD1 buildings around the microphones: every microphone hears the source's own rays among them at every state, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)). Spectral path only. |
-| `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `measured` (default), `coherent` or `energy` ([Buildings around the microphones](#buildings-around-the-microphones)). |
-| `--phase_interval` | With `--buildings` and `--ray_coherence measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
+| `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
+| `--coherence_angle` | With `--buildings`: the cone's half-angle, degrees, within which rays leaving the source add with their phases. Default 1. Given alone, it selects `cone`. |
+| `--phase_interval` | With `--buildings`, under `cone` or `measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
 | `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
@@ -390,8 +391,8 @@ clock of its own, so `-D`, `--lden_file`, `--cnel_file` and the period levels re
 
 ### Vehicle file
 
-JSON; values may be numbers or numeric strings. Other keys (the tail rotor, drag) are ignored.
-For example:
+JSON; values may be numbers or numeric strings. Other keys (the tail rotor, blade counts, drag)
+are ignored. For example:
 
 ```json
 { "Main Rotor": { "radius": "6.705", "tip speed": "220.0" },
@@ -403,7 +404,6 @@ For example:
 | Key | Meaning |
 | --- | --- |
 | `Main Rotor.radius`, `Main Rotor.tip speed` | m and m/s. Required. |
-| `Main Rotor.blades`, `Main Rotor.rotation` | The blade count, and `counterclockwise` or `clockwise` seen from above. Optional; `--buildings` takes the main rotor's delay between emission directions from them where the database records no coherence of its own ([Buildings around the microphones](#buildings-around-the-microphones)). The shipped AW139, B205, B407 and S-76D files give both. |
 | `Vehicle.weight` | Mass, kg. Required. |
 | `Atmosphere.density` | kg/m³, for C<sub>T</sub>. Required. |
 | `Atmosphere.temperature` | K. Optional; 293.15 K if absent. |
@@ -452,11 +452,12 @@ weights its rays by, as optional root attributes written by panam
 (`directional_coherence`, `build_empirical_database(coherence=...)`; panam's
 `docs/file_formats.md` lists them): the main rotor's blades and sense of rotation, the band up to
 which its delay holds, the decay of the mean coherency and of the coherence with frequency times
-angle, and each band's coherence between distant directions. A database that records some of them
-takes the defaults for the rest; one that records none takes the vehicle file's rotor and the
-defaults. The rotor turns at the database's `rotor_rpm` where it gives one, and at the vehicle
-file's tip speed over radius otherwise. A value NICEOPS cannot use, such as a band count that is not
-the database's, is refused when the database loads.
+angle, and each band's coherence between distant directions. A database that records any of them
+is taken with `--ray_coherence measured` unless the option says otherwise, the rotorcraft
+measurements' values filling what it leaves out; the rotor's delay comes from the database alone.
+One that records none is taken with the cone. The rotor turns at the database's `rotor_rpm` where
+it gives one, and at the vehicle file's tip speed over radius otherwise. A value NICEOPS cannot
+use, such as a band count that is not the database's, is refused when the database loads.
 
 ### Shipped databases
 
@@ -1116,26 +1117,30 @@ over a pass as it does in an exposure.
 - **Every microphone** must stand on the plane z = 0 and outside the buildings, and every source
   position above the floor and outside them.
 - **How the rays add.** The spheres carry levels, not phases, so how coherent the source is
-  between two rays' launch directions is a model, measured on rotorcraft
-  ([THEORY §6.5](THEORY.md#65-urban-receivers)). Under `--ray_coherence measured`, the default,
-  each pair's cross term is weighted by a coherency that falls with frequency times the angle
-  between their launches, so rays leaving together (a flush microphone's direct ray and the
-  floor's) stay coherent and rays far apart at high frequency add in energy. In the bands up to
-  4.5 blade-passage frequencies the pair also carries the delay a pattern turning with the main
-  rotor puts between them, where the database or the vehicle file gives the blades and the sense
-  of rotation. `coherent` adds every ray with its phase, as if the rotor radiated in phase in
-  every direction; `energy` adds them in energy.
-- **What the database records comes first.** A database may carry the vehicle's own coherence
-  ([Source coherence](#source-coherence)); the run's log says which it used. Without it, the
-  vehicle file's `blades` and `rotation`, and the measured defaults for the rest.
+  between two rays' launch directions is a model ([THEORY §6.5](THEORY.md#65-urban-receivers)).
+  By default (`cone`) nothing is assumed of the source: rays add in energy, except those leaving
+  within `--coherence_angle` (1°) of each other, which are one emission -- a flush microphone's
+  direct ray and the floor's, a diffracted ray and the ray it stands in for at a shadow
+  boundary -- and add with their phases, so the field stays continuous and the pressure doubles
+  at a flush microphone. A microphone above the floor whose reflection leaves more than the
+  angle from its direct ray takes the two in energy, without their interference.
+- **What the database records comes first.** A database may record its vehicle's coherence
+  ([Source coherence](#source-coherence)); the run then takes it (`measured`): each pair's cross
+  term weighted by a coherency that falls with frequency times the angle between their launches,
+  and, where the database gives the main rotor's blades and sense of rotation, the delay a pattern
+  turning with the rotor puts between them in the bands up to 4.5 blade-passage frequencies.
+  `--ray_coherence measured` takes the rotorcraft measurements' coherence without the rotor where
+  the database records none. `coherent` adds every ray with its phase, as if the rotor radiated in
+  phase in every direction; `energy` adds every pair in energy, which breaks the field's
+  continuity at shadow boundaries. The run's log says which it used.
 - **The phase interval.** `--phase_interval 90` writes, beside the output, the SEL with every
   state at the 5th percentile of its level over the phases the model leaves unknown
   (`<output>_phase_lower`), and at the 95th (`<output>_phase_upper`). The states are put at the
   same end together, since one vehicle's phases do not change from moment to moment, so for a
   pass the interval is wide rather than narrow. It is widest at low frequency and close to the
-  rotor, where the source's tones keep a stable but unknown phase between directions; broadband
-  rays far apart add in energy and leave nothing to be unsure of. It costs more than the level
-  alone.
+  rotor, where the source's tones may keep a stable but unknown phase between directions that the
+  energy sum leaves out; broadband rays far apart leave nothing to be unsure of. It costs more
+  than the level alone.
 - **Every state is evaluated**, with no peak search. Each state and microphone costs far more than
   the open-ground model, so this is for a street's microphones, not a grid.
 - **Not with** `--urban_table`, `--terrain`, `--refraction`, `--propagation_table`,
