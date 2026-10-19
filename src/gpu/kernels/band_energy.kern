@@ -33,9 +33,13 @@ NK_KERNEL(band_phasors)(NK_IN(BandProblem, problems, 0), NK_IN(float, amplitude,
 // within reach, Re(p_i conj p_j) sin(h dL) / (h dL), the sine by its
 // difference formula from the rays' own sines and cosines, and by its series
 // where h dL is under 0.1.  Each thread takes rays tid, tid + T, ...;
-// Kahan-compensated, then summed over the group.
+// Kahan-compensated, then summed over the group.  A problem whose rays add
+// partly in energy (BandProblem::sum) weights each pair by the cone's mean
+// coherency of their launches, as partially_coherent_energies takes it: 1
+// within three quarters of the cone's half-angle, 0 beyond five quarters of
+// it, cos^2 between, the angle the launches' chord in degrees; or by 0.
 NK_KERNEL(band_pair_sum)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1), NK_IN(float, phasor, 2),
-        NK_IN(float, trig, 3), NK_IN(float, rel, 4), NK_OUT(float, energy, 5) NK_GROUP_ARGS)
+        NK_IN(float, trig, 3), NK_IN(float, rel, 4), NK_OUT(float, energy, 5), NK_IN(float, launch, 6) NK_GROUP_ARGS)
 {
     NK_SHARED_ARRAY(float, scratch, 256);
     const uint q = which[NK_GROUP];
@@ -43,6 +47,8 @@ NK_KERNEL(band_pair_sum)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1),
     NK_GLOBAL_IN float* ph = phasor + 2u * p.first;
     NK_GLOBAL_IN float* tr = trig + 2u * p.first;
     NK_GLOBAL_IN float* L = rel + p.rays;
+    NK_GLOBAL_IN float* D = launch + 3u * p.rays;
+    const float inner = p.cone * 0.75f, outer = p.cone * 1.25f, degrees_per_radian = 57.29577951308232f;
     float acc = 0.0f, carry = 0.0f;
     for (uint i = NK_THREAD; i < p.n; i += NK_THREADS)
     {
@@ -50,11 +56,25 @@ NK_KERNEL(band_pair_sum)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1),
         const float si = tr[2u * i], ci = tr[2u * i + 1u];
         const float li = L[i];
         float sum = pr * pr + pi * pi;
-        for (uint j = i + 1u; j < p.n; j++)
+        for (uint j = i + 1u; j < p.n && p.sum != NK_SUM_ENERGY; j++)
         {
             const float d = L[j] - li;
             if (d > p.reach)
                 break;
+            float g = 1.0f;
+            if (p.sum == NK_SUM_CONE)
+            {
+                const float dx = D[3u * j] - D[3u * i], dy = D[3u * j + 1u] - D[3u * i + 1u],
+                            dz = D[3u * j + 2u] - D[3u * i + 2u];
+                const float degrees = sqrt(dx * dx + dy * dy + dz * dz) * degrees_per_radian;
+                if (degrees >= outer)
+                    continue;
+                if (degrees > inner)
+                {
+                    const float c = nk_cis(1.5707963267948966f * (degrees - inner) / (outer - inner)).re;
+                    g = c * c;
+                }
+            }
             const float x = p.h * d;
             float sinc;
             if (x < 0.1f)
@@ -64,7 +84,7 @@ NK_KERNEL(band_pair_sum)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1),
             }
             else
                 sinc = (tr[2u * j] * ci - tr[2u * j + 1u] * si) / x;
-            sum += 2.0f * (pr * ph[2u * j] + pi * ph[2u * j + 1u]) * sinc;
+            sum += 2.0f * g * (pr * ph[2u * j] + pi * ph[2u * j + 1u]) * sinc;
         }
         const float y = sum - carry, t = acc + y;
         carry = (t - acc) - y;

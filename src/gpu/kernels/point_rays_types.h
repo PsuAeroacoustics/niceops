@@ -53,14 +53,38 @@ struct GpuAperture
 
 // A ray over a shared face: its two ends' apertures, sin(beta), and the
 // reference path less the ray's length in the plane, as a float-float pair
-// (the phase the aperture's lengths leave out).
+// (the phase the aperture's lengths leave out).  Sampled
+// (PointPathOptions::sample_shared_faces), its apertures hold only the probes'
+// wavenumbers, and `cascade` is the first of its two wedge terms, which
+// ray_amplitudes takes at every problem (the first's scale carrying the
+// cascade's spreading over the face's); taken at every wavenumber, `cascade`
+// is no_cascade.
 struct GpuFace
 {
     GpuAperture end[2];
     float sin_beta;
     float offset_hi;
     float offset_lo;
-    float unused;
+    uint32_t cascade;
+};
+
+#define NK_NO_CASCADE 0xffffffffu
+
+// A sampled shared face's ray, for face_ratios: the problems of its set
+// [first, first + problems), the ray within the set, its probes
+// [probe, probe + probes) of the probe arrays (each probe's problem within
+// the set, ascending in k, and the integral face_amplitudes put there), and
+// the problem within the set from which the cascade stands alone (problems
+// for none).
+struct GpuFaceSample
+{
+    uint32_t first;
+    uint32_t problems;
+    uint32_t ray;
+    uint32_t probe;
+    uint32_t probes;
+    uint32_t free;
+    uint32_t unused[2];
 };
 
 // One Filon panel of an aperture: its three nodes' places up the aperture;
@@ -86,13 +110,15 @@ struct GpuPanel
 
 // A shared face's ray at one problem: the problem (its index in the batch),
 // the ray (its index within its own set, which face_amplitudes offsets by the
-// problem's first ray) and its face (its index in the batch).
+// problem's first ray) and its face (its index in the batch); `probe` is 0,
+// or one more than the probe slot the integral goes to instead of the
+// amplitude (a sampled face).
 struct GpuFaceItem
 {
     uint32_t problem;
     uint32_t ray;
     uint32_t face;
-    uint32_t unused;
+    uint32_t probe;
 };
 
 #endif

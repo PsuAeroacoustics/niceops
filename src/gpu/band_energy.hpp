@@ -91,11 +91,12 @@ private:
         const PointRaySet* point = nullptr;
     };
     Device& device_;
-    Kernel phasors_, pair_sum_, quadrature_, ray_amplitudes_, face_amplitudes_;
+    Kernel phasors_, pair_sum_, quadrature_, ray_amplitudes_, face_amplitudes_, face_ratios_;
     std::vector<Entry> sets_;
     std::size_t problem_count_ = 0, quadrature_count_ = 0;
     Buffer problems_, which_pairs_, which_quadrature_, amplitude_, length_, phasor_, trig_, rel_, rule_, energy_;
     Buffer which_rays_, rays_, wedges_, faces_, panels_, reflected_, face_items_;
+    Buffer samples_, probe_problems_, probe_out_, launch_;
     Batch batch_;
     bool submitted_ = false;
     std::vector<double> energy_out_;

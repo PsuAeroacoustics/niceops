@@ -321,6 +321,11 @@ public:
     {
         return rays_;
     }
+    // Whether its shared faces are sampled (PointPathOptions::sample_shared_faces).
+    bool samples_shared_faces() const
+    {
+        return sample_shared_faces_;
+    }
 
     // The band levels: 10 lg of |p|^2 band-averaged (every ray summed
     // coherently, pair by pair, over three sub-bands, as the urban tables
@@ -407,6 +412,20 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<
         double floor_reflection, double k);
 double reflected_amplitude(const PointRay& ray, const std::vector<double>& reflection, double floor_reflection);
 std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, double k);
+// Where a shared face's integral is taken when it is sampled
+// (PointPathOptions::sample_shared_faces) over the wavenumbers k: `probes`,
+// the indices of those it is taken at, in ascending k, and `free`, the index
+// of the lowest at which the cascade stands alone (k.size() for none).  The
+// field at the rest is the cascade's times the integral's ratio to it,
+// linear in log k in its log magnitude and unwrapped phase between the
+// probes and 1 at `free` and above (THEORY 6.5).
+struct SharedFaceSamples
+{
+    std::vector<std::size_t> probes;
+    std::size_t free = 0;
+};
+SharedFaceSamples shared_face_samples(const SharedFaceTerm& face, const std::vector<double>& k);
+
 // point_ray_amplitude for a ray over a shared face, given its face's field at
 // k sin(beta) (shared_face_field, or shared_face_spectrum for many k at once).
 std::complex<double> shared_face_amplitude(const PointRay& ray, double reflected, double k, std::complex<double> field);

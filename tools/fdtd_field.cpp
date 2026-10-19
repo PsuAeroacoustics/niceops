@@ -47,6 +47,7 @@
 #include "building_input.hpp"
 #include "buildings.hpp"
 #include "fdtd.hpp"
+#include "gpu/gpu.hpp"
 #include "point_paths.hpp"
 #include "util/constants.hpp"
 #include "util/csv.hpp"
@@ -67,7 +68,7 @@ int main(int argc, char** argv)
     double wall_absorption = 0.0, humidity = std::numeric_limits<double>::quiet_NaN();
     double temperature = reference_temperature, pressure = reference_pressure;
     int pml = 20, threads = 0;
-    bool mirror = false, use_gpu = false;
+    bool mirror = false, use_gpu = true;
     app.add_option("--buildings", buildings_file, "The district: CSV of footprint vertices, or GeoJSON.")->required();
     app.add_option("--solids", solids_file, "More rigid prisms: a CSV of solid, x, y, bottom and top, each "
                                             "solid's vertices in order around it.");
@@ -98,7 +99,9 @@ int main(int argc, char** argv)
     app.add_option("--temperature", temperature, "With --humidity, K (default 293.15).");
     app.add_option("--pressure", pressure, "With --humidity, kPa (default 101.325).");
     app.add_flag("--mirror", mirror, "The plane y = the source's y is one of symmetry: grid half the space.");
-    app.add_flag("--gpu", use_gpu, "March on the GPU.");
+    app.add_flag("--gpu,!--no-gpu", use_gpu,
+            "March on the GPU: on by default wherever there is one. --gpu asks for it and is refused where there is "
+            "none; --no-gpu marches on the CPU.");
     app.add_option("-j,--threads", threads, "CPU threads (default: all).");
     app.add_option("-o,--output", output, "The band levels, CSV.")->required();
     app.add_option("--spectrum", spectrum_file, "H at every frequency averaged over, CSV.");
@@ -183,7 +186,11 @@ int main(int argc, char** argv)
         setup.duration = duration > 0.0 ? duration : 2.0 * span.norm() / sound_speed;
         setup.pulse_frequency = pulse_frequency > 0.0 ? pulse_frequency : f_top / 2.25;
         setup.threads = tool_thread_count(threads);
-        setup.gpu = use_gpu;
+        // The GPU wherever there is one; asked for, it must be there.  The
+        // flag's count takes --no-gpu too, so asking is its value as well.
+        if (use_gpu && app.count("--gpu") > 0)
+            gpu::Device::require("--gpu");
+        setup.gpu = use_gpu && gpu::Device::get() != nullptr;
         setup.wall_absorption = wall_absorption;
         // The air's absorption per sub-band, as niceops_point_field takes it.
         std::vector<double> absorption;
@@ -205,7 +212,7 @@ int main(int argc, char** argv)
         const FdtdRecording run = solve_fdtd(setup, solids, s, points);
         std::cerr << "FDTD: " << run.nx << " x " << run.ny << " x " << run.nz << " cells of " << h * 1000.0
                   << " mm (" << run.cells * 1e-6 << " M), " << run.steps << " steps of " << run.dt * 1e6 << " us, "
-                  << run.seconds << " s" << (use_gpu ? " on the GPU" : "") << ", "
+                  << run.seconds << " s" << (setup.gpu ? " on the GPU" : "") << ", "
                   << std::lround(run.marched * 100.0) << "% of the cell-steps marched" << std::endl;
         ensure_parent_directory(output);
         std::ofstream out(output);

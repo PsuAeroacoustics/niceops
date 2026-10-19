@@ -142,6 +142,7 @@ BandEnergies::BandEnergies(Device& device)
     , quadrature_(device.kernel(program, "band_quadrature"))
     , ray_amplitudes_(device.kernel(program, "ray_amplitudes"))
     , face_amplitudes_(device.kernel(program, "face_amplitudes"))
+    , face_ratios_(device.kernel(program, "face_ratios"))
 {
 }
 
@@ -175,7 +176,7 @@ void BandEnergies::submit()
     if (submitted_)
         return;
     std::size_t rays = 0, entries = 0, rule_floats = 0, wedge_count = 0, face_count = 0, panel_count = 0,
-                reflected_count = 0, item_count = 0, gpu_problems = 0;
+                reflected_count = 0, item_count = 0, gpu_problems = 0, sample_count = 0, probe_count = 0;
     for (const Entry& e : sets_)
     {
         const std::vector<double>& length = e.host ? e.host->length : e.point->length;
@@ -190,8 +191,10 @@ void BandEnergies::submit()
             face_count += e.point->faces.size();
             panel_count += e.point->panels.size();
             reflected_count += e.point->reflected.size();
-            item_count += e.point->face_rays.size() * e.point->problems();
+            item_count += e.point->face_rays.size() * e.point->problems() + e.point->probe_items.size();
             gpu_problems += e.point->problems();
+            sample_count += e.point->samples.size();
+            probe_count += e.point->probe_problems.size();
         }
     }
     if (entries > UINT32_MAX / 2)
@@ -213,6 +216,10 @@ void BandEnergies::submit()
     ensure<GpuPanel>(device_, panels_, panel_count);
     ensure<float>(device_, reflected_, reflected_count);
     ensure<GpuFaceItem>(device_, face_items_, item_count);
+    ensure<GpuFaceSample>(device_, samples_, sample_count);
+    ensure<unsigned>(device_, probe_problems_, probe_count);
+    ensure<float>(device_, probe_out_, 2 * probe_count);
+    ensure<float>(device_, launch_, 3 * rays);
 
     BandProblem* records = problems_.as<BandProblem>();
     unsigned* pairs = which_pairs_.as<unsigned>();
@@ -228,8 +235,11 @@ void BandEnergies::submit()
     GpuPanel* panels = panels_.as<GpuPanel>();
     float* reflected = reflected_.as<float>();
     GpuFaceItem* items = face_items_.as<GpuFaceItem>();
+    GpuFaceSample* samples = samples_.as<GpuFaceSample>();
+    unsigned* probe_problems = probe_problems_.as<unsigned>();
+    float* launch = launch_.as<float>();
     std::size_t q = 0, ray = 0, entry = 0, rule_at = 0, pair_count = 0, wedge_at = 0, face_at = 0, panel_at = 0,
-                reflected_at = 0, item_at = 0, gpu_at = 0;
+                reflected_at = 0, item_at = 0, gpu_at = 0, sample_at = 0, probe_at = 0;
     quadrature_count_ = 0;
     for (const Entry& e : sets_)
     {
@@ -243,6 +253,10 @@ void BandEnergies::submit()
             split(L[i], length[2 * (ray + i)], length[2 * (ray + i) + 1]);
             rel[ray + i] = static_cast<float>(L[i] - L[0]);
         }
+        if (e.point && e.point->launch.size() == 3 * n)
+            std::copy(e.point->launch.begin(), e.point->launch.end(), launch + 3 * ray);
+        else
+            std::fill(launch + 3 * ray, launch + 3 * (ray + n), 0.0f);
         if (e.host)
             std::copy(reinterpret_cast<const float*>(e.host->amplitude.data()),
                     reinterpret_cast<const float*>(e.host->amplitude.data()) + 2 * e.host->amplitude.size(),
@@ -264,8 +278,24 @@ void BandEnergies::submit()
                 GpuFace face = p.faces[f];
                 for (GpuAperture& end : face.end)
                     end.panel += static_cast<uint32_t>(panel_at);
+                if (face.cascade != NK_NO_CASCADE)
+                    face.cascade += static_cast<uint32_t>(wedge_at);
                 faces[face_at + f] = face;
             }
+            // The sampled faces: their records, the probes' problems (set-local,
+            // as face_ratios reads them) and the integrals at the probes.
+            for (const GpuFaceSample& s : p.samples)
+            {
+                GpuFaceSample record = s;
+                record.first = static_cast<uint32_t>(q);
+                record.probe += static_cast<uint32_t>(probe_at);
+                samples[sample_at++] = record;
+            }
+            std::copy(p.probe_problems.begin(), p.probe_problems.end(), probe_problems + probe_at);
+            for (const GpuFaceItem& probe : p.probe_items)
+                items[item_at++] = {static_cast<uint32_t>(q + probe.problem), probe.ray,
+                        static_cast<uint32_t>(face_at + probe.face), static_cast<uint32_t>(probe_at + probe.probe)};
+            probe_at += p.probe_problems.size();
             std::copy(p.panels.begin(), p.panels.end(), panels + panel_at);
             std::copy(p.reflected.begin(), p.reflected.end(), reflected + reflected_at);
         }
@@ -285,6 +315,8 @@ void BandEnergies::submit()
             r.centre = n ? static_cast<float>(0.5 * (L[n - 1] - L[0])) : 0.0f;
             r.band = e.point ? e.point->band[m] : 0;
             r.absorption = e.point ? e.point->absorption[m] : 0.0f;
+            r.sum = e.point ? e.point->sum : NK_SUM_COHERENT;
+            r.cone = e.point ? e.point->cone : 1.0f;
             if (r.nodes)
             {
                 const std::vector<double>& rule_nodes = gauss_legendre(r.nodes);
@@ -297,9 +329,9 @@ void BandEnergies::submit()
             if (e.point)
             {
                 gpu_amplitudes[gpu_at++] = static_cast<unsigned>(q);
-                for (std::size_t f = 0; f < e.point->face_rays.size(); f++)
-                    items[item_at++] = {static_cast<uint32_t>(q), e.point->face_rays[f],
-                            static_cast<uint32_t>(face_at + f), 0};
+                for (uint32_t face_ray : e.point->face_rays)
+                    items[item_at++] = {static_cast<uint32_t>(q), face_ray,
+                            static_cast<uint32_t>(face_at + e.point->rays[face_ray].term), 0};
             }
         }
         if (e.point)
@@ -315,13 +347,20 @@ void BandEnergies::submit()
 
     batch_ = device_.batch();
     batch_.dispatch(ray_amplitudes_,
-            {Arg(problems_), Arg(which_rays_), Arg(rays_), Arg(wedges_), Arg(reflected_), Arg(amplitude_)}, gpu_at, 256);
+            {Arg(problems_), Arg(which_rays_), Arg(rays_), Arg(wedges_), Arg(reflected_), Arg(amplitude_), Arg(faces_)},
+            gpu_at, 256);
     batch_.dispatch(face_amplitudes_,
-            {Arg(face_items_), Arg(problems_), Arg(rays_), Arg(faces_), Arg(panels_), Arg(reflected_), Arg(amplitude_)},
+            {Arg(face_items_), Arg(problems_), Arg(rays_), Arg(faces_), Arg(panels_), Arg(reflected_), Arg(amplitude_),
+                    Arg(probe_out_)},
             item_at, 32);
+    const uint32_t sampled = static_cast<uint32_t>(sample_at);
+    batch_.dispatch(face_ratios_,
+            {Arg(samples_), Arg(problems_), Arg(probe_problems_), Arg(probe_out_), Arg(amplitude_), Arg::value(sampled)},
+            (sample_at + 63) / 64, 64);
     batch_.dispatch(phasors_, {Arg(problems_), Arg(amplitude_), Arg(length_), Arg(phasor_), Arg(trig_)},
             problem_count_, 256);
-    batch_.dispatch(pair_sum_, {Arg(problems_), Arg(which_pairs_), Arg(phasor_), Arg(trig_), Arg(rel_), Arg(energy_)},
+    batch_.dispatch(pair_sum_,
+            {Arg(problems_), Arg(which_pairs_), Arg(phasor_), Arg(trig_), Arg(rel_), Arg(energy_), Arg(launch_)},
             pair_count, 256);
     batch_.dispatch(quadrature_,
             {Arg(problems_), Arg(which_quadrature_), Arg(phasor_), Arg(rule_), Arg(rel_), Arg(energy_)},

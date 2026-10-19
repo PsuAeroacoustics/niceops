@@ -1,8 +1,8 @@
 # GPU
 
-The GPU paths: the backend interface, the kernel dialect, how `niceops_point_field --gpu` forms
-the rays' amplitudes and sums the bands, and how `niceops_urban_table --gpu` marches the canyon
-wave solver. Accuracy is in [FIDELITY](../FIDELITY.md#a-point-source-among-buildings) and
+The GPU paths: the backend interface, the kernel dialect, how `niceops_point_field` and
+`niceops --buildings` form the rays' amplitudes and sum the bands there, and how
+`niceops_urban_table --wave_below` marches the canyon wave solver. Accuracy is in [FIDELITY](../FIDELITY.md#a-point-source-among-buildings) and
 [FIDELITY](../FIDELITY.md#canyon-wave-solver).
 
 ## Layout
@@ -13,22 +13,31 @@ wave solver. Accuracy is in [FIDELITY](../FIDELITY.md#a-point-source-among-build
 | `src/gpu/gpu_metal.mm` | The Metal backend, in Objective-C++. |
 | `src/gpu/gpu_disabled.cpp` | The backend of a build without one: `Device::get()` is null. |
 | `src/gpu/band_energy` | `BandEnergies`: a batch of ray sets on the GPU, either `RaySet`s (amplitudes from the host) or `PointRaySet`s (rays whose amplitudes the GPU forms). `plan_nodes` picks each problem's form. |
-| `src/gpu/point_rays` | `pack_point_rays`: a `PointSourceField`'s rays as the GPU's records. |
+| `src/gpu/point_rays` | `pack_point_rays`: a `PointSourceField`'s rays as the GPU's records, with a directional source's weights and how the rays add (`PointRayPacking`). |
+| `src/gpu/band_stream` | `BandStream`: packed sets from worker threads to the GPU a batch at a time, two in flight, each set's energies handed back; `niceops_point_field` and `UrbanDistrict::levels` share it. |
 | `src/gpu/kernels/` | Kernel sources in the dialect: `prelude_metal.h`; `common.h` (complex floats, the group sum, `nk_phase`); `wedge.h` (Faddeeva, the UTD transition, the wedge coefficient, Filon's panel); the `*_types.h` records shared with the host; `band_energy.kern`, `point_rays.kern`, `canyon_wave.kern`, `fdtd.kern`; `wedge_check.kern`, for the tests. |
 | `src/canyon_wave.cpp` (`run_gpu`) | The canyon solver's march on the GPU, beside `run()`. |
 | `src/fdtd.cpp` (`march_gpu`) | The 3-D FDTD reference's march on the GPU, beside `march_cpu` ([ground.md](ground.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field)). |
 | `cmake/embed_kernels.cmake` | Embeds every file of `NICEOPS_KERNEL_SOURCES` as a string, for `gpu::kernel_source()`. |
 
-A batch dispatches, in order: `ray_amplitudes` (rays not over a shared face, one problem a group),
-`face_amplitudes` (each shared face's ray at each problem, 32 threads splitting its Filon
-panels), `band_phasors` (each ray's phase at the band's middle), then `band_pair_sum` and
-`band_quadrature` over their problems.
+A batch dispatches, in order: `ray_amplitudes` (rays not over a shared face, and a sampled shared
+face's cascade, one problem a group), `face_amplitudes` (each shared face's ray at each problem, or
+a sampled face's at its probes, 32 threads splitting its Filon panels), `face_ratios` (each sampled
+face's ratio, applied to its cascade, a face a thread), `band_phasors` (each ray's phase at the
+band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
 
 ## Things to preserve
 
-- **The CPU is the reference.** Every GPU path is opt-in, is tested against the CPU at a stated
-  tolerance rather than bit for bit, and never feeds a golden. The CPU path stays byte-identical
+- **The GPU by default, the CPU the reference.** Every GPU path runs wherever there is a device and
+  the case is one it takes, and falls back to the CPU otherwise; `--gpu` asks for it (refused where
+  it cannot run) and `--no-gpu` keeps the CPU. It is tested against the CPU at a stated tolerance
+  rather than bit for bit, and never feeds a golden: **every test pinned to CPU results passes
+  `--no-gpu`**, or it would fail on a Mac and pass on Linux CI. The CPU path stays byte-identical
   whether or not the build has a backend.
+- **`--gpu,!--no-gpu` is one CLI11 option**, so `app.count("--gpu")` counts `--no-gpu` as well.
+  Asking for the GPU is the flag's value and its count together; testing the count alone made
+  `--no-gpu` demand a device, which only a build without a backend shows (`fdtd_field_runs`, which
+  passes `--no-gpu`, failed under GCC).
 - **Kernels are written once, in the dialect.** A kernel names only what a prelude defines:
   `NK_KERNEL`, `NK_IN`/`NK_OUT`/`NK_VALUE` with their slots, `NK_GROUP_ARGS` (which carries its own
   leading comma), `NK_GROUP`/`NK_THREAD`/`NK_THREADS`, the address-space words for helper
@@ -75,13 +84,37 @@ panels), `band_phasors` (each ray's phase at the band's middle), then `band_pair
   the rays are fewer than the pairs within reach. The node count is
   `h Δ / 2 + 4 (h Δ)^(1/3) + 6`, Δ the spread of lengths: on the district's problems it is within
   2e-12 dB of every pair summed. A problem past 4096 nodes takes the pairs.
-- **`niceops_point_field --gpu` streams.** Its workers trace pairs without pause and push each
-  pair's packed rays (`pack_point_rays`) onto a bounded queue; one GPU thread takes them a batch
-  at a time, keeps two batches in flight and writes the levels. The bound holds the workers back if
-  the GPU falls behind, and a GPU failure wakes them to stop. The ray dumps come from the CPU.
+- **The point model on the GPU streams** (`BandStream`). Workers trace pairs without pause and push
+  each pair's packed rays (`pack_point_rays`) onto a bounded queue; one GPU thread takes them a
+  batch at a time, keeps two batches in flight and hands each set's energies back. The bound holds
+  the workers back if the GPU falls behind, and a GPU failure wakes them to stop; the caller's
+  catch calls `finish()` first, so the GPU's own error is the one reported. The ray dumps come from
+  the CPU.
+- **Shared faces are sampled on the GPU as on the CPU** (`shared_face_samples`, one rule for both).
+  The packer works out a sampled face's aperture for its probes' wavenumbers only and adds the
+  cascade's two wedge terms (the first's scale carrying the cascade's spreading over the face's);
+  `ray_amplitudes` puts the cascade at every problem, `face_amplitudes` the integral at the probes
+  into a side buffer (`GpuFaceItem::probe`), and `face_ratios` takes R = integral / cascade there and
+  multiplies every problem's cascade by R interpolated in log k, as `sampled_shared_face_factors`
+  does. A probe whose R is not finite is passed over, where the CPU takes the integral everywhere
+  instead. Taken at every wavenumber (`--exact_shared_faces`), a face has no cascade
+  (`NK_NO_CASCADE`) and `face_amplitudes` writes the amplitudes itself, as before. Exact faces' items
+  index their face through their ray's record, not their order. Without the sampling the GPU spent
+  90% of its time on the integrals and the CPU's sampled run beat it (1.45 s against 1.77 s over the
+  demo approach's source positions); with it, 0.82 s.
+- **A partly coherent sum** (`BandProblem::sum`, `cone`): `band_pair_sum` weights each pair by the
+  cone's mean coherency of the two rays' launches (`PointRaySet::launch`, three floats a ray, the
+  chord in degrees as `partially_coherent_energies` takes it), or adds only each ray's own energy.
+  The quadrature integrates every pair with its phases, so a set that is not coherent takes the pair
+  sum throughout. For a coherent set `g` is 1.0f, and the sum's arithmetic is what it was.
+- **`niceops --buildings` on the GPU** (`UrbanDistrict::levels` with a device): the sphere's weight
+  on each ray in each band is folded into the ray's reflected amplitude, so the kernels are
+  `niceops_point_field`'s. The measured coherence (a decay in frequency times angle, and the rotor's
+  delay with its wraps) and the phase interval's variance are the CPU's (`gpu_supports`); a default
+  run then stays on the CPU, and `--gpu` is refused.
 - **CI never builds the Metal backend.** It runs on Linux, where `NICEOPS_GPU=AUTO` is `OFF`.
-  `point_field_gpu_refused` covers the disabled backend there; everything else here is tested
-  only on a Mac (`[gpu]`, `point_field_gpu_*`).
+  `point_field_gpu_refused` and `buildings_gpu_refused` cover the disabled backend there; everything
+  else here is tested only on a Mac (`[gpu]`, `point_field_gpu_*`, `buildings_gpu_*`).
 
 ## The canyon wave solver
 
@@ -112,13 +145,20 @@ panels), `band_phasors` (each ray's phase at the band's middle), then `band_pair
 
 ## Measured
 
-On the 49-block district, an M4 Pro (10 performance and 4 efficiency cores, 20 GPU cores).
+On the demo approach over the test district (the run's 6,551 states, seven microphones, 28 bands),
+an M4 Pro: `niceops --buildings` takes 1.7 s on the GPU (its rays 1.0 s) against 3.2 s with
+`--no-gpu`, its SELs within 0.001 dB of the CPU's; `niceops_point_field` over every fifth of those
+source positions, 9,177 pairs, takes 0.82 s against 1.45 s on 14 threads, its band levels within
+0.05 dB.
+
+On the 49-block district, an M4 Pro (10 performance and 4 efficiency cores, 20 GPU cores), with
+every shared face's integral at every wavenumber.
 
 - **The pair sum alone** (40 microphones, one source 30 m up, 24 bands of three sub-bands, 1.1
   billion pairs within reach): the CPU's vectorized sum on 14 threads takes 51 ms
   (2.2e10 pairs/s, about 0.6 ns a pair a thread). The same algorithm on the GPU takes 14 ms;
   taking each problem by the cheaper form takes 4.3 ms, 12 times the CPU.
-- **The 60-point track over 185 microphones**: 30 s on the CPU, 3.9 s with `--gpu`. The GPU is
+- **The 60-point track over 185 microphones**: 30 s on the CPU, 3.9 s on the GPU. The GPU is
   busy 3.3 s of it and sets the pace: the shared faces' panels (`face_amplitudes`) take about
   half of that, the other rays' amplitudes 0.4 s and the band sums the rest. The workers spend
   72% of their time on the path search and 25% packing the rays, two thirds of that the shared
@@ -153,9 +193,6 @@ Measured and left alone:
 ## Not on the GPU
 
 - **The path search** (`PointSourceField::trace`): branchy, and most of the workers' time.
-- **The shared faces' sampling** (`PointPathOptions::sample_shared_faces`, ground.md): the GPU
-  takes every shared face's integral at every wavenumber, which is cheap there, so its levels are
-  held to the CPU's with the sampling off.
 - **Ray-tracing hardware** (RT cores; Metal's intersection API, in hardware on M3 and later;
   OptiX; Vulkan's ray queries) accelerates what a renderer spends its time on: walking a bounding
   volume hierarchy and testing rays against triangles. Here that is the visibility tests inside

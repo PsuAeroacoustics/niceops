@@ -530,9 +530,8 @@ it bought:
   - **Two thirds of an octave between samples**: an octave left 0.13 dB on the long blocks, two
     octaves 0.48; two thirds leaves 0.07. Raising the cutoff from 30 to 60 changed nothing.
   - **A sample's cascade zero, or a ratio not finite, takes the integral everywhere** for that ray.
-  - **The GPU takes the integral at every wavenumber**, so the CPU's GPU comparisons
-    (`the GPU's point rays are the CPU's`, `point_field_gpu_matches_cpu`) run with the sampling
-    off.
+  - **The GPU samples by the same rule** (`shared_face_samples`; [gpu.md](gpu.md)), and
+    `the GPU's point-source amplitudes are the CPU's` holds it to the CPU's both ways.
   On the demo approach it took the run from 37 to 10 s. Tests: `a sampled shared face is its
   integral at every wavenumber` (0.1 dB, 0.03 rad), `point_field_shared_faces_sampled` (band levels
   within 0.1 dB).
@@ -661,8 +660,9 @@ which marches them. What to keep:
   - The defaults (32 apart, 0.02 dB, loud bands within 30 dB at 15 times the tolerance) were
     chosen from a simulation over every state's band levels: 0.05 dB evaluated 16% of the pairs
     for LAmax within 0.22 dB, 0.02 dB 27% for LAmax within 0.01.
-- Cost: the demo track's 6,551 states at seven microphones take 3.3 s on 14 threads, 12,453 pairs
-  evaluated (10 s with every state, 37 s with every shared face's integral at every wavenumber,
+- Cost: the demo track's 6,551 states at seven microphones take 1.7 s on the GPU and 3.3 s on 14
+  threads with `--no-gpu`, 12,453 pairs evaluated ([gpu.md](gpu.md)); on the CPU, 10 s with every
+  state, 37 s with every shared face's integral at every wavenumber,
   70 s before the transition table and the shared nodes above). The run without buildings takes
   0.2 s. Of an evaluated pair, the coherence sum is about a fifth, the transition function and
   wedge coefficients another, the sampled shared faces' integrals another, the path search about 6%.

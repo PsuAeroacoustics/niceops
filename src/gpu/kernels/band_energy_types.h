@@ -32,6 +32,17 @@ struct BandProblem
     // of an amplitude per metre of path, Np/m (0 for none).
     uint32_t band;
     float absorption;
+    // How its rays add (band_pair_sum): NK_SUM_COHERENT, all with their
+    // phases; NK_SUM_CONE, with their phases within `cone` degrees of each
+    // other's launch (the per-ray launch array), a cos^2 taper over a quarter
+    // of it either side, in energy beyond; NK_SUM_ENERGY, all in energy.  Only
+    // coherent problems may take the quadrature.
+    uint32_t sum;
+    float cone;
 };
+
+#define NK_SUM_COHERENT 0u
+#define NK_SUM_CONE 1u
+#define NK_SUM_ENERGY 2u
 
 #endif

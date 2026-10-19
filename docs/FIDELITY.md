@@ -772,8 +772,8 @@ same run unsampled:
   integral's.
 - **Cost**, 14 threads on an M4 Pro: 70 s for the run at the start, 37 s with the transition
   function tabulated and each shared face's nodes worked out once for every wavenumber, 10 s with
-  the shared faces sampled, 3.3 s with the states sampled too. The run without buildings takes
-  0.2 s.
+  the shared faces sampled, 3.3 s with the states sampled too, and 1.7 s with the rays formed and
+  summed on the GPU. The run without buildings takes 0.2 s.
 
 ### Roof-edge diffraction
 
@@ -1056,7 +1056,7 @@ a block 10 m thick. Against the boundary elements either side of the plane the s
 within ±0.6 dB, the exact field moving by 0.1 dB; the cascade steps by 5 to 15 dB. A source above
 the roof steps by up to 4.9 dB, where the cascade takes over above the plane.
 
-**On the GPU** (`--gpu`, an M4 Pro), which works in single precision:
+**On the GPU** (the default on a Mac, an M4 Pro), which works in single precision:
 
 - **The sums.** Against double-precision sums of the same amplitudes, over ray sets of 200 to 1100
   rays with lengths from 120 m to 2 km and bands from 50 Hz to 10 kHz, the GPU's pair sums agree
@@ -1069,7 +1069,11 @@ the roof steps by up to 4.9 dB, where the cascade takes over above the plane.
   ending at each one's taper and extent: on the Filon test's faces it is within 0.006 dB of the
   fine midpoint rule from 50 Hz to 10 kHz, where the CPU's own is within 0.017 dB. Band by band,
   amplitudes the GPU forms give levels within 2.3e-4 dB of the same batch given the CPU's (five
-  pairs among containers and blocks, 104 rays over shared faces, 50 Hz to 10 kHz).
+  pairs among containers and blocks, 104 rays over shared faces, 50 Hz to 10 kHz), and with the
+  shared faces sampled on both, within 2.6e-4 dB.
+- **In a run.** `niceops --buildings` on the demo approach: SELs within 0.001 dB of the CPU's, with
+  the states sampled and with every state evaluated. `niceops_point_field` over every fifth of its
+  source positions, the shared faces sampled on both: band levels within 0.05 dB.
 - **The levels** differ from the CPU's by what the CPU's cutoff leaves out, the pairs whose sinc
   has fallen below 1/30, which the integral keeps:
 

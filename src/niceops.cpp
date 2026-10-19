@@ -45,6 +45,7 @@
 #include "stratified.hpp"
 #include "ground_classes.hpp"
 #include "ground_effect.hpp"
+#include "gpu/gpu.hpp"
 #include "manifest.hpp"
 #include "screening.hpp"
 #include "operations.hpp"
@@ -776,6 +777,10 @@ struct RunOptions
     // states evaluated, may miss a state's level by (UrbanDistrict::levels);
     // 0 evaluates every state.
     double state_tolerance = 0.02;
+    // --gpu / --no-gpu: the buildings' rays on the GPU wherever there is one
+    // and it takes the run's sum (gpu); --gpu asks for it (gpu_required).
+    bool gpu = true;
+    bool gpu_required = false;
     // --terrain, read once for the run: the ground models take each path's
     // mean ground line from it (terrain_ray), resampled per trajectory onto the
     // local frame every terrain_step meters with terrain_offset (m) added.
@@ -3114,12 +3119,28 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         PhaseInterval interval;
         if (options.phase_interval > 0.0)
             interval.percent = options.phase_interval;
+        // The GPU wherever there is one and it takes the run's sum; asked for,
+        // it must.
+        gpu::Device* device = nullptr;
+        if (options.gpu)
+        {
+            const bool supported = UrbanDistrict::gpu_supports(coherence, options.phase_interval > 0.0);
+            if (options.gpu_required && !supported)
+                input_error("--gpu: the GPU does not take --ray_coherence measured or --phase_interval; the CPU "
+                            "does (--no-gpu).");
+            device = !supported ? nullptr : options.gpu_required ? &gpu::Device::require("--gpu") : gpu::Device::get();
+            if (device != nullptr)
+                log("--buildings: the rays formed and summed on the GPU, ", device->name(), ".");
+            else
+                log("--buildings: the rays on the CPU (",
+                        supported ? "no GPU" : "the GPU does not take this sum or the interval", ").");
+        }
         const auto started = std::chrono::steady_clock::now();
         const std::size_t evaluated = district.levels(database, source_states, microphones, absorption.data(),
                 band_gains, first_band, last_band, sound_speed,
                 options.thread_count > 0 ? options.thread_count : default_thread_count(), coherence, point_levels,
                 record_bands || want_frames ? &point_bands : nullptr, spectral ? &packed_of_state : nullptr,
-                options.phase_interval > 0.0 ? &interval : nullptr, options.state_tolerance);
+                options.phase_interval > 0.0 ? &interval : nullptr, options.state_tolerance, device);
         point_lower = std::move(interval.lower);
         point_upper = std::move(interval.upper);
         log("--buildings ", options.buildings_path, ": the rays from ", nt, " states to ", observer_count,
@@ -4846,6 +4867,7 @@ int run(int argc, char* argv[])
     double floor_absorption = 0.0;
     bool exact_shared_faces = false;
     double state_tolerance = 0.02;
+    bool use_gpu = true;
     std::string ray_coherence;
     double coherence_angle = SourceCoherence::default_cone;
     double phase_interval = 0.0;
@@ -5336,6 +5358,10 @@ int run(int argc, char* argv[])
             "With --buildings: take the integral over a flat roof between its two edges at every wavenumber, not "
             "only where the cascade of the two edges' coefficients cannot stand in for it; the reference, about "
             "four times as slow.");
+    app.add_flag("--gpu,!--no-gpu", use_gpu,
+            "With --buildings: form and sum each pair's rays on the GPU (on by default wherever there is one and the "
+            "run's sum is 'cone', 'coherent' or 'energy' without --phase_interval). --gpu asks for it, and is "
+            "refused where there is none or the sum is the CPU's; --no-gpu keeps them on the CPU.");
     app.add_option("--state_tolerance", state_tolerance,
             "With --buildings: evaluate the rays at states 32 apart and wherever the buildings' effect, taken "
             "linearly between them, misses a state's A-weighted level by more than this many dB (default 0.02); "
@@ -6110,8 +6136,9 @@ int run(int argc, char* argv[])
     }
     else if (app.count("--wall_absorption") > 0 || app.count("--floor_absorption") > 0)
         input_error("--wall_absorption and --floor_absorption go with --buildings.");
-    else if (exact_shared_faces || app.count("--state_tolerance") > 0)
-        input_error("--exact_shared_faces and --state_tolerance go with --buildings.");
+    else if (exact_shared_faces || app.count("--state_tolerance") > 0 || app.count("--gpu") > 0
+            || app.count("--no-gpu") > 0)
+        input_error("--exact_shared_faces, --state_tolerance, --gpu and --no-gpu go with --buildings.");
     else if (app.count("--ray_coherence") > 0 || app.count("--coherence_angle") > 0
             || app.count("--phase_interval") > 0)
         input_error("--ray_coherence, --coherence_angle and --phase_interval go with --buildings.");
@@ -6444,6 +6471,9 @@ int run(int argc, char* argv[])
         if (!(state_tolerance >= 0.0) || !std::isfinite(state_tolerance))
             input_error("--state_tolerance is a non-negative number of dB; given ", state_tolerance, ".");
         options.state_tolerance = state_tolerance;
+        options.gpu = use_gpu;
+        // The flag's count takes --no-gpu too, so asking is its value as well.
+        options.gpu_required = use_gpu && app.count("--gpu") > 0;
     }
     if (!plate_table.empty())
     {

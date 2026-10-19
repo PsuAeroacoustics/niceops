@@ -192,6 +192,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--phase_interval` | With `--buildings`, under `cone` or `measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
 | `--state_tolerance` | With `--buildings`: dB by which the buildings' effect, taken linearly between the states evaluated, may miss a state's A-weighted level. Default 0.02; 0 evaluates every state ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--exact_shared_faces` | With `--buildings`: take the integral over a flat roof between its two edges at every wavenumber, not only where the cascade of the two edges cannot stand in for it. The reference; much slower. |
+| `--gpu`, `--no-gpu` | With `--buildings`: form and sum each state's rays on the GPU (Metal, on a Mac), the default wherever there is one and the rays add `cone`, `coherent` or `energy` without `--phase_interval`; `measured` and the interval are the CPU's. `--gpu` asks for it and is refused where it cannot run; `--no-gpu` keeps the CPU. |
 | `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
 | `--terrain_step` | Spacing of the terrain samples each path's mean ground plane is fitted to. Default the grid's own spacing, at least 5 m. |
@@ -1153,6 +1154,10 @@ over a pass as it does in an exposure.
   neither evaluated state around it is evaluated outright. `--state_tolerance 0` evaluates every
   state. There is no peak search. Each evaluation still costs far more than the open-ground model,
   so this is for a street's microphones, not a grid.
+- **On the GPU.** Where the machine has one, each evaluated state's rays are formed and summed
+  there, in single precision, while the CPU traces the next states' rays; the levels agree with the
+  CPU's closely ([FIDELITY](FIDELITY.md#the-point-source-model-in-a-run)). `--no-gpu` keeps them on
+  the CPU, and `--ray_coherence measured` and `--phase_interval` always do.
 - **Flat roofs and walls between two corners** are crossed by the uniform form's integral only
   where the cascade of the two edges' coefficients cannot stand in for it -- the lower bands, and
   sources or microphones near the roof's plane -- at wavenumbers two thirds of an octave apart,
@@ -1762,7 +1767,7 @@ niceops_urban_table --canyons streets.csv --database databases/B407_fixed_load_f
 | `--wave_below` | Solve each canyon with walls of equal height by the wave equation and use its table for the bands centered at or below this frequency, Hz. Default 0, none. |
 | `--wave_blend` | Bands above `--wave_below` over which the wave table fades into the geometric one. Default 2. |
 | `--wave_ppw` | The wave solver's grid points per wavelength. Default 15. |
-| `--gpu` | March the wave equation on the GPU (Metal, on a Mac), as below. Refused without one. |
+| `--gpu`, `--no-gpu` | March the wave equation on the GPU (Metal, on a Mac), as below: the default wherever there is one and `--wave_below` is given. `--gpu` asks for it and is refused without one; `--no-gpu` keeps the CPU. |
 | `-j`, `--threads` | Canyons solved at once, or a receiver's directions shared out. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`; the table to write (SI). |
 
@@ -1775,8 +1780,8 @@ height keep the geometric table, with a warning naming the row. Give the walls a
 absorption: a rigid canyon rings for seconds, and a warning says when a canyon had not decayed
 when its solution stopped. Each doubling of the frequency costs about eight times as much: with
 the default blend, `--wave_below 400` solves each canyon to 707 Hz, about a minute at 15 points per
-wavelength, and canyons are solved several at a time. `--gpu` marches the wave equation on the GPU
-instead, in single precision, two canyons at a time, and `--wave_below` must be given with it;
+wavelength, and canyons are solved several at a time. On a machine with a GPU the wave equation is
+marched there instead, in single precision, two canyons at a time (`--no-gpu` keeps the CPU);
 [FIDELITY](FIDELITY.md#canyon-wave-solver) has how much faster that is and how closely its tables
 agree with the CPU's.
 
@@ -1876,12 +1881,14 @@ source, to the bit, and the run is quicker than those runs. The output is writte
 a block of sources at a time, so a run that fails partway exits with an error and leaves the blocks
 it finished.
 
-`--gpu` forms each ray's amplitude at every band and sums the bands on the GPU (Metal, on a Mac),
-while the CPU traces the next pairs' rays. The rays are the same, and the levels agree closely with
+On a machine with a GPU (Metal, on a Mac) each ray's amplitude at every band is formed and the bands
+summed there, while the CPU traces the next pairs' rays; `--no-gpu` keeps the CPU, and
+`--edge_source` and `--fade` always do. The rays are the same, and the levels agree closely with
 the CPU's ([FIDELITY](FIDELITY.md#a-point-source-among-buildings) has the comparison): in the low
 bands, where every pair of rays interferes, the GPU averages over the band exactly,
 while the CPU leaves out the pairs that the averaging has all but cancelled. The GPU works in
-single precision. A build without a GPU backend refuses the flag, as does a machine without a GPU.
+single precision. `--gpu` asks for it, and is refused by a build without a GPU backend or a
+machine without a GPU.
 
 `--edge_source` takes the diffracted rays' fields from the edge-source integral
 ([THEORY §6.5](THEORY.md#65-urban-receivers)) instead of UTD's coefficients. The integral runs over
@@ -1890,7 +1897,7 @@ ray fades rather than stops as its diffraction point leaves its edge. Every once
 takes it. A twice-diffracted ray takes it where the cascade of two coefficients cannot be trusted --
 near either edge's shadow or reflection boundary, near an edge's end, over a shared face -- and the
 cascade elsewhere, the two blended smoothly band by band. The run is much slower, and CPU only:
-`--edge_source` is refused with `--gpu`. Its accuracy and cost are in
+`--edge_source` is refused with `--gpu`, and keeps a default run on the CPU. Its accuracy and cost are in
 [FIDELITY](FIDELITY.md#a-point-source-among-buildings).
 
 Walls with relief -- corrugated cladding, balconies, ribs, window bays -- send part of what they
@@ -1931,7 +1938,7 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--no_diffraction`, `--no_double_diffraction` | Leave out every diffracted ray, or those at two edges. |
 | `--no_roofs` | Roofs do not reflect, for comparison. |
 | `--cascade` | Over a shared face (a roof from edge to edge, a wall from corner to corner), the cascade of two edge coefficients instead of the uniform form. For comparison only. |
-| `--exact_shared_faces` | Over a shared face, the uniform form's integral at every wavenumber rather than only where the cascade cannot stand in for it, as `niceops --buildings` takes it. The reference, and what `--gpu` always takes; much slower on the CPU. |
+| `--exact_shared_faces` | Over a shared face, the uniform form's integral at every wavenumber rather than only where the cascade cannot stand in for it, as `niceops --buildings` takes it. The reference; much slower. |
 | `--edge_source` | Diffraction by the edge-source integral, which keeps the edges' ends, as above. Not with `--gpu`. |
 | `--orientation_tolerance` | As `niceops_urban_table`'s. Default 1 degree. |
 | `--sound_speed` | m/s. Default 343.2. |
@@ -1939,7 +1946,7 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--temperature`, `--pressure` | For the absorption: K, default 293.15; kPa, default 101.325. |
 | `--no_air_absorption` | Leave the air's absorption out. Not with the three above. |
 | `--rays` | Also write every ray: its source's row (with `--sources`), its microphone, kind, reflections, length, its level at each band center (no band averaging; absorbed at the band center's coefficient), and its path from the source as `x y z;x y z;...`, for drawing. A leg off the floor is drawn unfolded below it, so only its `x` and `y` are the ray's. |
-| `--gpu` | Form the rays' amplitudes and sum the bands on the GPU, as above. |
+| `--gpu`, `--no-gpu` | Form the rays' amplitudes and sum the bands on the GPU, as above: the default wherever there is one. `--gpu` asks for it; `--no-gpu` keeps the CPU. |
 | `-j`, `--threads` | Pairs of source and microphone evaluated at once. Default the environment's `NICEOPS_THREADS`, else one per hardware thread. |
 | `--units`, `-o` | `ft` (default) or `m`, for every length in and out; the file to write. |
 
@@ -1989,8 +1996,8 @@ geometry LoD1 buildings cannot hold, such as a facade's relief.
 The run lasts `--duration` (default twice the time sound takes across the domain's diagonal), and
 a microphone whose bands still move by more than 0.02 dB over the run's last tenth is named on the
 standard error: lengthen the run. Between parallel rigid walls the reflections die away slowly;
-give such walls their absorption. `--gpu` marches on the GPU (Metal, on a Mac), in single
-precision as the CPU's march; the CPU is for small grids. Check a result by repeating it with a
+give such walls their absorption. On a machine with a GPU (Metal, on a Mac) the march is the
+GPU's, in single precision as the CPU's march; `--no-gpu` keeps the CPU, which is for small grids. Check a result by repeating it with a
 finer `--cell`.
 
 | Option | Meaning |
@@ -2010,7 +2017,7 @@ finer `--cell`.
 | `--sound_speed` | m/s. Default 343.2. |
 | `--spectrum` | Also write the transfer function at every frequency the bands average over: microphone, frequency, real and imaginary parts. |
 | `--recording` | Also write the pulse and every microphone's pressure at every step. |
-| `--gpu`, `-j` | March on the GPU; CPU threads. |
+| `--gpu`, `--no-gpu`, `-j` | March on the GPU (the default wherever there is one) or keep the CPU; CPU threads. |
 
 ### `niceops_pe_compare`
 

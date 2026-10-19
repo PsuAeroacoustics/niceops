@@ -96,10 +96,15 @@ Commands and options are in `README.md`; rationale is in
   broadband path, because `S-76D_M3.nod` has no spectra (`regression_default` also passes
   `--no-spectral --no-ground_effect` explicitly). `eval` and `eval_spectrum` share their
   cell and stencil, so any disagreement between them is physics, not interpolation.
-- **GPU paths are opt-in (`--gpu`) and the CPU is their reference.** They work in float (phases
-  in float-float), are tested against the CPU at a stated tolerance, never bit-for-bit, and never
-  feed a golden. Kernels are written once, in the dialect of `src/gpu/kernels`, so another backend
-  takes the same source: [docs/internals/gpu.md](docs/internals/gpu.md).
+- **GPU paths are on by default wherever there is a device, and the CPU is their reference.**
+  `niceops --buildings`, `niceops_point_field`, `niceops_urban_table --wave_below` and
+  `niceops_fdtd_field` take the GPU unless `--no-gpu`, and fall back to the CPU where the GPU does
+  not take the case (`--edge_source`, `--fade`, `--ray_coherence measured`, `--phase_interval`);
+  `--gpu` asks for it and is refused where it cannot run. They work in float (phases in
+  float-float), are tested against the CPU at a stated tolerance, never bit-for-bit, and never feed
+  a golden: **a test pinned to CPU results passes `--no-gpu`**, or it fails on a Mac and passes on
+  Linux CI. Kernels are written once, in the dialect of `src/gpu/kernels`, so another backend takes
+  the same source: [docs/internals/gpu.md](docs/internals/gpu.md).
 - **`--edge_source` is the point-source model's exact diffraction, and is held to exact
   solutions**, not to the UTD rays it replaces: Sommerfeld's half-plane, the wedge series, the
   long block's boundary elements. Its second order is localized by partner corrections that
@@ -142,8 +147,8 @@ Commands and options are in `README.md`; rationale is in
 - **Shared faces are sampled** (`PointPathOptions::sample_shared_faces`): the cascade times the
   integral's ratio to it, taken two thirds of an octave apart while the transition parameter is
   under 30. An end's angle off the face's plane counts on either side: with an end in the plane
-  the cascade has the wrong sign. `--exact_shared_faces` (and the GPU) take the integral at every
-  wavenumber; the GPU comparisons run with the sampling off.
+  the cascade has the wrong sign. `--exact_shared_faces` takes the integral at every wavenumber.
+  The GPU samples by the same rule (`shared_face_samples`), its `face_ratios` kernel applying R.
 - **Scattering walls in `niceops_point_field` reuse the urban tables' radiosity**, lit by the
   source's own specular paths to each patch; with s = 0 nothing is built and the run is byte for
   byte the specular one.

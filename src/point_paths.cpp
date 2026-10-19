@@ -1565,6 +1565,38 @@ constexpr double probe_spacing = 1.5874010519681994;
 // face is its integral at every wavenumber`).  Empty where a probe's cascade
 // is zero or the ratio is not finite: the caller takes the integral
 // everywhere then.
+} // namespace
+
+SharedFaceSamples shared_face_samples(const SharedFaceTerm& t, const std::vector<double>& k)
+{
+    const std::size_t n = k.size();
+    SharedFaceSamples s;
+    s.free = n;
+    std::vector<std::size_t> by_k(n);
+    for (std::size_t j = 0; j < n; j++)
+        by_k[j] = j;
+    std::sort(by_k.begin(), by_k.end(), [&](std::size_t a, std::size_t b) { return k[a] < k[b]; });
+    const double rate = shared_face_transition_rate(t);
+    for (std::size_t r = 0; r < n; r++)
+    {
+        const std::size_t j = by_k[r];
+        if (rate * k[j] >= cascade_stands)
+        {
+            s.free = j;
+            if (!s.probes.empty() && s.probes.back() != by_k[r - 1])
+                s.probes.push_back(by_k[r - 1]);
+            break;
+        }
+        if (s.probes.empty() || k[j] >= probe_spacing * k[s.probes.back()])
+            s.probes.push_back(j);
+        if (r + 1 == n && s.probes.back() != j)
+            s.probes.push_back(j);
+    }
+    return s;
+}
+
+namespace {
+
 std::vector<std::complex<double>> sampled_shared_face_factors(const PointRay& ray, const std::vector<double>& k)
 {
     using complex = std::complex<double>;
@@ -1580,29 +1612,9 @@ std::vector<std::complex<double>> sampled_shared_face_factors(const PointRay& ra
     const double ratio = ray.cascade_spreading / ray.spreading;
     for (std::size_t j = 0; j < n; j++)
         out[j] = point_ray_amplitude(cascade, ratio, k[j]);
-    std::vector<std::size_t> by_k(n);
-    for (std::size_t j = 0; j < n; j++)
-        by_k[j] = j;
-    std::sort(by_k.begin(), by_k.end(), [&](std::size_t a, std::size_t b) { return k[a] < k[b]; });
-    const double rate = shared_face_transition_rate(t);
-    // The probes, in ascending k, and the first wavenumber the cascade stands at.
-    std::vector<std::size_t> probes;
-    std::size_t first_free = n;
-    for (std::size_t r = 0; r < n; r++)
-    {
-        const std::size_t j = by_k[r];
-        if (rate * k[j] >= cascade_stands)
-        {
-            first_free = j;
-            if (!probes.empty() && probes.back() != by_k[r - 1])
-                probes.push_back(by_k[r - 1]);
-            break;
-        }
-        if (probes.empty() || k[j] >= probe_spacing * k[probes.back()])
-            probes.push_back(j);
-        if (r + 1 == n && probes.back() != j)
-            probes.push_back(j);
-    }
+    const SharedFaceSamples samples = shared_face_samples(t, k);
+    const std::vector<std::size_t>& probes = samples.probes;
+    const std::size_t first_free = samples.free;
     if (probes.empty())
         return out;
     std::vector<double> in_plane(probes.size());

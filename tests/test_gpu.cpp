@@ -275,10 +275,15 @@ Footprint block(double x0, double y0, double x1, double y1, double top)
 // for every sub-band) against the same batch given the CPU's amplitudes,
 // band by band, among DigiCity's containers and a district's blocks: the
 // energy kernels are the same, so what differs is the amplitudes.  And the
-// levels against band_levels on the CPU.
+// levels against band_levels on the CPU.  With the shared faces' integrals
+// at every wavenumber, and sampled (the cascade at every problem, the
+// integral at the probes, face_ratios between) as the CPU samples them.
 TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
 {
     gpu::Device& device = device_or_skip();
+    for (const bool sampled : {false, true})
+    {
+    INFO((sampled ? "sampled" : "every wavenumber"));
     const Buildings containers({block(4.09, 17.66, 6.53, 23.72, 7.77), block(14.81, 17.66, 17.25, 23.72, 7.77),
             block(1.6, 10.82, 4.04, 16.88, 7.77), block(1.6, 8.38, 13.72, 10.82, 5.18),
             block(20.21, 3.86, 22.65, 16.0, 7.77), block(13.5, -1.84, 19.56, 0.6, 7.77)});
@@ -314,11 +319,9 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     {
         const Buildings& city = *cases[i].city;
         std::vector<double> reflection(city.facades().size() * bands.size(), 0.9);
-        // The GPU takes a shared face's integral at every wavenumber, so the
-        // CPU's amplitudes here do too.
-        PointPathOptions exact;
-        exact.sample_shared_faces = false;
-        fields.push_back(std::make_unique<PointSourceField>(city, cases[i].source, cases[i].microphone, exact));
+        PointPathOptions options;
+        options.sample_shared_faces = sampled;
+        fields.push_back(std::make_unique<PointSourceField>(city, cases[i].source, cases[i].microphone, options));
         const PointSourceField& field = *fields.back();
         const std::vector<double> absorption = i % 2 ? absorbing : std::vector<double> {};
         field.band_levels(reflection, 1.0, bands, c, cpu[i].data(), absorption);
@@ -333,7 +336,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
                 absorption);
         host[i].plan();
         gpu::pack_point_rays(field, reflection, 1.0, bands, c, point[i], absorption);
-        shared += point[i].face_rays.size();
+        shared += point[i].face_rays.size() + point[i].samples.size();
         host_first.push_back(energies.add(host[i]));
         point_first.push_back(energies.add(point[i]));
     }
@@ -354,6 +357,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
                 << worst_cpu << " dB from band_levels");
     REQUIRE(worst_amplitudes < 0.02);
     REQUIRE(worst_cpu < 0.1);
+    }
 }
 
 // The canyon wave solver marched on the GPU, in float, against the CPU's

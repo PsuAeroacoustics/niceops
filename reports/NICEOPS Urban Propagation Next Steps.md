@@ -82,8 +82,8 @@ above a 45 ft roof, and one 0.66 ft off a wall at 20 ft, both run. Neither has b
 
 ## 3. Cost, the barrier to district-scale maps
 
-**The numbers.** The demo approach (6,551 states × 7 microphones) takes 3.3 s on 14 threads, against 0.2 s without
-buildings; an evaluated pair costs about 3 ms of CPU, so a district grid of 10,000 receivers is still far off.
+**The numbers.** The demo approach (6,551 states × 7 microphones) takes 1.7 s on the GPU (3.3 s on 14 threads), against
+0.2 s without buildings; an evaluated pair costs about 3 ms of CPU, so a district grid of 10,000 receivers is still far off.
 
 **Done (Oct 19).** 70 s → 3.3 s on the demo approach (`docs/internals/ground.md`, FIDELITY):
 - the UTD transition function from a table, and a shared face's node geometry worked out once for every wavenumber
@@ -93,6 +93,8 @@ buildings; an evaluated pair costs about 3 ms of CPU, so a district grid of 10,0
 - the states sampled: the buildings' transfer at adaptively chosen states, the source exact at every state (SEL within
   0.003 dB, LAmax within 0.007; 10 → 3.3 s).
 Measured and left out: windowing the coherence sum by the sinc's reach (4%).
+- the GPU in the run, by default wherever there is one (the shared faces sampled there too, the cone's sum in the
+  pair-sum kernel): 3.3 → 1.7 s. The measured coherence and `--phase_interval` stay on the CPU.
 
 **Ray-tracing hardware does not help yet.** RT cores accelerate ray–triangle tests, which here are the path search's
 visibility tests: 1–2% of a `--buildings` run before the sampling below, about 6% of an evaluated pair after it, and

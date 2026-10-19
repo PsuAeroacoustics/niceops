@@ -309,6 +309,12 @@ old and new results only with them in mind.
   buildings' transfer is evaluated at some states and interpolated between them, the source exact
   at every state. Every state was evaluated, which `--state_tolerance 0` keeps to the bit. The demo
   approach's SELs moved by 0.003 dB at most and its LAmax by 0.007, for a third of the pairs.
+- **The GPU is the default wherever there is one**: `niceops --buildings` (new there),
+  `niceops_point_field`, `niceops_urban_table --wave_below` and `niceops_fdtd_field`, each falling
+  back to the CPU where the GPU does not take the case; they were the CPU's unless `--gpu`.
+  `--no-gpu` keeps the CPU, to the bit. On a Mac their results move by what single precision moves
+  them: the demo approach's `--buildings` SELs by 0.001 dB at most, `niceops_point_field`'s band
+  levels by 0.05. The GPU now samples the shared faces as the CPU does.
 
 ### Inputs
 

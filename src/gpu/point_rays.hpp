@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "gpu/kernels/band_energy_types.h"
 #include "gpu/kernels/point_rays_types.h"
 
 namespace niceops {
@@ -31,8 +32,16 @@ struct PointRaySet
     std::vector<GpuFace> faces;
     std::vector<GpuPanel> panels;
     std::vector<float> reflected; // [ray][band]
-    // Which rays are over a shared face.
+    // Which rays are over a shared face whose integral is taken at every
+    // problem.
     std::vector<uint32_t> face_rays;
+    // The sampled shared faces (PointPathOptions::sample_shared_faces): one
+    // record each, its problems, ray and probes set-local; each probe's
+    // problem within the set; and the integrals to take, at the probes, each
+    // into its probe's slot (one more than its index).
+    std::vector<GpuFaceSample> samples;
+    std::vector<uint32_t> probe_problems;
+    std::vector<GpuFaceItem> probe_items;
     // The problems: per band, its three sub-bands in order, and the air's
     // attenuation in each (Np/m, 0 for none).
     std::vector<uint32_t> band;
@@ -40,11 +49,27 @@ struct PointRaySet
     std::vector<float> absorption;
     // As RaySet::nodes (band_energy.hpp).
     std::vector<uint32_t> nodes;
+    // How the rays add (BandProblem::sum, cone), and each ray's launch, a unit
+    // vector, three floats a ray, for the cone.
+    uint32_t sum = NK_SUM_COHERENT;
+    float cone = 1.0f;
+    std::vector<float> launch;
 
     std::size_t problems() const
     {
         return k1.size();
     }
+};
+
+// What a caller may add to a set beyond band_levels' arguments: `weights`,
+// each ray's amplitude in each band, [ray][band] in rays()'s order (a
+// directional source along its launch, as band_levels takes it), and how the
+// rays add (PointRaySet::sum, cone).
+struct PointRayPacking
+{
+    const double* weights = nullptr;
+    uint32_t sum = NK_SUM_COHERENT;
+    double cone = 1.0;
 };
 
 // Packs `field` for the bands (Hz), the facades' reflection coefficients
@@ -53,6 +78,6 @@ struct PointRaySet
 // std::invalid_argument for no bands.
 void pack_point_rays(const PointSourceField& field, const std::vector<double>& reflection, double floor_reflection,
         const std::vector<double>& bands, double sound_speed, PointRaySet& set,
-        const std::vector<double>& absorption = {});
+        const std::vector<double>& absorption = {}, const PointRayPacking& packing = {});
 
 } // namespace niceops::gpu

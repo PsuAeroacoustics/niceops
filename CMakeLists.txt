@@ -280,6 +280,7 @@ add_library(niceops_core STATIC
   ${NICEOPS_GPU_SOURCE}
   src/gpu/band_energy.cpp
   src/gpu/point_rays.cpp
+  src/gpu/band_stream.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/gpu_kernel_sources.cpp
 )
 target_include_directories(niceops_core PUBLIC
@@ -1199,7 +1200,7 @@ set_tests_properties(urban_table_canyon_golden urban_table_plate_golden PROPERTI
 # is pinned (golden/urban_wave.csv).  Leaving the facades' reflections unscaled in the wave band
 # moves the A-weighted SEL by under 1e-5 dB below 125 Hz, so the Catch2 case "the wave band's
 # weights and blend" is what guards that.
-add_test(NAME urban_table_wave_build COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 --wave_below 80 --wave_ppw 10 -j 2 -o tables/urban_wave_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_table_wave_build COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 --wave_below 80 --wave_ppw 10 -j 2 --no-gpu -o tables/urban_wave_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_table_wave_build PROPERTIES FIXTURES_SETUP urban_table_wave_file)
 add_test(NAME urban_table_wave_warns_unequal_walls COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --bands 50 63 80 100 --frame_bearing 210 --wave_below 63 --wave_ppw 8 -o tables/urban_wave_warn_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_table_wave_warns_unequal_walls PROPERTIES PASS_REGULAR_EXPRESSION "row 2: walls of unequal height \\(40 and 60 ft\\); the wave solver needs flush roofs")
@@ -1275,8 +1276,8 @@ set_tests_properties(urban_buildings_geojson_needs_heights PROPERTIES PASS_REGUL
 # the run without a ground model: every state evaluated (--state_tolerance 0), at 1e-9; and with the
 # states sampled, whose transfer is then nothing at every state, the direct ray's free-field level
 # that the sampling adds it to is the ray's own, at 1e-6 dB.
-add_test(NAME buildings_far_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --phase_interval 90 --state_tolerance 0 -o integrated/buildings_far.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_far_sampled_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --floor_absorption 1 -o integrated/buildings_far_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_far_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --phase_interval 90 --state_tolerance 0 --no-gpu -o integrated/buildings_far.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_far_sampled_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --no-gpu -o integrated/buildings_far_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME buildings_far_reference COMMAND ${URBAN_RUN} --no-ground_effect -o integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_far_run buildings_far_sampled_run buildings_far_reference PROPERTIES FIXTURES_SETUP buildings_far_runs)
 add_test(NAME buildings_far_is_open_without_ground COMMAND golden_compare integrated/buildings_far.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1284,13 +1285,15 @@ add_test(NAME buildings_far_sampled_is_open COMMAND golden_compare integrated/bu
 set_tests_properties(buildings_far_is_open_without_ground buildings_far_sampled_is_open PROPERTIES FIXTURES_REQUIRED buildings_far_runs)
 # The demo approach over the test district: its states sampled (the default) against every state
 # evaluated, within 0.01 dB of SEL at every microphone (0.003 measured).
-add_test(NAME buildings_every_state_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --state_tolerance 0 -o integrated/buildings_every_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME buildings_sampled_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv -o integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_every_state_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --state_tolerance 0 --no-gpu -o integrated/buildings_every_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_sampled_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --no-gpu -o integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_every_state_run buildings_sampled_run PROPERTIES FIXTURES_SETUP buildings_sampling_runs)
 add_test(NAME buildings_states_sampled COMMAND golden_compare integrated/buildings_sampled.csv integrated/buildings_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_states_sampled PROPERTIES FIXTURES_REQUIRED buildings_sampling_runs)
 add_test(NAME buildings_refuses_lone_state_tolerance COMMAND ${URBAN_RUN} --state_tolerance 0.1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces and --state_tolerance go with --buildings")
+set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --state_tolerance, --gpu and --no-gpu go with --buildings")
+add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_lone_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_negative_state_tolerance COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --state_tolerance -1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_negative_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--state_tolerance is a non-negative number of dB")
 # One ray has no phase to be unsure of: both ends of the interval are the level.
@@ -1332,7 +1335,7 @@ set_tests_properties(urban_table_builder_checks_units PROPERTIES PASS_REGULAR_EX
 # niceops_point_field (tools/point_field.cpp): a point source in the test district's street, at
 # its microphones on two threads with every ray written out, through the urban tools' shared
 # district reader; and its refusal of a source inside a building.
-add_test(NAME point_field_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_rays.csv -j 2 --humidity 70 -o integrated/point_field.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_rays.csv -j 2 --humidity 70 --no-gpu -o integrated/point_field.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME point_field_refuses_inside COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1060 230 10 --microphones tests/data/urban_observers.csv --bands 125 --no_air_absorption -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "--source stands inside building 4")
 # The air's absorption depends strongly on the humidity, so a run without one is refused rather than assumed.
@@ -1346,29 +1349,29 @@ set_tests_properties(point_field_edge_source_gpu_refused PROPERTIES PASS_REGULAR
 # first the point_field_runs source.  The library test `a field from ends traced once is the pair's own`
 # holds the fields to the single-source ones ray for ray.
 # Scattering walls: the diffuse field lit by the source's specular paths (diffuse_facades.hpp).
-add_test(NAME point_field_scattering_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 1000 --scattering 0.3 --patch_size 20 -j 2 --humidity 70 -o integrated/point_field_scattering.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_scattering_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 1000 --scattering 0.3 --patch_size 20 -j 2 --humidity 70 --no-gpu -o integrated/point_field_scattering.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME point_field_scattering_out_of_range COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 --scattering 1.5 --no_air_absorption -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_scattering_out_of_range PROPERTIES PASS_REGULAR_EXPRESSION "--scattering must lie within")
-add_test(NAME point_field_scattering_spectrum_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 1000 --scattering_spectrum tests/data/scattering_spectrum.csv --patch_size 20 -j 2 --humidity 70 -o integrated/point_field_scattering_spectrum.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_scattering_spectrum_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 1000 --scattering_spectrum tests/data/scattering_spectrum.csv --patch_size 20 -j 2 --humidity 70 --no-gpu -o integrated/point_field_scattering_spectrum.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME point_field_scattering_spectrum_short COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 4000 --scattering_spectrum tests/data/scattering_spectrum.csv --no_air_absorption -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_scattering_spectrum_short PROPERTIES PASS_REGULAR_EXPRESSION "covers 100 to 2000 Hz, not the band at 4000 Hz")
 # A wall beyond --diffuse_radius returns nothing diffusely, so it keeps its whole rho: with none in
 # reach the levels are the specular run's.
-add_test(NAME point_field_specular_reference COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 1000 -j 2 --humidity 70 -o integrated/point_field_specular_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME point_field_scattering_out_of_reach COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 1000 --scattering 0.5 --diffuse_radius 0.001 -j 2 --humidity 70 -o integrated/point_field_scattering_out_of_reach.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_specular_reference COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 1000 -j 2 --humidity 70 --no-gpu -o integrated/point_field_specular_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_scattering_out_of_reach COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --microphones tests/data/urban_observers.csv --bands 125 1000 --scattering 0.5 --diffuse_radius 0.001 -j 2 --humidity 70 --no-gpu -o integrated/point_field_scattering_out_of_reach.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_specular_reference point_field_scattering_out_of_reach PROPERTIES FIXTURES_SETUP point_field_reach_runs)
 add_test(NAME point_field_scattering_out_of_reach_is_specular COMMAND golden_compare integrated/point_field_scattering_out_of_reach.csv integrated/point_field_specular_reference.csv 1e-9 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_scattering_out_of_reach_is_specular PROPERTIES FIXTURES_REQUIRED point_field_reach_runs)
 # niceops_fdtd_field (tools/fdtd_field.cpp): a block on the floor, a coarse grid on the CPU, half
 # the space by the source's plane of symmetry.
-add_test(NAME fdtd_field_runs COMMAND niceops_fdtd_field --buildings tests/data/fdtd_block.csv --microphones tests/data/fdtd_microphones.csv --source 0 0 0.1 --bands 250 500 --units m --cell 0.02 --margin 0.2 --mirror -j 2 -o integrated/fdtd_field.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-add_test(NAME fdtd_field_order2_runs COMMAND niceops_fdtd_field --buildings tests/data/fdtd_block.csv --microphones tests/data/fdtd_microphones.csv --source 0 0 0.1 --bands 250 500 --units m --cell 0.02 --margin 0.2 --mirror --order 2 -j 2 -o integrated/fdtd_field_order2.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME fdtd_field_runs COMMAND niceops_fdtd_field --buildings tests/data/fdtd_block.csv --microphones tests/data/fdtd_microphones.csv --source 0 0 0.1 --bands 250 500 --units m --cell 0.02 --margin 0.2 --mirror -j 2 --no-gpu -o integrated/fdtd_field.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME fdtd_field_order2_runs COMMAND niceops_fdtd_field --buildings tests/data/fdtd_block.csv --microphones tests/data/fdtd_microphones.csv --source 0 0 0.1 --bands 250 500 --units m --cell 0.02 --margin 0.2 --mirror --order 2 -j 2 --no-gpu -o integrated/fdtd_field_order2.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME fdtd_field_order_refused COMMAND niceops_fdtd_field --buildings tests/data/fdtd_block.csv --microphones tests/data/fdtd_microphones.csv --source 0 0 0.1 --bands 250 --units m --order 3 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(fdtd_field_order_refused PROPERTIES WILL_FAIL TRUE)
-add_test(NAME point_field_sources_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_sources_rays.csv -j 2 --humidity 70 -o integrated/point_field_sources.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_sources_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_sources_rays.csv -j 2 --humidity 70 --no-gpu -o integrated/point_field_sources.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # The shared faces sampled (the default) against their integral at every wavenumber
 # (--exact_shared_faces): within 0.1 dB in every band.
-add_test(NAME point_field_sources_exact_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --exact_shared_faces -j 2 --humidity 70 -o integrated/point_field_sources_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME point_field_sources_exact_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --exact_shared_faces -j 2 --humidity 70 --no-gpu -o integrated/point_field_sources_exact.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_sources_runs point_field_sources_exact_runs PROPERTIES FIXTURES_SETUP point_field_sources)
 add_test(NAME point_field_shared_faces_sampled COMMAND golden_compare integrated/point_field_sources.csv integrated/point_field_sources_exact.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_shared_faces_sampled PROPERTIES FIXTURES_REQUIRED point_field_sources)
@@ -1377,26 +1380,39 @@ set_tests_properties(point_field_refuses_two_sources PROPERTIES PASS_REGULAR_EXP
 add_test(NAME point_field_refuses_nonfinite COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources_nan.csv --microphones tests/data/urban_observers.csv --bands 125 --no_air_absorption -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_refuses_nonfinite PROPERTIES PASS_REGULAR_EXPRESSION "row 2's y is not a finite number")
 # --gpu: the same run on the GPU writes the same rays, and levels within
-# 0.05 dB of the CPU's taking every shared face's integral at every wavenumber,
-# as the GPU does (the GPU integrates the low bands over every pair,
+# 0.05 dB of the CPU's, its shared faces sampled as the CPU samples them
+# (the GPU integrates the low bands over every pair,
 # where the CPU's pair sum drops the pairs its sinc damps below 1/30; FIDELITY
 # has the difference).  A build without a GPU backend refuses the flag.
 if(NICEOPS_GPU_BACKEND STREQUAL "OFF")
   add_test(NAME point_field_gpu_refused COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 --gpu --no_air_absorption -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(point_field_gpu_refused PROPERTIES PASS_REGULAR_EXPRESSION "this build has no GPU backend")
+  add_test(NAME buildings_gpu_refused COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_gpu_refused PROPERTIES PASS_REGULAR_EXPRESSION "this build has no GPU backend")
 else()
   add_test(NAME point_field_gpu_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 --rays integrated/point_field_sources_gpu_rays.csv -j 2 --gpu --humidity 70 -o integrated/point_field_sources_gpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(point_field_gpu_runs PROPERTIES FIXTURES_SETUP point_field_gpu)
-  add_test(NAME point_field_gpu_matches_cpu COMMAND golden_compare integrated/point_field_sources_gpu.csv integrated/point_field_sources_exact.csv 0.05 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  add_test(NAME point_field_gpu_matches_cpu COMMAND golden_compare integrated/point_field_sources_gpu.csv integrated/point_field_sources.csv 0.05 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   add_test(NAME point_field_gpu_same_rays COMMAND ${CMAKE_COMMAND} -E compare_files integrated/point_field_sources_gpu_rays.csv integrated/point_field_sources_rays.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(point_field_gpu_matches_cpu point_field_gpu_same_rays PROPERTIES FIXTURES_REQUIRED "point_field_gpu;point_field_sources")
   # With no diffraction a batch has no wedges, whose buffer every dispatch of
   # the amplitudes still binds.
   add_test(NAME point_field_gpu_no_diffraction_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 --no_diffraction -j 2 --gpu --humidity 70 -o integrated/point_field_specular_gpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-  add_test(NAME point_field_no_diffraction_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 --no_diffraction -j 2 --humidity 70 -o integrated/point_field_specular.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  add_test(NAME point_field_no_diffraction_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 --no_diffraction -j 2 --humidity 70 --no-gpu -o integrated/point_field_specular.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(point_field_gpu_no_diffraction_runs point_field_no_diffraction_runs PROPERTIES FIXTURES_SETUP point_field_specular)
   add_test(NAME point_field_gpu_no_diffraction_matches_cpu COMMAND golden_compare integrated/point_field_specular_gpu.csv integrated/point_field_specular.csv 0.05 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(point_field_gpu_no_diffraction_matches_cpu PROPERTIES FIXTURES_REQUIRED point_field_specular)
+  # niceops --buildings on the GPU (the default where there is one) against the CPU (--no-gpu):
+  # the demo approach's SELs within 0.01 dB; and with every state evaluated, within 0.01 dB too.
+  add_test(NAME buildings_gpu_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --gpu -o integrated/buildings_gpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  add_test(NAME buildings_gpu_every_state_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --gpu --state_tolerance 0 -o integrated/buildings_gpu_every_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_gpu_run buildings_gpu_every_state_run PROPERTIES FIXTURES_SETUP buildings_gpu_runs)
+  add_test(NAME buildings_gpu_matches_cpu COMMAND golden_compare integrated/buildings_gpu.csv integrated/buildings_sampled.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  add_test(NAME buildings_gpu_every_state_matches_cpu COMMAND golden_compare integrated/buildings_gpu_every_state.csv integrated/buildings_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_gpu_matches_cpu buildings_gpu_every_state_matches_cpu PROPERTIES FIXTURES_REQUIRED "buildings_gpu_runs;buildings_sampling_runs")
+  # The measured coherence and the phase interval are the CPU's: --gpu asked for is refused there.
+  add_test(NAME buildings_gpu_refuses_measured COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --ray_coherence measured --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_gpu_refuses_measured PROPERTIES PASS_REGULAR_EXPRESSION "--gpu: the GPU does not take --ray_coherence measured or --phase_interval")
 endif()
 # --atmosphere through a single-level profile holding the vehicle file's own
 # atmosphere has to reproduce the homogeneous run: the whole layered-absorption

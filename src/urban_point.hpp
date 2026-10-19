@@ -30,6 +30,10 @@
 
 namespace niceops {
 
+namespace gpu {
+class Device;
+}
+
 class PointSourceField;
 
 // The interval over the source's unknown phase relations: `percent` of it
@@ -112,13 +116,20 @@ public:
     // times it; the other states are their direct ray's free-field levels plus
     // the transfer interpolated (THEORY 6.5).  0 evaluates every state.
     // Returns the pairs evaluated.
+    //
+    // With a `device`, each pair's rays are formed and summed on it
+    // (gpu/point_rays.hpp): for rays adding coherently, in a cone or in
+    // energy, without an interval -- gpu_supports() says.
     std::size_t levels(const Database& database, const std::vector<Database::SourceState>& states,
             const std::vector<Vec3>& microphones, const double* absorption, const std::vector<double>& gains,
             std::size_t first_band, std::size_t last_band, double sound_speed, unsigned threads,
             const SourceCoherence& coherence, std::vector<double>& levels,
             std::vector<double>* band_levels = nullptr,
             const std::vector<const Database::PackedSpectra*>* packed = nullptr,
-            PhaseInterval* interval = nullptr, double state_tolerance = 0.0) const;
+            PhaseInterval* interval = nullptr, double state_tolerance = 0.0, gpu::Device* device = nullptr) const;
+    // Whether levels() can take a GPU for these rays' sum, and an interval or
+    // not: the measured coherence and the interval are the CPU's.
+    static bool gpu_supports(const SourceCoherence& coherence, bool interval);
 
 private:
     UrbanDistrict();

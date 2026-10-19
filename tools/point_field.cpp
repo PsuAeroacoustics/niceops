@@ -45,17 +45,13 @@
 #include <array>
 #include <cmath>
 #include <complex>
-#include <condition_variable>
-#include <deque>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "atmosphere.hpp"
@@ -63,6 +59,7 @@
 #include "buildings.hpp"
 #include "diffuse_facades.hpp"
 #include "gpu/band_energy.hpp"
+#include "gpu/band_stream.hpp"
 #include "gpu/point_rays.hpp"
 #include "point_paths.hpp"
 #include "sphere_database.hpp"
@@ -114,7 +111,7 @@ int main(int argc, char** argv)
     bool cascade = false;
     std::string rays_file;
     int threads = 0;
-    bool use_gpu = false;
+    bool use_gpu = true;
     app.add_option("--buildings", buildings_file, "The district: CSV of footprint vertices, or GeoJSON.")->required();
     auto* one_source = app.add_option("--source", source, "The source's x, y and height above the floor.")->expected(3);
     auto* many_sources = app.add_option("--sources", sources_file,
@@ -186,9 +183,10 @@ int main(int argc, char** argv)
     app.add_flag("--fade_incident", fade_incident,
             "With --fade, the made partner's coefficient with the incident wave's terms only, for comparison.");
     app.add_option("--rays", rays_file, "Also write every ray, with its level per band and its path.");
-    app.add_flag("--gpu", use_gpu,
+    app.add_flag("--gpu,!--no-gpu", use_gpu,
             "Form the rays' amplitudes and sum each band on the GPU (Metal on macOS) while the CPU traces the "
-            "next pairs' rays.");
+            "next pairs' rays: on by default wherever there is one, except with --edge_source or --fade, which "
+            "are the CPU's. --gpu asks for it and is refused where there is none; --no-gpu keeps the CPU.");
     app.add_option("-j,--threads", threads, "Pairs of source and microphone evaluated at once. Default the environment's "
                                             "NICEOPS_THREADS, else one per hardware thread.");
     app.add_option("--units", units, "Length unit: ft (default) or m.")->check(CLI::IsMember({"ft", "m"}));
@@ -368,14 +366,18 @@ int main(int argc, char** argv)
         options.prune = !no_prune;
         options.edge_source = edge_source;
         options.edge_source_reach = 100.0 / (2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed);
-        if (edge_source && (use_gpu || fade))
+        // The GPU wherever there is one and the run is one it takes; asked
+        // for (--gpu), it must be.  The flag's count takes --no-gpu too, so
+        // asking is its value as well.
+        const bool gpu_asked = use_gpu && app.count("--gpu") > 0;
+        if (edge_source && (gpu_asked || fade))
             throw std::runtime_error("--edge_source does not run with --gpu or --fade");
         if (fade)
         {
             const double k_min = 2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed;
             options.fade_reach = app.count("--fade_reach") > 0 ? fade_reach_given * to_meters : fade_reach(k_min);
             options.fade_incident = fade_incident;
-            if (use_gpu)
+            if (gpu_asked)
                 throw std::runtime_error("--fade does not run on the GPU yet");
         }
         else if (app.count("--fade_reach") > 0 || fade_incident)
@@ -471,18 +473,14 @@ int main(int argc, char** argv)
         // the pairs a batch holds -- enough for every core several times over
         // (a GPU batch is a few milliseconds against a pair's tens).
         gpu::Device* device = nullptr;
-        std::vector<gpu::BandEnergies> energies;
         const std::size_t gpu_batch = std::max<std::size_t>(64, 4 * std::size_t {workers});
         std::vector<std::array<SubBand, 3>> parts;
         for (double f : bands)
             parts.push_back(sub_bands(f, sound_speed));
-        if (use_gpu)
-        {
-            device = &gpu::Device::require("--gpu");
-            energies.emplace_back(*device);
-            energies.emplace_back(*device);
+        if (use_gpu && !edge_source && !fade)
+            device = gpu_asked ? &gpu::Device::require("--gpu") : gpu::Device::get();
+        if (device != nullptr)
             std::cerr << "GPU: " << device->name() << std::endl;
-        }
         // With scattering walls, each microphone's diffuse field (its patches'
         // weights, diffuse_facades.hpp), for every source to light.
         std::vector<std::unique_ptr<DiffuseFacades>> diffuse_fields(diffuse ? nm : 0);
@@ -568,104 +566,29 @@ int main(int argc, char** argv)
             else
             {
                 // Workers trace each pair and pack its rays (the GPU forms
-                // their amplitudes) without pause; a GPU thread
-                // takes them a batch at a time, two batches in flight, and
-                // writes their levels.  The queue between them is bounded, so
-                // a GPU that falls behind holds the workers back rather than
-                // the memory growing.
-                struct Packed
-                {
-                    std::size_t pair = 0;
-                    gpu::PointRaySet set;
-                };
-                std::mutex lock;
-                std::condition_variable ready, space;
-                std::deque<std::unique_ptr<Packed>> queue;
-                bool producing = true;
-                std::exception_ptr gpu_failure;
-                const std::size_t max_queued = 2 * gpu_batch;
-                std::thread gpu_thread([&] {
-                    try
-                    {
-                        std::vector<std::unique_ptr<Packed>> held[2];
-                        auto take = [&](std::vector<std::unique_ptr<Packed>>& into) {
-                            std::unique_lock<std::mutex> guard(lock);
-                            ready.wait(guard, [&] { return queue.size() >= gpu_batch || !producing; });
-                            while (!queue.empty() && into.size() < gpu_batch)
-                            {
-                                into.push_back(std::move(queue.front()));
-                                queue.pop_front();
-                            }
-                            space.notify_all();
-                            return !into.empty();
-                        };
-                        auto finish = [&](std::vector<std::unique_ptr<Packed>>& from, gpu::BandEnergies& batch) {
-                            const std::vector<double>& energy = batch.wait();
-                            std::size_t q = 0;
-                            for (const auto& packed : from)
-                            {
-                                for (std::size_t band = 0; band < nb; band++)
-                                    levels[packed->pair * nb + band] = band_level(bands[band], parts[band], &energy[q + 3 * band]);
-                                q += 3 * nb;
-                            }
-                            from.clear();
-                            batch.clear();
-                        };
-                        std::size_t current = 0;
-                        bool in_flight = false;
-                        while (take(held[current]))
-                        {
-                            for (const auto& packed : held[current])
-                                energies[current].add(packed->set);
-                            energies[current].submit();
-                            if (in_flight)
-                                finish(held[1 - current], energies[1 - current]);
-                            in_flight = true;
-                            current = 1 - current;
-                        }
-                        if (in_flight)
-                            finish(held[1 - current], energies[1 - current]);
-                    }
-                    catch (...)
-                    {
-                        std::lock_guard<std::mutex> guard(lock);
-                        gpu_failure = std::current_exception();
-                        space.notify_all();
-                    }
+                // their amplitudes) without pause; the stream takes them a
+                // batch at a time (gpu/band_stream.hpp) and writes their
+                // levels.
+                gpu::BandStream stream(*device, gpu_batch, [&](std::size_t pair, const double* energy) {
+                    for (std::size_t band = 0; band < nb; band++)
+                        levels[pair * nb + band] = band_level(bands[band], parts[band], &energy[3 * band]);
                 });
-                auto stop_gpu = [&] {
-                    {
-                        std::lock_guard<std::mutex> guard(lock);
-                        producing = false;
-                    }
-                    ready.notify_all();
-                    gpu_thread.join();
-                };
                 try
                 {
                     trace_pairs(0, nm * nk, [&](std::size_t, std::size_t pair, const PointSourceField& field) {
-                        auto packed = std::make_unique<Packed>();
-                        packed->pair = pair;
+                        gpu::PointRaySet set;
                         gpu::pack_point_rays(field, reflection_for(pair % nm), 1.0 - floor_absorption, bands,
-                                sound_speed, packed->set, air_absorption);
-                        std::unique_lock<std::mutex> guard(lock);
-                        space.wait(guard, [&] { return queue.size() < max_queued || gpu_failure; });
-                        if (gpu_failure)
-                            throw std::runtime_error("the GPU stopped");
-                        queue.push_back(std::move(packed));
-                        ready.notify_one();
+                                sound_speed, set, air_absorption);
+                        stream.push(pair, std::move(set));
                     });
                 }
                 catch (...)
                 {
-                    stop_gpu();
-                    if (gpu_failure)
-                        std::rethrow_exception(gpu_failure);
+                    // The GPU's own failure, where it is the cause.
+                    stream.finish();
                     throw;
                 }
-                stop_gpu();
-                if (gpu_failure)
-                    std::rethrow_exception(gpu_failure);
+                stream.finish();
             }
 
             // The diffuse energy adds to the rays' in each band.

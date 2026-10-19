@@ -13,6 +13,9 @@
 
 #include "building_input.hpp"
 #include "building_paths.hpp"
+#include "gpu/band_stream.hpp"
+#include "gpu/kernels/band_energy_types.h"
+#include "gpu/point_rays.hpp"
 #include "buildings.hpp"
 #include "point_paths.hpp"
 #include "source_coherence.hpp"
@@ -452,13 +455,20 @@ std::string UrbanDistrict::misplaced(const Vec3& p) const
     return "";
 }
 
+bool UrbanDistrict::gpu_supports(const SourceCoherence& coherence, bool interval)
+{
+    return !interval && coherence.sum != RaySum::measured;
+}
+
 std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Database::SourceState>& states,
         const std::vector<Vec3>& microphones, const double* absorption, const std::vector<double>& gains,
         std::size_t first_band, std::size_t last_band, double sound_speed, unsigned threads,
         const SourceCoherence& coherence, std::vector<double>& levels, std::vector<double>* band_levels,
         const std::vector<const Database::PackedSpectra*>* packed, PhaseInterval* interval,
-        double state_tolerance) const
+        double state_tolerance, gpu::Device* device) const
 {
+    if (device != nullptr && !gpu_supports(coherence, interval != nullptr))
+        throw std::invalid_argument("UrbanDistrict::levels: the GPU does not take the measured coherence or an interval");
     const Impl& d = *impl_;
     const Buildings& city = d.city;
     const std::vector<double>& centers = database.band_centers();
@@ -516,15 +526,11 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     {
         std::vector<double> weights, spectrum, full, energy, variance;
     };
-    auto evaluate = [&](const PathEnd& source, const PathEnd& microphone, std::size_t state, Scratch& w, Pair& out) {
-        out.bands.assign(nb, silence);
-        out.level = out.lower = out.upper = silence;
-        const PointSourceField field(city, source, microphone, d.paths);
+    // Each ray's amplitude at 1 m along its launch, from the sphere at its
+    // radius, into w.weights; no spreading gain inside the sphere, and no
+    // absorption there.
+    auto weigh = [&](const PointSourceField& field, std::size_t state, Scratch& w) {
         const auto& rays = field.rays();
-        if (rays.empty())
-            return;
-        // Each ray's amplitude at 1 m along its launch, from the sphere at its
-        // radius; no spreading gain inside the sphere, and no absorption there.
         w.spectrum.resize(all);
         w.weights.assign(rays.size() * nb, 0.0);
         for (std::size_t r = 0; r < rays.size(); r++)
@@ -540,6 +546,14 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                             * std::exp(nepers[b] * inside);
             }
         }
+    };
+    auto evaluate = [&](const PathEnd& source, const PathEnd& microphone, std::size_t state, Scratch& w, Pair& out) {
+        out.bands.assign(nb, silence);
+        out.level = out.lower = out.upper = silence;
+        const PointSourceField field(city, source, microphone, d.paths);
+        if (field.rays().empty())
+            return;
+        weigh(field, state, w);
         if (coherence.sum == RaySum::coherent)
             field.band_levels(reflection, d.floor_reflection, bands, sound_speed, out.bands.data(), sub_band_air,
                     w.weights.data());
@@ -591,8 +605,29 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // alike: the sources' ends a block at a time, built in parallel, and
     // the pairs microphone by microphone, so a worker keeps the
     // microphone's end while its pairs last.
+    // On a GPU: the workers trace each pair, weigh its rays and pack them
+    // without pause, and a stream (gpu/band_stream.hpp) sums them there and
+    // turns its energies into the pair's levels.
+    const uint32_t gpu_sum = coherence.sum == RaySum::cone ? NK_SUM_CONE
+            : coherence.sum == RaySum::energy              ? NK_SUM_ENERGY
+                                                           : NK_SUM_COHERENT;
+    std::vector<std::array<SubBand, 3>> parts(nb);
+    for (std::size_t b = 0; b < nb; b++)
+        parts[b] = sub_bands(bands[b], sound_speed);
     auto evaluate_pairs = [&](const std::vector<std::pair<std::size_t, std::size_t>>& todo, std::vector<Pair>& out) {
-        out.resize(todo.size());
+        out.assign(todo.size(), Pair {});
+        for (Pair& p : out)
+            p.bands.assign(nb, silence);
+        std::unique_ptr<gpu::BandStream> stream;
+        std::vector<double> stream_full(all, silence);
+        if (device != nullptr)
+            stream = std::make_unique<gpu::BandStream>(*device, block, [&](std::size_t i, const double* energy) {
+                Pair& p = out[i];
+                for (std::size_t b = 0; b < nb; b++)
+                    p.bands[b] = band_level(bands[b], parts[b], &energy[3 * b]);
+                std::copy(p.bands.begin(), p.bands.end(), stream_full.begin() + static_cast<std::ptrdiff_t>(first_band));
+                p.level = weighted_level(stream_full.data(), gains);
+            });
         std::vector<std::unique_ptr<PathEnd>> source_ends;
         std::vector<std::size_t> block_states, slot(ns, 0), work;
         for (std::size_t first = 0; first < todo.size();)
@@ -620,23 +655,56 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             std::iota(work.begin(), work.end(), first);
             std::stable_sort(work.begin(), work.end(),
                     [&](std::size_t a, std::size_t b) { return todo[a].second < todo[b].second; });
-            parallel_chunks(work.size(), workers, [&](std::size_t begin, std::size_t end) {
-                std::unique_ptr<PathEnd> microphone;
-                std::size_t microphone_row = nm;
-                Scratch w;
-                for (std::size_t i = begin; i < end; i++)
-                {
-                    const auto [state, m] = todo[work[i]];
-                    if (m != microphone_row)
+            auto run = [&] {
+                parallel_chunks(work.size(), workers, [&](std::size_t begin, std::size_t end) {
+                    std::unique_ptr<PathEnd> microphone;
+                    std::size_t microphone_row = nm;
+                    Scratch w;
+                    for (std::size_t i = begin; i < end; i++)
                     {
-                        microphone = std::make_unique<PathEnd>(city, microphones[m], false, d.paths, near_sources);
-                        microphone_row = m;
+                        const auto [state, m] = todo[work[i]];
+                        if (m != microphone_row)
+                        {
+                            microphone = std::make_unique<PathEnd>(city, microphones[m], false, d.paths, near_sources);
+                            microphone_row = m;
+                        }
+                        if (!stream)
+                        {
+                            evaluate(*source_ends[slot[state]], *microphone, state, w, out[work[i]]);
+                            continue;
+                        }
+                        const PointSourceField field(city, *source_ends[slot[state]], *microphone, d.paths);
+                        if (field.rays().empty())
+                            continue;
+                        weigh(field, state, w);
+                        gpu::PointRaySet set;
+                        gpu::PointRayPacking packing;
+                        packing.weights = w.weights.data();
+                        packing.sum = gpu_sum;
+                        packing.cone = coherence.cone;
+                        gpu::pack_point_rays(field, reflection, d.floor_reflection, bands, sound_speed, set,
+                                sub_band_air, packing);
+                        stream->push(work[i], std::move(set));
                     }
-                    evaluate(*source_ends[slot[state]], *microphone, state, w, out[work[i]]);
+                });
+            };
+            if (!stream)
+                run();
+            else
+                try
+                {
+                    run();
                 }
-            });
+                catch (...)
+                {
+                    // The GPU's own failure, where it is the cause.
+                    stream->finish();
+                    throw;
+                }
             first = last;
         }
+        if (stream)
+            stream->finish();
     };
 
     if (!(state_tolerance > 0.0) || ns < 3)

@@ -109,7 +109,7 @@ int main(int argc, char** argv)
     std::size_t wave_blend = 2;
     double wave_ppw = 15.0;
     int threads = 0;
-    bool use_gpu = false;
+    bool use_gpu = true;
     app.add_option("--canyons", canyons_file, "Receivers in ideal canyons, one per row (see the header).");
     app.add_option("--buildings", buildings_file,
             "LoD1 buildings, one row per footprint vertex (see the header); with --receivers.");
@@ -182,9 +182,10 @@ int main(int argc, char** argv)
             "Bands above --wave_below over which the wave table fades into the geometric one (default 2).");
     app.add_option("--wave_ppw", wave_ppw, "The wave solver's grid points per wavelength (default 15).")
             ->check(CLI::Range(6.0, 40.0));
-    app.add_flag("--gpu", use_gpu,
+    app.add_flag("--gpu,!--no-gpu", use_gpu,
             "March --wave_below's wave equation on the GPU (Metal on macOS), in single precision, two canyons at a "
-            "time; refused without --wave_below.");
+            "time: on by default wherever there is one. --gpu asks for it, and is refused where there is none or "
+            "without --wave_below; --no-gpu keeps the CPU.");
     app.add_option("-j,--threads", threads,
             "Worker threads, for the geometric table's directions and the canyons the wave equation solves "
             "(default: NICEOPS_THREADS when set, else one per hardware thread); the table is the same bits at "
@@ -198,13 +199,16 @@ int main(int argc, char** argv)
         const double to_meters = units == "m" ? 1.0 : ft2m;
         if (canyons_file.empty() == buildings_file.empty())
             throw std::runtime_error("give either --canyons or --buildings");
-        // Before any work: the GPU marches the wave equation and nothing else.
-        if (use_gpu)
+        // Before any work: the GPU marches the wave equation and nothing else,
+        // wherever there is one; asked for, it must be there and have one.
+        // The flag's count takes --no-gpu too, so asking is its value as well.
+        if (use_gpu && app.count("--gpu") > 0)
         {
             if (wave_below <= 0.0)
                 throw std::runtime_error("--gpu marches --wave_below's wave equation, and there is none to march");
             gpu::Device::require("--gpu");
         }
+        use_gpu = use_gpu && wave_below > 0.0 && gpu::Device::get() != nullptr;
         if (buildings_file.empty() != receivers_file.empty())
             throw std::runtime_error("--receivers goes with --buildings, and --buildings needs it");
         // Defaults are lengths in metres; a value given is in --units.

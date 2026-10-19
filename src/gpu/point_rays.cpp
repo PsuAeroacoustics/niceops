@@ -67,13 +67,16 @@ GpuAperture pack_aperture(const ApertureGeometry& g, double weight, std::vector<
 } // namespace
 
 void pack_point_rays(const PointSourceField& field, const std::vector<double>& reflection, double floor_reflection,
-        const std::vector<double>& bands, double sound_speed, PointRaySet& set, const std::vector<double>& absorption)
+        const std::vector<double>& bands, double sound_speed, PointRaySet& set, const std::vector<double>& absorption,
+        const PointRayPacking& packing)
 {
     if (bands.empty())
         throw std::invalid_argument("pack_point_rays: no bands");
     if (!absorption.empty() && absorption.size() != 3 * bands.size())
         throw std::invalid_argument("pack_point_rays: the absorption is not three per band");
     set = PointRaySet();
+    set.sum = packing.sum;
+    set.cone = static_cast<float>(packing.cone);
     const std::vector<PointRay>& rays = field.rays();
     const std::size_t nb = bands.size(), facades = nb ? reflection.size() / nb : 0;
     std::vector<std::size_t> order(rays.size());
@@ -110,45 +113,93 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         r.reflected = static_cast<uint32_t>(set.reflected.size());
         r.length = static_cast<float>(ray.length);
         for (std::size_t band = 0; band < nb; band++)
-            set.reflected.push_back(static_cast<float>(reflected_amplitude(ray, band_reflection[band], floor_reflection)));
+            set.reflected.push_back(static_cast<float>(reflected_amplitude(ray, band_reflection[band], floor_reflection)
+                    * (packing.weights != nullptr ? packing.weights[index * nb + band] : 1.0)));
+        const Vec3 launch = point_ray_launch(ray);
+        for (double v : {launch.x, launch.y, launch.z})
+            set.launch.push_back(static_cast<float>(v));
+        auto put_wedge = [&](const WedgeTerm& t, double factor) {
+            GpuWedge g {};
+            put_angles(t.angles, g.cot, g.c);
+            g.n = static_cast<float>(t.angles.n);
+            g.sin_beta = static_cast<float>(t.sin_beta);
+            g.distance = static_cast<float>(t.distance);
+            g.scale = static_cast<float>(factor * (t.grazing ? 0.5 : 1.0) / std::sqrt(t.sin_beta));
+            set.wedges.push_back(g);
+        };
         if (ray.shared)
         {
             const SharedFaceTerm& t = ray.shared_face;
-            in_plane.assign(centres.begin(), centres.end());
-            for (double& k : in_plane)
-                k *= t.sin_beta;
-            const SharedFaceGeometry g = shared_face_geometry(t.face, t.sx, t.sz, t.rx, t.rz, in_plane);
+            // Sampled, the integral is wanted at the probes only, and the
+            // cascade, its spreading's ratio to the face's on its first
+            // term, at every problem.
+            SharedFaceSamples sampled;
+            const bool sample = field.samples_shared_faces();
+            if (sample)
+            {
+                sampled = shared_face_samples(t, centres);
+                in_plane.clear();
+                for (std::size_t p : sampled.probes)
+                    in_plane.push_back(centres[p] * t.sin_beta);
+            }
+            else
+            {
+                in_plane.assign(centres.begin(), centres.end());
+                for (double& k : in_plane)
+                    k *= t.sin_beta;
+            }
             GpuFace f {};
-            f.end[0] = g.forward_weight > 0.0 ? pack_aperture(g.forward, g.forward_weight, set.panels) : GpuAperture {};
-            f.end[1] = g.reverse_weight > 0.0 ? pack_aperture(g.reverse, g.reverse_weight, set.panels) : GpuAperture {};
             f.sin_beta = static_cast<float>(t.sin_beta);
-            const double reference = g.forward_weight > 0.0 ? g.forward.reference : g.reverse.reference;
-            split(reference - ray.length * t.sin_beta, f.offset_hi, f.offset_lo);
+            f.cascade = NK_NO_CASCADE;
+            if (!in_plane.empty())
+            {
+                const SharedFaceGeometry g = shared_face_geometry(t.face, t.sx, t.sz, t.rx, t.rz, in_plane);
+                f.end[0] = g.forward_weight > 0.0 ? pack_aperture(g.forward, g.forward_weight, set.panels) : GpuAperture {};
+                f.end[1] = g.reverse_weight > 0.0 ? pack_aperture(g.reverse, g.reverse_weight, set.panels) : GpuAperture {};
+                const double reference = g.forward_weight > 0.0 ? g.forward.reference : g.reverse.reference;
+                split(reference - ray.length * t.sin_beta, f.offset_hi, f.offset_lo);
+            }
+            const uint32_t face = static_cast<uint32_t>(set.faces.size());
+            const uint32_t self = static_cast<uint32_t>(set.rays.size());
+            if (sample)
+            {
+                f.cascade = static_cast<uint32_t>(set.wedges.size());
+                put_wedge(ray.wedge[0], ray.cascade_spreading / ray.spreading);
+                put_wedge(ray.wedge[1], 1.0);
+                GpuFaceSample record {};
+                record.problems = static_cast<uint32_t>(centres.size());
+                record.ray = self;
+                record.probe = static_cast<uint32_t>(set.probe_problems.size());
+                record.probes = static_cast<uint32_t>(sampled.probes.size());
+                record.free = static_cast<uint32_t>(sampled.free);
+                for (std::size_t p : sampled.probes)
+                {
+                    set.probe_problems.push_back(static_cast<uint32_t>(p));
+                    set.probe_items.push_back({static_cast<uint32_t>(p), self, face,
+                            static_cast<uint32_t>(set.probe_problems.size())});
+                }
+                set.samples.push_back(record);
+            }
+            else
+                set.face_rays.push_back(self);
             r.kind = 3;
-            r.term = static_cast<uint32_t>(set.faces.size());
+            r.term = face;
             set.faces.push_back(f);
-            set.face_rays.push_back(static_cast<uint32_t>(set.rays.size()));
         }
         else
         {
             r.kind = static_cast<uint32_t>(ray.wedges);
             r.term = static_cast<uint32_t>(set.wedges.size());
             for (int w = 0; w < ray.wedges; w++)
-            {
-                const WedgeTerm& t = ray.wedge[w];
-                GpuWedge g {};
-                put_angles(t.angles, g.cot, g.c);
-                g.n = static_cast<float>(t.angles.n);
-                g.sin_beta = static_cast<float>(t.sin_beta);
-                g.distance = static_cast<float>(t.distance);
-                g.scale = static_cast<float>((t.grazing ? 0.5 : 1.0) / std::sqrt(t.sin_beta));
-                set.wedges.push_back(g);
-            }
+                put_wedge(ray.wedge[w], 1.0);
         }
         set.rays.push_back(r);
         set.length.push_back(ray.length);
     }
     plan_nodes(set.length, set.k1, set.k2, set.nodes);
+    // The quadrature integrates every pair with its phases.
+    if (set.sum != NK_SUM_COHERENT)
+        std::fill(set.nodes.begin(), set.nodes.end(), 0u);
 }
 
 } // namespace niceops::gpu
