@@ -131,3 +131,7 @@ Atmospheric and Urban Propagation Options".
 a snapshot of it. The internals files name roadmap items by what they are (the
 linear refraction model, the stratified rays, the PE, the propagation tables) and link here
 rather than citing step numbers.
+
+The urban model's next steps -- the paths it misses, ground and receivers, cost, drone and AAM
+sources, and the validation still open -- are in
+[`reports/NICEOPS Urban Propagation Next Steps.md`](../../reports/NICEOPS%20Urban%20Propagation%20Next%20Steps.md).
