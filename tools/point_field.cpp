@@ -254,45 +254,10 @@ int main(int argc, char** argv)
         input.scattering = !scattering_spectrum_file.empty() && app.count("--scattering") == 0 ? 1.0 : scattering;
         if (!(input.scattering >= 0.0 && input.scattering <= 1.0))
             throw std::runtime_error("--scattering must lie within [0, 1]");
-        std::vector<double> band_scattering(bands.size(), 1.0);
-        if (!scattering_spectrum_file.empty())
-        {
-            const LabeledCsv rows = read_numeric_rows(scattering_spectrum_file, "scattering coefficients");
-            const std::size_t fc = length_column(rows, scattering_spectrum_file, units, "band_hz", true, false);
-            const std::size_t sc = length_column(rows, scattering_spectrum_file, units, "s", true, false);
-            std::vector<std::pair<double, double>> spectrum;
-            for (const auto& r : rows.rows)
-            {
-                if (!(r[fc] > 0.0) || !(r[sc] >= 0.0 && r[sc] <= 1.0))
-                    throw std::runtime_error(scattering_spectrum_file + ": each band_hz must be positive and each s "
-                                                                        "within [0, 1]");
-                spectrum.emplace_back(r[fc], r[sc]);
-            }
-            std::sort(spectrum.begin(), spectrum.end());
-            for (std::size_t i = 1; i < spectrum.size(); i++)
-                if (spectrum[i].first == spectrum[i - 1].first)
-                    throw std::runtime_error(scattering_spectrum_file + " gives " + exact_text(spectrum[i].first)
-                            + " Hz twice");
-            for (std::size_t b = 0; b < bands.size(); b++)
-            {
-                const double f = bands[b];
-                if (f < spectrum.front().first / 1.01 || f > spectrum.back().first * 1.01)
-                    throw std::runtime_error(scattering_spectrum_file + " covers " + exact_text(spectrum.front().first)
-                            + " to " + exact_text(spectrum.back().first) + " Hz, not the band at " + exact_text(f)
-                            + " Hz");
-                std::size_t i = 1;
-                while (i + 1 < spectrum.size() && spectrum[i].first < f)
-                    i++;
-                if (spectrum.size() == 1)
-                    band_scattering[b] = spectrum[0].second;
-                else
-                {
-                    const double t = std::clamp(std::log(f / spectrum[i - 1].first)
-                                    / std::log(spectrum[i].first / spectrum[i - 1].first), 0.0, 1.0);
-                    band_scattering[b] = spectrum[i - 1].second + t * (spectrum[i].second - spectrum[i - 1].second);
-                }
-            }
-        }
+        const std::vector<double> band_scattering = scattering_spectrum_file.empty()
+                ? std::vector<double>(bands.size(), 1.0)
+                : scattering_at(read_scattering_spectrum(scattering_spectrum_file, units), bands,
+                          scattering_spectrum_file);
         const BuildingInput district = read_buildings(buildings_file, input);
         Buildings city;
         try

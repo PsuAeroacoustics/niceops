@@ -4,6 +4,7 @@
 // (niceops_urban_table, niceops_point_field): a CSV of footprint vertices or
 // a GeoJSON of WGS84 footprints, and the observer file's columns by name.
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -11,6 +12,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "buildings.hpp"
@@ -68,6 +70,55 @@ inline LabeledCsv read_numeric_rows(const std::string& file, const std::string& 
                         + " is not a finite number");
     }
     return csv;
+}
+
+// A scattering coefficient band by band, as tools/profile_scattering.py
+// writes it: a CSV of band_hz and s, returned sorted by frequency.
+inline std::vector<std::pair<double, double>> read_scattering_spectrum(const std::string& file,
+        const std::string& units)
+{
+    const LabeledCsv rows = read_numeric_rows(file, "scattering coefficients");
+    const std::size_t fc = length_column(rows, file, units, "band_hz", true, false);
+    const std::size_t sc = length_column(rows, file, units, "s", true, false);
+    std::vector<std::pair<double, double>> spectrum;
+    for (const auto& r : rows.rows)
+    {
+        if (!(r[fc] > 0.0) || !(r[sc] >= 0.0 && r[sc] <= 1.0))
+            throw std::runtime_error(file + ": each band_hz must be positive and each s within [0, 1]");
+        spectrum.emplace_back(r[fc], r[sc]);
+    }
+    std::sort(spectrum.begin(), spectrum.end());
+    for (std::size_t i = 1; i < spectrum.size(); i++)
+        if (spectrum[i].first == spectrum[i - 1].first)
+            throw std::runtime_error(file + " gives " + exact_text(spectrum[i].first) + " Hz twice");
+    return spectrum;
+}
+
+// That spectrum at each band, interpolated in log frequency.  A band more
+// than 1 % beyond its ends is refused, `file` naming it.
+inline std::vector<double> scattering_at(const std::vector<std::pair<double, double>>& spectrum,
+        const std::vector<double>& bands, const std::string& file)
+{
+    std::vector<double> out(bands.size());
+    for (std::size_t b = 0; b < bands.size(); b++)
+    {
+        const double f = bands[b];
+        if (f < spectrum.front().first / 1.01 || f > spectrum.back().first * 1.01)
+            throw std::runtime_error(file + " covers " + exact_text(spectrum.front().first) + " to "
+                    + exact_text(spectrum.back().first) + " Hz, not the band at " + exact_text(f) + " Hz");
+        std::size_t i = 1;
+        while (i + 1 < spectrum.size() && spectrum[i].first < f)
+            i++;
+        if (spectrum.size() == 1)
+            out[b] = spectrum[0].second;
+        else
+        {
+            const double t = std::clamp(std::log(f / spectrum[i - 1].first)
+                            / std::log(spectrum[i].first / spectrum[i - 1].first), 0.0, 1.0);
+            out[b] = spectrum[i - 1].second + t * (spectrum[i].second - spectrum[i - 1].second);
+        }
+    }
+    return out;
 }
 
 struct BuildingInputOptions

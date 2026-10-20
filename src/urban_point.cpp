@@ -13,6 +13,7 @@
 
 #include "building_input.hpp"
 #include "building_paths.hpp"
+#include "diffuse_facades.hpp"
 #include "gpu/band_stream.hpp"
 #include "gpu/kernels/band_energy_types.h"
 #include "gpu/point_rays.hpp"
@@ -20,6 +21,7 @@
 #include "point_paths.hpp"
 #include "source_coherence.hpp"
 #include "util/constants.hpp"
+#include "util/logger.hpp"
 #include "util/parallel.hpp"
 #include "weighting.hpp"
 
@@ -412,6 +414,9 @@ struct UrbanDistrict::Impl
     std::vector<double> reflection;
     double floor_reflection = 1.0;
     PointPathOptions paths;
+    std::vector<std::pair<double, double>> scattering_spectrum;
+    std::string scattering_file;
+    double patch_size = 4.0, diffuse_radius = 0.0;
 };
 
 UrbanDistrict::UrbanDistrict() : impl_(std::make_unique<Impl>()) {}
@@ -426,6 +431,7 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
     options.origin = input.origin;
     options.frame_bearing = input.frame_bearing;
     options.absorption = input.wall_absorption;
+    options.scattering = input.scattering;
     std::shared_ptr<UrbanDistrict> district(new UrbanDistrict());
     Impl& d = *district->impl_;
     d.input = read_buildings(file, options);
@@ -442,6 +448,11 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
         d.reflection[f] = 1.0 - d.input.absorption[d.city.facade_building(f)];
     d.floor_reflection = 1.0 - input.floor_absorption;
     d.paths.sample_shared_faces = !input.exact_shared_faces;
+    if (!input.scattering_file.empty())
+        d.scattering_spectrum = read_scattering_spectrum(input.scattering_file, input.units);
+    d.scattering_file = input.scattering_file;
+    d.patch_size = input.patch_size;
+    d.diffuse_radius = input.diffuse_radius > 0.0 ? input.diffuse_radius : d.paths.radius;
     return district;
 }
 
@@ -459,6 +470,23 @@ bool UrbanDistrict::scatters() const
 {
     const auto& s = impl_->input.scattering;
     return std::any_of(s.begin(), s.end(), [](double v) { return v > 0.0; });
+}
+
+std::vector<double> UrbanDistrict::band_scattering(const std::vector<double>& bands) const
+{
+    if (impl_->scattering_spectrum.empty())
+        return std::vector<double>(bands.size(), 1.0);
+    return scattering_at(impl_->scattering_spectrum, bands, impl_->scattering_file);
+}
+
+double UrbanDistrict::patch_size() const
+{
+    return impl_->patch_size;
+}
+
+double UrbanDistrict::diffuse_radius() const
+{
+    return impl_->diffuse_radius;
 }
 
 std::string UrbanDistrict::misplaced(const Vec3& p) const
@@ -532,16 +560,62 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     const unsigned workers = std::max(1u, threads);
     const std::size_t block = std::max<std::size_t>(64, 4 * workers);
 
+    // Walls and roofs that scatter (diffuse_facades.hpp) reflect rho of what
+    // reaches them and scatter s of that.  Each microphone's diffuse field
+    // covers the buildings within its reach, whose walls and roofs then give
+    // the rays rho (1 - s); the rest reflect their whole rho, since nothing
+    // returns what they would scatter.
+    const std::vector<double> band_s = band_scattering(bands);
+    std::vector<double> scatter(reflection.size(), 0.0);
+    bool diffuse = false;
+    for (std::size_t f = 0; f < d.reflection.size(); f++)
+        for (std::size_t b = 0; b < nb; b++)
+        {
+            scatter[f * nb + b] = d.input.scattering[city.facade_building(f)] * band_s[b];
+            diffuse = diffuse || scatter[f * nb + b] > 0.0;
+        }
+    std::vector<std::unique_ptr<DiffuseFacades>> diffuse_fields(diffuse ? nm : 0);
+    std::vector<std::vector<double>> microphone_reflection(diffuse ? nm : 0);
+    if (diffuse)
+    {
+        DiffuseOptions options;
+        options.radius = d.diffuse_radius;
+        options.patch_size = d.patch_size;
+        // The rays reflect in the roofs, so the roofs scatter too.
+        options.roofs = d.paths.roofs;
+        options.air = nepers;
+        std::size_t unconverged = 0;
+        for (std::size_t m = 0; m < nm; m++)
+        {
+            diffuse_fields[m] = std::make_unique<DiffuseFacades>(city, microphones[m], reflection, scatter,
+                    d.floor_reflection, bands, sound_speed, options, workers);
+            diffuse_fields[m]->prepare_point_lighting(d.paths.max_reflections, workers);
+            unconverged += diffuse_fields[m]->converged() ? 0 : 1;
+            microphone_reflection[m] = reflection;
+            for (std::size_t f = 0; f < d.reflection.size(); f++)
+                if (diffuse_fields[m]->scatters(f))
+                    for (std::size_t b = 0; b < nb; b++)
+                        microphone_reflection[m][f * nb + b] = reflection[f * nb + b] * (1.0 - scatter[f * nb + b]);
+        }
+        if (unconverged > 0)
+            warn("--buildings: the diffuse field's solve did not converge at ", unconverged, " of ", nm,
+                    " microphones.");
+    }
+    auto reflection_for = [&](std::size_t m) -> const std::vector<double>& {
+        return diffuse ? microphone_reflection[m] : reflection;
+    };
+
     // One pair: its band levels over the metric's bands, its A-weighted level
-    // and its interval's ends, all -infinity where no ray arrives.
+    // and its interval's ends, all -infinity where nothing arrives, and with
+    // scattering walls its diffuse energy per band.
     struct Pair
     {
-        std::vector<double> bands;
+        std::vector<double> bands, diffuse;
         double level = silence, lower = silence, upper = silence;
     };
     struct Scratch
     {
-        std::vector<double> weights, spectrum, full, energy, variance;
+        std::vector<double> weights, spectrum, full, energy, variance, lighting;
     };
     // Each ray's amplitude at 1 m along its launch, from the sphere at its
     // radius, into w.weights; no spreading gain inside the sphere, and no
@@ -564,26 +638,63 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             }
         }
     };
-    auto evaluate = [&](const PathEnd& source, const PathEnd& microphone, std::size_t state, Scratch& w, Pair& out) {
+    // The diffuse energy at microphone `m` from the source at `state`, per
+    // band, into `out`: each path lighting a patch carries the sphere along
+    // its launch, its power at 1 m as a ray's amplitude is (weigh).
+    auto diffuse_energy = [&](std::size_t state, std::size_t m, Scratch& w, std::vector<double>& out) {
+        w.lighting.resize(all);
+        const DiffuseFacades::SourcePower power = [&](const Vec3& launch, double length, double* sent) {
+            database.spectrum_along(states[state], launch, w.lighting.data(), first_band, last_band,
+                    packed != nullptr ? (*packed)[state] : nullptr);
+            const double inside = std::min(length, radius);
+            for (std::size_t b = 0; b < nb; b++)
+            {
+                const double level = w.lighting[first_band + b];
+                sent[b] = std::isfinite(level) ? std::pow(10.0, (level + at_one_metre) / 10.0) * (inside / radius)
+                                * (inside / radius) * std::exp(2.0 * nepers[b] * inside)
+                                               : 0.0;
+            }
+        };
+        out.assign(nb, 0.0);
+        diffuse_fields[m]->point_energy(states[state].position, d.paths.max_reflections, nepers, out.data(), 1,
+                &power);
+    };
+    // The diffuse energy added into band levels.
+    auto add_diffuse = [&](const std::vector<double>& energy, std::vector<double>& levels_db) {
+        for (std::size_t b = 0; b < energy.size(); b++)
+            if (energy[b] > 0.0)
+                levels_db[b] = 10.0 * std::log10(std::pow(10.0, 0.1 * levels_db[b]) + energy[b]);
+    };
+    auto evaluate = [&](const PathEnd& source, const PathEnd& microphone, std::size_t state, std::size_t m,
+                            Scratch& w, Pair& out) {
         out.bands.assign(nb, silence);
         out.level = out.lower = out.upper = silence;
-        const PointSourceField field(city, source, microphone, d.paths);
-        if (field.rays().empty())
-            return;
-        weigh(field, state, w);
-        // Coherent rays have no unknown phase relation, so no variance.
+        // Coherent rays have no unknown phase relation, and the diffuse field
+        // none either, so neither has variance.
         w.variance.assign(nb, 0.0);
-        if (coherence.sum == RaySum::coherent)
-            field.band_levels(reflection, d.floor_reflection, bands, sound_speed, out.bands.data(), sub_band_air,
-                    w.weights.data());
-        else
+        const PointSourceField field(city, source, microphone, d.paths);
+        if (field.rays().empty() && !diffuse)
+            return;
+        if (!field.rays().empty())
         {
-            w.energy.resize(3 * nb);
-            partially_coherent_energies(field, reflection, d.floor_reflection, bands, first_band, sound_speed,
-                    sub_band_air, w.weights.data(), coherence, states[state].frame, w.energy.data(),
-                    interval != nullptr ? w.variance.data() : nullptr);
-            for (std::size_t b = 0; b < nb; b++)
-                out.bands[b] = band_level(bands[b], sub_bands(bands[b], sound_speed), &w.energy[3 * b]);
+            weigh(field, state, w);
+            if (coherence.sum == RaySum::coherent)
+                field.band_levels(reflection_for(m), d.floor_reflection, bands, sound_speed, out.bands.data(),
+                        sub_band_air, w.weights.data());
+            else
+            {
+                w.energy.resize(3 * nb);
+                partially_coherent_energies(field, reflection_for(m), d.floor_reflection, bands, first_band,
+                        sound_speed, sub_band_air, w.weights.data(), coherence, states[state].frame, w.energy.data(),
+                        interval != nullptr ? w.variance.data() : nullptr);
+                for (std::size_t b = 0; b < nb; b++)
+                    out.bands[b] = band_level(bands[b], sub_bands(bands[b], sound_speed), &w.energy[3 * b]);
+            }
+        }
+        if (diffuse)
+        {
+            diffuse_energy(state, m, w, out.diffuse);
+            add_diffuse(out.diffuse, out.bands);
         }
         w.full.assign(all, silence);
         std::copy(out.bands.begin(), out.bands.end(), w.full.begin() + static_cast<std::ptrdiff_t>(first_band));
@@ -645,6 +756,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 Pair& p = out[i];
                 for (std::size_t b = 0; b < nb; b++)
                     p.bands[b] = band_level(bands[b], parts[b], &energy[3 * b]);
+                add_diffuse(p.diffuse, p.bands);
                 std::copy(p.bands.begin(), p.bands.end(), stream_full.begin() + static_cast<std::ptrdiff_t>(first_band));
                 p.level = weighted_level(stream_full.data(), gains);
             });
@@ -690,19 +802,35 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                         }
                         if (!stream)
                         {
-                            evaluate(*source_ends[slot[state]], *microphone, state, w, out[work[i]]);
+                            evaluate(*source_ends[slot[state]], *microphone, state, m, w, out[work[i]]);
                             continue;
                         }
                         const PointSourceField field(city, *source_ends[slot[state]], *microphone, d.paths);
+                        // The diffuse energy before the push: the stream's
+                        // callback adds it.
+                        Pair& p = out[work[i]];
+                        if (diffuse)
+                            diffuse_energy(state, m, w, p.diffuse);
                         if (field.rays().empty())
+                        {
+                            // The diffuse field alone, where it reaches.
+                            if (diffuse)
+                            {
+                                add_diffuse(p.diffuse, p.bands);
+                                w.full.assign(all, silence);
+                                std::copy(p.bands.begin(), p.bands.end(),
+                                        w.full.begin() + static_cast<std::ptrdiff_t>(first_band));
+                                p.level = weighted_level(w.full.data(), gains);
+                            }
                             continue;
+                        }
                         weigh(field, state, w);
                         gpu::PointRaySet set;
                         gpu::PointRayPacking packing;
                         packing.weights = w.weights.data();
                         packing.sum = gpu_sum;
                         packing.cone = coherence.cone;
-                        gpu::pack_point_rays(field, reflection, d.floor_reflection, bands, sound_speed, set,
+                        gpu::pack_point_rays(field, reflection_for(m), d.floor_reflection, bands, sound_speed, set,
                                 sub_band_air, packing);
                         stream->push(work[i], std::move(set));
                     }

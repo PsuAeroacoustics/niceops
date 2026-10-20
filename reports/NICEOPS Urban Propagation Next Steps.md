@@ -5,14 +5,14 @@ Oct 19, 2026
 ## Summary
 
 The urban model now runs a point source among LoD1 buildings inside a trajectory run (`--buildings`), with
-reflections from facades, roofs and the floor, and diffraction at one or two edges by UTD or the edge-source
+reflections from facades, roofs and the floor, diffuse scattering by the facades and roofs, and diffraction at one or two edges by UTD or the edge-source
 integral. A full-wave FDTD reference checks it, and EDGE scale-model data and a DigiCity reconstruction validate it.
 Rays leaving the source apart add in energy beyond a 1° cone, unless the database records the vehicle's coherence.
 
 What follows is ordered by how much each step would improve predictions for drones, helicopters and AAM among
 buildings, judged against what EDGE, DigiCity and the FDTD have shown. Recommended order:
 
-1. **Facade scattering in the run.** Days of work, with a measured gain.
+1. **Facade scattering in the run.** Done (Oct 19): `--facade_scattering` (1b).
 2. **A third edge, and reflections between edges.** The largest measured error, and weeks of work.
 
 The rest follow as data and need decide.
@@ -44,14 +44,20 @@ boundaries need the same continuity treatment the second order has.
   `tools/profile_scattering.py`), it goes from −4.4 dB mean / 5.5 dB rms to −2.6 / 3.3.
 - **EDGE canyons with relief** (UE24–26 against UE23): measured −1.0 to −1.6 dB, which a specular-only model misses.
 
-**The gap.** `--buildings` leaves the scattering coefficients out, with a warning.
+**Done (Oct 19).** `niceops --buildings` takes `--facade_scattering` (or each building's scattering column),
+`--facade_scattering_spectrum`, `--patch_size` and `--diffuse_radius`. `UrbanDistrict::levels` builds
+`DiffuseFacades` per microphone, gives the rays rho (1 - s) for the walls and roofs each field covers, and adds the
+diffuse energy band by band, on the CPU and the GPU. Each lighting path reads the sphere along its own launch
+(`DiffuseFacades::SourcePower`).
 
-**Approach.** Reuse `DiffuseFacades::point_energy` in `UrbanDistrict::levels`, adding the diffuse energy to the ray
-sum's per band, with the roofs scattering as `niceops_point_field`'s now do (`DiffuseOptions::roofs`). Take the
-coefficients per building from the district file, or a spectrum per building.
-
-**Check.** A CTest that a run with every coefficient 0 is the specular run byte for byte; DigiCity microphone 7 in a
-run matching `niceops_point_field`'s.
+- **Checks.** For an omnidirectional source the run is `niceops_point_field`'s to 1e-9 dB (the GPU to 1e-6), so
+  DigiCity microphone 7's −2.6 / 3.3 with the corrugation holds in a run. A directional source lights a wall as
+  Lambert's law says to 0.5%. The demo district's states sampled agree with every state to 0.003 dB. A run with
+  nothing in reach is the specular run byte for byte. FIDELITY has the demo district's SELs (s = 0.3: −0.22 to
+  +1.03 dB).
+- **Cost.** 0.2 s on the GPU and 0.4 s on the CPU over the demo district's seven microphones. Each microphone's
+  field is O(patches²) to build, so a grid of thousands of microphones is out of reach this way.
+- **Still open.** A spectrum per building: now one spectrum multiplies each building's coefficient.
 
 ## 2. Ground and receivers, matched to how measurements are made
 

@@ -366,6 +366,7 @@ add_executable(niceops_unit_tests
   tests/test_geojson_buildings.cpp
   tests/test_point_paths.cpp
   tests/test_source_coherence.cpp
+  tests/test_urban_point.cpp
   tests/test_gpu.cpp
   tests/test_edge_visibility.cpp
   tests/test_atmosphere.cpp
@@ -1308,6 +1309,29 @@ add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integr
 set_tests_properties(buildings_refuses_lone_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_negative_state_tolerance COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --state_tolerance -1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_negative_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--state_tolerance is a non-negative number of dB")
+# Facades that scatter (--facade_scattering, diffuse_facades.hpp): each microphone's diffuse field, lit
+# by the source's specular paths with the sphere read along each one's launch, adds to its rays.  The
+# states sampled against every state evaluated, within 0.01 dB of SEL (0.003 measured), and the run
+# pinned (golden/buildings_scattering.csv, made by the build that added it).  A building outside every
+# microphone's --diffuse_radius keeps its whole rho, so with none in reach the run is the specular one.
+# A spectrum (--facade_scattering_spectrum) must reach every band the metric sums.  The library test
+# `a run's diffuse field is niceops_point_field's for an omnidirectional source` holds the field to the
+# tool's, on the CPU and the GPU.
+add_test(NAME buildings_scattering_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_scattering 0.3 --patch_size 20 --no-gpu -o integrated/buildings_scattering.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_every_state_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_scattering 0.3 --patch_size 20 --state_tolerance 0 --no-gpu -o integrated/buildings_scattering_every_state.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_out_of_reach_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_scattering 0.5 --diffuse_radius 0.001 --no-gpu -o integrated/buildings_scattering_out_of_reach.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_spectrum_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_scattering_spectrum tests/data/scattering_spectrum.csv --band_limits 100 2000 --patch_size 20 --no-gpu -o integrated/buildings_scattering_spectrum.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_scattering_run buildings_scattering_every_state_run buildings_scattering_out_of_reach_run buildings_scattering_spectrum_run PROPERTIES FIXTURES_SETUP buildings_scattering_runs)
+add_test(NAME buildings_scattering_states_sampled COMMAND golden_compare integrated/buildings_scattering.csv integrated/buildings_scattering_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_golden COMMAND golden_compare integrated/buildings_scattering.csv golden/buildings_scattering.csv 1e-6 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_scattering_out_of_reach_is_specular COMMAND golden_compare integrated/buildings_scattering_out_of_reach.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_scattering_states_sampled buildings_scattering_golden buildings_scattering_out_of_reach_is_specular PROPERTIES FIXTURES_REQUIRED "buildings_scattering_runs;buildings_sampling_runs")
+add_test(NAME buildings_refuses_scattering_out_of_range COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_scattering 1.5 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_scattering_out_of_range PROPERTIES PASS_REGULAR_EXPRESSION "--facade_scattering is a share within")
+add_test(NAME buildings_refuses_short_scattering_spectrum COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_scattering_spectrum tests/data/scattering_spectrum.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_short_scattering_spectrum PROPERTIES PASS_REGULAR_EXPRESSION "covers 100 to 2000 Hz, not the band at")
+add_test(NAME buildings_refuses_lone_scattering COMMAND ${URBAN_RUN} --facade_scattering 0.3 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_lone_scattering PROPERTIES PASS_REGULAR_EXPRESSION "go with --buildings")
 # One ray has no phase to be unsure of: both ends of the interval are the level.
 add_test(NAME buildings_far_phase_lower_is_the_level COMMAND golden_compare integrated/buildings_far_phase_lower.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME buildings_far_phase_upper_is_the_level COMMAND golden_compare integrated/buildings_far_phase_upper.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

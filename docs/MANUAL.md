@@ -187,6 +187,8 @@ is a physical quantity, given here in meters with its value in feet.
 | `--propagation_table` | A propagation loss table (netCDF) that replaces the ground and ray models wherever it covers a pair ([Propagation loss tables](#propagation-loss-tables)). Spectral path only. |
 | `--urban_table` | Urban receivers: for each microphone it holds, what the street around it does to the direct path, and its facades' first-order reflections ([Urban receivers](#urban-receivers)). Built by `niceops_urban_table`. Spectral path only; not with `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`. |
 | `--buildings`, `--wall_absorption`, `--floor_absorption` | LoD1 buildings around the microphones: every microphone hears the source's own rays among them, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)). Spectral path only, with a database carrying spectra. |
+| `--facade_scattering`, `--facade_scattering_spectrum` | With `--buildings`: the share of what the walls and roofs reflect that they scatter diffusely, where a building gives none (default 0, or 1 with a spectrum), and a CSV of `band_hz` and `s` that multiplies it band by band. |
+| `--patch_size`, `--diffuse_radius` | With scattering facades: the diffuse field's patches' size at most (default 4 m (13.123 ft)), and the horizontal distance from a microphone within which a building scatters (default 150 m (492.13 ft), the rays' own reach). |
 | `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--coherence_angle` | With `--buildings`: the cone's half-angle, degrees, within which rays leaving the source add with their phases. Default 1. Given alone, it selects `cone`. |
 | `--phase_interval` | With `--buildings`, under `cone` or `measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
@@ -1113,10 +1115,22 @@ moment, such as LAmax and the numbers above a level, where the table's error doe
 over a pass as it does in an exposure.
 
 - **The district** is `niceops_point_field`'s: a CSV of footprint vertices (`building`, `x`, `y`,
-  `top`, optionally `absorption`) in the run's `--units` and frame, or GeoJSON with `--origin` and
-  `--frame_bearing`. A building's absorption applies to its walls and its roof, and
-  `--wall_absorption` to those that give none. Scattering coefficients are left out, with a
-  warning: a run's walls reflect specularly.
+  `top`, optionally `absorption` and `scattering`) in the run's `--units` and frame, or GeoJSON
+  with `--origin` and `--frame_bearing`. A building's coefficients apply to its walls and its
+  roof, and `--wall_absorption` and `--facade_scattering` to those that give none.
+- **Facades that scatter.** A wall or roof whose scattering coefficient s is above 0 reflects
+  specularly only ρ(1 − s) of what reaches it and scatters the rest of ρ diffusely, by Lambert's
+  law, as `niceops_point_field --scattering` takes it
+  ([THEORY §6.5](THEORY.md#65-urban-receivers)). Each microphone has its own diffuse field over the
+  buildings with a wall within `--diffuse_radius` of it, walls and roofs cut into patches of at most
+  `--patch_size`. The source lights each patch by its specular paths there, every path reading the
+  sphere along its own launch as a ray does, and the field adds to the rays in energy, band by
+  band. A building beyond the radius reflects its whole ρ. `--facade_scattering_spectrum` gives s
+  band by band, as `tools/profile_scattering.py` writes it, times each building's coefficient; it
+  must reach every band the metric sums (`--band_limits`). Each microphone's field is built once
+  for the run, so the cost grows with the microphones and the patches, not with the states: on the
+  test district, 0.2 s on the GPU and 0.4 s on the CPU. For a corrugated container's s(f), on
+  NLR's DigiCity, see [FIDELITY](FIDELITY.md#scattering-walls-point-source).
 - **The floor** is the buildings', rigid unless `--floor_absorption`. The ground model is not used:
   `--ground_effect` is refused, and `--no-ground_effect` changes nothing.
 - **Every microphone** stands where the observer file puts it, raised by its height column where

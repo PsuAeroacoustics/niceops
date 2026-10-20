@@ -2183,6 +2183,20 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         last_band = bands.size();
         while (last_band > first_band && band_gains[last_band - 1] == 0.0)
             last_band--;
+        // The facades' scattering spectrum must reach every band the metric
+        // sums.
+        if (options.buildings)
+        {
+            try
+            {
+                options.buildings->band_scattering(std::vector<double>(bands.begin() + static_cast<std::ptrdiff_t>(first_band),
+                        bands.begin() + static_cast<std::ptrdiff_t>(last_band)));
+            }
+            catch (const std::exception& e)
+            {
+                input_error("--facade_scattering_spectrum ", e.what(), ", which the metric sums (--band_limits).");
+            }
+        }
 
         // EPNL is defined over the 24 one-third-octave bands 50 Hz to 10 kHz
         // (A36.4), and the noy tables and the tone correction need every one of
@@ -4875,6 +4889,10 @@ int run(int argc, char* argv[])
     std::string buildings_file;
     double wall_absorption = 0.0;
     double floor_absorption = 0.0;
+    double facade_scattering = 0.0;
+    std::string facade_scattering_spectrum;
+    double patch_size = 4.0;      // m
+    double diffuse_radius = 0.0;  // m; 0 for the rays' reach
     bool exact_shared_faces = false;
     double state_tolerance = 0.02;
     bool use_gpu = true;
@@ -5366,6 +5384,20 @@ int run(int argc, char* argv[])
             "With --buildings: the walls' energy absorption coefficient where a building gives none (default 0).");
     app.add_option("--floor_absorption", floor_absorption,
             "With --buildings: the floor's energy absorption coefficient (default 0, rigid).");
+    app.add_option("--facade_scattering", facade_scattering,
+            "With --buildings: the walls' and roofs' scattering coefficient where a building gives none (default 0, "
+            "or 1 with --facade_scattering_spectrum): the share of what they reflect that they scatter diffusely, "
+            "by Lambert's law. Each microphone's diffuse field, lit by the source's specular paths with the sphere "
+            "read along each one's launch, adds to its rays band by band.");
+    app.add_option("--facade_scattering_spectrum", facade_scattering_spectrum,
+            "With --buildings: a CSV of band_hz and s, as tools/profile_scattering.py writes it: the scattering "
+            "coefficient band by band, times each building's scattering column or --facade_scattering, interpolated "
+            "in log frequency. It must reach every band the metric sums.");
+    auto* patch_size_option = app.add_option("--patch_size", patch_size,
+            "With scattering facades: the diffuse field's patches' size at most (default 4 m).");
+    auto* diffuse_radius_option = app.add_option("--diffuse_radius", diffuse_radius,
+            "With scattering facades: a building with a wall within this horizontal distance of a microphone "
+            "scatters, walls and roof (default 150 m, the rays' own reach).");
     app.add_flag("--exact_shared_faces", exact_shared_faces,
             "With --buildings: take the integral over a flat roof between its two edges at every wavenumber, not "
             "only where the cascade of the two edges' coefficients cannot stand in for it; the reference, about "
@@ -5979,6 +6011,8 @@ int run(int argc, char* argv[])
     to_meters(terrain_offset_option, terrain_offset);
     to_meters(terrain_step_option, terrain_step);
     to_meters(screening_min_height_option, screening_min_height);
+    to_meters(patch_size_option, patch_size);
+    to_meters(diffuse_radius_option, diffuse_radius);
     // An operations file's offsets are lengths the user wrote, in --units.
     if (operations)
     {
@@ -6173,6 +6207,12 @@ int run(int argc, char* argv[])
         if (!(wall_absorption >= 0.0 && wall_absorption <= 1.0) || !(floor_absorption >= 0.0 && floor_absorption <= 1.0))
             input_error("--wall_absorption and --floor_absorption are energy coefficients within [0, 1]; given ",
                     wall_absorption, " and ", floor_absorption, ".");
+        if (!(facade_scattering >= 0.0 && facade_scattering <= 1.0))
+            input_error("--facade_scattering is a share within [0, 1]; given ", facade_scattering, ".");
+        if (!(patch_size > 0.0) || !std::isfinite(patch_size))
+            input_error("--patch_size is a positive length; given ", patch_size, ".");
+        if (app.count("--diffuse_radius") > 0 && (!(diffuse_radius > 0.0) || !std::isfinite(diffuse_radius)))
+            input_error("--diffuse_radius is a positive length; given ", diffuse_radius, ".");
         if (app.count("--phase_interval") > 0)
         {
             if (!(phase_interval > 0.0 && phase_interval < 100.0))
@@ -6192,6 +6232,10 @@ int run(int argc, char* argv[])
     }
     else if (app.count("--wall_absorption") > 0 || app.count("--floor_absorption") > 0)
         input_error("--wall_absorption and --floor_absorption go with --buildings.");
+    else if (app.count("--facade_scattering") > 0 || app.count("--facade_scattering_spectrum") > 0
+            || app.count("--patch_size") > 0 || app.count("--diffuse_radius") > 0)
+        input_error("--facade_scattering, --facade_scattering_spectrum, --patch_size and --diffuse_radius go with "
+                    "--buildings.");
     else if (exact_shared_faces || app.count("--state_tolerance") > 0 || app.count("--gpu") > 0
             || app.count("--no-gpu") > 0)
         input_error("--exact_shared_faces, --state_tolerance, --gpu and --no-gpu go with --buildings.");
@@ -6500,6 +6544,14 @@ int run(int argc, char* argv[])
         input.frame_bearing = std::isnan(frame_bearing) ? 90.0 : frame_bearing;
         input.wall_absorption = wall_absorption;
         input.floor_absorption = floor_absorption;
+        // With a spectrum, a building's coefficient weights it: 1, all relief,
+        // by default.
+        input.scattering = !facade_scattering_spectrum.empty() && app.count("--facade_scattering") == 0
+                ? 1.0
+                : facade_scattering;
+        input.scattering_file = facade_scattering_spectrum;
+        input.patch_size = patch_size;
+        input.diffuse_radius = diffuse_radius;
         input.exact_shared_faces = exact_shared_faces;
         try
         {
@@ -6510,8 +6562,13 @@ int run(int argc, char* argv[])
             input_error("--buildings ", buildings_file, ": ", e.what());
         }
         if (options.buildings->scatters())
-            warn("--buildings ", buildings_file, ": its scattering coefficients are left out; a run's walls reflect "
-                    "specularly (niceops_point_field --scattering carries the diffuse field).");
+            log("--buildings: the facades scatter", facade_scattering_spectrum.empty() ? "" : " by ",
+                    facade_scattering_spectrum, "; each microphone's diffuse field in patches of ",
+                    options.buildings->patch_size() / unit.to_meters, " ", unit.name, " at most, over the buildings "
+                    "within ", options.buildings->diffuse_radius() / unit.to_meters, " ", unit.name, ".");
+        else if (!facade_scattering_spectrum.empty())
+            warn("--facade_scattering_spectrum ", facade_scattering_spectrum, ": every building's coefficient is 0 "
+                    "(--facade_scattering or the district's scattering column), so nothing scatters.");
         options.buildings_path = buildings_file;
         // Unset, the database decides; an angle asks for the cone.
         if (ray_coherence == "cone" || (ray_coherence.empty() && app.count("--coherence_angle") > 0))

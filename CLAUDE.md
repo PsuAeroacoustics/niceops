@@ -161,9 +161,11 @@ Commands and options are in `README.md`; rationale is in
   under 30. An end's angle off the face's plane counts on either side: with an end in the plane
   the cascade has the wrong sign. `--exact_shared_faces` takes the integral at every wavenumber.
   The GPU samples by the same rule (`shared_face_samples`), its `face_ratios` kernel applying R.
-- **Scattering walls in `niceops_point_field` reuse the urban tables' radiosity**, lit by the
-  source's own specular paths to each patch; with s = 0 nothing is built and the run is byte for
-  byte the specular one. The roofs scatter too (`DiffuseOptions::roofs`), with their building's
+- **Scattering walls in `niceops_point_field` and `niceops --buildings` (`--facade_scattering`)
+  reuse the urban tables' radiosity**, lit by the source's own specular paths to each patch; with
+  s = 0 nothing is built and the run is byte for byte the specular one. In a run each lighting path
+  reads the sphere along its own launch (`DiffuseFacades::SourcePower`), which is what holds the
+  run to the tool for an omnidirectional source at 1e-9 dB. The roofs scatter too (`DiffuseOptions::roofs`), with their building's
   first wall's coefficients as their reflection takes them, so a building then scatters as a whole
   where any wall is in reach; a roof patched while its reflection kept its whole rho, or the
   reverse, would make or lose energy.

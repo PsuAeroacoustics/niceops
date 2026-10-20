@@ -693,9 +693,29 @@ which marches them. What to keep:
   column where there is one). The floor is the buildings', so `--buildings` turns the ground model
   off rather than leaving it to put a microphone at its receiver height: the run built ground
   tables it never used and put observers without a height column 1.2 m up.
+- **Facades that scatter** (`--facade_scattering`, `--facade_scattering_spectrum`) take
+  `niceops_point_field`'s radiosity. Each microphone gets its own `DiffuseFacades`, its patch
+  images traced once for the run, and its rays a reflection vector of their own: ρ(1 − s) for the
+  walls and roofs its field covers, ρ beyond. What is the run's own:
+  - **Each lighting path reads the sphere along its launch** (`DiffuseFacades::SourcePower`): the
+    direction to the patch's image, which is the path's first leg, with a ray's conventions inside
+    the sphere's radius. Without it a directional source would light every patch as if the
+    patch lay on its direct ray.
+  - **The energy is added after the rays' band levels.** On the GPU the worker computes it before
+    the push and the stream's callback adds it; a pair no ray reaches takes it alone. It has no
+    phase, so it adds nothing to `--phase_interval`'s variance. An energy of 0 is not added, so a
+    run with nothing in reach is the specular run byte for byte.
+  - **The spectrum is read by the district** (`UrbanDistrict::Input::scattering_file`), since
+    `read_scattering_spectrum` lives in `building_input.hpp`, which `niceops.cpp` cannot include;
+    the run checks it against the metric's bands once the database is loaded.
+  - Cost grows with microphones and patches, not states: each field is O(patches²) to build.
 - Tests: `buildings_far_is_open_without_ground` (every state), `buildings_far_sampled_is_open`
   (sampled, at 1e-6 dB), `buildings_states_sampled` (the demo approach sampled against every
-  state, within 0.01 dB), the refusals `buildings_refuses_*`, and the launch test above.
+  state, within 0.01 dB), the refusals `buildings_refuses_*`, and the launch test above. With
+  scattering: `a run's diffuse field is niceops_point_field's for an omnidirectional source`
+  (1e-9 dB, the GPU 1e-6), `a directional source lights the diffuse field along each path's
+  launch`, and `buildings_scattering_*` (sampled within 0.01 dB of every state, out of reach is
+  specular, pinned to `golden/buildings_scattering.csv`).
 
 **How its rays add** (`src/source_coherence`, `partially_coherent_energies` in
 `src/urban_point.cpp`; THEORY 6.5). The model came out of the harness's `coherence/`, which says how

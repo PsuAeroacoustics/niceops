@@ -394,12 +394,13 @@ void DiffuseFacades::prepare_point_lighting(std::size_t max_order, unsigned thre
 }
 
 void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order, const std::vector<double>& air,
-        std::vector<double>& e, unsigned threads) const
+        std::vector<double>& e, unsigned threads, const SourcePower* power) const
 {
     e.assign(patches_.size() * bands_, 0.0);
     parallel_chunks(active_.size(), threads, [&](std::size_t begin, std::size_t end) {
         std::vector<Vec3> hits;
         std::vector<PatchImage> scratch;
+        std::vector<double> sent(power != nullptr ? bands_ : 0);
         for (std::size_t a = begin; a < end; a++)
         {
             const std::size_t p = active_[a];
@@ -423,9 +424,13 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
                     const double c = normal.dot(back) / back.norm();
                     if (!(c > 0.0) || !(length > 0.0))
                         continue;
+                    if (power != nullptr)
+                        (*power)((target - source) / length, length, sent.data());
                     for (std::size_t b = 0; b < bands_; b++)
                     {
                         double carried = c / (length * length) * (floor ? floor_reflection_ : 1.0);
+                        if (power != nullptr)
+                            carried *= sent[b];
                         for (std::size_t f : image.facades)
                             carried *= specular_[f * bands_ + b];
                         if (!air.empty())
@@ -439,10 +444,10 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
 }
 
 void DiffuseFacades::point_energy(const Vec3& source, std::size_t max_order, const std::vector<double>& air,
-        double* out, unsigned threads) const
+        double* out, unsigned threads, const SourcePower* power) const
 {
     std::vector<double> e;
-    point_irradiance(source, max_order, air, e, threads);
+    point_irradiance(source, max_order, air, e, threads, power);
     gathered(e, out);
 }
 

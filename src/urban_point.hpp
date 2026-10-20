@@ -16,6 +16,12 @@
 // With no buildings and a floor that absorbs everything, the one ray left is
 // the straight path, and the level is the run's without a ground model.
 //
+// Walls and roofs that scatter reflect specularly only rho (1 - s) of what
+// reaches them, and the rest of rho diffusely, as niceops_point_field takes
+// them: each microphone's radiosity field (diffuse_facades.hpp), lit by the
+// source's specular paths to each patch, each path carrying the sphere along
+// its own launch, adds its energy to the rays' in each band.
+//
 // The district is opaque here: the run's translation unit cannot see
 // buildings.hpp, whose Ring is not contour.hpp's.
 
@@ -84,6 +90,17 @@ public:
         double frame_bearing = 90.0;
         double wall_absorption = 0.0;
         double floor_absorption = 0.0;
+        // The share of what the walls and roofs reflect that they scatter
+        // diffusely, where a building gives none, and a CSV of band_hz and s
+        // that multiplies it band by band (read_scattering_spectrum; "" for
+        // none).
+        double scattering = 0.0;
+        std::string scattering_file;
+        // The diffuse field's patches' size at most, and the horizontal
+        // distance from a microphone within which a building scatters, in
+        // metres; 0 for the rays' own reach (PointPathOptions::radius).
+        double patch_size = 4.0;
+        double diffuse_radius = 0.0;
         // A shared face's aperture at every wavenumber, not sampled
         // (PointPathOptions::sample_shared_faces).
         bool exact_shared_faces = false;
@@ -93,9 +110,15 @@ public:
 
     std::size_t building_count() const;
     std::size_t facade_count() const;
-    // Whether any building gave a scattering coefficient, which a run leaves
-    // out.
+    // Whether any building's coefficient is above 0, so that its walls and
+    // roof scatter wherever the spectrum does.
     bool scatters() const;
+    // The scattering spectrum's factor at each of `bands` (1 without one).
+    // Throws std::runtime_error where the spectrum does not reach a band.
+    std::vector<double> band_scattering(const std::vector<double>& bands) const;
+    // The diffuse field's patch size and reach, metres.
+    double patch_size() const;
+    double diffuse_radius() const;
     // "" where a point may stand, or why not: "below the floor", "inside
     // building <id>".
     std::string misplaced(const Vec3& point) const;

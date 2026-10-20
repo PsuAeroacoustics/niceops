@@ -35,6 +35,7 @@
 // band-averaged; between patches they add in energy.
 
 #include <cstddef>
+#include <functional>
 #include <vector>
 
 #include "buildings.hpp"
@@ -102,6 +103,11 @@ public:
     // wave's intensity, for the wave from `u` (unit, toward the source).
     void energy(const Vec3& u, double* out) const;
 
+    // A source that is not the same in every direction: per band, the power
+    // it sends along a lighting path, relative to the unit source's, given
+    // the path's launch (unit, from the source) and its length.
+    using SourcePower = std::function<void(const Vec3& launch, double length, double* power)>;
+
     // The same for a point source (point_paths.hpp): a unit source, whose
     // free field is |p|^2 = 1/r^2, lights each patch by every specular path
     // from it to `max_order` reflections (the patch's images, beam traced as
@@ -110,11 +116,13 @@ public:
     // (`air`, Np/m of amplitude per band; empty for none).  Diffracted waves
     // light nothing, as for the plane wave.  The energy is in |p|^2, to add to
     // the rays' band energy.  The patches are shared out over `threads`.
+    // With `power`, each path also carries the source's power along its
+    // launch, which is the straight line to the patch's image.
     void point_energy(const Vec3& source, std::size_t max_order, const std::vector<double>& air, double* out,
-            unsigned threads = 1) const;
+            unsigned threads = 1, const SourcePower* power = nullptr) const;
     // The irradiance point_energy gathers, [patch][band].
     void point_irradiance(const Vec3& source, std::size_t max_order, const std::vector<double>& air,
-            std::vector<double>& e, unsigned threads = 1) const;
+            std::vector<double>& e, unsigned threads = 1, const SourcePower* power = nullptr) const;
     // Trace each active patch's images to `max_order` once, for every source
     // point_energy is then given at that order: what a moving source would
     // otherwise trace again at every position.  Not thread-safe against

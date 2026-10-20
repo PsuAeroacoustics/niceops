@@ -1342,6 +1342,12 @@ where any of its walls is within the radius. A roof is lit from above only, so t
 paths light none, and sends nothing by the floor; between patches and to the microphone it is
 taken as the walls are, its patch's normal mirrored with it below the floor.
 
+In a run (`niceops --buildings --facade_scattering`) the source is the sphere, and each path
+carries its power along the path's launch, $|A_b(\hat l)|^2$ with $A_b$ as a ray's above, $\ell$
+the path's length and $\hat l$ the direction from the source to the patch's image, which is the
+path's first leg. Each microphone's weights $\mathbf w$ are solved once for the run, and its
+diffuse energy adds to its rays' at every state evaluated.
+
 ### 6.6 The canyon's wave solution
 
 Below a few hundred hertz a street is a few wavelengths wide and rays stop describing it.

@@ -774,6 +774,27 @@ same run unsampled:
 - **Cost**, 14 threads on an M4 Pro (the development build, asserts on): 3.2 s with `--no-gpu`,
   1.2 s with the rays formed and summed on the GPU, against 0.3 s for the run without buildings.
 
+**Facades that scatter** (`--facade_scattering`). For a source the same in every direction, the
+run's band levels are `niceops_point_field --scattering`'s to 1e-9 dB, rays and diffuse field
+together, with one building in the diffuse field's reach and one beyond it; on the GPU, to 1e-6 dB
+(`tests/test_urban_point.cpp`). A source whose power falls as cos² off a wall's normal lights the
+wall's field as Lambert's law says to 0.5%, which checks that each lighting path reads the source
+along its own launch. On the demo track and district, s = 0.3 on every wall and roof:
+
+| Microphone | SEL, s = 0.3 − specular |
+| --- | --- |
+| In a street | +1.03 dB |
+| At an L-shaped building's corner | +0.08 |
+| At an intersection | +0.54 |
+| Beside a tall wall | +0.07 |
+| In the open | +0.00 |
+| In an alley | −0.22 |
+| Behind a building | +0.00 |
+
+The states sampled agree with every state evaluated to 0.003 dB, as without scattering, and patches of
+20 ft agree with the default 4 m to 0.03 dB. Cost: 1.7 s on the GPU against 1.5 s specular, and
+3.8 s with `--no-gpu` against 3.4 s, each microphone's field built once for the run.
+
 ### Roof-edge diffraction
 
 The UTD wedge kernel (`src/wedge`, `tests/test_wedge.cpp`), a unit plane wave on a rigid wedge,
@@ -2064,15 +2085,15 @@ reconstruction.
 
 The source's level at 1 m is calibrated per band on microphones 2, 8 and 10 with
 `niceops_point_field` (walls absorbing 0.05, the floor rigid, the default ray orders, chosen before
-any comparison). The three agree on it to 2.5 dB on average. Microphone 7, 160 Hz to 5 kHz,
+any comparison). The three agree on it to 2.6 dB on average. Microphone 7, 160 Hz to 5 kHz,
 predicted minus measured:
 
 | Model | Mean | Rms | Range |
 | --- | --- | --- | --- |
-| `niceops_point_field` | −4.2 dB | 5.3 dB | −10.4 to +1.4 dB |
+| `niceops_point_field` | −4.4 dB | 5.5 dB | −10.5 to +1.2 dB |
 | NLR's CNOSSOS-EU model (as published) | −12.9 dB | 13.3 dB | −19.9 to −7.3 dB |
 
-Below 1 kHz the prediction is within 3.4 dB in every band but 250 Hz (−6.9). It is 8.5–10.4 dB short
+Below 1 kHz the prediction is within 3.5 dB in every band but 250 Hz (−6.9). It is 8.7–10.5 dB short
 at 1.25–1.6 kHz and 5 kHz. Most of what reaches microphone 7 is diffracted once at a vertical
 corner after one or two reflections off a stack's wall: the strongest ray, a third of the energy
 with its floor partner, reflects off that wall and diffracts at the south-east stack's corner, and
@@ -2081,11 +2102,14 @@ and the cascade gives the same result here as the shared-face form. Walls rigid 
 floor absorbing 0.1, the source 0.2 m higher, or calibration on fewer microphones each move the
 mean by 0.4 dB at most. Allowing only one reflection either side of an edge loses 2.1 dB, and three
 gain nothing. Over 60 reconstructions with the figure's scale within 3% and every container group
-and microphone within 0.28 m, the mean ranges from −4.9 to −2.6 dB (10–90%).
+and microphone within 0.28 m, the mean ranges from −5.2 to −2.8 dB (10–90%).
 
-The shortfall at 1–2 kHz is larger than that spread. The source is not omnidirectional above about
-500 Hz and is calibrated in other directions. The corrugated walls scatter, which the model leaves
-out. Neither has been measured here.
+The shortfall at 1–2 kHz is larger than that spread. The corrugated walls scatter: with the
+corrugation's own s(f), computed from its profile and not fitted, the error comes to −2.6 dB mean,
+3.3 rms, and the 1.25 kHz and 5 kHz bands to within 3 dB
+([Scattering walls (point source)](#scattering-walls-point-source)). A run takes the same field with
+`--facade_scattering_spectrum`. The source is not omnidirectional above about 500 Hz and is
+calibrated in other directions, which has not been measured here.
 
 ## Sensitivity studies
 
