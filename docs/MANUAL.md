@@ -186,9 +186,10 @@ is a physical quantity, given here in meters with its value in feet.
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state rather than from per-trajectory tables. Slower; for checking the tables. |
 | `--propagation_table` | A propagation loss table (netCDF) that replaces the ground and ray models wherever it covers a pair ([Propagation loss tables](#propagation-loss-tables)). Spectral path only. |
 | `--urban_table` | Urban receivers: for each microphone it holds, what the street around it does to the direct path, and its facades' first-order reflections ([Urban receivers](#urban-receivers)). Built by `niceops_urban_table`. Spectral path only; not with `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`. |
-| `--buildings`, `--wall_absorption`, `--floor_absorption` | LoD1 buildings around the microphones: every microphone hears the source's own rays among them, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)); the floor rigid, absorbing, or with `--ground_effect` the ground model's at every bounce. Spectral path only, with a database carrying spectra. |
+| `--buildings`, `--wall_absorption`, `--floor_absorption` | Buildings around the microphones: every microphone hears the source's own rays among them, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)); the floor rigid, absorbing, or with `--ground_effect` the ground model's at every bounce. Spectral path only, with a database carrying spectra. |
 | `--facade_scattering`, `--facade_scattering_spectrum` | With `--buildings`: the share of what the walls and roofs reflect that they scatter diffusely, where a building gives none (default 0, or 1 with a spectrum), and a CSV of `band_hz` and `s` that multiplies it band by band. |
 | `--facade_relief`, `--relief_scattering`, `--grating_reflections` | With `--buildings`: walls with a periodic relief, reflecting into its grating orders ([Buildings around the microphones](#buildings-around-the-microphones)). |
+| `--roofs` | With a CSV `--buildings`: pitched roofs (LoD2), one row per roof plane ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--edge_source` | With `--buildings`: diffraction by the edge-source integral, on the CPU, as `niceops_point_field --edge_source` takes it. |
 | `--patch_size`, `--diffuse_radius` | With scattering facades: the diffuse field's patches' size at most (default 4 m (13.123 ft)), and the horizontal distance from a microphone within which a building scatters (default 150 m (492.13 ft), the rays' own reach). |
 | `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
@@ -1120,6 +1121,18 @@ over a pass as it does in an exposure.
   `top`, optionally `absorption` and `scattering`) in the run's `--units` and frame, or GeoJSON
   with `--origin` and `--frame_bearing`. A building's coefficients apply to its walls and its
   roof, and `--wall_absorption` and `--facade_scattering` to those that give none.
+- **Pitched roofs** (`--roofs roofs.csv`, LoD2, with a CSV district). One row per roof plane:
+  `building` (an id of the district's), `x`, `y` and `z` (a point the plane passes through, in the
+  run's `--units` and frame) and `slope_x` and `slope_y` (its rise per unit run along x and along
+  y). A building's roof is the least of its planes, capped at its `top`: a top below the planes'
+  highest point is a level deck there (a mansard's), and one at or above it changes nothing. A
+  least of planes is convex, so a roof with a valley or a step is several buildings sharing sides.
+  Its walls stand up to the roof, its eaves, rakes, ridges and hips diffract as wedges of their own
+  angles, and every path the flat roofs take applies; a slope reflects no specular ray and scatters
+  nothing diffusely ([THEORY §6.5](THEORY.md#65-urban-receivers)). A building given no plane keeps
+  its flat roof. On EDGE's measured pitched scenes the planes are 3.1 dB rms where the same houses
+  as flat blocks are 4.5 at the mean height and 5.8 at the ridge
+  ([FIDELITY](FIDELITY.md#pitched-roofs)).
 - **Turbulence in the buildings' shadows** (`--scattering` γ<sub>T</sub>, off by default). Where
   the buildings shield a microphone from the source, turbulence scatters energy into the shadow,
   most at high frequency: Forssén et al.'s engineering model for a thin screen, the roof top
@@ -1939,7 +1952,10 @@ niceops_point_field --buildings district.csv --source 12.5 30 2 --microphones mi
 ```
 
 `--buildings` is `niceops_urban_table`'s, CSV or GeoJSON (with `--origin` and `--frame_bearing`),
-and the buildings stand on a flat floor. Roofs reflect as the floor does, with their building's
+and the buildings stand on a flat floor. `--roofs` gives a CSV district pitched roofs, as
+[`niceops --roofs`](#buildings-around-the-microphones) takes them, and a ray over four roof edges
+or more -- a mansard heard from low beside it, several rows of roofs -- is traced up to
+`--max_chain` of them. Roofs reflect as the floor does, with their building's
 absorption: a ray reflects in one of them or in the floor at most, and from a roof it reaches only
 a microphone above that roof, directly or by an edge that stands higher still. `--microphones` is a CSV with `x`, `y` and `height`
 columns. Each output row is a microphone's `x`, `y` and `height`, then one level per band, dB, the
@@ -2022,8 +2038,10 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--max_between_reflections` | Reflections, in a facade or the floor, between the two edges of a double diffraction, 0 or 1. Default 1. |
 | `--triple_diffraction` | Rays diffracted at three edges: `roofs` (default; three roof edges, the rows a street's sound crosses), `all` (any three, every chain of corners round a block too: far more rays for little), or `none`. |
 | `--max_thrice_reflections` | Facade reflections on each side of a triple diffraction. Default 0. |
+| `--roofs` | Pitched roofs for a CSV district, one row per plane, as `niceops --roofs` takes them. |
+| `--max_chain` | Rays diffracted at more than three roof edges, up to this many: the corners of the taut string over the buildings' cross-section between the source and the microphone, the floor at either end or not. Default 8, at most 14; 3 for none. |
 | `--radius` | Facades and edges within this horizontal distance of the source or a microphone. Default 150 m. |
-| `--no_diffraction`, `--no_double_diffraction` | Leave out every diffracted ray, or those at two edges. |
+| `--no_diffraction`, `--no_double_diffraction` | Leave out every diffracted ray, or those at two edges or more. |
 | `--no_roofs` | Roofs do not reflect, for comparison. |
 | `--no_prune` | Solve and check every diffracted path rather than ruling most out first: the same rays, slower. For checking. |
 | `--fade` | Where a boundary leaves the field to an order the run does not trace -- a third reflection about an edge, a reflection between two edges -- make that ray from the one it partners, so the level does not step there (specular and once-diffracted rays). Not with `--edge_source` or `--gpu`. |
@@ -2082,7 +2100,12 @@ at every frequency; the floor stays rigid. The air is lossless in the march, and
 (with `--temperature` and `--pressure`) applies its absorption to every arrival afterwards by its
 delay, as `niceops_point_field` absorbs each ray along its length. `--solids` adds rigid prisms,
 from a CSV of `solid`, `x`, `y`, `bottom` and `top` (each solid's vertices in order around it), for
-geometry LoD1 buildings cannot hold, such as a facade's relief.
+geometry LoD1 buildings cannot hold, such as a facade's relief. `--roofs` gives a CSV district
+pitched roofs, as `niceops --roofs` takes them; a cell is solid where its centre lies under the
+roof, so a slope is a staircase of cells, which diffracts as a smooth slope only well below the
+step. Behind EDGE's gable terrace, cells of 3 mm leave 5 dB at 6.3 kHz at model scale
+([FIDELITY](FIDELITY.md#pitched-roofs)): check a sloped roof at a finer `--cell` than a flat one
+needs.
 
 The run lasts `--duration` (default twice the time sound takes across the domain's diagonal, the
 whole space's under `--mirror`), and
@@ -2098,6 +2121,7 @@ small grids. Check a result by repeating it with a finer `--cell`.
 | --- | --- |
 | `--buildings`, `--source`, `--microphones`, `--bands`, `--units`, `-o` | As `niceops_point_field`'s. |
 | `--solids` | More rigid prisms, as above. |
+| `--roofs` | Pitched roofs for a CSV district, as above. |
 | `--cell`, `--points_per_wavelength` | The grid's cell, or how many make a wavelength at the top band's upper edge. Default 8 (12 with `--order 2`). |
 | `--order` | The differences' order, 4 (default) or 2. |
 | `--margin` | Air beyond everything each way before the absorbing layer. |

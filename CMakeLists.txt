@@ -372,6 +372,7 @@ add_executable(niceops_unit_tests
   tests/test_urban_point.cpp
   tests/test_turbulence_scattering.cpp
   tests/test_facade_relief.cpp
+  tests/test_pitched_roofs.cpp
   tests/test_gpu.cpp
   tests/test_edge_visibility.cpp
   tests/test_atmosphere.cpp
@@ -1312,6 +1313,11 @@ add_test(NAME buildings_refuses_lone_state_tolerance COMMAND ${URBAN_RUN} --stat
 set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--gpu and --no-gpu go with --buildings")
+# Pitched roofs (--roofs): the demo district's two terraces given gables runs through, and --roofs
+# alone is refused.
+add_test(NAME buildings_pitched_runs COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --roofs tests/data/urban_roofs.csv -o integrated/urban_pitched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_refuses_lone_roofs COMMAND ${URBAN_RUN} --roofs tests/data/urban_roofs.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_lone_roofs PROPERTIES PASS_REGULAR_EXPRESSION "--roofs goes with --buildings")
 add_test(NAME buildings_refuses_negative_state_tolerance COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --state_tolerance -1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_negative_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--state_tolerance is a non-negative number of dB")
 # Facades that scatter (--facade_scattering, diffuse_facades.hpp): each microphone's diffuse field, lit

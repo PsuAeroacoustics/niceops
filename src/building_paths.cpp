@@ -388,8 +388,9 @@ bool folded_path_with(const Buildings& buildings, const Vec3& from, const Vec3& 
             return false;
         const Vec3 hit = cur + (s0 / (s0 - s1)) * (targets[j] - cur);
         const double along = (hit.x - fr.x0) * fr.ax + (hit.y - fr.y0) * fr.ay;
-        const double bottom = below_floor ? -all[f].top : all[f].bottom;
-        if (along < -1e-9 || along > fr.length + 1e-9 || hit.z < bottom - 1e-9 || hit.z > all[f].top + 1e-9)
+        const double top = facade_top(all[f], hit);
+        const double bottom = below_floor ? -top : all[f].bottom;
+        if (along < -1e-9 || along > fr.length + 1e-9 || hit.z < bottom - 1e-9 || hit.z > top + 1e-9)
             return false;
         if (!leg_open(facades.size() - j, cur, hit))
             return false;
@@ -464,7 +465,7 @@ bool folded_roof_path_open(const Buildings& buildings, const Vec3& from, const V
         const Vec3 hit = cur + (s0 / (s0 - s1)) * (targets[j] - cur);
         const double along = (hit.x - fr.x0) * fr.ax + (hit.y - fr.y0) * fr.ay;
         const double z = real(hit).z;
-        if (along < -1e-9 || along > fr.length + 1e-9 || z < all[f].bottom - 1e-9 || z > all[f].top + 1e-9)
+        if (along < -1e-9 || along > fr.length + 1e-9 || z < all[f].bottom - 1e-9 || z > facade_top(all[f], hit) + 1e-9)
             return false;
         if (!leg(cur, hit))
             return false;

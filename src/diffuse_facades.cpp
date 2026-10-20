@@ -117,8 +117,9 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
                 p.facade = f;
                 p.center = Vec3(facade.x0, facade.y0, facade.bottom) + ((i + 0.5) * p.width) * along
                         + Vec3(0.0, 0.0, (j + 0.5) * p.height) + 1e-3 * normal;
-                // A patch inside a neighbour is not a wall anyone sees.
-                if (!buildings.buried(p.center))
+                // A patch inside a neighbour is not a wall anyone sees, and
+                // one above a gable's sloping top is no wall.
+                if (!buildings.buried(p.center) && p.center.z < facade_top(facade, p.center))
                     patches_.push_back(p);
             }
     }
@@ -248,6 +249,9 @@ void DiffuseFacades::add_roof_patches()
         if (f == Buildings::no_facade || !in_reach_[f])
             continue;
         const Footprint& footprint = buildings.footprints()[b];
+        // A pitched roof does not scatter: its rays do not reflect in it.
+        if (!footprint.roof.empty())
+            continue;
         const std::size_t m = footprint.x.size();
         // The patches run along the outline's longest side, so that a
         // rectangle's fit it; a cell the outline crosses keeps the part on

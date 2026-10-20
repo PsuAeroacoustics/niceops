@@ -365,7 +365,7 @@ TEST_CASE("the point-source field is reciprocal", "[point_paths]")
         const PointSourceField field(city, s, m);
         for (const auto& ray : field.rays())
         {
-            wedges[ray.wedges]++;
+            wedges[std::min(ray.wedges, 3)]++;
             shared += ray.shared;
             // The path drawn is the ray: it runs from the source to the
             // microphone through its points (a bounce on the floor between two

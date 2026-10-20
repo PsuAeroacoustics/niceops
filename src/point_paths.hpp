@@ -23,7 +23,14 @@
 //     single-edge condition there with the other two at theirs (see
 //     thrice_diffracted_ray), the ends' images to max_thrice_reflections and
 //     nothing between the edges; three rows of roofs, or the partner a ray
-//     that reflects between two edges needs at its facade's end.
+//     that reflects between two edges needs at its facade's end.  Diffracted
+//     at four roof edges or more, to `max_chain` (chain_diffracted_ray): the
+//     corners of the taut string over the buildings' cross-section in the
+//     vertical plane through the two ends -- a mansard's or a gambrel's
+//     roof, or several rows of roofs, heard from low beside them -- the path
+//     over them the least of its length, which is convex in its points along
+//     the edges, and the cascade of their coefficients; the floor at either
+//     end or not, and no facade.
 //     Two parallel edges that share a face -- a flat
 //     roof between its two edges, a wall between two corners -- take the
 //     uniform form of double_wedge.hpp, in the plane normal to them, at
@@ -35,8 +42,8 @@
 //     spreading sqrt((s1 + s2) / (s3 (s1 + s2 + s3))).
 //
 // Every ray is tested exactly (folded_path_open); the images are beam traced
-// (image_tree).  Left out: four edges or more, more than one reflection
-// between two edges, any reflection between three,
+// (image_tree).  Left out: four edges or more but over roofs as above, more
+// than one reflection between two edges, any reflection among three or more,
 // a shared face's aperture on a ray of three, diffuse reflection, and an
 // edge's ends.
 
@@ -84,6 +91,13 @@ struct PointPathOptions
     };
     Triple triple_diffraction = Triple::roofs;
     std::size_t max_thrice_reflections = 0;
+    // Rays diffracted at more than three roof edges, up to this many (at most
+    // 14, which the GPU's ray record holds): the corners of the taut string
+    // over the buildings' cross-section in the vertical plane through the
+    // source and the microphone, each a roof edge of the pair's, the floor
+    // at either end or not (chain_diffracted_ray).  3 for none, as is
+    // double_diffraction off.
+    std::size_t max_chain = 8;
     bool diffraction = true;
     bool double_diffraction = true;
     // The uniform form over a shared face (double_wedge.hpp); off, the
@@ -272,6 +286,8 @@ struct PointRay
     std::vector<FacadeHit> hits;
     int wedges = 0;
     WedgeTerm wedge[3];
+    // A chain's terms past the third (wedges > 3; wedge_term).
+    std::vector<WedgeTerm> more_wedges;
     bool shared = false;
     SharedFaceTerm shared_face;
     // Over a shared face, the cascade's spreading, which `spreading` then
@@ -304,6 +320,12 @@ struct PointRay
     // it, so only x and y are the ray's own there.
     std::vector<Vec3> path;
 };
+
+// A ray's wedge term w < ray.wedges, in order from the source.
+inline const WedgeTerm& wedge_term(const PointRay& ray, int w)
+{
+    return w < 3 ? ray.wedge[w] : ray.more_wedges[static_cast<std::size_t>(w - 3)];
+}
 
 // The floor the rays reflect in (THEORY 6.5).  By default an energy
 // reflection coefficient, the same at every angle and wavenumber: 1 is rigid.
@@ -553,6 +575,18 @@ PointRay twice_diffracted_ray(const Edge& g1, const Edge& g2, const Vec3& pa, co
 // for the legs either side of each edge.
 PointRay thrice_diffracted_ray(const Edge& g1, const Edge& g2, const Edge& g3, const Vec3& pa, const Vec3& pb,
         const Vec3& q1, const Vec3& q2, const Vec3& q3);
+// The same through any number of edges g, at the points q: the spreading
+// that recursion over every edge in turn, each edge's distance parameter
+// that of the legs either side of it, and a wedge term halved where the leg
+// that reaches it runs on a face it shares with the edge before.  Three
+// edges give thrice_diffracted_ray's terms.
+PointRay chain_diffracted_ray(const std::vector<const Edge*>& g, const Vec3& pa, const Vec3& pb,
+        const std::vector<Vec3>& q);
+// The parameters t along the edges g, from their starts, where a path from a
+// over each in turn to b is stationary: the least of its length, a convex
+// function of them, by damped Newton from `t`.  False where it does not settle
+// strictly within every edge.
+bool chain_points(const std::vector<const Edge*>& g, const Vec3& a, const Vec3& b, std::vector<double>& t);
 
 // The unit direction a ray leaves the source in, which a directional source
 // is read along.  A specular ray leaves toward its first hit, or toward the

@@ -274,10 +274,13 @@ Grid make_grid(const FdtdSetup& s, const std::vector<FdtdSolid>& solids, double 
                         hole = hole || inside_ring(r.x, r.y, xc, yc);
                     if (hole)
                         continue;
+                    double top = b.top;
+                    for (const RoofPlane& plane : b.roof)
+                        top = std::min(top, plane.at(xc, yc));
                     for (std::size_t k = 0; k < nz; k++)
                     {
                         const double zc = g.z.origin + (static_cast<double>(k) + 0.5) * g.h;
-                        if (zc > b.bottom && zc < b.top)
+                        if (zc > b.bottom && zc < top)
                             solid[g.index(i, j, k)] = 1;
                     }
                 }
@@ -857,6 +860,7 @@ std::vector<FdtdSolid> fdtd_solids(const std::vector<Footprint>& footprints)
         s.holes = f.holes;
         s.bottom = -1e9;
         s.top = f.top;
+        s.roof = f.roof;
         out.push_back(s);
     }
     return out;

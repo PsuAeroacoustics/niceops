@@ -47,6 +47,9 @@ struct FdtdSolid
     std::vector<double> x, y;
     std::vector<Ring> holes;
     double bottom = 0.0, top = 0.0;
+    // A pitched roof's planes, the solid below the least of them
+    // (buildings.hpp); empty for a flat top.
+    std::vector<RoofPlane> roof;
 };
 
 // The solids of LoD1 buildings on a floor at z = 0: each footprint to its

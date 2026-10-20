@@ -16,6 +16,7 @@
 // segment that only touches a building -- ends on a wall where it reflects,
 // starts on an edge where it diffracts, or grazes along a wall -- is not.
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -35,18 +36,50 @@ struct Ring
     std::vector<double> y;
 };
 
+// A plane of a pitched roof, z = a x + b y + c (m).
+struct RoofPlane
+{
+    double a = 0.0;
+    double b = 0.0;
+    double c = 0.0;
+    double at(double x, double y) const
+    {
+        return a * x + b * y + c;
+    }
+};
+
 // A footprint: its outer ring's vertices in the run's local frame (m), in
 // either orientation, the first not repeated at the end; its roof's height
 // above the floor; and the holes it surrounds (courtyards, open to the sky).
 // Buildings orients every ring so that the solid is on its left: the outer
-// one counterclockwise, the holes clockwise.
+// one counterclockwise, the holes clockwise.  `roof`, when given, makes the
+// roof pitched (LoD2): its height over (x, y) is the least of its planes there
+// -- a gable is two, a hip four, a mansard more -- so the roof is convex,
+// every ridge between two planes an edge.  A roof that is not (a valley, a
+// step) is several buildings sharing sides.  Buildings then sets `top` to the
+// highest point.
 struct Footprint
 {
     std::vector<double> x;
     std::vector<double> y;
     double top = 0.0;
     std::vector<Ring> holes;
+    std::vector<RoofPlane> roof;
 };
+
+// The roof's height over (x, y): `top`, or the least of the planes.
+inline double roof_height(const Footprint& f, double x, double y)
+{
+    if (f.roof.empty())
+        return f.top;
+    double h = f.roof[0].at(x, y);
+    for (std::size_t i = 1; i < f.roof.size(); i++)
+        h = std::min(h, f.roof[i].at(x, y));
+    return h;
+}
+
+// A pitched roof's highest point over its footprint (`roof` not empty).
+double roof_top(const Footprint& f);
 
 // A straight edge where a building diffracts: the roof edge along each side of
 // its footprint, and the vertical edge at each convex corner.  The edge runs
@@ -199,6 +232,16 @@ public:
     // [y_min, y_max], each once, in no particular order: the grid's
     // candidates, which the caller tests.
     void near_box(double x_min, double x_max, double y_min, double y_max, std::vector<std::uint32_t>& out) const;
+    // The plan segment from a to b across the buildings: each stretch of it
+    // inside a footprint (outside its holes), from d0 to d1 metres along it
+    // from a, and the building; in no particular order.
+    struct SectionSpan
+    {
+        double d0 = 0.0;
+        double d1 = 0.0;
+        std::uint32_t building = 0;
+    };
+    void section(const Vec3& a, const Vec3& b, std::vector<SectionSpan>& out) const;
     // The same for the facades, ascending.
     void facades_in_box(double x_min, double x_max, double y_min, double y_max, std::vector<std::uint32_t>& out) const;
 

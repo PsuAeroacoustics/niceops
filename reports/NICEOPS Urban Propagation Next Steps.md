@@ -35,7 +35,15 @@ ranks what the literature says would improve the predictions most, for rotorcraf
    scatters onto other walls diffusely at each path's incidence. Against EDGE's reliefs the orders match the FDTD
    (UE24-26 rms 1.24, 1.59, 1.63 against its 1.25, 1.60, 1.60; Lambert's s(f) 1.48, 1.85, 2.25); the default
    hybrid beats s(f) everywhere, DigiCity's microphone 7 included (−2.0 / 2.7 against −2.3 / 2.9).
-4. **Pitched roofs (LoD2)**, validated on EDGE's measured pitched-roof scenes (UE01-05, 15, 17, 19), unused so far.
+4. **Pitched roofs (LoD2)**, validated on EDGE's measured pitched-roof scenes (UE01-05, 15, 17, 19). Done (Oct
+   20): `--roofs` gives a CSV district's buildings roof planes (the least of them, capped at the top), with walls
+   up to the roof, eaves, rakes, ridges and hips as wedges of their own angles, and rays over four roof edges or
+   more traced as chains (`max_chain`). Against EDGE's pitched scenes the planes are 3.1 dB rms where the same
+   houses flat are 4.5 at the mean height and 5.8 at the ridge (the mansard's floor source 14.3 → 4.5 with
+   chains); against boundary elements a gable is 0.17 dB rms. Open: slopes reflect no specular ray; over a
+   mansard's nearly flat wedges the cascade is 3.9 dB rms off the BEM, which a cascade of transitions (Tzaras and
+   Saunders) or the edge source's higher orders would address; the FDTD's staircase is 5 dB loud on a slope at
+   EDGE's 3 mm cells, so it is no reference there; GeoJSON districts take no roofs yet (OSM's `roof:shape`).
 5. **Higher orders with pruning** (1a), and an engineering term for paths beyond the explicit orders.
 
 For drones the review expects the source model to outweigh these until a measured multirotor sphere exists (4a).
@@ -220,8 +228,8 @@ cases.
 
 - **Low-frequency wave effects.** Canyon resonances below about 150 Hz, where the rotor tones sit. The wave solver
   handles ideal canyons only (`--wave_below`). The FDTD could supply low-band corrections per scene.
-- **Terrain under buildings, pitched (LoD2) roofs, vegetation.** `--buildings` stands everything on the plane
-  z = 0 and refuses `--terrain`.
+- **Terrain under buildings, vegetation.** `--buildings` stands everything on the plane z = 0 and refuses
+  `--terrain`. Pitched roofs are in (`--roofs`, item 4 above).
 - **Atmosphere in streets.** Refraction is minor at urban ranges. The decorrelation of multipath by turbulence is
   partly stood in for by the cone.
 

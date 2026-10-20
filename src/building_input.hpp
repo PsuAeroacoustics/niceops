@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -135,6 +136,8 @@ struct BuildingInputOptions
     // Where a building gives none.
     double absorption = 0.0;
     double scattering = 0.0;
+    // A CSV of roof planes (read_roofs), or empty for flat roofs.
+    std::string roofs;
 };
 
 // The footprints, in metres in the run's frame, and each building's walls'
@@ -164,10 +167,44 @@ inline int relief_of(const BuildingInput& in, std::size_t building, std::size_t 
     return given;
 }
 
+// Pitched roofs (LoD2) from a CSV with one row per plane: building (an id of
+// the district's), x, y and z, a point the plane passes through, and slope_x
+// and slope_y, its rise per unit run along x and along y.  A building's roof
+// is the least of its planes, capped at its top: a top below the planes'
+// highest point is a flat there (a mansard's deck), and one within 1 mm of it
+// or above changes nothing.  A building given no plane keeps its flat roof.
+inline void read_roofs(const std::string& file, const BuildingInputOptions& o, BuildingInput& in)
+{
+    const LabeledCsv csv = read_numeric_rows(file, "roof planes");
+    const std::size_t cid = length_column(csv, file, o.units, "building", true, false);
+    const std::size_t cx = length_column(csv, file, o.units, "x", true, true);
+    const std::size_t cy = length_column(csv, file, o.units, "y", true, true);
+    const std::size_t cz = length_column(csv, file, o.units, "z", true, true);
+    const std::size_t csx = length_column(csv, file, o.units, "slope_x", true, false);
+    const std::size_t csy = length_column(csv, file, o.units, "slope_y", true, false);
+    std::map<std::string, std::size_t> index;
+    for (std::size_t b = 0; b < in.ids.size(); b++)
+        index.emplace(in.ids[b], b);
+    for (std::size_t row = 0; row < csv.rows.size(); row++)
+    {
+        const auto& r = csv.rows[row];
+        const auto found = index.find(exact_text(r[cid]));
+        if (found == index.end())
+            throw std::runtime_error(file + " row " + std::to_string(row + 1) + ": building " + exact_text(r[cid])
+                    + " is not in the district");
+        const double x = r[cx] * o.to_meters, y = r[cy] * o.to_meters, z = r[cz] * o.to_meters;
+        in.footprints[found->second].roof.push_back({r[csx], r[csy], z - r[csx] * x - r[csy] * y});
+    }
+    for (Footprint& f : in.footprints)
+        if (!f.roof.empty() && f.top < roof_top(f) - 1e-3)
+            f.roof.push_back({0.0, 0.0, f.top});
+}
+
 // A GeoJSON file (.geojson or .json) of WGS84 footprints, projected into the
 // run's frame, or a CSV with one row per footprint vertex: building (an id,
 // a building's rows consecutive, its vertices in order around it), x, y, top
-// and optionally absorption, scattering and relief (a whole number).
+// and optionally absorption, scattering and relief (a whole number); then
+// `o.roofs`'s planes (read_roofs), which a GeoJSON district does not take.
 inline BuildingInput read_buildings(const std::string& file, const BuildingInputOptions& o)
 {
     BuildingInput in;
@@ -262,6 +299,13 @@ inline BuildingInput read_buildings(const std::string& file, const BuildingInput
             footprints.back().x.push_back(r[bx] * o.to_meters);
             footprints.back().y.push_back(r[by] * o.to_meters);
         }
+    }
+    if (!o.roofs.empty())
+    {
+        if (extension == ".geojson" || extension == ".json")
+            throw std::runtime_error(o.roofs + ": roof planes go with a CSV district, in its frame; " + file
+                    + " is GeoJSON");
+        read_roofs(o.roofs, o, in);
     }
     return in;
 }

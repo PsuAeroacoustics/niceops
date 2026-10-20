@@ -60,7 +60,7 @@ using namespace niceops; // NOLINT
 int main(int argc, char** argv)
 {
     CLI::App app {"The full-wave field of a point source among buildings, at microphones (FDTD)."};
-    std::string buildings_file, solids_file, microphones_file, output, spectrum_file, recording_file;
+    std::string buildings_file, roofs_file, solids_file, microphones_file, output, spectrum_file, recording_file;
     std::string units = "ft";
     std::vector<double> source, bands;
     double cell = 0.0, points_per_wavelength = 0.0, margin = std::numeric_limits<double>::quiet_NaN();
@@ -71,6 +71,9 @@ int main(int argc, char** argv)
     int pml = 20, threads = 0;
     bool mirror = false, use_gpu = true;
     app.add_option("--buildings", buildings_file, "The district: CSV of footprint vertices, or GeoJSON.")->required();
+    app.add_option("--roofs", roofs_file, "Pitched roofs (LoD2) for a CSV district: one row per roof plane, building (its id), x, y and z (a "
+            "point on the plane) and slope_x and slope_y (its rise along x and y). A building's roof is the "
+            "least of its planes, capped at its top; one given none stays flat.");
     app.add_option("--solids", solids_file, "More rigid prisms: a CSV of solid, x, y, bottom and top, each "
                                             "solid's vertices in order around it.");
     app.add_option("--source", source, "The source's x, y and height above the floor.")->expected(3)->required();
@@ -124,6 +127,7 @@ int main(int argc, char** argv)
         BuildingInputOptions input;
         input.units = units;
         input.to_meters = to_meters;
+        input.roofs = roofs_file;
         const BuildingInput district = read_buildings(buildings_file, input);
         std::vector<FdtdSolid> solids = fdtd_solids(district.footprints);
         if (!solids_file.empty())

@@ -9,6 +9,7 @@
 #include <map>
 #include <limits>
 #include <stdexcept>
+#include <tuple>
 #include <string>
 #include <tuple>
 
@@ -197,7 +198,184 @@ bool in_ring(const std::vector<double>& x, const std::vector<double>& y, double 
     return in;
 }
 
+// Whether (px, py) is in a footprint: in its outer ring and none of its holes.
+bool in_footprint(const Footprint& f, double px, double py)
+{
+    if (!in_ring(f.x, f.y, px, py))
+        return false;
+    for (const Ring& hole : f.holes)
+        if (in_ring(hole.x, hole.y, px, py))
+            return false;
+    return true;
+}
+
+// The plane of a pitched roof that is least over (x, y).
+std::size_t active_plane(const Footprint& f, double x, double y)
+{
+    std::size_t best = 0;
+    for (std::size_t i = 1; i < f.roof.size(); i++)
+        if (f.roof[i].at(x, y) < f.roof[best].at(x, y))
+            best = i;
+    return best;
+}
+
+// The stretches of the side from (ax, ay) to (bx, by) over which one plane of a
+// pitched roof is the least, as (t0, t1, plane), t from 0 at a to 1 at b:
+// where two planes cross over the side the least may change.
+std::vector<std::tuple<double, double, std::size_t>> roof_stretches(const Footprint& f, double ax, double ay,
+        double bx, double by)
+{
+    std::vector<double> cuts {0.0, 1.0};
+    for (std::size_t k = 0; k < f.roof.size(); k++)
+        for (std::size_t l = k + 1; l < f.roof.size(); l++)
+        {
+            const double g0 = f.roof[k].at(ax, ay) - f.roof[l].at(ax, ay);
+            const double g1 = f.roof[k].at(bx, by) - f.roof[l].at(bx, by);
+            if ((g0 < 0.0) != (g1 < 0.0) && g0 != g1)
+            {
+                const double t = g0 / (g0 - g1);
+                if (t > 1e-12 && t < 1.0 - 1e-12)
+                    cuts.push_back(t);
+            }
+        }
+    std::sort(cuts.begin(), cuts.end());
+    std::vector<std::tuple<double, double, std::size_t>> out;
+    for (std::size_t i = 0; i + 1 < cuts.size(); i++)
+    {
+        if (cuts[i + 1] - cuts[i] < 1e-12)
+            continue;
+        const double t = 0.5 * (cuts[i] + cuts[i + 1]);
+        const std::size_t plane = active_plane(f, ax + t * (bx - ax), ay + t * (by - ay));
+        if (!out.empty() && std::get<2>(out.back()) == plane)
+            std::get<1>(out.back()) = cuts[i + 1];
+        else
+            out.emplace_back(cuts[i], cuts[i + 1], plane);
+    }
+    return out;
+}
+
+// A pitched roof's ridges: where two of its planes cross and are both the
+// least, over the footprint.  The roof is the least of its planes, so every
+// one is convex: a ridge or a hip.
+struct Ridge
+{
+    Vec3 a, b;
+    std::size_t k = 0, l = 0;
+};
+std::vector<Ridge> roof_ridges(const Footprint& f)
+{
+    std::vector<Ridge> out;
+    for (std::size_t k = 0; k < f.roof.size(); k++)
+        for (std::size_t l = k + 1; l < f.roof.size(); l++)
+        {
+            const RoofPlane& pk = f.roof[k];
+            const RoofPlane& pl = f.roof[l];
+            const double nx = pk.a - pl.a, ny = pk.b - pl.b, nc = pk.c - pl.c, n2 = nx * nx + ny * ny;
+            if (n2 < 1e-18)
+                continue;
+            // The line where they are equal: p0 + s d in plan.
+            const double px = -nc * nx / n2, py = -nc * ny / n2, norm = std::sqrt(n2);
+            const double dx = -ny / norm, dy = nx / norm;
+            // Where both are the least: each other plane at least as high.
+            double s_lo = -1e12, s_hi = 1e12;
+            bool empty = false;
+            for (std::size_t m = 0; m < f.roof.size() && !empty; m++)
+            {
+                if (m == k || m == l)
+                    continue;
+                // pk - pm <= 0 along the line: alpha + beta s <= 0.
+                const double alpha = pk.at(px, py) - f.roof[m].at(px, py);
+                const double beta = (pk.a - f.roof[m].a) * dx + (pk.b - f.roof[m].b) * dy;
+                if (std::abs(beta) < 1e-15)
+                    empty = alpha > 1e-12;
+                else if (beta > 0.0)
+                    s_hi = std::min(s_hi, -alpha / beta);
+                else
+                    s_lo = std::max(s_lo, -alpha / beta);
+            }
+            if (empty || !(s_lo < s_hi))
+                continue;
+            // Where the line crosses the footprint's sides; the stretches
+            // between whose middles lie in the footprint.
+            std::vector<double> cuts {s_lo, s_hi};
+            for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+                for (std::size_t i = 0, n = rx.size(), h = n - 1; i < n; h = i++)
+                {
+                    const double ex = rx[i] - rx[h], ey = ry[i] - ry[h];
+                    const double denominator = cross2(dx, dy, ex, ey);
+                    if (denominator == 0.0)
+                        continue;
+                    const double qx = rx[h] - px, qy = ry[h] - py;
+                    const double s = cross2(qx, qy, ex, ey) / denominator;
+                    const double u = cross2(qx, qy, dx, dy) / denominator;
+                    if (u >= -1e-12 && u <= 1.0 + 1e-12 && s > s_lo && s < s_hi)
+                        cuts.push_back(s);
+                }
+            });
+            std::sort(cuts.begin(), cuts.end());
+            for (std::size_t i = 0; i + 1 < cuts.size(); i++)
+            {
+                const double s0 = cuts[i], s1 = cuts[i + 1], s = 0.5 * (s0 + s1);
+                if (s1 - s0 < Buildings::contact || !in_footprint(f, px + s * dx, py + s * dy))
+                    continue;
+                Ridge r;
+                r.a = Vec3(px + s0 * dx, py + s0 * dy, 0.0);
+                r.b = Vec3(px + s1 * dx, py + s1 * dy, 0.0);
+                r.a.z = pk.at(r.a.x, r.a.y);
+                r.b.z = pk.at(r.b.x, r.b.y);
+                r.k = k;
+                r.l = l;
+                // Joined to the one before where they meet (a side cut it).
+                if (!out.empty() && out.back().k == k && out.back().l == l && (out.back().b - r.a).norm() < 1e-9)
+                    out.back().b = r.b;
+                else
+                    out.push_back(r);
+            }
+        }
+    return out;
+}
+
+// An edge of a pitched roof from `a` to `b`: its first face in `plane`,
+// leaving the edge toward the plan direction `inward`, the air above the
+// plane, and the second face leaving along `second`.
+Edge roof_edge(const Vec3& a, const Vec3& b, const RoofPlane& plane, const Vec3& inward, const Vec3& second,
+        std::size_t building)
+{
+    Edge e;
+    e.start = a;
+    e.length = (b - a).norm();
+    e.direction = (b - a) / e.length;
+    const Vec3 in(inward.x, inward.y, plane.a * inward.x + plane.b * inward.y);
+    const Vec3 face0 = in - in.dot(e.direction) * e.direction;
+    e.face0 = face0 / face0.norm();
+    const Vec3 up(-plane.a, -plane.b, 1.0);
+    e.air = up / up.norm();
+    const Vec3 other = second - second.dot(e.direction) * e.direction;
+    e.n = e.angle(other / other.norm()) / pi;
+    e.building = building;
+    return e;
+}
+
 } // namespace
+
+// Over its outline's vertices, where its ridges end, and where two planes
+// cross over a side.
+double roof_top(const Footprint& f)
+{
+    double top = -std::numeric_limits<double>::infinity();
+    for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+        for (std::size_t i = 0, n = rx.size(); i < n; i++)
+        {
+            const std::size_t j = (i + 1) % n;
+            for (const auto& [t0, t1, plane] : roof_stretches(f, rx[i], ry[i], rx[j], ry[j]))
+                for (double t : {t0, t1})
+                    top = std::max(top, roof_height(f, rx[i] + t * (rx[j] - rx[i]), ry[i] + t * (ry[j] - ry[i])));
+        }
+    });
+    for (const Ridge& r : roof_ridges(f))
+        top = std::max({top, r.a.z, r.b.z});
+    return top;
+}
 
 Buildings::Buildings(std::vector<Footprint> footprints, double orientation_tolerance)
     : footprints_(std::move(footprints))
@@ -215,15 +393,20 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
     {
         std::size_t building;
         double x0, y0, x1, y1;
-        std::size_t facade, roof, corner0, corner1;
+        // Its facades and roof edges, [first, end): one each under a flat
+        // roof, one a stretch of one plane under a pitched one.
+        std::size_t facade, facade_end, roof, roof_end, corner0, corner1;
     };
     std::vector<Side> sides;
     for (std::size_t b = 0; b < footprints_.size(); b++)
     {
         Footprint& f = footprints_[b];
         const std::string which = "building " + std::to_string(b + 1);
-        if (!(f.top > 0.0) || !std::isfinite(f.top))
+        if (f.roof.empty() && (!(f.top > 0.0) || !std::isfinite(f.top)))
             throw std::invalid_argument(which + ": its roof must be above the floor");
+        for (const RoofPlane& plane : f.roof)
+            if (!std::isfinite(plane.a) || !std::isfinite(plane.b) || !std::isfinite(plane.c))
+                throw std::invalid_argument(which + ": a roof plane is not a number");
         bool outer = true;
         auto check = [&](std::vector<double>& x, std::vector<double>& y) {
             const std::size_t n = x.size();
@@ -290,6 +473,17 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
                     throw std::invalid_argument(which + ": a hole lies inside another");
         }
 
+        // A pitched roof stands above the floor all round, and its top is its
+        // highest point.
+        if (!f.roof.empty())
+        {
+            for_each_ring(f, [&](const std::vector<double>& x, const std::vector<double>& y) {
+                for (std::size_t i = 0; i < x.size(); i++)
+                    if (!(roof_height(f, x[i], y[i]) > contact))
+                        throw std::invalid_argument(which + ": its roof comes down to the floor");
+            });
+            f.top = roof_top(f);
+        }
         const std::size_t n = f.x.size();
         double bx0 = f.x[0], bx1 = f.x[0], by0 = f.y[0], by1 = f.y[0];
         for (std::size_t i = 0; i < n; i++)
@@ -338,7 +532,7 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
                 Edge e;
                 e.start = Vec3(x[i], y[i], 0.0);
                 e.direction = Vec3(0.0, 0.0, 1.0);
-                e.length = f.top;
+                e.length = f.roof.empty() ? f.top : roof_height(f, x[i], y[i]);
                 e.face0 = along;
                 e.air = Vec3(along.y, -along.x, 0.0);
                 e.n = e.angle(Vec3((x[h] - x[i]) / back, (y[h] - y[i]) / back, 0.0)) / pi;
@@ -350,6 +544,47 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
             for (std::size_t i = 0; i < m; i++)
             {
                 const std::size_t j = (i + 1) % m;
+                const double len = std::hypot(x[j] - x[i], y[j] - y[i]);
+                const Vec3 along((x[j] - x[i]) / len, (y[j] - y[i]) / len, 0.0);
+                const Vec3 outward(along.y, -along.x, 0.0);
+                if (!f.roof.empty())
+                {
+                    // Under a pitched roof, a facade and a roof edge for each
+                    // stretch of the side under one plane: an eave where the
+                    // plane runs level along it, a rake where it climbs.
+                    Side side {b, x[i], y[i], x[j], y[j], facades_.size(), 0, edges_.size(), 0, corner[i], corner[j]};
+                    const auto stretches = roof_stretches(f, x[i], y[i], x[j], y[j]);
+                    for (auto k = stretches.size(); k-- > 0;)
+                    {
+                        // Facades run the other way, so walk the stretches back.
+                        const auto& [t0, t1, plane] = stretches[k];
+                        const double xa = x[i] + t0 * (x[j] - x[i]), ya = y[i] + t0 * (y[j] - y[i]);
+                        const double xb = x[i] + t1 * (x[j] - x[i]), yb = y[i] + t1 * (y[j] - y[i]);
+                        Facade facade;
+                        facade.x0 = xb;
+                        facade.y0 = yb;
+                        facade.x1 = xa;
+                        facade.y1 = ya;
+                        facade.bottom = 0.0;
+                        facade.top_start = f.roof[plane].at(xb, yb);
+                        facade.top_end = f.roof[plane].at(xa, ya);
+                        facade.top = std::max(facade.top_start, facade.top_end);
+                        facades_.push_back(facade);
+                        facade_building_.push_back(b);
+                    }
+                    for (const auto& [t0, t1, plane] : stretches)
+                    {
+                        const double xa = x[i] + t0 * (x[j] - x[i]), ya = y[i] + t0 * (y[j] - y[i]);
+                        const double xb = x[i] + t1 * (x[j] - x[i]), yb = y[i] + t1 * (y[j] - y[i]);
+                        edges_.push_back(roof_edge(Vec3(xa, ya, f.roof[plane].at(xa, ya)),
+                                Vec3(xb, yb, f.roof[plane].at(xb, yb)), f.roof[plane], -1.0 * outward,
+                                Vec3(0.0, 0.0, -1.0), b));
+                    }
+                    side.facade_end = facades_.size();
+                    side.roof_end = edges_.size();
+                    sides.push_back(side);
+                    continue;
+                }
                 // The side i -> j, the solid on its left; its facade runs the
                 // other way, so that the outside is on the facade's left.
                 Facade facade;
@@ -359,9 +594,6 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
                 facade.y1 = y[i];
                 facade.bottom = 0.0;
                 facade.top = f.top;
-                const double len = std::hypot(x[j] - x[i], y[j] - y[i]);
-                const Vec3 along((x[j] - x[i]) / len, (y[j] - y[i]) / len, 0.0);
-                const Vec3 outward(along.y, -along.x, 0.0);
                 // The roof edge: the roof leaves it inward, the air is above.
                 Edge roof;
                 roof.start = Vec3(x[i], y[i], f.top);
@@ -371,12 +603,26 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
                 roof.air = Vec3(0.0, 0.0, 1.0);
                 roof.n = 1.5;
                 roof.building = b;
-                sides.push_back({b, x[i], y[i], x[j], y[j], facades_.size(), edges_.size(), corner[i], corner[j]});
+                sides.push_back({b, x[i], y[i], x[j], y[j], facades_.size(), facades_.size() + 1, edges_.size(),
+                        edges_.size() + 1, corner[i], corner[j]});
                 facades_.push_back(facade);
                 facade_building_.push_back(b);
                 edges_.push_back(roof);
             }
         });
+        // A pitched roof's ridges and hips, each between its two planes.
+        if (!f.roof.empty())
+            for (const Ridge& r : roof_ridges(f))
+            {
+                // Each plane leaves the ridge toward the side where it is the
+                // lower: the gradient of the other less it, in plan.
+                const RoofPlane& pk = f.roof[r.k];
+                const RoofPlane& pl = f.roof[r.l];
+                const Vec3 toward_k(pl.a - pk.a, pl.b - pk.b, 0.0), toward_l = -1.0 * toward_k;
+                const Edge probe = roof_edge(r.a, r.b, pl, toward_l, Vec3(0.0, 0.0, -1.0), b);
+                const Vec3 face_l = probe.face0;
+                edges_.push_back(roof_edge(r.a, r.b, pk, toward_k, face_l, b));
+            }
     }
 
     // Sides two buildings share exactly: a side's neighbour runs the other
@@ -405,20 +651,25 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
             ceded_[side.building].push_back({side.x0, side.y0, side.x1, side.y1});
         if (level || neighbour >= top)
         {
-            drop_facade[side.facade] = 1;
-            drop_edge[side.roof] = 1;
+            for (std::size_t k = side.facade; k < side.facade_end; k++)
+                drop_facade[k] = 1;
+            for (std::size_t k = side.roof; k < side.roof_end; k++)
+                drop_edge[k] = 1;
             for (std::size_t c : {side.corner0, side.corner1})
                 if (c != none)
                     drop_edge[c] = 1;
             continue;
         }
-        // Only what stands above the neighbour's roof is outside.
-        facades_[side.facade].bottom = std::max(facades_[side.facade].bottom, neighbour);
+        // Only what stands above the neighbour's roof is outside.  (Its highest
+        // point, under a pitched one.)
+        for (std::size_t k = side.facade; k < side.facade_end; k++)
+            facades_[k].bottom = std::max(facades_[k].bottom, neighbour);
         for (std::size_t c : {side.corner0, side.corner1})
             if (c != none && edges_[c].start.z < neighbour)
             {
+                const double end = edges_[c].start.z + edges_[c].length;
                 edges_[c].start.z = neighbour;
-                edges_[c].length = top - neighbour;
+                edges_[c].length = end - neighbour;
             }
     }
     if (shared_sides_ > 0)
@@ -504,6 +755,9 @@ bool Buildings::strictly_inside(std::size_t building, double x, double y) const
 
 bool Buildings::on_roof(std::size_t building, double x, double y) const
 {
+    // A pitched roof is no level plane to bounce on.
+    if (!footprints_[building].roof.empty())
+        return false;
     for (const auto& s : ceded_[building])
         if (distance_to_side(x, y, s[0], s[1], s[2], s[3]) < 1e-9)
             return false;
@@ -534,7 +788,8 @@ bool Buildings::buried(const Vec3& p) const
     bool found = false;
     building_grid_.walk(p.x, p.y, 0.0, 0.0, 0.0, [&](const std::uint32_t* first, const std::uint32_t* last, double) {
         for (const std::uint32_t* i = first; i != last && !found; i++)
-            found = p.z > contact && p.z < footprints_[*i].top - contact && strictly_inside(*i, p.x, p.y);
+            found = p.z > contact && p.z < roof_height(footprints_[*i], p.x, p.y) - contact
+                    && strictly_inside(*i, p.x, p.y);
         return false;
     });
     return found;
@@ -572,6 +827,20 @@ bool Buildings::blocked_by(std::size_t building, const Vec3& a, const Vec3& b, b
         add((z_high - a.z) / d.z);
         add((z_low - a.z) / d.z);
     }
+    // Under a pitched roof, where the segment crosses each plane (and below
+    // the floor its image).
+    for (const RoofPlane& plane : f.roof)
+    {
+        const double rate = d.z - plane.a * d.x - plane.b * d.y;
+        if (rate != 0.0)
+            add((plane.at(a.x, a.y) - a.z) / rate);
+        if (below_floor)
+        {
+            const double image = d.z + plane.a * d.x + plane.b * d.y;
+            if (image != 0.0)
+                add((-plane.at(a.x, a.y) - a.z) / image);
+        }
+    }
     for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
         for (std::size_t i = 0, n = rx.size(), h = n - 1; i < n; h = i++)
         {
@@ -596,7 +865,14 @@ bool Buildings::blocked_by(std::size_t building, const Vec3& a, const Vec3& b, b
         const double z = a.z + t * d.z;
         if (!(z > z_low + z_margin && z < z_high - z_margin))
             continue;
-        if (strictly_inside(building, a.x + t * d.x, a.y + t * d.y))
+        const double x = a.x + t * d.x, y = a.y + t * d.y;
+        if (!f.roof.empty())
+        {
+            const double h = roof_height(f, x, y);
+            if (!(z > (below_floor ? -h : 0.0) + z_margin && z < h - z_margin))
+                continue;
+        }
+        if (strictly_inside(building, x, y))
             return true;
     }
     return false;
@@ -662,6 +938,61 @@ void Buildings::near_box(double x_min, double x_max, double y_min, double y_max,
     });
 }
 
+void Buildings::section(const Vec3& a, const Vec3& b, std::vector<SectionSpan>& out) const
+{
+    out.clear();
+    const double dx = b.x - a.x, dy = b.y - a.y, span = std::hypot(dx, dy);
+    if (!(span > 0.0))
+        return;
+    thread_local Stamps seen;
+    seen.next(footprints_.size());
+    thread_local std::vector<double> cuts;
+    building_grid_.walk(a.x, a.y, dx, dy, 1.0, [&](const std::uint32_t* first, const std::uint32_t* last, double) {
+        for (const std::uint32_t* i = first; i != last; i++)
+        {
+            if (!seen.first(*i))
+                continue;
+            const Footprint& f = footprints_[*i];
+            // Where the segment crosses the rings, as fractions of it; then
+            // each stretch between two crossings whose middle is inside.
+            cuts.assign({0.0, 1.0});
+            for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+                for (std::size_t k = 0, n = rx.size(); k < n; k++)
+                {
+                    const std::size_t l = (k + 1) % n;
+                    const double ex = rx[l] - rx[k], ey = ry[l] - ry[k], wx = rx[k] - a.x, wy = ry[k] - a.y;
+                    const double det = ex * dy - dx * ey;
+                    if (det == 0.0)
+                        continue;
+                    const double t = (ex * wy - wx * ey) / det, s = (dx * wy - dy * wx) / det;
+                    if (t > 0.0 && t < 1.0 && s >= 0.0 && s <= 1.0)
+                        cuts.push_back(t);
+                }
+            });
+            std::sort(cuts.begin(), cuts.end());
+            for (std::size_t k = 0; k + 1 < cuts.size(); k++)
+            {
+                if (!(cuts[k + 1] > cuts[k]))
+                    continue;
+                const double t = 0.5 * (cuts[k] + cuts[k + 1]), x = a.x + t * dx, y = a.y + t * dy;
+                bool in = false;
+                for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
+                    for (std::size_t m = 0, n = rx.size(), h = n - 1; m < n; h = m++)
+                        if ((ry[m] > y) != (ry[h] > y) && x < rx[h] + (y - ry[h]) * (rx[m] - rx[h]) / (ry[m] - ry[h]))
+                            in = !in;
+                });
+                if (!in)
+                    continue;
+                if (!out.empty() && out.back().building == *i && out.back().d1 == cuts[k] * span)
+                    out.back().d1 = cuts[k + 1] * span;
+                else
+                    out.push_back({cuts[k] * span, cuts[k + 1] * span, *i});
+            }
+        }
+        return true;
+    });
+}
+
 void Buildings::facades_in_box(double x_min, double x_max, double y_min, double y_max,
         std::vector<std::uint32_t>& out) const
 {
@@ -705,9 +1036,9 @@ std::size_t Buildings::first_hit(const Vec3& pos, const Vec3& dir, bool below_fl
                         continue;
                     const Vec3 p = pos + t * dir;
                     const double along = (p.x - fr.x0) * fr.ax + (p.y - fr.y0) * fr.ay;
-                    const double bottom = below_floor ? -facades_[i].top : facades_[i].bottom;
-                    if (along >= -1e-9 && along <= fr.length + 1e-9 && p.z >= bottom - 1e-9
-                            && p.z <= facades_[i].top + 1e-9)
+                    const double top = facade_top(facades_[i], p);
+                    const double bottom = below_floor ? -top : facades_[i].bottom;
+                    if (along >= -1e-9 && along <= fr.length + 1e-9 && p.z >= bottom - 1e-9 && p.z <= top + 1e-9)
                     {
                         best = i;
                         best_t = t;

@@ -286,6 +286,13 @@ struct Fields
             block(20.21, 3.86, 22.65, 16.0, 7.77), block(13.5, -1.84, 19.56, 0.6, 7.77)}};
     Buildings blocks {{block(0.0, 0.0, 60.0, 60.0, 20.0), block(80.0, 0.0, 140.0, 60.0, 35.0),
             block(0.0, 80.0, 60.0, 140.0, 10.0), block(80.0, 80.0, 140.0, 140.0, 40.0)}};
+    // A mansard house, over which a low source reaches a microphone close
+    // behind by four roof edges (a chain: more wedge terms than three).
+    Buildings mansard {{[] {
+        Footprint f = block(0.0, -30.0, 12.0, 30.0, 9.0);
+        f.roof = {{1.0, 0.0, 6.0}, {0.4, 0.0, 6.9}, {-0.4, 0.0, 11.7}, {-1.0, 0.0, 18.0}};
+        return f;
+    }()}};
     std::vector<std::unique_ptr<PointSourceField>> fields;
     std::vector<std::vector<double>> reflection;
 
@@ -299,6 +306,7 @@ struct Fields
             {&blocks, {70.0, 30.0, 5.0}, {110.0, 150.0, 1.5}},
             // A flush microphone, for a plate.
             {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 0.0}},
+            {&mansard, {-15.0, 0.0, 0.5}, {14.0, 1.0, 0.5}},
         };
         for (const auto& [city, source, microphone] : cases)
         {
@@ -342,7 +350,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     std::vector<std::vector<double>> cpu(count, std::vector<double>(bands.size()));
     gpu::BandEnergies energies(device);
     std::vector<std::size_t> host_first, point_first;
-    std::size_t shared = 0, thrice = 0, between = 0, plates = 0;
+    std::size_t shared = 0, thrice = 0, chained = 0, between = 0, plates = 0;
     std::vector<double> middles;
     for (double band : bands)
         for (const SubBand& s : sub_bands(band, c))
@@ -367,6 +375,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
         for (const PointRay& ray : field.rays())
         {
             thrice += ray.wedges == 3;
+            chained += ray.wedges > 3;
             between += ray.between != PointRay::no_facade;
         }
         const std::vector<double> absorption = i % 2 ? absorbing : std::vector<double> {};
@@ -387,9 +396,10 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
         point_first.push_back(energies.add(point[i]));
     }
     REQUIRE(shared > 0);
-    // Rays of three wedge terms, and rays with a facade between two edges,
-    // take the same kernel.
+    // Rays of three wedge terms and of more, and rays with a facade between
+    // two edges, take the same kernel.
     REQUIRE(thrice > 0);
+    REQUIRE(chained > 0);
     REQUIRE(between > 0);
     REQUIRE(plates == 1);
     energies.submit();

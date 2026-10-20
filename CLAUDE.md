@@ -197,6 +197,19 @@ Commands and options are in `README.md`; rationale is in
   relief scatters onto other walls to the diffuse field (`first_scattering_elsewhere`). Against EDGE
   the orders match the FDTD; behind DigiCity's containers the diffuse field matters; FIDELITY has
   the table.
+- **Pitched roofs are the least of planes** (`--roofs`, `Footprint::roof`; ground.md "Pitched
+  roofs"). Convex by construction, so a valley or a step is several buildings sharing sides. A
+  wall's top is `facade_top`, never `Footprint::top`; the input's top caps the roof (a level plane
+  added within 1 mm); the pruning proof cuts the prism by the roof planes (the full prism hides real
+  rays; `pruning finds every ray among pitched houses`). Slopes reflect no specular ray. The FDTD's
+  slope is a staircase, 5 dB loud at 6.3 kHz with EDGE's 3 mm cells, so pitched scenes are scored
+  against the measurements and the BEM, not it.
+- **Four roof edges and more are a chain** (`max_chain`, default 8, at most 14 for the GPU's ray
+  kind): the corners of the taut string in the vertical plane through the ends, the path the
+  convex least of its length. Only chains of more than three (fewer are the double and triple
+  searches'); terms past the third in `more_wedges`, read through `wedge_term`. Over a mansard's
+  nearly flat, face-sharing wedges the cascade is 3-4 dB rms off the BEM with three edges as with
+  four; a gable's is 0.17.
 - **`--scattering` with `--buildings` fills the buildings' shadows** (`turbulence_scattering`, Forssén
   et al. 2014 without its canyon term). gamma_T is taken as velocity turbulence of
   C_v^2 = (3/22) c0^2 gamma_T; the paper's temperature coefficients are not used (they contradict its

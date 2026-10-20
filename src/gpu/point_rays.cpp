@@ -5,6 +5,7 @@
 #include <cmath>
 #include <complex>
 #include <stdexcept>
+#include <string>
 
 #include "double_wedge.hpp"
 #include "gpu/band_energy.hpp"
@@ -223,10 +224,14 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         }
         else
         {
+            // Its wedge count is its kind, which must stay short of a face's.
+            if (ray.wedges >= static_cast<int>(NK_KIND_FACE))
+                throw std::invalid_argument("a ray diffracted at " + std::to_string(ray.wedges)
+                        + " edges is more than the GPU's ray record holds");
             r.kind = static_cast<uint32_t>(ray.wedges);
             r.term = static_cast<uint32_t>(set.wedges.size());
             for (int w = 0; w < ray.wedges; w++)
-                put_wedge(ray.wedge[w], 1.0);
+                put_wedge(wedge_term(ray, w), 1.0);
         }
         set.rays.push_back(r);
         set.length.push_back(ray.length);

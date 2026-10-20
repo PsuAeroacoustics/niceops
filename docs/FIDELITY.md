@@ -1686,6 +1686,91 @@ Modelled as its own facets and ridges (the FDTD's solid, by UTD, eight reflectio
 change is −0.88 dB, error +0.16 / 1.28, as good as the FDTD and the orders. The ribs that way are 24
 million rays a pair, and sub-wavelength.
 
+### Pitched roofs
+
+`--roofs` (LoD2; THEORY §6.5). The geometry is checked directly (`tests/test_pitched_roofs.cpp`): a
+gable house's walls, eaves, rakes and ridge and each wedge's angle; blocking against sampling the
+segment at 4000 points over 4000 random segments, above and below the floor; shed, hip and mansard
+roofs; the roofs file's units, cap and refusals; and pruning, which finds the unpruned search's rays
+ray for ray among gable, hip, shed and mansard houses.
+
+**Against exact solutions.** A house long enough to be two-dimensional, the source and the
+microphone in one plane across it, every ray times the root of its length as for the long block
+(boundary elements by `tools/thick_barrier_bem.py`, rigid house and floor, 90 elements a wavelength,
+converged to 0.15 dB; the cases that were not are left out), 125 Hz to 1 kHz, sources 2-4.5 m up
+and 10-30 m off, microphones 2-15 m behind and 0.5-7 m up:
+
+| House | Cases | UTD: worst, rms (dB) | Edge source | Flat roofs instead, rms |
+| --- | --- | --- | --- | --- |
+| Gable 8 m across, eaves 6 m, ridge 9 m | 71 | 0.74, 0.17 | 0.53, 0.12 | 6.2 at the eaves, 8.9 at the mean height, 11.0 at the ridge |
+| EDGE UE03's terrace at model scale (0.96 m across, eaves 0.492 m, ridge 0.732 m), the floor source, 1.6, 3.15 and 6.3 kHz, 45 elements a wavelength | 12 | 0.34, 0.15 | 0.47, 0.16 | 3.0 at the eaves (worst 6.5) |
+| Mansard 12 m across, eaves 6 m, slopes 1 and 0.4, deck 9 m | 68 | 13.8, 3.9 | | |
+
+The gable's path over it is eave, ridge and eave, or the ridge alone where the source sees the near
+slope. The mansard's, from a source 0.5 m up to a microphone 2 m behind, bends at four edges -- the
+near deck edge, the far one, the far break and the far eave -- and without a chain of them there is
+no ray at all: chains (`max_chain`) bring those nine cases within 1.5 dB below 4 m (at 4 m the
+microphone sits on the far lower slope's plane, at its eave's boundary). The mansard's other cases,
+three edges, are 3.5 dB rms: its wedges are nearly flat ($n \approx 1.1$) and each pair shares the
+face the ray runs along, where the cascade is weakest. The uniform form that fixes a flat roof's
+pair (above) is for two edges; a cascade of transitions (Tzaras and Saunders's heuristic, or the
+edge source's higher orders) would be the next step.
+
+**Why not the FDTD.** A pitched roof in the FDTD is a staircase of cells. With the terrace's gable
+at 6 mm cells, the FDTD behind it was 2-13 dB louder than the rays, rising with frequency, and
+louder than the bare block at the eaves, while the same FDTD matched the rays within 0.5 dB with
+the roof flat at the eaves or at the ridge. Built as 40 stacked slabs it gives the voxels' result to
+0.3 dB, so the voxelization is consistent. The boundary elements, given the voxels' own staircase in
+the profile's plane, put it there:
+
+| Microphone, 6.3 kHz | Smooth slope (rays within 0.17) | Staircase of 6 mm | 3 mm | 1.5 mm |
+| --- | --- | --- | --- | --- |
+| 0.46 m behind, on the floor | −27.0 dB re free field | −16.8 | −21.9 | −24.5 |
+| 1.25 m behind | −17.0 | −9.8 | −13.2 | −15.0 |
+
+The error halves with the step: first order. A staircase's steps diffract a grazing wave down the
+slope that a smooth slope does not, so the FDTD at 3 mm, the finest the EDGE runs used, is still
+about 5 dB loud in the top bands; 1.5 mm does not fit the GPU. The FDTD is no reference for a sloped
+roof at these cells, and the pitched scenes are scored against the measurements alone.
+
+**Against EDGE's measurements.** The harness (`urban/edge/`) builds the pitched scenes from their
+STEP files: the roof and sloping faces grouped into convex roofs, each a building, so a step (UE01,
+UE02) or a valley (UE05) parts them into neighbours sharing a side; UE04's mansard is four planes
+under its deck. UE19 stands on a carpet and is left out, as the carpeted LoD1 scenes are. Every
+receiver is in a house's shadow, so each loudspeaker takes the per-band calibration of the LoD1
+scenes' line-of-sight pairs. Measured − predicted, mean and rms (dB), 1.6-20 kHz at model scale:
+
+| Scene, source | Band levels | Roof planes, UTD | Edge source | Flat at the mean height | Flat at the ridge |
+| --- | --- | --- | --- | --- | --- |
+| UE01 half gable, floor | 32 | +0.50, 2.37 | +0.49, 2.38 | +7.14, 8.39 | +9.04, 10.20 |
+| UE01, drone | 48 | +1.90, 3.53 | +1.92, 3.53 | −3.85, 4.27 | +0.61, 3.12 |
+| UE02 pent, floor | 32 | −0.06, 2.81 | −0.04, 2.83 | +5.04, 6.43 | +9.68, 10.65 |
+| UE02, drone | 48 | +3.89, 4.30 | +3.06, 3.65 | −2.34, 3.10 | +0.42, 2.09 |
+| UE03 gable, floor | 32 | −0.28, 2.06 | −0.30, 2.07 | +6.44, 7.60 | +9.46, 10.51 |
+| UE03, drone | 48 | +0.74, 2.53 | +0.67, 2.50 | −0.63, 2.73 | +1.66, 3.99 |
+| UE04 mansard, floor | 31 | −2.29, 4.47 | −2.29, 4.48 | +5.00, 6.19 | +7.07, 8.12 |
+| UE04, drone | 48 | +1.31, 2.44 | +1.03, 2.40 | +0.02, 2.71 | +1.52, 3.59 |
+| UE05 shed, floor | 31 | −0.71, 3.09 | −0.69, 3.09 | +3.06, 4.63 | +5.06, 6.41 |
+| UE05, drone | 48 | +0.21, 1.93 | +0.18, 1.93 | −1.39, 2.18 | +0.21, 2.00 |
+| UE15 detached gable, floor | 30 | +0.18, 1.79 | +0.24, 1.82 | +0.88, 2.90 | +1.25, 3.44 |
+| UE15, drone | 48 | +0.25, 2.25 | +0.15, 2.19 | −0.18, 2.56 | +0.77, 3.82 |
+| UE17 detached gable (1/5), floor | 31 | +0.61, 2.04 | +0.54, 1.98 | +2.22, 4.21 | +2.30, 4.10 |
+| UE17, drone | 47 | +1.12, 4.73 | +1.05, 4.71 | +0.71, 3.66 | +1.86, 4.92 |
+| All | 554 | +0.70, 3.08 | +0.58, 3.00 | +1.03, 4.51 | +3.11, 5.82 |
+
+From the floor, where the roof's shape sets the path, the planes are 1.8-4.5 dB rms where a flat
+block is 2.9-10.7; from the drone, which sees over the roofs, they and the flat block at the mean
+height are alike. UE04's floor source was 7.8 dB low, 14.3 rms, before chains: its microphones
+close behind are reached over four edges. UE17's drone source is the one row a flat block does
+better, by 1.1 dB.
+
+**Cost.** Chains cost nothing measurable: a suburb of 64 gable houses (10 by 15 m, eaves 6 m, ridge
+9 m, 25 m apart) to 162 microphones in its gardens took 166.1 s with them and 165.9 s without from
+a source 1.5 m up, which made 26 chain rays and moved no band level by 0.1 dB. The pitched houses
+cost 2.2 times the same houses flat (1408 against 637 s of CPU from 60 m up), most of it their
+eleven edges against eight; before the pruning took their roof planes it was 3.2 times (2051 s),
+with the same levels to the bit.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and
@@ -2279,9 +2364,13 @@ range-dependent source fit would confound descent state drift with path loss.
   next to the microphone and along the path decides ([Ground classes](#ground-classes)).
 - **The nose.** No shipped database records a heading-filed azimuth, and a WGS84 track's
   heading has to be given as a column.
-- **A point source among buildings** diffracts at two edges at most; roofs do not reflect; with
-  both ends above a shared face, double diffraction is the cascade, off by up to 10 dB near the
-  plane; and blocks thinner than a wavelength or so are 2-6 dB low below 500 Hz ([A point source
-  among buildings](#a-point-source-among-buildings)).
+- **A point source among buildings** diffracts at three edges at most but over roofs, where chains
+  take up to eight; with both ends above a shared face, double diffraction is the cascade, off by
+  up to 10 dB near the plane; and blocks thinner than a wavelength or so are 2-6 dB low below
+  500 Hz ([A point source among buildings](#a-point-source-among-buildings)). A pitched roof's
+  slopes reflect no specular ray, and over a roof of nearly flat wedges whose pairs share the faces
+  the ray runs along (a mansard's) the cascade is 3-4 dB rms off the exact field; the FDTD's
+  staircase makes it no reference for a sloped roof below 1.5 mm cells at EDGE's scale
+  ([Pitched roofs](#pitched-roofs)).
 - **Source coverage.** Every aircraft over-predicts at low elevation; the B407 hover between 3°
   and 17° below the horizon, and under the aircraft, is an interpolation.

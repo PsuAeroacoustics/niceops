@@ -62,6 +62,22 @@ ShadowScreen shadow_screen(const Buildings& buildings, const Vec3& source, const
     for (const std::uint32_t b : near)
     {
         const Footprint& f = buildings.footprints()[b];
+        if (!f.roof.empty())
+        {
+            // A pitched roof: its eaves, rakes and ridges where the line
+            // crosses them, at their heights there.
+            for (std::size_t e = buildings.edge_begin(b); e < buildings.edge_begin(b + 1); e++)
+            {
+                const Edge& g = buildings.edges()[e];
+                if (g.vertical)
+                    continue;
+                const Vec3 end = g.start + g.length * g.direction;
+                double t;
+                if (crossing(g.start.x, g.start.y, end.x, end.y, t))
+                    consider(t, roof_height(f, source.x + t * d.x, source.y + t * d.y));
+            }
+            continue;
+        }
         auto ring = [&](const std::vector<double>& x, const std::vector<double>& y) {
             for (std::size_t i = 0; i < x.size(); i++)
             {

@@ -122,6 +122,9 @@ public:
         // none).
         double scattering = 0.0;
         std::string scattering_file;
+        // A CSV of roof planes (building_input.hpp's read_roofs); "" for flat
+        // roofs.
+        std::string roofs;
         // The diffuse field's patches' size at most, and the horizontal
         // distance from a microphone within which a building scatters, in
         // metres; 0 for the rays' own reach (PointPathOptions::radius).

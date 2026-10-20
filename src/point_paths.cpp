@@ -9,6 +9,7 @@
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 #include "edge_visibility.hpp"
 #include "facade_relief.hpp"
@@ -164,6 +165,137 @@ bool air_or_face(const Edge& e, const Vec3& v)
         return sign == 1;
     bool on_face;
     return in_air(onto_face(e.angle(v), e.n, on_face), e.n, true);
+}
+
+// The roof edges a path from a to b over the buildings bends at, in order,
+// each with where along it: the corners of the taut string over the
+// buildings' cross-section in the vertical plane through the two -- the
+// upper hull, between them, of the corners of every roof profile the plan
+// segment crosses -- each the roof edge it lies on.  Empty where the string
+// bends nowhere, and where a corner lies on no edge in `near` (sorted), or at
+// an edge's end: a footprint's vertex, or a building beyond the pair's reach.
+std::vector<std::pair<std::size_t, double>> roof_chain(const Buildings& buildings, const Vec3& a, const Vec3& b,
+        const std::vector<std::size_t>& near)
+{
+    std::vector<std::pair<std::size_t, double>> chain;
+    const double dx = b.x - a.x, dy = b.y - a.y, span = std::hypot(dx, dy);
+    if (!(span > 0.0))
+        return chain;
+    const double ux = dx / span, uy = dy / span;
+    struct Corner
+    {
+        double d, z;
+        std::uint32_t building;
+    };
+    thread_local std::vector<Buildings::SectionSpan> spans;
+    thread_local std::vector<Corner> corners;
+    thread_local std::vector<double> at;
+    buildings.section(a, b, spans);
+    corners.clear();
+    for (const Buildings::SectionSpan& s : spans)
+    {
+        const Footprint& f = buildings.footprints()[s.building];
+        if (f.roof.empty())
+        {
+            corners.push_back({s.d0, f.top, s.building});
+            corners.push_back({s.d1, f.top, s.building});
+            continue;
+        }
+        // The roof over the span: the least of its planes, z = m d + c along
+        // it, bending where the least changes.
+        auto line = [&](const RoofPlane& p) {
+            return std::make_pair(p.a * ux + p.b * uy, p.a * a.x + p.b * a.y + p.c);
+        };
+        auto lowest = [&](double d) {
+            std::size_t best = 0;
+            double z = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i < f.roof.size(); i++)
+            {
+                const auto [m, c] = line(f.roof[i]);
+                if (m * d + c < z)
+                {
+                    z = m * d + c;
+                    best = i;
+                }
+            }
+            return std::make_pair(best, z);
+        };
+        at.assign({s.d0, s.d1});
+        for (std::size_t i = 0; i < f.roof.size(); i++)
+            for (std::size_t j = i + 1; j < f.roof.size(); j++)
+            {
+                const auto [mi, ci] = line(f.roof[i]);
+                const auto [mj, cj] = line(f.roof[j]);
+                if (mi != mj)
+                {
+                    const double d = (cj - ci) / (mi - mj);
+                    if (d > s.d0 && d < s.d1)
+                        at.push_back(d);
+                }
+            }
+        std::sort(at.begin(), at.end());
+        corners.push_back({s.d0, lowest(s.d0).second, s.building});
+        for (std::size_t k = 1; k + 1 < at.size(); k++)
+        {
+            const double before = line(f.roof[lowest(0.5 * (at[k - 1] + at[k])).first]).first;
+            const double after = line(f.roof[lowest(0.5 * (at[k] + at[k + 1])).first]).first;
+            if (std::abs(before - after) > 1e-12)
+                corners.push_back({at[k], lowest(at[k]).second, s.building});
+        }
+        corners.push_back({s.d1, lowest(s.d1).second, s.building});
+    }
+    if (corners.empty())
+        return chain;
+    std::sort(corners.begin(), corners.end(),
+            [](const Corner& p, const Corner& q) { return p.d < q.d || (p.d == q.d && p.z < q.z); });
+    // The upper hull from a to b over them, dropping corners on a straight
+    // stretch of it.
+    thread_local std::vector<Corner> hull;
+    hull.assign({{0.0, a.z, 0}});
+    const double flat = 1e-12 * (span + std::abs(a.z) + std::abs(b.z)) * (span + std::abs(a.z) + std::abs(b.z));
+    auto push = [&](const Corner& p) {
+        while (hull.size() >= 2)
+        {
+            const Corner& o = hull[hull.size() - 2];
+            const Corner& m = hull.back();
+            if ((m.d - o.d) * (p.z - o.z) - (m.z - o.z) * (p.d - o.d) > -flat)
+                hull.pop_back();
+            else
+                break;
+        }
+        hull.push_back(p);
+    };
+    for (const Corner& c : corners)
+        push(c);
+    push({span, b.z, 0});
+    const auto& edges = buildings.edges();
+    for (std::size_t h = 1; h + 1 < hull.size(); h++)
+    {
+        const Corner& c = hull[h];
+        const Vec3 p(a.x + c.d * ux, a.y + c.d * uy, c.z);
+        std::size_t best = edges.size();
+        double nearest = 1e-6 + 1e-9 * span, along = 0.0;
+        for (std::size_t e = buildings.edge_begin(c.building); e < buildings.edge_begin(c.building + 1); e++)
+        {
+            const Edge& g = edges[e];
+            if (g.vertical || !std::binary_search(near.begin(), near.end(), e))
+                continue;
+            const double t = std::clamp((p - g.start).dot(g.direction), 0.0, g.length);
+            const double distance = (g.start + t * g.direction - p).norm();
+            if (distance < nearest)
+            {
+                nearest = distance;
+                best = e;
+                along = t;
+            }
+        }
+        const double end = 1e-6 + 1e-9 * span;
+        if (best == edges.size() || along < end || along > edges[best].length - end
+                || (!chain.empty() && chain.back().first == best))
+            return {};
+        chain.emplace_back(best, along);
+    }
+    return chain;
 }
 
 // Whether two edges share an end, within contact: a corner of a building.
@@ -1518,6 +1650,73 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             }
         }
 
+    // Diffracted at more than three roof edges: the taut string's corners
+    // over the cross-section between each pair of the ends' points (floor
+    // images or not), the path over them stationary.
+    if (options.diffraction && options.double_diffraction && options.max_chain > 3)
+    {
+        std::vector<const Edge*> g;
+        std::vector<double> t;
+        std::vector<Vec3> q, to_chain_source, to_chain_microphone;
+        for (int fa = 0; fa < source_floors; fa++)
+            for (int fb = 0; fb < 2; fb++)
+            {
+                const Vec3 pa = fa ? below(source) : source, pb = fb ? below(microphone) : microphone;
+                const auto chain = roof_chain(buildings, pa, pb, near_edges);
+                if (chain.size() <= 3 || chain.size() > options.max_chain)
+                    continue;
+                g.clear();
+                t.clear();
+                for (const auto& [e, along] : chain)
+                {
+                    g.push_back(&edges[e]);
+                    t.push_back(along);
+                }
+                if (!chain_points(g, pa, pb, t))
+                    continue;
+                const std::size_t n = g.size();
+                q.resize(n);
+                bool open = true;
+                for (std::size_t i = 0; i < n && open; i++)
+                {
+                    q[i] = g[i]->start + t[i] * g[i]->direction;
+                    open = q[i].z >= 0.0 && !buildings.buried(q[i]);
+                }
+                for (std::size_t i = 0; i < n && open; i++)
+                {
+                    const Edge& e = *g[i];
+                    const Vec3 in = i == 0 ? pa - q[0] : q[i - 1] - q[i];
+                    const Vec3 out = i + 1 == n ? pb - q[i] : q[i + 1] - q[i];
+                    open = (i == 0 ? air(e, normal_part(e, in), false) : air_or_face(e, normal_part(e, in)))
+                            && (i + 1 == n ? air(e, normal_part(e, out), false) : air_or_face(e, normal_part(e, out)));
+                }
+                for (std::size_t i = 0; i + 1 < n && open; i++)
+                    open = !buildings.blocked(q[i], q[i + 1]);
+                if (!open || !folded_path_open(buildings, q[0], source, {}, fa == 1, &to_chain_source)
+                        || !folded_path_open(buildings, q[n - 1], microphone, {}, fb == 1, &to_chain_microphone))
+                    continue;
+                PointRay ray = chain_diffracted_ray(g, pa, pb, q);
+                ray.floor = fa + fb;
+                if (fa)
+                    ray.source_plane = 0.0;
+                int bounces = 0;
+                if (fa)
+                    ray.floor_bounce[bounces++] = bounce_on(pa, q[0], false);
+                if (fb)
+                    ray.floor_bounce[bounces++] = bounce_on(q[n - 1], pb, true);
+                ray.edge_source.edges[0] = chain.front().first;
+                ray.edge_source.edges[1] = chain.back().first;
+                ray.edge_source.source = pa;
+                ray.edge_source.microphone = pb;
+                ray.path = {source};
+                ray.path.insert(ray.path.end(), to_chain_source.rbegin(), to_chain_source.rend());
+                ray.path.insert(ray.path.end(), q.begin(), q.end());
+                ray.path.insert(ray.path.end(), to_chain_microphone.begin(), to_chain_microphone.end());
+                ray.path.push_back(microphone);
+                rays_.push_back(std::move(ray));
+            }
+    }
+
     if (options.triple_diffraction == PointPathOptions::Triple::none)
         return;
     const bool roofs_only = options.triple_diffraction == PointPathOptions::Triple::roofs;
@@ -1820,6 +2019,149 @@ PointRay thrice_diffracted_ray(const Edge& g1, const Edge& g2, const Edge& g3, c
     return ray;
 }
 
+PointRay chain_diffracted_ray(const std::vector<const Edge*>& g, const Vec3& pa, const Vec3& pb,
+        const std::vector<Vec3>& q)
+{
+    const std::size_t n = g.size();
+    // Leg i reaches edge i (leg n the microphone); s[i] its length.
+    std::vector<Vec3> leg(n + 1);
+    std::vector<double> s(n + 1);
+    leg[0] = q[0] - pa;
+    for (std::size_t i = 1; i < n; i++)
+        leg[i] = q[i] - q[i - 1];
+    leg[n] = pb - q[n - 1];
+    for (std::size_t i = 0; i <= n; i++)
+        s[i] = leg[i].norm();
+    auto seen = [](const Edge& e, const Edge& f, const Vec3& l, double length) {
+        const Vec3 d = l / length;
+        const Vec3 u = e.direction - e.direction.dot(d) * d, v = f.direction - f.direction.dot(d) * d;
+        const double nu = u.norm(), nv = v.norm();
+        return nu > 1e-12 && nv > 1e-12 ? std::pow(u.dot(v) / (nu * nv), 2) : 1.0;
+    };
+    auto along_edge = [](double c2, double rho, double l) { return 1.0 / (c2 / (rho + l) + (1.0 - c2) / l); };
+    PointRay ray;
+    ray.length = 0.0;
+    for (double l : s)
+        ray.length += l;
+    ray.spreading = 1.0 / s[0];
+    double rho = s[0];
+    bool leaves = false;
+    ray.wedges = static_cast<int>(n);
+    for (std::size_t i = 0; i < n; i++)
+    {
+        const Edge& e = *g[i];
+        if (i > 0)
+            rho = along_edge(seen(*g[i - 1], e, leg[i], s[i]), rho, s[i]);
+        ray.spreading *= std::sqrt(rho / (s[i + 1] * (rho + s[i + 1])));
+        bool arrives = false, on_face = false;
+        const double theta0 = i == 0 ? e.angle(normal_part(e, -1.0 * leg[0]))
+                                     : onto_face(e.angle(normal_part(e, -1.0 * leg[i])), e.n, arrives);
+        const double theta = i + 1 < n ? onto_face(e.angle(normal_part(e, leg[i + 1])), e.n, on_face)
+                                        : e.angle(normal_part(e, leg[n]));
+        // sin(beta) by the leg on the source's side for the first edge, as
+        // thrice_diffracted_ray takes it, and by the leg leaving the rest.
+        const double sb = i == 0 ? normal_part(e, leg[0]).norm() / s[0] : normal_part(e, leg[i + 1]).norm() / s[i + 1];
+        const WedgeTerm term {wedge_angles(e.n, theta, theta0), sb, s[i] * s[i + 1] * sb / (s[i] + s[i + 1]),
+                i > 0 && leaves && arrives};
+        if (i < 3)
+            ray.wedge[i] = term;
+        else
+            ray.more_wedges.push_back(term);
+        leaves = on_face;
+    }
+    return ray;
+}
+
+bool chain_points(const std::vector<const Edge*>& g, const Vec3& a, const Vec3& b, std::vector<double>& t)
+{
+    const std::size_t n = g.size();
+    if (n == 0 || t.size() != n)
+        return false;
+    std::vector<double> grad(n), diag(n), off(n), step(n), trial(n);
+    auto point = [&](const std::vector<double>& u, std::size_t i) { return g[i]->start + u[i] * g[i]->direction; };
+    auto length = [&](const std::vector<double>& u) {
+        double l = (point(u, 0) - a).norm() + (b - point(u, n - 1)).norm();
+        for (std::size_t i = 0; i + 1 < n; i++)
+            l += (point(u, i + 1) - point(u, i)).norm();
+        return l;
+    };
+    const double scale = std::max(1.0, (b - a).norm());
+    bool settled = false;
+    for (int iteration = 0; iteration < 100 && !settled; iteration++)
+    {
+        std::fill(grad.begin(), grad.end(), 0.0);
+        std::fill(diag.begin(), diag.end(), 1e-12 / scale);
+        std::fill(off.begin(), off.end(), 0.0);
+        // Each leg from u (edge leg - 1's point, or a) to v (edge leg's, or b):
+        // its length's gradient and Hessian in the two parameters.
+        for (std::size_t l = 0; l <= n; l++)
+        {
+            const bool from_edge = l > 0, to_edge = l < n;
+            const Vec3 u = from_edge ? point(t, l - 1) : a, v = to_edge ? point(t, l) : b;
+            const Vec3 w = v - u;
+            const double r = w.norm();
+            if (!(r > 0.0))
+                return false;
+            const Vec3 h = w / r;
+            const double cu = from_edge ? g[l - 1]->direction.dot(h) : 0.0;
+            const double cv = to_edge ? g[l]->direction.dot(h) : 0.0;
+            if (from_edge)
+            {
+                grad[l - 1] -= cu;
+                diag[l - 1] += (1.0 - cu * cu) / r;
+            }
+            if (to_edge)
+            {
+                grad[l] += cv;
+                diag[l] += (1.0 - cv * cv) / r;
+            }
+            if (from_edge && to_edge)
+                off[l - 1] -= (g[l - 1]->direction.dot(g[l]->direction) - cu * cv) / r;
+        }
+        // The Newton step, H step = -grad, H tridiagonal (Thomas).
+        std::vector<double> c(n), d(n);
+        double pivot = diag[0];
+        c[0] = n > 1 ? off[0] / pivot : 0.0;
+        d[0] = -grad[0] / pivot;
+        for (std::size_t i = 1; i < n; i++)
+        {
+            pivot = diag[i] - off[i - 1] * c[i - 1];
+            if (!(pivot > 0.0))
+                return false;
+            c[i] = i + 1 < n ? off[i] / pivot : 0.0;
+            d[i] = (-grad[i] - off[i - 1] * d[i - 1]) / pivot;
+        }
+        step[n - 1] = d[n - 1];
+        for (std::size_t i = n - 1; i-- > 0;)
+            step[i] = d[i] - c[i] * step[i + 1];
+        // Damped: halve until the length does not grow.
+        const double before = length(t);
+        double fraction = 1.0, moved = 0.0;
+        for (int halving = 0; halving < 40; halving++, fraction *= 0.5)
+        {
+            for (std::size_t i = 0; i < n; i++)
+                trial[i] = t[i] + fraction * step[i];
+            if (length(trial) <= before * (1.0 + 1e-15))
+                break;
+        }
+        for (std::size_t i = 0; i < n; i++)
+        {
+            moved = std::max(moved, std::abs(trial[i] - t[i]));
+            t[i] = trial[i];
+        }
+        settled = moved < 1e-11 * scale;
+    }
+    if (!settled)
+        return false;
+    for (std::size_t i = 0; i < n; i++)
+    {
+        const double end = 1e-9 * scale;
+        if (!(t[i] > end && t[i] < g[i]->length - end))
+            return false;
+    }
+    return true;
+}
+
 Vec3 point_ray_launch(const PointRay& ray)
 {
     const Vec3& source = ray.path.front();
@@ -1939,7 +2281,7 @@ std::complex<double> point_ray_amplitude(const PointRay& ray, double reflected, 
     }
     for (int w = 0; w < ray.wedges; w++)
     {
-        const WedgeTerm& t = ray.wedge[w];
+        const WedgeTerm& t = wedge_term(ray, w);
         // The wedge's coefficient in the plane normal to the edge, at the
         // wavenumber and distance projected into it: for a spherical wave the
         // distance is L / sin(beta), L = s s' sin^2(beta) / (s + s').

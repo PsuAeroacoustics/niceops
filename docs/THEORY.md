@@ -1487,6 +1487,63 @@ many periods (a Fresnel zone wider than the period); nearer, the relief's facets
 and a relief that size is geometry: EDGE's sawtooth modelled as its own facets and ridges reproduces
 the canyon too.
 
+**Pitched roofs** (`--roofs`, LoD2). A building's roof may be planes $z = a x + b y + c$ instead of
+a level top: its height over $(x, y)$ is the least of them, capped at the building's top. A least of
+planes is convex, so every line where two of them meet over the footprint is a ridge, a hip or a
+break that turns outward, and a roof that is not convex -- a valley, a step -- is several buildings
+sharing sides. Its geometry follows:
+
+- **Walls.** Each side of the footprint splits where the least plane changes along it, and each
+  stretch is a facade whose top runs straight from one end's roof height to the other's (a gable's
+  end wall is two). A ray reflects in it only below that top, and blocking tests a segment against
+  the roof over each point it crosses: the planes' crossings with it are breakpoints of the exact
+  test as the footprint's sides are, and below the floor the building and its image stand from
+  $-z_\text{roof}$ to $z_\text{roof}$.
+- **Edges.** Along each stretch's top a roof edge, its faces the wall and the plane: an eave where
+  the plane rises from the wall ($n = 3/2 - \phi/\pi$ for a pitch $\phi$ across it), a rake where
+  the stretch climbs to a ridge; along each line where two planes are least together, clipped to
+  the footprint, an edge whose faces are the two planes ($n = 1 + (\phi_1 + \phi_2)/\pi$ for a ridge
+  between pitches $\phi_1$ and $\phi_2$). Each edge's air is above its plane. A corner's vertical
+  edge is as tall as the roof at its vertex. Every path search, reflection order and UTD or
+  edge-source coefficient of the flat-roofed model then applies unchanged.
+- **What a slope does not do.** A pitched roof reflects no specular ray: §6.5's roof reflection is
+  a level plane's. It scatters no diffuse energy, and a wall's patches stop at its top. The
+  turbulence screen's height is the roof's over the crossing. The pruning's visibility proof takes
+  a convex pitched building as its prism cut by each roof plane, mirrored in a facade and in the
+  floor as the footprint is, and finds the rays the unpruned search does.
+
+Against the boundary elements for a long gable 8 m across, the rays are within 0.74 dB, 0.17 rms,
+where any level roof standing in for it is 6-11 dB rms off; against EDGE's measured pitched
+scenes, 3.1 dB rms against LoD1's 4.5 at the mean height and 5.8 at the ridge (FIDELITY,
+"Pitched roofs").
+
+**Four edges and more** (`max_chain`, up to 8 by default). From low beside a building to a
+microphone low and close behind, the path over a mansard's or a gambrel's roof bends at more
+edges than three -- the near deck edge, the far one, the far break and the far eave -- and over
+several rows of roofs too. Such a path lies near the vertical plane through its two ends, so its
+edges are found there: the buildings' cross-section in that plane, each roof's profile along it
+(its corners where the plan line crosses a footprint's side or the least plane changes), and the
+upper convex hull of those corners between the source and the microphone, the taut string over
+them. Each corner of the string with more than three is matched to the roof edge it lies on, a
+corner at a footprint's vertex ending the search. The ray over the edges $g_i$ meets each at
+$\mathbf Q_i = \mathbf E_i + t_i\hat{\mathbf e}_i$ where
+
+$$
+L(\mathbf t) = |\mathbf Q_1 - \mathbf S| + \sum_i |\mathbf Q_{i+1} - \mathbf Q_i| + |\mathbf M - \mathbf Q_N|
+$$
+
+is stationary, which is Keller's law at every edge. $L$ is a sum of norms of affine functions of
+$\mathbf t$, so it is convex, its Hessian is tridiagonal, and damped Newton from the string's
+corners finds its least in a few steps; a least on an edge's end is no ray. The ray takes the
+cascade of the edges' coefficients, each wedge term the thrice-diffracted ray's: its distance
+parameter from the legs either side, its spreading by the same recursion over each edge's $\rho_e$,
+and a term halved where the leg reaching it runs along a face it shares with the edge before. Each
+end's floor image gives its own string, so a ray off the floor at either end or both is found the
+same way. Against the boundary elements for a long mansard, the nine cases only such a ray reaches
+come within 1.5 dB below 4 m, where none were found before; over every case the rays are 3.9 dB
+rms, the cascade over a mansard's nearly flat wedges ($n \approx 1.1$), each pair sharing the face
+the ray runs along, being the limit with three edges as with four.
+
 **Turbulence scattering into the buildings' shadows** (`--scattering` $\gamma_T$ with
 `--buildings`). Still air leaves a shielded microphone the diffracted rays alone; turbulence
 scatters energy into the shadow, most at high frequency. The scattered level relative to free field
@@ -2125,7 +2182,12 @@ is the error's spread over directions. Yee's error, $D(x) = \sin(x/2)$, is slow 
 where the phase speed is $c\,(1 - (kh)^2(1 - C^2/3)/24)$, and exact along the diagonals at $C = 1$;
 it is not warped. A
 cell is solid or air by its centre; a face between two air cells is open, and one at a solid is
-rigid ($v = 0$) or, with an absorption $\alpha$, the impedance face of §6.6. The floor and a plane
+rigid ($v = 0$) or, with an absorption $\alpha$, the impedance face of §6.6. Under a pitched roof a
+cell is solid where its centre lies below the least of the planes, so a slope is a staircase of
+cells, and a staircase diffracts as a smooth slope does only well below the step: behind a gable,
+by boundary elements in the profile's plane, a staircase of 6, 3 and 1.5 mm steps on a 26.6°
+slope is 10, 5 and 2.5 dB too loud at 6.3 kHz (FIDELITY, "Pitched roofs"), converging at first
+order. The floor and a plane
 of symmetry are rigid. The other sides are a convolutional PML [75]: in a slab
 normal to $x$, $\delta_x p$ becomes $\delta_x p + \psi$ with
 $\psi^n = b\,\psi^{n-1} + a\,\delta_x p^n$, $b = e^{-(\sigma + \alpha_c)\Delta t}$,

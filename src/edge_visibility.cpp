@@ -90,7 +90,10 @@ bool hidden_interval(const Vec3& apex, const Vec3& q0, const Vec3& d, double len
 
 // The planes of a convex footprint's prism from z_low to top, each moved in
 // by the margin; false for a footprint not convex or with holes.  `mirror`,
-// when set, reflects the footprint in that facade's vertical plane first.
+// when set, reflects the footprint in that facade's vertical plane first.  A
+// pitched roof's planes stand in for the top (the solid under the least of
+// them is the prism cut by each), and below the floor (z_low < 0, the
+// building with its floor image) their mirrors in the floor for the bottom.
 bool prism_planes(const Footprint& f, double z_low, const Facade* mirror, std::vector<Plane>& planes)
 {
     if (!f.holes.empty())
@@ -131,7 +134,34 @@ bool prism_planes(const Footprint& f, double z_low, const Facade* mirror, std::v
         planes.push_back({nx, ny, 0.0, nx * x[i] + ny * y[i] - margin});
     }
     planes.push_back({0.0, 0.0, 1.0, f.top - margin});
-    planes.push_back({0.0, 0.0, -1.0, -(z_low + margin)});
+    if (f.roof.empty() || z_low >= 0.0)
+        planes.push_back({0.0, 0.0, -1.0, -(z_low + margin)});
+    // z <= a x + b y + c, and below the floor -z <= a x + b y + c, mirrored
+    // (m to m - 2 (m.n) n, the constant less 2 (f0.n)(m.n)) as the footprint.
+    double nx = 0.0, ny = 0.0, offset = 0.0;
+    if (mirror)
+    {
+        const double length = std::hypot(mirror->x1 - mirror->x0, mirror->y1 - mirror->y0);
+        nx = -(mirror->y1 - mirror->y0) / length;
+        ny = (mirror->x1 - mirror->x0) / length;
+        offset = mirror->x0 * nx + mirror->y0 * ny;
+    }
+    for (const RoofPlane& r : f.roof)
+        for (const double up : {1.0, -1.0})
+        {
+            if (up < 0.0 && z_low >= 0.0)
+                continue;
+            const double norm = std::sqrt(r.a * r.a + r.b * r.b + 1.0);
+            double mx = -r.a / norm, my = -r.b / norm, c = r.c / norm;
+            if (mirror)
+            {
+                const double k = mx * nx + my * ny;
+                mx -= 2.0 * k * nx;
+                my -= 2.0 * k * ny;
+                c -= 2.0 * offset * k;
+            }
+            planes.push_back({mx, my, up / norm, c - margin});
+        }
     return true;
 }
 

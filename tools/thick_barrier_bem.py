@@ -22,6 +22,17 @@ The test's values are within 0.05 dB on that estimate.
     tools/thick_barrier_bem.py --check
     tools/thick_barrier_bem.py --width 2.44 --height 5.18 --per_wavelength 60 --out bem60.csv
 
+With --ridge the block has a gable roof, its ridge over the middle (tests/test_pitched_roofs.cpp):
+
+    tools/thick_barrier_bem.py --width 8 --height 6 --ridge 9 --sources='-10,2;-25,4.5' --behind 2,5,10 \
+        --heights 1.2,4,7 --per_wavelength 60 --out gable60.csv
+
+With --roof any roof: its corners between the eaves, from the near one to the far one (a mansard
+there, rays diffracted at four edges and more):
+
+    tools/thick_barrier_bem.py --width 12 --height 6 --roof '1.5,7.5;5.25,9;6.75,9;10.5,7.5' \
+        --sources='-15,0.5;-30,2' --behind 2,6,15 --heights 0.5,1.5,4 --per_wavelength 60 --out mansard60.csv
+
 Needs numpy and scipy.  --check compares against the exact series for a rigid circular cylinder
 (0.005 dB at 800 Hz with 800 elements).
 """
@@ -32,6 +43,7 @@ import os
 from multiprocessing import Pool
 
 import numpy as np
+from scipy.linalg import lstsq as scipy_lstsq
 from scipy.special import h1vp, hankel1, jv, jvp
 
 C = 343.2
@@ -100,15 +112,21 @@ def solve(a, b, normal, k, source, ground, chief):
     rhs = incident(middle, source, k, ground)
     A = np.vstack([A, double_layer(chief, a, b, normal, k, ground)])
     rhs = np.concatenate([rhs, -incident(chief, source, k, ground)])
-    p = np.linalg.lstsq(A, rhs, rcond=None)[0]
+    try:
+        p = np.linalg.lstsq(A, rhs, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        # LAPACK's SVD driver gives up on some large fine meshes; a
+        # complete orthogonal factorization does not.
+        p = scipy_lstsq(A, rhs, lapack_driver='gelsy')[0]
     return lambda x: incident(x, source, k, ground) + double_layer(x, a, b, normal, k, ground) @ p
 
 
 def block_case(args):
-    width, height, f, source, receivers, per_wavelength = args
+    width, height, f, source, receivers, per_wavelength, roof = args
     k = 2 * np.pi * f / C
-    a, b, normal = mesh([(width, 0.0), (width, height), (0.0, height), (0.0, 0.0)],
-                        min(C / f / per_wavelength, 0.25), closed=False, grade=3)
+    # The roof's corners between the eaves (none for a flat roof), far to near.
+    profile = [(width, 0.0), (width, height), *roof[::-1], (0.0, height), (0.0, 0.0)]
+    a, b, normal = mesh(profile, min(C / f / per_wavelength, 0.25), closed=False, grade=3)
     rng = np.random.default_rng(1)
     chief = np.stack([rng.uniform(0.1 * width, 0.9 * width, 12), rng.uniform(0.1 * height, 0.9 * height, 12)], axis=1)
     field = solve(a, b, normal, k, np.asarray(source, float), True, chief)
@@ -137,6 +155,8 @@ def main():
     parser.add_argument('--width', type=float, default=2.44)
     parser.add_argument('--height', type=float, default=5.18)
     parser.add_argument('--sources', default='-10,2;-25,4.5;-15,6.5', help='x,z;x,z;... (m, the block at 0 < x < width)')
+    parser.add_argument('--ridge', type=float, help='a gable roof, its ridge this high over the middle (m)')
+    parser.add_argument('--roof', help="the roof's corners between the eaves, near to far: x,z;x,z;... (m)")
     parser.add_argument('--behind', default='2,5,10,25', help='receivers this far past the block (m)')
     parser.add_argument('--heights', default='1.2,4.8,5.1,5.26,5.6,6.5,8', help='receiver heights (m)')
     parser.add_argument('--frequencies', default='125,250,500,1000')
@@ -149,7 +169,10 @@ def main():
         return
     sources = [tuple(float(v) for v in s.split(',')) for s in args.sources.split(';')]
     receivers = np.array([(args.width + float(d), float(z)) for d in args.behind.split(',') for z in args.heights.split(',')])
-    jobs = [(args.width, args.height, float(f), s, receivers, args.per_wavelength)
+    roof = [] if args.ridge is None else [(0.5 * args.width, args.ridge)]
+    if args.roof:
+        roof = [tuple(float(v) for v in p.split(',')) for p in args.roof.split(';')]
+    jobs = [(args.width, args.height, float(f), s, receivers, args.per_wavelength, roof)
             for f, s in itertools.product(args.frequencies.split(','), sources)]
     with Pool(args.j) as pool:
         rows = sorted(row for rows in pool.imap_unordered(block_case, jobs) for row in rows)

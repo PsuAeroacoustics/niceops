@@ -36,15 +36,18 @@
 #include <cstddef>
 #include <map>
 #include <string>
+#include <limits>
 #include <vector>
 
 #include "vec3.hpp"
 
 namespace niceops {
 
-// A vertical rectangular facade: the wall standing on the segment from (x0, y0)
-// to (x1, y1) in the run's local frame, from height `bottom` to `top` (m, the
-// run's z).  Its two faces both reflect.
+// A vertical facade: the wall standing on the segment from (x0, y0) to
+// (x1, y1) in the run's local frame, from height `bottom` to its top (m, the
+// run's z).  Its two faces both reflect.  The top is `top` all along, or
+// under a pitched roof (buildings.hpp, RoofPlane) a straight line from
+// `top_start` over (x0, y0) to `top_end` over (x1, y1), `top` their larger.
 struct Facade
 {
     double x0 = 0.0;
@@ -53,7 +56,20 @@ struct Facade
     double y1 = 0.0;
     double bottom = 0.0;
     double top = 0.0;
+    double top_start = std::numeric_limits<double>::quiet_NaN();
+    double top_end = std::numeric_limits<double>::quiet_NaN();
 };
+
+// A facade's top over the point of its base nearest p's plan.
+inline double facade_top(const Facade& f, const Vec3& p)
+{
+    if (!(f.top_start == f.top_start))
+        return f.top;
+    const double dx = f.x1 - f.x0, dy = f.y1 - f.y0, length2 = dx * dx + dy * dy;
+    double t = length2 > 0.0 ? ((p.x - f.x0) * dx + (p.y - f.y0) * dy) / length2 : 0.0;
+    t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+    return f.top_start + t * (f.top_end - f.top_start);
+}
 
 // The signed horizontal distance of `p` from the facade's plane, positive on
 // the left of its base direction (x0, y0) -> (x1, y1).

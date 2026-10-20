@@ -446,6 +446,7 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
     options.frame_bearing = input.frame_bearing;
     options.absorption = input.wall_absorption;
     options.scattering = input.scattering;
+    options.roofs = input.roofs;
     std::shared_ptr<UrbanDistrict> district(new UrbanDistrict());
     Impl& d = *district->impl_;
     d.input = read_buildings(file, options);

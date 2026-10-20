@@ -244,7 +244,8 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                             const double kick = order * lambda / relief.period();
                             double x, z;
                             if (!grating_point(facade, pa, pb, kick, x, z) || x < 0.0 || x > fr.length
-                                    || z < std::max(facade.bottom, 0.0) || z > facade.top)
+                                    || z < std::max(facade.bottom, 0.0)
+                                    || z > facade_top(facade, fr.start + x * fr.along))
                                 continue;
                             const Vec3 p(fr.start.x + x * fr.along.x, fr.start.y + x * fr.along.y, z);
                             const double r1 = (p - pa).norm(), r2 = (pb - p).norm();

@@ -346,6 +346,40 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
     `buildings_relief_flat_is_plain`), and the GPU matches the CPU with reliefs
     (`buildings_relief_gpu_matches_cpu`, `the GPU takes a relief's specular share as the CPU does`).
 
+### Pitched roofs (`Footprint::roof`, `--roofs`, `src/building_input.hpp`)
+
+A footprint's `roof`, when given, is planes z = a x + b y + c, and the roof over a point is the
+least of them (`roof_height`). THEORY §6.5 has the geometry and FIDELITY ("Pitched roofs") the
+checks. What to keep:
+
+- **The least of planes is convex, and everything leans on it.** Ridges are the lines where two
+  planes are least together (`roof_ridges`), each turning outward; a wall's top is straight between
+  the points where the least plane changes (`roof_stretches`); the pruning proof is a convex solid.
+  A valley or a step is several buildings sharing sides; the harness's EDGE extraction groups a
+  STEP file's roof faces that way (`edge.py`, `_roofs`). Do not teach `Buildings` concave roofs.
+- **`top` is the roof's highest point after construction** (`roof_top`), whatever the footprint
+  came with. The input's top caps the roof instead: `read_roofs` adds a level plane at it where it
+  is more than 1 mm below the planes' highest point (1 cm was 12 cm at EDGE's 1/12 scale).
+- **The roofs file gives a point and two slopes, not an intercept.** c at the frame's origin loses
+  digits for a building kilometres from it.
+- **Every test of a point against a wall's top goes through `facade_top`**, which interpolates
+  along the base (`first_hit`, `building_paths`, `urban.cpp`, `grating_paths`, the diffuse
+  patches). A new one that compares with `Footprint::top` lets rays through a gable's end wall.
+- **Edges come from `roof_edge`**: the first face in the plane normal to the edge, the air the
+  plane's upward normal, n from the second face. A shared side drops or raises whole ranges of
+  facades and roof edges, and a corner's edge is as tall as the roof at its vertex less the
+  neighbour's.
+- **`blocked_by` breaks a segment at the roof planes' crossings** as at the footprint's sides, and
+  below the floor tests against the mirrored roof. `on_roof` is false for a pitched building: no
+  level reflection on a slope. Slope reflections and diffuse roof patches are not done.
+- **The pruning proof takes the roof planes** (`prism_planes`): the prism cut by each, mirrored in
+  a facade and in the floor as the footprint is. Proving with the prism to the top hides real rays,
+  and `pruning finds every ray among pitched houses` fails then (checked by making that change).
+  Without any proof the pitched suburb in FIDELITY took 2051 s of CPU against 1408.
+- **The FDTD's slope is a staircase** (`make_grid`, a cell solid below the least plane). It is the
+  same as a stack of thin slabs, and it is not a smooth slope: at EDGE's scale 3 mm cells leave
+  5 dB at 6.3 kHz behind a gable (FIDELITY). Do not score sloped roofs against it.
+
 ### A point source among buildings (`src/point_paths`, `src/double_wedge`)
 
 `PointSourceField` is the tables' ray model for a source near the buildings (`niceops_point_field`,
@@ -737,6 +771,25 @@ Measured and left alone:
 - **`point_ray_launch` is minus the length's gradient**, and `a point ray leaves the source along
   minus its length's gradient` checks it so, by nudging the source, over every kind of ray; it fails
   without either floor rule. It is what a directional source is read along.
+- **Four roof edges and more are a chain** (`max_chain`, `roof_chain`, `chain_points`,
+  `chain_diffracted_ray`). The edges are the corners of the taut string over the cross-section in
+  the vertical plane through the two ends (`Buildings::section`, then each roof's profile and the
+  upper hull), each matched to a non-vertical edge of the pair's near list, strictly inside it; a
+  corner at a footprint's vertex ends the chain. The points are the least of the path's length,
+  convex in them, by damped Newton on its tridiagonal Hessian. What to keep:
+  - **Only chains of more than three.** Fewer are the double and triple searches', and a chain of
+    three would count their rays twice.
+  - **Terms past the third live in `more_wedges`**, read through `wedge_term`; anything that reads
+    `ray.wedge[w]` for any w must use it. PointRay keeps its three inline terms because a district's
+    rays are many and a chain's are few.
+  - **The GPU's ray kind is the wedge count**, which must stay below `NK_KIND_FACE` (15): hence
+    `max_chain` at most 14, and `point_rays.cpp` throws past it.
+  - **Three edges give `thrice_diffracted_ray`'s terms** (`a chain of three edges is the
+    thrice-diffracted ray`): change the two together.
+  - **Each floor variant finds its own string**: an image below the floor sees the edges
+    differently. No facade reflects on a chain, and `double_diffraction` off turns chains off.
+  - Chains cost nothing measurable (FIDELITY, "Pitched roofs"); none arose on EDGE's LoD1 scenes or
+    DigiCity, whose levels did not move.
 
 ### In a run (`--buildings`, `src/urban_point`)
 

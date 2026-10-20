@@ -77,6 +77,7 @@ int main(int argc, char** argv)
 {
     CLI::App app {"The field of a point source among buildings, at microphones."};
     std::string buildings_file;
+    std::string roofs_file;
     std::string microphones_file;
     std::string sources_file;
     std::string output;
@@ -116,6 +117,7 @@ int main(int argc, char** argv)
     std::size_t max_twice_reflections = 2;
     std::size_t max_between_reflections = 1;
     std::size_t max_thrice_reflections = 0;
+    std::size_t max_chain = 8;
     std::string triple_diffraction = "roofs";
     bool no_diffraction = false;
     bool no_double_diffraction = false;
@@ -126,6 +128,9 @@ int main(int argc, char** argv)
     int threads = 0;
     bool use_gpu = true;
     app.add_option("--buildings", buildings_file, "The district: CSV of footprint vertices, or GeoJSON.")->required();
+    app.add_option("--roofs", roofs_file, "Pitched roofs (LoD2) for a CSV district: one row per roof plane, building (its id), x, y and z (a "
+            "point on the plane) and slope_x and slope_y (its rise along x and y). A building's roof is the "
+            "least of its planes, capped at its top; one given none stays flat.");
     auto* one_source = app.add_option("--source", source, "The source's x, y and height above the floor.")->expected(3);
     auto* many_sources = app.add_option("--sources", sources_file,
             "Instead of --source, a CSV of sources: x, y and height columns. Each row is a source position.");
@@ -180,13 +185,18 @@ int main(int argc, char** argv)
     app.add_option("--radius", radius, "Facades and edges within this horizontal distance of the source or a "
                                        "microphone, in --units (default 150 m).");
     app.add_flag("--no_diffraction", no_diffraction, "Specular rays only.");
-    app.add_flag("--no_double_diffraction", no_double_diffraction, "No ray diffracted at two edges or three.");
+    app.add_flag("--no_double_diffraction", no_double_diffraction, "No ray diffracted at two edges or more.");
     app.add_option("--triple_diffraction", triple_diffraction,
             "Rays diffracted at three edges: 'roofs' (default; three roof edges, the rows a street's sound crosses), "
             "'all' (any three, every chain of corners round a block too: far more rays), or 'none'.")
             ->check(CLI::IsMember({"none", "roofs", "all"}));
     app.add_option("--max_thrice_reflections", max_thrice_reflections,
             "Facade reflections on each side of a triple diffraction (default 0).");
+    app.add_option("--max_chain", max_chain,
+            "Rays diffracted at more than three roof edges, up to this many (default 8, at most 14; 3 for none): "
+            "the corners of the taut string over the buildings' cross-section between the source and the "
+            "microphone, a mansard's or several rows of roofs from low beside them.")
+            ->check(CLI::Range(3, 14));
     app.add_flag("--no_roofs", no_roofs, "Roofs do not reflect, for comparison.");
     app.add_flag("--no_prune", no_prune,
             "Solve and check every diffracted path rather than ruling most out first: the same rays, slower; for "
@@ -317,6 +327,7 @@ int main(int argc, char** argv)
         input.default_height = default_height;
         input.default_height_given = app.count("--default_height") > 0;
         input.absorption = absorption;
+        input.roofs = roofs_file;
         // With a spectrum, a building's scattering coefficient weights it: 1, all
         // relief, by default.
         input.scattering = (!scattering_spectrum_file.empty() || !relief_files.empty()) && app.count("--scattering") == 0
@@ -432,6 +443,7 @@ int main(int argc, char** argv)
                 : triple_diffraction == "all"                      ? PointPathOptions::Triple::all
                                                                    : PointPathOptions::Triple::roofs;
         options.max_thrice_reflections = max_thrice_reflections;
+        options.max_chain = max_chain;
         options.diffraction = !no_diffraction;
         options.double_diffraction = !no_double_diffraction;
         options.roofs = !no_roofs;
@@ -514,6 +526,8 @@ int main(int argc, char** argv)
                 const std::string kind = std::string(ray.wedges == 0 ? "specular"
                                                              : ray.wedges == 1 ? "diffracted"
                                                              : ray.wedges == 3 ? "diffracted three times"
+                                                             : ray.wedges > 3  ? "diffracted " + std::to_string(ray.wedges)
+                                                                           + " times"
                                                              : ray.shared      ? "diffracted twice over a shared face"
                                                                                : "diffracted twice")
                         + (ray.made_edges.empty() ? "" : " (made partner)");

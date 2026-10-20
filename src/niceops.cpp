@@ -4912,6 +4912,7 @@ int run(int argc, char* argv[])
     std::string propagation_table;
     std::string urban_table;
     std::string buildings_file;
+    std::string roofs_file;
     double wall_absorption = 0.0;
     double floor_absorption = 0.0;
     double facade_scattering = 0.0;
@@ -5412,6 +5413,10 @@ int run(int argc, char* argv[])
             "(--state_tolerance). Spectral path, and a database carrying spectra; not with --urban_table, "
             "--terrain, --refraction, --propagation_table, --atmosphere, --wind, --db_cutoff or "
             "--coverage_file.");
+    app.add_option("--roofs", roofs_file,
+            "With a CSV --buildings: pitched roofs (LoD2), one row per roof plane: building (its id), x, y and z "
+            "(a point on the plane) and slope_x and slope_y (its rise along x and y). A building's roof is the "
+            "least of its planes, capped at its top; one given none stays flat.");
     app.add_option("--wall_absorption", wall_absorption,
             "With --buildings: the walls' energy absorption coefficient where a building gives none (default 0).");
     app.add_option("--floor_absorption", floor_absorption,
@@ -6287,6 +6292,8 @@ int run(int argc, char* argv[])
     }
     else if (app.count("--wall_absorption") > 0 || app.count("--floor_absorption") > 0)
         input_error("--wall_absorption and --floor_absorption go with --buildings.");
+    else if (!roofs_file.empty())
+        input_error("--roofs goes with --buildings.");
     else if (app.count("--facade_scattering") > 0 || app.count("--facade_scattering_spectrum") > 0
             || app.count("--patch_size") > 0 || app.count("--diffuse_radius") > 0 || app.count("--facade_relief") > 0
             || app.count("--relief_scattering") > 0 || app.count("--grating_reflections") > 0)
@@ -6608,6 +6615,7 @@ int run(int argc, char* argv[])
                 ? 1.0
                 : facade_scattering;
         input.scattering_file = facade_scattering_spectrum;
+        input.roofs = roofs_file;
         if (!facade_reliefs.empty() && !facade_scattering_spectrum.empty())
             input_error("--facade_relief and --facade_scattering_spectrum are each the walls' scattering; give one.");
         if ((app.count("--relief_scattering") > 0 || app.count("--grating_reflections") > 0) && facade_reliefs.empty())
