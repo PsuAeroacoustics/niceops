@@ -17,8 +17,8 @@
 //     the single-edge condition at each in turn, found by Steffensen's
 //     method (in closed form for parallel edges), and a pair whose point
 //     does not converge is no ray; the ray between the edges reflects in
-//     nothing, or with max_between_reflections in one facade, the second
-//     edge mirrored in it.  Diffracted three times: the cascade of three
+//     nothing, or with max_between_reflections in one facade or the floor,
+//     the second edge mirrored in it.  Diffracted three times: the cascade of three
 //     coefficients, the middle edge's point a fixed point of meeting the
 //     single-edge condition there with the other two at theirs (see
 //     thrice_diffracted_ray), the ends' images to max_thrice_reflections and
@@ -36,7 +36,7 @@
 //
 // Every ray is tested exactly (folded_path_open); the images are beam traced
 // (image_tree).  Left out: four edges or more, more than one reflection
-// between two edges and the floor there, any reflection between three,
+// between two edges, any reflection between three,
 // a shared face's aperture on a ray of three, diffuse reflection, and an
 // edge's ends.
 
@@ -63,8 +63,9 @@ struct PointPathOptions
     std::size_t max_reflections = 4;      // on a ray that diffracts nowhere
     std::size_t max_edge_reflections = 2; // on each side of a single diffraction
     std::size_t max_twice_reflections = 2; // on each side of a double diffraction
-    // Facade reflections between the two edges of a double diffraction: 0 or
-    // 1.  The ray unfolds about the facade, the second edge mirrored in it.
+    // Reflections between the two edges of a double diffraction, in a facade
+    // or the floor: 0 or 1.  The ray unfolds about the facade or the floor,
+    // the second edge mirrored in it.
     std::size_t max_between_reflections = 1;
     // Rays diffracted at three edges in turn, by the cascade of their three
     // coefficients, the source's and the microphone's images to
@@ -239,10 +240,12 @@ struct PointRay
     // For a diffracted ray (wedges > 0).
     EdgeSourceTerm edge_source;
     // The facade a twice-diffracted ray reflects in between its edges, the
-    // last of its `facades` before the microphone's; no_facade for none.  Its
-    // wedge terms are taken with the second edge mirrored in it, and it takes
-    // UTD under the edge source, whose integral runs over the real edge.
+    // last of its `facades` before the microphone's; no_facade for none; or
+    // whether it reflects in the floor there (one of its `floor`).  Its wedge
+    // terms are taken with the second edge mirrored, and it takes UTD under
+    // the edge source, whose integral runs over the real edge.
     std::size_t between = no_facade;
+    bool between_floor = false;
     // The height of the horizontal plane the ray reflects in on its source
     // side -- anywhere along it for a specular ray, before its first edge for
     // a diffracted one -- 0 for the floor, NaN for none (point_ray_launch).

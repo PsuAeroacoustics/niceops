@@ -146,7 +146,8 @@ int main(int argc, char** argv)
     app.add_option("--max_twice_reflections", max_twice_reflections,
             "Facade reflections on each side of a double diffraction (default 2).");
     app.add_option("--max_between_reflections", max_between_reflections,
-            "Facade reflections between the two edges of a double diffraction, 0 or 1 (default 1).")
+            "Reflections, in a facade or the floor, between the two edges of a double diffraction, 0 or 1 "
+            "(default 1).")
             ->check(CLI::Range(0, 1));
     app.add_option("--radius", radius, "Facades and edges within this horizontal distance of the source or a "
                                        "microphone, in --units (default 150 m).");

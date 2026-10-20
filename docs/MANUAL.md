@@ -1961,7 +1961,7 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--max_reflections` | Facade reflections on a ray that diffracts nowhere, and on a path that lights a patch. Default 4. |
 | `--max_edge_reflections` | Facade reflections on each side of a single diffraction. Default 2. |
 | `--max_twice_reflections` | Facade reflections on each side of a double diffraction. Default 2. |
-| `--max_between_reflections` | Facade reflections between the two edges of a double diffraction, 0 or 1. Default 1. |
+| `--max_between_reflections` | Reflections, in a facade or the floor, between the two edges of a double diffraction, 0 or 1. Default 1. |
 | `--triple_diffraction` | Rays diffracted at three edges: `roofs` (default; three roof edges, the rows a street's sound crosses), `all` (any three, every chain of corners round a block too: far more rays for little), or `none`. |
 | `--max_thrice_reflections` | Facade reflections on each side of a triple diffraction. Default 0. |
 | `--radius` | Facades and edges within this horizontal distance of the source or a microphone. Default 150 m. |

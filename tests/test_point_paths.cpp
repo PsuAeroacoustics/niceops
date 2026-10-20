@@ -177,7 +177,7 @@ TEST_CASE("the point-source field is reciprocal", "[point_paths]")
     const std::vector<std::pair<Vec3, Vec3>> pairs {{Vec3(3.0, 12.0, 2.0), Vec3(4.0, -3.0, 1.2)},
             {Vec3(6.0, 6.0, 2.0), Vec3(13.0, 10.0, 1.2)}, {Vec3(-4.0, 4.0, 1.5), Vec3(6.0, 18.0, 1.2)},
             {Vec3(-5.0, 4.0, 2.0), Vec3(6.0, 6.0, 1.2)}};
-    std::size_t wedges[3] {0, 0, 0}, shared = 0;
+    std::size_t wedges[4] {0, 0, 0, 0}, shared = 0;
     for (const auto& [s, m] : pairs)
     {
         const auto forward = levels(city, s, m, 0.9, 1.0), back = levels(city, m, s, 0.9, 1.0);
@@ -189,12 +189,14 @@ TEST_CASE("the point-source field is reciprocal", "[point_paths]")
             wedges[ray.wedges]++;
             shared += ray.shared;
             // The path drawn is the ray: it runs from the source to the
-            // microphone through its points, and off the floor's mirror it is
-            // as long as the ray.
+            // microphone through its points (a bounce on the floor between two
+            // edges among them), and off the floor's mirror it is as long as
+            // the ray.
             REQUIRE(ray.path.size() >= 2);
             REQUIRE((ray.path.front() - s).norm() == 0.0);
             REQUIRE((ray.path.back() - m).norm() == 0.0);
-            REQUIRE(ray.path.size() == 2 + ray.facades.size() + static_cast<std::size_t>(ray.wedges));
+            REQUIRE(ray.path.size()
+                    == 2 + ray.facades.size() + static_cast<std::size_t>(ray.wedges) + (ray.between_floor ? 1 : 0));
             if (ray.floor == 0)
             {
                 double length = 0.0;
@@ -1395,6 +1397,55 @@ TEST_CASE("a ray reflects between two edges as the double diffraction to the mir
     every.prune = false;
     REQUIRE(lengths_of(PointSourceField(notch, source, microphone, every), 2, &unpruned) == with);
     REQUIRE(unpruned == some);
+}
+
+// Among DigiCity-like containers some twice-diffracted rays reflect in the
+// floor between their edges: each bounces on the floor in the air, its
+// length is its real legs' sum, and the rays are the same with the ends
+// swapped and with pruning off.
+TEST_CASE("a ray reflects in the floor between two edges", "[point_paths]")
+{
+    const Buildings containers({box(4.09, 17.66, 6.53, 23.72, 7.77), box(14.81, 17.66, 17.25, 23.72, 7.77),
+            box(1.6, 10.82, 4.04, 16.88, 7.77), box(1.6, 8.38, 13.72, 10.82, 5.18),
+            box(20.21, 3.86, 22.65, 16.0, 7.77), box(13.5, -1.84, 19.56, 0.6, 7.77)});
+    std::size_t bounced = 0, checked = 0;
+    for (const Vec3& microphone : {Vec3(10.5, -1.1, 1.2), Vec3(-3.6, 6.4, 1.2), Vec3(18.0, 2.0, 1.2)})
+    {
+        const Vec3 source(10.5, 20.5, 2.0);
+        const PointSourceField field(containers, source, microphone);
+        for (const PointRay& ray : field.rays())
+        {
+            if (!ray.between_floor)
+                continue;
+            bounced++;
+            REQUIRE(ray.wedges == 2);
+            REQUIRE(ray.floor >= 1);
+            // A ray that also bounces on the floor at an end draws that leg
+            // unfolded below it; with the one bounce between its edges, the
+            // path is the real one.
+            if (ray.floor == 1 && ray.facades.empty())
+            {
+                double length = 0.0, lowest = 1e300;
+                for (std::size_t k = 1; k < ray.path.size(); k++)
+                    lowest = std::min(lowest, ray.path[k].z);
+                REQUIRE(lowest == Catch::Approx(0.0).margin(1e-9));
+                checked++;
+                for (std::size_t k = 1; k < ray.path.size(); k++)
+                    length += (ray.path[k] - ray.path[k - 1]).norm();
+                REQUIRE(length == Catch::Approx(ray.length).epsilon(1e-9));
+            }
+        }
+        const std::vector<double> there = lengths_of(field, 2);
+        const std::vector<double> back = lengths_of(PointSourceField(containers, microphone, source), 2);
+        REQUIRE(back.size() == there.size());
+        for (std::size_t i = 0; i < there.size(); i++)
+            REQUIRE(back[i] == Catch::Approx(there[i]).epsilon(1e-12));
+        PointPathOptions every;
+        every.prune = false;
+        REQUIRE(lengths_of(PointSourceField(containers, source, microphone, every), 2) == there);
+    }
+    REQUIRE(bounced > 0);
+    REQUIRE(checked > 0);
 }
 
 // Two rows, the first the taller, the microphone behind the second: the path

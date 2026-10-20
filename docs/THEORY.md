@@ -1130,10 +1130,12 @@ distance parameters are the first's $s_1 s_2/(s_1 + s_2)$ and the second's $s_2 
 are reciprocal too.
 
 **A reflection between the two edges** (`--max_between_reflections`, 1 by default). Mirrored in a
-facade, the second edge -- its faces with it, so that its own angles are its own -- and the
-microphone's image make the path a double diffraction of its own, which the same search solves. The
-facade must face both edges and lie within the pair's own extent of them (at least 1 m); its
-reflection point must lie on it, and both edges' points in front of it. Its wedge terms are the
+facade or the floor, the second edge -- its faces with it, so that its own angles are its own -- and
+the microphone's image make the path a double diffraction of its own, which the same search solves.
+A facade must face both edges and lie within the pair's own extent of them (at least 1 m); its
+reflection point must lie on it, and both edges' points in front of it. The floor is always tried,
+its bounce in the air: where a twice-diffracted ray's point runs down a corner to the wall's foot,
+the ray that bounces on the floor between the edges takes over. Its wedge terms are the
 mirrored pair's. Between the two edges of a low roof in a notch -- the low house between two tall
 ones -- the ray grazes the roof and meets the tall walls at their foot, where roof and wall make a
 right angle whose image is exact, and the mirrored pair still shares a face. Near a facade's end
@@ -1346,8 +1348,7 @@ with the amplitudes held at the sub-band's center, which the GPU takes by Gaussâ
 quadrature wherever it needs fewer operations than the pairs, for rays adding coherently. $|S|^2$ is a sum of
 $e^{ik\,\Delta L}$ with $|\Delta L|$ at most the rays' spread of lengths $\Delta$, so with
 $M \ge h\Delta/2 + 4\,(h\Delta)^{1/3} + 6$ nodes the rule is exact to round-off, and it keeps every
-pair. Left out: four edges or more; more than one reflection between two edges, and the floor
-there; any reflection between three edges or at their ends (`--max_thrice_reflections`); a shared
+pair. Left out: four edges or more; more than one reflection between two edges; any reflection between three edges or at their ends (`--max_thrice_reflections`); a shared
 face's aperture on a ray of three, which takes the cascade; more than `--max_twice_reflections` on
 either side of two edges; a roof bounce on a twice-diffracted ray; a vertex; and an edge's ends
 (except with `--edge_source`, which a ray reflected between its edges or diffracted three times does

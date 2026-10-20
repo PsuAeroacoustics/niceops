@@ -50,6 +50,18 @@ Edge mirrored_edge(const Facade& facade, const Edge& g)
     return m;
 }
 
+// The same in the floor's plane.
+Edge floor_mirrored_edge(const Edge& g)
+{
+    Edge m = g;
+    m.start = below(g.start);
+    m.direction = below(g.direction);
+    m.face0 = below(g.face0);
+    m.air = below(g.air);
+    m.air1 = below(g.air1);
+    return m;
+}
+
 // The component of v normal to the edge.
 Vec3 normal_part(const Edge& e, const Vec3& v)
 {
@@ -1102,12 +1114,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     // front, the plan of a segment from the first edge to the mirror can cross
     // it: the crossings fill the hull of the four from end to end.  Facades
     // farther off than the pair's own extent, at least 1 m, are not tried.
-    // Worked out once a field for each pair met.
+    // The floor is always a candidate, last.  Worked out once a field for each
+    // pair met.
     struct Between
     {
         std::size_t facade;
         Edge mirror;
         EdgePair pair;
+        bool floor = false;
     };
     std::unordered_map<std::uint64_t, std::vector<Between>> between_lists;
     std::vector<std::uint32_t> nearby;
@@ -1170,6 +1184,9 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             b.pair = edge_pair(g1, b.mirror);
             list.push_back(std::move(b));
         }
+        Between floor {Buildings::no_facade, floor_mirrored_edge(g2), {}, true};
+        floor.pair = edge_pair(g1, floor.mirror);
+        list.push_back(std::move(floor));
         return list;
     };
     std::vector<Vec3> to_source, to_microphone, across;
@@ -1232,8 +1249,9 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 const PathEnd::View& from_microphone = mic.view(j, k2, fb);
                                 const Vec3 pa = fa ? below(a.point) : a.point;
                                 const Vec3 pb_real = fb ? below(b.point) : b.point;
-                                const Vec3 pb = via != nullptr ? mirror_in(buildings.facades()[via->facade], pb_real)
-                                                               : pb_real;
+                                const Vec3 pb = via == nullptr ? pb_real
+                                        : via->floor           ? below(pb_real)
+                                                               : mirror_in(buildings.facades()[via->facade], pb_real);
                                 // The fixed point of t2 -> keller(g2, q1(keller(g1, pa, q2(t2))), pb),
                                 // by Steffensen's method: exact in one step for parallel
                                 // edges, where the map is affine, and quadratic near the
@@ -1293,15 +1311,17 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 // where the real path does.
                                 const Vec3 q1 = g1.start + t1 * g1.direction, q2 = h2.start + t2 * h2.direction;
                                 const Vec3 q2_real = via != nullptr ? g2.start + t2 * g2.direction : q2;
-                                if (q1.z < 0.0 || q2.z < 0.0)
+                                if (q1.z < 0.0 || q2_real.z < 0.0)
                                     continue;
-                                if (via != nullptr)
+                                if (via != nullptr && !via->floor)
                                 {
                                     const Facade& facade = buildings.facades()[via->facade];
                                     if (facade_side(facade, q1) <= Buildings::contact
                                             || facade_side(facade, q2_real) <= Buildings::contact)
                                         continue;
                                 }
+                                if (via != nullptr && via->floor && !(q1.z > 0.0 && q2_real.z > 0.0))
+                                    continue;
                                 const Vec3 in1 = pa - q1, mid = q2 - q1, out2 = pb - q2;
                                 if (mid.norm() < 1e-6)
                                     continue;
@@ -1319,20 +1339,26 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 if (!folded_path_open(buildings, q1, source, a.facades, fa == 1, &to_source))
                                     continue;
                                 across.clear();
-                                if (via != nullptr ? !folded_path_open(buildings, q1, q2_real, {via->facade}, false, &across)
-                                                   : buildings.blocked(q1, q2))
+                                if (via == nullptr ? buildings.blocked(q1, q2)
+                                        : via->floor
+                                        ? !folded_path_open(buildings, q1, q2_real, {}, true)
+                                        : !folded_path_open(buildings, q1, q2_real, {via->facade}, false, &across))
                                     continue;
+                                // The floor's bounce, where the unfolded leg crosses it.
+                                if (via != nullptr && via->floor)
+                                    across.push_back(q1 + (q1.z / (q1.z + q2_real.z)) * (q2 - q1));
                                 if (!folded_path_open(buildings, q2_real, microphone, b.facades, fb == 1, &to_microphone))
                                     continue;
                                 PointRay ray = twice_diffracted_ray(g1, h2, pa, pb, q1, q2);
                                 ray.facades = a.facades;
-                                if (via != nullptr)
+                                if (via != nullptr && !via->floor)
                                 {
                                     ray.facades.push_back(via->facade);
                                     ray.between = via->facade;
                                 }
+                                ray.between_floor = via != nullptr && via->floor;
                                 ray.facades.insert(ray.facades.end(), b.facades.begin(), b.facades.end());
-                                ray.floor = fa + fb;
+                                ray.floor = fa + fb + (ray.between_floor ? 1 : 0);
                                 if (fa)
                                     ray.source_plane = 0.0;
                                 ray.edge_source.edges[0] = e1;
@@ -1851,7 +1877,7 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
     // So does a ray that reflects between its edges, whose second edge it
     // meets mirrored, and one diffracted three times.
     if (ray.wedges == 0 || ray.wedges > 2 || !ray.made_edges.empty() || !ray.roof_facades.empty()
-            || ray.between != PointRay::no_facade)
+            || ray.between != PointRay::no_facade || ray.between_floor)
         return out;
     const EdgeSourceTerm& t = ray.edge_source;
     if (ray.wedges == 1)

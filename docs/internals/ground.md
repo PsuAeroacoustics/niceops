@@ -643,8 +643,8 @@ Measured and left alone:
   reflections are not proved (`visible_stretch` tries one), so their views take the whole edge;
   the exact path tests decide. `twice-diffracted rays reflect to max_twice_reflections at either
   end` holds the rays at one to be those at two that reflect once, and swaps the ends.
-- **A reflection between two edges unfolds about the facade** (`max_between_reflections`, 1). The
-  second edge and the microphone's image are mirrored in it (`mirrored_edge`: every vector of the
+- **A reflection between two edges unfolds about the facade or the floor** (`max_between_reflections`,
+  1). The second edge and the microphone's image are mirrored in it (`mirrored_edge`: every vector of the
   edge with it, so that `Edge::angle`, which reads `face0` and `air`, gives the mirror its own
   angles), and the pair is solved as any other. What to keep:
   - **The candidates are per pair, once a field** (`between_of`): facades near the pair (within its
@@ -656,6 +656,11 @@ Measured and left alone:
     angle, exact, and `folded_path_open` takes it.
   - **The ray keeps its facade** (`PointRay::between`, and in `facades` for its reflection) and takes
     UTD under `--edge_source`, whose integral runs over the real edge, not its mirror.
+  - **The floor is every pair's last candidate** (`floor_mirrored_edge`, `PointRay::between_floor`,
+    counted in `floor`), its bounce tested by `folded_path_open` below the floor with no facades,
+    which holds the line to q2's floor image against the buildings and their mirrors. It took the
+    continuity sweep's two steps at a wall's foot (25 to 23 over 1 dB on 20 lines) for 8% of the
+    demo run, and moved nothing on EDGE. Test: `a ray reflects in the floor between two edges`.
   - **What it leaves wrong:** near a facade's end the reflected wave is in the end's transition, and
     its partner diffracts at the end's corner. Where that corner meets the first edge (a notch's
     front edge running into the tall wall) the partner's point closes on the vertex, so the ray is

@@ -42,15 +42,16 @@ boundaries need the same continuity treatment the second order has.
 - **Two reflections at each end of a twice-diffracted ray** (`max_twice_reflections`, was one): the street
   between two rows after the roof. UE13's receivers between the rows went from −3.6 dB mean, 4.5 rms to −2.0,
   3.2 against the FDTD.
-- **One facade reflection between two edges** (`max_between_reflections`): the second edge mirrored in the
-  facade. UE06's floor source went from 5.3 to 2.8 dB rms against the FDTD; its R2-R4 are within 1.6.
+- **One reflection between two edges** (`max_between_reflections`), in a facade or the floor: the second edge
+  mirrored in it. UE06's floor source went from 5.3 to 2.8 dB rms against the FDTD; its R2-R4 are within 1.6.
 - **Three roof edges** (`triple_diffraction`, `roofs`; `all` for any three): UE13's receiver behind the second
   row went from 8.2 to 2.2 dB rms. Every edge cost eight times the demo run for no level that moved.
 
 Rays against the FDTD over EDGE's 13 runs: 2.80 → 1.95 dB rms. Against the measurements (1124 band levels, UE06
-and UE07 read swapped): 4.01 → 3.82 dB rms by UTD. DigiCity microphone 7: −4.4 / 5.5 → −3.9 / 5.0 dB (specular).
-The continuity sweep (20 lines, 3771 positions): 31 → 25 steps over 1 dB, the largest 9.5 → 5.2 dB. The demo
-`--buildings` run costs 66% more on the CPU (3.5 → 5.8 s). FIDELITY and THEORY 6.5 have the details.
+and UE07 read swapped): 4.01 → 3.82 dB rms by UTD. DigiCity microphone 7: −4.4 / 5.5 → −4.1 / 5.2 dB (specular), with the source calibrated on three other
+microphones that the new rays reach too.
+The continuity sweep (20 lines, 3771 positions): 31 → 23 steps over 1 dB, the largest 9.5 → 4.9 dB. The demo
+`--buildings` run costs 80% more on the CPU (3.5 → 6.3 s). FIDELITY and THEORY 6.5 have the details.
 
 **Still open:**
 
@@ -58,7 +59,7 @@ The continuity sweep (20 lines, 3771 positions): 31 → 25 steps over 1 dB, the 
   reflects 3 cm inside a tall house's wall, where the field is about half, and the corner that would diffract
   the partner meets the low roof's front edge. A knife-edge transition carried past the facade's end (as
   `--fade` makes partners for lower orders) would stand in for it.
-- **Vertex diffraction** in general, the floor between two edges, more than one reflection between edges,
+- **Vertex diffraction** in general, more than one reflection between edges,
   reflections on a ray of three edges, and the shared face's aperture on a ray of three (it takes the cascade).
 - **Four edges or more**, which a thin middle row needs (each of its roof edges counts).
 
@@ -67,7 +68,7 @@ The continuity sweep (20 lines, 3771 positions): 31 → 25 steps over 1 dB, the 
 **Evidence.** `niceops_point_field --scattering_spectrum` already carries the diffuse field.
 
 - **DigiCity microphone 7:** with the containers' corrugation (36 mm on a 278 mm pitch, coefficient from
-  `tools/profile_scattering.py`), it goes from −3.9 dB mean / 5.0 dB rms to −2.3 / 2.9.
+  `tools/profile_scattering.py`), it goes from −4.1 dB mean / 5.2 dB rms to −2.3 / 2.9.
 - **EDGE canyons with relief** (UE24–26 against UE23): measured −1.0 to −1.6 dB, which a specular-only model misses.
 
 **Done (Oct 19).** `niceops --buildings` takes `--facade_scattering` (or each building's scattering column),
