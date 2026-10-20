@@ -1221,11 +1221,13 @@ hemi-anechoic room, rigid floor, receivers on the floor mostly in the buildings'
 given its loudspeaker's measured directivity at its emission angle and the air's absorption,
 summed coherently over the band; pairs at least 15 dB over noise whose repeats agree to 0.5 dB,
 1.6-20 kHz at model scale; one gain per loudspeaker fitted, the archive's being undocumented),
-the two are the same: 4.09 and 4.10 dB rms over 1124 band levels, 4.36 and 4.37 over the 845 in
-shadow, and within 0.01 dB of each other at the median there. At model scale the buildings are many
+the two are close: 4.09 and 4.07 dB rms over 1124 band levels, 4.36 and 4.33 over the 845 in
+shadow, and within 0.03 dB of each other at the median there. At model scale the buildings are many
 wavelengths long, so their ends matter little, and what is left is not diffraction's form. Read
 with the archive's UE06 and UE07 measurements swapped, as the full-wave runs suggest (below; not
-confirmed), the two models are 3.82 and 3.79 dB rms over all, 4.03 and 3.98 in shadow.
+confirmed), the two models are 3.82 and 3.74 dB rms over all, 4.03 and 3.92 in shadow. The edge
+source's floor-source rows in UE06 and UE07 are 2.15 and 2.53 dB rms, level with the FDTD's 2.19 and
+2.36, since it took the rays that reflect between two edges.
 
 **Continuity.** On 20 of the sweep's lines (3771 positions, the loudspeaker at hover spot 5 only),
 `--edge_source` left 30 steps of more than 1 dB where the model without it left 31 (9.1 and
@@ -1466,16 +1468,16 @@ loudspeaker and band from the line-of-sight pairs, as above). Measured − predi
 | UE00, floor | 32, shadow | +0.03 dB mean, 1.80 rms | +0.29, 1.96 | +0.23, 1.98 |
 | UE00, drone | 32, shadow | −0.14, 0.59 | −0.16, 0.58 | −0.16, 0.59 |
 | UE23, floor | 28, line of sight | +0.36, 0.83 | +0.36, 0.80 | +0.36, 0.80 |
-| UE06 (read swapped), floor | 32, shadow | −1.03, 2.19 | −1.80, 3.68 | −1.64, 3.35 |
-| UE06 (read swapped), drone | 31, shadow | −0.09, 0.74 | +0.20, 1.98 | +0.26, 1.23 |
-| UE07 (read swapped), floor | 32, shadow | −1.04, 2.36 | −2.12, 4.13 | −1.52, 3.48 |
-| UE07 (read swapped), drone | 32, shadow | −0.29, 1.11 | −0.12, 2.21 | −0.22, 1.27 |
-| UE06 (as labelled), floor | 32, shadow | −1.79, 4.99 | −2.55, 4.85 | −2.39, 4.84 |
-| UE06 (as labelled), drone | 32, shadow | +2.43, 3.91 | +2.61, 4.33 | +2.70, 4.19 |
-| UE07 (as labelled), floor | 32, shadow | −0.29, 4.28 | −1.37, 4.97 | −0.77, 4.64 |
-| UE07 (as labelled), drone | 31, shadow | −2.79, 4.09 | −2.75, 3.39 | −2.73, 3.97 |
+| UE06 (read swapped), floor | 32, shadow | −1.03, 2.19 | −1.80, 3.68 | −0.43, 2.15 |
+| UE06 (read swapped), drone | 31, shadow | −0.09, 0.74 | +0.20, 1.98 | +0.31, 1.15 |
+| UE07 (read swapped), floor | 32, shadow | −1.04, 2.36 | −2.12, 4.13 | −0.59, 2.53 |
+| UE07 (read swapped), drone | 32, shadow | −0.29, 1.11 | −0.12, 2.21 | −0.25, 1.25 |
+| UE06 (as labelled), floor | 32, shadow | −1.79, 4.99 | −2.55, 4.85 | −1.18, 4.62 |
+| UE06 (as labelled), drone | 32, shadow | +2.43, 3.91 | +2.61, 4.33 | +2.76, 4.22 |
+| UE07 (as labelled), floor | 32, shadow | −0.29, 4.28 | −1.37, 4.97 | +0.16, 4.15 |
+| UE07 (as labelled), drone | 31, shadow | −2.79, 4.09 | −2.75, 3.39 | −2.74, 3.96 |
 | UE13, floor (walls 0.05, 90 ms) | 26, shadow | +2.02, 4.96 | +2.77, 5.85 | +2.77, 5.93 |
-| UE12, floor (walls 0.05, 90 ms) | 27, shadow | +1.17, 3.77 | +0.66, 4.16 | +0.62, 4.12 |
+| UE12, floor (walls 0.05, 90 ms) | 27, shadow | +1.17, 3.77 | +0.66, 4.16 | +0.62, 4.11 |
 | UE12, drone | 21, shadow | +0.26, 1.12 | −0.14, 1.15 | −0.15, 1.15 |
 | UE14, floor | 32, shadow | −0.08, 1.36 | +0.13, 1.45 | −0.14, 1.51 |
 | UE14, drone | 24, shadow | +0.09, 0.73 | +0.36, 0.90 | +0.09, 0.74 |
