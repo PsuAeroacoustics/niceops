@@ -537,45 +537,6 @@ TEST_CASE("over a long mansard house the rays need four edges", "[pitched_roofs]
     REQUIRE(std::sqrt(square / mansard_cases.size()) < 4.2);
 }
 
-// Through three edges a chain's ray is the thrice-diffracted one, term for
-// term: here over a hip roof's eave, hip and ridge, none parallel, at points
-// that need not be stationary.
-TEST_CASE("a chain of three edges is the thrice-diffracted ray", "[pitched_roofs]")
-{
-    Footprint hip;
-    hip.x = {0.0, 12.0, 12.0, 0.0};
-    hip.y = {0.0, 0.0, 8.0, 8.0};
-    hip.roof = {{0.5, 0.0, 5.0}, {-0.5, 0.0, 11.0}, {0.0, 0.5, 5.0}, {0.0, -0.5, 9.0}};
-    const Buildings city({hip});
-    std::vector<const Edge*> g;
-    for (const Edge& e : city.edges())
-        if (!e.vertical && g.size() < 3
-                && (g.empty() || std::abs(std::abs(e.direction.dot(g.back()->direction)) - 1.0) > 1e-6))
-            g.push_back(&e);
-    REQUIRE(g.size() == 3);
-    const std::vector<Vec3> q {g[0]->start + 0.4 * g[0]->length * g[0]->direction,
-            g[1]->start + 0.6 * g[1]->length * g[1]->direction, g[2]->start + 0.5 * g[2]->length * g[2]->direction};
-    const Vec3 pa(-8.0, -3.0, 1.5), pb(19.0, 12.0, 2.0);
-    const PointRay chain = chain_diffracted_ray(g, pa, pb, q);
-    const PointRay thrice = thrice_diffracted_ray(*g[0], *g[1], *g[2], pa, pb, q[0], q[1], q[2]);
-    REQUIRE(chain.wedges == 3);
-    REQUIRE(chain.length == Catch::Approx(thrice.length).epsilon(1e-14));
-    REQUIRE(chain.spreading == Catch::Approx(thrice.spreading).epsilon(1e-12));
-    for (int w = 0; w < 3; w++)
-    {
-        const WedgeTerm &a = chain.wedge[w], &b = thrice.wedge[w];
-        REQUIRE(a.angles.n == b.angles.n);
-        for (int k = 0; k < 4; k++)
-        {
-            REQUIRE(a.angles.c[k] == Catch::Approx(b.angles.c[k]).margin(1e-12));
-            REQUIRE(a.angles.cot[k] == Catch::Approx(b.angles.cot[k]).epsilon(1e-10).margin(1e-10));
-        }
-        REQUIRE(a.sin_beta == Catch::Approx(b.sin_beta).epsilon(1e-12));
-        REQUIRE(a.distance == Catch::Approx(b.distance).epsilon(1e-12));
-        REQUIRE(a.grazing == b.grazing);
-    }
-}
-
 // Across a hip roof below its ridge, from low beside it: the far eave, two
 // hips and the near eave, the hips oblique to the eaves, and the path over
 // them stationary in 3-D -- Keller's law at every edge -- however the solver

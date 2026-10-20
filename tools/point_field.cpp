@@ -396,14 +396,7 @@ int main(int argc, char** argv)
         }
 
         // What is wrong with where a point stands, "" for nothing.
-        auto misplaced = [&](const Vec3& p) -> std::string {
-            if (!(p.z >= 0.0))
-                return "stands below the floor";
-            const std::size_t b = city.inside(p.x, p.y);
-            if (b < city.size() && p.z < city.footprints()[b].top)
-                return "stands inside building " + district.ids[b];
-            return "";
-        };
+        auto misplaced = [&](const Vec3& p) { return misplaced_point(city, district.ids, p); };
         // Reading x, y and height columns by name, in --units.
         auto points_of = [&](const LabeledCsv& rows, const std::string& file) {
             const std::size_t x = length_column(rows, file, units, "x", true, true);

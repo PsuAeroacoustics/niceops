@@ -380,6 +380,40 @@ checks. What to keep:
   same as a stack of thin slabs, and it is not a smooth slope: at EDGE's scale 3 mm cells leave
   5 dB at 6.3 kHz behind a gable (FIDELITY). Do not score sloped roofs against it.
 
+### Ends on a surface, and each microphone's floor (`Buildings::support`, `PathEnd::surface`)
+
+A source or microphone may lie on a wall or a level roof (within `Buildings::contact`), as well as
+on the floor or in the air; THEORY §6.5 ("Ends on a surface") has the rule. What to keep:
+
+- **The floor's partners are traced, a wall's or a roof's are factors.** The image tree takes a
+  facade only for a point more than `contact` in front of it, and the roof reflection only below
+  `z - contact`; `support()` puts a point on a surface within the same `contact`, so the two never
+  overlap. A point a hair off the surface (partners traced) and one on it (factor `1 + R`) agree
+  within 0.06 dB (`an end on a roof or a wall is one a hair off it`). Before this a microphone on a
+  roof lost the roof's 6 dB, one on a wall the wall's, and one on a roof behind its edge heard
+  nothing at all (the leg along the edge's face was refused).
+- **On the face, half the factor.** A hard wedge's coefficient on its face already holds the face's
+  reflection, so a ray whose end wedge has the surface as a face takes `(1 + R) / 2`
+  (`*_on_face`). Which face an end lies on is geometric (`edge_face`, within `contact` of the
+  face's plane), not angular: an angular slack disagrees with `contact` with distance, and a point
+  1 µm up at 5 m then took the full factor on top of the face's reflection (+4 dB). A floor image
+  of an end on a wall lies on the wall's face too (`end_face` takes it), and so does its pruning
+  view (`view_from`'s `faces`).
+- **A leg that doubles back along its face is no ray** (`doubles_back`): the far edge's
+  backscatter along the roof to a microphone on it, which the shared-face form also double counts.
+- **The factor lives in `reflected_amplitude`**, so every amplitude path takes it, the GPU's
+  included; a plate on a raised surface corrects it in `floor_factors` by
+  `(P_d + R P_r) / (1 + R)` (`FloorModel::surface`, set from the rays' own `reflection_for`). A
+  grating ray takes `(1 + R)^2` in energy, the diffuse gathering the same, the turbulent fill the
+  surface's energy at the receiver.
+- **Refused:** an end on a slope or an edge (`PathEnd` throws; `misplaced_point` says why first),
+  and a plate on a wall (`niceops` refuses it; `levels` throws as a backstop).
+- **Each microphone's floor** (`UrbanDistrict::floor_height`): z = 0 where its observer stands
+  there or on any surface of the district, else the observer's z. `niceops` evaluates each floor's
+  microphones together with the source states and microphones lowered by it, and scatters the
+  results back; one floor at 0 is the old single call, so every golden stands.
+  `buildings_floor_at_observer_z` holds raised observers to the track lowered as much.
+
 ### A point source among buildings (`src/point_paths`, `src/double_wedge`)
 
 `PointSourceField` is the tables' ray model for a source near the buildings (`niceops_point_field`,
@@ -784,8 +818,8 @@ Measured and left alone:
     rays are many and a chain's are few.
   - **The GPU's ray kind is the wedge count**, which must stay below `NK_KIND_FACE` (15): hence
     `max_chain` at most 14, and `point_rays.cpp` throws past it.
-  - **Three edges give `thrice_diffracted_ray`'s terms** (`a chain of three edges is the
-    thrice-diffracted ray`): change the two together.
+  - **`thrice_diffracted_ray` is `chain_diffracted_ray` of three edges**: one recursion for every
+    cascade of more than two wedges.
   - **Each floor variant finds its own string**: an image below the floor sees the edges
     differently. No facade reflects on a chain, and `double_diffraction` off turns chains off.
   - Chains cost nothing measurable (FIDELITY, "Pitched roofs"); none arose on EDGE's LoD1 scenes or

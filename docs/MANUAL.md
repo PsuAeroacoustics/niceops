@@ -1121,6 +1121,18 @@ over a pass as it does in an exposure.
   `top`, optionally `absorption` and `scattering`) in the run's `--units` and frame, or GeoJSON
   with `--origin` and `--frame_bearing`. A building's coefficients apply to its walls and its
   roof, and `--wall_absorption` and `--facade_scattering` to those that give none.
+- **Where a microphone stands.** At its observer's point raised by its height: on the floor, on a
+  roof, on a wall, or on a pole above any of them. An observer whose `z` is 0, or whose point lies
+  on a roof or a wall of the district, stands on the district's floor (z = 0), and a microphone on
+  a roof or a wall takes that surface's reflection as one on the floor takes the floor's (a
+  microphone flush on a flat roof hears the roof's doubling). Any other observer's floor is at
+  its own `z`, as in the open-ground run: the buildings stand on that floor for it, and the source
+  is taken as high above it as the track says above z = 0. With `--plate_table` a flush
+  microphone sits on its plate on the floor or a flat roof, the roof's reflection in place of the
+  ground's. Refused, naming the observer: a microphone inside a building, on a pitched roof's
+  slope (slopes reflect nothing in the model), on a building's edge, or flush on a wall with a
+  plate (a plate lies level); and a source state below a microphone's floor
+  ([THEORY §6.5](THEORY.md#65-urban-receivers)).
 - **Pitched roofs** (`--roofs roofs.csv`, LoD2, with a CSV district). One row per roof plane:
   `building` (an id of the district's), `x`, `y` and `z` (a point the plane passes through, in the
   run's `--units` and frame) and `slope_x` and `slope_y` (its rise per unit run along x and along
@@ -1958,7 +1970,9 @@ or more -- a mansard heard from low beside it, several rows of roofs -- is trace
 `--max_chain` of them. Roofs reflect as the floor does, with their building's
 absorption: a ray reflects in one of them or in the floor at most, and from a roof it reaches only
 a microphone above that roof, directly or by an edge that stands higher still. `--microphones` is a CSV with `x`, `y` and `height`
-columns. Each output row is a microphone's `x`, `y` and `height`, then one level per band, dB, the
+columns, the height above the floor: a microphone (or a source) at a flat roof's height over it, or
+on a wall, lies on that surface and takes its reflection there, as one on the floor takes the
+floor's; one on a pitched roof's slope or a building's edge is refused. Each output row is a microphone's `x`, `y` and `height`, then one level per band, dB, the
 rays summed coherently and averaged over the band, each absorbed by the air along its length
 (ISO 9613-1, as the spectral path's). A free-field level at the microphone would be −20 lg r for
 its distance r in metres, less that absorption.

@@ -149,6 +149,14 @@ double onto_face(double theta, double n, bool& on_face)
     return theta;
 }
 
+// The angle of v about the edge, or the face's own where the end lies on face
+// `face` (edge_face; -1 none), which it then records in `on_face`.
+double end_angle(const Edge& e, const Vec3& v, int face, bool& on_face)
+{
+    on_face = face >= 0;
+    return face == 0 ? 0.0 : face == 1 ? e.n * pi : e.angle(normal_part(e, v));
+}
+
 // in_air(e.angle(v), e.n, faces), by the signs where they decide it.
 bool air(const Edge& e, const Vec3& v, bool faces)
 {
@@ -298,6 +306,22 @@ std::vector<std::pair<std::size_t, double>> roof_chain(const Buildings& building
     return chain;
 }
 
+} // namespace
+
+int edge_face(const Edge& e, const Vec3& p)
+{
+    const Vec3 v = normal_part(e, p - e.start);
+    const double c = std::cos(e.n * pi), s = std::sin(e.n * pi);
+    const Vec3 other = c * e.face0 + s * e.air, other_normal = -s * e.face0 + c * e.air;
+    if (std::abs(v.dot(e.air)) <= Buildings::contact && v.dot(e.face0) > 0.0)
+        return 0;
+    if (std::abs(v.dot(other_normal)) <= Buildings::contact && v.dot(other) > 0.0)
+        return 1;
+    return -1;
+}
+
+namespace {
+
 // Whether two edges share an end, within contact: a corner of a building.
 bool meet(const Edge& a, const Edge& b)
 {
@@ -320,7 +344,8 @@ bool sees_air(const Edge& f, const Edge& e)
 
 // How a point stands about an edge (PathEnd::View), seeing [from, to] of it
 // or nothing.
-PathEnd::View view_from(const Edge& e, const Vec3& p, bool visible, double from, double to)
+// `faces`: a point on a surface, whose leg to the edge may run along a face.
+PathEnd::View view_from(const Edge& e, const Vec3& p, bool visible, double from, double to, bool faces = false)
 {
     const Edge::Projection place = e.project(p);
     PathEnd::View s;
@@ -336,7 +361,9 @@ PathEnd::View view_from(const Edge& e, const Vec3& p, bool visible, double from,
     {
         const double theta = e.angle(place.normal);
         const double slack = 1e-9 - 1e-10;
-        s.lit = theta > slack && theta < e.n * pi - slack;
+        bool on_face;
+        s.lit = faces ? in_air(onto_face(theta, e.n, on_face), e.n, true)
+                      : theta > slack && theta < e.n * pi - slack;
     }
     s.lit = s.lit && visible;
     return s;
@@ -807,6 +834,17 @@ PathEnd::PathEnd(const Buildings& buildings, const Vec3& point, bool source, con
     , tree_(image_tree(buildings, point, options.radius, tree_order(source, options), options.max_images, true,
               candidates_, edge_order(options)))
 {
+    // A wall or a level roof the point lies on gives every ray its reflection
+    // at the point; a slope or an edge would need what the model does not hold.
+    const Buildings::Support on = buildings.support(point);
+    if (on.kind == Buildings::Support::Kind::slope)
+        throw std::invalid_argument("a point lies on a pitched roof's slope, which reflects nothing in the model");
+    if (on.kind == Buildings::Support::Kind::edge)
+        throw std::invalid_argument("a point lies on a building's edge, or where two of its surfaces meet");
+    if (on.kind == Buildings::Support::Kind::facade)
+        surface_ = on.index;
+    else if (on.kind == Buildings::Support::Kind::roof)
+        surface_ = buildings.roof_facade(on.index);
     // Each image's places about its edges, and the stretch of each edge an
     // image to one reflection can see, once for every partner: among
     // buildings, most of what the diffracted searches would otherwise solve
@@ -827,7 +865,8 @@ PathEnd::PathEnd(const Buildings& buildings, const Vec3& point, bool source, con
                 double from = 0.0, to = edge.length;
                 const bool visible = !prove || (floor == 1 && source && !options.source_reflections)
                         || visible_stretch(buildings, edge, point, image.facades, floor == 1, from, to);
-                views_[i][2 * k + floor] = view_from(edge, floor ? below(image.point) : image.point, visible, from, to);
+                views_[i][2 * k + floor] = view_from(edge, floor ? below(image.point) : image.point, visible, from, to,
+                        on_surface() && image.facades.empty());
             }
         }
     }
@@ -842,8 +881,14 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
     , reliefs_(options.reliefs)
     , edge_source_threads_(options.edge_source_threads)
 {
-    trace(buildings, PathEnd(buildings, source, true, options, edges_near(buildings, microphone, options.radius)),
-            PathEnd(buildings, microphone, false, options, edges_near(buildings, source, options.radius)), options);
+    const PathEnd source_end(buildings, source, true, options, edges_near(buildings, microphone, options.radius));
+    const PathEnd microphone_end(buildings, microphone, false, options, edges_near(buildings, source, options.radius));
+    trace(buildings, source_end, microphone_end, options);
+    for (PointRay& ray : rays_)
+    {
+        ray.source_surface = source_end.surface();
+        ray.microphone_surface = microphone_end.surface();
+    }
 }
 
 PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& source, const PathEnd& microphone,
@@ -856,6 +901,11 @@ PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& so
     , edge_source_threads_(options.edge_source_threads)
 {
     trace(buildings, source, microphone, options);
+    for (PointRay& ray : rays_)
+    {
+        ray.source_surface = source.surface();
+        ray.microphone_surface = microphone.surface();
+    }
 }
 
 void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_end, const PathEnd& microphone_end,
@@ -901,6 +951,21 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     const Vec3& source = source_end.point();
     const Vec3& microphone = microphone_end.point();
     const int source_floors = options.source_reflections ? 2 : 1;
+    // An end on a wall or a level roof is reached along the face of an edge
+    // of that surface by a leg straight from the wedge, with no facade
+    // between: end_face, that face (edge_face) or -1, its floor image's off
+    // the floor (on a wall's face too).  Its leg is then on the face, every
+    // other end's strictly in the air (end_air).
+    const auto end_face = [](const PathEnd& end, const Edge& e, const std::vector<std::size_t>& facades, int floor) {
+        return end.on_surface() && facades.empty() ? edge_face(e, floor ? below(end.point()) : end.point()) : -1;
+    };
+    const auto end_air = [](const Edge& e, const Vec3& v, int face) { return face >= 0 || air(e, v, false); };
+    // A leg along the face an end lies on whose wedge's other leg runs along
+    // that face too doubles back on it: the edge's grazing backscatter, which
+    // the end's own rays over the face already carry, and no ray.
+    const auto doubles_back = [](const Edge& e, int face, const Vec3& other) {
+        return face >= 0 && edge_face(e, other) == face;
+    };
     const bool fading = options.fade_reach > 0.0;
     // Roofs (options.roofs): the buildings whose boxes meet a box in plan,
     // ascending.
@@ -991,8 +1056,10 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 continue;
             for (std::uint32_t b : buildings_along({source, microphone}, image.facades))
             {
+                // An end on the roof (within contact) takes its reflection at
+                // the end itself (PathEnd::surface).
                 const double h = buildings.footprints()[b].top;
-                if (!(h < std::min(source.z, microphone.z) - 1e-9))
+                if (!(h < std::min(source.z, microphone.z) - Buildings::contact))
                     continue;
                 std::vector<Vec3> hits;
                 if (!folded_roof_path_open(buildings, source, microphone, image.facades, b, &hits))
@@ -1073,7 +1140,10 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 continue;
                         }
                         const Vec3 in = pa - q, out = pb - q;
-                        if (!air(edge, normal_part(edge, in), false) || !air(edge, normal_part(edge, out), false))
+                        const int on_a = end_face(source_end, edge, a.facades, fa);
+                        const int on_b = end_face(microphone_end, edge, b.facades, fb);
+                        if (!end_air(edge, normal_part(edge, in), on_a) || !end_air(edge, normal_part(edge, out), on_b)
+                                || doubles_back(edge, on_a, pb) || doubles_back(edge, on_b, pa))
                             continue;
                         std::vector<Vec3> to_source, to_microphone;
                         std::vector<PendingEdge> pending;
@@ -1112,11 +1182,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         else if (!folded_path_open(buildings, q, source, a.facades, fa == 1, &to_source)
                                 || !folded_path_open(buildings, q, microphone, b.facades, fb == 1, &to_microphone))
                             continue;
-                        const double theta0 = edge.angle(normal_part(edge, in));
-                        const double theta = edge.angle(normal_part(edge, out));
+                        PointRay ray;
+                        const double theta0 = end_angle(edge, in, on_a, ray.source_on_face);
+                        const double theta = end_angle(edge, out, on_b, ray.microphone_on_face);
                         const double s_in = in.norm(), s_out = out.norm();
                         const double sin_beta = normal_part(edge, in).norm() / s_in;
-                        PointRay ray;
                         ray.length = s_in + s_out;
                         ray.spreading = 1.0 / std::sqrt(s_in * s_out * (s_in + s_out));
                         ray.facades = a.facades;
@@ -1204,8 +1274,10 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         // The edge is a member of the chain: both its ends.
                         for (std::uint32_t r : buildings_along({edge.start, end, real_end}, facades))
                         {
+                            // An end on the roof (within contact) takes its
+                            // reflection at the end itself (PathEnd::surface).
                             const double h = buildings.footprints()[r].top;
-                            if (h < end_z - 1e-9 && h < edge_top - 1e-9)
+                            if (h < end_z - Buildings::contact && h < edge_top - 1e-9)
                                 out.push_back(static_cast<long>(r));
                         }
                     };
@@ -1235,7 +1307,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                             && !(q.z > buildings.footprints()[static_cast<std::size_t>(sb)].top + 1e-9)))
                                 continue;
                             const Vec3 in = pa - q, out = pb - q;
-                            if (!air(edge, normal_part(edge, in), false) || !air(edge, normal_part(edge, out), false))
+                            const int on_a = sa < 0 ? end_face(source_end, edge, a.facades, sa == floor_side) : -1;
+                            const int on_b = sb < 0 ? end_face(microphone_end, edge, b.facades, sb == floor_side) : -1;
+                            if (!end_air(edge, normal_part(edge, in), on_a)
+                                    || !end_air(edge, normal_part(edge, out), on_b) || doubles_back(edge, on_a, pb)
+                                    || doubles_back(edge, on_b, pa))
                                 continue;
                             std::vector<Vec3> to_source, to_microphone;
                             const bool source_open = sa >= 0
@@ -1251,11 +1327,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                               &to_microphone);
                             if (!microphone_open)
                                 continue;
-                            const double theta0 = edge.angle(normal_part(edge, in));
-                            const double theta = edge.angle(normal_part(edge, out));
+                            PointRay ray;
+                            const double theta0 = end_angle(edge, in, on_a, ray.source_on_face);
+                            const double theta = end_angle(edge, out, on_b, ray.microphone_on_face);
                             const double s_in = in.norm(), s_out = out.norm();
                             const double sin_beta = normal_part(edge, in).norm() / s_in;
-                            PointRay ray;
                             ray.length = s_in + s_out;
                             ray.spreading = 1.0 / std::sqrt(s_in * s_out * (s_in + s_out));
                             ray.facades = a.facades;
@@ -1554,10 +1630,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 // doubled by that face, and wedge 2's coefficient, its
                                 // incident and reflected boundaries coinciding at grazing,
                                 // would double it again.
-                                if (!air(g1, normal_part(g1, in1), false) || !air_or_face(g1, normal_part(g1, mid))
+                                const EndFaces ends {end_face(source_end, g1, a.facades, fa),
+                                        via == nullptr ? end_face(microphone_end, h2, b.facades, fb) : -1};
+                                if (!end_air(g1, normal_part(g1, in1), ends.source)
+                                        || !air_or_face(g1, normal_part(g1, mid))
                                         || !air_or_face(h2, normal_part(h2, -1.0 * mid))
-                                        || !air(h2, normal_part(h2, out2), false) || buildings.buried(q1)
-                                        || buildings.buried(q2_real))
+                                        || !end_air(h2, normal_part(h2, out2), ends.microphone)
+                                        || doubles_back(g1, ends.source, q2) || doubles_back(h2, ends.microphone, q1)
+                                        || buildings.buried(q1) || buildings.buried(q2_real))
                                     continue;
                                 if (!folded_path_open(buildings, q1, source, a.facades, fa == 1, &to_source))
                                     continue;
@@ -1572,7 +1652,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                     across.push_back(q1 + (q1.z / (q1.z + q2_real.z)) * (q2 - q1));
                                 if (!folded_path_open(buildings, q2_real, microphone, b.facades, fb == 1, &to_microphone))
                                     continue;
-                                PointRay ray = twice_diffracted_ray(g1, h2, pa, pb, q1, q2);
+                                PointRay ray = twice_diffracted_ray(g1, h2, pa, pb, q1, q2, ends);
                                 ray.facades = a.facades;
                                 if (via != nullptr && !via->floor)
                                 {
@@ -1682,20 +1762,24 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     q[i] = g[i]->start + t[i] * g[i]->direction;
                     open = q[i].z >= 0.0 && !buildings.buried(q[i]);
                 }
+                const EndFaces ends {end_face(source_end, *g.front(), {}, fa), end_face(microphone_end, *g.back(), {}, fb)};
                 for (std::size_t i = 0; i < n && open; i++)
                 {
                     const Edge& e = *g[i];
                     const Vec3 in = i == 0 ? pa - q[0] : q[i - 1] - q[i];
                     const Vec3 out = i + 1 == n ? pb - q[i] : q[i + 1] - q[i];
-                    open = (i == 0 ? air(e, normal_part(e, in), false) : air_or_face(e, normal_part(e, in)))
-                            && (i + 1 == n ? air(e, normal_part(e, out), false) : air_or_face(e, normal_part(e, out)));
+                    open = (i == 0 ? end_air(e, normal_part(e, in), ends.source) : air_or_face(e, normal_part(e, in)))
+                            && (i + 1 == n ? end_air(e, normal_part(e, out), ends.microphone)
+                                           : air_or_face(e, normal_part(e, out)));
                 }
+                if (doubles_back(*g.front(), ends.source, q[1]) || doubles_back(*g.back(), ends.microphone, q[n - 2]))
+                    continue;
                 for (std::size_t i = 0; i + 1 < n && open; i++)
                     open = !buildings.blocked(q[i], q[i + 1]);
                 if (!open || !folded_path_open(buildings, q[0], source, {}, fa == 1, &to_chain_source)
                         || !folded_path_open(buildings, q[n - 1], microphone, {}, fb == 1, &to_chain_microphone))
                     continue;
-                PointRay ray = chain_diffracted_ray(g, pa, pb, q);
+                PointRay ray = chain_diffracted_ray(g, pa, pb, q, ends);
                 ray.floor = fa + fb;
                 if (fa)
                     ray.source_plane = 0.0;
@@ -1894,19 +1978,23 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 const Vec3 in1 = pa - q1, m12 = q2 - q1, m23 = q3 - q2, out3 = pb - q3;
                                 if (m12.norm() < 1e-6 || m23.norm() < 1e-6)
                                     continue;
-                                if (!air(g1, normal_part(g1, in1), false) || !air_or_face(g1, normal_part(g1, m12))
+                                const EndFaces ends {end_face(source_end, g1, a.facades, fa),
+                                        end_face(microphone_end, g3, b.facades, fb)};
+                                if (!end_air(g1, normal_part(g1, in1), ends.source)
+                                        || !air_or_face(g1, normal_part(g1, m12))
                                         || !air_or_face(g2, normal_part(g2, -1.0 * m12))
                                         || !air_or_face(g2, normal_part(g2, m23))
                                         || !air_or_face(g3, normal_part(g3, -1.0 * m23))
-                                        || !air(g3, normal_part(g3, out3), false) || buildings.buried(q1)
-                                        || buildings.buried(q2) || buildings.buried(q3))
+                                        || !end_air(g3, normal_part(g3, out3), ends.microphone)
+                                        || doubles_back(g1, ends.source, q2) || doubles_back(g3, ends.microphone, q2)
+                                        || buildings.buried(q1) || buildings.buried(q2) || buildings.buried(q3))
                                     continue;
                                 if (!folded_path_open(buildings, q1, source, a.facades, fa == 1, &to_third_source)
                                         || buildings.blocked(q1, q2) || buildings.blocked(q2, q3)
                                         || !folded_path_open(
                                                 buildings, q3, microphone, b.facades, fb == 1, &to_third_microphone))
                                     continue;
-                                PointRay ray = thrice_diffracted_ray(g1, g2, g3, pa, pb, q1, q2, q3);
+                                PointRay ray = thrice_diffracted_ray(g1, g2, g3, pa, pb, q1, q2, q3, ends);
                                 ray.facades = a.facades;
                                 ray.facades.insert(ray.facades.end(), b.facades.begin(), b.facades.end());
                                 ray.floor = fa + fb;
@@ -1942,16 +2030,16 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
 }
 
 PointRay twice_diffracted_ray(const Edge& g1, const Edge& g2, const Vec3& pa, const Vec3& pb, const Vec3& q1,
-        const Vec3& q2)
+        const Vec3& q2, EndFaces ends)
 {
     const Vec3 in1 = pa - q1, mid = q2 - q1, out2 = pb - q2;
     const double s1 = in1.norm(), s2 = mid.norm(), s3 = out2.norm();
-    bool leaves_on_face, arrives_on_face;
-    const double theta0_1 = g1.angle(normal_part(g1, in1));
+    bool leaves_on_face, arrives_on_face, source_on_face, microphone_on_face;
+    const double theta0_1 = end_angle(g1, in1, ends.source, source_on_face);
     const double theta_1 = onto_face(g1.angle(normal_part(g1, mid)), g1.n, leaves_on_face);
     const double theta0_2 = onto_face(g2.angle(normal_part(g2, -1.0 * mid)), g2.n, arrives_on_face);
     const bool grazing = leaves_on_face && arrives_on_face;
-    const double theta_2 = g2.angle(normal_part(g2, out2));
+    const double theta_2 = end_angle(g2, out2, ends.microphone, microphone_on_face);
     const double sb1 = normal_part(g1, in1).norm() / s1;
     const double sb2 = normal_part(g2, out2).norm() / s3;
     // Wedge 2's incident wave is curved about wedge 1 (radius s2) across that
@@ -1978,49 +2066,19 @@ PointRay twice_diffracted_ray(const Edge& g1, const Edge& g2, const Vec3& pa, co
     // Wedge 1's observer is wedge 2.
     ray.wedge[0] = {wedge_angles(g1.n, theta_1, theta0_1), sb1, s1 * s2 * sb1 / (s1 + s2), false};
     ray.wedge[1] = {wedge_angles(g2.n, theta_2, theta0_2), sb2, s2 * s3 * sb2 / (s2 + s3), grazing};
+    ray.source_on_face = source_on_face;
+    ray.microphone_on_face = microphone_on_face;
     return ray;
 }
 
 PointRay thrice_diffracted_ray(const Edge& g1, const Edge& g2, const Edge& g3, const Vec3& pa, const Vec3& pb,
-        const Vec3& q1, const Vec3& q2, const Vec3& q3)
+        const Vec3& q1, const Vec3& q2, const Vec3& q3, EndFaces ends)
 {
-    const Vec3 in1 = pa - q1, m12 = q2 - q1, m23 = q3 - q2, out3 = pb - q3;
-    const double s1 = in1.norm(), s2 = m12.norm(), s3 = m23.norm(), s4 = out3.norm();
-    bool leaves1, arrives2, leaves2, arrives3;
-    const double theta0_1 = g1.angle(normal_part(g1, in1));
-    const double theta_1 = onto_face(g1.angle(normal_part(g1, m12)), g1.n, leaves1);
-    const double theta0_2 = onto_face(g2.angle(normal_part(g2, -1.0 * m12)), g2.n, arrives2);
-    const double theta_2 = onto_face(g2.angle(normal_part(g2, m23)), g2.n, leaves2);
-    const double theta0_3 = onto_face(g3.angle(normal_part(g3, -1.0 * m23)), g3.n, arrives3);
-    const double theta_3 = g3.angle(normal_part(g3, out3));
-    const double sb1 = normal_part(g1, in1).norm() / s1;
-    const double sb2 = normal_part(g2, m23).norm() / s3;
-    const double sb3 = normal_part(g3, out3).norm() / s4;
-    // The cosine squared between two edges as the ray between them sees them.
-    auto seen = [](const Edge& a, const Edge& b, const Vec3& leg, double length) {
-        const Vec3 d = leg / length;
-        const Vec3 u = a.direction - a.direction.dot(d) * d, v = b.direction - b.direction.dot(d) * d;
-        const double nu = u.norm(), nv = v.norm();
-        return nu > 1e-12 && nv > 1e-12 ? std::pow(u.dot(v) / (nu * nv), 2) : 1.0;
-    };
-    // Each edge's rho_e: the incident wavefront's radius of curvature along it.
-    auto along_edge = [](double c2, double rho, double s) { return 1.0 / (c2 / (rho + s) + (1.0 - c2) / s); };
-    const double rho1 = s1;
-    const double rho2 = along_edge(seen(g1, g2, m12, s2), rho1, s2);
-    const double rho3 = along_edge(seen(g2, g3, m23, s3), rho2, s3);
-    PointRay ray;
-    ray.length = s1 + s2 + s3 + s4;
-    ray.spreading = std::sqrt(rho1 / (s2 * (rho1 + s2))) * std::sqrt(rho2 / (s3 * (rho2 + s3)))
-            * std::sqrt(rho3 / (s4 * (rho3 + s4))) / s1;
-    ray.wedges = 3;
-    ray.wedge[0] = {wedge_angles(g1.n, theta_1, theta0_1), sb1, s1 * s2 * sb1 / (s1 + s2), false};
-    ray.wedge[1] = {wedge_angles(g2.n, theta_2, theta0_2), sb2, s2 * s3 * sb2 / (s2 + s3), leaves1 && arrives2};
-    ray.wedge[2] = {wedge_angles(g3.n, theta_3, theta0_3), sb3, s3 * s4 * sb3 / (s3 + s4), leaves2 && arrives3};
-    return ray;
+    return chain_diffracted_ray({&g1, &g2, &g3}, pa, pb, {q1, q2, q3}, ends);
 }
 
 PointRay chain_diffracted_ray(const std::vector<const Edge*>& g, const Vec3& pa, const Vec3& pb,
-        const std::vector<Vec3>& q)
+        const std::vector<Vec3>& q, EndFaces ends)
 {
     const std::size_t n = g.size();
     // Leg i reaches edge i (leg n the microphone); s[i] its length.
@@ -2054,10 +2112,10 @@ PointRay chain_diffracted_ray(const std::vector<const Edge*>& g, const Vec3& pa,
             rho = along_edge(seen(*g[i - 1], e, leg[i], s[i]), rho, s[i]);
         ray.spreading *= std::sqrt(rho / (s[i + 1] * (rho + s[i + 1])));
         bool arrives = false, on_face = false;
-        const double theta0 = i == 0 ? e.angle(normal_part(e, -1.0 * leg[0]))
-                                     : onto_face(e.angle(normal_part(e, -1.0 * leg[i])), e.n, arrives);
+        const double theta0 = i > 0 ? onto_face(e.angle(normal_part(e, -1.0 * leg[i])), e.n, arrives)
+                                    : end_angle(e, -1.0 * leg[0], ends.source, ray.source_on_face);
         const double theta = i + 1 < n ? onto_face(e.angle(normal_part(e, leg[i + 1])), e.n, on_face)
-                                        : e.angle(normal_part(e, leg[n]));
+                                        : end_angle(e, leg[n], ends.microphone, ray.microphone_on_face);
         // sin(beta) by the leg on the source's side for the first edge, as
         // thrice_diffracted_ray takes it, and by the leg leaving the rest.
         const double sb = i == 0 ? normal_part(e, leg[0]).norm() / s[0] : normal_part(e, leg[i + 1]).norm() / s[i + 1];
@@ -2188,7 +2246,8 @@ double reflected_amplitude(const PointRay& ray, const std::vector<double>& refle
     for (std::size_t f : ray.roof_facades)
         if (f != PointRay::no_facade)
             amplitude *= std::sqrt(reflection[f]);
-    return amplitude;
+    return amplitude * end_surface_factor(ray.source_surface, ray.source_on_face, reflection)
+            * end_surface_factor(ray.microphone_surface, ray.microphone_on_face, reflection);
 }
 
 void point_ray_arrival(const PointRay& ray, double& elevation, double& azimuth)
@@ -2212,12 +2271,17 @@ void floor_factors(const PointRay& ray, const FloorModel& floor, const std::vect
     }
     if (floor.admittance.size() != problems)
         throw std::invalid_argument("floor_factors: the floor's admittance is not one per sub-band");
+    if (!floor.surface.empty() && floor.surface.size() != problems)
+        throw std::invalid_argument("floor_factors: the raised surface's reflection is not one per sub-band");
     bool at_microphone = false;
     for (int b = 0; b < ray.floor; b++)
         at_microphone = at_microphone || ray.floor_bounce[static_cast<std::size_t>(b)].microphone;
     for (std::size_t j = 0; j < problems; j++)
     {
-        std::complex<double> f = plate == nullptr ? 1.0 : plate[at_microphone ? problems + j : j];
+        std::complex<double> f = plate == nullptr ? 1.0
+                : !floor.surface.empty()
+                ? (plate[j] + floor.surface[j] * plate[problems + j]) / (1.0 + floor.surface[j])
+                : plate[at_microphone ? problems + j : j];
         for (int b = 0; b < ray.floor; b++)
         {
             const FloorBounce& bounce = ray.floor_bounce[static_cast<std::size_t>(b)];

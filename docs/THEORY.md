@@ -1020,6 +1020,31 @@ The diffuse facades and the turbulence's fill of the shadows carry energy alone,
 ground's diffuse-field reflection, $2\int_0^1 |R_p(\mu)|^2\mu\,d\mu$ (one less Paris's statistical
 absorption coefficient), in each band -- the diffuse field its bands' mean.
 
+**Ends on a surface.** A source or a microphone may lie on a surface of the district, within the
+`contact` tolerance (1 µm): a microphone flush on a flat roof or a mansard's deck, or on a wall, a
+loudspeaker on a roof. The floor's partners are traced as any ray's, its image coinciding with
+the point; a wall's or a roof's are not, the image trees and the roof reflection reaching only
+points strictly in front of them. Instead every ray arriving at such an end has a partner
+reflected off its surface at the end itself, of one length, so the pair is the ray times
+$1 + R$, $R$ the surface's specular amplitude reflection $\sqrt{\rho(1-s)}$ (1 for a rigid
+roof). Where the ray's wedge at that end has the surface as a face, its coefficient already holds
+that face's reflection (rigidly: a hard wedge's four terms pair on its face), and the ray takes
+$(1 + R)/2$; the leg to the end is then on the face, which every test admits for such an end and
+no other, and the angle there is the face's own. Whether the end lies on the face is geometric,
+within `contact` of its plane, as the surface itself is; an end whose wedge's other leg runs along
+the same face (an edge's grazing backscatter along its own roof) is no ray. A grating ray takes
+$(1 + R)^2$ in energy, the diffuse field's gathering at the microphone the same, and the
+turbulent fill's doubling at the receiver is the surface's. A plate on a roof takes
+$P_d + R\,P_r$ on each ray where the floor's takes $P_d$ and its partner $Q\,P_r$. An end on a
+pitched roof's slope, which reflects nothing in the model, or on an edge, where no one surface
+stands for it, is refused, as is a plate on a wall: a plate lies level. A point a hair off the
+surface, whose partners are traced, hears the same within 0.06 dB.
+
+**Each microphone's floor.** In a run, a microphone's floor is the plane the buildings stand on for
+it: the district's own, $z = 0$, where its observer stands there or on a surface of the district;
+otherwise the observer's own $z$, as open ground and the urban tables take an observer's ground.
+The microphones of each floor are evaluated together, the source and they lowered by its height.
+
 **In a run** (`niceops --buildings`) the source is the rotor's sphere, and each ray's amplitude in
 band $b$ is multiplied by the sphere's along the direction $\hat d$ the ray leaves the source,
 

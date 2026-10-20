@@ -304,6 +304,15 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                             const double length = r1 + r2;
                             if (!input.air.empty())
                                 energy *= std::exp(-2.0 * input.air[band] * length);
+                            // An end on a wall or a level roof: its reflection
+                            // there, of one length (PointRay::source_surface).
+                            for (const std::size_t s : {source.surface(), microphone.surface()})
+                                if (s != PointRay::no_surface)
+                                {
+                                    const double a = 1.0
+                                            + (s == PointRay::no_facade ? 1.0 : std::sqrt(rho[s * nb + band]));
+                                    energy *= a * a;
+                                }
                             if (!(energy > 0.0))
                                 continue;
                             GratingRay ray;

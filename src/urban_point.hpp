@@ -171,9 +171,18 @@ public:
     // The diffuse field's patch size and reach, metres.
     double patch_size() const;
     double diffuse_radius() const;
-    // "" where a point may stand, or why not: "below the floor", "inside
-    // building <id>".
+    // "" where a point may stand, or why not (misplaced_point): "stands below
+    // the floor", "stands inside building <id>", "lies on ..." a slope or an
+    // edge.
     std::string misplaced(const Vec3& point) const;
+    // The height of the floor an observer at `ground` stands on, the plane the
+    // buildings stand on for it: the district's own, 0, where it stands at 0
+    // (within contact) or on a surface of the district (Buildings::support: a
+    // wall, a roof, a slope or an edge); its own z otherwise, as open ground and
+    // the urban tables take an observer's ground.
+    double floor_height(const Vec3& ground) const;
+    // Whether a point lies on a wall of the district (Buildings::support).
+    bool on_wall(const Vec3& point) const;
 
     // Each state's level at every microphone, from the states' sources (their
     // positions, sphere frames and blends) and the run's absorption (dB/m per

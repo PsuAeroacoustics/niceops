@@ -3082,29 +3082,52 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     }
     // --buildings: every state's level at every microphone, from the source's
     // own rays among the buildings, each reading the sphere along its launch;
-    // the observer loop marches these.  The floor is the buildings' own, the
-    // plane z = 0.
+    // the observer loop marches these.
     std::vector<double> point_levels, point_bands, point_lower, point_upper;
     if (options.buildings)
     {
         const UrbanDistrict& district = *options.buildings;
-        // A microphone stands where the run puts any: the observer's point
-        // raised by its height, on the floor, a roof or a pole, so long as it
-        // is in the air.
+        // Each microphone's floor, the plane the buildings stand on for it: the
+        // district's own, z = 0, where its observer stands there or on a
+        // surface of the district (a roof or a wall); otherwise the observer's
+        // own z, as open ground and the urban tables take an observer's ground.
+        // A microphone stands where the run puts any, the observer's point
+        // raised by its height -- on the floor, a roof, a wall or a pole -- so
+        // long as it is in the air or on a wall or a level roof.
+        std::vector<double> floor_height(observer_count);
+        for (std::size_t i = 0; i < observer_count; i++)
+            floor_height[i] = district.floor_height(observers[i]);
+        std::vector<double> floors_at(floor_height);
+        std::sort(floors_at.begin(), floors_at.end());
+        floors_at.erase(std::unique(floors_at.begin(), floors_at.end()), floors_at.end());
+        // A floor off z = 0, for the messages.
+        const auto on_floor = [&](double floor) {
+            std::ostringstream text;
+            if (floor != 0.0)
+                text << " (its floor at its observer's z, " << floor / options.unit.to_meters << " "
+                     << options.unit.name << ", as it stands on no roof or wall of the district)";
+            return text.str();
+        };
         for (std::size_t i = 0; i < observer_count; i++)
         {
-            const std::string why = district.misplaced(microphones[i]);
+            const Vec3 at = microphones[i] - Vec3(0.0, 0.0, floor_height[i]);
+            const std::string why = district.misplaced(at);
             if (!why.empty())
-                input_error("--buildings ", options.buildings_path, ": observer ", i + 1, "'s microphone stands ",
-                        why, ".");
+                input_error("--buildings ", options.buildings_path, ": observer ", i + 1, "'s microphone ", why,
+                        on_floor(floor_height[i]), ".");
+            if (on_plate[i] && district.on_wall(at))
+                input_error("--buildings ", options.buildings_path, ": observer ", i + 1,
+                        "'s microphone is flush on a wall, and --plate_table puts it on a plate, which lies level: "
+                        "on the floor or a roof. Give it a height off the wall, or no plate.");
         }
-        for (std::size_t it = 0; it < nt; it++)
-        {
-            const std::string why = district.misplaced(source_states[it].position);
-            if (!why.empty())
-                input_error("--buildings ", options.buildings_path, ": the source at state ", it + 1, " stands ",
-                        why, ".");
-        }
+        for (const double floor : floors_at)
+            for (std::size_t it = 0; it < nt; it++)
+            {
+                const std::string why = district.misplaced(source_states[it].position - Vec3(0.0, 0.0, floor));
+                if (!why.empty())
+                    input_error("--buildings ", options.buildings_path, ": the source at state ", it + 1, " ", why,
+                            floor != 0.0 ? " for a microphone" + on_floor(floor) : "", ".");
+            }
         // How the rays add: in energy beyond a cone, unless the database
         // records its vehicle's coherence, which then takes the cone's place
         // with its rotor's delay where it gives one (at the database's rpm,
@@ -3184,14 +3207,75 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             }
         }
         const auto started = std::chrono::steady_clock::now();
-        const std::size_t evaluated = district.levels(database, source_states, microphones, absorption.data(),
-                band_gains, first_band, last_band, sound_speed,
-                options.thread_count > 0 ? options.thread_count : default_thread_count(), coherence, point_levels,
-                record_bands || want_frames ? &point_bands : nullptr, spectral ? &packed_of_state : nullptr,
-                options.phase_interval > 0.0 ? &interval : nullptr, options.state_tolerance, device,
-                floors.empty() ? nullptr : &floors);
-        point_lower = std::move(interval.lower);
-        point_upper = std::move(interval.upper);
+        const unsigned threads = options.thread_count > 0 ? options.thread_count : default_thread_count();
+        std::size_t evaluated = 0;
+        if (floors_at.size() == 1 && floors_at.front() == 0.0)
+        {
+            evaluated = district.levels(database, source_states, microphones, absorption.data(), band_gains,
+                    first_band, last_band, sound_speed, threads, coherence, point_levels,
+                    record_bands || want_frames ? &point_bands : nullptr, spectral ? &packed_of_state : nullptr,
+                    options.phase_interval > 0.0 ? &interval : nullptr, options.state_tolerance, device,
+                    floors.empty() ? nullptr : &floors);
+            point_lower = std::move(interval.lower);
+            point_upper = std::move(interval.upper);
+        }
+        else
+        {
+            // The microphones of each floor together, the source and they
+            // lowered by its height, so that it is the buildings' z = 0.
+            log("--buildings: the microphones stand on ", floors_at.size(), " floors, from ",
+                    floors_at.front() / options.unit.to_meters, " to ", floors_at.back() / options.unit.to_meters, " ", options.unit.name,
+                    " (their observers' z where they stand on no roof or wall).");
+            const std::size_t nbands = database.band_centers().size();
+            point_levels.assign(nt * observer_count, 0.0);
+            if (record_bands || want_frames)
+                point_bands.assign(nt * observer_count * nbands, 0.0);
+            if (options.phase_interval > 0.0)
+            {
+                point_lower.assign(nt * observer_count, 0.0);
+                point_upper.assign(nt * observer_count, 0.0);
+            }
+            for (const double floor : floors_at)
+            {
+                std::vector<std::size_t> members;
+                for (std::size_t i = 0; i < observer_count; i++)
+                    if (floor_height[i] == floor)
+                        members.push_back(i);
+                const std::size_t ng = members.size();
+                std::vector<Vec3> lowered(ng);
+                std::vector<MicrophoneFloor> group_floors;
+                for (std::size_t k = 0; k < ng; k++)
+                {
+                    lowered[k] = microphones[members[k]] - Vec3(0.0, 0.0, floor);
+                    if (!floors.empty())
+                        group_floors.push_back(floors[members[k]]);
+                }
+                std::vector<Database::SourceState> states = source_states;
+                for (Database::SourceState& s : states)
+                    s.position.z -= floor;
+                std::vector<double> levels, bands;
+                PhaseInterval part;
+                part.percent = interval.percent;
+                evaluated += district.levels(database, states, lowered, absorption.data(), band_gains, first_band,
+                        last_band, sound_speed, threads, coherence, levels,
+                        record_bands || want_frames ? &bands : nullptr, spectral ? &packed_of_state : nullptr,
+                        options.phase_interval > 0.0 ? &part : nullptr, options.state_tolerance, device,
+                        group_floors.empty() ? nullptr : &group_floors);
+                for (std::size_t it = 0; it < nt; it++)
+                    for (std::size_t k = 0; k < ng; k++)
+                    {
+                        const std::size_t to = it * observer_count + members[k], from = it * ng + k;
+                        point_levels[to] = levels[from];
+                        if (!bands.empty())
+                            std::copy_n(bands.data() + from * nbands, nbands, point_bands.data() + to * nbands);
+                        if (!part.lower.empty())
+                        {
+                            point_lower[to] = part.lower[from];
+                            point_upper[to] = part.upper[from];
+                        }
+                    }
+            }
+        }
         log("--buildings ", options.buildings_path, ": the rays from ", nt, " states to ", observer_count,
                 " microphones among ", district.building_count(), " buildings (", district.facade_count(),
                 " facades) in ", std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(),

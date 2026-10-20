@@ -373,6 +373,7 @@ add_executable(niceops_unit_tests
   tests/test_turbulence_scattering.cpp
   tests/test_facade_relief.cpp
   tests/test_pitched_roofs.cpp
+  tests/test_microphone_surfaces.cpp
   tests/test_gpu.cpp
   tests/test_edge_visibility.cpp
   tests/test_atmosphere.cpp
@@ -1298,21 +1299,31 @@ add_test(NAME buildings_sampled_run COMMAND ${URBAN_RUN} --buildings tests/data/
 set_tests_properties(buildings_every_state_run buildings_sampled_run PROPERTIES FIXTURES_SETUP buildings_sampling_runs)
 add_test(NAME buildings_states_sampled COMMAND golden_compare integrated/buildings_sampled.csv integrated/buildings_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_states_sampled PROPERTIES FIXTURES_REQUIRED buildings_sampling_runs)
-# Receivers stand where the run puts any: the same seven microphones given as raised observer points,
-# with no heights, are the same levels; --no-ground_effect is no clash (the run has no ground model
-# among buildings); and a database without spectra is refused, its rays reading each band.
-add_test(NAME buildings_raised_observers_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers_raised.csv -L warn --buildings tests/data/urban_buildings.csv --no-gpu -o integrated/buildings_raised.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+# --no-ground_effect is no clash (the run has no ground model among buildings); and a database
+# without spectra is refused, its rays reading each band.  (An observer's z is its floor's height
+# where it stands on no roof or wall: buildings_floor_at_observer_z below.)
 add_test(NAME buildings_no_ground_effect_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --no-ground_effect --no-gpu -o integrated/buildings_no_ground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_raised_observers_run buildings_no_ground_effect_run PROPERTIES FIXTURES_SETUP buildings_receiver_runs)
-add_test(NAME buildings_raised_observers_are_the_heights COMMAND golden_compare integrated/buildings_raised.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_no_ground_effect_run PROPERTIES FIXTURES_SETUP buildings_receiver_runs)
 add_test(NAME buildings_no_ground_effect_is_the_default COMMAND golden_compare integrated/buildings_no_ground.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_raised_observers_are_the_heights buildings_no_ground_effect_is_the_default PROPERTIES FIXTURES_REQUIRED "buildings_receiver_runs;buildings_sampling_runs")
+set_tests_properties(buildings_no_ground_effect_is_the_default PROPERTIES FIXTURES_REQUIRED "buildings_receiver_runs;buildings_sampling_runs")
 add_test(NAME buildings_refuses_no_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn --buildings tests/data/urban_buildings.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_no_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--buildings needs a database carrying per-band spectra")
 add_test(NAME buildings_refuses_lone_state_tolerance COMMAND ${URBAN_RUN} --state_tolerance 0.1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--gpu and --no-gpu go with --buildings")
+# Each microphone's floor at its observer's z where it stands on no roof or wall: observers 5 ft up
+# hear what observers on the district's floor hear of the track 5 ft lower (a short stretch of the
+# demo track and its copy lowered by 5 ft), to round-off; and a run with microphones on two floors
+# goes through.
+set(URBAN_SHORT niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 --frame_bearing 210 -L warn --buildings tests/data/urban_buildings.csv)
+add_test(NAME buildings_floor_raised_run COMMAND ${URBAN_SHORT} -t tests/data/urban_track_short.csv -b tests/data/urban_observers_up5.csv -o integrated/urban_floor_raised.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_floor_raised_run PROPERTIES FIXTURES_SETUP urban_floor_raised)
+add_test(NAME buildings_floor_lowered_run COMMAND ${URBAN_SHORT} -t tests/data/urban_track_short_lowered.csv -b tests/data/urban_observers.csv -o integrated/urban_floor_lowered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_floor_lowered_run PROPERTIES FIXTURES_SETUP urban_floor_lowered)
+add_test(NAME buildings_floor_at_observer_z COMMAND golden_compare integrated/urban_floor_raised.csv integrated/urban_floor_lowered.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_floor_at_observer_z PROPERTIES FIXTURES_REQUIRED "urban_floor_raised;urban_floor_lowered")
+add_test(NAME buildings_two_floors_run COMMAND ${URBAN_SHORT} -t tests/data/urban_track_short.csv -b tests/data/urban_observers_raised.csv -o integrated/urban_two_floors.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 # Pitched roofs (--roofs): the demo district's two terraces given gables runs through, and --roofs
 # alone is refused.
 add_test(NAME buildings_pitched_runs COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --roofs tests/data/urban_roofs.csv -o integrated/urban_pitched.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

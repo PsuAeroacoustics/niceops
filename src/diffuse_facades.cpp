@@ -144,6 +144,22 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
     // open ground's do.
     form_factors_.resize(n);
     gather_.assign(n * nb, 0.0);
+    // A microphone on a wall or a level roof hears each patch twice, the
+    // second off that surface at the microphone, of one length: (1 + R)^2,
+    // R the surface's specular amplitude, as the rays' partners there take it.
+    std::vector<double> surface(nb, 1.0);
+    const Buildings::Support on = buildings.support(microphone);
+    if (on.kind == Buildings::Support::Kind::facade || on.kind == Buildings::Support::Kind::roof)
+    {
+        const std::size_t f = on.kind == Buildings::Support::Kind::facade ? on.index : buildings.roof_facade(on.index);
+        for (std::size_t b = 0; b < nb; b++)
+        {
+            const double r = f == Buildings::no_facade
+                    ? 1.0
+                    : std::sqrt(reflection[f * nb + b] * (1.0 - scattering[f * nb + b]));
+            surface[b] = (1.0 + r) * (1.0 + r);
+        }
+    }
     const Vec3 none(0.0, 0.0, 0.0);
     const Vec3 image(microphone.x, microphone.y, -microphone.z);
     const double half = std::pow(2.0, 1.0 / 6.0);
@@ -185,7 +201,8 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
                 const double sinc = std::abs(x) < 1e-8 ? 1.0 : std::sin(x) / x;
                 const double a1 = options.air.empty() ? e1 : e1 * std::exp(-2.0 * options.air[b] * d1);
                 const double a2 = options.air.empty() ? e2 : e2 * std::exp(-2.0 * options.air[b] * d2);
-                gather_[p * nb + b] = a1 + a2 + 2.0 * std::sqrt(a1 * a2) * std::cos(0.5 * (k1 + k2) * delta) * sinc;
+                gather_[p * nb + b] = surface[b]
+                        * (a1 + a2 + 2.0 * std::sqrt(a1 * a2) * std::cos(0.5 * (k1 + k2) * delta) * sinc);
             }
         }
     });

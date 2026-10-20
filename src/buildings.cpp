@@ -795,6 +795,63 @@ bool Buildings::buried(const Vec3& p) const
     return found;
 }
 
+Buildings::Support Buildings::support(const Vec3& p) const
+{
+    Support out;
+    std::size_t surfaces = 0;
+    thread_local std::vector<std::uint32_t> near;
+    // Walls: within contact of the plane, along the base and up to the top.
+    facades_in_box(p.x - contact, p.x + contact, p.y - contact, p.y + contact, near);
+    for (const std::uint32_t f : near)
+    {
+        const Facade& w = facades_[f];
+        const double dx = w.x1 - w.x0, dy = w.y1 - w.y0, length = std::hypot(dx, dy);
+        const double along = ((p.x - w.x0) * dx + (p.y - w.y0) * dy) / length;
+        if (std::abs(facade_side(w, p)) <= contact && along >= -contact && along <= length + contact
+                && p.z >= w.bottom - contact && p.z <= facade_top(w, p) + contact)
+        {
+            out = {Support::Kind::facade, f};
+            surfaces++;
+        }
+    }
+    // Roofs: over the footprint (or on its outline) at the roof's height.  Two
+    // level roofs across a shared side are one roof there.
+    near_box(p.x - contact, p.x + contact, p.y - contact, p.y + contact, near);
+    std::sort(near.begin(), near.end());
+    bool roofed = false;
+    for (const std::uint32_t b : near)
+    {
+        const Footprint& f = footprints_[b];
+        if (std::abs(p.z - roof_height(f, p.x, p.y)) > contact)
+            continue;
+        bool on = in_footprint(f, p.x, p.y);
+        for_each_ring(f, [&](const std::vector<double>& x, const std::vector<double>& y) {
+            for (std::size_t i = 0, n = x.size(), h = n - 1; i < n && !on; h = i++)
+                on = distance_to_side(p.x, p.y, x[h], y[h], x[i], y[i]) <= contact;
+        });
+        if (!on || roofed)
+            continue;
+        roofed = true;
+        surfaces++;
+        const bool level = f.roof.empty() || (f.roof[active_plane(f, p.x, p.y)].a == 0.0
+                                                     && f.roof[active_plane(f, p.x, p.y)].b == 0.0);
+        if (out.kind == Support::Kind::none)
+            out = {level ? Support::Kind::roof : Support::Kind::slope, b};
+    }
+    // An edge, or more than one surface.
+    for (const std::uint32_t b : near)
+        for (std::size_t e = edge_begin(b); e < edge_begin(b + 1) && surfaces < 2; e++)
+        {
+            const Edge& g = edges_[e];
+            const double t = std::clamp((p - g.start).dot(g.direction), 0.0, g.length);
+            if ((g.start + t * g.direction - p).norm() <= contact)
+                surfaces = 2;
+        }
+    if (surfaces >= 2)
+        out = {Support::Kind::edge, 0};
+    return out;
+}
+
 bool Buildings::blocked_by(std::size_t building, const Vec3& a, const Vec3& b, bool below_floor) const
 {
     const Footprint& f = footprints_[building];

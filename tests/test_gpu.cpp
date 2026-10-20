@@ -295,6 +295,9 @@ struct Fields
     }()}};
     std::vector<std::unique_ptr<PointSourceField>> fields;
     std::vector<std::vector<double>> reflection;
+    // Per field, whether its microphone lies on a roof (PointRay::
+    // microphone_surface), where a plate takes the roof's R.
+    std::vector<bool> on_roof;
 
     explicit Fields(std::size_t bands, const PointPathOptions& options = {})
     {
@@ -307,11 +310,14 @@ struct Fields
             // A flush microphone, for a plate.
             {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 0.0}},
             {&mansard, {-15.0, 0.0, 0.5}, {14.0, 1.0, 0.5}},
+            // A flush microphone on a roof, behind its edge from a low source.
+            {&blocks, {-20.0, 30.0, 5.0}, {30.0, 30.0, 20.0}},
         };
         for (const auto& [city, source, microphone] : cases)
         {
             fields.push_back(std::make_unique<PointSourceField>(*city, source, microphone, options));
             reflection.emplace_back(city->facades().size() * bands, 0.9);
+            on_roof.push_back(city->support(microphone).kind == Buildings::Support::Kind::roof);
         }
     }
 };
@@ -350,7 +356,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     std::vector<std::vector<double>> cpu(count, std::vector<double>(bands.size()));
     gpu::BandEnergies energies(device);
     std::vector<std::size_t> host_first, point_first;
-    std::size_t shared = 0, thrice = 0, chained = 0, between = 0, plates = 0;
+    std::size_t shared = 0, thrice = 0, chained = 0, between = 0, plates = 0, roof_plates = 0;
     std::vector<double> middles;
     for (double band : bands)
         for (const SubBand& s : sub_bands(band, c))
@@ -371,7 +377,11 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
         const PointSourceField& field = *f.fields[i];
         const bool flush = field.rays().front().path.back().z == 0.0;
         plates += flush;
-        const FloorModel floor = flush ? plate : i % 3 == 1 ? grass : FloorModel(1.0);
+        // A plate on the roof takes its R, the root of 0.9, at every sub-band.
+        FloorModel on_roof = plate;
+        on_roof.surface.assign(middles.size(), std::sqrt(0.9));
+        roof_plates += f.on_roof[i];
+        const FloorModel floor = flush ? plate : f.on_roof[i] ? on_roof : i % 3 == 1 ? grass : FloorModel(1.0);
         for (const PointRay& ray : field.rays())
         {
             thrice += ray.wedges == 3;
@@ -402,6 +412,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     REQUIRE(chained > 0);
     REQUIRE(between > 0);
     REQUIRE(plates == 1);
+    REQUIRE(roof_plates == 1);
     energies.submit();
     const std::vector<double>& energy = energies.wait();
     double worst_amplitudes = 0.0, worst_cpu = 0.0;

@@ -264,6 +264,27 @@ public:
     // and between the floor and its roof, by `contact` or more.
     bool buried(const Vec3& p) const;
 
+    // What a point lies on, within `contact`, besides the floor (whose
+    // reflection every ray's floor partner carries): a wall (its facade), a
+    // level roof (the building: a flat roof, or a pitched one's level plane
+    // where that is least), a pitched roof's slope, or an edge -- a building's
+    // edge, or two surfaces meeting in a concave corner -- where no one
+    // surface's reflection stands for it.
+    struct Support
+    {
+        enum class Kind
+        {
+            none,
+            facade,
+            roof,
+            slope,
+            edge
+        };
+        Kind kind = Kind::none;
+        std::size_t index = 0;
+    };
+    Support support(const Vec3& p) const;
+
     // The sides found shared exactly with another building.
     std::size_t shared_sides() const
     {

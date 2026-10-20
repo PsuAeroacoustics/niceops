@@ -167,6 +167,27 @@ inline int relief_of(const BuildingInput& in, std::size_t building, std::size_t 
     return given;
 }
 
+// What is wrong with where a source or microphone stands among the
+// buildings, "" for nothing: below the floor, inside a building (under its
+// roof, pitched or not), or on a pitched roof's slope or a building's edge,
+// whose reflection the model does not hold (Buildings::support).  On a wall
+// or a level roof is fine: the surface reflects at the point.
+inline std::string misplaced_point(const Buildings& city, const std::vector<std::string>& ids, const Vec3& p)
+{
+    if (!(p.z >= 0.0))
+        return "stands below the floor";
+    const std::size_t b = city.inside(p.x, p.y);
+    if (b < city.size() && p.z < roof_height(city.footprints()[b], p.x, p.y) - Buildings::contact)
+        return "stands inside building " + ids[b];
+    const Buildings::Support on = city.support(p);
+    if (on.kind == Buildings::Support::Kind::slope)
+        return "lies on building " + ids[on.index]
+                + "'s sloping roof, which reflects nothing in the model: raise it off the roof or move it";
+    if (on.kind == Buildings::Support::Kind::edge)
+        return "lies on a building's edge, or where two of its surfaces meet: move it off by a millimetre or more";
+    return "";
+}
+
 // Pitched roofs (LoD2) from a CSV with one row per plane: building (an id of
 // the district's), x, y and z, a point the plane passes through, and slope_x
 // and slope_y, its rise per unit run along x and along y.  A building's roof

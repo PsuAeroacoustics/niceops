@@ -1771,6 +1771,31 @@ cost 2.2 times the same houses flat (1408 against 637 s of CPU from 60 m up), mo
 eleven edges against eight; before the pruning took their roof planes it was 3.2 times (2051 s),
 with the same levels to the bit.
 
+### Microphones on roofs and walls
+
+A source or a microphone lying on a wall or a flat roof (THEORY §6.5, "Ends on a surface"), against
+the same a hair (10 µm) off the surface, where the model traces the surface's partners itself.
+A rigid building 20 m square and 10 m high, `niceops_point_field`, band levels re the source at 1 m:
+
+| End | Before, on the surface | Now, on it | A hair off it |
+| --- | --- | --- | --- |
+| Microphone on the roof, source 50 m overhead (250 Hz) | −33.98 (free field) | −27.87 | −27.87 |
+| Microphone on the roof 5 m behind its edge, source low beyond (250 Hz) | −300 (no ray) | −32.28 | −32.27 |
+| Microphone on a wall, source facing it 40 m off (250 Hz) | −26.70 | −20.71 | −20.71 |
+| Source on the roof, microphone 50 m overhead (250 Hz) | −33.98 | −27.87 | −27.87 |
+
+Over eight geometries, overhead, behind and obliquely over the roof's edge, facing a wall, round
+its corner, behind the building and oblique to it, six bands from 125 Hz to 4 kHz: within
+0.062 dB, the largest at 125 Hz in the building's shadow, where a hair off the face carries an
+edge's backscatter along it that the end on the face leaves out. An absorbing roof (ρ = 0.6)
+overhead gives the free field times (1 + √ρ)² to 0.05 dB, as above it. The GPU's levels for a
+microphone on a roof with a plate are the CPU's (`[gpu]`).
+
+**Each microphone's floor.** On the demo district and a 4 s stretch of the demo track, observers
+raised 5 ft (on no roof or wall) give the levels the same observers at z = 0 give under the track
+lowered 5 ft, to 1e-10 dB (`buildings_floor_at_observer_z`); with half of them raised, each half
+is its own floor's run to the digit.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and

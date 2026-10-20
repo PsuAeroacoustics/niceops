@@ -535,13 +535,19 @@ double UrbanDistrict::diffuse_radius() const
 
 std::string UrbanDistrict::misplaced(const Vec3& p) const
 {
-    if (!(p.z >= 0.0))
-        return "below the floor";
-    const Buildings& city = impl_->city;
-    const std::size_t b = city.inside(p.x, p.y);
-    if (b < city.size() && p.z < city.footprints()[b].top)
-        return "inside building " + impl_->input.ids[b];
-    return "";
+    return misplaced_point(impl_->city, impl_->input.ids, p);
+}
+
+bool UrbanDistrict::on_wall(const Vec3& p) const
+{
+    return impl_->city.support(p).kind == Buildings::Support::Kind::facade;
+}
+
+double UrbanDistrict::floor_height(const Vec3& ground) const
+{
+    return std::abs(ground.z) <= Buildings::contact || impl_->city.support(ground).kind != Buildings::Support::Kind::none
+            ? 0.0
+            : ground.z;
 }
 
 bool UrbanDistrict::gpu_supports(const SourceCoherence& coherence, bool interval)
@@ -647,6 +653,24 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             }
         }
     }
+    // A microphone on a wall or a level roof: that surface is its own end's
+    // reflector (raised, by the facade whose coefficient it takes) -- for the
+    // turbulent field's doubling at the receiver, and for a plate there, R in
+    // P_d + R P_r (FloorModel::surface, below).
+    std::vector<std::vector<double>> receiver_energy = floor_energy;
+    std::vector<std::size_t> raised(nm, PointRay::no_surface);
+    for (std::size_t m = 0; m < nm; m++)
+    {
+        const Buildings::Support on = city.support(microphones[m]);
+        if (on.kind != Buildings::Support::Kind::facade && on.kind != Buildings::Support::Kind::roof)
+            continue;
+        if (floor_of[m].plate && on.kind == Buildings::Support::Kind::facade)
+            throw std::invalid_argument("microphone " + std::to_string(m + 1)
+                    + " is flush on a wall with a plate; a plate lies level, on the floor or a roof");
+        raised[m] = on.kind == Buildings::Support::Kind::facade ? on.index : city.roof_facade(on.index);
+        std::fill(receiver_energy[m].begin(), receiver_energy[m].end(),
+                raised[m] == Buildings::no_facade ? 1.0 : d.reflection[raised[m]]);
+    }
     const double radius = database.sphere_radius();
     const double at_one_metre = 20.0 * std::log10(radius);
     // The interval's percentiles, as fractions.
@@ -723,6 +747,16 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     auto reflection_for = [&](std::size_t m) -> const std::vector<double>& {
         return diffuse ? microphone_reflection[m] : reflection;
     };
+    // A plate on a raised surface takes the specular R its rays' partners do.
+    for (std::size_t m = 0; m < nm; m++)
+        if (floor_of[m].plate && raised[m] != PointRay::no_surface)
+        {
+            floor_of[m].surface.resize(middles.size());
+            for (std::size_t j = 0; j < middles.size(); j++)
+                floor_of[m].surface[j] = raised[m] == Buildings::no_facade
+                        ? 1.0
+                        : std::sqrt(reflection_for(m)[raised[m] * nb + j / 3]);
+        }
 
     // One pair: its band levels over the metric's bands, its A-weighted level
     // and its interval's ends, all -infinity where nothing arrives, and with
@@ -784,7 +818,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // energy, from the sphere along the straight line as a ray's is (weigh),
     // times the scattered level, its fit's doubling by the ground at either
     // end taken as the floor's ((1 + R) / 2 each, R its energy coefficient or
-    // a ground's diffuse_reflection), absorbed along the line.
+    // a ground's diffuse_reflection; at a microphone on a wall or a level roof,
+    // that surface's), absorbed along the line.
     const double turbulence_cv2 = velocity_equivalent(d.turbulence, sound_speed);
     auto turbulence_energy = [&](std::size_t state, std::size_t m, Scratch& w, std::vector<double>& out) {
         out.clear();
@@ -808,10 +843,10 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 continue;
             const double free = std::pow(10.0, (level + at_one_metre) / 10.0) * (inside / radius) * (inside / radius)
                     * std::exp(-2.0 * nepers[b] * (r - inside)) / (r * r);
-            const double floor = floor_energy[m][b];
-            out[b] = free * 0.25 * (1.0 + floor) * (1.0 + floor)
+            const double floor = floor_energy[m][b], receiver = receiver_energy[m][b];
+            out[b] = free * 0.25 * (1.0 + floor) * (1.0 + receiver)
                     * std::pow(10.0, 0.1 * scattered_level(screen.h, screen.d_s, screen.d_r, bands[b], turbulence_cv2));
-            out[nb + b] = free * (1.0 + floor);
+            out[nb + b] = free * (1.0 + receiver);
         }
     };
     // The scattered energy added into band levels, the total held to open

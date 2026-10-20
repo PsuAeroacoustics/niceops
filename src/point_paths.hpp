@@ -48,6 +48,7 @@
 // edge's ends.
 
 #include <array>
+#include <cmath>
 #include <complex>
 #include <functional>
 #include <cstddef>
@@ -315,11 +316,34 @@ struct PointRay
     // A partner made by the fade: the edges it diffracts at besides the
     // ray's own (its length includes their detours).
     std::vector<MadeEdge> made_edges;
+    // The surface a raised end lies on -- a wall or a level roof, never the
+    // floor, whose partners are traced -- by the facade whose reflection
+    // coefficient it takes (no_facade: a rigid one), or no_surface.  Every
+    // ray arriving there has a partner reflected at the end itself, of one
+    // length, so the ray carries (1 + R) for it; halved where the ray's wedge
+    // at that end has the surface as a face (`*_on_face`), whose coefficient
+    // holds its reflection already.
+    static constexpr std::size_t no_surface = no_facade - 1;
+    std::size_t source_surface = no_surface;
+    std::size_t microphone_surface = no_surface;
+    bool source_on_face = false;
+    bool microphone_on_face = false;
     // Where it goes, for drawing: the source, its reflection and diffraction
     // points in order, the microphone.  A leg off the floor is unfolded below
     // it, so only x and y are the ray's own there.
     std::vector<Vec3> path;
 };
+
+// The amplitude a raised end's surface gives a ray (PointRay::source_surface):
+// 1 + R, R the root of the surface's energy reflection coefficient (1 for a
+// rigid one), halved where the ray's wedge there has the surface as a face.
+inline double end_surface_factor(std::size_t surface, bool on_face, const std::vector<double>& reflection)
+{
+    if (surface == PointRay::no_surface)
+        return 1.0;
+    const double r = surface == PointRay::no_facade ? 1.0 : std::sqrt(reflection[surface]);
+    return (1.0 + r) * (on_face ? 0.5 : 1.0);
+}
 
 // A ray's wedge term w < ray.wedges, in order from the source.
 inline const WedgeTerm& wedge_term(const PointRay& ray, int w)
@@ -355,6 +379,11 @@ struct FloorModel
     using PlateTransfer = std::function<void(double elevation, double azimuth, std::complex<double>* direct,
             std::complex<double>* image)>;
     PlateTransfer plate;
+    // With a plate on a wall's or a level roof's surface instead of the floor
+    // (PointRay::microphone_surface), that surface's amplitude reflection R at
+    // every sub-band: each ray, which carries 1 + R for the surface already,
+    // takes (P_d + R P_r) / (1 + R).  Empty on the floor.
+    std::vector<double> surface;
     bool impedance() const
     {
         return !admittance.empty();
@@ -373,7 +402,8 @@ class PathEnd
 {
 public:
     // Throws std::invalid_argument where `partners` is not ascending without
-    // repeats.
+    // repeats, and where the point lies on a pitched roof's slope or on an
+    // edge (Buildings::support), whose reflection the model does not hold.
     PathEnd(const Buildings& buildings, const Vec3& point, bool source, const PointPathOptions& options,
             const std::vector<std::size_t>& partners);
 
@@ -422,6 +452,17 @@ public:
     {
         return source_;
     }
+    // Whether it lies on a wall or a level roof (Buildings::support), and the
+    // facade whose reflection coefficient that surface takes (no_facade for a
+    // rigid roof; PointRay::no_surface where it lies on neither).
+    bool on_surface() const
+    {
+        return surface_ != PointRay::no_surface;
+    }
+    std::size_t surface() const
+    {
+        return surface_;
+    }
     const PointPathOptions& options() const
     {
         return options_;
@@ -430,6 +471,7 @@ public:
 private:
     Vec3 point_;
     bool source_ = false;
+    std::size_t surface_ = PointRay::no_surface;
     PointPathOptions options_;
     std::vector<std::size_t> near_;
     std::vector<std::size_t> candidates_;
@@ -561,8 +603,21 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
 // A twice-diffracted ray's cascade from the source's image pa by g1 at q1 and
 // g2 at q2 to the microphone's image pb: its length, spreading and wedge
 // terms; the rest of the record is the caller's.
+// Which face of a diffracted ray's first or last wedge its end lies on, 0 or
+// 1 (within Buildings::contact of it; edge_face), -1 for none: the angle there
+// is the face's, and the ray records it (PointRay::source_on_face,
+// microphone_on_face).
+struct EndFaces
+{
+    int source = -1;
+    int microphone = -1;
+};
+// The face of the edge's wedge that p lies on, within Buildings::contact of
+// its plane and on its side of the edge: 0 for face0, 1 for the other, -1
+// for none.
+int edge_face(const Edge& e, const Vec3& p);
 PointRay twice_diffracted_ray(const Edge& g1, const Edge& g2, const Vec3& pa, const Vec3& pb, const Vec3& q1,
-        const Vec3& q2);
+        const Vec3& q2, EndFaces ends = {});
 // The same through three edges.  Each edge's diffracted wave spreads from its
 // own caustic at the edge and from a second along it, at the incident
 // wavefront's radius of curvature along the edge (Kouyoumjian and Pathak's
@@ -574,14 +629,14 @@ PointRay twice_diffracted_ray(const Edge& g1, const Edge& g2, const Vec3& pa, co
 // spreading.  The distance parameters are the point-source ones, s s' / (s + s')
 // for the legs either side of each edge.
 PointRay thrice_diffracted_ray(const Edge& g1, const Edge& g2, const Edge& g3, const Vec3& pa, const Vec3& pb,
-        const Vec3& q1, const Vec3& q2, const Vec3& q3);
+        const Vec3& q1, const Vec3& q2, const Vec3& q3, EndFaces ends = {});
 // The same through any number of edges g, at the points q: the spreading
 // that recursion over every edge in turn, each edge's distance parameter
 // that of the legs either side of it, and a wedge term halved where the leg
 // that reaches it runs on a face it shares with the edge before.  Three
 // edges give thrice_diffracted_ray's terms.
 PointRay chain_diffracted_ray(const std::vector<const Edge*>& g, const Vec3& pa, const Vec3& pb,
-        const std::vector<Vec3>& q);
+        const std::vector<Vec3>& q, EndFaces ends = {});
 // The parameters t along the edges g, from their starts, where a path from a
 // over each in turn to b is stationary: the least of its length, a convex
 // function of them, by damped Newton from `t`.  False where it does not settle

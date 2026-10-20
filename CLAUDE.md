@@ -204,6 +204,13 @@ Commands and options are in `README.md`; rationale is in
   rays; `pruning finds every ray among pitched houses`). Slopes reflect no specular ray. The FDTD's
   slope is a staircase, 5 dB loud at 6.3 kHz with EDGE's 3 mm cells, so pitched scenes are scored
   against the measurements and the BEM, not it.
+- **An end may lie on a wall or a level roof** (`Buildings::support`, within `contact`; ground.md
+  "Ends on a surface"). The floor's partners are traced; a wall's or a roof's are a factor
+  `1 + R` in `reflected_amplitude`, halved where the end wedge has that surface as a face (judged
+  geometrically, `edge_face`, never by an angular slack). A plate on a roof takes `P_d + R P_r`.
+  Slopes and edges are refused. In a run each microphone's floor is at its observer's z unless it
+  stands on z = 0 or a surface of the district (`floor_height`); each floor is evaluated with the
+  source lowered by it.
 - **Four roof edges and more are a chain** (`max_chain`, default 8, at most 14 for the GPU's ray
   kind): the corners of the taut string in the vertical plane through the ends, the path the
   convex least of its length. Only chains of more than three (fewer are the double and triple
