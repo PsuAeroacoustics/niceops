@@ -26,7 +26,8 @@ ranks what the literature says would improve the predictions most, for rotorcraf
    stays shielded through an event.
 2. **Finite facades and edge ends treated uniformly**: reflections near a facade's end weighted by their Fresnel
    zone, the vertex term, and a ray whose partner is beyond the orders faded rather than kept whole (1a's
-   leftover, UE06's R1).
+   leftover, UE06's R1). Begun (Oct 20): the edge source carries the vertex for a ray that reflects between two
+   edges (UE06 2.63 → 1.01 dB rms); by UTD it remains.
 3. **Facade scattering by incidence and grating order**: s(θ, f) from the BEM, grating orders for periodic relief
    (UE24-26), and a receiver-side gather that makes the diffuse field affordable on a grid.
 4. **Pitched roofs (LoD2)**, validated on EDGE's measured pitched-roof scenes (UE01-05, 15, 17, 19), unused so far.
@@ -71,10 +72,13 @@ The continuity sweep (20 lines, 3771 positions): 31 → 23 steps over 1 dB, the 
 
 **Still open:**
 
-- **A reflection near a facade's end whose partner would be a vertex.** UE06's R1 is 4.7 dB high: its ray
-  reflects 3 cm inside a tall house's wall, where the field is about half, and the corner that would diffract
-  the partner meets the low roof's front edge. A knife-edge transition carried past the facade's end (as
-  `--fade` makes partners for lower orders) would stand in for it.
+- **A reflection near a facade's end whose partner would be a vertex, by UTD.** UE06's R1 is 4.7 dB high by
+  UTD: its ray reflects 3 cm inside a tall house's wall, where the field is about half, and the corner that
+  would diffract the partner meets the low roof's front edge. With `--edge_source` the ray now takes the
+  integral unfolded about the wall, whose end over the front edge is the vertex's wave: R1 −0.1 dB, the scene
+  1.0 dB rms, EDGE's 13 runs 1.35 against UTD's 1.95. A Fresnel weight on the reflection would not do it (its
+  zone is a few centimetres there: −0.4 dB at 8 kHz). Making it the default needs the edge source on the GPU
+  and cheaper, or a vertex term in UTD (Albani et al. 2009).
 - **Vertex diffraction** in general, more than one reflection between edges,
   reflections on a ray of three edges, and the shared face's aperture on a ray of three (it takes the cascade).
 - **Four edges or more**, which a thin middle row needs (each of its roof edges counts).

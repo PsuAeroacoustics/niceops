@@ -1414,10 +1414,10 @@ receivers each, on the floor). Model − FDTD over every band level, mean and rm
 | UE00 (one row 0.49 m high), floor | rigid, 3 mm | −0.26, 0.36 (−1.0 to 0.0) | −0.20, 0.34 | Over one long row the model is the full-wave field |
 | UE00, drone | | +0.02, 0.05 (−0.1 to +0.1) | +0.01, 0.05 | |
 | UE23 (deep canyon), floor | walls 0.05, 4 mm, 90 ms; line of sight | −0.24, 0.37 (−0.8 to +0.4) | −0.25, 0.38 | With 12 reflections −0.3 to +0.6: a canyon's field is right with orders enough |
-| UE06 (five houses, the middle tall), floor | rigid, 3 mm | +0.77, 2.77 (−2.6 to +8.7) | +0.58, 2.63 | The low roofs' notches reflect between their edges: R2-R4 within 1.6 dB rms; behind the tall house +4.7 dB (below) |
-| UE06, drone | | −0.18, 2.12 (−3.3 to +4.1) | −0.27, 1.53 | |
-| UE07 (the middle low), floor | | +1.08, 3.87 (−10.5 to +6.9) | +0.47, 3.26 | |
-| UE07, drone | | −0.16, 2.45 (−4.5 to +6.1) | −0.05, 0.93 (−3.0 to +2.3) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
+| UE06 (five houses, the middle tall), floor | rigid, 3 mm | +0.77, 2.77 (−2.6 to +8.7) | −0.67, 1.01 (−1.6 to +2.3) | The low roofs' notches reflect between their edges: R2-R4 within 1.6 dB rms; behind the tall house +4.7 dB by UTD, −0.1 with the edge source (below) |
+| UE06, drone | | −0.18, 2.12 (−3.3 to +4.1) | −0.34, 1.47 | |
+| UE07 (the middle low), floor | | +1.08, 3.87 (−10.5 to +6.9) | −0.49, 2.52 (−7.2 to +5.0) | |
+| UE07, drone | | −0.16, 2.45 (−4.5 to +6.1) | −0.01, 0.85 (−2.6 to +1.9) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
 | UE13 (two rows, the first higher), floor | walls 0.05, 4 mm, 90 ms | −0.81, 2.79 (−7.4 to +4.3) | −0.80, 2.72 | Behind the second row, over three roof edges: +1.96, 2.20 |
 | | | between the rows: −1.74, 2.97 (−7.4 to +0.8) | −1.68, 2.94 | The reflections between the rows after the roof, two each side; the floor's null at 5 kHz |
 | UE12 (two rows of one height), floor | walls 0.05, 4 mm, 90 ms | +0.39, 2.31 (−3.8 to +4.7) | +0.47, 2.31 | Behind the second row 2.2-4.7 dB high: two roofs of one height taken for one |
@@ -1500,9 +1500,13 @@ roof and the next tall house's side wall, a corner whose double reflection misse
 and so arrives at about half its strength. It meets that roof between two edges. Until the model
 took a reflection between two edges (`--max_between_reflections`) it was 5.7 dB low at the
 receiver farther behind (R2) and 2.3 dB low at the nearer (R1); with it, R2-R4 are within 1.6 dB
-rms. At R1 the model's ray reflects 3 cm inside the wall's end and is taken whole, where the FDTD
-has it at about half: its partner would diffract at the tall house's corner, which meets the low
-roof's front edge at a vertex the model leaves out. There the model is 4.7 dB high.
+rms. At R1 the model's ray reflects 3 cm inside the wall's end and, by UTD, is taken whole, where
+the FDTD has it at about half: its partner would diffract at the tall house's corner, which meets
+the low roof's front edge at a vertex UTD has no term for. There UTD is 4.7 dB high. With
+`--edge_source` the ray takes the integral unfolded about the wall, over the front edge as far as
+it runs, and the end of that integral is the vertex's wave: R1 comes to −0.1 dB mean (1.1 rms) and
+the scene to 1.0 dB rms. Over EDGE's 13 runs the edge source goes from 1.63 to 1.35 dB rms against
+the FDTD; UTD stays at 1.95.
 
 What is left after the FDTD is mostly the floor source itself. Its own floor reflection makes a
 null where the path over the first roof leaves at θ, near c / (4 h sin θ) (h = 29 mm): 4.9 kHz in

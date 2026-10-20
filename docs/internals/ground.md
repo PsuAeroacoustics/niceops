@@ -654,8 +654,19 @@ Measured and left alone:
   - **The reflection at a wall's foot must count.** Between a low roof's two edges the ray grazes
     the roof and meets the tall neighbour's wall exactly at its bottom; that is the image of a right
     angle, exact, and `folded_path_open` takes it.
-  - **The ray keeps its facade** (`PointRay::between`, and in `facades` for its reflection) and takes
-    UTD under `--edge_source`, whose integral runs over the real edge, not its mirror.
+  - **The ray keeps its facade** (`PointRay::between`, and in `facades` for its reflection). Under
+    `--edge_source` it takes the integral unfolded about the facade (`edge_source_factors`
+    mirrors the second edge and the microphone's image), and that is where its ends count: the
+    integral over the first edge stops where it runs into the wall, which is the vertex UTD has
+    no term for. UE06's R1 went from +4.7 dB (UTD) to −0.1 against the FDTD, the scene from 2.77
+    to 1.01 dB rms, and the edge source's pooled EDGE score from 1.63 to 1.35. A floor bounce
+    between the edges keeps UTD there: a vertical edge on the floor already goes on below it in
+    the integral (`through_floor`).
+  - **Image theory holds it** (`a wall the edges run into is a mirror, by UTD and by the edge
+    source`): a low block's edges running into a wall that fills a half-space, against the block
+    doubled through it radiated by the source and its mirror. By UTD the sum of the rays is the
+    doubled block's to 0.02 dB; with the edge source, within 1.4 dB (the ends at the wall do not
+    quite cancel across the mirror); without the rays between the edges it misses by 6 dB.
   - **The floor is every pair's last candidate** (`floor_mirrored_edge`, `PointRay::between_floor`,
     counted in `floor`), its bounce tested by `folded_path_open` below the floor with no facades,
     which holds the line to q2's floor image against the buildings and their mirrors. It took the

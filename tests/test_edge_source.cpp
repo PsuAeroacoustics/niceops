@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <random>
@@ -8,6 +9,7 @@
 #include "buildings.hpp"
 #include "edge_source.hpp"
 #include "point_paths.hpp"
+#include "urban.hpp"
 #include "util/constants.hpp"
 #include "wedge.hpp"
 #include "wedge_series.hpp"
@@ -528,4 +530,90 @@ TEST_CASE("a partner's part reaches a shared vertex", "[edge_source]")
     }
     REQUIRE(twice > 0);
     REQUIRE(parts > 0);
+}
+
+// Image theory: a low block whose two roof edges run into a tall wall that
+// fills the half-space y < 0.  The wall is a rigid plane, so the field is the
+// free field of the block doubled through it, radiated by the source and by
+// its mirror together.  The model's rays -- over the edges, off the wall before
+// the first edge, between the edges (the second mirrored), after the second --
+// must add up to the doubled block's.  By UTD, whose edges have no ends, they
+// do to round-off.  With the edge source each ray takes the integral over its
+// own stretch of edge, ends and all; the ends at the wall do not quite cancel
+// across the mirror (1.4 dB at worst, measured), and without the rays that
+// reflect between the edges the sum misses by over 3 dB.
+TEST_CASE("a wall the edges run into is a mirror, by UTD and by the edge source", "[edge_source]")
+{
+    const std::vector<double> bands {125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0};
+    const double c = 343.2;
+    Footprint wall;
+    wall.x = {-400.0, 400.0, 400.0, -400.0};
+    wall.y = {-400.0, -400.0, 0.0, 0.0};
+    wall.top = 300.0;
+    Footprint low;
+    low.x = {0.0, 10.0, 10.0, 0.0};
+    low.y = {0.0, 0.0, 30.0, 30.0};
+    low.top = 5.0;
+    Footprint doubled = low;
+    doubled.y = {-30.0, -30.0, 30.0, 30.0};
+    const Buildings with_wall({wall, low}), open({doubled});
+    const Vec3 microphone(20.0, 3.0, 1.2);
+    // The worst difference, dB, between the wall's field and the doubled
+    // block's, the source `ys` from the wall.
+    auto worst_with = [&](bool edge_source, std::size_t between, double ys) {
+        PointPathOptions options;
+        options.edge_source = edge_source;
+        options.max_reflections = 1;
+        options.max_edge_reflections = 1;
+        options.max_twice_reflections = 1;
+        options.max_between_reflections = between;
+        options.triple_diffraction = PointPathOptions::Triple::none;
+        using Problems = std::vector<std::vector<std::pair<std::complex<double>, double>>>;
+        auto gather = [&](const Buildings& city, const Vec3& s, Problems& into) {
+            const PointSourceField field(city, s, microphone, options);
+            const std::vector<double> reflection(city.facades().size() * bands.size(), 1.0);
+            into.resize(3 * bands.size());
+            field.sub_band_problems(reflection, 1.0, bands, c,
+                    [&](std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
+                            const std::vector<double>& length, const SubBand&) {
+                        for (std::size_t i = 0; i < amplitude.size(); i++)
+                            into[3 * band + part].push_back({amplitude[i], length[i]});
+                    });
+        };
+        Problems mirrored, unfolded;
+        gather(with_wall, Vec3(-10.0, ys, 1.5), mirrored);
+        gather(open, Vec3(-10.0, ys, 1.5), unfolded);
+        gather(open, Vec3(-10.0, -ys, 1.5), unfolded);
+        double worst = 0.0;
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            const auto parts = sub_bands(bands[b], c);
+            double energy[2][3];
+            for (int which = 0; which < 2; which++)
+                for (int part = 0; part < 3; part++)
+                {
+                    auto rays = (which == 0 ? mirrored : unfolded)[3 * b + part];
+                    std::sort(rays.begin(), rays.end(),
+                            [](const auto& x, const auto& y) { return x.second < y.second; });
+                    std::vector<std::complex<double>> amplitude;
+                    std::vector<double> length;
+                    for (const auto& [a, l] : rays)
+                    {
+                        amplitude.push_back(a);
+                        length.push_back(l);
+                    }
+                    energy[which][part] = band_averaged_energy(amplitude, length, parts[part].k1, parts[part].k2);
+                }
+            worst = std::max(worst,
+                    std::abs(band_level(bands[b], parts, energy[0]) - band_level(bands[b], parts, energy[1])));
+        }
+        return worst;
+    };
+    for (double ys : {2.0, 8.0})
+    {
+        INFO("the source " << ys << " m from the wall");
+        REQUIRE(worst_with(false, 1, ys) < 0.05);
+        REQUIRE(worst_with(true, 1, ys) < 1.5);
+    }
+    REQUIRE(worst_with(true, 0, 2.0) > 3.0);
 }

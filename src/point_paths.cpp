@@ -1874,10 +1874,11 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
     std::vector<std::complex<double>> out;
     // A ray off a roof takes UTD: the roof's outline bounds the stretch of the
     // edge its image sees, which the integral over the edge does not know.
-    // So does a ray that reflects between its edges, whose second edge it
-    // meets mirrored, and one diffracted three times.
+    // So does a ray that bounces on the floor between its edges, and one
+    // diffracted three times; one that reflects in a facade between them takes
+    // the integral unfolded about it.
     if (ray.wedges == 0 || ray.wedges > 2 || !ray.made_edges.empty() || !ray.roof_facades.empty()
-            || ray.between != PointRay::no_facade || ray.between_floor)
+            || ray.between_floor)
         return out;
     const EdgeSourceTerm& t = ray.edge_source;
     if (ray.wedges == 1)
@@ -1907,8 +1908,17 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
                                     : std::vector<std::complex<double>> {};
         return out;
     }
+    // A ray that reflects in a facade between its edges takes the integral
+    // unfolded about it: the second edge and the microphone's image mirrored.
+    const bool mirrored = ray.between != PointRay::no_facade;
+    const Facade* between = mirrored ? &buildings.facades()[ray.between] : nullptr;
     const Edge g1 = through_floor(buildings.edges()[t.edges[0]]);
-    const Edge g2 = through_floor(buildings.edges()[t.edges[1]]);
+    const Edge g2 = through_floor(mirrored ? mirrored_edge(*between, buildings.edges()[t.edges[1]])
+                                           : buildings.edges()[t.edges[1]]);
+    EdgeSourceTerm t_unfolded = t;
+    if (mirrored)
+        t_unfolded.microphone = mirror_in(*between, t.microphone);
+    const EdgeSourceTerm& u = t_unfolded;
     // The weights: the transition parameters' least, per unit wavenumber, and
     // the least path excess of an end or a boundary point.
     double transition = std::numeric_limits<double>::infinity();
@@ -1921,17 +1931,17 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
     }
     const auto via_first = [&](double z1) {
         const Vec3 p = g1.start + z1 * g1.direction;
-        const EdgeFrameEnds e = edge_frame_ends(g2, p, t.microphone);
-        return (t.source - p).norm() + std::hypot(e.r_s + e.r_r, e.z_r - e.z_s);
+        const EdgeFrameEnds e = edge_frame_ends(g2, p, u.microphone);
+        return (u.source - p).norm() + std::hypot(e.r_s + e.r_r, e.z_r - e.z_s);
     };
     const auto via_second = [&](double z2) {
         const Vec3 q = g2.start + z2 * g2.direction;
-        const EdgeFrameEnds e = edge_frame_ends(g1, t.source, q);
-        return (t.microphone - q).norm() + std::hypot(e.r_s + e.r_r, e.z_r - e.z_s);
+        const EdgeFrameEnds e = edge_frame_ends(g1, u.source, q);
+        return (u.microphone - q).norm() + std::hypot(e.r_s + e.r_r, e.z_r - e.z_s);
     };
     double excess = std::min({via_first(0.0), via_first(g1.length), via_second(0.0), via_second(g2.length)})
             - ray.length;
-    for (const PartnerWave& p : twice_diffracted_partners(g1, g2, t.source, t.microphone))
+    for (const PartnerWave& p : twice_diffracted_partners(g1, g2, u.source, u.microphone))
         for (double z : {p.part.lo, p.part.hi})
         {
             const Edge& along = p.over_second ? g2 : g1;
@@ -1942,14 +1952,14 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
             if (p.over_second)
             {
                 const Vec3 q = g2.start + z * g2.direction;
-                const EdgeFrameEnds e = edge_frame_ends(g1, t.source, q);
-                path = std::hypot(e.r_s + e.r_r, e.z_r - e.z_s) + (t.microphone - q).norm();
+                const EdgeFrameEnds e = edge_frame_ends(g1, u.source, q);
+                path = std::hypot(e.r_s + e.r_r, e.z_r - e.z_s) + (u.microphone - q).norm();
             }
             else
             {
                 const Vec3 p1 = g1.start + z * g1.direction;
-                const EdgeFrameEnds e = edge_frame_ends(g2, p1, t.microphone);
-                path = (t.source - p1).norm() + std::hypot(e.r_s + e.r_r, e.z_r - e.z_s);
+                const EdgeFrameEnds e = edge_frame_ends(g2, p1, u.microphone);
+                path = (u.source - p1).norm() + std::hypot(e.r_s + e.r_r, e.z_r - e.z_s);
             }
             excess = std::min(excess, path - ray.length);
         }
@@ -1966,7 +1976,7 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
     }
     if (!any)
         return out;
-    const std::vector<std::complex<double>> exact = localized_twice_diffracted_spectrum(g1, g2, t.source, t.microphone,
+    const std::vector<std::complex<double>> exact = localized_twice_diffracted_spectrum(g1, g2, u.source, u.microphone,
             ray.wedge[1].grazing ? 0.5 : 1.0, wavenumbers, PartnerModel::edge_source);
     out.resize(wavenumbers.size());
     for (std::size_t j = 0; j < wavenumbers.size(); j++)

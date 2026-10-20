@@ -171,7 +171,9 @@ Commands and options are in `README.md`; rationale is in
   reverse, would make or lose energy.
 - **Rays reflect between two edges and cross three** (`max_between_reflections`, `triple_diffraction`;
   docs/internals/ground.md). A reflection between edges unfolds about the facade or the floor, the
-  second edge mirrored with every vector (`mirrored_edge`), and takes UTD under `--edge_source`. Three edges
+  second edge mirrored with every vector (`mirrored_edge`); under `--edge_source` it takes the integral
+  unfolded about the facade (a floor bounce keeps UTD), which is what carries the vertex where the
+  first edge runs into the wall. Three edges
   are roof edges only by default: every edge multiplied the demo run's cost by eight for nothing.
   A middle edge meeting an outer one at a corner is left out (a vertex, not a cascade). The GPU's
   shared-face ray kind is `NK_KIND_FACE`, freeing 3 for three wedge terms.

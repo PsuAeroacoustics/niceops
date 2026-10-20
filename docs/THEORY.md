@@ -1351,8 +1351,9 @@ $M \ge h\Delta/2 + 4\,(h\Delta)^{1/3} + 6$ nodes the rule is exact to round-off,
 pair. Left out: four edges or more; more than one reflection between two edges; any reflection between three edges or at their ends (`--max_thrice_reflections`); a shared
 face's aperture on a ray of three, which takes the cascade; more than `--max_twice_reflections` on
 either side of two edges; a roof bounce on a twice-diffracted ray; a vertex; and an edge's ends
-(except with `--edge_source`, which a ray reflected between its edges or diffracted three times does
-not take). Continuity across
+(except with `--edge_source`, which a ray that bounces on the floor between its edges or is
+diffracted three times does not take; one that reflects in a facade between its edges takes it
+unfolded about the facade, the second edge and the microphone's image mirrored). Continuity across
 a ray's boundary rests on the diffracted ray that takes over there being traced: one with the same
 reflections, split about the boundary's edge, which a specular ray of more reflections than
 `--max_edge_reflections` on one side, or a diffracted ray whose own leg meets another edge, does not

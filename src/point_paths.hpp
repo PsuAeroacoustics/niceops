@@ -242,8 +242,8 @@ struct PointRay
     // The facade a twice-diffracted ray reflects in between its edges, the
     // last of its `facades` before the microphone's; no_facade for none; or
     // whether it reflects in the floor there (one of its `floor`).  Its wedge
-    // terms are taken with the second edge mirrored, and it takes UTD under
-    // the edge source, whose integral runs over the real edge.
+    // terms are taken with the second edge mirrored; under the edge source it
+    // takes the integral unfolded about the facade, and UTD off the floor.
     std::size_t between = no_facade;
     bool between_floor = false;
     // The height of the horizontal plane the ray reflects in on its source
