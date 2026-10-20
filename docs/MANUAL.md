@@ -220,7 +220,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--epnl_file` | Write each observer's EPNL, PNLTM, duration and tone corrections (14 CFR 36 A36.4). Once, or once per trajectory (`<track>_EPNL.csv`). Needs the spectral path and the 24 bands 50 Hz–10 kHz. Refused with `-a`. See [EPNL](#epnl-and-reception-time-frames). |
 | `--epnl_masking` / `--no-epnl_masking` | Exclude tones in bands below their noy threshold from the tone correction. On by default; `--no-epnl_masking` is the procedure as written. |
 | `--band_frames` | Write every observer's band levels in 0.5 s reception-time frames, as netCDF. Once, or once per trajectory (`<track>_band_frames.nc`). Needs the spectral path. Refused with `-a`. |
-| `--coverage_file` | Write, per observer, the energy-weighted share of its level that came from sphere cells the database did not measure. Needs a database that records `coverage`. Straight rays only: refused with `--refraction` or `-a`. |
+| `--coverage_file` | Write, per observer, the energy-weighted share of its level that came from sphere cells the database did not measure. Needs a database that records `coverage`. Straight rays only: refused with `--buildings`, `--refraction` or `-a`. |
 | `--provenance_spheres` | With `--provenance_file`, also write every sphere's share of every observer's SEL energy to a netCDF file ([Output files](#output-files)). |
 | `--provenance_file` | Write, per observer, where its SEL energy came from: the shares from states clamped on each database axis or held at a load-factor limit, and the sphere that supplied the most ([Output files](#output-files)). One database per run; refused with `-a`. |
 
@@ -1143,7 +1143,8 @@ over a pass as it does in an exposure.
   continuity at shadow boundaries. The run's log says which it used.
 - **The phase interval.** `--phase_interval 90` writes, beside the output, the SEL with every
   state at the 5th percentile of its level over the phases the model leaves unknown
-  (`<output>_phase_lower`), and at the 95th (`<output>_phase_upper`). The states are put at the
+  (`<output>_phase_lower`), and at the 95th (`<output>_phase_upper`). Names that collide with
+  another output are refused before the acoustic calculations. The states are put at the
   same end together, since one vehicle's phases do not change from moment to moment, so for a
   pass the interval is wide rather than narrow. It is widest at low frequency and close to the
   rotor, where the source's tones may keep a stable but unknown phase between directions that the
@@ -1173,7 +1174,7 @@ over a pass as it does in an exposure.
   and the cascade carries it in between and beyond. `--exact_shared_faces` takes the integral at
   every wavenumber.
 - **Not with** `--urban_table`, `--terrain`, `--refraction`, `--propagation_table`,
-  `--plate_table`, `--ground_classes`, `--atmosphere`, `--wind` or `--db_cutoff`.
+  `--plate_table`, `--ground_classes`, `--atmosphere`, `--wind`, `--db_cutoff` or `--coverage_file`.
 
 ## Metrics and output files
 

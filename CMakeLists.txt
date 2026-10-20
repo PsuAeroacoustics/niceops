@@ -1312,6 +1312,17 @@ set_tests_properties(buildings_refuses_negative_state_tolerance PROPERTIES PASS_
 add_test(NAME buildings_far_phase_lower_is_the_level COMMAND golden_compare integrated/buildings_far_phase_lower.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME buildings_far_phase_upper_is_the_level COMMAND golden_compare integrated/buildings_far_phase_upper.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_far_phase_lower_is_the_level buildings_far_phase_upper_is_the_level PROPERTIES FIXTURES_REQUIRED buildings_far_runs)
+# Implicit interval filenames must not replace another metric or trajectory.
+foreach(end lower upper)
+  add_test(NAME buildings_phase_${end}_refuses_csel_collision COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --phase_interval 90 -o integrated/phase_collision.csv --csel_file ${CMAKE_CURRENT_LIST_DIR}/integrated/phase_collision_phase_${end}.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  add_test(NAME buildings_phase_${end}_refuses_trajectory_collision COMMAND ${URBAN_RUN} -t tracks/S-76D/197421AC.csv --buildings tests/data/urban_far_building.csv --phase_interval 90 -o integrated/phase_collision.csv -o integrated/phase_collision_phase_${end}.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_phase_${end}_refuses_csel_collision buildings_phase_${end}_refuses_trajectory_collision PROPERTIES PASS_REGULAR_EXPRESSION "--phase_interval output .* would overwrite another output")
+endforeach()
+add_test(NAME buildings_phase_refuses_metric_collision COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --phase_interval 90 -o integrated/phase_collision.csv --lamax_file integrated/phase_collision_phase_upper.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_phase_refuses_companion_collision COMMAND ${URBAN_RUN} -t tracks/S-76D/197421AC.csv --buildings tests/data/urban_far_building.csv --phase_interval 90 -o integrated/phase_collision -o integrated/phase_collision.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_phase_refuses_metric_collision buildings_phase_refuses_companion_collision PROPERTIES PASS_REGULAR_EXPRESSION "--phase_interval output .* would overwrite another output")
+add_test(NAME buildings_refuses_coverage COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --coverage_file integrated/never_coverage.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_coverage PROPERTIES PASS_REGULAR_EXPRESSION "--buildings does not combine with --coverage_file")
 # The measured coherence through a run: with one ray any sum is that ray's level, so the far
 # building's run is the open one again, at 1e-9; and over the test district the interval's ends
 # bracket every microphone's SEL, some strictly.

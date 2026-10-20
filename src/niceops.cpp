@@ -5360,8 +5360,8 @@ int run(int argc, char* argv[])
             "The floor is theirs, rigid unless --floor_absorption, with no ground model: a microphone stands where "
             "the observer file puts it, raised by its height column. States are sampled (--state_tolerance). "
             "Spectral path, and a database carrying spectra; not with --urban_table, --terrain, --refraction, "
-            "--propagation_table, --plate_table, --ground_classes, --atmosphere, --wind, --ground_effect or "
-            "--db_cutoff.");
+            "--propagation_table, --plate_table, --ground_classes, --atmosphere, --wind, --ground_effect, "
+            "--db_cutoff or --coverage_file.");
     app.add_option("--wall_absorption", wall_absorption,
             "With --buildings: the walls' energy absorption coefficient where a building gives none (default 0).");
     app.add_option("--floor_absorption", floor_absorption,
@@ -5683,6 +5683,43 @@ int run(int argc, char* argv[])
             require_distinct(band_frames_files, "--band_frames file");
         if (!time_history_prefix.empty() || !band_history_prefix.empty())
             require_distinct(run_names, "history file name (their tracks share a file name)");
+    }
+
+    // The interval's implicit output names must not alias another output,
+    // including another trajectory's level or interval file.
+    if (phase_interval > 0.0)
+    {
+        std::vector<std::string> outputs;
+        for (const auto* names : {&out_files, &csel_files, &state_files, &epnl_files,
+                     &band_frames_files, &atmosphere_out_files})
+            outputs.insert(outputs.end(), names->begin(), names->end());
+        for (const auto* name : {&dnl_file, &lden_file, &cnel_file, &lday_file, &levening_file,
+                     &lnight_file, &laeq_file, &lamax_file, &nax_file, &ta_file, &coverage_file,
+                     &provenance_file, &provenance_spheres_file, &metric_file, &contour_file,
+                     &raster_file, &figure_file, &state_figure_file, &manifest_file})
+            if (!name->empty())
+                outputs.push_back(*name);
+        outputs.push_back(log_file);
+        if (latlon)
+        {
+            for (const auto* names : {&out_files, &csel_files})
+                for (const auto& name : *names)
+                    outputs.push_back(latlon_companion(name));
+            for (const auto* name : {&dnl_file, &lden_file, &cnel_file, &lday_file, &levening_file,
+                         &lnight_file, &laeq_file, &lamax_file, &nax_file, &ta_file, &coverage_file})
+                if (!name->empty())
+                    outputs.push_back(latlon_companion(*name));
+        }
+        for (const auto& output : out_files)
+            for (const char* end : {"lower", "upper"})
+            {
+                const std::string companion = phase_companion(output, end);
+                for (const auto& other : outputs)
+                    if (same_file(companion, other))
+                        input_error("--phase_interval output ", companion, " would overwrite another output (",
+                                other, "). Name them apart.");
+                outputs.push_back(companion);
+            }
     }
 
     if (grid_bounds.empty())
@@ -6111,6 +6148,8 @@ int run(int argc, char* argv[])
         if (!spectral)
             input_error("--buildings needs the spectral path: its rays are summed band by band.");
         const std::pair<bool, const char*> clashes[] {
+                {!coverage_file.empty(),
+                        "--coverage_file: coverage reports the straight-ray source direction, not the buildings' rays"},
                 {!urban_table.empty(), "--urban_table: both model the same microphones' streets; use one"},
                 {!terrain_file.empty(), "--terrain: the buildings and their floor stand on the plane z = 0"},
                 {refraction != "none", "--refraction: its rays are straight"},
