@@ -633,6 +633,65 @@ Measured and left alone:
   - Tests: `a roof reflects as the floor does`, `the field is continuous where a roof's edge hides
     its reflection`, `on a wide roof the field is the direct ray and the roof's`, and `rays off a
     roof are reciprocal and leave along minus their length's gradient`.
+- **A twice-diffracted ray takes each end's images to `max_twice_reflections`** (2), its own
+  order rather than `max_edge_reflections`, so a run at an edge order of 0 keeps them
+  (`twice-diffracted rays reflect at the microphone whatever the edge order`). It was 1 until the
+  EDGE scale models showed what a street behind a roof is short of: against the FDTD, UE13's
+  receivers between the rows went from −3.6 dB mean, 4.5 rms to −2.0, 3.2, and UE12's floor source
+  from 3.4 to 2.5 dB rms; three reflections add 0.3 dB more. It costs 21% of the demo
+  `--buildings` run on the CPU (3.5 to 4.2 s), and moves no SEL there by 0.001 dB. Images of two
+  reflections are not proved (`visible_stretch` tries one), so their views take the whole edge;
+  the exact path tests decide. `twice-diffracted rays reflect to max_twice_reflections at either
+  end` holds the rays at one to be those at two that reflect once, and swaps the ends.
+- **A reflection between two edges unfolds about the facade** (`max_between_reflections`, 1). The
+  second edge and the microphone's image are mirrored in it (`mirrored_edge`: every vector of the
+  edge with it, so that `Edge::angle`, which reads `face0` and `air`, gives the mirror its own
+  angles), and the pair is solved as any other. What to keep:
+  - **The candidates are per pair, once a field** (`between_of`): facades near the pair (within its
+    own extent, at least 1 m) that both edges face, whose heights meet the band between the edges',
+    and -- every end in front -- whose plan the hull of the four end-to-mirror segments crosses.
+    Those are necessary conditions, so pruning off finds the same rays.
+  - **The reflection at a wall's foot must count.** Between a low roof's two edges the ray grazes
+    the roof and meets the tall neighbour's wall exactly at its bottom; that is the image of a right
+    angle, exact, and `folded_path_open` takes it.
+  - **The ray keeps its facade** (`PointRay::between`, and in `facades` for its reflection) and takes
+    UTD under `--edge_source`, whose integral runs over the real edge, not its mirror.
+  - **What it leaves wrong:** near a facade's end the reflected wave is in the end's transition, and
+    its partner diffracts at the end's corner. Where that corner meets the first edge (a notch's
+    front edge running into the tall wall) the partner's point closes on the vertex, so the ray is
+    taken whole: UE06's R1, 4.7 dB high against the FDTD where R2-R4 are within 1.6 dB rms.
+  - Cost: 25% of the demo `--buildings` run on the CPU (3.9 to 4.9 s). EDGE's UE06 floor source went
+    from 5.30 to 2.77 dB rms against the FDTD. Test: `a ray reflects between two edges as the double
+    diffraction to the mirror`.
+- **Three edges** (`triple_diffraction`, `roofs` by default; `thrice_diffracted_ray`). With q2
+  given, the outer points are each Keller's toward their own end, so the search is a 1-D fixed
+  point on the middle edge, by the twice-diffracted search's Steffensen loop. What to keep:
+  - **The spreading carries rho_e by Euler's formula edge to edge**; two edges give the
+    twice-diffracted expression, and three parallel ones
+    1 / sqrt(s1 s2 s3 s4 S), which `a ray crosses three roof edges as the unfolded path does`
+    checks.
+  - **A middle edge that meets an outer one is left out** (`meet`). Round a corner the points
+    close on the vertex; taken as a cascade they put dozens of rays 2-7 cm from UE14's corners and
+    made its R2 11 dB low at 1.6 kHz.
+  - **Roof edges only by default.** Every edge took the demo run from 4.9 to 39.7 s with 16,000
+    rays more on the test district -- chains of vertical corners round each block -- and moved no
+    SEL by 0.001 dB; on EDGE it scored the same as roofs. Roofs cost 17% (4.9 to 5.8 s) and add a
+    dozen rays to the district.
+  - **The middle-edge lists are cached per thread across fields** (`MiddleCache`, keyed by
+    `Buildings::id()`, which a new district gets and a copy keeps): rebuilt every field they were
+    the cost, 13 s of the run.
+  - **No reflections at the ends by default** (`max_thrice_reflections`, 0): one each side scored
+    worse on EDGE (UE13 3.11 against 2.79 dB rms) and cost more.
+  - **The GPU's shared-face kind is `NK_KIND_FACE`**, not 3, so that a ray's kind can count its
+    three wedge terms; `the GPU's point-source amplitudes are the CPU's` requires both new kinds.
+  - `the field is continuous where a third edge cuts a twice-diffracted ray` sweeps a middle apex
+    across the line between two others: under 0.01 dB a step with three edges, 1.6-2.6 dB without.
+    Its geometry is particular for two reasons: with the outer blocks no deeper than the middle one,
+    the middle block's far side crossed the outer ones' far line at the same time, taking a shared-
+    face ray with it, which no three-edge ray stands in for; and exactly on the line three rays
+    graze at once and the field spikes, so the sweep steps past it.
+  - EDGE: UE13's floor source went from 4.92 to 2.79 dB rms against the FDTD, its R3 behind the
+    second row from 8.2 to 2.2.
 - **`point_ray_launch` is minus the length's gradient**, and `a point ray leaves the source along
   minus its length's gradient` checks it so, by nudging the source, over every kind of ray; it fails
   without either floor rule. It is what a directional source is read along.

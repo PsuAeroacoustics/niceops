@@ -12,12 +12,19 @@
 //     `max_edge_reflections` and each with the floor or without -- so an edge
 //     the source lights only by a reflection diffracts too;
 //   - diffracted twice: between two edges, the source's and the
-//     microphone's images to one reflection each.  The two diffraction
+//     microphone's images to `max_twice_reflections` each.  The two diffraction
 //     points are where the path is stationary: a fixed point of meeting
 //     the single-edge condition at each in turn, found by Steffensen's
 //     method (in closed form for parallel edges), and a pair whose point
 //     does not converge is no ray; the ray between the edges reflects in
-//     nothing.  Two parallel edges that share a face -- a flat
+//     nothing, or with max_between_reflections in one facade, the second
+//     edge mirrored in it.  Diffracted three times: the cascade of three
+//     coefficients, the middle edge's point a fixed point of meeting the
+//     single-edge condition there with the other two at theirs (see
+//     thrice_diffracted_ray), the ends' images to max_thrice_reflections and
+//     nothing between the edges; three rows of roofs, or the partner a ray
+//     that reflects between two edges needs at its facade's end.
+//     Two parallel edges that share a face -- a flat
 //     roof between its two edges, a wall between two corners -- take the
 //     uniform form of double_wedge.hpp, in the plane normal to them, at
 //     k sin(beta), and spread along them as the ray does.  Any other pair,
@@ -28,8 +35,10 @@
 //     spreading sqrt((s1 + s2) / (s3 (s1 + s2 + s3))).
 //
 // Every ray is tested exactly (folded_path_open); the images are beam traced
-// (image_tree).  Left out: three edges or more, a reflection between two
-// edges, diffuse reflection, and an edge's ends.
+// (image_tree).  Left out: four edges or more, more than one reflection
+// between two edges and the floor there, any reflection between three,
+// a shared face's aperture on a ray of three, diffuse reflection, and an
+// edge's ends.
 
 #include <array>
 #include <complex>
@@ -53,6 +62,25 @@ struct PointPathOptions
 {
     std::size_t max_reflections = 4;      // on a ray that diffracts nowhere
     std::size_t max_edge_reflections = 2; // on each side of a single diffraction
+    std::size_t max_twice_reflections = 2; // on each side of a double diffraction
+    // Facade reflections between the two edges of a double diffraction: 0 or
+    // 1.  The ray unfolds about the facade, the second edge mirrored in it.
+    std::size_t max_between_reflections = 1;
+    // Rays diffracted at three edges in turn, by the cascade of their three
+    // coefficients, the source's and the microphone's images to
+    // max_thrice_reflections each and nothing between the edges: over three
+    // roof edges (`roofs`, the rows a street's sound crosses), over any three
+    // (`all`), or none.  Any three take every chain of corners round a
+    // block, thousands in a district and weak: eight times a street run's cost
+    // for no level that moved, where roofs add a few rays.
+    enum class Triple
+    {
+        none,
+        roofs,
+        all
+    };
+    Triple triple_diffraction = Triple::roofs;
+    std::size_t max_thrice_reflections = 0;
     bool diffraction = true;
     bool double_diffraction = true;
     // The uniform form over a shared face (double_wedge.hpp); off, the
@@ -201,7 +229,7 @@ struct PointRay
     std::vector<std::size_t> facades;
     int floor = 0;
     int wedges = 0;
-    WedgeTerm wedge[2];
+    WedgeTerm wedge[3];
     bool shared = false;
     SharedFaceTerm shared_face;
     // Over a shared face, the cascade's spreading, which `spreading` then
@@ -210,6 +238,11 @@ struct PointRay
     double cascade_spreading = 0.0;
     // For a diffracted ray (wedges > 0).
     EdgeSourceTerm edge_source;
+    // The facade a twice-diffracted ray reflects in between its edges, the
+    // last of its `facades` before the microphone's; no_facade for none.  Its
+    // wedge terms are taken with the second edge mirrored in it, and it takes
+    // UTD under the edge source, whose integral runs over the real edge.
+    std::size_t between = no_facade;
     // The height of the horizontal plane the ray reflects in on its source
     // side -- anywhere along it for a specular ray, before its first edge for
     // a diffracted one -- 0 for the floor, NaN for none (point_ray_launch).
@@ -400,6 +433,18 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
 // terms; the rest of the record is the caller's.
 PointRay twice_diffracted_ray(const Edge& g1, const Edge& g2, const Vec3& pa, const Vec3& pb, const Vec3& q1,
         const Vec3& q2);
+// The same through three edges.  Each edge's diffracted wave spreads from its
+// own caustic at the edge and from a second along it, at the incident
+// wavefront's radius of curvature along the edge (Kouyoumjian and Pathak's
+// rho_e), which Euler's formula gives from the incident wave's two: s1 for the
+// first edge, then for each next one rho' + s and s, the previous edge's
+// rho_e and the leg between them, weighted by the cosine between the two
+// edges as the ray between them sees them.  Parallel edges give
+// 1 / sqrt(s1 s2 s3 s4 (s1 + s2 + s3 + s4)), and two edges the twice-diffracted
+// spreading.  The distance parameters are the point-source ones, s s' / (s + s')
+// for the legs either side of each edge.
+PointRay thrice_diffracted_ray(const Edge& g1, const Edge& g2, const Edge& g3, const Vec3& pa, const Vec3& pb,
+        const Vec3& q1, const Vec3& q2, const Vec3& q3);
 
 // The unit direction a ray leaves the source in, which a directional source
 // is read along.  A specular ray leaves toward its first hit, or toward the

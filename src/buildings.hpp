@@ -127,6 +127,13 @@ public:
     // one orientation (`reflect`).
     explicit Buildings(std::vector<Footprint> footprints, double orientation_tolerance = 1e-5);
 
+    // Which district this is, for a cache that outlives one query: each
+    // construction takes a new one, and a copy keeps its original's.
+    std::uint64_t id() const
+    {
+        return id_;
+    }
+
     std::size_t size() const
     {
         return footprints_.size();
@@ -192,6 +199,8 @@ public:
     // [y_min, y_max], each once, in no particular order: the grid's
     // candidates, which the caller tests.
     void near_box(double x_min, double x_max, double y_min, double y_max, std::vector<std::uint32_t>& out) const;
+    // The same for the facades, ascending.
+    void facades_in_box(double x_min, double x_max, double y_min, double y_max, std::vector<std::uint32_t>& out) const;
 
     // Whether a ray from `a` along `direction` reaches infinity without
     // passing through a building.  A ray that does not rise escapes once past
@@ -279,6 +288,7 @@ private:
     std::vector<double> bounds_;
     double max_top_ = 0.0;
     double orientation_tolerance_ = 1e-5;
+    std::uint64_t id_ = 0;
     std::size_t shared_sides_ = 0;
     // Per building, the sides (x0, y0, x1, y1) it shares with an earlier
     // building whose roof is level with its own, which on_roof leaves to that

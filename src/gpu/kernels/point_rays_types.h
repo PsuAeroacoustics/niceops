@@ -21,10 +21,11 @@ struct GpuWedge
     float scale;
 };
 
-// One ray, in length order: its kind (0 specular, 1 or 2 its wedge terms, 3
-// over a shared face), its first wedge term or its face, where its amplitude
-// after reflections (reflected_amplitude) starts, one per band, and its
-// length, m, for the air's absorption.
+// One ray, in length order: its kind (0 specular, 1 to 3 its wedge terms,
+// NK_KIND_FACE over a shared face), its first wedge term or its face, where its
+// amplitude after reflections (reflected_amplitude) starts, one per band, and
+// its length, m, for the air's absorption.
+#define NK_KIND_FACE 15u
 struct GpuRay
 {
     uint32_t kind;

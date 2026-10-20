@@ -1,6 +1,7 @@
 #include "buildings.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -202,6 +203,8 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
     : footprints_(std::move(footprints))
     , orientation_tolerance_(orientation_tolerance)
 {
+    static std::atomic<std::uint64_t> next_id {1};
+    id_ = next_id++;
     ceded_.resize(footprints_.size());
     x_min_ = y_min_ = std::numeric_limits<double>::infinity();
     x_max_ = y_max_ = -std::numeric_limits<double>::infinity();
@@ -657,6 +660,22 @@ void Buildings::near_box(double x_min, double x_max, double y_min, double y_max,
             if (seen.first(*i))
                 out.push_back(*i);
     });
+}
+
+void Buildings::facades_in_box(double x_min, double x_max, double y_min, double y_max,
+        std::vector<std::uint32_t>& out) const
+{
+    out.clear();
+    if (facades_.empty())
+        return;
+    thread_local Stamps seen;
+    seen.next(facades_.size());
+    facade_grid_.box(x_min, x_max, y_min, y_max, [&](const std::uint32_t* first, const std::uint32_t* last) {
+        for (const std::uint32_t* i = first; i != last; i++)
+            if (seen.first(*i))
+                out.push_back(*i);
+    });
+    std::sort(out.begin(), out.end());
 }
 
 std::size_t Buildings::first_hit(const Vec3& pos, const Vec3& dir, bool below_floor, Vec3& hit) const

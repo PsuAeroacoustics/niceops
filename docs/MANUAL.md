@@ -1106,8 +1106,8 @@ A microphone in a street costs about one extra evaluation per reflecting facade.
 
 `--buildings district.csv` evaluates every microphone with the point-source model of
 [`niceops_point_field`](#niceops_point_field): the rotor's own rays among LoD1 buildings,
-reflected in the facades, the roofs and the floor and diffracted at their edges once or at two in
-turn, each reading the sphere in the direction it leaves the rotor, added as below
+reflected in the facades, the roofs and the floor and diffracted at their edges once, at two in
+turn (reflecting in a facade between them or not) or at three roof edges, each reading the sphere in the direction it leaves the rotor, added as below
 ([THEORY §6.5](THEORY.md#65-urban-receivers)). Where `--urban_table` takes the source as a distant
 plane wave arriving from its direction, this follows the source among the buildings. Use it for a
 source near them -- a drone among the roofs, a slow approach to a vertiport -- and for metrics of a
@@ -1875,7 +1875,8 @@ grows about 1.7-fold with each further order of diffracted reflection
 The field of a point source among LoD1 buildings, at microphones: for a source near the buildings
 -- a loudspeaker in a street, a drone among the roofs -- where an `--urban_table`'s plane wave will
 not do. It traces the source's own rays, reflected in the facades, the roofs and the floor, diffracted at
-the roof edges and the corners, once or at two in turn, and writes each band's level re the
+the roof edges and the corners, once, at two in turn (with a facade between them or not) or at three
+roof edges in turn, and writes each band's level re the
 source's level at 1 m, so a measured source spectrum at 1 m adds to it directly.
 
 ```sh
@@ -1959,6 +1960,10 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--diffuse_radius` | With scattering walls, a building with a wall within this horizontal distance of a microphone scatters, walls and roof; those beyond reflect specularly. Default `--radius`. |
 | `--max_reflections` | Facade reflections on a ray that diffracts nowhere, and on a path that lights a patch. Default 4. |
 | `--max_edge_reflections` | Facade reflections on each side of a single diffraction. Default 2. |
+| `--max_twice_reflections` | Facade reflections on each side of a double diffraction. Default 2. |
+| `--max_between_reflections` | Facade reflections between the two edges of a double diffraction, 0 or 1. Default 1. |
+| `--triple_diffraction` | Rays diffracted at three edges: `roofs` (default; three roof edges, the rows a street's sound crosses), `all` (any three, every chain of corners round a block too: far more rays for little), or `none`. |
+| `--max_thrice_reflections` | Facade reflections on each side of a triple diffraction. Default 0. |
 | `--radius` | Facades and edges within this horizontal distance of the source or a microphone. Default 150 m. |
 | `--no_diffraction`, `--no_double_diffraction` | Leave out every diffracted ray, or those at two edges. |
 | `--no_roofs` | Roofs do not reflect, for comparison. |

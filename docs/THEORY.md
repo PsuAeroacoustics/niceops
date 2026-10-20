@@ -1110,8 +1110,8 @@ $\mu\,\bigl(1 - 1/9k + z_q/3\sqrt k\bigr)^3$, $z_q$ the normal quantile, which i
 $4\times10^{-7}$ dB there. `--phase_interval` takes the SEL of the history whose every state sits at the same
 end: one vehicle's phases do not change from state to state.
 
-A ray diffracted twice runs between two edges, the source's and the microphone's images to one
-reflection each, through the points where the path is stationary: where Keller's condition holds
+A ray diffracted twice runs between two edges, the source's and the microphone's images to
+`--max_twice_reflections` each (2 by default), through the points where the path is stationary: where Keller's condition holds
 at both edges at once, a fixed point of meeting it at each in turn (by Steffensen's method, and in
 closed form for parallel edges, where the path unfolds into a line). Where the two edges meet at a
 building's corner the fixed point is the corner itself, which is no ray. In general it is the
@@ -1128,6 +1128,41 @@ $$
 $1/\sqrt{s_1 s_2 s_3 (s_1 + s_2 + s_3)}$ for parallel edges, and the same from either end. The
 distance parameters are the first's $s_1 s_2/(s_1 + s_2)$ and the second's $s_2 s_3/(s_2 + s_3)$, which
 are reciprocal too.
+
+**A reflection between the two edges** (`--max_between_reflections`, 1 by default). Mirrored in a
+facade, the second edge -- its faces with it, so that its own angles are its own -- and the
+microphone's image make the path a double diffraction of its own, which the same search solves. The
+facade must face both edges and lie within the pair's own extent of them (at least 1 m); its
+reflection point must lie on it, and both edges' points in front of it. Its wedge terms are the
+mirrored pair's. Between the two edges of a low roof in a notch -- the low house between two tall
+ones -- the ray grazes the roof and meets the tall walls at their foot, where roof and wall make a
+right angle whose image is exact, and the mirrored pair still shares a face. Near a facade's end
+the reflected wave is in the end's transition, whose partner diffracts at the end's corner: where
+that corner meets the first edge, the point of the partner closes on the vertex, which the model
+leaves out, and the reflected ray is there kept whole.
+
+**Three edges** (`--triple_diffraction`). With the middle edge's point $q_2$ given, the outer two's
+are each Keller's toward their own end and independent of each other; $q_2$ is then Keller's between
+them, and the path is stationary at a fixed point of that, found as for two edges. The cascade
+carries on by Euler's formula: past each edge its wave spreads from its own caustic at the edge and
+from a second at the incident wavefront's radius of curvature along it,
+
+$$
+\rho_1 = s_1, \qquad
+\frac{1}{\rho_{k+1}} = \frac{c_k^2}{\rho_k + s_{k+1}} + \frac{1 - c_k^2}{s_{k+1}},
+$$
+
+$c_k$ the cosine between edges $k$ and $k+1$ projected normal to the leg between them, the spreading
+being $s_1^{-1} \prod_k \sqrt{\rho_k/(s_{k+1}(\rho_k + s_{k+1}))}$; two edges give the expression
+above, and three parallel ones $1/\sqrt{s_1 s_2 s_3 s_4 S}$. The distance parameters are again
+$s_k s_{k+1}/(s_k + s_{k+1})$ about each edge. Swept across the boundary where a middle corner cuts
+the ray between the outer two, the field moves by under 0.01 dB in 4 mm steps, where without the
+third edge it steps by 1.6-2.6 dB. A middle edge that meets either outer one at a corner is left
+out: the path's points close on the vertex there, as two edges that meet have their fixed point at
+the corner. By default only roof edges are taken (`roofs`): rows of buildings across a street,
+which is where a third edge was missing on EDGE's scale models. Taken among all edges (`all`), the
+chains of vertical corners round a block came to thousands of rays in the demo district and eight
+times the cost of its run, for no level that moved there; on EDGE they changed nothing either.
 
 **Over a shared face.** Where the two edges are parallel and share a face -- a flat roof from one
 edge to the other, a wall from one corner to the next -- the second edge lies in the first's
@@ -1311,9 +1346,12 @@ with the amplitudes held at the sub-band's center, which the GPU takes by Gaussâ
 quadrature wherever it needs fewer operations than the pairs, for rays adding coherently. $|S|^2$ is a sum of
 $e^{ik\,\Delta L}$ with $|\Delta L|$ at most the rays' spread of lengths $\Delta$, so with
 $M \ge h\Delta/2 + 4\,(h\Delta)^{1/3} + 6$ nodes the rule is exact to round-off, and it keeps every
-pair. Left out: three edges or more, a reflection between two edges (the floor included), more than
-one reflection on either side of two edges, a roof bounce on a twice-diffracted ray, and an edge's
-ends (except with `--edge_source`). Continuity across
+pair. Left out: four edges or more; more than one reflection between two edges, and the floor
+there; any reflection between three edges or at their ends (`--max_thrice_reflections`); a shared
+face's aperture on a ray of three, which takes the cascade; more than `--max_twice_reflections` on
+either side of two edges; a roof bounce on a twice-diffracted ray; a vertex; and an edge's ends
+(except with `--edge_source`, which a ray reflected between its edges or diffracted three times does
+not take). Continuity across
 a ray's boundary rests on the diffracted ray that takes over there being traced: one with the same
 reflections, split about the boundary's edge, which a specular ray of more reflections than
 `--max_edge_reflections` on one side, or a diffracted ray whose own leg meets another edge, does not

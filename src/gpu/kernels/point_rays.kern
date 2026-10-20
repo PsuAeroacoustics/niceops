@@ -16,7 +16,7 @@ NK_KERNEL(ray_amplitudes)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1)
     {
         const GpuRay r = rays[p.rays + i];
         uint term = r.term, terms = r.kind;
-        if (r.kind == 3u)
+        if (r.kind == NK_KIND_FACE)
         {
             term = faces[r.term].cascade;
             if (term == NK_NO_CASCADE)

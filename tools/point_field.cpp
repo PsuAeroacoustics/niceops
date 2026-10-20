@@ -105,6 +105,10 @@ int main(int argc, char** argv)
     double radius = 150.0;
     std::size_t max_reflections = 4;
     std::size_t max_edge_reflections = 2;
+    std::size_t max_twice_reflections = 2;
+    std::size_t max_between_reflections = 1;
+    std::size_t max_thrice_reflections = 0;
+    std::string triple_diffraction = "roofs";
     bool no_diffraction = false;
     bool no_double_diffraction = false;
     bool no_roofs = false;
@@ -139,10 +143,21 @@ int main(int argc, char** argv)
             "Facade reflections on a ray that diffracts nowhere (default 4).");
     app.add_option("--max_edge_reflections", max_edge_reflections,
             "Facade reflections on each side of a single diffraction (default 2).");
+    app.add_option("--max_twice_reflections", max_twice_reflections,
+            "Facade reflections on each side of a double diffraction (default 2).");
+    app.add_option("--max_between_reflections", max_between_reflections,
+            "Facade reflections between the two edges of a double diffraction, 0 or 1 (default 1).")
+            ->check(CLI::Range(0, 1));
     app.add_option("--radius", radius, "Facades and edges within this horizontal distance of the source or a "
                                        "microphone, in --units (default 150 m).");
     app.add_flag("--no_diffraction", no_diffraction, "Specular rays only.");
-    app.add_flag("--no_double_diffraction", no_double_diffraction, "No ray diffracted at two edges.");
+    app.add_flag("--no_double_diffraction", no_double_diffraction, "No ray diffracted at two edges or three.");
+    app.add_option("--triple_diffraction", triple_diffraction,
+            "Rays diffracted at three edges: 'roofs' (default; three roof edges, the rows a street's sound crosses), "
+            "'all' (any three, every chain of corners round a block too: far more rays), or 'none'.")
+            ->check(CLI::IsMember({"none", "roofs", "all"}));
+    app.add_option("--max_thrice_reflections", max_thrice_reflections,
+            "Facade reflections on each side of a triple diffraction (default 0).");
     app.add_flag("--no_roofs", no_roofs, "Roofs do not reflect, for comparison.");
     app.add_flag("--no_prune", no_prune,
             "Solve and check every diffracted path rather than ruling most out first: the same rays, slower; for "
@@ -325,6 +340,12 @@ int main(int argc, char** argv)
         PointPathOptions options;
         options.max_reflections = max_reflections;
         options.max_edge_reflections = max_edge_reflections;
+        options.max_twice_reflections = max_twice_reflections;
+        options.max_between_reflections = max_between_reflections;
+        options.triple_diffraction = triple_diffraction == "none" ? PointPathOptions::Triple::none
+                : triple_diffraction == "all"                      ? PointPathOptions::Triple::all
+                                                                   : PointPathOptions::Triple::roofs;
+        options.max_thrice_reflections = max_thrice_reflections;
         options.diffraction = !no_diffraction;
         options.double_diffraction = !no_double_diffraction;
         options.roofs = !no_roofs;
@@ -401,6 +422,7 @@ int main(int argc, char** argv)
                 const PointRay& ray = field.rays()[i];
                 const std::string kind = std::string(ray.wedges == 0 ? "specular"
                                                              : ray.wedges == 1 ? "diffracted"
+                                                             : ray.wedges == 3 ? "diffracted three times"
                                                              : ray.shared      ? "diffracted twice over a shared face"
                                                                                : "diffracted twice")
                         + (ray.made_edges.empty() ? "" : " (made partner)");

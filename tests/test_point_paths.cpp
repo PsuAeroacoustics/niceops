@@ -1292,6 +1292,207 @@ TEST_CASE("twice-diffracted rays reflect at the microphone whatever the edge ord
     REQUIRE(reflected > 0);
 }
 
+// A microphone in a street behind a row, which the source reaches over the
+// row's roof: what reaches it reflects between the street's walls after the
+// second edge.  Each end's images go to max_twice_reflections, so the rays at
+// one are the rays at two that reflect once at most, to the bit, and two adds
+// rays that reflect twice.  Swapping the ends gives the same rays.
+TEST_CASE("twice-diffracted rays reflect to max_twice_reflections at either end", "[point_paths]")
+{
+    const Buildings rows({box(0.0, -20.0, 10.0, 20.0, 8.0), box(16.0, -20.0, 26.0, 20.0, 6.0)});
+    const Vec3 source(-15.0, 0.0, 1.5), microphone(13.0, 0.0, 1.2);
+    PointPathOptions once;
+    once.max_twice_reflections = 1;
+    const PointPathOptions twice;
+    REQUIRE(twice.max_twice_reflections == 2);
+    auto lengths = [](const PointSourceField& field, std::size_t& deep) {
+        std::vector<double> out;
+        deep = 0;
+        for (const PointRay& ray : field.rays())
+            if (ray.wedges == 2)
+            {
+                out.push_back(ray.length);
+                deep += ray.facades.size() >= 2;
+            }
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+    std::size_t deep_once = 0, deep_twice = 0, deep_swapped = 0;
+    const std::vector<double> a = lengths(PointSourceField(rows, source, microphone, once), deep_once);
+    const std::vector<double> b = lengths(PointSourceField(rows, source, microphone, twice), deep_twice);
+    REQUIRE(!a.empty());
+    REQUIRE(b.size() > a.size());
+    REQUIRE(std::includes(b.begin(), b.end(), a.begin(), a.end()));
+    REQUIRE(deep_twice > 0);
+    const std::vector<double> c = lengths(PointSourceField(rows, microphone, source, twice), deep_swapped);
+    REQUIRE(c.size() == b.size());
+    for (std::size_t i = 0; i < b.size(); i++)
+        REQUIRE(c[i] == Catch::Approx(b[i]).epsilon(1e-12));
+}
+
+
+// The sorted lengths of a field's rays with `wedges` edges, and the count of
+// those that reflect between two edges.
+std::vector<double> lengths_of(const PointSourceField& field, int wedges, std::size_t* between = nullptr)
+{
+    std::vector<double> out;
+    std::size_t count = 0;
+    for (const PointRay& ray : field.rays())
+        if (ray.wedges == wedges)
+        {
+            out.push_back(ray.length);
+            count += ray.between != PointRay::no_facade;
+        }
+    std::sort(out.begin(), out.end());
+    if (between != nullptr)
+        *between = count;
+    return out;
+}
+
+// A notch: a low house between two tall ones, the source in front of it and
+// the microphone behind, on its middle line.  Over the low roof the ray may
+// reflect in either tall house's wall between the roof's two edges: unfolded
+// about the wall it is the double diffraction to the microphone's mirror, the
+// two edges parallel, so its length is the transverse path over the roof with
+// the mirror's offset along the edges added in quadrature.  Swapping the ends
+// gives the same rays, and so does tracing them with pruning off.
+TEST_CASE("a ray reflects between two edges as the double diffraction to the mirror", "[point_paths]")
+{
+    const Buildings notch({box(0.0, 10.0, 10.0, 20.0, 12.0), box(0.0, 0.0, 10.0, 10.0, 8.0),
+            box(0.0, -10.0, 10.0, 0.0, 12.0)});
+    const Vec3 source(-15.0, 5.0, 1.5), microphone(25.0, 5.0, 1.2);
+    PointPathOptions straight;
+    straight.max_between_reflections = 0;
+    const PointPathOptions between;
+    REQUIRE(between.max_between_reflections == 1);
+    std::size_t none = 0, some = 0, swapped = 0, unpruned = 0;
+    const PointSourceField field(notch, source, microphone, between);
+    const std::vector<double> plain = lengths_of(PointSourceField(notch, source, microphone, straight), 2, &none);
+    const std::vector<double> with = lengths_of(field, 2, &some);
+    REQUIRE(none == 0);
+    REQUIRE(some > 0);
+    REQUIRE(std::includes(with.begin(), with.end(), plain.begin(), plain.end()));
+    const double transverse = std::hypot(15.0, 6.5) + 10.0 + std::hypot(15.0, 6.8);
+    const double expected = std::hypot(transverse, 10.0);
+    bool found = false;
+    for (const PointRay& ray : field.rays())
+        if (ray.between != PointRay::no_facade && ray.floor == 0 && ray.facades.size() == 1)
+        {
+            found = found || std::abs(ray.length - expected) < 1e-9;
+            // It reflects in a tall house's wall, at the roof's height.
+            const std::size_t house = notch.facade_building(ray.between);
+            REQUIRE((house == 0 || house == 2));
+            REQUIRE(ray.path.size() == 5);
+            REQUIRE(ray.path[2].z == Catch::Approx(8.0).margin(1e-9));
+        }
+    REQUIRE(found);
+    const std::vector<double> back = lengths_of(PointSourceField(notch, microphone, source, between), 2, &swapped);
+    REQUIRE(swapped == some);
+    REQUIRE(back.size() == with.size());
+    for (std::size_t i = 0; i < with.size(); i++)
+        REQUIRE(back[i] == Catch::Approx(with[i]).epsilon(1e-12));
+    PointPathOptions every = between;
+    every.prune = false;
+    REQUIRE(lengths_of(PointSourceField(notch, source, microphone, every), 2, &unpruned) == with);
+    REQUIRE(unpruned == some);
+}
+
+// Two rows, the first the taller, the microphone behind the second: the path
+// crosses the first row's two roof edges and the second's far one, the second's
+// near edge lit below it.  The three edges are parallel, so the ray's length is
+// the transverse path and its spreading 1 / sqrt(s1 s2 s3 s4 (s1 + s2 + s3 + s4)).
+// None without three edges; the same rays with the ends swapped and with
+// pruning off.
+TEST_CASE("a ray crosses three roof edges as the unfolded path does", "[point_paths]")
+{
+    const Buildings rows({box(0.0, -20.0, 10.0, 20.0, 9.0), box(16.0, -20.0, 26.0, 20.0, 6.0)});
+    const Vec3 source(-15.0, 0.0, 1.5), microphone(31.0, 0.0, 1.2);
+    const double s1 = std::hypot(15.0, 7.5), s2 = 10.0, s3 = std::hypot(16.0, 3.0), s4 = std::hypot(5.0, 4.8);
+    const double total = s1 + s2 + s3 + s4;
+    const PointPathOptions options;
+    REQUIRE(options.triple_diffraction == PointPathOptions::Triple::roofs);
+    const PointSourceField field(rows, source, microphone, options);
+    bool found = false;
+    for (const PointRay& ray : field.rays())
+        if (ray.wedges == 3 && ray.floor == 0 && ray.facades.empty() && std::abs(ray.length - total) < 1e-9)
+        {
+            found = true;
+            REQUIRE(ray.spreading == Catch::Approx(1.0 / std::sqrt(s1 * s2 * s3 * s4 * total)).epsilon(1e-12));
+            REQUIRE(ray.path.size() == 5);
+            REQUIRE(ray.path[3].x == Catch::Approx(26.0).margin(1e-9));
+        }
+    REQUIRE(found);
+    PointPathOptions without = options;
+    without.triple_diffraction = PointPathOptions::Triple::none;
+    REQUIRE(lengths_of(PointSourceField(rows, source, microphone, without), 3).empty());
+    const std::vector<double> there = lengths_of(field, 3);
+    const std::vector<double> back = lengths_of(PointSourceField(rows, microphone, source, options), 3);
+    REQUIRE(back.size() == there.size());
+    for (std::size_t i = 0; i < there.size(); i++)
+        REQUIRE(back[i] == Catch::Approx(there[i]).epsilon(1e-12));
+    PointPathOptions every = options;
+    every.prune = false;
+    REQUIRE(lengths_of(PointSourceField(rows, source, microphone, every), 3) == there);
+}
+
+// Three tall wedge-shaped blocks, apexes down, between a source and a
+// microphone low on either side: the sound goes round the apexes, one
+// vertical edge each.  As the middle apex moves across the line between the
+// outer two, the ray round those is cut off and the ray round all three takes
+// over, its middle coefficient's transition making up the step.  Every edge
+// (Triple::all), the corners being vertical; without three edges the field
+// steps there.  The outer blocks run twice as deep as the middle one, so that
+// no ray round their far corners meets the middle one's far side as it moves;
+// and the sweep steps past the apex exactly on the line, where three rays
+// graze at once.
+TEST_CASE("the field is continuous where a third edge cuts a twice-diffracted ray", "[point_paths]")
+{
+    PointPathOptions options;
+    options.triple_diffraction = PointPathOptions::Triple::all;
+    options.max_reflections = 0;
+    options.max_edge_reflections = 0;
+    options.max_twice_reflections = 0;
+    options.max_between_reflections = 0;
+    PointPathOptions without = options;
+    without.triple_diffraction = PointPathOptions::Triple::none;
+    const Vec3 source(-25.0, 40.0, 1.5), microphone(25.0, 40.0, 1.5);
+    auto wedge = [](double x, double y, double depth) {
+        Footprint f;
+        f.x = {x, x + 0.08 * depth, x - 0.08 * depth};
+        f.y = {y, y + depth, y + depth};
+        f.top = 60.0;
+        return f;
+    };
+    // The outer apexes at (-12, 10) and (12, 10), the middle one at (0, c).
+    auto field_at = [&](double c, const PointPathOptions& o, std::size_t* thrice = nullptr) {
+        const Buildings city({wedge(-12.0, 10.0, 200.0), wedge(0.0, c, 100.0), wedge(12.0, 10.0, 200.0)});
+        if (thrice != nullptr)
+            *thrice = lengths_of(PointSourceField(city, source, microphone, o), 3).size();
+        return levels(city, source, microphone, 1.0, 0.0, o);
+    };
+    std::size_t below = 0, above = 0;
+    field_at(9.6, options, &below);
+    field_at(10.4, options, &above);
+    REQUIRE(below > 0);
+    REQUIRE(above > 0);
+    double worst = 0.0, worst_without = 0.0;
+    std::vector<double> previous = field_at(9.801, options), previous_without = field_at(9.801, without);
+    for (int step = 1; step <= 50; step++)
+    {
+        const double c = 9.801 + 0.008 * step;
+        const std::vector<double> now = field_at(c, options), now_without = field_at(c, without);
+        for (std::size_t b = 0; b < 3; b++)
+        {
+            worst = std::max(worst, std::abs(now[b] - previous[b]));
+            worst_without = std::max(worst_without, std::abs(now_without[b] - previous_without[b]));
+        }
+        previous = now;
+        previous_without = now_without;
+    }
+    REQUIRE(worst_without > 1.0);
+    REQUIRE(worst < 0.05);
+}
+
 
 // A vertical edge standing on the floor goes on below it as its image, and the
 // floor's images split that doubled edge between rays and their mirrors: of

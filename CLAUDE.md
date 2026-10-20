@@ -169,6 +169,12 @@ Commands and options are in `README.md`; rationale is in
   first wall's coefficients as their reflection takes them, so a building then scatters as a whole
   where any wall is in reach; a roof patched while its reflection kept its whole rho, or the
   reverse, would make or lose energy.
+- **Rays reflect between two edges and cross three** (`max_between_reflections`, `triple_diffraction`;
+  docs/internals/ground.md). A reflection between edges unfolds about the facade, the second edge
+  mirrored with every vector (`mirrored_edge`), and takes UTD under `--edge_source`. Three edges
+  are roof edges only by default: every edge multiplied the demo run's cost by eight for nothing.
+  A middle edge meeting an outer one at a corner is left out (a vertex, not a cascade). The GPU's
+  shared-face ray kind is `NK_KIND_FACE`, freeing 3 for three wedge terms.
 - **The ground model returns a gain, not a loss.**
 - **Compass bearings** are turned into the local frame by `--frame_bearing` through one
   rotation, `CompassToLocal`. The shipped AC tracks need 210.

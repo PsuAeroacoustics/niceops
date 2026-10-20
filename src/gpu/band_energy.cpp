@@ -268,7 +268,7 @@ void BandEnergies::submit()
             for (std::size_t i = 0; i < n; i++)
             {
                 GpuRay r = p.rays[i];
-                r.term += static_cast<uint32_t>(r.kind == 3 ? face_at : wedge_at);
+                r.term += static_cast<uint32_t>(r.kind == NK_KIND_FACE ? face_at : wedge_at);
                 r.reflected += static_cast<uint32_t>(reflected_at);
                 ray_records[ray + i] = r;
             }

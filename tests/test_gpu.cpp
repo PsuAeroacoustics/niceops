@@ -335,11 +335,16 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     std::vector<std::vector<double>> cpu(count, std::vector<double>(bands.size()));
     gpu::BandEnergies energies(device);
     std::vector<std::size_t> host_first, point_first;
-    std::size_t shared = 0;
+    std::size_t shared = 0, thrice = 0, between = 0;
     for (std::size_t i = 0; i < count; i++)
     {
         const std::vector<double>& reflection = f.reflection[i];
         const PointSourceField& field = *f.fields[i];
+        for (const PointRay& ray : field.rays())
+        {
+            thrice += ray.wedges == 3;
+            between += ray.between != PointRay::no_facade;
+        }
         const std::vector<double> absorption = i % 2 ? absorbing : std::vector<double> {};
         field.band_levels(reflection, 1.0, bands, c, cpu[i].data(), absorption);
         field.sub_band_problems(
@@ -358,6 +363,10 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
         point_first.push_back(energies.add(point[i]));
     }
     REQUIRE(shared > 0);
+    // Rays of three wedge terms, and rays with a facade between two edges,
+    // take the same kernel.
+    REQUIRE(thrice > 0);
+    REQUIRE(between > 0);
     energies.submit();
     const std::vector<double>& energy = energies.wait();
     double worst_amplitudes = 0.0, worst_cpu = 0.0;

@@ -182,7 +182,7 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
             }
             else
                 set.face_rays.push_back(self);
-            r.kind = 3;
+            r.kind = NK_KIND_FACE;
             r.term = face;
             set.faces.push_back(f);
         }

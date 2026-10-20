@@ -1204,11 +1204,11 @@ hemi-anechoic room, rigid floor, receivers on the floor mostly in the buildings'
 given its loudspeaker's measured directivity at its emission angle and the air's absorption,
 summed coherently over the band; pairs at least 15 dB over noise whose repeats agree to 0.5 dB,
 1.6-20 kHz at model scale; one gain per loudspeaker fitted, the archive's being undocumented),
-the two are the same: 4.22 dB rms over 1124 band levels either way, 4.52 dB rms over the 845 in
-shadow either way, and 0.00 dB apart at the median there. At model scale the buildings are many
+the two are the same: 4.09 and 4.10 dB rms over 1124 band levels, 4.36 and 4.37 over the 845 in
+shadow, and 0.01 dB apart at the median there. At model scale the buildings are many
 wavelengths long, so their ends matter little, and what is left is not diffraction's form. Read
 with the archive's UE06 and UE07 measurements swapped, as the full-wave runs suggest (below; not
-confirmed), the two models are 4.01 and 3.98 dB rms over all, 4.26 and 4.21 in shadow.
+confirmed), the two models are 3.82 and 3.79 dB rms over all, 4.03 and 3.98 in shadow.
 
 **Continuity.** On 20 of the sweep's lines (3771 positions, the loudspeaker at hover spot 5 only),
 `--edge_source` leaves 30 steps of more than 1 dB where the model without it leaves 31 (9.1 and
@@ -1396,17 +1396,17 @@ receivers each, on the floor). Model − FDTD over every band level, mean and rm
 | UE00 (one row 0.49 m high), floor | rigid, 3 mm | −0.26, 0.36 (−1.0 to 0.0) | −0.20, 0.34 | Over one long row the model is the full-wave field |
 | UE00, drone | | +0.02, 0.05 (−0.1 to +0.1) | +0.01, 0.05 | |
 | UE23 (deep canyon), floor | walls 0.05, 4 mm, 90 ms; line of sight | −0.24, 0.37 (−0.8 to +0.4) | −0.25, 0.38 | With 12 reflections −0.3 to +0.6: a canyon's field is right with orders enough |
-| UE06 (five houses, the middle tall), floor | rigid, 3 mm | −4.25, 5.30 (−9.3 to +3.5) | −5.26, 6.04 | A reflection between two edges, which the model does not have (below) |
-| UE06, drone | | −0.27, 2.00 (−3.3 to +3.8) | −0.38, 1.47 | |
-| UE07 (the middle low), floor | | −0.98, 4.42 (−11.1 to +9.6) | −1.72, 4.03 | |
-| UE07, drone | | −0.11, 2.29 (−4.3 to +5.2) | +0.05, 0.82 (−1.6 to +2.1) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
-| UE13 (two rows, the first higher), floor | walls 0.05, 4 mm, 90 ms | −4.29, 5.63 | −4.10, 5.18 | Behind the second row −12.4 to −8.0 dB at 1.6-3.15 kHz: no ray crosses three edges |
-| | | between the rows: −3.57, 4.48 (−9.4 to −0.4) | −3.52, 4.44 | Short of the reflections between the rows after the roof |
-| UE12 (two rows of one height), floor | walls 0.05, 4 mm, 90 ms | −0.72, 3.39 (−6.3 to +5.2) | −0.61, 3.33 | Behind the second row 2.7-5.2 dB high: two roofs of one height taken for one |
+| UE06 (five houses, the middle tall), floor | rigid, 3 mm | +0.77, 2.77 (−2.6 to +8.7) | +0.58, 2.63 | The low roofs' notches reflect between their edges: R2-R4 within 1.6 dB rms; behind the tall house +4.7 dB (below) |
+| UE06, drone | | −0.18, 2.12 (−3.3 to +4.1) | −0.27, 1.53 | |
+| UE07 (the middle low), floor | | +1.08, 3.87 (−10.5 to +6.9) | +0.47, 3.26 | |
+| UE07, drone | | −0.16, 2.45 (−4.5 to +6.1) | −0.05, 0.93 (−3.0 to +2.3) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
+| UE13 (two rows, the first higher), floor | walls 0.05, 4 mm, 90 ms | −0.81, 2.79 (−7.4 to +4.3) | −0.80, 2.72 | Behind the second row, over three roof edges: +1.96, 2.20 |
+| | | between the rows: −1.74, 2.97 (−7.4 to +0.8) | −1.68, 2.94 | The reflections between the rows after the roof, two each side; the floor's null at 5 kHz |
+| UE12 (two rows of one height), floor | walls 0.05, 4 mm, 90 ms | +0.39, 2.31 (−3.8 to +4.7) | +0.47, 2.31 | Behind the second row 2.2-4.7 dB high: two roofs of one height taken for one |
 | UE14 (one house 0.96 by 1 m), floor | rigid, 3 mm | −0.22, 1.22 (−3.9 to +2.1) | +0.06, 0.74 (−2.0 to +1.7) | A house a few wavelengths long: its edges' ends count |
 | UE14, drone | | −0.18, 0.67 (−2.0 to +1.1) | −0.02, 0.23 (−0.8 to +0.4) | From above too, the house's ends count |
-| UE12, drone | | +0.20, 0.32 (−0.4 to +0.7) | +0.20, 0.33 | From above, one edge to each receiver: the model is the field |
-| UE13, drone | | +0.31, 0.45 (−0.3 to +1.3) | +0.30, 0.45 | |
+| UE12, drone | | +0.23, 0.40 (−0.2 to +1.0) | +0.23, 0.41 | From above, one edge to each receiver: the model is the field |
+| UE13, drone | | +0.27, 0.36 (−0.2 to +0.8) | +0.26, 0.36 | |
 
 Behind UE12's second row the model's strongest ray diffracts at the first row's front edge and the
 second row's back edge, over a "shared face": the two roofs lie in one plane, and the model takes
@@ -1415,11 +1415,15 @@ The model tests only that its leg grazes the second edge's face, not that the fa
 the edges. Rows of one height across a street are common; of the twelve shared-face rays without
 reflections at DigiCity's four microphones (the loudspeaker at hover spot 5), none crosses a gap.
 
-Between UE13's rows the model is 0.4-3.1 dB short at 1.6-3.15 kHz and up to 9.4 dB at 4-5 kHz.
-What reaches those receivers crosses the first roof and reflects between the two rows' facades,
-and the model's twice-diffracted rays carry one reflection each side; with only those few paths,
-all leaving the floor source at one angle, the null of its floor reflection stays deep at 5 kHz,
-where the full-wave field's many paths fill it. Rigid, the same canyon had not settled in 36 ms:
+Behind UE13's second row the model was 8-12 dB low at 1.6-3.15 kHz until it took three edges: the path
+crosses the first row's two roof edges and the second's far one, its near one lit below the line.
+With the third edge it is 1.2-2.2 dB high there. Between UE13's rows the model is within 1.7 dB at
+1.6-3.15 kHz and 5.9-7.4 dB short at 5 kHz.
+What reaches those receivers crosses the first roof and reflects between the two rows' facades.
+With one reflection each side, as the twice-diffracted rays took until `--max_twice_reflections`,
+it was 0.4-3.1 dB short at 1.6-3.15 kHz; three reflections gain 0.3 dB more. At 5 kHz the
+rays all leave the floor source at nearly one angle, and the null of its floor reflection,
+c / (4 h sin θ) ≈ 5.1 kHz at 29 mm, stays deep where the full-wave field's many paths fill it. Rigid, the same canyon had not settled in 36 ms:
 1.6-2.1 dB still moved over the run's last tenth.
 
 **Two of EDGE's scenes may be swapped.** UE06 (a row of five 1 m houses, the middle one tall) and
@@ -1441,23 +1445,23 @@ loudspeaker and band from the line-of-sight pairs, as above). Measured − predi
 
 | Scene, source | Band levels | FDTD | UTD | Edge source |
 | --- | --- | --- | --- | --- |
-| UE00, floor | 32, shadow | +0.03 dB mean, 1.80 rms | +0.28, 1.96 | +0.23, 1.98 |
+| UE00, floor | 32, shadow | +0.03 dB mean, 1.80 rms | +0.29, 1.96 | +0.23, 1.98 |
 | UE00, drone | 32, shadow | −0.19, 0.66 | −0.20, 0.65 | −0.20, 0.65 |
 | UE23, floor | 28, line of sight | +0.36, 0.83 | +0.36, 0.80 | +0.36, 0.80 |
-| UE06 (read swapped), floor | 32, shadow | −1.15, 2.21 | +3.10, 4.52 | +3.99, 5.01 |
-| UE06 (read swapped), drone | 31, shadow | −0.12, 0.72 | +0.21, 1.84 | +0.30, 1.15 |
-| UE07 (read swapped), floor | 32, shadow | −1.04, 2.33 | −0.06, 3.71 | +0.63, 3.20 |
-| UE07 (read swapped), drone | 32, shadow | −0.33, 1.14 | −0.22, 2.13 | −0.36, 1.21 |
-| UE06 (as labelled), floor | 32, shadow | −1.91, 5.00 | +2.34, 3.93 | +3.24, 4.84 |
-| UE06 (as labelled), drone | 32, shadow | +2.39, 3.89 | +2.66, 4.33 | +2.77, 4.26 |
-| UE07 (as labelled), floor | 32, shadow | −0.29, 4.30 | +0.70, 4.82 | +1.38, 4.37 |
-| UE07 (as labelled), drone | 31, shadow | −2.83, 4.10 | −2.77, 3.36 | −2.83, 3.96 |
-| UE13, floor (walls 0.05, 90 ms) | 26, shadow | +2.50, 5.64 | +6.47, 9.11 | +6.36, 8.99 |
-| UE12, floor (walls 0.05, 90 ms) | 27, shadow | +1.13, 3.72 | +1.91, 4.83 | +1.84, 4.79 |
-| UE12, drone | 21, shadow | +0.22, 1.09 | −0.13, 1.01 | −0.14, 1.01 |
+| UE06 (read swapped), floor | 32, shadow | −1.03, 2.19 | −1.80, 3.68 | −1.64, 3.35 |
+| UE06 (read swapped), drone | 31, shadow | −0.12, 0.71 | +0.16, 1.97 | +0.22, 1.24 |
+| UE07 (read swapped), floor | 32, shadow | −1.04, 2.36 | −2.12, 4.13 | −1.52, 3.48 |
+| UE07 (read swapped), drone | 32, shadow | −0.33, 1.13 | −0.17, 2.23 | −0.26, 1.29 |
+| UE06 (as labelled), floor | 32, shadow | −1.79, 4.99 | −2.55, 4.85 | −2.40, 4.84 |
+| UE06 (as labelled), drone | 32, shadow | +2.39, 3.89 | +2.57, 4.32 | +2.66, 4.19 |
+| UE07 (as labelled), floor | 32, shadow | −0.29, 4.28 | −1.37, 4.97 | −0.77, 4.64 |
+| UE07 (as labelled), drone | 31, shadow | −2.83, 4.10 | −2.79, 3.42 | −2.77, 3.98 |
+| UE13, floor (walls 0.05, 90 ms) | 26, shadow | +2.02, 4.96 | +2.77, 5.85 | +2.77, 5.93 |
+| UE12, floor (walls 0.05, 90 ms) | 27, shadow | +1.17, 3.77 | +0.66, 4.16 | +0.62, 4.12 |
+| UE12, drone | 21, shadow | +0.21, 1.09 | −0.19, 1.12 | −0.20, 1.12 |
 | UE14, floor | 32, shadow | −0.08, 1.36 | +0.14, 1.44 | −0.14, 1.51 |
 | UE14, drone | 24, shadow | +0.05, 0.74 | +0.32, 0.91 | +0.05, 0.74 |
-| UE13, drone | 28, shadow | −0.36, 1.60 | −0.78, 1.71 | −0.78, 1.69 |
+| UE13, drone | 28, shadow | −0.36, 1.60 | −0.74, 1.71 | −0.74, 1.70 |
 
 Behind the second row of both UE12 and UE13 the measurement is louder than the full-wave field of
 the LoD1 rows, by 3-5 dB at 1.6-2.5 kHz and more above (+4.4 dB mean in UE12, +8.5 in UE13); that
@@ -1467,15 +1471,20 @@ The drone's runs are the cleanest test, the source far from the floor and from a
 might be under it: over UE00, UE06 and UE07 (the last two read swapped) the full-wave field is
 the measurement to 0.7, 0.7 and 1.1 dB rms, band by band. Where one edge brings the drone's sound
 to each receiver -- UE00, UE12, UE13 -- the ray model is as good; over UE06 and UE07, where the
-paths cross several houses' edges and ends, UTD is 1.8 and 2.1 and the edge source 1.2 and 1.2. As labelled, the full-wave field
+paths cross several houses' edges and ends, UTD is 2.0 and 2.2 and the edge source 1.2 and 1.3. As labelled, the full-wave field
 misses UE06 and UE07 by 3.9 and 4.1 dB rms and the ray model by 4.3 and 3.4, so the full-wave
-field favours the swap and the ray model does not decide it.
+field favours the swap. With reflections between two edges the ray model's floor-source rows favour
+it too (UE06 3.7 swapped against 4.9 as labelled, UE07 4.1 against 5.0 dB rms), where before UE06's
+did not (4.5 swapped against 3.9).
 
-In UE06 the FDTD's strongest arrival behind the tall house is a reflection the ray model does not
-have: off the low neighbour's roof and the next tall house's side wall, a corner whose double
-reflection misses its wall by 1.4 cm and so arrives at about half its strength. It meets that roof
-between two edges, a reflection between edges, which the model does not take; there it is 5 dB
-low.
+In UE06 the FDTD's strongest arrival behind the tall house is a reflection off the low neighbour's
+roof and the next tall house's side wall, a corner whose double reflection misses its wall by 1.4 cm
+and so arrives at about half its strength. It meets that roof between two edges. Until the model
+took a reflection between two edges (`--max_between_reflections`) it was 5.7 dB low at the
+receiver farther behind (R2) and 2.3 dB low at the nearer (R1); with it, R2-R4 are within 1.6 dB
+rms. At R1 the model's ray reflects 3 cm inside the wall's end and is taken whole, where the FDTD
+has it at about half: its partner would diffract at the tall house's corner, which meets the low
+roof's front edge at a vertex the model leaves out. There the model is 4.7 dB high.
 
 What is left after the FDTD is mostly the floor source itself. Its own floor reflection makes a
 null where the path over the first roof leaves at θ, near c / (4 h sin θ) (h = 29 mm): 4.9 kHz in
@@ -1567,15 +1576,15 @@ on microphones 2, 8 and 10, as the validation harness's DigiCity comparison does
 
 | Walls | Microphone 7, predicted − measured, 160 Hz-5 kHz | Calibration microphones' spread |
 | --- | --- | --- |
-| Specular | −4.4 dB mean, 5.5 rms (−10.5 to +1.2) | 2.55 dB |
-| s = 0.1 in every band | −3.6, 4.3 | 2.38 |
-| s = 0.3 | −3.2, 3.6 | 2.34 |
-| s = 0.5 | −3.2, 3.6 | 2.42 |
-| The corrugation's s(f) | −2.6, 3.3 (−6.9 to +1.2) | 2.20 |
+| Specular | −3.9 dB mean, 5.0 rms (−9.9 to +1.0) | 2.52 dB |
+| s = 0.1 in every band | −3.3, 4.0 | 2.35 |
+| s = 0.3 | −3.0, 3.4 | 2.34 |
+| s = 0.5 | −3.0, 3.4 | 2.42 |
+| The corrugation's s(f) | −2.3, 2.9 (−6.4 to +1.0) | 2.17 |
 
-With the corrugation's coefficients microphone 7 rises by 1.6-7.9 dB from 800 Hz up (1.25 kHz
-−8.7 → −2.9 dB, 5 kHz −10.0 → −2.7), and the calibration microphones by 0.2-1.0 dB. Below 630 Hz
-nothing moves, so the 250 Hz shortfall (−6.9 dB) stays.
+With the corrugation's coefficients microphone 7 rises by 0.7-7.2 dB from 800 Hz to 5 kHz (1.25 kHz
+−7.2 → −2.8 dB, 5 kHz −9.9 → −2.7). Below 630 Hz nothing moves, so the 250 Hz shortfall (−3.8 dB)
+stays.
 
 ### Trajectory smoothing
 
@@ -2085,28 +2094,28 @@ reconstruction.
 
 The source's level at 1 m is calibrated per band on microphones 2, 8 and 10 with
 `niceops_point_field` (walls absorbing 0.05, the floor rigid, the default ray orders, chosen before
-any comparison). The three agree on it to 2.6 dB on average. Microphone 7, 160 Hz to 5 kHz,
+any comparison). The three agree on it to 2.5 dB on average. Microphone 7, 160 Hz to 5 kHz,
 predicted minus measured:
 
 | Model | Mean | Rms | Range |
 | --- | --- | --- | --- |
-| `niceops_point_field` | −4.4 dB | 5.5 dB | −10.5 to +1.2 dB |
+| `niceops_point_field` | −3.9 dB | 5.0 dB | −9.9 to +1.0 dB |
 | NLR's CNOSSOS-EU model (as published) | −12.9 dB | 13.3 dB | −19.9 to −7.3 dB |
 
-Below 1 kHz the prediction is within 3.5 dB in every band but 250 Hz (−6.9). It is 8.7–10.5 dB short
+Below 1 kHz the prediction is within 3.8 dB in every band. It is 7.2–9.9 dB short
 at 1.25–1.6 kHz and 5 kHz. Most of what reaches microphone 7 is diffracted once at a vertical
 corner after one or two reflections off a stack's wall: the strongest ray, a third of the energy
 with its floor partner, reflects off that wall and diffracts at the south-east stack's corner, and
 the next at the bar's own end. Without that wall's stack microphone 7 drops by 8–22 dB. Double diffraction over the bar or around its end is 8–15 dB weaker,
 and the cascade gives the same result here as the shared-face form. Walls rigid or absorbing 0.1, a
 floor absorbing 0.1, the source 0.2 m higher, or calibration on fewer microphones each move the
-mean by 0.4 dB at most. Allowing only one reflection either side of an edge loses 2.1 dB, and three
+mean by 0.4 dB at most. Allowing only one reflection either side of an edge loses 1.9 dB, and three
 gain nothing. Over 60 reconstructions with the figure's scale within 3% and every container group
-and microphone within 0.28 m, the mean ranges from −5.2 to −2.8 dB (10–90%).
+and microphone within 0.28 m, the mean ranges from −5.1 to −2.7 dB (10–90%).
 
 The shortfall at 1–2 kHz is larger than that spread. The corrugated walls scatter: with the
-corrugation's own s(f), computed from its profile and not fitted, the error comes to −2.6 dB mean,
-3.3 rms, and the 1.25 kHz and 5 kHz bands to within 3 dB
+corrugation's own s(f), computed from its profile and not fitted, the error comes to −2.3 dB mean,
+2.9 rms, and the 1.25 kHz and 5 kHz bands to within 3 dB
 ([Scattering walls (point source)](#scattering-walls-point-source)). A run takes the same field with
 `--facade_scattering_spectrum`. The source is not omnidirectional above about 500 Hz and is
 calibrated in other directions, which has not been measured here.

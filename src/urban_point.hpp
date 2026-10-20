@@ -3,7 +3,8 @@
 // --buildings: the point-source urban model in a run (THEORY 6.5).  Every
 // microphone hears the source's own rays among LoD1 buildings
 // (point_paths.hpp) -- reflected in the facades and the floor, diffracted at
-// the roof edges and corners once or at two in turn -- each reading the
+// the roof edges and corners once or at two in turn, a facade between the two
+// or not, or at three roof edges -- each reading the
 // sphere along the direction it leaves the source (point_ray_launch), not
 // along the blocked straight line, and summed over three sub-bands as
 // niceops_point_field sums them, each pair's cross term weighted by how

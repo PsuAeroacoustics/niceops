@@ -5373,8 +5373,8 @@ int run(int argc, char* argv[])
     app.add_option("--buildings", buildings_file,
             "LoD1 buildings, a CSV of footprint vertices (building, x, y, top, optionally absorption) or GeoJSON "
             "in the run's frame (--origin, --frame_bearing): every microphone hears the source's own rays among "
-            "them, reflected in the facades, the roofs and the floor and diffracted at their edges once or at two in "
-            "turn, each reading the sphere in the direction it leaves the source, added as --ray_coherence says. "
+            "them, reflected in the facades, the roofs and the floor and diffracted at their edges once, at two in "
+            "turn (reflecting in a facade between them or not) or at three roof edges, each reading the sphere in the direction it leaves the source, added as --ray_coherence says. "
             "The floor is theirs, rigid unless --floor_absorption, with no ground model: a microphone stands where "
             "the observer file puts it, raised by its height column. States are sampled (--state_tolerance). "
             "Spectral path, and a database carrying spectra; not with --urban_table, --terrain, --refraction, "
