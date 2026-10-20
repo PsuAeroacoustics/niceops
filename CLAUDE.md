@@ -184,6 +184,13 @@ Commands and options are in `README.md`; rationale is in
   are roof edges only by default: every edge multiplied the demo run's cost by eight for nothing.
   A middle edge meeting an outer one at a corner is left out (a vertex, not a cascade). The GPU's
   shared-face ray kind is `NK_KIND_FACE`, freeing 3 for three wedge terms.
+- **A facade relief is a grating** (`--relief`, `--facade_relief`; `facade_relief`, `grating_paths`;
+  THEORY 6.5). Specular rays that diffract nowhere take its order 0 at the incidence recorded in
+  `PointRay::hits`; rays that diffract reflect whole (measured: the other way DigiCity's mic 7 fell
+  2.4 dB). Grating rays' floor variants add with their phases. The default `hybrid` hands what a
+  relief scatters onto other walls to the diffuse field (`first_scattering_elsewhere`). Against EDGE
+  the orders match the FDTD; behind DigiCity's containers the diffuse field matters; FIDELITY has
+  the table.
 - **`--scattering` with `--buildings` fills the buildings' shadows** (`turbulence_scattering`, Forssén
   et al. 2014 without its canyon term). gamma_T is taken as velocity turbulence of
   C_v^2 = (3/22) c0^2 gamma_T; the paper's temperature coefficients are not used (they contradict its

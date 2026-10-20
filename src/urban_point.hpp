@@ -134,6 +134,17 @@ public:
         // A shared face's aperture at every wavenumber, not sampled
         // (PointPathOptions::sample_shared_faces).
         bool exact_shared_faces = false;
+        // Reliefs' grating orders (facade_relief.hpp), each building carrying
+        // the one its relief column names, or without the column the first
+        // wherever it scatters; how they scatter beyond their specular order,
+        // "hybrid" (each wall's first scattering as grating rays,
+        // grating_paths.hpp, and what it scatters onto other walls
+        // diffusely), "orders" (the rays alone) or "lambert" (all diffusely,
+        // by Lambert's law at each lighting path's incidence); and the facade
+        // reflections a grating ray may take besides its order.
+        std::vector<std::string> relief_files;
+        std::string relief_scattering = "hybrid";
+        std::size_t grating_reflections = 2;
     };
     static std::shared_ptr<const UrbanDistrict> read(const std::string& file, const Input& input);
     ~UrbanDistrict();
@@ -146,6 +157,8 @@ public:
     // The scattering spectrum's factor at each of `bands` (1 without one).
     // Throws std::runtime_error where the spectrum does not reach a band.
     std::vector<double> band_scattering(const std::vector<double>& bands) const;
+    // How many walls carry a relief.
+    std::size_t relief_walls() const;
     // The diffuse field's patch size and reach, metres.
     double patch_size() const;
     double diffuse_radius() const;

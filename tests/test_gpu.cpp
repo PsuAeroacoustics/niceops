@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <complex>
 #include <memory>
 #include <random>
@@ -14,6 +15,7 @@
 #include "gpu/band_stream.hpp"
 #include "gpu/gpu.hpp"
 #include "gpu/point_rays.hpp"
+#include "facade_relief.hpp"
 #include "ground_effect.hpp"
 #include "point_paths.hpp"
 #include "source_coherence.hpp"
@@ -593,4 +595,40 @@ TEST_CASE("the GPU's canyon march is the CPU's", "[gpu]")
     INFO("canyon " << worst << " dB, open ground " << worst_open << " dB; steps " << cpu.steps << " and " << gpu.steps);
     REQUIRE(worst < 1e-3);
     REQUIRE(worst_open < 1e-3);
+}
+
+// A relief's specular share on the GPU: the rays' reflections complex per
+// problem, as a floor's impedance makes them, the CPU's factors taken over.
+TEST_CASE("the GPU takes a relief's specular share as the CPU does", "[gpu]")
+{
+    gpu::Device& device = device_or_skip();
+    const std::string path = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/niceops_gpu_relief.csv";
+    {
+        std::ofstream out(path);
+        out << "frequency_hz,incidence_deg,order,share,period_m\n";
+        for (double f : {50.0, 20000.0})
+            for (int psi = -85; psi <= 85; psi += 5)
+                for (const auto& [m, share] : std::vector<std::pair<int, double>> {{-1, 0.3}, {0, 0.4}, {1, 0.3}})
+                    out << f << "," << psi << "," << m << "," << share << ",0.3\n";
+    }
+    const FacadeRelief relief = FacadeRelief::read(path);
+    const Buildings blocks {{block(0.0, 0.0, 60.0, 60.0, 20.0), block(80.0, 0.0, 140.0, 60.0, 35.0),
+            block(0.0, 80.0, 60.0, 140.0, 10.0), block(80.0, 80.0, 140.0, 140.0, 40.0)}};
+    std::vector<const FacadeRelief*> reliefs(blocks.facades().size(), &relief);
+    PointPathOptions options;
+    options.reliefs = &reliefs;
+    const PointSourceField field(blocks, Vec3(70.0, 70.0, 30.0), Vec3(30.0, 70.0, 1.5), options);
+    const std::vector<double> bands {250, 1000, 4000};
+    const std::vector<double> reflection(blocks.facades().size() * bands.size(), 0.9);
+    std::vector<double> cpu(bands.size());
+    field.band_levels(reflection, 1.0, bands, 343.2, cpu.data());
+    gpu::PointRaySet set;
+    gpu::pack_point_rays(field, reflection, 1.0, bands, 343.2, set);
+    REQUIRE(set.complex_reflections);
+    gpu::BandEnergies energies(device);
+    const std::size_t first = energies.add(set);
+    energies.submit();
+    const std::vector<double>& energy = energies.wait();
+    for (std::size_t b = 0; b < bands.size(); b++)
+        REQUIRE(std::abs(band_level(bands[b], sub_bands(bands[b], 343.2), &energy[first + 3 * b]) - cpu[b]) < 0.02);
 }

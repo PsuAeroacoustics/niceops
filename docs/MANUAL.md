@@ -188,6 +188,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--urban_table` | Urban receivers: for each microphone it holds, what the street around it does to the direct path, and its facades' first-order reflections ([Urban receivers](#urban-receivers)). Built by `niceops_urban_table`. Spectral path only; not with `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`. |
 | `--buildings`, `--wall_absorption`, `--floor_absorption` | LoD1 buildings around the microphones: every microphone hears the source's own rays among them, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)); the floor rigid, absorbing, or with `--ground_effect` the ground model's at every bounce. Spectral path only, with a database carrying spectra. |
 | `--facade_scattering`, `--facade_scattering_spectrum` | With `--buildings`: the share of what the walls and roofs reflect that they scatter diffusely, where a building gives none (default 0, or 1 with a spectrum), and a CSV of `band_hz` and `s` that multiplies it band by band. |
+| `--facade_relief`, `--relief_scattering`, `--grating_reflections` | With `--buildings`: walls with a periodic relief, reflecting into its grating orders ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--patch_size`, `--diffuse_radius` | With scattering facades: the diffuse field's patches' size at most (default 4 m (13.123 ft)), and the horizontal distance from a microphone within which a building scatters (default 150 m (492.13 ft), the rays' own reach). |
 | `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--coherence_angle` | With `--buildings`: the cone's half-angle, degrees, within which rays leaving the source add with their phases. Default 1. Given alone, it selects `cone`. |
@@ -1143,6 +1144,23 @@ over a pass as it does in an exposure.
   for the run, so the cost grows with the microphones and the patches, not with the states: on the
   test district, 0.2 s on the GPU and 0.4 s on the CPU. For a corrugated container's s(f), on
   NLR's DigiCity, see [FIDELITY](FIDELITY.md#scattering-walls-point-source).
+- **Walls with a periodic relief** (`--facade_relief`). Ribs, a sawtooth in plan or a container's
+  corrugation do not scatter by Lambert's law: they reflect into grating orders, each on the cone
+  of the wave's elevation ([THEORY §6.5](THEORY.md#65-urban-receivers)). `tools/profile_scattering.py
+  --orders` writes a relief's orders by boundary elements from its profile; `--facade_relief` takes
+  one table or more, a building carrying the one its `relief` column names (from 1; 0 for none), or
+  without the column the first wherever it scatters (`--facade_scattering` or its `scattering`
+  column, 1 by default with this). Every wall of the building carries it, its +along the wall's base
+  direction, which matters only for a relief that is not symmetric. Its specular rays take the
+  relief's specular order at the incidence they meet it at; rays that diffract reflect in it whole.
+  `--relief_scattering` sets where the rest goes: `hybrid` (the default), each wall's first
+  scattering as grating rays and what it scatters onto other walls diffusely; `orders`, the grating
+  rays alone; `lambert`, all of it diffusely, by Lambert's law at each lighting path's incidence. A
+  grating ray reflects in `--grating_reflections` walls besides its relief (default 2). Against
+  EDGE's measured reliefs and DigiCity the hybrid beats a relief's random-incidence s(f) everywhere,
+  the orders alone match the FDTD in a canyon and fall short in a shadow, and Lambert's law at
+  incidence the reverse ([FIDELITY](FIDELITY.md#scattering-walls-point-source)). Not with
+  `--facade_scattering_spectrum`.
 - **The floor** is rigid by default, or absorbs `--floor_absorption` of the energy at every angle
   and frequency. With `--ground_effect` (or `--ground_classes` or `--plate_table`, which name a
   ground) it is the ground model's instead: each ray's every bounce on the floor -- the floor's
@@ -1985,6 +2003,7 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--bands`, `--database` | Band centers, given or from a database. |
 | `--absorption` | The walls' energy absorption where a building gives none. Default 0, rigid. |
 | `--floor_absorption` | The floor's. Default 0, rigid. |
+| `--relief`, `--relief_scattering`, `--grating_reflections` | Walls with a periodic relief, as `niceops --facade_relief` takes them (above): the reliefs' grating-order tables, where what they scatter beyond their specular order goes (`hybrid`, `orders` or `lambert`), and a grating ray's other reflections. Not with `--scattering_spectrum`. |
 | `--flow_resistance`, `--impedance_model` | A floor of finite impedance instead, as `niceops --buildings --ground_effect` takes it: each bounce takes the ground's Q. The flow resistance in kPa s/m²; the model `delany_bazley` (default) or `miki`, the two that need nothing else. Not with `--floor_absorption`. |
 | `--scattering` | The walls' and roofs' scattering coefficient where a building gives none, 0 to 1. Default 0, specular; 1 with `--scattering_spectrum`. |
 | `--scattering_spectrum` | A CSV of `band_hz` and `s`: the coefficient band by band, each building's weighting it, as above. |

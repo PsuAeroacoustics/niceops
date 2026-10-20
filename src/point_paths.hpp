@@ -58,6 +58,8 @@
 
 namespace niceops {
 
+class FacadeRelief;
+
 struct PointPathOptions
 {
     std::size_t max_reflections = 4;      // on a ray that diffracts nowhere
@@ -141,6 +143,13 @@ struct PointPathOptions
     // integral at every wavenumber.  Off, the integral at every wavenumber:
     // the reference, and what the GPU takes.
     bool sample_shared_faces = true;
+    // Per facade of the buildings, its relief (facade_relief.hpp), or null for
+    // a plain facade; null for none.  A ray that reflects in a relief and
+    // diffracts nowhere takes its specular order's share there, at the
+    // incidence it meets it at (PointRay::hits); the other orders are
+    // grating_paths.hpp's.  One that diffracts reflects whole, since what it
+    // would scatter reaches nothing in the model.  It must outlive the field.
+    const std::vector<const FacadeRelief*>* reliefs = nullptr;
 };
 
 // The diffracted ray the model does not trace at a boundary, made from the
@@ -223,6 +232,16 @@ struct EdgeSourceTerm
     Stretch stretches[2];
 };
 
+// How a ray meets a facade it reflects in, for a relief's share there: the
+// sine of its incidence in the facade's horizontal plane, positive where it
+// travels toward the facade's -along (FacadeRelief), and the cosine of its
+// elevation, by which a relief sees its frequency.
+struct FacadeHit
+{
+    double sin_psi = 0.0;
+    double cos_elevation = 1.0;
+};
+
 // A ray's bounce on the floor, for a floor of finite impedance (FloorModel):
 // the sine of its grazing angle and the length of the leg it lies on,
 // unfolded, from the source or the edge before it to the edge or the
@@ -244,6 +263,9 @@ struct PointRay
     int floor = 0;
     // Its `floor` bounces, along it from the source.
     std::array<FloorBounce, 3> floor_bounce {};
+    // With reliefs (PointPathOptions::reliefs), how it meets each of its
+    // `facades`, in their order; empty without.
+    std::vector<FacadeHit> hits;
     int wedges = 0;
     WedgeTerm wedge[3];
     bool shared = false;
@@ -413,6 +435,11 @@ public:
     {
         return sample_shared_faces_;
     }
+    // The reliefs it was traced with (PointPathOptions::reliefs), or null.
+    const std::vector<const FacadeRelief*>* reliefs() const
+    {
+        return reliefs_;
+    }
 
     // The band levels: 10 lg of |p|^2 band-averaged (every ray summed
     // coherently, pair by pair, over three sub-bands, as the urban tables
@@ -462,6 +489,7 @@ private:
     const Buildings* buildings_ = nullptr;
     bool edge_source_ = false;
     bool sample_shared_faces_ = true;
+    const std::vector<const FacadeRelief*>* reliefs_ = nullptr;
 };
 
 // A ray's factor from the floor in each of `problems` sub-bands, [3 band +
@@ -471,6 +499,17 @@ private:
 // P_d and P_r (FloorModel::plate), 2 `problems` of them.
 void floor_factors(const PointRay& ray, const FloorModel& floor, const std::vector<double>& k,
         const std::complex<double>* plate, std::complex<double>* out);
+// A ray's factor from the reliefs it reflects in (PointPathOptions::
+// reliefs): the root of each one's specular share at the incidence the ray
+// meets it at (PointRay::hits) and the sub-band's middle frequency
+// `frequencies`[j], seen in the relief's plane.  Multiplied into `out`, one
+// per frequency.  Only for a ray meets_relief() takes.
+void relief_factors(const PointRay& ray, const std::vector<const FacadeRelief*>& reliefs,
+        const std::vector<double>& frequencies, double sound_speed, std::complex<double>* out);
+// Whether the ray takes a relief's specular share: it reflects in one and
+// diffracts nowhere.
+bool meets_relief(const PointRay& ray, const std::vector<const FacadeRelief*>* reliefs);
+
 // Where a ray arrives at the microphone, as a plate reads it: the elevation
 // of its last leg above the floor and that leg's horizontal direction, from
 // +x, radians.

@@ -319,6 +319,32 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
     `tools/profile_scattering.py`): a constant s is a poor stand-in, the relief scattering nothing
     where it is shallow against the wavelength and nearly everything above. A building's own
     coefficient then weights the spectrum, so one run holds plain and relieved buildings.
+- **A relief as a grating** (`--relief`, `--facade_relief`; `src/facade_relief`, `src/grating_paths`;
+  THEORY 6.5). What to keep:
+  - **Rays record how they meet each wall** (`PointRay::hits`, parallel to `facades`), where they
+    are built, from the leg's unfolded direction carried through the chain's mirrors
+    (`meeting_from`, `meeting_toward`). The path's points cannot give it: a floor leg's points are
+    unfolded and the leg's ends are real, so a segment across the two has the wrong slope. Only
+    traced when `PointPathOptions::reliefs` is set.
+  - **Only rays that diffract nowhere take a relief's specular share** (`meets_relief`). Measured:
+    with diffracted rays taking it too, DigiCity's microphone 7 fell 2.4 dB further and EDGE did not
+    move. What a diffracted ray scatters reaches nothing in the model.
+  - **The share goes in the per-ray complex factor beside the floor's**, so the CPU sums and the
+    GPU's complex rows (`complex_reflections`) take it alike.
+  - **Grating rays are found from the image trees**: a source image and a microphone image that both
+    end in the relief wall (each tree's beam reaches it), the point on the wall by Newton's method on
+    a convex function from the specular point (`grating_point`), the tube by perturbing the launch
+    (`grating_spreading`, 1/L^2 at order 0 -- a test). Per band, at its centre.
+  - **A group's floor variants add with their phases** (`grating_band_energies`). In energy they
+    lost 3 dB near the floor against the specular rays' coherent pairs, and the canyon's sawtooth
+    came out 1.3 dB too low.
+  - **The hybrid counts nothing twice**: grating rays carry a relief's first scattering to the
+    microphone, the diffuse field only what it scatters onto other walls
+    (`DiffuseOptions::first_scattering_elsewhere`, w = S (y - g) on the relief's patches), its
+    deposit taken at each lighting path's incidence (`scattering_at`).
+  - **A table that keeps everything specular changes nothing** (`point_field_relief_flat_is_plain`,
+    `buildings_relief_flat_is_plain`), and the GPU matches the CPU with reliefs
+    (`buildings_relief_gpu_matches_cpu`, `the GPU takes a relief's specular share as the CPU does`).
 
 ### A point source among buildings (`src/point_paths`, `src/double_wedge`)
 
@@ -1185,7 +1211,9 @@ scale models. It is not part of any prediction. What to keep:
 `tools/profile_scattering.py` gives a relief's scattering coefficient for `--scattering_spectrum`
 from the same 2-D boundary elements as `thick_barrier_bem.py`: two closed boxes of one outline, the
 relief on one, CHIEF points inside both, the correlation of their far fields over the front
-half-plane. The boxes' edges scatter alike and leave s alone.
+half-plane. The boxes' edges scatter alike and leave s alone. With `--orders` it also bins the
+relief's far field by grating order for `--relief`; sample at 0.1 degrees (`--angle_step`), since a
+lobe is about lambda / L wide.
 
 ## Weighting
 

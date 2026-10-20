@@ -1424,6 +1424,54 @@ the path's length and $\hat l$ the direction from the source to the patch's imag
 path's first leg. Each microphone's weights $\mathbf w$ are solved once for the run, and its
 diffuse energy adds to its rays' at every state evaluated.
 
+**A facade's relief as a grating** (`--relief`, `--facade_relief`). A relief periodic along a wall
+and the same up it -- ribs, a sawtooth in plan, a container's corrugation -- does not scatter by
+Lambert's law: it reflects a plane wave into its grating orders. Arriving at incidence $\psi$ in the
+profile's plane, order $m$ leaves at
+
+$$
+\sin\theta_m = -\sin\psi + m\,\frac{\lambda}{\Lambda},
+$$
+
+$\Lambda$ the period, with a share $e_m(\psi, f)$ of the reflected energy that the boundary
+elements give (§9.4): the far field binned by the nearest order, the shares of the orders that
+propagate summing to one. A wave arriving out of the profile's plane keeps its component up the
+wall and sees the profile at its horizontal wavenumber, so it takes the table at $f\cos e$ and each
+order leaves on the cone of its elevation $e$ -- unlike Lambert's law, which sends a wall's
+scattering into every elevation. Three things follow:
+
+- A ray that reflects in a relief and diffracts nowhere takes $\sqrt{e_0}$ there, at the incidence
+  it meets the wall at (each ray records it where it is built), in each third of each band. A ray
+  that diffracts reflects whole: what it would scatter reaches nothing in the model, the grating
+  rays and the diffuse field's lighting being specular paths, so it carries on the specular way.
+- A **grating ray** of order $m \ne 0$ off wall $F$ leaves its point $P$ with its direction's
+  component along $F$ raised by $m\lambda/\Lambda$ and its vertical component kept. Before $F$ and
+  after it it reflects specularly in the walls through which the source's and the microphone's
+  image trees reach $F$, two at most besides it by default; $P$ is where
+  $|P - S'| + |P - M'| + m(\lambda/\Lambda)x$ is least, $S'$ and $M'$ the ends' images through those
+  walls and the floor, $x$ along $F$ -- convex, so Newton's method from the specular point finds it.
+  It carries $e_m$ times the other walls' coefficients (a relief's $e_0$ among them), the floor's,
+  the air's, and its tube's spreading $d\Omega/dA$, found by perturbing its launch ($1/L^2$ for
+  $m = 0$). It is solved at each band's centre, since its path follows the wavelength. A grating ray
+  and its floor partner are one length near the floor, as a specular ray and its partner are, so the
+  floor variants of one order add with their phases over the band; the orders add in energy.
+- **What a relief scatters further.** With `orders` that is all; a path with two non-specular
+  orders is left out. With `lambert` the grating rays are off, and the diffuse field takes the rest
+  by Lambert's law, each lighting path depositing $s(\psi) = 1 - e_0(\psi)$ at the incidence it
+  meets the wall at (and reflecting $\rho\,e_0$ at the walls it crosses), scaled from the patch's
+  random-incidence $s$. The `hybrid`, the default, does both and counts nothing twice: the grating
+  rays carry a relief's first scattering to the microphone, and the diffuse field only what the
+  relief scatters onto other walls, its own direct share left out ($\mathbf w = S(\mathbf y -
+  \mathbf g)$ on its patches).
+
+Against EDGE's measured reliefs (FIDELITY, Scattering walls) the orders match the FDTD's own error in
+a canyon, where Lambert's law returns what the relief sends out of it; behind DigiCity's containers
+the diffuse field's further scattering is what reaches a shielded microphone. The hybrid improves
+on the random-incidence $s(f)$ in every case. The ray model of a grating holds where a receiver sees
+many periods (a Fresnel zone wider than the period); nearer, the relief's facets are what it sees,
+and a relief that size is geometry: EDGE's sawtooth modelled as its own facets and ridges reproduces
+the canyon too.
+
 **Turbulence scattering into the buildings' shadows** (`--scattering` $\gamma_T$ with
 `--buildings`). Still air leaves a shielded microphone the diffracted rays alone; turbulence
 scatters energy into the shadow, most at high frequency. The scattered level relative to free field
@@ -2113,7 +2161,10 @@ $$
 s(\psi) = 1 - \frac{\left|\sum_\theta p_1 p_0^*\right|^2}{\sum_\theta|p_1|^2\,\sum_\theta|p_0|^2},
 $$
 
-averaged over $\psi$ with weight $\cos\psi$ and over the frequencies of a band.
+averaged over $\psi$ with weight $\cos\psi$ and over the frequencies of a band. With `--orders`
+it writes the grating orders' shares instead (§6.5): at each frequency and incidence, $|p_1|^2$
+summed over the far-field directions nearest each order's,
+$\sin\theta_m = -\sin\psi + m\lambda/\Lambda$, over its sum over all of them.
 
 ## 10. Noise metrics
 

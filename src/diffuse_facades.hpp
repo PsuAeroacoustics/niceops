@@ -71,6 +71,21 @@ struct DiffuseOptions
     // roof, where any of its walls is within the radius.  For a model whose
     // rays reflect in the roofs.
     bool roofs = false;
+    // A facade's scattering coefficient at the incidence a wave meets it at
+    // (a relief's, facade_relief.hpp: 1 less its specular share), in band b:
+    // the sine of the incidence in the facade's horizontal plane (positive
+    // travelling toward its -along) and the cosine of the elevation.  Negative
+    // where the facade's does not depend on it, which then takes
+    // `scattering`.  A point source's lighting paths (point_irradiance) take
+    // it at each wall they reflect in and at the wall patch they light, the
+    // patch's deposit scaled from `scattering`'s; the patches' exchange, and
+    // the plane wave's lighting, keep `scattering`.  Empty for none.
+    std::function<double(std::size_t facade, double sin_psi, double cos_elevation, std::size_t band)> scattering_at;
+    // The walls whose first scattering reaches the microphone some other way
+    // (a relief's grating rays, grating_paths.hpp): a patch on one sends the
+    // microphone only what it scatters onto other patches, its own direct
+    // share left out (w = S (y - g) there).  Empty for none.
+    std::function<bool(std::size_t facade)> first_scattering_elsewhere;
 };
 
 class DiffuseFacades
@@ -183,6 +198,11 @@ private:
     std::size_t bands_ = 0;
     double floor_reflection_ = 1.0;
     std::vector<double> specular_;    // [facade][band], rho (1 - s)
+    std::vector<double> reflection_;  // [facade][band], rho
+    double rho_of(std::size_t facade, std::size_t band) const
+    {
+        return reflection_[facade * bands_ + band];
+    }
     std::vector<std::size_t> all_;    // every patch
     std::vector<std::size_t> planes_; // the orientations within reach
     std::vector<Patch> patches_;

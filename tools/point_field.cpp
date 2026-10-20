@@ -59,6 +59,8 @@
 #include "building_input.hpp"
 #include "buildings.hpp"
 #include "diffuse_facades.hpp"
+#include "facade_relief.hpp"
+#include "grating_paths.hpp"
 #include "ground_effect.hpp"
 #include "gpu/band_energy.hpp"
 #include "gpu/band_stream.hpp"
@@ -89,6 +91,9 @@ int main(int argc, char** argv)
     double absorption = 0.0;
     double scattering = 0.0;
     std::string scattering_spectrum_file;
+    std::vector<std::string> relief_files;
+    std::string relief_scattering = "hybrid";
+    std::size_t grating_reflections = 2;
     double patch_size = 4.0;
     double diffuse_radius = 0.0;
     double floor_absorption = 0.0;
@@ -136,6 +141,19 @@ int main(int argc, char** argv)
     app.add_option("--scattering_spectrum", scattering_spectrum_file,
             "A CSV of band_hz and s: the scattering coefficient band by band, times each building's scattering "
             "column or --scattering (default 1 with this), interpolated in log frequency.");
+    app.add_option("--relief", relief_files,
+            "Reliefs' grating orders (tools/profile_scattering.py --orders), one or more: a building carries the one "
+            "its relief column names (from 1, 0 none), or without the column the first wherever it scatters "
+            "(--scattering or its column, 1 by default with this), on every wall, each wall's +along its base "
+            "direction. Its specular rays take the relief's order 0 at the incidence they meet it at, and the rest goes "
+            "by --relief_scattering.");
+    app.add_option("--relief_scattering", relief_scattering,
+            "With --relief: hybrid (default), the other orders as rays that take one each and what a wall scatters "
+            "onto other walls diffusely; orders, the rays alone; or lambert, all diffusely by Lambert's law at the "
+            "incidence each lighting path meets the wall at.")
+            ->check(CLI::IsMember({"orders", "lambert", "hybrid"}));
+    app.add_option("--grating_reflections", grating_reflections,
+            "With --relief_scattering orders: facade reflections on a grating ray besides its order (default 2).");
     app.add_option("--patch_size", patch_size, "With scattering walls, the diffuse field's patches' size at most, in "
                                                "--units (default 4 m).");
     app.add_option("--diffuse_radius", diffuse_radius, "With scattering walls, a building with a wall within this "
@@ -301,7 +319,15 @@ int main(int argc, char** argv)
         input.absorption = absorption;
         // With a spectrum, a building's scattering coefficient weights it: 1, all
         // relief, by default.
-        input.scattering = !scattering_spectrum_file.empty() && app.count("--scattering") == 0 ? 1.0 : scattering;
+        input.scattering = (!scattering_spectrum_file.empty() || !relief_files.empty()) && app.count("--scattering") == 0
+                ? 1.0
+                : scattering;
+        if (!relief_files.empty() && !scattering_spectrum_file.empty())
+            throw std::runtime_error("give --relief or --scattering_spectrum: each is the walls' scattering");
+        std::vector<FacadeRelief> relief_tables;
+        for (const std::string& file : relief_files)
+            relief_tables.push_back(FacadeRelief::read(file));
+        const bool relief = !relief_tables.empty();
         if (!(input.scattering >= 0.0 && input.scattering <= 1.0))
             throw std::runtime_error("--scattering must lie within [0, 1]");
         const std::vector<double> band_scattering = scattering_spectrum_file.empty()
@@ -320,18 +346,43 @@ int main(int argc, char** argv)
         }
         // A wall reflects rho = 1 - alpha of what reaches it and scatters s
         // of that: the rays carry rho (1 - s), and the diffuse field the rest.
+        // A relief's walls carry rho on the rays, which take its order 0 at
+        // their incidence; by orders they scatter nothing diffusely, and by
+        // Lambert's law their random-incidence s, scaled to each path's.
         const std::size_t nb = bands.size();
         std::vector<double> rho(city.facades().size() * nb), scatter(rho.size()), reflection(rho.size());
+        std::vector<const FacadeRelief*> reliefs(city.facades().size(), nullptr);
         bool diffuse = false;
         for (std::size_t f = 0; f < city.facades().size(); f++)
             for (std::size_t b = 0; b < nb; b++)
             {
                 const std::size_t building = city.facade_building(f);
                 rho[f * nb + b] = 1.0 - district.absorption[building];
-                scatter[f * nb + b] = district.scattering[building] * band_scattering[b];
-                reflection[f * nb + b] = rho[f * nb + b] * (1.0 - scatter[f * nb + b]);
+                const int which = relief ? relief_of(district, building, relief_tables.size()) : 0;
+                if (which > 0)
+                {
+                    const FacadeRelief& r = relief_tables[static_cast<std::size_t>(which - 1)];
+                    reliefs[f] = &r;
+                    scatter[f * nb + b]
+                            = relief_scattering != "orders" ? r.random_incidence(bands[b], sound_speed) : 0.0;
+                    reflection[f * nb + b] = rho[f * nb + b];
+                }
+                else
+                {
+                    scatter[f * nb + b] = relief ? 0.0 : district.scattering[building] * band_scattering[b];
+                    reflection[f * nb + b] = rho[f * nb + b] * (1.0 - scatter[f * nb + b]);
+                }
                 diffuse = diffuse || scatter[f * nb + b] > 0.0;
             }
+        if (relief)
+        {
+            std::size_t carrying = 0;
+            for (const FacadeRelief* r : reliefs)
+                carrying += r != nullptr;
+            for (const FacadeRelief& r : relief_tables)
+                std::cerr << "Relief: " << r.source() << ", period " << r.period() << " m." << std::endl;
+            std::cerr << "Reliefs on " << carrying << " walls, scattering by " << relief_scattering << "." << std::endl;
+        }
 
         // What is wrong with where a point stands, "" for nothing.
         auto misplaced = [&](const Vec3& p) -> std::string {
@@ -388,6 +439,8 @@ int main(int argc, char** argv)
         options.sample_shared_faces = !exact_shared_faces;
         options.prune = !no_prune;
         options.edge_source = edge_source;
+        if (relief)
+            options.reliefs = &reliefs;
         options.edge_source_reach = 100.0 / (2.0 * pi * *std::min_element(bands.begin(), bands.end()) / sound_speed);
         // The GPU wherever there is one and the run is one it takes; asked
         // for (--gpu), it must be.  The flag's count takes --no-gpu too, so
@@ -516,6 +569,13 @@ int main(int argc, char** argv)
             diffuse_options.patch_size = patch_size;
             // The rays reflect in the roofs, so the roofs scatter too.
             diffuse_options.roofs = !no_roofs;
+            if (relief && relief_scattering != "orders")
+                diffuse_options.scattering_at = [&](std::size_t f, double sin_psi, double cos_elevation, std::size_t b) {
+                    return reliefs[f] != nullptr ? 1.0 - reliefs[f]->specular(sin_psi, bands[b] * cos_elevation, sound_speed)
+                                                 : -1.0;
+                };
+            if (relief && relief_scattering == "hybrid")
+                diffuse_options.first_scattering_elsewhere = [&](std::size_t f) { return reliefs[f] != nullptr; };
             if (!no_air_absorption)
                 diffuse_options.air = band_air;
             for (std::size_t row = 0; row < nm; row++)
@@ -546,6 +606,28 @@ int main(int argc, char** argv)
             return diffuse ? microphone_reflection[row] : reflection;
         };
         std::size_t total = 0;
+        // With a relief's orders as rays, each pair's energy from them per
+        // band, and how many.
+        const bool gratings = relief && relief_scattering != "lambert";
+        GratingInput grating_input;
+        grating_input.reliefs = &reliefs;
+        grating_input.bands = bands;
+        grating_input.sound_speed = sound_speed;
+        if (!no_air_absorption)
+            grating_input.air = band_air;
+        grating_input.max_reflections = grating_reflections;
+        grating_input.source_reflections = options.source_reflections;
+        if (centre_floor.impedance())
+            grating_input.floor = [&](double sin_grazing, double leg, std::size_t b) {
+                const auto q = spherical_reflection_coefficient(sin_grazing, pi * bands[b] * leg / sound_speed,
+                        centre_floor.admittance[b]);
+                return q[0] * q[0] + q[1] * q[1];
+            };
+        else
+            grating_input.floor = [&](double, double, std::size_t) { return centre_floor.reflection; };
+        std::vector<double> grating;
+        std::vector<std::size_t> grating_count;
+        std::size_t gratings_total = 0;
         std::vector<std::unique_ptr<PathEnd>> source_ends;
         std::vector<double> levels;
         std::vector<std::size_t> counts;
@@ -561,6 +643,8 @@ int main(int argc, char** argv)
             });
             levels.assign(nk * nm * nb, 0.0);
             counts.assign(nk * nm, 0);
+            grating.assign(gratings ? nk * nm * nb : 0, 0.0);
+            grating_count.assign(gratings ? nk * nm : 0, 0);
             ray_rows.assign(rays_file.empty() ? 0 : nk * nm, std::string());
             // Traces the pairs [begin, end) of the block, microphone by
             // microphone, and hands each field to `use` with its place; a
@@ -580,6 +664,15 @@ int main(int argc, char** argv)
                         const std::size_t pair = k * nm + row;
                         const PointSourceField field(city, *source_ends[k], *microphone, options);
                         counts[pair] = field.rays().size();
+                        if (gratings)
+                        {
+                            GratingInput g = grating_input;
+                            g.reflection = &reflection_for(row);
+                            std::vector<GratingRay> found;
+                            grating_rays(city, *source_ends[k], *microphone, g, found);
+                            grating_band_energies(found, bands, sound_speed, nullptr, &grating[pair * nb]);
+                            grating_count[index - begin] = found.size();
+                        }
                         if (!rays_file.empty())
                             ray_rows[pair] = ray_text(field, first + k, row, reflection_for(row));
                         use(index - begin, pair, field);
@@ -619,6 +712,12 @@ int main(int argc, char** argv)
                 stream.finish();
             }
 
+            // The grating rays' energy adds to the rays' in each band.
+            for (std::size_t i = 0; i < grating.size(); i++)
+                if (grating[i] > 0.0)
+                    levels[i] = 10.0 * std::log10(std::pow(10.0, 0.1 * levels[i]) + grating[i]);
+            for (std::size_t c : grating_count)
+                gratings_total += c;
             // The diffuse energy adds to the rays' in each band.
             if (diffuse)
                 parallel_chunks(nk * nm, workers, [&](std::size_t begin, std::size_t end) {
@@ -654,7 +753,10 @@ int main(int argc, char** argv)
             throw std::runtime_error("cannot write " + (!out ? output : rays_file));
         if (!sources_file.empty())
             std::cerr << ns << " sources, ";
-        std::cerr << nm << " microphones, " << total << " rays" << std::endl;
+        std::cerr << nm << " microphones, " << total << " rays";
+        if (gratings)
+            std::cerr << ", " << gratings_total << " grating rays";
+        std::cerr << std::endl;
     }
     catch (const std::exception& e)
     {

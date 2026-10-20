@@ -14,6 +14,8 @@
 #include "building_input.hpp"
 #include "building_paths.hpp"
 #include "diffuse_facades.hpp"
+#include "facade_relief.hpp"
+#include "grating_paths.hpp"
 #include "ground_effect.hpp"
 #include "plate_receiver.hpp"
 #include "gpu/band_stream.hpp"
@@ -421,6 +423,14 @@ struct UrbanDistrict::Impl
     std::string scattering_file;
     double patch_size = 4.0, diffuse_radius = 0.0;
     double turbulence = 0.0;
+    // The reliefs, each facade's (null for a plain one), how they scatter,
+    // and the reflections a grating ray may take besides its order.
+    std::vector<FacadeRelief> reliefs;
+    std::vector<const FacadeRelief*> facade_reliefs;
+    // Whether the other orders go as rays, and whether diffusely.
+    bool relief_orders = true;
+    bool relief_lambert = true;
+    std::size_t grating_reflections = 2;
 };
 
 UrbanDistrict::UrbanDistrict() : impl_(std::make_unique<Impl>()) {}
@@ -458,7 +468,29 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
     d.patch_size = input.patch_size;
     d.diffuse_radius = input.diffuse_radius > 0.0 ? input.diffuse_radius : d.paths.radius;
     d.turbulence = input.turbulence;
+    for (const std::string& relief : input.relief_files)
+        d.reliefs.push_back(FacadeRelief::read(relief));
+    d.relief_orders = input.relief_scattering != "lambert";
+    d.relief_lambert = input.relief_scattering != "orders";
+    d.grating_reflections = input.grating_reflections;
+    if (!d.reliefs.empty())
+    {
+        d.facade_reliefs.assign(d.city.facades().size(), nullptr);
+        for (std::size_t f = 0; f < d.facade_reliefs.size(); f++)
+        {
+            const int which = relief_of(d.input, d.city.facade_building(f), d.reliefs.size());
+            if (which > 0)
+                d.facade_reliefs[f] = &d.reliefs[static_cast<std::size_t>(which - 1)];
+        }
+        d.paths.reliefs = &d.facade_reliefs;
+    }
     return district;
+}
+
+std::size_t UrbanDistrict::relief_walls() const
+{
+    return static_cast<std::size_t>(std::count_if(impl_->facade_reliefs.begin(), impl_->facade_reliefs.end(),
+            [](const FacadeRelief* r) { return r != nullptr; }));
 }
 
 std::size_t UrbanDistrict::building_count() const
@@ -618,13 +650,21 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // covers the buildings within its reach, whose walls and roofs then give
     // the rays rho (1 - s); the rest reflect their whole rho, since nothing
     // returns what they would scatter.
+    // A relief's walls give the rays their whole rho, which take its order 0
+    // at their incidence; by orders they scatter nothing diffusely, and by
+    // Lambert's law their random-incidence s, scaled to each path's.
     const std::vector<double> band_s = band_scattering(bands);
     std::vector<double> scatter(reflection.size(), 0.0);
     bool diffuse = false;
+    const bool reliefs = !d.facade_reliefs.empty();
+    auto relief_at = [&](std::size_t f) { return reliefs ? d.facade_reliefs[f] : nullptr; };
     for (std::size_t f = 0; f < d.reflection.size(); f++)
         for (std::size_t b = 0; b < nb; b++)
         {
-            scatter[f * nb + b] = d.input.scattering[city.facade_building(f)] * band_s[b];
+            const FacadeRelief* r = relief_at(f);
+            scatter[f * nb + b] = r != nullptr ? (d.relief_lambert ? r->random_incidence(bands[b], sound_speed) : 0.0)
+                    : reliefs                  ? 0.0
+                                               : d.input.scattering[city.facade_building(f)] * band_s[b];
             diffuse = diffuse || scatter[f * nb + b] > 0.0;
         }
     std::vector<std::unique_ptr<DiffuseFacades>> diffuse_fields(diffuse ? nm : 0);
@@ -637,6 +677,16 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         // The rays reflect in the roofs, so the roofs scatter too.
         options.roofs = d.paths.roofs;
         options.air = nepers;
+        if (reliefs && d.relief_lambert)
+            options.scattering_at = [&](std::size_t f, double sin_psi, double cos_elevation, std::size_t b) {
+                const FacadeRelief* r = relief_at(f);
+                return r != nullptr ? 1.0 - r->specular(sin_psi, bands[b] * cos_elevation, sound_speed) : -1.0;
+            };
+        // With the orders as rays too, those carry a relief's first scattering
+        // to the microphone, and the diffuse field only what it scatters onto
+        // other walls.
+        if (reliefs && d.relief_lambert && d.relief_orders)
+            options.first_scattering_elsewhere = [&](std::size_t f) { return relief_at(f) != nullptr; };
         std::size_t unconverged = 0;
         for (std::size_t m = 0; m < nm; m++)
         {
@@ -647,7 +697,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             unconverged += diffuse_fields[m]->converged() ? 0 : 1;
             microphone_reflection[m] = reflection;
             for (std::size_t f = 0; f < d.reflection.size(); f++)
-                if (diffuse_fields[m]->scatters(f))
+                if (diffuse_fields[m]->scatters(f) && relief_at(f) == nullptr)
                     for (std::size_t b = 0; b < nb; b++)
                         microphone_reflection[m][f * nb + b] = reflection[f * nb + b] * (1.0 - scatter[f * nb + b]);
         }
@@ -768,6 +818,57 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             if (energy[b] > 0.0)
                 levels_db[b] = 10.0 * std::log10(std::pow(10.0, 0.1 * levels_db[b]) + energy[b]);
     };
+    // With reliefs scattering by their orders, alone or with the diffuse
+    // field (hybrid), the grating rays' energy at
+    // microphone `m` from the source at `state` per band, added into `out`
+    // (sized when empty): each ray carrying the sphere along its launch, its
+    // power at 1 m as a ray's amplitude is (weigh), and each order's floor
+    // variants adding with their phases (grating_band_energies).
+    const bool gratings = reliefs && d.relief_orders;
+    auto grating_energy = [&](const PathEnd& source, const PathEnd& microphone, std::size_t state, std::size_t m,
+                                  Scratch& w, std::vector<double>& out) {
+        if (!gratings)
+            return;
+        GratingInput g;
+        g.reliefs = &d.facade_reliefs;
+        g.bands = bands;
+        g.sound_speed = sound_speed;
+        g.reflection = &reflection_for(m);
+        g.air = nepers;
+        g.max_reflections = d.grating_reflections;
+        g.source_reflections = d.paths.source_reflections;
+        const FloorModel& floor = floor_of[m];
+        if (floor.impedance())
+            g.floor = [&](double sin_grazing, double leg, std::size_t b) {
+                const auto q = spherical_reflection_coefficient(sin_grazing, pi * bands[b] * leg / sound_speed,
+                        floor.admittance[3 * b + 1], floor.boundary_loss);
+                return q[0] * q[0] + q[1] * q[1];
+            };
+        else
+            g.floor = [&](double, double, std::size_t) { return floor.reflection; };
+        thread_local std::vector<GratingRay> rays;
+        thread_local std::vector<double> power;
+        rays.clear();
+        grating_rays(city, source, microphone, g, rays);
+        if (rays.empty())
+            return;
+        power.resize(rays.size());
+        w.lighting.resize(all);
+        for (std::size_t i = 0; i < rays.size(); i++)
+        {
+            database.spectrum_along(states[state], rays[i].launch, w.lighting.data(), first_band, last_band,
+                    packed != nullptr ? (*packed)[state] : nullptr);
+            const std::size_t b = rays[i].band;
+            const double level = w.lighting[first_band + b];
+            const double inside = std::min(rays[i].length, radius);
+            power[i] = std::isfinite(level) ? std::pow(10.0, (level + at_one_metre) / 10.0) * (inside / radius)
+                            * (inside / radius) * std::exp(2.0 * nepers[b] * inside)
+                                            : 0.0;
+        }
+        if (out.empty())
+            out.assign(nb, 0.0);
+        grating_band_energies(rays, bands, sound_speed, power.data(), out.data());
+    };
     auto evaluate = [&](const PathEnd& source, const PathEnd& microphone, std::size_t state, std::size_t m,
                             Scratch& w, Pair& out) {
         out.bands.assign(nb, silence);
@@ -777,7 +878,12 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         w.variance.assign(nb, 0.0);
         const PointSourceField field(city, source, microphone, d.paths);
         turbulence_energy(state, m, w, out.scattered);
-        if (field.rays().empty() && !diffuse && out.scattered.empty())
+        // The diffuse field and the grating rays carry energy alone.
+        out.diffuse.clear();
+        if (diffuse)
+            diffuse_energy(state, m, w, out.diffuse);
+        grating_energy(source, microphone, state, m, w, out.diffuse);
+        if (field.rays().empty() && out.diffuse.empty() && out.scattered.empty())
             return;
         if (!field.rays().empty())
         {
@@ -795,11 +901,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                     out.bands[b] = band_level(bands[b], sub_bands(bands[b], sound_speed), &w.energy[3 * b]);
             }
         }
-        if (diffuse)
-        {
-            diffuse_energy(state, m, w, out.diffuse);
-            add_diffuse(out.diffuse, out.bands);
-        }
+        add_diffuse(out.diffuse, out.bands);
         add_scattered(out.scattered, out.bands);
         w.full.assign(all, silence);
         std::copy(out.bands.begin(), out.bands.end(), w.full.begin() + static_cast<std::ptrdiff_t>(first_band));
@@ -915,14 +1017,16 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                         // The diffuse energy before the push: the stream's
                         // callback adds it.
                         Pair& p = out[work[i]];
+                        p.diffuse.clear();
                         if (diffuse)
                             diffuse_energy(state, m, w, p.diffuse);
+                        grating_energy(*source_ends[slot[state]], *microphone, state, m, w, p.diffuse);
                         turbulence_energy(state, m, w, p.scattered);
                         if (field.rays().empty())
                         {
                             // The diffuse and scattered fields alone, where
                             // they reach.
-                            if (diffuse || !p.scattered.empty())
+                            if (!p.diffuse.empty() || !p.scattered.empty())
                             {
                                 add_diffuse(p.diffuse, p.bands);
                                 add_scattered(p.scattered, p.bands);

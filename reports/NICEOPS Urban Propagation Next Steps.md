@@ -29,7 +29,12 @@ ranks what the literature says would improve the predictions most, for rotorcraf
    leftover, UE06's R1). Begun (Oct 20): the edge source carries the vertex for a ray that reflects between two
    edges (UE06 2.63 → 1.01 dB rms); by UTD it remains.
 3. **Facade scattering by incidence and grating order**: s(θ, f) from the BEM, grating orders for periodic relief
-   (UE24-26), and a receiver-side gather that makes the diffuse field affordable on a grid.
+   (UE24-26), and a receiver-side gather that makes the diffuse field affordable on a grid. Done (Oct 20) but the
+   gather: `--relief`/`--facade_relief` takes a relief's grating orders from the BEM (`profile_scattering.py
+   --orders`), its specular share at each ray's incidence, the other orders as grating rays, and by default what it
+   scatters onto other walls diffusely at each path's incidence. Against EDGE's reliefs the orders match the FDTD
+   (UE24-26 rms 1.24, 1.59, 1.63 against its 1.25, 1.60, 1.60; Lambert's s(f) 1.48, 1.85, 2.25); the default
+   hybrid beats s(f) everywhere, DigiCity's microphone 7 included (−2.0 / 2.7 against −2.3 / 2.9).
 4. **Pitched roofs (LoD2)**, validated on EDGE's measured pitched-roof scenes (UE01-05, 15, 17, 19), unused so far.
 5. **Higher orders with pruning** (1a), and an engineering term for paths beyond the explicit orders.
 

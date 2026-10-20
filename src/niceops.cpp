@@ -4914,6 +4914,9 @@ int run(int argc, char* argv[])
     double floor_absorption = 0.0;
     double facade_scattering = 0.0;
     std::string facade_scattering_spectrum;
+    std::vector<std::string> facade_reliefs;
+    std::string relief_scattering = "hybrid";
+    std::size_t grating_reflections = 2;
     double patch_size = 4.0;      // m
     double diffuse_radius = 0.0;  // m; 0 for the rays' reach
     bool exact_shared_faces = false;
@@ -5420,6 +5423,19 @@ int run(int argc, char* argv[])
             "With --buildings: a CSV of band_hz and s, as tools/profile_scattering.py writes it: the scattering "
             "coefficient band by band, times each building's scattering column or --facade_scattering, interpolated "
             "in log frequency. It must reach every band the metric sums.");
+    app.add_option("--facade_relief", facade_reliefs,
+            "With --buildings: reliefs' grating orders, as tools/profile_scattering.py --orders writes them, one or "
+            "more: a building carries the one its relief column names (from 1, 0 none), or without the column the "
+            "first wherever it scatters (--facade_scattering or its scattering column, 1 by default with this), on "
+            "every wall, +along the wall's base direction. Its specular rays take the relief's order 0 at the incidence "
+            "they meet it at, and the rest goes by --relief_scattering.");
+    app.add_option("--relief_scattering", relief_scattering,
+            "With --facade_relief: hybrid (default), the other orders as rays that take one each and what a wall "
+            "scatters onto other walls diffusely; orders, the rays alone; or lambert, all diffusely by Lambert's law "
+            "at the incidence each lighting path meets the wall at.")
+            ->check(CLI::IsMember({"hybrid", "orders", "lambert"}));
+    app.add_option("--grating_reflections", grating_reflections,
+            "With --facade_relief: facade reflections on a grating ray besides its order (default 2).");
     auto* patch_size_option = app.add_option("--patch_size", patch_size,
             "With scattering facades: the diffuse field's patches' size at most (default 4 m).");
     auto* diffuse_radius_option = app.add_option("--diffuse_radius", diffuse_radius,
@@ -6266,9 +6282,10 @@ int run(int argc, char* argv[])
     else if (app.count("--wall_absorption") > 0 || app.count("--floor_absorption") > 0)
         input_error("--wall_absorption and --floor_absorption go with --buildings.");
     else if (app.count("--facade_scattering") > 0 || app.count("--facade_scattering_spectrum") > 0
-            || app.count("--patch_size") > 0 || app.count("--diffuse_radius") > 0)
-        input_error("--facade_scattering, --facade_scattering_spectrum, --patch_size and --diffuse_radius go with "
-                    "--buildings.");
+            || app.count("--patch_size") > 0 || app.count("--diffuse_radius") > 0 || app.count("--facade_relief") > 0
+            || app.count("--relief_scattering") > 0 || app.count("--grating_reflections") > 0)
+        input_error("--facade_scattering, --facade_scattering_spectrum, --facade_relief, --relief_scattering, "
+                    "--grating_reflections, --patch_size and --diffuse_radius go with --buildings.");
     else if (exact_shared_faces || app.count("--state_tolerance") > 0 || app.count("--gpu") > 0
             || app.count("--no-gpu") > 0)
         input_error("--exact_shared_faces, --state_tolerance, --gpu and --no-gpu go with --buildings.");
@@ -6580,10 +6597,18 @@ int run(int argc, char* argv[])
         input.floor_absorption = floor_absorption;
         // With a spectrum, a building's coefficient weights it: 1, all relief,
         // by default.
-        input.scattering = !facade_scattering_spectrum.empty() && app.count("--facade_scattering") == 0
+        input.scattering = (!facade_scattering_spectrum.empty() || !facade_reliefs.empty())
+                        && app.count("--facade_scattering") == 0
                 ? 1.0
                 : facade_scattering;
         input.scattering_file = facade_scattering_spectrum;
+        if (!facade_reliefs.empty() && !facade_scattering_spectrum.empty())
+            input_error("--facade_relief and --facade_scattering_spectrum are each the walls' scattering; give one.");
+        if ((app.count("--relief_scattering") > 0 || app.count("--grating_reflections") > 0) && facade_reliefs.empty())
+            input_error("--relief_scattering and --grating_reflections go with --facade_relief.");
+        input.relief_files = facade_reliefs;
+        input.relief_scattering = relief_scattering;
+        input.grating_reflections = grating_reflections;
         input.patch_size = patch_size;
         input.diffuse_radius = diffuse_radius;
         input.turbulence = scattering;
@@ -6596,6 +6621,9 @@ int run(int argc, char* argv[])
         {
             input_error("--buildings ", buildings_file, ": ", e.what());
         }
+        if (!facade_reliefs.empty())
+            log("--buildings: ", options.buildings->relief_walls(), " walls carry a relief (--facade_relief), "
+                    "scattering beyond its specular order by ", relief_scattering, ".");
         if (options.buildings->scatters())
             log("--buildings: the facades scatter", facade_scattering_spectrum.empty() ? "" : " by ",
                     facade_scattering_spectrum, "; each microphone's diffuse field in patches of ",

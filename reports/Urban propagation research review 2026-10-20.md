@@ -10,8 +10,14 @@ October 20, 2026. Private: this review quotes the project's own validation numbe
 > does not use them and takes γ_T as velocity turbulence instead. The review's conversion
 > "γ_t/4 = C_v²/c0²" is not NICEOPS's: γ_T = C_T²/T0² + (22/3) C_v²/c0² (THEORY 5.3), which puts the
 > open-terrain "moderate" 3×10⁻⁶ at C_v² ≈ 0.05, not 0.1. Its "13 steps at a wall's foot" is the
-> 80-line sweep's; on 20 lines the floor between two edges has since removed both. Everything
-> else is as the agent left it.
+> 80-line sweep's; on 20 lines the floor between two edges has since removed both. Recommendation
+> 3 (a) and (b) are implemented too (`--relief`, THEORY 6.5), and NICEOPS's checks qualify its "why":
+> in an energy model a relief's grating orders return about what Lambert's law does in a street
+> canyon, both near −0.3 dB in a plan-view canyon model of UE24. What the measured drop needs is the
+> orders as rays with their floor partners coherent, each order's energy beyond its first scattering
+> lost; then they match the FDTD (FIDELITY, Scattering walls). Behind DigiCity's containers the
+> diffuse field's further scattering matters instead. (c), the receiver-side gather, is not done.
+> Everything else is as the agent left it.
 
 ## How this was done
 

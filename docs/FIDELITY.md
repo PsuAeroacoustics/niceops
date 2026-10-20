@@ -1629,6 +1629,43 @@ With the corrugation's coefficients microphone 7 rises by 1.0-7.7 dB from 800 Hz
 −7.8 → −2.9 dB, 5 kHz −10.4 → −2.7). Below 630 Hz nothing moves, so the shortfall at 200-250 Hz
 (−3.4 dB) stays.
 
+**Reliefs as gratings** (`--relief`, `--facade_relief`; THEORY §6.5). The same scenes with each
+relief's grating orders (`tools/profile_scattering.py --orders`: the sawtooth 3.72 m long, the ribs
+4 m, the container wall 6 m, four frequencies a band, incidence every 5°, the far field every
+0.1°), walls absorbing 0.05 throughout; the validation harness's `urban/edge/relief.py` and
+`urban/digicity/accuracy.py`. Each cell is the mean change from the scene without relief and, in
+brackets, the error against the measured change, mean / rms (for DigiCity, microphone 7's
+predicted − measured):
+
+| Scene | Measured | FDTD | Random-incidence s(f) | Orders | Lambert at incidence | Hybrid (default) |
+| --- | --- | --- | --- | --- | --- | --- |
+| UE24, sawtooth (64 pairs) | −1.03 | −1.35 (−0.20 / 1.25) | −0.22 (+0.81 / 1.48) | −1.46 (−0.42 / 1.24) | −0.25 (+0.78 / 1.46) | −0.33 (+0.70 / 1.39) |
+| UE25, ribs (64) | −1.11 | −0.92 (+0.24 / 1.60) | −0.02 (+1.09 / 1.85) | −0.50 (+0.61 / 1.59) | −0.05 (+1.05 / 1.80) | −0.10 (+1.01 / 1.76) |
+| UE26, both (64) | −1.62 | −1.16 (−0.29 / 1.60) | −0.10 (+1.52 / 2.25) | −1.94 (−0.32 / 1.63) | −0.16 (+1.46 / 2.16) | −0.43 (+1.19 / 1.98) |
+| UE28, in sight (72) | +0.23 | | +0.03 (−0.20 / 0.77) | +0.02 (−0.22 / 0.70) | +0.02 (−0.21 / 0.76) | +0.05 (−0.18 / 0.69) |
+| UE28, shadow (22) | +0.40 | | +0.03 (−0.36 / 0.60) | +0.06 (−0.34 / 0.58) | +0.08 (−0.32 / 0.56) | +0.06 (−0.34 / 0.58) |
+| DigiCity microphone 7 | | | −2.33 / 2.93 | −3.36 / 4.27 | | −1.97 / 2.72 |
+
+In the canyon the orders carry the relief's redirection, and their error is the FDTD's: what the
+sawtooth sends out along the canyon or back is lost to the microphones, where Lambert's law returns
+most of it. The sawtooth's teeth may face either way along the canyon (the archive does not say);
+turned round, its mean change moves by 0.06 dB. Behind DigiCity's containers the order is reversed:
+microphone 7 is in a shadow, and what the walls scatter onto other walls reaches it, which the
+diffuse field carries and the orders alone do not; Lambert's law at incidence, there, is −1.76 /
+2.46. The hybrid, each wall's first scattering as orders and the rest diffusely, is better than the
+random-incidence s(f) in every case. Two choices were measured on the way: grating rays and their
+floor partners add with their phases (in energy, the canyon's sawtooth came out −2.29 dB, the
+partners near the floor being one length), and rays that diffract reflect in a relief whole
+(taking its specular share, DigiCity's microphone 7 fell to −5.9 dB mean with the orders; EDGE did
+not move). Grating rays with up to six other reflections change nothing in the canyon, every second
+one being on the relief, whose specular share is a few per cent.
+
+**A relief as geometry.** The sawtooth is 12 cm deep on a 36 cm pitch, so the canyon's microphones,
+0.4-1.5 m from it, see its facets rather than a grating (their Fresnel zones span about a period).
+Modelled as its own facets and ridges (the FDTD's solid, by UTD, eight reflections), UE24's mean
+change is −0.88 dB, error +0.16 / 1.28, as good as the FDTD and the orders. The ribs that way are 24
+million rays a pair, and sub-wavelength.
+
 ### Trajectory smoothing
 
 The demo track's own latitude, longitude and altitude columns, fed back in as a WGS84 track and

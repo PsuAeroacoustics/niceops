@@ -10,6 +10,7 @@
 #include "gpu/band_energy.hpp"
 #include "gpu/gpu.hpp"
 #include "point_paths.hpp"
+#include "util/constants.hpp"
 
 namespace niceops::gpu {
 
@@ -108,7 +109,11 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
     if (floor.impedance() && floor.admittance.size() != centres.size())
         throw std::invalid_argument("pack_point_rays: the floor's admittance is not three per band");
     const double floor_reflection = floor.impedance() ? 1.0 : floor.reflection;
-    set.complex_reflections = floor.impedance();
+    // A relief's share changes across a band too.
+    set.complex_reflections = floor.impedance() || field.reliefs() != nullptr;
+    std::vector<double> frequencies(centres.size());
+    for (std::size_t j = 0; j < centres.size(); j++)
+        frequencies[j] = centres[j] * sound_speed / (2.0 * pi);
     std::vector<std::complex<double>> floor_factor(centres.size(), 1.0), plate(floor.plate ? 2 * centres.size() : 0);
     std::vector<double> in_plane;
     for (std::size_t index : order)
@@ -124,7 +129,11 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
             floor.plate(elevation, azimuth, plate.data(), plate.data() + centres.size());
         }
         if (set.complex_reflections)
+        {
             floor_factors(ray, floor, centres, floor.plate ? plate.data() : nullptr, floor_factor.data());
+            if (meets_relief(ray, field.reliefs()))
+                relief_factors(ray, *field.reliefs(), frequencies, sound_speed, floor_factor.data());
+        }
         for (std::size_t band = 0; band < nb; band++)
         {
             const double amplitude = reflected_amplitude(ray, band_reflection[band], floor_reflection)

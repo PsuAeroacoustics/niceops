@@ -145,12 +145,29 @@ struct BuildingInput
     std::vector<double> absorption;
     std::vector<double> scattering;
     std::vector<std::string> ids;
+    // Which of the run's reliefs (facade_relief.hpp) a building's walls carry,
+    // counting from 1, 0 for none; -1 where the file has no relief column.
+    std::vector<int> relief;
 };
+
+// Which of `count` reliefs a building carries: its relief column's, or
+// without one the first wherever it scatters.  Throws where the column names
+// one past `count`.
+inline int relief_of(const BuildingInput& in, std::size_t building, std::size_t count)
+{
+    const int given = in.relief[building];
+    if (given < 0)
+        return count > 0 && in.scattering[building] > 0.0 ? 1 : 0;
+    if (static_cast<std::size_t>(given) > count)
+        throw std::runtime_error("building " + in.ids[building] + " carries relief " + std::to_string(given)
+                + ", and the run gives " + std::to_string(count));
+    return given;
+}
 
 // A GeoJSON file (.geojson or .json) of WGS84 footprints, projected into the
 // run's frame, or a CSV with one row per footprint vertex: building (an id,
 // a building's rows consecutive, its vertices in order around it), x, y, top
-// and optionally absorption and scattering.
+// and optionally absorption, scattering and relief (a whole number).
 inline BuildingInput read_buildings(const std::string& file, const BuildingInputOptions& o)
 {
     BuildingInput in;
@@ -181,6 +198,7 @@ inline BuildingInput read_buildings(const std::string& file, const BuildingInput
             footprints.push_back(std::move(building.footprint));
             building_absorption.push_back(alpha);
             building_scattering.push_back(scatter);
+            in.relief.push_back(-1);
             ids.push_back(building.id);
         }
         std::cerr << file << ": " << report.footprints << " footprints from " << report.features
@@ -208,6 +226,7 @@ inline BuildingInput read_buildings(const std::string& file, const BuildingInput
         const std::size_t bt = length_column(bcsv, file, o.units, "top", true, true);
         const std::size_t ba = length_column(bcsv, file, o.units, "absorption", false, false);
         const std::size_t bs = length_column(bcsv, file, o.units, "scattering", false, false);
+        const std::size_t br = length_column(bcsv, file, o.units, "relief", false, false);
         std::set<double> seen;
         double current = std::numeric_limits<double>::quiet_NaN();
         for (std::size_t row = 0; row < bcsv.rows.size(); row++)
@@ -216,6 +235,9 @@ inline BuildingInput read_buildings(const std::string& file, const BuildingInput
             const std::string where = file + " row " + std::to_string(row + 1) + ": ";
             const double alpha = ba == LabeledCsv::npos ? o.absorption : r[ba];
             const double scatter = bs == LabeledCsv::npos ? o.scattering : r[bs];
+            const int relief = br == LabeledCsv::npos ? -1 : static_cast<int>(r[br]);
+            if (br != LabeledCsv::npos && !(r[br] >= 0.0 && r[br] == std::round(r[br])))
+                throw std::runtime_error(where + "a relief is a whole number, 0 for none");
             if (footprints.empty() || r[cid] != current)
             {
                 if (!seen.insert(r[cid]).second)
@@ -229,13 +251,14 @@ inline BuildingInput read_buildings(const std::string& file, const BuildingInput
                 footprints.back().top = r[bt] * o.to_meters;
                 building_absorption.push_back(alpha);
                 building_scattering.push_back(scatter);
+                in.relief.push_back(relief);
                 current = r[cid];
                 ids.push_back(exact_text(r[cid]));
             }
             else if (r[bt] * o.to_meters != footprints.back().top || alpha != building_absorption.back()
-                    || scatter != building_scattering.back())
+                    || scatter != building_scattering.back() || relief != in.relief.back())
                 throw std::runtime_error(
-                        where + "a building's rows must give one top, one absorption and one scattering");
+                        where + "a building's rows must give one top, one absorption, one scattering and one relief");
             footprints.back().x.push_back(r[bx] * o.to_meters);
             footprints.back().y.push_back(r[by] * o.to_meters);
         }

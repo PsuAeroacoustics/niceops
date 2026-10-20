@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 #include "edge_visibility.hpp"
+#include "facade_relief.hpp"
 #include "faddeeva.hpp"
 #include "ground_effect.hpp"
 #include "urban.hpp"
@@ -32,6 +33,54 @@ FloorBounce bounce_on(const Vec3& from, const Vec3& to, bool microphone)
 {
     const double leg = (to - from).norm();
     return {leg > 0.0 ? std::abs(to.z - from.z) / leg : 1.0, leg, microphone};
+}
+
+// How a ray travelling along `d` meets facade f.
+FacadeHit hit_of(const Facade& f, const Vec3& d)
+{
+    const double dx = f.x1 - f.x0, dy = f.y1 - f.y0, length = std::hypot(dx, dy);
+    const double horizontal = std::hypot(d.x, d.y), norm = d.norm();
+    if (!(horizontal > 0.0) || !(length > 0.0))
+        return {0.0, 0.0};
+    return {-(d.x * dx + d.y * dy) / (length * horizontal), horizontal / norm};
+}
+
+// `d` mirrored in a facade's plane, z kept.
+Vec3 mirrored_direction(const Facade& f, const Vec3& d)
+{
+    const Vec3 h = mirror_direction(f, Vec3(d.x, d.y, 0.0));
+    return Vec3(h.x, h.y, d.z);
+}
+
+// How a ray meets a chain of facades (an image's, the point's side first)
+// that it crosses toward the point, arriving at the chain's last facade along
+// `d`: in the chain's order, appended to `out`.
+void meeting_toward(const Buildings& buildings, const std::vector<std::size_t>& chain, Vec3 d,
+        std::vector<FacadeHit>& out)
+{
+    const std::size_t at = out.size();
+    out.resize(at + chain.size());
+    for (std::size_t k = chain.size(); k-- > 0;)
+    {
+        const Facade& f = buildings.facades()[chain[k]];
+        out[at + k] = hit_of(f, d);
+        d = mirrored_direction(f, d);
+    }
+}
+
+// The same for a chain it crosses away from the point, leaving the chain's
+// last facade along `d`.
+void meeting_from(const Buildings& buildings, const std::vector<std::size_t>& chain, Vec3 d,
+        std::vector<FacadeHit>& out)
+{
+    const std::size_t at = out.size();
+    out.resize(at + chain.size());
+    for (std::size_t k = chain.size(); k-- > 0;)
+    {
+        const Facade& f = buildings.facades()[chain[k]];
+        d = mirrored_direction(f, d);
+        out[at + k] = hit_of(f, d);
+    }
 }
 
 // Where the path through a point on a line is stationary, the point leaving
@@ -657,6 +706,7 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
     , buildings_(&buildings)
     , edge_source_(options.edge_source)
     , sample_shared_faces_(options.sample_shared_faces)
+    , reliefs_(options.reliefs)
 {
     trace(buildings, PathEnd(buildings, source, true, options, edges_near(buildings, microphone, options.radius)),
             PathEnd(buildings, microphone, false, options, edges_near(buildings, source, options.radius)), options);
@@ -668,6 +718,7 @@ PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& so
     , buildings_(&buildings)
     , edge_source_(options.edge_source)
     , sample_shared_faces_(options.sample_shared_faces)
+    , reliefs_(options.reliefs)
 {
     trace(buildings, source, microphone, options);
 }
@@ -791,6 +842,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 ray.source_plane = 0.0;
                 ray.floor_bounce[0] = bounce_on(source, below(image.point), true);
             }
+            if (options.reliefs != nullptr)
+                meeting_toward(buildings, image.facades, (floor ? below(image.point) : image.point) - source, ray.hits);
             const std::vector<double> segments {ray.length};
             push_faded(rays_, std::move(ray), pending, segments, buildings, options);
         }
@@ -818,6 +871,9 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 ray.facades = image.facades;
                 ray.roof_facades = {buildings.roof_facade(b)};
                 ray.source_plane = h;
+                if (options.reliefs != nullptr)
+                    meeting_toward(buildings, image.facades,
+                            Vec3(image.point.x, image.point.y, 2.0 * h - image.point.z) - source, ray.hits);
                 rays_.push_back(std::move(ray));
             }
         }
@@ -938,6 +994,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                             ray.floor_bounce[bounces++] = bounce_on(pa, q, false);
                         if (fb)
                             ray.floor_bounce[bounces++] = bounce_on(q, pb, true);
+                        if (options.reliefs != nullptr)
+                        {
+                            meeting_from(buildings, a.facades, q - pa, ray.hits);
+                            meeting_toward(buildings, b.facades, pb - q, ray.hits);
+                        }
                         ray.wedges = 1;
                         ray.wedge[0] = {wedge_angles(edge.n, theta, theta0), sin_beta,
                                 s_in * s_out * sin_beta / (s_in + s_out), false};
@@ -1070,6 +1131,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 ray.floor_bounce[bounces++] = bounce_on(pa, q, false);
                             if (sb == floor_side)
                                 ray.floor_bounce[bounces++] = bounce_on(q, pb, true);
+                            if (options.reliefs != nullptr)
+                            {
+                                meeting_from(buildings, a.facades, q - pa, ray.hits);
+                                meeting_toward(buildings, b.facades, pb - q, ray.hits);
+                            }
                             for (long side : {sa, sb})
                                 if (side >= 0)
                                     ray.roof_facades.push_back(buildings.roof_facade(static_cast<std::size_t>(side)));
@@ -1392,6 +1458,13 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                     ray.floor_bounce[bounces++] = bounce_on(q1, q2, false);
                                 if (fb)
                                     ray.floor_bounce[bounces++] = bounce_on(q2, pb, true);
+                                if (options.reliefs != nullptr)
+                                {
+                                    meeting_from(buildings, a.facades, q1 - pa, ray.hits);
+                                    if (ray.between != PointRay::no_facade)
+                                        ray.hits.push_back(hit_of(buildings.facades()[ray.between], q2 - q1));
+                                    meeting_toward(buildings, b.facades, pb_real - q2_real, ray.hits);
+                                }
                                 ray.edge_source.edges[0] = e1;
                                 ray.edge_source.edges[1] = e2;
                                 ray.edge_source.source = pa;
@@ -1642,6 +1715,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                     ray.floor_bounce[bounces++] = bounce_on(pa, q1, false);
                                 if (fb)
                                     ray.floor_bounce[bounces++] = bounce_on(q3, pb, true);
+                                if (options.reliefs != nullptr)
+                                {
+                                    meeting_from(buildings, a.facades, q1 - pa, ray.hits);
+                                    meeting_toward(buildings, b.facades, pb - q3, ray.hits);
+                                }
                                 ray.edge_source.edges[0] = e1;
                                 ray.edge_source.edges[1] = e3;
                                 ray.edge_source.source = pa;
@@ -1809,6 +1887,35 @@ void floor_factors(const PointRay& ray, const FloorModel& floor, const std::vect
             f *= coherent * std::complex<double>(q[0], q[1]);
         }
         out[j] = f;
+    }
+}
+
+bool meets_relief(const PointRay& ray, const std::vector<const FacadeRelief*>* reliefs)
+{
+    // A ray that diffracts reflects in a relief whole: what it would scatter
+    // reaches nothing in the model (the grating rays and the diffuse field's
+    // lighting are specular paths), so it carries on the specular way.
+    if (reliefs == nullptr || ray.wedges > 0)
+        return false;
+    for (std::size_t f : ray.facades)
+        if (f < reliefs->size() && (*reliefs)[f] != nullptr)
+            return true;
+    return false;
+}
+
+void relief_factors(const PointRay& ray, const std::vector<const FacadeRelief*>& reliefs,
+        const std::vector<double>& frequencies, double sound_speed, std::complex<double>* out)
+{
+    if (ray.hits.size() != ray.facades.size())
+        throw std::invalid_argument("relief_factors: the ray was traced without its facade hits (reliefs)");
+    for (std::size_t i = 0; i < ray.facades.size(); i++)
+    {
+        const std::size_t f = ray.facades[i];
+        if (f >= reliefs.size() || reliefs[f] == nullptr)
+            continue;
+        const FacadeHit& hit = ray.hits[i];
+        for (std::size_t j = 0; j < frequencies.size(); j++)
+            out[j] *= std::sqrt(reliefs[f]->specular(hit.sin_psi, frequencies[j] * hit.cos_elevation, sound_speed));
     }
 }
 
@@ -2263,23 +2370,35 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     if (edge_source_)
         for (std::size_t i = 0; i < order.size(); i++)
             factors[i] = edge_source_factors(*buildings_, rays_[order[i]], wavenumbers);
-    // A floor of finite impedance: each ray's factor from it, every sub-band
-    // at once, for the rays it touches (a plate's microphone, every ray).
-    std::vector<std::vector<std::complex<double>>> floor_factor(floor.impedance() ? order.size() : 0);
+    // A floor of finite impedance and the reliefs: each ray's factor from
+    // them, every sub-band at once, for the rays they touch (a plate's
+    // microphone, every ray).
+    std::vector<std::vector<std::complex<double>>> floor_factor(
+            floor.impedance() || reliefs_ != nullptr ? order.size() : 0);
     std::vector<std::complex<double>> plate(floor.plate ? 2 * wavenumbers.size() : 0);
+    std::vector<double> frequencies(wavenumbers.size());
+    for (std::size_t j = 0; j < wavenumbers.size(); j++)
+        frequencies[j] = wavenumbers[j] * sound_speed / (2.0 * pi);
     for (std::size_t i = 0; i < floor_factor.size(); i++)
     {
         const PointRay& ray = rays_[order[i]];
-        if (ray.floor == 0 && !floor.plate)
+        const bool on_floor = floor.impedance() && (ray.floor > 0 || floor.plate);
+        const bool on_relief = meets_relief(ray, reliefs_);
+        if (!on_floor && !on_relief)
             continue;
-        if (floor.plate)
+        floor_factor[i].assign(wavenumbers.size(), 1.0);
+        if (on_floor)
         {
-            double elevation, azimuth;
-            point_ray_arrival(ray, elevation, azimuth);
-            floor.plate(elevation, azimuth, plate.data(), plate.data() + wavenumbers.size());
+            if (floor.plate)
+            {
+                double elevation, azimuth;
+                point_ray_arrival(ray, elevation, azimuth);
+                floor.plate(elevation, azimuth, plate.data(), plate.data() + wavenumbers.size());
+            }
+            floor_factors(ray, floor, wavenumbers, floor.plate ? plate.data() : nullptr, floor_factor[i].data());
         }
-        floor_factor[i].resize(wavenumbers.size());
-        floor_factors(ray, floor, wavenumbers, floor.plate ? plate.data() : nullptr, floor_factor[i].data());
+        if (on_relief)
+            relief_factors(ray, *reliefs_, frequencies, sound_speed, floor_factor[i].data());
     }
     // A shared face's field at every sub-band at once: sampled where that is
     // allowed and works, or its nodes' geometry shared between them

@@ -77,6 +77,7 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
     const auto& facades = buildings.facades();
     const std::size_t nb = bands.size();
     specular_.resize(reflection.size());
+    reflection_ = reflection;
     for (std::size_t i = 0; i < reflection.size(); i++)
         specular_[i] = reflection[i] * (1.0 - scattering[i]);
     in_reach_.assign(facades.size(), 0);
@@ -219,7 +220,11 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
         }
         converged_ = converged_ && done;
         for (std::size_t p = 0; p < n; p++)
-            weight_[p * nb + b] = rho_s_[p * nb + b] * y[p];
+        {
+            const bool elsewhere = options.first_scattering_elsewhere && !patches_[p].roof
+                    && options.first_scattering_elsewhere(patches_[p].facade);
+            weight_[p * nb + b] = rho_s_[p * nb + b] * (elsewhere ? y[p] - gather_[p * nb + b] : y[p]);
+        }
     }
     double largest = 0.0;
     for (double w : weight_)
@@ -397,10 +402,23 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
         std::vector<double>& e, unsigned threads, const SourcePower* power) const
 {
     e.assign(patches_.size() * bands_, 0.0);
+    const auto& at = options_.scattering_at;
+    const auto& facades = buildings_->facades();
+    // How a wave travelling along d meets facade f: the sine of its
+    // incidence and the cosine of its elevation.
+    auto meet = [&](std::size_t f, const Vec3& d, double& sin_psi, double& cos_elevation) {
+        const Facade& g = facades[f];
+        const double ax = g.x1 - g.x0, ay = g.y1 - g.y0, length = std::hypot(ax, ay), h = std::hypot(d.x, d.y);
+        sin_psi = h > 0.0 ? -(d.x * ax + d.y * ay) / (length * h) : 0.0;
+        cos_elevation = h / d.norm();
+    };
     parallel_chunks(active_.size(), threads, [&](std::size_t begin, std::size_t end) {
         std::vector<Vec3> hits;
         std::vector<PatchImage> scratch;
         std::vector<double> sent(power != nullptr ? bands_ : 0);
+        // With incidence-dependent scattering, each band's factor from the
+        // walls the path reflects in and its deposit's scale at the patch.
+        std::vector<double> by_incidence(at ? bands_ : 0);
         for (std::size_t a = begin; a < end; a++)
         {
             const std::size_t p = active_[a];
@@ -426,11 +444,43 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
                         continue;
                     if (power != nullptr)
                         (*power)((target - source) / length, length, sent.data());
+                    if (at)
+                    {
+                        std::fill(by_incidence.begin(), by_incidence.end(), 1.0);
+                        Vec3 d = (target - source) / length;
+                        double sin_psi, cos_elevation;
+                        for (std::size_t k = image.facades.size(); k-- > 0;)
+                        {
+                            const std::size_t f = image.facades[k];
+                            meet(f, d, sin_psi, cos_elevation);
+                            for (std::size_t b = 0; b < bands_; b++)
+                            {
+                                const double s = at(f, sin_psi, cos_elevation, b);
+                                if (s >= 0.0 && specular_[f * bands_ + b] > 0.0)
+                                    by_incidence[b] *= rho_of(f, b) * (1.0 - s) / specular_[f * bands_ + b];
+                            }
+                            const Vec3 h = mirror_direction(facades[f], Vec3(d.x, d.y, 0.0));
+                            d = Vec3(h.x, h.y, d.z);
+                        }
+                        if (!patch.roof)
+                        {
+                            meet(patch.facade, d, sin_psi, cos_elevation);
+                            for (std::size_t b = 0; b < bands_; b++)
+                            {
+                                const double s = at(patch.facade, sin_psi, cos_elevation, b);
+                                const double nominal = rho_s_[p * bands_ + b] / rho_[p * bands_ + b];
+                                if (s >= 0.0 && nominal > 0.0)
+                                    by_incidence[b] *= s / nominal;
+                            }
+                        }
+                    }
                     for (std::size_t b = 0; b < bands_; b++)
                     {
                         double carried = c / (length * length) * (floor ? floor_reflection_ : 1.0);
                         if (power != nullptr)
                             carried *= sent[b];
+                        if (at)
+                            carried *= by_incidence[b];
                         for (std::size_t f : image.facades)
                             carried *= specular_[f * bands_ + b];
                         if (!air.empty())

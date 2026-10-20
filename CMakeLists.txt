@@ -255,6 +255,8 @@ add_library(niceops_core STATIC
   src/diffuse_facades.cpp
   src/geojson_buildings.cpp
   src/point_paths.cpp
+  src/facade_relief.cpp
+  src/grating_paths.cpp
   src/urban_point.cpp
   src/turbulence_scattering.cpp
   src/source_coherence.cpp
@@ -369,6 +371,7 @@ add_executable(niceops_unit_tests
   tests/test_source_coherence.cpp
   tests/test_urban_point.cpp
   tests/test_turbulence_scattering.cpp
+  tests/test_facade_relief.cpp
   tests/test_gpu.cpp
   tests/test_edge_visibility.cpp
   tests/test_atmosphere.cpp
@@ -1462,6 +1465,21 @@ add_test(NAME point_field_sources_exact_runs COMMAND niceops_point_field --build
 set_tests_properties(point_field_sources_runs point_field_sources_exact_runs PROPERTIES FIXTURES_SETUP point_field_sources)
 add_test(NAME point_field_shared_faces_sampled COMMAND golden_compare integrated/point_field_sources.csv integrated/point_field_sources_exact.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_shared_faces_sampled PROPERTIES FIXTURES_REQUIRED point_field_sources)
+# A relief that keeps everything in its specular order (tests/data/relief_flat.csv) changes nothing, in the
+# run and in niceops_point_field; a relief's grating rays and specular shares on the GPU are the CPU's, within
+# 0.01 dB of SEL; --facade_relief goes with --buildings and not with a scattering spectrum.
+add_test(NAME point_field_relief_flat_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 -j 2 --humidity 70 --no-gpu --relief tests/data/relief_flat.csv -o integrated/point_field_relief_flat.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(point_field_relief_flat_runs PROPERTIES FIXTURES_SETUP point_field_relief_flat)
+add_test(NAME point_field_relief_flat_is_plain COMMAND golden_compare integrated/point_field_relief_flat.csv integrated/point_field_sources.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(point_field_relief_flat_is_plain PROPERTIES FIXTURES_REQUIRED "point_field_relief_flat;point_field_sources")
+add_test(NAME buildings_relief_flat_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_relief tests/data/relief_flat.csv --no-gpu -o integrated/buildings_relief_flat.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_relief_flat_run PROPERTIES FIXTURES_SETUP buildings_relief_flat_runs)
+add_test(NAME buildings_relief_flat_is_plain COMMAND golden_compare integrated/buildings_relief_flat.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_relief_flat_is_plain PROPERTIES FIXTURES_REQUIRED "buildings_relief_flat_runs;buildings_sampling_runs")
+add_test(NAME buildings_refuses_lone_relief COMMAND ${URBAN_RUN} --facade_relief tests/data/relief_test.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_lone_relief PROPERTIES PASS_REGULAR_EXPRESSION "--facade_relief, --relief_scattering, --grating_reflections, --patch_size and --diffuse_radius go with --buildings")
+add_test(NAME buildings_refuses_relief_and_spectrum COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_relief tests/data/relief_test.csv --facade_scattering_spectrum tests/data/scattering_spectrum.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_relief_and_spectrum PROPERTIES PASS_REGULAR_EXPRESSION "--facade_relief and --facade_scattering_spectrum are each the walls' scattering")
 # A floor of finite impedance (--flow_resistance) whose flow resistance is enormous reflects as the rigid
 # floor does, to 0.01 dB in every band (0.006 measured), its bounces' Q all but 1; with
 # --floor_absorption it is refused.
@@ -1506,6 +1524,12 @@ else()
   add_test(NAME buildings_gpu_matches_cpu COMMAND golden_compare integrated/buildings_gpu.csv integrated/buildings_sampled.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   add_test(NAME buildings_gpu_every_state_matches_cpu COMMAND golden_compare integrated/buildings_gpu_every_state.csv integrated/buildings_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(buildings_gpu_matches_cpu buildings_gpu_every_state_matches_cpu PROPERTIES FIXTURES_REQUIRED "buildings_gpu_runs;buildings_sampling_runs")
+  # With a relief scattering by the hybrid (grating rays and the diffuse field): the GPU's SELs are the CPU's.
+  add_test(NAME buildings_relief_gpu_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_relief tests/data/relief_test.csv --gpu -o integrated/buildings_relief_gpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  add_test(NAME buildings_relief_cpu_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --facade_relief tests/data/relief_test.csv --no-gpu -o integrated/buildings_relief_cpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_relief_gpu_run buildings_relief_cpu_run PROPERTIES FIXTURES_SETUP buildings_relief_gpu_runs)
+  add_test(NAME buildings_relief_gpu_matches_cpu COMMAND golden_compare integrated/buildings_relief_gpu.csv integrated/buildings_relief_cpu.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_relief_gpu_matches_cpu PROPERTIES FIXTURES_REQUIRED buildings_relief_gpu_runs)
   # And with the ground model's floor over two classes, the flush microphones on plates: the GPU takes
   # each ray's Q and P_d or P_r per sub-band from the CPU, within 0.01 dB of SEL (1e-4 measured).
   add_test(NAME buildings_ground_gpu_run COMMAND ${URBAN_CLASS_RUN} --buildings tests/data/urban_buildings.csv --gpu -o integrated/buildings_ground_gpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
