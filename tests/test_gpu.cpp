@@ -483,12 +483,8 @@ TEST_CASE("the GPU's cone sum is not below zero", "[gpu]")
     for (uint32_t i = 0; i < 3; i++)
     {
         set.length.push_back(50.0 + 1e-4 * i);
-        set.rays.push_back(GpuRay {0u, 0u, 6u * i, static_cast<float>(set.length.back())});
-        // Its amplitude after reflections, complex, in each of the three
-        // problems.
-        for (int part = 0; part < 3; part++)
-            for (double v : {sign[i], 0.0})
-                set.reflected.push_back(static_cast<float>(v));
+        set.rays.push_back(GpuRay {0u, 0u, i, static_cast<float>(set.length.back())});
+        set.reflected.push_back(static_cast<float>(sign[i]));
         const double turn = 0.7 * i * pi / 180.0;
         for (double v : {std::cos(turn), std::sin(turn), 0.0})
             set.launch.push_back(static_cast<float>(v));

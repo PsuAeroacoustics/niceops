@@ -313,7 +313,8 @@ void BandEnergies::submit()
             r.h = static_cast<float>(h);
             r.reach = h > 0.0 ? static_cast<float>(30.0 / h) : FLT_MAX;
             r.centre = n ? static_cast<float>(0.5 * (L[n - 1] - L[0])) : 0.0f;
-            r.slot = static_cast<uint32_t>(m);
+            r.complex_reflections = e.point && e.point->complex_reflections ? 1u : 0u;
+            r.slot = static_cast<uint32_t>(r.complex_reflections ? m : m / 3);
             r.absorption = e.point ? e.point->absorption[m] : 0.0f;
             r.sum = e.point ? e.point->sum : NK_SUM_COHERENT;
             r.cone = e.point ? e.point->cone : 1.0f;

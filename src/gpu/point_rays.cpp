@@ -108,6 +108,7 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
     if (floor.impedance() && floor.admittance.size() != centres.size())
         throw std::invalid_argument("pack_point_rays: the floor's admittance is not three per band");
     const double floor_reflection = floor.impedance() ? 1.0 : floor.reflection;
+    set.complex_reflections = floor.impedance();
     std::vector<std::complex<double>> floor_factor(centres.size(), 1.0), plate(floor.plate ? 2 * centres.size() : 0);
     std::vector<double> in_plane;
     for (std::size_t index : order)
@@ -122,11 +123,17 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
             point_ray_arrival(ray, elevation, azimuth);
             floor.plate(elevation, azimuth, plate.data(), plate.data() + centres.size());
         }
-        floor_factors(ray, floor, centres, floor.plate ? plate.data() : nullptr, floor_factor.data());
+        if (set.complex_reflections)
+            floor_factors(ray, floor, centres, floor.plate ? plate.data() : nullptr, floor_factor.data());
         for (std::size_t band = 0; band < nb; band++)
         {
             const double amplitude = reflected_amplitude(ray, band_reflection[band], floor_reflection)
                     * (packing.weights != nullptr ? packing.weights[index * nb + band] : 1.0);
+            if (!set.complex_reflections)
+            {
+                set.reflected.push_back(static_cast<float>(amplitude));
+                continue;
+            }
             for (std::size_t part = 0; part < 3; part++)
             {
                 const std::complex<double> a = amplitude * floor_factor[3 * band + part];

@@ -34,8 +34,12 @@ struct PointRaySet
     std::vector<GpuFace> faces;
     std::vector<GpuPanel> panels;
     // Each ray's amplitude after its reflections, the floor's included, and
-    // the caller's weights, per problem: [ray][problem][re, im].
+    // the caller's weights: [ray][band], or with `complex_reflections`
+    // [ray][problem][re, im], which a floor of finite impedance needs (its Q
+    // is complex and changes across a band) and which takes six times the
+    // memory.
     std::vector<float> reflected;
+    bool complex_reflections = false;
     // Which rays are over a shared face whose integral is taken at every
     // problem.
     std::vector<uint32_t> face_rays;

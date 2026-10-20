@@ -2,6 +2,15 @@
 // problem's wavenumber, into the amplitude array band_energy.kern reads.
 // Needs band_energy_types.h, point_rays_types.h and wedge.h before it.
 
+// A ray's amplitude after its reflections in problem p: its row's entry for
+// the band, real, or for the problem, complex (BandProblem::slot).
+NK_FN nk_complex nk_reflections(NK_GLOBAL_IN float* reflected, uint row, BandProblem p)
+{
+    if (p.complex_reflections == 0u)
+        return nk_make(reflected[row + p.slot], 0.0f);
+    return nk_make(reflected[row + 2u * p.slot], reflected[row + 2u * p.slot + 1u]);
+}
+
 // The rays that are not over a shared face: their amplitude after
 // reflections times each wedge term's coefficient at k sin(beta).  A sampled
 // shared face's ray takes its cascade's two terms here, which face_ratios
@@ -23,8 +32,7 @@ NK_KERNEL(ray_amplitudes)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1)
                 continue;
             terms = 2u;
         }
-        const float air = exp(-p.absorption * r.length);
-        nk_complex a = nk_make(reflected[r.reflected + 2u * p.slot] * air, reflected[r.reflected + 2u * p.slot + 1u] * air);
+        nk_complex a = nk_scale(nk_reflections(reflected, r.reflected, p), exp(-p.absorption * r.length));
         for (uint w = 0u; w < terms; w++)
         {
             NK_GLOBAL_IN GpuWedge* t = wedges + term + w;
@@ -133,7 +141,7 @@ NK_KERNEL(face_amplitudes)(NK_IN(GpuFaceItem, items, 0), NK_IN(BandProblem, prob
     }
     field = nk_scale(field, 1.0f / weights);
     const GpuRay r = rays[p.rays + item.ray];
-    const nk_complex reflections = nk_make(reflected[r.reflected + 2u * p.slot], reflected[r.reflected + 2u * p.slot + 1u]);
+    const nk_complex reflections = nk_reflections(reflected, r.reflected, p);
     const nk_complex a = nk_mul(nk_mul(nk_scale(field, exp(-p.absorption * r.length) * s), reflections),
             nk_cis(nk_phase(kt, kt_lo, f->offset_hi, f->offset_lo)));
     // A sampled face's integral goes to its probe's slot, for face_ratios.
