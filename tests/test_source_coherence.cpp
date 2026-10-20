@@ -5,6 +5,8 @@
 #include <cmath>
 #include <complex>
 #include <filesystem>
+#include <optional>
+#include <stdexcept>
 #include <vector>
 
 #include "buildings.hpp"
@@ -273,6 +275,14 @@ TEST_CASE("the measured model takes the database's rotor and fits, and the defau
     REQUIRE(helicopter.rotation_rate == 40.0);
     REQUIRE(helicopter.rotation_limit == 100.0);
     REQUIRE(helicopter.scale == 600.0);
+
+    // Half a fit is refused, as the database's reader refuses it.
+    CoherenceRecord half;
+    half.scale = 600.0;
+    REQUIRE_THROWS_AS(measured_coherence(half, 40.0), std::invalid_argument);
+    half = {};
+    half.spread_exponent = 0.8;
+    REQUIRE_THROWS_AS(measured_coherence(half, 40.0), std::invalid_argument);
 }
 
 // The default: rays within the cone of each other add with their phases,
@@ -324,12 +334,14 @@ TEST_CASE("within the cone rays add with their phases and beyond it in energy", 
 }
 
 // Written at a database's root and read back; an exported sphere carries it,
-// as it carries the rest of the root.  A tonal fraction that does not match
+// and the rotor's speed the delay takes, as it carries the rest of the root.
+// A tonal fraction that does not match
 // the bands is refused.
 TEST_CASE("a database carries its coherence through an exported sphere", "[source_coherence]")
 {
     Database plain("databases/S-76D_M3.nod");
     REQUIRE(plain.coherence_record().empty());
+    REQUIRE(!plain.interpolate_sphere(0.15, -4.0, 0.006).rotor_rpm);
     auto sphere = plain.interpolate_sphere(0.15, -4.0, 0.006);
     sphere.frequencies = {125.0, 500.0, 2000.0};
     sphere.amplitudes.assign(sphere.cells.size() * sphere.frequencies.size(), 90.0);
@@ -343,6 +355,7 @@ TEST_CASE("a database carries its coherence through an exported sphere", "[sourc
     r.spread_exponent = 1.1;
     r.tonal_fraction = {0.8, 0.2, 0.0};
     r.source = "test";
+    sphere.rotor_rpm = 395.0;
     const auto path = (std::filesystem::temp_directory_path() / "niceops_coherence_record.nod").string();
     write_sphere(sphere, path);
     const Database back(path);
@@ -356,6 +369,8 @@ TEST_CASE("a database carries its coherence through an exported sphere", "[sourc
     REQUIRE(b.spread_exponent == r.spread_exponent);
     REQUIRE(b.tonal_fraction == r.tonal_fraction);
     REQUIRE(b.source == r.source);
+    REQUIRE(back.rotor_rpm() == std::optional<double>(395.0));
+    REQUIRE(back.interpolate_sphere(0.15, -4.0, 0.006).rotor_rpm == std::optional<double>(395.0));
     REQUIRE(back.interpolate_sphere(0.15, -4.0, 0.006).coherence.tonal_fraction == r.tonal_fraction);
 
     r.tonal_fraction = {0.5};
@@ -476,4 +491,59 @@ TEST_CASE("rays that leave together deviate together", "[source_coherence]")
         REQUIRE(energy[q] == Catch::Approx(expected[q]).epsilon(1e-9));
     // At 125 Hz the four are nearly alike, and the groups count nearly four times.
     REQUIRE(variance[0] > 3.0 * 0.5 * apart[0]);
+}
+
+// The phase interval's ends: the gamma distribution's quantiles, by its own
+// cdf up to a shape of 1e4 and Wilson and Hilferty's cube beyond, against
+// scipy.special.gammaincinv.  Past 1e4 the series behind the cdf stopped
+// short of the mean and put the lower end on it.
+TEST_CASE("the phase interval's ends are the gamma distribution's quantiles", "[source_coherence]")
+{
+    struct Case
+    {
+        double shape, q, quantile; // over the mean
+    };
+    for (const Case& c : {Case {1e2, 0.05, 0.841392772183}, Case {1e3, 0.95, 1.052577118082},
+                 Case {1e4, 0.05, 0.983608511086}, Case {1e5, 0.05, 0.994804207468},
+                 Case {1e7, 0.05, 0.999479908470}, Case {1e7, 0.95, 1.000520205233}})
+    {
+        INFO("shape " << c.shape << ", q " << c.q);
+        const double mean = 3.0;
+        REQUIRE(gamma_quantile(mean, mean * mean / c.shape, c.q) / mean == Catch::Approx(c.quantile).epsilon(1e-9));
+    }
+    REQUIRE(gamma_quantile(3.0, 0.0, 0.05) == 3.0);
+}
+
+// Under the cone the level is the cone's, and the phase interval's spread and
+// tonal fractions are a database's record's where it gives them: they measure
+// the coherence the interval is about, whatever the sum.
+TEST_CASE("the cone's phase interval takes the database's spread", "[source_coherence]")
+{
+    CoherenceRecord fits;
+    fits.spread_scale = 300.0;
+    fits.spread_exponent = 1.0;
+    fits.tonal_fraction.assign(bands.size(), 0.9);
+    fits.source = "a test";
+    const SourceCoherence plain = cone_coherence(1.0), recorded = cone_coherence(1.0, fits);
+    REQUIRE(plain.spread_scale == 2120.0);
+    REQUIRE(plain.tonal_fraction.empty());
+    REQUIRE(plain.spread_source == "the defaults");
+    REQUIRE(recorded.sum == RaySum::cone);
+    REQUIRE(recorded.cone == 1.0);
+    REQUIRE(recorded.spread_scale == 300.0);
+    REQUIRE(recorded.tonal(0, bands[0]) == 0.9);
+    REQUIRE(recorded.spread_source == "the database's (a test)");
+
+    const Buildings none;
+    const PointSourceField apart(none, Vec3(0.0, 0.0, 30.0), Vec3(40.0, 10.0, 6.0));
+    std::vector<double> plain_variance, recorded_variance;
+    REQUIRE(sum(apart, plain, 1.0, &plain_variance) == sum(apart, recorded, 1.0, &recorded_variance));
+    bool moved = false;
+    for (std::size_t b = 0; b < bands.size(); b++)
+        moved = moved || recorded_variance[b] != plain_variance[b];
+    REQUIRE(moved);
+
+    CoherenceRecord half;
+    half.spread_scale = 300.0;
+    REQUIRE_THROWS_AS(cone_coherence(1.0, half), std::invalid_argument);
 }

@@ -1,6 +1,7 @@
 #include "fdtd.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -132,6 +133,12 @@ struct Grid
     std::size_t cells() const
     {
         return x.n * y.n * z.n;
+    }
+    // The PML's auxiliary fields' sizes, one per axis: that axis's slabs
+    // across the other two.
+    std::array<std::size_t, 3> slab_cells() const
+    {
+        return {x.slabs() * y.n * z.n, x.n * y.slabs() * z.n, x.n * y.n * z.slabs()};
     }
     std::size_t index(std::size_t i, std::size_t j, std::size_t k) const
     {
@@ -539,12 +546,13 @@ void march_cpu(const Grid& g, const FdtdSetup& s, float push_v, float push_p, co
     f.vx.assign(n, 0.0f);
     f.vy.assign(n, 0.0f);
     f.vz.assign(n, 0.0f);
-    f.psi_x.assign(g.x.slabs() * ny * nz, 0.0f);
-    f.phi_x.assign(f.psi_x.size(), 0.0f);
-    f.psi_y.assign(nx * g.y.slabs() * nz, 0.0f);
-    f.phi_y.assign(f.psi_y.size(), 0.0f);
-    f.psi_z.assign(nx * ny * g.z.slabs(), 0.0f);
-    f.phi_z.assign(f.psi_z.size(), 0.0f);
+    const auto [sx, sy, sz] = g.slab_cells();
+    f.psi_x.assign(sx, 0.0f);
+    f.phi_x.assign(sx, 0.0f);
+    f.psi_y.assign(sy, 0.0f);
+    f.phi_y.assign(sy, 0.0f);
+    f.psi_z.assign(sz, 0.0f);
+    f.phi_z.assign(sz, 0.0f);
     const unsigned threads = std::max(1u, s.threads);
     const std::size_t count = receivers.size();
     const std::vector<std::uint8_t>& fl_ = g.flags;
@@ -689,17 +697,35 @@ void march_cpu(const Grid& g, const FdtdSetup& s, float push_v, float push_p, co
     }
 }
 
+// Why the device cannot take the march, or empty if it can: the kernels index
+// cells and the recording in 32 bits, and every buffer must fit, as must all
+// of them together.
+std::string gpu_cannot_hold(const gpu::Device& device, const Grid& g, std::size_t steps, std::size_t receivers)
+{
+    const std::size_t n = g.cells(), recording = steps * std::max<std::size_t>(receivers, 1);
+    const auto [sx, sy, sz] = g.slab_cells();
+    constexpr std::size_t index = std::numeric_limits<std::uint32_t>::max(), f = sizeof(float);
+    if (n > index || recording > index)
+        return std::to_string(n) + " cells and " + std::to_string(recording)
+                + " recorded samples, where its kernels index 2^32";
+    const std::size_t largest = f * std::max({n, sx, sy, sz, recording});
+    const std::size_t total = n + 4 * f * n + 2 * f * (sx + sy + sz) + f * (recording + steps);
+    if (largest > device.max_buffer_bytes())
+        return "a buffer of " + std::to_string(largest) + " bytes, where it takes "
+                + std::to_string(device.max_buffer_bytes());
+    if (total > device.working_set_bytes())
+        return std::to_string(total) + " bytes, where it keeps " + std::to_string(device.working_set_bytes());
+    return {};
+}
+
 // The same on the GPU, either order: four dispatches a step, 256 steps a
 // batch, two batches in flight.
-void march_gpu(const Grid& g, int order, float push_v, float push_p, const Walls& walls, const Stencil& source,
-        const std::vector<float>& pulse, const std::vector<Stencil>& receivers, const std::vector<FdtdBox>& boxes,
-        std::vector<float>& recording)
+void march_gpu(gpu::Device& device, const Grid& g, int order, float push_v, float push_p, const Walls& walls,
+        const Stencil& source, const std::vector<float>& pulse, const std::vector<Stencil>& receivers,
+        const std::vector<FdtdBox>& boxes, std::vector<float>& recording)
 {
     const std::size_t steps = boxes.size();
-    gpu::Device& device = gpu::Device::require("--gpu");
     const std::size_t nx = g.x.n, ny = g.y.n, nz = g.z.n, n = g.cells();
-    if (n > std::numeric_limits<std::uint32_t>::max())
-        throw std::runtime_error("FDTD: " + std::to_string(n) + " cells is more than the GPU's kernels index");
     FdtdGridGpu grid {};
     grid.nx = static_cast<std::uint32_t>(nx);
     grid.ny = static_cast<std::uint32_t>(ny);
@@ -736,7 +762,7 @@ void march_gpu(const Grid& g, int order, float push_v, float push_p, const Walls
     const gpu::Buffer coefficients = upload(coefficient.data(), coefficient.size() * sizeof(float));
     const gpu::Buffer p = device.buffer(n * sizeof(float)), vx = device.buffer(n * sizeof(float)),
                       vy = device.buffer(n * sizeof(float)), vz = device.buffer(n * sizeof(float));
-    const std::size_t sx = g.x.slabs() * ny * nz, sy = nx * g.y.slabs() * nz, sz = nx * ny * g.z.slabs();
+    const auto [sx, sy, sz] = g.slab_cells();
     const gpu::Buffer psi_x = device.buffer(sx * sizeof(float)), phi_x = device.buffer(sx * sizeof(float));
     const gpu::Buffer psi_y = device.buffer(sy * sizeof(float)), phi_y = device.buffer(sy * sizeof(float));
     const gpu::Buffer psi_z = device.buffer(sz * sizeof(float)), phi_z = device.buffer(sz * sizeof(float));
@@ -943,9 +969,24 @@ FdtdRecording solve_fdtd(const FdtdSetup& setup, const std::vector<FdtdSolid>& s
     for (const FdtdBox& b : boxes)
         marched += static_cast<double>(b.ni) * b.nj * b.nk;
     out.marched = out.steps > 0 ? marched / (static_cast<double>(out.cells) * static_cast<double>(out.steps)) : 1.0;
+    gpu::Device* device = !setup.gpu ? nullptr
+            : setup.gpu_required    ? &gpu::Device::require("--gpu")
+                                    : gpu::Device::get();
+    if (device != nullptr)
+    {
+        const std::string cannot = gpu_cannot_hold(*device, g, out.steps, receivers.size());
+        if (!cannot.empty() && setup.gpu_required)
+            throw std::runtime_error("FDTD: the GPU cannot hold this march: " + cannot);
+        if (!cannot.empty())
+        {
+            out.gpu_declined = "the GPU cannot hold this march: " + cannot;
+            device = nullptr;
+        }
+    }
+    out.gpu = device != nullptr;
     const auto start = std::chrono::steady_clock::now();
-    if (setup.gpu)
-        march_gpu(g, setup.order, push_v, push_p, walls, source_stencil, pulse, receiver_stencils, boxes,
+    if (device != nullptr)
+        march_gpu(*device, g, setup.order, push_v, push_p, walls, source_stencil, pulse, receiver_stencils, boxes,
                 out.pressure);
     else
     {
@@ -967,22 +1008,25 @@ std::complex<double> FdtdRecording::transfer(std::size_t receiver, double freque
     const std::size_t count = used == 0 ? steps : std::min(used, steps);
     const double omega = 2.0 * pi * grid_frequency(frequency);
     const std::complex<double> turn = std::polar(1.0, omega * dt);
-    // The pressure at (n + 1) dt, Q at (n + 1/2) dt; a sample's path, c times
-    // its delay after the pulse's peak, loses exp(-a L).
+    // The pressure at (n + 1) dt, Q at (n + 1/2) dt.  The air's absorption
+    // weights both by exp(-lambda (t - t_peak)), lambda = a c: the march's
+    // transfer at the complex frequency omega + i lambda, at which every
+    // arrival of path L carries exp(-a L) on the lossless grid's.  The weight
+    // is exact every 256th sample and stepped by one sample's between, Q's a
+    // fixed half step's ahead of p's; lossless, it is 1 throughout.
+    const double lambda = attenuation * sound_speed, step = std::exp(-lambda * dt), half = std::exp(0.5 * lambda * dt);
     std::complex<double> phase_p = turn, phase_q = std::polar(1.0, 0.5 * omega * dt);
     std::complex<double> P(0.0, 0.0), Q(0.0, 0.0);
-    const double loss = std::exp(-attenuation * sound_speed * dt);
     double kept = 1.0;
     for (std::size_t n = 0; n < count; n++)
     {
-        const double t = (static_cast<double>(n) + 1.0) * dt;
-        if (attenuation > 0.0)
-            kept = t <= pulse_delay ? 1.0
-                    : (n % 256 == 0 ? std::exp(-attenuation * sound_speed * (t - pulse_delay)) : kept * loss);
+        if (n % 256 == 0)
+            kept = std::exp(-lambda * ((static_cast<double>(n) + 1.0) * dt - pulse_delay));
         P += static_cast<double>(pressure[n * receivers + receiver]) * kept * phase_p;
-        Q += source[n] * phase_q;
+        Q += source[n] * (kept * half) * phase_q;
         phase_p *= turn;
         phase_q *= turn;
+        kept *= step;
         // Renormalised now and then, so the rotation does not drift.
         if (n % 256 == 255)
         {
@@ -990,7 +1034,12 @@ std::complex<double> FdtdRecording::transfer(std::size_t receiver, double freque
             phase_q /= std::abs(phase_q);
         }
     }
-    return P * (4.0 * pi) / (std::complex<double>(0.0, -omega) * density * Q);
+    // The march takes Q into the pressure's time difference, whose symbol at
+    // that frequency is -i (2 / dt) sin((omega + i lambda) dt / 2), not
+    // -i omega.
+    const std::complex<double> difference
+            = std::complex<double>(0.0, -2.0 / dt) * std::sin(0.5 * dt * std::complex<double>(omega, lambda));
+    return P * (4.0 * pi) / (difference * density * Q);
 }
 
 double FdtdRecording::grid_frequency(double frequency) const

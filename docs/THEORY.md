@@ -905,7 +905,11 @@ facade counts only where it lies in that beam, and an edge only where it crosses
 candidate is then tested exactly in three dimensions: within each facade it reflects in, from in
 front, with no leg through a building. Buildings that share a side stand against each other
 there: of the shared wall only what rises above the lower roof is a facade, and the lower roof's
-edge and both corners below it are no edges. An edge point or a facade patch inside another
+edge and both corners below it are no edges. A side shared in part -- one building's wall against
+part of another's, at a T-junction -- is first split at the other's vertices on it, so that the
+part they share is shared exactly; a vertex within $10^{-6}$ m of the line through its neighbours
+is no corner. Two roofs level across a shared side are one roof there, the side the earlier
+building's. An edge point or a facade patch inside another
 building takes no part. Two exactly aligned surfaces are a knife edge for these rules -- a wave
 exactly parallel to a wall is neither reflected by it nor diffracted at its corner, and a hair
 off it is -- so the table evaluates each direction $10^{-6}$ rad clockwise of its azimuth. Walls
@@ -991,8 +995,10 @@ $$
 $L_b(\hat d)$ the sphere's level at its radius $r_s$, $\ell$ the ray's length and $a_b$ the air's
 attenuation of amplitude per metre, so each ray spreads from the sphere and is absorbed beyond it,
 as the straight path is (§4.2). $\hat d$ is $-\nabla_S \ell$, the ray's length being stationary in
-every point between its ends. With no buildings and a floor that absorbs everything, the one ray
-left is the straight path and the level is the run's without a ground model.
+every point between its ends. The microphone is the observer's point raised by its height column,
+as in a run without a ground model, and the floor is the buildings'. With no buildings and a floor
+that absorbs everything, the one ray left is the straight path and the level is the run's without
+a ground model.
 
 **Along a track** the rays are not evaluated at every state. Per microphone, band $b$'s transfer at
 state $s$ is its level less the direct ray's in free field,
@@ -1006,7 +1012,9 @@ $\hat d_0$ and $r$ the straight path's direction and length. The rays are evalua
 and the last. A stretch $[s_a, s_b]$ between evaluated states is accepted where, at its middle $s_m$,
 $\hat L_b(s_m) = D_b(s_m) + T_b(s_a) + \frac{s_m - s_a}{s_b - s_a}\bigl(T_b(s_b) - T_b(s_a)\bigr)$ gives an
 A-weighted level within $\tau$ (`--state_tolerance`) of the evaluated one, and every band within
-30 dB of its loudest A-weighted band within $15\tau$; otherwise each half is a stretch. The states
+30 dB of its loudest A-weighted band within $15\tau$, of the bands above the floor below;
+otherwise each half is a stretch. A middle with no band above the floor -- no ray, or every band at
+it -- is matched by an estimate with none, and the stretch is accepted on that alone. The states
 inside accepted stretches take $\hat L_b$. A band's transfer is not known where it lies more than
 120 dB under the state's loudest $D_b$, or where its rays' sum is at the band level's floor of
 $-300$ dB; it is silent where no ray arrives. Between a known and an unknown end the known one
@@ -1083,7 +1091,9 @@ $$
 
 $\gamma^2$ the coherence, which tends to the band's coherence between distant directions $T_b$ (its
 tonal fraction; by default $1/(1 + (f_b/58\,\mathrm{Hz})^{1.67})$), with $\theta_s = 2120$ Hz deg and
-$p_s = 1$. Rays whose $\bar g \ge 0.99$, by single linkage, deviate together, so each pair of such
+$p_s = 1$ by default. A database's record supplies $T_b$, $\theta_s$ and $p_s$ where it gives them,
+under the cone as under the measured model: they measure the coherence the interval is about,
+whichever mean the sum takes. Rays whose $\bar g \ge 0.99$, by single linkage, deviate together, so each pair of such
 groups $G$, $H$ contributes one term to the band energy's variance:
 
 $$
@@ -1094,8 +1104,10 @@ $$
 
 the sub-bands sharing the band's deviation, and the bands independent. The A-weighted energy then
 has mean $\mu = \sum_b G_b E_b$ and variance $\sigma^2 = \sum_b G_b^2\,\mathrm{Var}\,E_b$, and the
-interval's ends are the quantiles of the gamma distribution with shape $\mu^2/\sigma^2$ and scale
-$\sigma^2/\mu$. `--phase_interval` takes the SEL of the history whose every state sits at the same
+interval's ends are the quantiles of the gamma distribution with shape $k = \mu^2/\sigma^2$ and
+scale $\sigma^2/\mu$; past $k = 10^4$ by Wilson and Hilferty's
+$\mu\,\bigl(1 - 1/9k + z_q/3\sqrt k\bigr)^3$, $z_q$ the normal quantile, which is the gamma's to
+$4\times10^{-7}$ dB there. `--phase_interval` takes the SEL of the history whose every state sits at the same
 end: one vehicle's phases do not change from state to state.
 
 A ray diffracted twice runs between two edges, the source's and the microphone's images to one
@@ -1267,7 +1279,8 @@ an end of its edge still has that end's wave, which the integral over the edge c
 while the path through the end exceeds the Keller path by no more than 100 radians at the lowest
 band, weighted by $T(k\Delta_\mathrm{end};\ 50, 100)$, $\Delta_\mathrm{end}$ that excess.
 
-Once-diffracted rays take the integral over the whole edge always. A twice-diffracted ray takes, at
+Once-diffracted rays take the integral over the whole edge always, but those off a roof, which
+take UTD (above). A twice-diffracted ray takes, at
 each wavenumber,
 
 $$
@@ -1283,7 +1296,7 @@ either edge's end or a partner's boundary point; and $w = 1$ over a shared face.
 
 The air absorbs each ray along its length: in each sub-band its amplitude is multiplied by
 $e^{-a L_r}$, $a = \alpha \ln 10 / 20$ with $\alpha$ the ISO 9613-1 coefficient (dB/m, §5) at the
-sub-band's middle frequency, $\tfrac12(f_1 + f_2)$. The rays sum coherently, band-averaged pair by
+sub-band's middle frequency, $\tfrac12(f_1 + f_2)$; a run takes the band's $a_b$ in all three. The rays sum coherently, band-averaged pair by
 pair over three sub-bands as the table's are, and the band level is $10\lg$ of the result, re the
 source's level at 1 m. The same average is the
 integral of the sum's square over the sub-band,
@@ -1294,13 +1307,13 @@ $$
 \qquad S(k) = \sum_r A_r\,e^{ikL_r},
 $$
 
-with the amplitudes held at the sub-band's center, which `--gpu` takes by Gauss–Legendre
-quadrature wherever it needs fewer operations than the pairs. $|S|^2$ is a sum of
+with the amplitudes held at the sub-band's center, which the GPU takes by Gauss–Legendre
+quadrature wherever it needs fewer operations than the pairs, for rays adding coherently. $|S|^2$ is a sum of
 $e^{ik\,\Delta L}$ with $|\Delta L|$ at most the rays' spread of lengths $\Delta$, so with
 $M \ge h\Delta/2 + 4\,(h\Delta)^{1/3} + 6$ nodes the rule is exact to round-off, and it keeps every
 pair. Left out: three edges or more, a reflection between two edges (the floor included), more than
-one reflection on either side of two edges, roofs as reflectors, and an edge's ends (except with
-`--edge_source`). Continuity across
+one reflection on either side of two edges, a roof bounce on a twice-diffracted ray, and an edge's
+ends (except with `--edge_source`). Continuity across
 a ray's boundary rests on the diffracted ray that takes over there being traced: one with the same
 reflections, split about the boundary's edge, which a specular ray of more reflections than
 `--max_edge_reflections` on one side, or a diffracted ray whose own leg meets another edge, does not
@@ -1322,7 +1335,12 @@ the patch and $a$ the air's attenuation at the band's centre, which the gatherin
 as $e^{-2ad}$ along each of its two paths. $\mathbf w\cdot\mathbf E$ is then energy in $|p|^2$ and
 adds to each band's energy of the rays, which carry $\rho(1 - s)$ per reflection at the walls
 within the radius and $\rho$ beyond it. For a source and microphone together at $d$ from an infinite wall, it is
-$\rho s / 2d^2$, against the specular image's $\rho(1-s)/4d^2$.
+$\rho s / 2d^2$, against the specular image's $\rho(1-s)/4d^2$. The roofs, which the rays reflect
+in, scatter too: each is cut into patches facing up, with its building's $\rho$ and $s$ (those of
+its first wall, as its reflection takes them), and a building scatters as a whole, walls and roof,
+where any of its walls is within the radius. A roof is lit from above only, so the floor's image
+paths light none, and sends nothing by the floor; between patches and to the microphone it is
+taken as the walls are, its patch's normal mirrored with it below the floor.
 
 ### 6.6 The canyon's wave solution
 
@@ -1969,9 +1987,15 @@ H(f) = \frac{4\pi\,P(f)}{-i\omega\rho\,Q(f)}, \qquad P(f) = \sum_n p^n e^{i\omeg
 $$
 
 is the transfer re the source's field at 1 m, $|H| = 1/r$ in free field, and a band's level is
-$10\lg$ of $|H|^2$ averaged over it, as the ray model's band average (§6.5). The air is lossless
-in the march; its absorption is applied afterwards, each sample after the pulse's peak scaled by
-$e^{-a\,c\,(t - t_0)}$ per sub-band, which is $e^{-aL}$ for every arrival of path $L$.
+$10\lg$ of $|H|^2$ averaged over it, as the ray model's band average (§6.5). The march takes $Q$
+into the pressure's time difference, so $-i\omega$ is taken as that difference's symbol,
+$-i\,(2/\Delta t)\sin(\omega\Delta t/2)$; $-i\omega$ itself would leave $20\lg(\sin x/x)$,
+$x = \omega\Delta t/2$, in every level. The air is lossless in the march; its absorption is
+applied afterwards, every sample of $p$ and of $Q$ alike scaled by $e^{-\lambda (t - t_0)}$,
+$\lambda = a c$, per sub-band. That is the transfer at the complex frequency $\omega + i\lambda$,
+the difference's symbol taken there too, at which every arrival of path $L$ carries $e^{-aL}$ on
+the lossless field; scaling $p$ alone leaves a bias of order $(\lambda\tau)^2$ from the pulse's
+width.
 
 **A relief's scattering coefficient** (`tools/profile_scattering.py`). A facade's relief extruded
 along one direction scatters in the plane of its profile. By boundary elements in that plane

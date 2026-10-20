@@ -16,6 +16,7 @@
 // segment that only touches a building -- ends on a wall where it reflects,
 // starts on an edge where it diffracts, or grazes along a wall -- is not.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -116,7 +117,11 @@ public:
     // the lower one's facade, roof edge and corners on that side are inside
     // the taller (or as tall) neighbour and are dropped, and the taller one's
     // keep only what stands above the lower roof.  A side shared only in part
-    // keeps its facade and edges, which `buried` then keeps out of the rays.
+    // -- a T-junction, or walls staggered along one line -- is first split at
+    // the other building's vertices on it (footprints() then has them), so
+    // that its shared part is shared exactly; a building touching a side at
+    // one vertex leaves it whole.  A vertex within `contact` of the line
+    // between its neighbours is not a corner.
     //
     // Facades whose normals agree within `orientation_tolerance` (rad) share
     // one orientation (`reflect`).
@@ -145,6 +150,15 @@ public:
     std::size_t facade_building(std::size_t facade) const
     {
         return facade_building_[facade];
+    }
+
+    // The facade whose coefficients a building's roof takes -- its walls and
+    // roof absorb and scatter alike -- its first; no_facade for a building
+    // with none left standing.
+    static constexpr std::size_t no_facade = static_cast<std::size_t>(-1);
+    std::size_t roof_facade(std::size_t building) const
+    {
+        return roof_facade_[building];
     }
 
     const std::vector<Edge>& edges() const
@@ -258,6 +272,7 @@ private:
     PlanGrid building_grid_;
     PlanGrid facade_grid_;
     std::vector<std::size_t> facade_building_;
+    std::vector<std::size_t> roof_facade_;
     std::vector<Edge> edges_;
     std::vector<std::size_t> edge_begin_;
     // Per building: x min, x max, y min, y max.
@@ -265,6 +280,10 @@ private:
     double max_top_ = 0.0;
     double orientation_tolerance_ = 1e-5;
     std::size_t shared_sides_ = 0;
+    // Per building, the sides (x0, y0, x1, y1) it shares with an earlier
+    // building whose roof is level with its own, which on_roof leaves to that
+    // one.
+    std::vector<std::vector<std::array<double, 4>>> ceded_;
     double x_min_ = 0.0, x_max_ = 0.0, y_min_ = 0.0, y_max_ = 0.0;
 };
 

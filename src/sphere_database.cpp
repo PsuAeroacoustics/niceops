@@ -2333,6 +2333,7 @@ Database::Sphere Database::interpolate_sphere(double advance_ratio, double fligh
     sphere.azimuth_reference = azimuth_reference_;
     sphere.tip_speed = tip_speed_;
     sphere.coherence = coherence_record_;
+    sphere.rotor_rpm = rotor_rpm_;
     sphere.rotor_radius = rotor_radius_;
     sphere.vehicle_weight_newtons = vehicle_weight_newtons_;
     sphere.phis = phis.values();
@@ -3118,12 +3119,16 @@ int define_scalar(int group, const char* name, int dimid)
 
 
 // The record's root attributes, in define mode.
+// A root attribute of one number, where there is one; in define mode.
+void write_root_number(int file, const char* name, const std::optional<double>& v)
+{
+    if (v)
+        nc_check(nc_put_att_double(file, NC_GLOBAL, name, NC_DOUBLE, 1, &*v), std::string("writing ") + name);
+}
+
 void write_coherence_record(int file, const CoherenceRecord& r)
 {
-    auto number = [&](const char* name, const std::optional<double>& v) {
-        if (v)
-            nc_check(nc_put_att_double(file, NC_GLOBAL, name, NC_DOUBLE, 1, &*v), std::string("writing ") + name);
-    };
+    auto number = [&](const char* name, const std::optional<double>& v) { write_root_number(file, name, v); };
     auto text = [&](const char* name, const std::string& v) {
         if (!v.empty())
             nc_check(nc_put_att_text(file, NC_GLOBAL, name, v.size(), v.c_str()), std::string("writing ") + name);
@@ -3195,6 +3200,7 @@ void write_sphere(const Database::Sphere& sphere, const std::string& path)
     }
 
     write_coherence_record(file, sphere.coherence);
+    write_root_number(file, "rotor_rpm", sphere.rotor_rpm);
 
     int group = 0;
     nc_check(nc_def_grp(file, "sphere0", &group), "defining group sphere0");

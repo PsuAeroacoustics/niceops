@@ -36,6 +36,10 @@ class Device;
 
 class PointSourceField;
 
+// The q-quantile of the gamma distribution with mean `mean` and variance
+// `variance`: what the interval's ends take (PhaseInterval).
+double gamma_quantile(double mean, double variance, double q);
+
 // The interval over the source's unknown phase relations: `percent` of it
 // (90 for the 5th to the 95th percentile), and the levels at its ends,
 // [state][mic] A-weighted dB.

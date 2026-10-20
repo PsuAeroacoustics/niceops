@@ -609,6 +609,9 @@ public:
         double tip_speed = std::numeric_limits<double>::quiet_NaN();
         double rotor_radius = std::numeric_limits<double>::quiet_NaN();
         double vehicle_weight_newtons = std::numeric_limits<double>::quiet_NaN();
+        // The main rotor's speed, which the coherence model's rotor delay
+        // takes; unset where the source recorded none.
+        std::optional<double> rotor_rpm;
         CoherenceRecord coherence;
         std::vector<double> phis;
         std::vector<double> thetas;

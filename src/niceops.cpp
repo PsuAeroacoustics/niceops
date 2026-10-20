@@ -2082,6 +2082,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         if (options.terrain_screening != TerrainScreening::none)
             input_error("--terrain_screening is per band, and ", job.database, " carries no per-band "
                         "spectra. Rebuild it with spectra, or leave out --terrain_screening.");
+        if (options.buildings)
+            input_error("--buildings needs a database carrying per-band spectra, its rays reading each "
+                        "band along their own launch; this one has none. Rebuild it with spectra.");
         if (options.spectral_explicit || options.ground_effect_given || atmosphere
                 || options.propagation_table || options.urban_table || !options.ground_classes.empty())
         {
@@ -3062,19 +3065,16 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
     // --buildings: every state's level at every microphone, from the source's
     // own rays among the buildings, each reading the sphere along its launch;
     // the observer loop marches these.  The floor is the buildings' own, the
-    // plane z = 0 the microphones stand on.
+    // plane z = 0.
     std::vector<double> point_levels, point_bands, point_lower, point_upper;
     if (options.buildings)
     {
         const UrbanDistrict& district = *options.buildings;
-        const LengthUnit& unit = options.unit;
+        // A microphone stands where the run puts any: the observer's point
+        // raised by its height, on the floor, a roof or a pole, so long as it
+        // is in the air.
         for (std::size_t i = 0; i < observer_count; i++)
         {
-            const double z = microphones[i].z - microphone_height[i];
-            if (std::abs(z) > 1e-9)
-                input_error("--buildings ", options.buildings_path, ": observer ", i + 1, " stands at z = ",
-                        z / unit.to_meters, " ", unit.name,
-                        "; the buildings and their floor stand on the plane z = 0, so every observer must too.");
             const std::string why = district.misplaced(microphones[i]);
             if (!why.empty())
                 input_error("--buildings ", options.buildings_path, ": observer ", i + 1, "'s microphone stands ",
@@ -3099,7 +3099,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 : vehicle.radius > 0.0                    ? vehicle.tip_speed / vehicle.radius
                                                           : 0.0;
         SourceCoherence coherence = sum == RaySum::measured ? measured_coherence(record, rotation_rate)
-                                                            : cone_coherence(options.coherence_angle);
+                                                            : cone_coherence(options.coherence_angle, record);
         coherence.sum = sum;
         if (sum == RaySum::cone)
             log("--buildings: rays add in ", coherence.source, ", with their phases within it.");
@@ -3118,16 +3118,26 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             log("--buildings: rays add ", sum == RaySum::coherent ? "with their phases" : "in energy", ".");
         PhaseInterval interval;
         if (options.phase_interval > 0.0)
+        {
             interval.percent = options.phase_interval;
+            log("--phase_interval: each pair's spread ", coherence.spread_source, ", decaying over ",
+                    coherence.spread_scale, " Hz deg to the power ", coherence.spread_exponent, ", toward ",
+                    coherence.tonal_fraction.empty() ? "the default tonal fractions"
+                                                     : "the database's tonal fractions",
+                    ".");
+        }
         // The GPU wherever there is one and it takes the run's sum; asked for,
         // it must.
         gpu::Device* device = nullptr;
         if (options.gpu)
         {
             const bool supported = UrbanDistrict::gpu_supports(coherence, options.phase_interval > 0.0);
+            // What the arguments ask the GPU to refuse is refused as they are
+            // read; here it is the database's record that chose the sum.
             if (options.gpu_required && !supported)
-                input_error("--gpu: the GPU does not take --ray_coherence measured or --phase_interval; the CPU "
-                            "does (--no-gpu).");
+                input_error("--gpu: the database records its vehicle's coherence, so its rays add by the measured "
+                            "model, which the GPU does not take; --ray_coherence cone puts them on the GPU, "
+                            "--no-gpu on the CPU.");
             device = !supported ? nullptr : options.gpu_required ? &gpu::Device::require("--gpu") : gpu::Device::get();
             if (device != nullptr)
                 log("--buildings: the rays formed and summed on the GPU, ", device->name(), ".");
@@ -5345,11 +5355,13 @@ int run(int argc, char* argv[])
     app.add_option("--buildings", buildings_file,
             "LoD1 buildings, a CSV of footprint vertices (building, x, y, top, optionally absorption) or GeoJSON "
             "in the run's frame (--origin, --frame_bearing): every microphone hears the source's own rays among "
-            "them, reflected in the facades and the floor and diffracted at their edges once or at two in turn, "
-            "each reading the sphere in the direction it leaves the source, summed with their phases. The floor is "
-            "theirs, rigid unless --floor_absorption, and every state is evaluated. Spectral path only; not with "
-            "--urban_table, --terrain, --refraction, --propagation_table, --plate_table, --ground_classes, "
-            "--atmosphere, --wind, --ground_effect or --db_cutoff.");
+            "them, reflected in the facades, the roofs and the floor and diffracted at their edges once or at two in "
+            "turn, each reading the sphere in the direction it leaves the source, added as --ray_coherence says. "
+            "The floor is theirs, rigid unless --floor_absorption, with no ground model: a microphone stands where "
+            "the observer file puts it, raised by its height column. States are sampled (--state_tolerance). "
+            "Spectral path, and a database carrying spectra; not with --urban_table, --terrain, --refraction, "
+            "--propagation_table, --plate_table, --ground_classes, --atmosphere, --wind, --ground_effect or "
+            "--db_cutoff.");
     app.add_option("--wall_absorption", wall_absorption,
             "With --buildings: the walls' energy absorption coefficient where a building gives none (default 0).");
     app.add_option("--floor_absorption", floor_absorption,
@@ -6108,12 +6120,17 @@ int run(int argc, char* argv[])
                         "--ground_classes: the floor among the buildings is theirs (--floor_absorption)"},
                 {!atmosphere_files.empty() || !wind_texts.empty(),
                         "--atmosphere or --wind: its rays absorb at the run's one set of coefficients"},
-                {app.count("--ground_effect") > 0,
+                // The flag's count takes --no-ground_effect too.
+                {ground_effect && app.count("--ground_effect") > 0,
                         "--ground_effect: the floor among the buildings is theirs (--floor_absorption)"},
                 {!std::isnan(db_cutoff), "--db_cutoff: the cutoff's bound covers the straight path alone"}};
         for (const auto& [clash, why] : clashes)
             if (clash)
                 input_error("--buildings does not combine with ", why, ".");
+        // The floor among the buildings is theirs: no ground model, so a
+        // microphone stands where the observer file puts it, as in any run
+        // without one.
+        ground_effect = false;
         if (!(wall_absorption >= 0.0 && wall_absorption <= 1.0) || !(floor_absorption >= 0.0 && floor_absorption <= 1.0))
             input_error("--wall_absorption and --floor_absorption are energy coefficients within [0, 1]; given ",
                     wall_absorption, " and ", floor_absorption, ".");
@@ -6474,6 +6491,16 @@ int run(int argc, char* argv[])
         options.gpu = use_gpu;
         // The flag's count takes --no-gpu too, so asking is its value as well.
         options.gpu_required = use_gpu && app.count("--gpu") > 0;
+        // A sum the arguments settle that the GPU does not take is refused
+        // now; one a database's record chooses, at its track.
+        if (options.gpu_required && (options.ray_sum || phase_interval > 0.0))
+        {
+            SourceCoherence asked;
+            asked.sum = options.ray_sum.value_or(RaySum::cone);
+            if (!UrbanDistrict::gpu_supports(asked, phase_interval > 0.0))
+                input_error("--gpu: the GPU does not take --ray_coherence measured or --phase_interval; the CPU "
+                            "does (--no-gpu).");
+        }
     }
     if (!plate_table.empty())
     {

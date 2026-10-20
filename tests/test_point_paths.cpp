@@ -211,6 +211,42 @@ TEST_CASE("the point-source field is reciprocal", "[point_paths]")
     REQUIRE(shared > 0);
 }
 
+// The ray set is the same with the ends swapped at every edge order: the
+// twice-diffracted search takes both ends' images to one reflection even with
+// none on a single diffraction's sides (--max_edge_reflections 0), where the
+// source's tree once stopped at its own point and the two ways differed.
+TEST_CASE("the ray set is reciprocal at every edge order", "[point_paths]")
+{
+    const Buildings city({box(0.0, 0.0, 6.0, 2.4, 7.8), box(8.0, 4.0, 10.4, 16.0, 7.8), box(-2.0, 8.0, 4.0, 10.4, 5.2),
+            box(0.0, 14.0, 2.4, 20.0, 7.8)});
+    const std::vector<std::pair<Vec3, Vec3>> pairs {{Vec3(3.0, 12.0, 2.0), Vec3(4.0, -3.0, 1.2)},
+            {Vec3(6.0, 6.0, 2.0), Vec3(13.0, 10.0, 1.2)}, {Vec3(-4.0, 4.0, 1.5), Vec3(6.0, 18.0, 1.2)}};
+    for (std::size_t order : {std::size_t {0}, std::size_t {1}, std::size_t {2}})
+    {
+        PointPathOptions options;
+        options.max_edge_reflections = order;
+        std::size_t twice = 0;
+        for (const auto& [s, m] : pairs)
+        {
+            std::vector<double> lengths[2];
+            for (int way = 0; way < 2; way++)
+            {
+                const PointSourceField field(city, way ? m : s, way ? s : m, options);
+                for (const PointRay& ray : field.rays())
+                    lengths[way].push_back(ray.length);
+                std::sort(lengths[way].begin(), lengths[way].end());
+                for (const PointRay& ray : field.rays())
+                    twice += way == 0 && ray.wedges == 2;
+            }
+            INFO("max_edge_reflections " << order);
+            REQUIRE(lengths[0].size() == lengths[1].size());
+            for (std::size_t r = 0; r < lengths[0].size(); r++)
+                REQUIRE(lengths[0][r] == Catch::Approx(lengths[1][r]).epsilon(1e-9));
+        }
+        REQUIRE(twice > 0);
+    }
+}
+
 TEST_CASE("a point ray leaves the source along minus its length's gradient", "[point_paths]")
 {
     // The reciprocity test's district, sources high and low, so that rays
@@ -346,6 +382,144 @@ TEST_CASE("a ray's weight multiplies its amplitude in its band", "[point_paths]"
             {}, one.data());
     for (std::size_t b = 0; b < bands.size(); b++)
         CHECK(without[b] == Catch::Approx(band_level(bands[b], sub_bands(bands[b], 343.2), &energy[3 * b])).margin(1e-12));
+}
+
+// A roof under a reflected leg is found whatever else stands in the district:
+// a low roof beside a tall wall's foot, the source's ray reflecting in the wall
+// and then bouncing on the roof to a microphone above it (specular), and a
+// corner's diffracted ray doing the same; with a hundred small buildings a
+// kilometre off, which make the plan grid's cells small, the rays are the same.
+// The unfolded line's plan box, which the search once took, misses the roof.
+TEST_CASE("a roof under a reflected leg is found whatever stands far off", "[point_paths]")
+{
+    for (const bool diffracted : {false, true})
+    {
+        std::vector<Footprint> near {box(10.0, diffracted ? 5.0 : -5.0, 12.0, 35.0, 50.0), box(0.5, 25.0, 3.0, 29.0, 10.0)};
+        if (diffracted)
+            near.push_back(box(5.0, -10.0, 9.0, 0.0, 40.0));
+        std::vector<Footprint> crowded = near;
+        for (int i = 0; i < 100; i++)
+            crowded.push_back(box(1000.0 + 3.0 * i, 1000.0, 1001.0 + 3.0 * i, 1001.0, 5.0));
+        const Vec3 source = diffracted ? Vec3(-10.0, -20.0, 28.2) : Vec3(5.0, 0.0, 20.0);
+        const Vec3 microphone(0.0, 30.0, 11.0);
+        PointPathOptions options;
+        options.diffraction = diffracted;
+        options.double_diffraction = false;
+        std::vector<double> lengths[2];
+        for (int which = 0; which < 2; which++)
+        {
+            const Buildings city(which == 0 ? near : crowded);
+            const PointSourceField field(city, source, microphone, options);
+            for (const PointRay& ray : field.rays())
+                if (!ray.roof_facades.empty() && ray.wedges == (diffracted ? 1 : 0))
+                    lengths[which].push_back(ray.length);
+            std::sort(lengths[which].begin(), lengths[which].end());
+        }
+        INFO((diffracted ? "diffracted" : "specular"));
+        REQUIRE(!lengths[0].empty());
+        REQUIRE(lengths[1] == lengths[0]);
+    }
+}
+
+// Two roofs level across a side they share are one roof there: a bounce
+// exactly on the join is one ray, not one per building, and the field 1 mm off
+// the join is the same to round-off (two rays there put it 1.4 dB high).
+TEST_CASE("a bounce on two level roofs' join is one ray", "[point_paths]")
+{
+    const Buildings city({box(0.0, 0.0, 10.0, 10.0, 6.0), box(10.0, 0.0, 20.0, 10.0, 6.0)});
+    const std::vector<double> bands {500.0, 1000.0};
+    const std::vector<double> reflection(city.facades().size() * bands.size(), 1.0);
+    PointPathOptions options;
+    options.diffraction = false;
+    double level[2][2];
+    for (int which = 0; which < 2; which++)
+    {
+        const Vec3 microphone(15.0 + which * 1e-3, 5.0, 20.0);
+        const PointSourceField field(city, Vec3(5.0, 5.0, 20.0), microphone, options);
+        std::size_t roofs = 0;
+        for (const PointRay& ray : field.rays())
+            roofs += ray.roof_facades.size();
+        REQUIRE(roofs == 1);
+        field.band_levels(reflection, 1.0, bands, 343.2, level[which]);
+    }
+    REQUIRE(level[0][0] == Catch::Approx(level[1][0]).margin(0.01));
+    REQUIRE(level[0][1] == Catch::Approx(level[1][1]).margin(0.01));
+}
+
+// A courtyard closed by four buildings meeting at T-junctions, each side
+// wall's ends against the long walls' middles: from a low source outside,
+// every ray reaches the microphone over a roof.  Two buildings' walls along
+// one line were two separate solids, and rays diffracted at the junctions'
+// corners and ran along the seam between them into the courtyard.
+TEST_CASE("a courtyard closed at T-junctions is reached over its roofs alone", "[point_paths]")
+{
+    const double top = 10.0;
+    const Buildings well({box(-12.0, -12.0, 12.0, -9.0, top), box(-12.0, 9.0, 12.0, 12.0, top),
+            box(-12.0, -9.0, -9.0, 9.0, top), box(9.0, -9.0, 12.0, 9.0, top)});
+    REQUIRE(well.shared_sides() == 8);
+    for (const Vec3& source : {Vec3(-200.0, 3.0, 2.0), Vec3(150.0, -120.0, 5.0), Vec3(-12.0, -40.0, 1.0)})
+    {
+        INFO("source " << source.x << ", " << source.y << ", " << source.z);
+        const PointSourceField field(well, source, Vec3(0.0, 0.0, 1.2));
+        REQUIRE(!field.rays().empty());
+        for (const PointRay& ray : field.rays())
+        {
+            double highest = 0.0;
+            for (const Vec3& p : ray.path)
+                highest = std::max(highest, p.z);
+            REQUIRE(highest >= top - 1e-9);
+        }
+    }
+}
+
+// --fade adds partners and nothing else: the rays it leaves without a made
+// edge are the rays without it.  Two ways that failed: a reflected leg back
+// through the other wing of the L-shaped building it leaves (its own
+// building's blocking went untested), and a ray across one building with three
+// beside the leg nearer than it, where keeping the three nearest dropped the
+// one across and let the bare ray through it.
+TEST_CASE("the fade adds partners and nothing else", "[point_paths]")
+{
+    Footprint ell;
+    ell.x = {150.0, 190.0, 190.0, 170.0, 170.0, 150.0};
+    ell.y = {0.0, 0.0, 20.0, 20.0, 50.0, 50.0};
+    ell.top = 25.0;
+    std::vector<Footprint> screened {box(100.0, -50.0, 102.0, 50.0, 50.0), box(50.0, 20.0, 52.0, 29.7, 10.0)};
+    for (double x : {20.0, 40.0, 60.0})
+        screened.push_back(box(x - 2.0, 0.2 * x + 0.001, x, 0.2 * x + 2.001, 10.0));
+    struct Scene
+    {
+        std::vector<Footprint> footprints;
+        Vec3 source, microphone;
+    };
+    const std::vector<Scene> scenes {{{ell}, Vec3(180.0, 26.0, 5.0), Vec3(200.0, 10.0, 5.0)},
+            {screened, Vec3(0.0, 0.0, 2.0), Vec3(0.0, 40.0, 2.0)}};
+    std::size_t made = 0;
+    for (std::size_t s = 0; s < scenes.size(); s++)
+    {
+        const Buildings city(scenes[s].footprints);
+        std::vector<double> lengths[2];
+        for (int fade = 0; fade < 2; fade++)
+        {
+            PointPathOptions options;
+            options.diffraction = false;
+            options.fade_reach = fade ? 0.5 : 0.0;
+            const PointSourceField field(city, scenes[s].source, scenes[s].microphone, options);
+            for (const PointRay& ray : field.rays())
+            {
+                if (ray.made_edges.empty())
+                    lengths[fade].push_back(ray.length);
+                made += !ray.made_edges.empty();
+            }
+            std::sort(lengths[fade].begin(), lengths[fade].end());
+        }
+        INFO("scene " << s);
+        REQUIRE(lengths[1].size() == lengths[0].size());
+        for (std::size_t r = 0; r < lengths[0].size(); r++)
+            REQUIRE(lengths[1][r] == Catch::Approx(lengths[0][r]).epsilon(1e-12));
+    }
+    // The second scene's partners exist: the fade did something.
+    REQUIRE(made > 0);
 }
 
 TEST_CASE("a roof reflects as the floor does", "[point_paths]")
@@ -1187,15 +1361,7 @@ TEST_CASE("with the edge source a corner's adjacent edges give a finite field", 
     const std::vector<double> ks {2.0 * pi * 2000.0 / 343.2, 2.0 * pi * 10000.0 / 343.2};
     // The field's own factors fall back to the cascade where not finite, so
     // the integral is held directly, its vertical edge through the floor as
-    // the factors take it.
-    const auto through_floor = [](Edge g) {
-        if (std::abs(g.direction.z) > 1.0 - 1e-12 && std::abs(g.start.z) < 1e-9)
-        {
-            g.start = g.start - g.length * g.direction;
-            g.length *= 2.0;
-        }
-        return g;
-    };
+    // the factors take it (through_floor).
     int adjacent = 0;
     for (const PointRay& ray : field.rays())
     {

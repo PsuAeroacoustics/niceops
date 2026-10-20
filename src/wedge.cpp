@@ -114,6 +114,10 @@ struct TransitionTable
 
 complex utd_transition(double x)
 {
+    // NaN goes through as NaN, as the Faddeeva form took it; it must not
+    // index the table.
+    if (std::isnan(x))
+        return complex(x, x);
     if (x <= 0.0)
         return complex(0.0, 0.0);
     // Past X = 50 the asymptotic series, sum over m of (-i)^m (2m - 1)!! / (2X)^m

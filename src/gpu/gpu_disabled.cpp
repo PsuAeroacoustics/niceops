@@ -80,6 +80,16 @@ std::string Device::name() const
     none();
 }
 
+std::size_t Device::max_buffer_bytes() const
+{
+    none();
+}
+
+std::size_t Device::working_set_bytes() const
+{
+    none();
+}
+
 Buffer Device::buffer(std::size_t)
 {
     none();

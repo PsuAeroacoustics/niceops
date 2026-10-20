@@ -315,6 +315,57 @@ old and new results only with them in mind.
   `--no-gpu` keeps the CPU, to the bit. On a Mac their results move by what single precision moves
   them: the demo approach's `--buildings` SELs by 0.001 dB at most, `niceops_point_field`'s band
   levels by 0.05. The GPU now samples the shared faces as the CPU does.
+- **The demo approach's `--buildings` run** took 70 s at first; tabulating the transition function
+  and sharing a shared face's nodes across wavenumbers took it to 37 s, sampling the shared faces
+  to 10 s, sampling the states to 3.3 s, and the GPU to 1.7 s. Its levels moved only as the
+  entries above say.
+- **`--buildings` puts the microphones where the observer file does**, raised by its height column,
+  as any run without a ground model. It had kept the ground model on, so an observer file without
+  a height column put every microphone 1.2 m up (about 3 dB at street level against the observer's
+  own point), and `--no-ground_effect` was refused with it. A database without spectra is now
+  refused; it ran with every level `-inf` and exited cleanly. Observer files with a height column,
+  as the tests' and the demo's, did not move.
+- **A roof under a reflected leg is found whatever stands far off.** Its candidates came from the
+  plan box of the leg's unfolded line, so whether a real bounce was found depended on the plan
+  grid's cell size, set by every building in the district. **A bounce on the join of two level
+  roofs is one ray**; both buildings took it, 1.4 dB loud. **Twice-diffracted rays are reciprocal
+  at `--max_edge_reflections 0`.** **Walls against part of another's are split at the junction**:
+  a side shared in part kept its facade and corners, and rays diffracted at the junction and ran
+  along the seam between the buildings; no shipped or validation district has one. The demo
+  approach's `--buildings` SELs did not move.
+- **`--edge_source`: angles about an edge are clamped onto its air, and a partner's part reaching
+  a shared vertex ends on it.** A district turned by 17-61° moved bands by up to 1 dB, and a
+  partner stopping 1e-20 short of a vertex added its whole field to a ray, 10-16 dB.
+  On EDGE's scale models the edge source's error against the FDTD fell from 2.73 to 1.47 dB rms
+  for UE06's drone and from 0.92 to 0.23 for UE14's, where it had been 2.6 dB high at one band, and
+  rose from 3.81 to 4.03 for UE07's floor source; against the measurements, read swapped, it went
+  from 4.02 to 3.98 dB rms over all band levels. UTD did not move.
+- **`--fade`**: a leg leaving an L-shaped building is tested against its other wing, and a ray
+  across a building is not let through by keeping only the three nearest screens.
+- **`niceops_point_field`'s roofs scatter** under `--scattering`, with their building's
+  coefficients, and a building with any wall within `--diffuse_radius` scatters as a whole. A roof
+  took its first wall's ρ(1 − s) and nothing returned the rest: microphones above the roofs rose
+  by 1.2 dB on average and up to 1.9 dB (7.4 in a band), windows by up to 0.2 and the street by
+  0.04 (FIDELITY). DigiCity's microphone 7 did not move: the loudspeaker stands below the roofs.
+- **The GPU's functions are the precise ones**, on macOS 15 and later too, where Metal had
+  defaulted to the fast ones whatever the math mode: the demo approach's GPU SELs went from within
+  5e-4 dB of the CPU's to within 1e-6. A cone's sum below zero in a sub-band is taken as zero, as
+  on the CPU.
+- **`niceops_fdtd_field`'s transfer divides by the march's own time difference**, not by -iω, and
+  the air's delay weighting goes on the source as on the pressure. Levels rose by 20 lg(x/sin x),
+  x = ωΔt/2: up to 0.05 dB at the default 8 cells a wavelength, 0.001-0.045 dB in EDGE's runs;
+  with `--humidity` the free-field test's 0.013 dB bias went to 0.002. Under `--mirror` the
+  default duration covers the whole space, where it covered the half gridded (up to 1.55 dB at
+  1 kHz in a run that had stopped early). A grid too large for the GPU marches on the CPU instead
+  of failing.
+- **The phase interval's quantile past a shape of 1e4** is Wilson and Hilferty's; the series had
+  stopped short there and put the lower end on the level, within 0.001 dB.
+- **The cone's phase interval takes a database's recorded spread and tonal fractions**, as the
+  measured model's did; it took the defaults whatever the record said. No shipped database has a
+  record, so nothing moved.
+- **`--export_sphere` carries `rotor_rpm`**, as it carried the coherence record: a run on an
+  exported sphere took the rotor's rate from the vehicle file instead, which also moved the band
+  up to which the measured model's rotor delay holds.
 
 ### Inputs
 

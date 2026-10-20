@@ -72,8 +72,10 @@ struct SourceCoherence
     double spread_exponent = 1.0;
     // T per database band; empty for the default law, 1 / (1 + (f / 58 Hz)^1.67).
     std::vector<double> tonal_fraction;
-    // Where each value came from, for the run's log.
+    // Where each value came from, for the run's log: the sum's, and the
+    // spread's and tonal fractions' (the phase interval's).
     std::string source = "the default";
+    std::string spread_source = "the defaults";
 
     static constexpr double default_cone = 1.0, cone_taper = 0.25;
     static constexpr double default_scale = 850.0, default_exponent = 1.6;
@@ -100,7 +102,7 @@ struct SourceCoherence
 };
 
 // What a database records of its vehicle's coherence between emission
-// directions, all optional root attributes (README, "Source coherence"):
+// directions, all optional root attributes (MANUAL, "Source coherence"):
 // main_rotor_blades, main_rotor_rotation ("counterclockwise" or "clockwise",
 // seen from above), coherence_rotation_limit_Hz, coherence_scale_Hz_deg with
 // coherence_exponent, coherence_spread_scale_Hz_deg with
@@ -135,15 +137,20 @@ struct CoherenceRecord
 };
 
 // The cone: rays leaving within `degrees` of each other add with their
-// phases, the rest in energy.
-SourceCoherence cone_coherence(double degrees = SourceCoherence::default_cone);
+// phases, the rest in energy.  The phase interval's spread and tonal
+// fractions are a database's record's where it gives them (they measure the
+// coherence the interval is about, whatever the sum), the defaults
+// otherwise.  Throws std::invalid_argument for a fit's scale without its
+// exponent or the reverse.
+SourceCoherence cone_coherence(double degrees = SourceCoherence::default_cone, const CoherenceRecord& record = {});
 
 // The measured model from a database's record and the rotor's rate (rad/s;
 // 0 where unknown): the rotor's delay where the record gives the blades and
 // the sense, and the record's fits, with the B407's fits for what it leaves
 // out -- with the delay removed where it has a rotor, without otherwise.
 // An empty record gives the measured defaults without a rotor.  `source`
-// says where each part came from.
+// says where each part came from.  Throws std::invalid_argument for a fit's
+// scale without its exponent or the reverse.
 SourceCoherence measured_coherence(const CoherenceRecord& record = {}, double rotation_rate = 0.0);
 
 // "counterclockwise" or "clockwise" (seen from above) as +1 or -1; nullopt

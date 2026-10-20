@@ -28,6 +28,15 @@ struct Batch::Impl
     id<MTLCommandBuffer> commands = nil;
     id<MTLComputeCommandEncoder> encoder = nil;
     bool committed = false;
+
+    // A batch dropped mid-encoding, by an exception between its dispatches
+    // and its commit, ends its encoder: Metal aborts the process when an
+    // encoder is released without that.
+    ~Impl()
+    {
+        if (encoder)
+            [encoder endEncoding];
+    }
 };
 
 struct Device::Impl
@@ -151,6 +160,16 @@ std::string Device::name() const
     return impl_->device.name.UTF8String;
 }
 
+std::size_t Device::max_buffer_bytes() const
+{
+    return static_cast<std::size_t>(impl_->device.maxBufferLength);
+}
+
+std::size_t Device::working_set_bytes() const
+{
+    return static_cast<std::size_t>(impl_->device.recommendedMaxWorkingSetSize);
+}
+
 Buffer Device::buffer(std::size_t bytes)
 {
     Buffer b;
@@ -196,10 +215,16 @@ Kernel Device::kernel(const std::vector<std::string>& sources, const std::string
                 program += std::string(text) + "\n";
             }
             MTLCompileOptions* options = [MTLCompileOptions new];
-            // Safe math: the kernels' compensated sums and their explicit
-            // fast/precise choices mean what they say.
+            // Safe math and precise functions, so the kernels' compensated
+            // sums and their exp, log and atan2 mean what they say, on every
+            // OS: from macOS 15 the functions default to the fast variants
+            // whatever the math mode, where fastMathEnabled = NO before it
+            // gave the precise ones.
             if (@available(macOS 15.0, *))
+            {
                 options.mathMode = MTLMathModeSafe;
+                options.mathFloatingPointFunctions = MTLMathFloatingPointFunctionsPrecise;
+            }
             else
             {
 #pragma clang diagnostic push

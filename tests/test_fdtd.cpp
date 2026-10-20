@@ -68,12 +68,15 @@ TEST_CASE("over a rigid floor the FDTD's field is the two rays'", "[fdtd]")
             });
             const double error = run.band_level(r, band) - exact;
             INFO("receiver " << r + 1 << ", " << band << " Hz: " << error << " dB");
-            CHECK(std::abs(error) < (order == 4 ? 0.01 : 0.1));
+            // Fourth order 5e-4 dB at worst; taking Q's derivative as
+            // -i omega would leave -0.0023 dB at 1250 Hz.
+            CHECK(std::abs(error) < (order == 4 ? 0.0015 : 0.1));
         }
     }
 
     // The air's absorption, taken afterwards by each arrival's delay: each
-    // ray loses exp(-a L) along its own length.
+    // ray loses exp(-a L) along its own length.  Fourth order 0.0018 dB at
+    // worst; weighting the pressure alone, not Q, leaves 0.013.
     const double a = 0.4;
     const double attenuation[3] = {a, a, a};
     for (std::size_t r = 0; r < receivers.size(); r++)
@@ -85,7 +88,7 @@ TEST_CASE("over a rigid floor the FDTD's field is the two rays'", "[fdtd]")
             });
             const double error = run.band_level(r, band, 0, attenuation) - exact;
             INFO("absorbed: receiver " << r + 1 << ", " << band << " Hz: " << error << " dB");
-            CHECK(std::abs(error) < (order == 4 ? 0.01 : 0.1));
+            CHECK(std::abs(error) < (order == 4 ? 0.003 : 0.1));
         }
 
     // The same with the plane y = 0 taken as one of symmetry, the receivers
@@ -388,6 +391,8 @@ TEST_CASE("the FDTD marches the same on the GPU", "[fdtd][gpu]")
     const FdtdRecording cpu = solve_fdtd(s, fdtd_solids({block}), source, receivers);
     s.gpu = true;
     const FdtdRecording gpu_run = solve_fdtd(s, fdtd_solids({block}), source, receivers);
+    REQUIRE(gpu_run.gpu);
+    REQUIRE_FALSE(cpu.gpu);
     REQUIRE(gpu_run.pressure.size() == cpu.pressure.size());
     double largest = 0.0, difference = 0.0;
     for (std::size_t i = 0; i < cpu.pressure.size(); i++)

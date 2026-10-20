@@ -27,15 +27,17 @@ double horizontal_distance_to_facade(const Facade& f, const Vec3& p)
 // of its parts, where one point would misjudge it.
 double transfer(const DiffuseFacades::Patch& q, const Vec3& x, const Vec3& facing, double z_sign)
 {
+    // The patch's image below the floor for z_sign < 0, facing down where the
+    // patch faces up.
+    const Vec3 normal(q.normal.x, q.normal.y, z_sign * q.normal.z);
     auto point = [&](const Vec3& c, double area) {
-        // The patch's image below the floor for z_sign < 0.
         const Vec3 from(c.x, c.y, z_sign * c.z);
         const Vec3 d = x - from;
         const double r2 = d.squaredNorm();
         if (r2 == 0.0)
             return 0.0;
         const double r = std::sqrt(r2);
-        const double cos_q = q.normal.dot(d) / r;
+        const double cos_q = normal.dot(d) / r;
         if (cos_q <= 0.0)
             return 0.0;
         double cos_x = 1.0;
@@ -57,7 +59,7 @@ double transfer(const DiffuseFacades::Patch& q, const Vec3& x, const Vec3& facin
         for (int j = 0; j < m; j++)
         {
             const double a = ((i + 0.5) / m - 0.5) * q.width, h = ((j + 0.5) / m - 0.5) * q.height;
-            sum += point(c + a * q.along + Vec3(0.0, 0.0, h), q.area / (m * m));
+            sum += point(c + a * q.along + h * q.across, q.area / (m * m));
         }
     return sum;
 }
@@ -79,11 +81,23 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
         specular_[i] = reflection[i] * (1.0 - scattering[i]);
     in_reach_.assign(facades.size(), 0);
     for (std::size_t f = 0; f < facades.size(); f++)
+        in_reach_[f] = horizontal_distance_to_facade(facades[f], microphone) <= options.radius;
+    // With the roofs a building scatters as a whole, walls and roof, where
+    // any of its walls is in reach: its roof's coefficient is one of its
+    // walls', so the two must scatter together.
+    if (options.roofs)
     {
-        const Facade& facade = facades[f];
-        if (horizontal_distance_to_facade(facade, microphone) > options.radius)
+        std::vector<char> building(buildings.size(), 0);
+        for (std::size_t f = 0; f < facades.size(); f++)
+            building[buildings.facade_building(f)] |= in_reach_[f];
+        for (std::size_t f = 0; f < facades.size(); f++)
+            in_reach_[f] = building[buildings.facade_building(f)];
+    }
+    for (std::size_t f = 0; f < facades.size(); f++)
+    {
+        if (!in_reach_[f])
             continue;
-        in_reach_[f] = 1;
+        const Facade& facade = facades[f];
         const double length = std::hypot(facade.x1 - facade.x0, facade.y1 - facade.y0);
         const Vec3 along((facade.x1 - facade.x0) / length, (facade.y1 - facade.y0) / length, 0.0);
         const Vec3 normal(-along.y, along.x, 0.0);
@@ -107,6 +121,8 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
                     patches_.push_back(p);
             }
     }
+    if (options.roofs)
+        add_roof_patches();
     const std::size_t n = patches_.size();
     for (std::size_t p = 0; p < n; p++)
         all_.push_back(p);
@@ -135,22 +151,30 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
             const Patch& pp = patches_[p];
             for (std::size_t q = 0; q < n; q++)
             {
-                if (q == p || patches_[q].facade == pp.facade)
-                    continue;
                 const Patch& qq = patches_[q];
+                // The same face exchanges nothing.
+                if (q == p || (qq.facade == pp.facade && qq.roof == pp.roof))
+                    continue;
+                // Each path's transfer first: one that faces away is zero and
+                // needs no visibility test.
                 double f = 0.0;
-                if (!buildings.blocked(pp.center, qq.center))
-                    f += transfer(qq, pp.center, pp.normal, 1.0);
-                const Vec3 below(qq.center.x, qq.center.y, -qq.center.z);
-                if (floor_reflection > 0.0 && !buildings.blocked(pp.center, below, true))
-                    f += floor_reflection * transfer(qq, pp.center, pp.normal, -1.0);
+                const double direct = transfer(qq, pp.center, pp.normal, 1.0);
+                if (direct > 0.0 && !buildings.blocked(pp.center, qq.center))
+                    f += direct;
+                if (floor_reflection > 0.0)
+                {
+                    const double mirrored = transfer(qq, pp.center, pp.normal, -1.0);
+                    const Vec3 below(qq.center.x, qq.center.y, -qq.center.z);
+                    if (mirrored > 0.0 && !buildings.blocked(pp.center, below, true))
+                        f += floor_reflection * mirrored;
+                }
                 if (f > 0.0)
                     form_factors_[p].emplace_back(q, f);
             }
-            const double e1 = buildings.blocked(microphone, pp.center) ? 0.0 : transfer(pp, microphone, none, 1.0);
-            const double e2 = floor_reflection > 0.0 && !buildings.blocked(pp.center, image, true)
-                    ? floor_reflection * transfer(pp, image, none, 1.0)
-                    : 0.0;
+            const double t1 = transfer(pp, microphone, none, 1.0);
+            const double e1 = t1 > 0.0 && !buildings.blocked(microphone, pp.center) ? t1 : 0.0;
+            const double t2 = floor_reflection > 0.0 ? transfer(pp, image, none, 1.0) : 0.0;
+            const double e2 = t2 > 0.0 && !buildings.blocked(pp.center, image, true) ? floor_reflection * t2 : 0.0;
             const double d1 = (microphone - pp.center).norm(), d2 = (image - pp.center).norm(), delta = d2 - d1;
             for (std::size_t b = 0; b < nb; b++)
             {
@@ -210,6 +234,85 @@ DiffuseFacades::DiffuseFacades(const Buildings& buildings, const Vec3& microphon
     }
 }
 
+void DiffuseFacades::add_roof_patches()
+{
+    const Buildings& buildings = *buildings_;
+    for (std::size_t b = 0; b < buildings.size(); b++)
+    {
+        const std::size_t f = buildings.roof_facade(b);
+        if (f == Buildings::no_facade || !in_reach_[f])
+            continue;
+        const Footprint& footprint = buildings.footprints()[b];
+        const std::size_t m = footprint.x.size();
+        // The patches run along the outline's longest side, so that a
+        // rectangle's fit it; a cell the outline crosses keeps the part on
+        // the roof, by a 4 by 4 grid of its points.
+        std::size_t longest = 0;
+        double best = 0.0;
+        for (std::size_t i = 0; i < m; i++)
+        {
+            const double length = std::hypot(footprint.x[(i + 1) % m] - footprint.x[i],
+                    footprint.y[(i + 1) % m] - footprint.y[i]);
+            if (length > best)
+            {
+                best = length;
+                longest = i;
+            }
+        }
+        const double ox = footprint.x[longest], oy = footprint.y[longest];
+        const Vec3 along((footprint.x[(longest + 1) % m] - ox) / best, (footprint.y[(longest + 1) % m] - oy) / best, 0.0);
+        const Vec3 across(-along.y, along.x, 0.0);
+        double u0 = std::numeric_limits<double>::infinity(), u1 = -u0, v0 = u0, v1 = -u0;
+        for (std::size_t i = 0; i < m; i++)
+        {
+            const double u = (footprint.x[i] - ox) * along.x + (footprint.y[i] - oy) * along.y;
+            const double v = (footprint.x[i] - ox) * across.x + (footprint.y[i] - oy) * across.y;
+            u0 = std::min(u0, u);
+            u1 = std::max(u1, u);
+            v0 = std::min(v0, v);
+            v1 = std::max(v1, v);
+        }
+        const auto nu = static_cast<std::size_t>(std::max(1.0, std::ceil((u1 - u0) / options_.patch_size)));
+        const auto nv = static_cast<std::size_t>(std::max(1.0, std::ceil((v1 - v0) / options_.patch_size)));
+        const double du = (u1 - u0) / static_cast<double>(nu), dv = (v1 - v0) / static_cast<double>(nv);
+        const int k = 4;
+        for (std::size_t i = 0; i < nu; i++)
+            for (std::size_t j = 0; j < nv; j++)
+            {
+                int on = 0;
+                double cu = 0.0, cv = 0.0;
+                for (int s = 0; s < k; s++)
+                    for (int t = 0; t < k; t++)
+                    {
+                        const double u = u0 + (static_cast<double>(i) + (s + 0.5) / k) * du;
+                        const double v = v0 + (static_cast<double>(j) + (t + 0.5) / k) * dv;
+                        if (buildings.on_roof(b, ox + u * along.x + v * across.x, oy + u * along.y + v * across.y))
+                        {
+                            on++;
+                            cu += u;
+                            cv += v;
+                        }
+                    }
+                if (on == 0)
+                    continue;
+                cu /= on;
+                cv /= on;
+                Patch p;
+                p.width = du;
+                p.height = dv;
+                p.area = du * dv * on / (k * k);
+                p.along = along;
+                p.across = across;
+                p.normal = Vec3(0.0, 0.0, 1.0);
+                p.facade = f;
+                p.roof = true;
+                p.center = Vec3(ox + cu * along.x + cv * across.x, oy + cu * along.y + cv * across.y, footprint.top + 1e-3);
+                if (!buildings.buried(p.center))
+                    patches_.push_back(p);
+            }
+    }
+}
+
 void DiffuseFacades::irradiance(const Vec3& u, const std::vector<std::size_t>& which, std::vector<double>& e) const
 {
     e.assign(patches_.size() * bands_, 0.0);
@@ -220,13 +323,17 @@ void DiffuseFacades::irradiance(const Vec3& u, const std::vector<std::size_t>& w
         const Patch& patch = patches_[p];
         for (int floor = 0; floor < 2; floor++)
         {
-            if (floor == 1 && floor_reflection_ == 0.0)
+            // A roof faces up: what the floor reflects rises away from it, as
+            // its mirrored normal would say for every departure, so the
+            // traces are saved.
+            if (floor == 1 && (floor_reflection_ == 0.0 || patch.roof))
                 continue;
             const Vec3 start = floor ? Vec3(patch.center.x, patch.center.y, -patch.center.z) : patch.center;
+            const Vec3 normal(patch.normal.x, patch.normal.y, floor ? -patch.normal.z : patch.normal.z);
             for (const Vec3& w : departures)
             {
-                // Arriving at the face from in front.
-                const double c = w.dot(patch.normal);
+                // Arriving at the face, or its image, from in front.
+                const double c = w.dot(normal);
                 if (c <= 0.0 || !trace_specular(*buildings_, start, w, u, floor == 1, options_.max_order, trace))
                     continue;
                 for (std::size_t b = 0; b < bands_; b++)
@@ -268,7 +375,8 @@ const std::vector<DiffuseFacades::PatchImage>& DiffuseFacades::patch_images(std:
         // The patch's own face reflects what arrives, it does not light the
         // patch a second time.
         if (image.facades.size() <= max_order
-                && (image.facades.empty() || image.facades[0] != patches_[active_[a]].facade))
+                && (image.facades.empty() || patches_[active_[a]].roof
+                        || image.facades[0] != patches_[active_[a]].facade))
             scratch.push_back({image.point, image.facades});
     return scratch;
 }
@@ -300,7 +408,8 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
             {
                 for (int floor = 0; floor < 2; floor++)
                 {
-                    if (floor == 1 && floor_reflection_ == 0.0)
+                    // A roof, as above: the paths are saved.
+                    if (floor == 1 && (floor_reflection_ == 0.0 || patch.roof))
                         continue;
                     if (!folded_path_open(*buildings_, source, patch.center, image.facades, floor == 1, &hits))
                         continue;
@@ -310,7 +419,8 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
                     const Vec3 last = hits.empty() ? source : hits.back();
                     const Vec3 end_point = floor ? Vec3(patch.center.x, patch.center.y, -patch.center.z) : patch.center;
                     const Vec3 back = last - end_point;
-                    const double c = patch.normal.dot(back) / back.norm();
+                    const Vec3 normal(patch.normal.x, patch.normal.y, floor ? -patch.normal.z : patch.normal.z);
+                    const double c = normal.dot(back) / back.norm();
                     if (!(c > 0.0) || !(length > 0.0))
                         continue;
                     for (std::size_t b = 0; b < bands_; b++)

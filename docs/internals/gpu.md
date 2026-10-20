@@ -39,22 +39,32 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
   `--no-gpu` demand a device, which only a build without a backend shows (`fdtd_field_runs`, which
   passes `--no-gpu`, failed under GCC).
 - **Kernels are written once, in the dialect.** A kernel names only what a prelude defines:
-  `NK_KERNEL`, `NK_IN`/`NK_OUT`/`NK_VALUE` with their slots, `NK_GROUP_ARGS` (which carries its own
-  leading comma), `NK_GROUP`/`NK_THREAD`/`NK_THREADS`, the address-space words for helper
-  functions' pointers (`NK_GLOBAL_IN`, `NK_LOCAL`, `NK_SHARED`), `NK_SHARED_ARRAY`, `NK_BARRIER`,
-  `NK_CONSTANT` for tables, `nk_sincos`, and `nk_u8` for byte-wide flags. No standard library, exceptions, recursion or `double`;
+  `NK_DIALECT` (defined, so that the `*_types.h` leave out `<cstdint>`), `NK_KERNEL`,
+  `NK_IN`/`NK_OUT`/`NK_VALUE` with their slots, `NK_GROUP_ARGS` (which carries its own leading
+  comma), `NK_GROUP`/`NK_THREAD`/`NK_THREADS`, `NK_FN` for helper functions, the address-space
+  words for their pointers (`NK_GLOBAL_IN`, `NK_GLOBAL_OUT`, `NK_LOCAL`, `NK_SHARED`),
+  `NK_SHARED_ARRAY`, `NK_BARRIER`, `NK_CONSTANT` for tables, `nk_sincos`, `nk_u8` for byte-wide
+  flags, and the types `uint` and `uint32_t`. No standard library, exceptions, recursion or `double`;
   complex numbers are `nk_complex` from `common.h`, not a backend's vector type. A record the
   host fills goes in a `*_types.h` of fixed-width integers and floats, included by both sides, so
   the layouts agree. A CUDA or HIP backend needs a `prelude_cuda.h` mapping the same names
-  (`extern "C" __global__`, `blockIdx.x`, `__shared__`, `__constant__`, `sincosf`, and an
-  `NK_GROUP_ARGS` that is empty) and a `gpu_cuda.cpp` behind `gpu.hpp`, compiling the same sources
+  (`extern "C" __global__`, `blockIdx.x`, `__shared__`, `__constant__`, `static __device__ inline`
+  for `NK_FN`, `sincosf`, `uint` and `uint32_t` typedefs, and an `NK_GROUP_ARGS` that is empty) and a `gpu_cuda.cpp` behind `gpu.hpp`, compiling the same sources
   with NVRTC; arguments bind by position, which the slots already are.
 - **No shader toolchain.** Metal compiles the sources at run time (`newLibraryWithSource`), which
   needs the framework only; Command Line Tools without Xcode have no offline `metal` compiler. A
   program is the prelude, `common.h`, then the sources a `Device::kernel` call names, in order;
   each program and kernel is compiled once and cached.
-- **Safe math** (`MTLMathModeSafe`): the Kahan compensation in the pair sum and the float-float
-  phases depend on the compiler not reassociating them.
+- **Safe math and precise functions** (`MTLMathModeSafe`, `MTLMathFloatingPointFunctionsPrecise`):
+  the Kahan compensation in the pair sum and the float-float phases depend on the compiler not
+  reassociating them. From macOS 15 the functions (`exp`, `log`, `atan2`, `sqrt`) default to the
+  fast variants whatever the math mode, `exp` erring by 4e-6 on [-87, 0] against the precise 2e-7,
+  where before macOS 15 `fastMathEnabled = NO` gave the precise ones: without the second setting the
+  results would differ by OS. They cost nothing measurable on the demo approach and moved its SELs by 5e-9 dB.
+- **A batch dropped mid-encoding ends its encoder** (`Batch::Impl`'s destructor). An exception
+  between a batch's first dispatch and its commit releases the encoder, and Metal aborts the
+  process when an encoder is released without `endEncoding`, so the exception's message was never
+  printed.
 - **What float cannot hold is formed in double on the host.**
   - Phases: a length and a wavenumber each travel as a pair of floats, their product is formed
     exactly (`fma`) and reduced modulo 2 pi before its sine and cosine (`nk_phase`): about
@@ -68,8 +78,8 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
     of micrometres beside a cut keeps them.
 - **The shared face's aperture is worked out once for the run's wavenumbers**
   (`shared_face_geometry`): nodes, path lengths, rates, amplitudes and the second wedge's angles,
-  which do not depend on k, once per ray, where the CPU path works them out again at each of the
-  72 sub-bands. The nodes run to the lowest wavenumber's extent, graded as `aperture()` grades
+  which do not depend on k, once per ray, where the CPU keeps each wavenumber's own nodes, sharing
+  the geometry of those that coincide. The nodes run to the lowest wavenumber's extent, graded as `aperture()` grades
   them, with a panel end at every wavenumber's taper start and extent: without them the Filon
   test's faces come out 0.019 dB from the fine midpoint rule at worst, three times what
   [FIDELITY](../FIDELITY.md#a-point-source-among-buildings) gives with them. **The end
@@ -106,12 +116,22 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
   cone's mean coherency of the two rays' launches (`PointRaySet::launch`, three floats a ray, the
   chord in degrees as `partially_coherent_energies` takes it), or adds only each ray's own energy.
   The quadrature integrates every pair with its phases, so a set that is not coherent takes the pair
-  sum throughout. For a coherent set `g` is 1.0f, and the sum's arithmetic is what it was.
+  sum throughout. For a coherent set `g` is 1.0f, and the sum's arithmetic is what it was. The cone's
+  taper is not a positive-definite kernel, so a sub-band's sum can come out below zero; the kernel
+  takes 0 there, as the CPU does.
 - **`niceops --buildings` on the GPU** (`UrbanDistrict::levels` with a device): the sphere's weight
   on each ray in each band is folded into the ray's reflected amplitude, so the kernels are
   `niceops_point_field`'s. The measured coherence (a decay in frequency times angle, and the rotor's
   delay with its wraps) and the phase interval's variance are the CPU's (`gpu_supports`); a default
-  run then stays on the CPU, and `--gpu` is refused.
+  run then stays on the CPU. `--gpu` with `--ray_coherence measured` or `--phase_interval` is
+  refused as the arguments are read, and where a database's record is what selects the measured
+  model, at that track.
+- **The FDTD takes the GPU only where it holds the march** (`gpu_cannot_hold` in `fdtd.cpp`): the
+  kernels index cells and the recording in 32 bits, and each buffer must fit the device's
+  `max_buffer_bytes()` and all of them its `working_set_bytes()` (17 bytes a cell, two floats a
+  PML slab cell, the recording). Otherwise the default marches on the CPU and says so, and
+  `--gpu` (`FdtdSetup::gpu_required`) is refused with the reason; `FdtdRecording::gpu` says which
+  ran.
 - **CI never builds the Metal backend.** It runs on Linux, where `NICEOPS_GPU=AUTO` is `OFF`.
   `point_field_gpu_refused` and `buildings_gpu_refused` cover the disabled backend there; everything
   else here is tested only on a Mac (`[gpu]`, `point_field_gpu_*`, `buildings_gpu_*`).
@@ -146,10 +166,10 @@ band's middle), then `band_pair_sum` and `band_quadrature` over their problems.
 ## Measured
 
 On the demo approach over the test district (the run's 6,551 states, seven microphones, 28 bands),
-an M4 Pro: `niceops --buildings` takes 1.7 s on the GPU (its rays 1.0 s) against 3.2 s with
-`--no-gpu`, its SELs within 0.001 dB of the CPU's; `niceops_point_field` over every fifth of those
-source positions, 9,177 pairs, takes 0.82 s against 1.45 s on 14 threads, its band levels within
-0.05 dB.
+an M4 Pro (the development build, asserts on): `niceops --buildings` takes 1.2 s on the GPU
+against 3.2 s with `--no-gpu`, its SELs within 1e-6 dB of the CPU's; `niceops_point_field` over
+every fifth of those source positions, 9,177 pairs, takes 0.81 s against 1.49 s on 14 threads, its
+band levels within 0.04 dB.
 
 On the 49-block district, an M4 Pro (10 performance and 4 efficiency cores, 20 GPU cores), with
 every shared face's integral at every wavenumber.
@@ -196,11 +216,11 @@ Measured and left alone:
 - **Ray-tracing hardware** (RT cores; Metal's intersection API, in hardware on M3 and later;
   OptiX; Vulkan's ray queries) accelerates what a renderer spends its time on: walking a bounding
   volume hierarchy and testing rays against triangles. Here that is the visibility tests inside
-  the path search, and the path search is 1-2% of a `--buildings` run (the demo approach among
-  the test district's eleven buildings, measured by sampling) and 12% of a pair on the 49-block
-  district; the rest is each ray's wave arithmetic at each sub-band, which no ray-tracing unit
-  does. With `niceops_point_field --gpu` the search is most of the workers' time, but the GPU
-  sets that run's pace. Two places it could pay later: scenes of many triangles (pitched LoD2
+  the path search, a small share of an evaluated pair in a `--buildings` run
+  ([ground.md](ground.md) has the profile) and 12% of a pair on the 49-block district; the rest
+  is each ray's wave arithmetic at each sub-band, which no ray-tracing unit does. With
+  `niceops_point_field` on the GPU the search is most of the workers' time, but the GPU sets that
+  run's pace. Two places it could pay later: scenes of many triangles (pitched LoD2
   roofs, terrain meshes, trees), where the exact test for extruded footprints no longer applies;
   and a diffuse field traced stochastically, as game-audio engines use it, for scattering beyond
   the first facade. Either needs the path tests' contact rules (a segment ending on a wall,

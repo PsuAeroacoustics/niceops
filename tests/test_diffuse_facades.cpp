@@ -283,3 +283,116 @@ TEST_CASE("a point source lights a wall's diffuse field as Lambert's law says", 
     REQUIRE(absorbed < energy);
     REQUIRE(absorbed > energy * std::exp(-2.0 * 0.05 * 8.0));
 }
+
+// The same off a roof (DiffuseOptions::roofs): a low block 20 m square, the
+// source and the microphone together d above the middle of its roof.  Its
+// walls are hidden from the microphone, and the floor reflects nothing a roof
+// sends up, so the roof alone is gathered: rho s d^2 / pi times the integral
+// of dA / r^6 over the roof.  Without roofs the field gathers nothing.
+TEST_CASE("a point source lights a roof's diffuse field as Lambert's law says", "[diffuse]")
+{
+    const double d = 2.0, top = 6.0;
+    const Buildings city({box(-10.0, -10.0, 10.0, 10.0, top)});
+    const Vec3 point(0.0, 0.0, top + d);
+    const std::vector<double> bands {1000.0};
+    const std::vector<double> rho(city.facades().size(), 0.9), s(city.facades().size(), 0.5);
+    DiffuseOptions options;
+    options.radius = 50.0;
+    options.patch_size = 0.4;
+    double walls_only = 0.0;
+    DiffuseFacades(city, point, rho, s, 1.0, bands, 343.2, options, 4).point_energy(point, 2, {}, &walls_only, 4);
+    REQUIRE(walls_only == 0.0);
+    options.roofs = true;
+    const DiffuseFacades diffuse(city, point, rho, s, 1.0, bands, 343.2, options, 4);
+    std::size_t roof = 0;
+    double area = 0.0;
+    for (const auto& p : diffuse.patches())
+        if (p.roof)
+        {
+            roof++;
+            area += p.area;
+            REQUIRE(p.normal.z == 1.0);
+            REQUIRE(p.center.z == Catch::Approx(top + 1e-3));
+        }
+    REQUIRE(roof == 50 * 50);
+    REQUIRE(area == Catch::Approx(400.0));
+    double energy = 0.0;
+    diffuse.point_energy(point, 2, {}, &energy, 4);
+    double integral = 0.0;
+    const int n = 1000;
+    const double step = 20.0 / n;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+        {
+            const double x = -10.0 + (i + 0.5) * step, y = -10.0 + (j + 0.5) * step;
+            integral += step * step / std::pow(d * d + x * x + y * y, 3);
+        }
+    REQUIRE(energy == Catch::Approx(0.9 * 0.5 * d * d / pi * integral).epsilon(5e-3));
+
+    // An L-shaped roof is patched over the L alone, and a building whose
+    // coefficient facade is out of reach keeps its roof whole.
+    Footprint ell;
+    ell.x = {0.0, 12.0, 12.0, 4.0, 4.0, 0.0};
+    ell.y = {0.0, 0.0, 4.0, 4.0, 12.0, 12.0};
+    ell.top = 5.0;
+    const Buildings two({ell, box(500.0, 0.0, 510.0, 10.0, 5.0)});
+    const std::vector<double> rho2(two.facades().size(), 0.9), s2(two.facades().size(), 0.5);
+    options.patch_size = 1.0;
+    const DiffuseFacades near(two, Vec3(-5.0, -5.0, 1.0), rho2, s2, 1.0, bands, 343.2, options, 2);
+    double ell_area = 0.0;
+    for (const auto& p : near.patches())
+        if (p.roof)
+        {
+            REQUIRE(p.facade == two.roof_facade(0));
+            ell_area += p.area;
+        }
+    REQUIRE(ell_area == Catch::Approx(80.0));
+    for (std::size_t f = 0; f < two.facades().size(); f++)
+        REQUIRE(near.scatters(f) == (two.facade_building(f) == 0));
+
+    // With the roofs a building scatters as a whole: a long block whose far
+    // wall is out of reach scatters there too, and only then.
+    const Buildings long_block({box(0.0, 0.0, 200.0, 10.0, 5.0)});
+    const std::vector<double> rho4(long_block.facades().size(), 0.9), s4(long_block.facades().size(), 0.5);
+    const Vec3 west(-5.0, 5.0, 1.0);
+    const DiffuseFacades whole(long_block, west, rho4, s4, 1.0, bands, 343.2, options, 2);
+    DiffuseOptions walls = options;
+    walls.roofs = false;
+    const DiffuseFacades walls_only_field(long_block, west, rho4, s4, 1.0, bands, 343.2, walls, 2);
+    std::size_t out_of_reach = 0;
+    for (std::size_t f = 0; f < long_block.facades().size(); f++)
+    {
+        REQUIRE(whole.scatters(f));
+        out_of_reach += !walls_only_field.scatters(f);
+    }
+    REQUIRE(out_of_reach == 1);
+
+    // A roof sends nothing by way of the floor: a low block's roof and the
+    // tower beside it exchange the same energy over a reflecting floor as over
+    // none, where the walls facing each other across the floor do not.
+    const Buildings pair({box(0.0, 0.0, 20.0, 20.0, 5.0), box(25.0, 0.0, 35.0, 20.0, 30.0)});
+    const std::vector<double> rho3(pair.facades().size(), 0.9), s3(pair.facades().size(), 0.5);
+    options.patch_size = 2.0;
+    const DiffuseFacades bare(pair, Vec3(22.0, 10.0, 1.0), rho3, s3, 0.0, bands, 343.2, options, 2);
+    const DiffuseFacades floored(pair, Vec3(22.0, 10.0, 1.0), rho3, s3, 1.0, bands, 343.2, options, 2);
+    REQUIRE(bare.patches().size() == floored.patches().size());
+    double from_roofs = 0.0, from_walls_bare = 0.0, from_walls_floored = 0.0;
+    for (std::size_t p = 0; p < bare.patches().size(); p++)
+    {
+        if (bare.patches()[p].roof)
+            continue;
+        auto sum = [&](const DiffuseFacades& field, bool roofs) {
+            double total = 0.0;
+            for (const auto& [q, f] : field.form_factors(p))
+                if (field.patches()[q].roof == roofs)
+                    total += f;
+            return total;
+        };
+        REQUIRE(sum(floored, true) == Catch::Approx(sum(bare, true)).epsilon(1e-12));
+        from_roofs += sum(bare, true);
+        from_walls_bare += sum(bare, false);
+        from_walls_floored += sum(floored, false);
+    }
+    REQUIRE(from_roofs > 0.0);
+    REQUIRE(from_walls_floored > from_walls_bare);
+}

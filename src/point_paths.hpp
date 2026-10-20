@@ -168,7 +168,9 @@ struct SubBand
     double g1 = 0.0, g2 = 0.0, k1 = 0.0, k2 = 0.0;
 };
 std::array<SubBand, 3> sub_bands(double band, double sound_speed);
-// A band's level, dB, from its sub-bands' band-averaged energies.
+// A band's level, dB, from its sub-bands' band-averaged energies, floored at
+// an energy of band_level_floor.
+constexpr double band_level_floor = 1e-30;
 double band_level(double band, const std::array<SubBand, 3>& parts, const double* energy);
 // The air's attenuation of a ray's amplitude per metre of its length, Np/m,
 // at each sub-band's middle frequency (ISO 9613-1): [3 band + part].  A ray's
@@ -215,7 +217,7 @@ struct PointRay
     // For each roof it reflects in, a facade of the roof's building, whose
     // reflection coefficient the roof takes (the building's walls and roof
     // absorb alike); no_facade for a building with none, a rigid roof.
-    static constexpr std::size_t no_facade = static_cast<std::size_t>(-1);
+    static constexpr std::size_t no_facade = Buildings::no_facade;
     std::vector<std::size_t> roof_facades;
     // A partner made by the fade: the edges it diffracts at besides the
     // ray's own (its length includes their detours).
@@ -376,6 +378,11 @@ private:
     bool edge_source_ = false;
     bool sample_shared_faces_ = true;
 };
+
+// An edge as the edge-source integral takes it: a vertical edge standing on
+// the floor (or ending on it) goes on below it as its mirror image, so the
+// kept ray of each floor pair takes both halves and the floor is no end.
+Edge through_floor(const Edge& g);
 
 // The diffraction factor a ray's edge-source integral gives it at each
 // wavenumber, what point_ray_amplitude's wedges give it at reflected = 1:

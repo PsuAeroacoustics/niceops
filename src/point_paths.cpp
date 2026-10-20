@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <stdexcept>
@@ -274,13 +275,6 @@ bool parallel_stationary(const Edge& g1, const Edge& g2, const Vec3& pa, const V
     return std::isfinite(t2);
 }
 
-std::size_t tree_order(bool source, const PointPathOptions& options)
-{
-    if (source)
-        return options.diffraction && options.source_reflections ? options.max_edge_reflections : 0;
-    return std::max(options.max_reflections, options.max_edge_reflections);
-}
-
 std::vector<std::size_t> joined(const std::vector<std::size_t>& a, const std::vector<std::size_t>& b)
 {
     std::vector<std::size_t> out;
@@ -304,6 +298,17 @@ std::size_t edge_order(const PointPathOptions& options)
 {
     return std::max(options.max_edge_reflections,
             options.diffraction && options.double_diffraction ? std::size_t {1} : std::size_t {0});
+}
+
+// How deep an end's image tree goes: the microphone's to the specular rays'
+// order; the source's (with source_reflections) to the edges' order -- one
+// reflection at least where the twice-diffracted search takes it, as the
+// microphone's side does, so the ray set is the same with the ends swapped.
+std::size_t tree_order(bool source, const PointPathOptions& options)
+{
+    if (source)
+        return options.diffraction && options.source_reflections ? edge_order(options) : 0;
+    return std::max(options.max_reflections, options.max_edge_reflections);
 }
 
 // The detour of the path from a to b by the line from p along the unit u:
@@ -344,15 +349,19 @@ struct PendingEdge
 // building blocks either of the partner's two legs, and its detour by the
 // edge is within the fade's reach.  Each building's are
 // taken as across the leg where it blocks the leg and beside it otherwise,
-// but for the buildings the leg's ends lie on (skip0, skip1).  False where a
-// building blocks the leg with no such edge.  Below the floor a building's
-// image stands from -top: its edges are taken with their images.
+// but for the buildings the leg's ends lie on (skip0, skip1), whose edges the
+// leg leaves from; a leg through one of those, past a corner of a footprint
+// that is not convex, is closed.  False where a building blocks the leg with
+// no such edge.  Below the floor a building's image stands from -top: its
+// edges are taken with their images.
 bool leg_edges(const Buildings& buildings, const Vec3& a, const Vec3& b, bool below_floor, double reach,
         std::size_t skip0, std::size_t skip1, double before, int chain, std::vector<PendingEdge>& out)
 {
     const double length = (b - a).norm();
-    // An edge h from the leg detours it by at least 2 h^2 / length.
-    const double h = std::sqrt(0.5 * reach * length) + Buildings::contact;
+    // The least detour of an edge d from the leg is at the leg's middle,
+    // sqrt(length^2 + 4 d^2) - length; it reaches the fade's reach at
+    // d = sqrt(reach^2 + 2 reach length) / 2, and the box is that wide.
+    const double h = 0.5 * std::sqrt(reach * reach + 2.0 * reach * length) + Buildings::contact;
     thread_local std::vector<std::uint32_t> near;
     buildings.near_box(std::min(a.x, b.x) - h, std::max(a.x, b.x) + h, std::min(a.y, b.y) - h, std::max(a.y, b.y) + h,
             near);
@@ -360,7 +369,11 @@ bool leg_edges(const Buildings& buildings, const Vec3& a, const Vec3& b, bool be
     for (const std::uint32_t building : near)
     {
         if (building == skip0 || building == skip1)
+        {
+            if (buildings.blocked_by(building, a, b, below_floor))
+                return false;
             continue;
+        }
         const std::size_t first = out.size();
         const bool across = buildings.blocked_by(building, a, b, below_floor);
         for (std::size_t e = buildings.edge_begin(building); e < buildings.edge_begin(building + 1); e++)
@@ -456,7 +469,9 @@ MadeEdge complete(const Buildings& buildings, const PendingEdge& p, const std::v
 // a leg leaves the ray as it was and adds a partner at each of its edges; a
 // building across one stops the ray, leaving the partners.  Over several
 // buildings the factors multiply: each term picks the ray or one edge per
-// building.  The three buildings of least detour, where there are more.
+// building.  Every building across a leg is kept, or a term would pass
+// through it; beside ones fill the rest of three by least detour, and a ray
+// across more than three is no ray.
 void push_faded(std::vector<PointRay>& rays, PointRay ray, const std::vector<PendingEdge>& pending,
         const std::vector<double>& segments, const Buildings& buildings, const PointPathOptions& options)
 {
@@ -481,7 +496,13 @@ void push_faded(std::vector<PointRay>& rays, PointRay ray, const std::vector<Pen
         groups.back().members.push_back(k);
         groups.back().least = std::min(groups.back().least, pending[k].detour);
     }
-    std::stable_sort(groups.begin(), groups.end(), [](const Group& x, const Group& y) { return x.least < y.least; });
+    // Across first, then by least detour.
+    std::stable_sort(groups.begin(), groups.end(),
+            [](const Group& x, const Group& y) { return x.across != y.across ? x.across : x.least < y.least; });
+    const std::size_t across = static_cast<std::size_t>(
+            std::count_if(groups.begin(), groups.end(), [](const Group& g) { return g.across; }));
+    if (across > 3)
+        return;
     if (groups.size() > 3)
         groups.resize(3);
     std::vector<MadeEdge> screens(pending.size());
@@ -637,19 +658,35 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     const Vec3& microphone = microphone_end.point();
     const int source_floors = options.source_reflections ? 2 : 1;
     const bool fading = options.fade_reach > 0.0;
-    // Roofs (options.roofs): each building's facade whose coefficient its
-    // roof takes, and the buildings whose boxes meet a box in plan, ascending.
-    std::vector<std::size_t> roof_facade;
-    if (options.roofs)
-    {
-        roof_facade.assign(buildings.size(), PointRay::no_facade);
-        for (std::size_t f = buildings.facades().size(); f-- > 0;)
-            roof_facade[buildings.facade_building(f)] = f;
-    }
+    // Roofs (options.roofs): the buildings whose boxes meet a box in plan,
+    // ascending.
     thread_local std::vector<std::uint32_t> boxed;
-    auto buildings_between = [&](double x0, double x1, double y0, double y1) {
+    // The buildings whose roofs a folded path may bounce on: its real legs
+    // each run between two consecutive members of the chain -- its two ends
+    // and the facades it reflects in -- so in plan the path stays inside the
+    // box of them all, wherever along a facade or an edge it meets them.  The
+    // unfolded line's box can miss a roof under a reflected leg, which the
+    // plan grid's coarseness then decided.
+    auto buildings_along = [&](std::initializer_list<Vec3> points,
+                                   const std::vector<std::size_t>& facades) -> const std::vector<std::uint32_t>& {
+        double x0 = std::numeric_limits<double>::infinity(), x1 = -x0, y0 = x0, y1 = -x0;
+        for (const Vec3& p : points)
+        {
+            x0 = std::min(x0, p.x);
+            x1 = std::max(x1, p.x);
+            y0 = std::min(y0, p.y);
+            y1 = std::max(y1, p.y);
+        }
+        for (std::size_t f : facades)
+        {
+            const Facade& wall = buildings.facades()[f];
+            x0 = std::min({x0, wall.x0, wall.x1});
+            x1 = std::max({x1, wall.x0, wall.x1});
+            y0 = std::min({y0, wall.y0, wall.y1});
+            y1 = std::max({y1, wall.y0, wall.y1});
+        }
         boxed.clear();
-        buildings.near_box(std::min(x0, x1), std::max(x0, x1), std::min(y0, y1), std::max(y0, y1), boxed);
+        buildings.near_box(x0, x1, y0, y1, boxed);
         std::sort(boxed.begin(), boxed.end());
         return boxed;
     };
@@ -697,14 +734,13 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             push_faded(rays_, std::move(ray), pending, segments, buildings, options);
         }
     }
-    // Specular rays off a roof below both ends, in place of the floor: the
-    // bounce lies between the source and the microphone's image in plan.
+    // Specular rays off a roof below both ends, in place of the floor.
     if (options.roofs)
         for (const PointImage& image : mic.images)
         {
             if (image.facades.size() + 1 > options.max_reflections)
                 continue;
-            for (std::uint32_t b : buildings_between(source.x, image.point.x, source.y, image.point.y))
+            for (std::uint32_t b : buildings_along({source, microphone}, image.facades))
             {
                 const double h = buildings.footprints()[b].top;
                 if (!(h < std::min(source.z, microphone.z) - 1e-9))
@@ -719,7 +755,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 ray.length = (Vec3(image.point.x, image.point.y, 2.0 * h - image.point.z) - source).norm();
                 ray.spreading = 1.0 / ray.length;
                 ray.facades = image.facades;
-                ray.roof_facades = {roof_facade[b]};
+                ray.roof_facades = {buildings.roof_facade(b)};
                 ray.source_plane = h;
                 rays_.push_back(std::move(ray));
             }
@@ -735,7 +771,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
         {
             const PointImage& a = src.images[i];
             const PointImage& b = mic.images[j];
-            if (b.facades.size() > options.max_edge_reflections)
+            if (a.facades.size() > options.max_edge_reflections || b.facades.size() > options.max_edge_reflections)
                 continue;
             // The edges both images keep: both lists run in near_edges' order,
             // so one pass along the two finds them.
@@ -872,7 +908,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                 const PointImage& b = mic.images[j];
                 const bool roof_a = options.source_reflections && a.facades.size() + 1 <= options.max_edge_reflections;
                 const bool roof_b = b.facades.size() + 1 <= options.max_edge_reflections;
-                if ((!roof_a && !roof_b) || b.facades.size() > options.max_edge_reflections)
+                if ((!roof_a && !roof_b) || a.facades.size() > options.max_edge_reflections
+                        || b.facades.size() > options.max_edge_reflections)
                     continue;
                 std::size_t next = 0;
                 const auto& keep = mic.edges[j];
@@ -887,26 +924,27 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     const Vec3 end = edge.start + edge.length * edge.direction;
                     const double edge_top = std::max(edge.start.z, end.z);
                     // Each side's reflectors at this edge: the floor and
-                    // nothing as the loop above takes them, and the roofs.
-                    auto sides = [&](const Vec3& p, double end_z, bool roofs_too, int floors, std::vector<long>& out) {
+                    // nothing as the loop above takes them, and the roofs
+                    // under its real legs from the edge, by its facades, to
+                    // its end.
+                    auto sides = [&](const Vec3& real_end, const std::vector<std::size_t>& facades, double end_z,
+                                         bool roofs_too, int floors, std::vector<long>& out) {
                         out.clear();
                         out.push_back(bare_side);
                         if (floors > 1)
                             out.push_back(floor_side);
                         if (!roofs_too)
                             return;
-                        for (std::uint32_t r : buildings_between(std::min(p.x, std::min(edge.start.x, end.x)),
-                                     std::max(p.x, std::max(edge.start.x, end.x)),
-                                     std::min(p.y, std::min(edge.start.y, end.y)),
-                                     std::max(p.y, std::max(edge.start.y, end.y))))
+                        // The edge is a member of the chain: both its ends.
+                        for (std::uint32_t r : buildings_along({edge.start, end, real_end}, facades))
                         {
                             const double h = buildings.footprints()[r].top;
                             if (h < end_z - 1e-9 && h < edge_top - 1e-9)
                                 out.push_back(static_cast<long>(r));
                         }
                     };
-                    sides(a.point, source.z, roof_a, source_floors, source_sides);
-                    sides(b.point, microphone.z, roof_b, 2, microphone_sides);
+                    sides(source, a.facades, source.z, roof_a, source_floors, source_sides);
+                    sides(microphone, b.facades, microphone.z, roof_b, 2, microphone_sides);
                     for (long sa : source_sides)
                         for (long sb : microphone_sides)
                         {
@@ -959,7 +997,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                             ray.floor = (sa == floor_side) + (sb == floor_side);
                             for (long side : {sa, sb})
                                 if (side >= 0)
-                                    ray.roof_facades.push_back(roof_facade[static_cast<std::size_t>(side)]);
+                                    ray.roof_facades.push_back(buildings.roof_facade(static_cast<std::size_t>(side)));
                             if (sa != bare_side)
                                 ray.source_plane
                                         = sa == floor_side ? 0.0 : buildings.footprints()[static_cast<std::size_t>(sa)].top;
@@ -1323,7 +1361,7 @@ double band_level(double band, const std::array<SubBand, 3>& parts, const double
     double sum = 0.0;
     for (int part = 0; part < 3; part++)
         sum += energy[part] * (parts[part].g2 - parts[part].g1);
-    return 10.0 * std::log10(std::max(sum / (f2 - f1), 1e-30));
+    return 10.0 * std::log10(std::max(sum / (f2 - f1), band_level_floor));
 }
 
 double fade_reach(double k_min, double cap)
@@ -1373,6 +1411,8 @@ double trust_taper(double x, double lo, double hi)
 constexpr double transition_lo = 0.3, transition_hi = 1.0;
 constexpr double excess_lo = 100.0, excess_hi = 1000.0;
 
+} // namespace
+
 // An edge as the edge-source integral takes it.  A vertical edge standing on
 // the floor goes on below it as its mirror image: the floor's images split
 // that one edge between a ray and its mirror -- a ray from the source's image
@@ -1393,8 +1433,6 @@ Edge through_floor(const Edge& g)
     h.length = 2.0 * g.length;
     return h;
 }
-
-} // namespace
 
 std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings, const PointRay& ray,
         const std::vector<double>& wavenumbers)

@@ -1,8 +1,7 @@
 // The full-wave field of a point source among rigid buildings at microphones
 // (src/fdtd.hpp): the reference niceops_point_field is held to.  The same
-// inputs and output as niceops_point_field, without the air's absorption --
-// each band's level re the source's own at 1 m, |H|^2 averaged over the third
-// octave.
+// inputs and output as niceops_point_field -- each band's level re the
+// source's own at 1 m, |H|^2 averaged over the third octave.
 //
 //   niceops_fdtd_field --buildings case/buildings.csv --source -2 0 1.5 --microphones mics.csv
 //       --bands 1600 2000 2500 --units m --mirror --gpu -o levels.csv
@@ -20,7 +19,7 @@
 // second order).  Check a run by repeating it at a finer --cell (FIDELITY
 // "The full-wave reference among buildings").
 // --duration defaults to twice the time sound takes across the domain's
-// diagonal; a microphone whose band levels move by more than 0.02 dB without
+// diagonal, the whole space's under --mirror; a microphone whose band levels move by more than 0.02 dB without
 // the recording's last tenth is named on stderr.
 //
 // The solids are rigid, or absorb --wall_absorption at normal incidence (a
@@ -28,7 +27,10 @@
 // --humidity absorbs each arrival afterwards by its delay, as
 // niceops_point_field absorbs each ray by its length.
 //
-// --spectrum writes H at every frequency the band levels average over: the
+// It marches on the GPU wherever there is one that holds the grid, and on
+// the CPU otherwise (--no-gpu always); --gpu refuses the CPU.
+//
+// --spectrum writes H across the bands, every quarter of 1 / duration: the
 // microphone's row, the frequency, Hz, and H's real and imaginary parts.
 
 #include <CLI/CLI.hpp>
@@ -47,7 +49,6 @@
 #include "building_input.hpp"
 #include "buildings.hpp"
 #include "fdtd.hpp"
-#include "gpu/gpu.hpp"
 #include "point_paths.hpp"
 #include "util/constants.hpp"
 #include "util/csv.hpp"
@@ -100,11 +101,11 @@ int main(int argc, char** argv)
     app.add_option("--pressure", pressure, "With --humidity, kPa (default 101.325).");
     app.add_flag("--mirror", mirror, "The plane y = the source's y is one of symmetry: grid half the space.");
     app.add_flag("--gpu,!--no-gpu", use_gpu,
-            "March on the GPU: on by default wherever there is one. --gpu asks for it and is refused where there is "
-            "none; --no-gpu marches on the CPU.");
+            "March on the GPU: on by default wherever there is one that holds the grid, the CPU otherwise. --gpu "
+            "asks for it and is refused where there is none or it cannot hold the grid; --no-gpu marches on the CPU.");
     app.add_option("-j,--threads", threads, "CPU threads (default: all).");
     app.add_option("-o,--output", output, "The band levels, CSV.")->required();
-    app.add_option("--spectrum", spectrum_file, "H at every frequency averaged over, CSV.");
+    app.add_option("--spectrum", spectrum_file, "H across the bands, every quarter of 1 / duration, CSV.");
     app.add_option("--recording", recording_file, "Each microphone's pressure at every step and its time, and the "
                                                     "pulse Q at its own time, half a step before, CSV.");
     CLI11_PARSE(app, argc, argv);
@@ -182,15 +183,19 @@ int main(int argc, char** argv)
         setup.pml = pml;
         setup.sound_speed = sound_speed;
         setup.courant = courant;
-        const Vec3 span = setup.hi - setup.lo;
+        // Long enough to cross the whole space twice: with the plane, the
+        // half on the source's side and its image.
+        Vec3 span = setup.hi - setup.lo;
+        if (mirror)
+            span.y *= 2.0;
         setup.duration = duration > 0.0 ? duration : 2.0 * span.norm() / sound_speed;
         setup.pulse_frequency = pulse_frequency > 0.0 ? pulse_frequency : f_top / 2.25;
         setup.threads = tool_thread_count(threads);
-        // The GPU wherever there is one; asked for, it must be there.  The
-        // flag's count takes --no-gpu too, so asking is its value as well.
-        if (use_gpu && app.count("--gpu") > 0)
-            gpu::Device::require("--gpu");
-        setup.gpu = use_gpu && gpu::Device::get() != nullptr;
+        // The GPU wherever there is one that holds the grid; asked for, it
+        // must be there and hold it.  The flag's count takes --no-gpu too, so
+        // asking is its value as well.
+        setup.gpu = use_gpu;
+        setup.gpu_required = use_gpu && app.count("--gpu") > 0;
         setup.wall_absorption = wall_absorption;
         // The air's absorption per sub-band, as niceops_point_field takes it.
         std::vector<double> absorption;
@@ -212,7 +217,9 @@ int main(int argc, char** argv)
         const FdtdRecording run = solve_fdtd(setup, solids, s, points);
         std::cerr << "FDTD: " << run.nx << " x " << run.ny << " x " << run.nz << " cells of " << h * 1000.0
                   << " mm (" << run.cells * 1e-6 << " M), " << run.steps << " steps of " << run.dt * 1e6 << " us, "
-                  << run.seconds << " s" << (setup.gpu ? " on the GPU" : "") << ", "
+                  << run.seconds << " s"
+                  << (run.gpu ? " on the GPU" : run.gpu_declined.empty() ? "" : " on the CPU, " + run.gpu_declined)
+                  << ", "
                   << std::lround(run.marched * 100.0) << "% of the cell-steps marched" << std::endl;
         ensure_parent_directory(output);
         std::ofstream out(output);

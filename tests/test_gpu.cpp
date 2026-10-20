@@ -5,14 +5,20 @@
 #include <complex>
 #include <memory>
 #include <random>
+#include <string>
+#include <tuple>
 #include <vector>
 
 #include "canyon_wave.hpp"
 #include "gpu/band_energy.hpp"
+#include "gpu/band_stream.hpp"
 #include "gpu/gpu.hpp"
 #include "gpu/point_rays.hpp"
 #include "point_paths.hpp"
+#include "source_coherence.hpp"
+#include "sphere_database.hpp"
 #include "urban.hpp"
+#include "urban_point.hpp"
 #include "wedge.hpp"
 #include "util/constants.hpp"
 
@@ -268,6 +274,35 @@ Footprint block(double x0, double y0, double x1, double y1, double top)
     return f;
 }
 
+// Street-like fields: two districts, DigiCity's containers and a district's
+// blocks, sources above and among the buildings.
+struct Fields
+{
+    Buildings containers {{block(4.09, 17.66, 6.53, 23.72, 7.77), block(14.81, 17.66, 17.25, 23.72, 7.77),
+            block(1.6, 10.82, 4.04, 16.88, 7.77), block(1.6, 8.38, 13.72, 10.82, 5.18),
+            block(20.21, 3.86, 22.65, 16.0, 7.77), block(13.5, -1.84, 19.56, 0.6, 7.77)}};
+    Buildings blocks {{block(0.0, 0.0, 60.0, 60.0, 20.0), block(80.0, 0.0, 140.0, 60.0, 35.0),
+            block(0.0, 80.0, 60.0, 140.0, 10.0), block(80.0, 80.0, 140.0, 140.0, 40.0)}};
+    std::vector<std::unique_ptr<PointSourceField>> fields;
+    std::vector<std::vector<double>> reflection;
+
+    explicit Fields(std::size_t bands, const PointPathOptions& options = {})
+    {
+        const std::vector<std::tuple<const Buildings*, Vec3, Vec3>> cases {
+            {&containers, {10.5, 20.5, 2.0}, {10.5, -1.1, 1.2}},
+            {&containers, {10.5, 20.5, 2.0}, {-3.6, 6.4, 1.2}},
+            {&containers, {8.0, 12.0, 15.0}, {18.0, 2.0, 1.2}},
+            {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 1.5}},
+            {&blocks, {70.0, 30.0, 5.0}, {110.0, 150.0, 1.5}},
+        };
+        for (const auto& [city, source, microphone] : cases)
+        {
+            fields.push_back(std::make_unique<PointSourceField>(*city, source, microphone, options));
+            reflection.emplace_back(city->facades().size() * bands, 0.9);
+        }
+    }
+};
+
 } // namespace
 
 // The GPU forming the rays' amplitudes itself (point_rays.kern: the wedge
@@ -284,45 +319,27 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     for (const bool sampled : {false, true})
     {
     INFO((sampled ? "sampled" : "every wavenumber"));
-    const Buildings containers({block(4.09, 17.66, 6.53, 23.72, 7.77), block(14.81, 17.66, 17.25, 23.72, 7.77),
-            block(1.6, 10.82, 4.04, 16.88, 7.77), block(1.6, 8.38, 13.72, 10.82, 5.18),
-            block(20.21, 3.86, 22.65, 16.0, 7.77), block(13.5, -1.84, 19.56, 0.6, 7.77)});
-    const Buildings blocks({block(0.0, 0.0, 60.0, 60.0, 20.0), block(80.0, 0.0, 140.0, 60.0, 35.0),
-            block(0.0, 80.0, 60.0, 140.0, 10.0), block(80.0, 80.0, 140.0, 140.0, 40.0)});
-    struct Case
-    {
-        const Buildings* city;
-        Vec3 source, microphone;
-    };
-    const std::vector<Case> cases {
-        {&containers, {10.5, 20.5, 2.0}, {10.5, -1.1, 1.2}},
-        {&containers, {10.5, 20.5, 2.0}, {-3.6, 6.4, 1.2}},
-        {&containers, {8.0, 12.0, 15.0}, {18.0, 2.0, 1.2}},
-        {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 1.5}},
-        {&blocks, {70.0, 30.0, 5.0}, {110.0, 150.0, 1.5}},
-    };
     const std::vector<double> bands {50, 100, 200, 400, 800, 1600, 3150, 6300, 10000};
+    PointPathOptions options;
+    options.sample_shared_faces = sampled;
+    const Fields f(bands.size(), options);
+    const std::size_t count = f.fields.size();
     const double c = 343.2;
     // Every other case through the air, so both the GPU's absorption and
     // its absence are held to the CPU's.
     Atmosphere air;
     air.relative_humidity = 50.0;
     const std::vector<double> absorbing = sub_band_absorption(air, bands, c);
-    std::vector<std::unique_ptr<PointSourceField>> fields;
-    std::vector<gpu::RaySet> host(cases.size());
-    std::vector<gpu::PointRaySet> point(cases.size());
-    std::vector<std::vector<double>> cpu(cases.size(), std::vector<double>(bands.size()));
+    std::vector<gpu::RaySet> host(count);
+    std::vector<gpu::PointRaySet> point(count);
+    std::vector<std::vector<double>> cpu(count, std::vector<double>(bands.size()));
     gpu::BandEnergies energies(device);
     std::vector<std::size_t> host_first, point_first;
     std::size_t shared = 0;
-    for (std::size_t i = 0; i < cases.size(); i++)
+    for (std::size_t i = 0; i < count; i++)
     {
-        const Buildings& city = *cases[i].city;
-        std::vector<double> reflection(city.facades().size() * bands.size(), 0.9);
-        PointPathOptions options;
-        options.sample_shared_faces = sampled;
-        fields.push_back(std::make_unique<PointSourceField>(city, cases[i].source, cases[i].microphone, options));
-        const PointSourceField& field = *fields.back();
+        const std::vector<double>& reflection = f.reflection[i];
+        const PointSourceField& field = *f.fields[i];
         const std::vector<double> absorption = i % 2 ? absorbing : std::vector<double> {};
         field.band_levels(reflection, 1.0, bands, c, cpu[i].data(), absorption);
         field.sub_band_problems(
@@ -344,7 +361,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     energies.submit();
     const std::vector<double>& energy = energies.wait();
     double worst_amplitudes = 0.0, worst_cpu = 0.0;
-    for (std::size_t i = 0; i < cases.size(); i++)
+    for (std::size_t i = 0; i < count; i++)
         for (std::size_t b = 0; b < bands.size(); b++)
         {
             const auto parts = sub_bands(bands[b], c);
@@ -357,6 +374,152 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
                 << worst_cpu << " dB from band_levels");
     REQUIRE(worst_amplitudes < 0.02);
     REQUIRE(worst_cpu < 0.1);
+    }
+}
+
+
+// The cone's and energy's sums on the GPU against partially_coherent_energies
+// on the same rays: a narrow cone, a wide one whose taper takes many pairs,
+// and no pair at all.
+TEST_CASE("the GPU's cone and energy sums are the CPU's", "[gpu]")
+{
+    gpu::Device& device = device_or_skip();
+    const std::vector<double> bands {50, 100, 200, 400, 800, 1600, 3150, 6300, 10000};
+    const double c = 343.2;
+    Atmosphere air;
+    air.relative_humidity = 50.0;
+    const std::vector<double> absorption = sub_band_absorption(air, bands, c);
+    const Fields f(bands.size());
+    struct Sum
+    {
+        RaySum sum;
+        uint32_t gpu;
+        double cone;
+    };
+    for (const Sum& sum : {Sum {RaySum::cone, NK_SUM_CONE, 1.0}, Sum {RaySum::cone, NK_SUM_CONE, 6.0},
+                 Sum {RaySum::energy, NK_SUM_ENERGY, 1.0}})
+    {
+        INFO((sum.sum == RaySum::energy ? "energy" : "cone of " + std::to_string(sum.cone) + " degrees"));
+        SourceCoherence coherence;
+        coherence.sum = sum.sum;
+        coherence.cone = sum.cone;
+        gpu::BandEnergies energies(device);
+        std::vector<gpu::PointRaySet> sets(f.fields.size());
+        std::vector<std::size_t> first;
+        std::vector<std::vector<double>> cpu(f.fields.size(), std::vector<double>(3 * bands.size()));
+        for (std::size_t i = 0; i < f.fields.size(); i++)
+        {
+            partially_coherent_energies(*f.fields[i], f.reflection[i], 1.0, bands, 0, c, absorption, nullptr,
+                    coherence, SphereFrame {}, cpu[i].data());
+            gpu::PointRayPacking packing;
+            packing.sum = sum.gpu;
+            packing.cone = sum.cone;
+            gpu::pack_point_rays(*f.fields[i], f.reflection[i], 1.0, bands, c, sets[i], absorption, packing);
+            first.push_back(energies.add(sets[i]));
+        }
+        energies.submit();
+        const std::vector<double>& energy = energies.wait();
+        REQUIRE(energies.integrals() == 0);
+        double worst = 0.0;
+        for (std::size_t i = 0; i < f.fields.size(); i++)
+            for (std::size_t b = 0; b < bands.size(); b++)
+            {
+                const auto parts = sub_bands(bands[b], c);
+                for (int part = 0; part < 3; part++)
+                    REQUIRE(energy[first[i] + 3 * b + static_cast<std::size_t>(part)] >= 0.0);
+                worst = std::max(worst, std::abs(band_level(bands[b], parts, &energy[first[i] + 3 * b])
+                                                - band_level(bands[b], parts, &cpu[i][3 * b])));
+            }
+        INFO("worst " << worst << " dB");
+        // 3e-4 dB: the GPU's float.
+        REQUIRE(worst < 0.002);
+    }
+}
+
+// The cone's taper is not a positive-definite kernel: three rays along a
+// line of launches, each next to its neighbour (fully coherent) and the ends
+// apart (in energy), with amplitudes +1, -1, +1 and the same length, sum to
+// 3 - 2 - 2 < 0.  The GPU takes 0 there, as the CPU does.
+TEST_CASE("the GPU's cone sum is not below zero", "[gpu]")
+{
+    gpu::Device& device = device_or_skip();
+    const double c = 343.2, band = 200.0;
+    gpu::PointRaySet set;
+    set.sum = NK_SUM_CONE;
+    set.cone = 1.0f;
+    const double sign[3] = {1.0, -1.0, 1.0};
+    for (uint32_t i = 0; i < 3; i++)
+    {
+        set.length.push_back(50.0 + 1e-4 * i);
+        set.rays.push_back(GpuRay {0u, 0u, i, static_cast<float>(set.length.back())});
+        set.reflected.push_back(static_cast<float>(sign[i]));
+        const double turn = 0.7 * i * pi / 180.0;
+        for (double v : {std::cos(turn), std::sin(turn), 0.0})
+            set.launch.push_back(static_cast<float>(v));
+    }
+    for (const SubBand& s : sub_bands(band, c))
+    {
+        set.band.push_back(0u);
+        set.k1.push_back(s.k1);
+        set.k2.push_back(s.k2);
+        set.absorption.push_back(0.0f);
+        set.nodes.push_back(0u);
+    }
+    gpu::BandEnergies energies(device);
+    energies.add(set);
+    energies.submit();
+    const std::vector<double>& energy = energies.wait();
+    REQUIRE(energy.size() == 3);
+    for (double e : energy)
+        REQUIRE(e == 0.0);
+}
+
+// A stream of sets in batches of two, two batches in flight, gives each set
+// the energies one batch of them all does, and every set back once.
+TEST_CASE("the GPU's stream gives every set its own energies", "[gpu]")
+{
+    gpu::Device& device = device_or_skip();
+    const std::vector<double> bands {100, 400, 1600, 6300};
+    const double c = 343.2;
+    const Fields f(bands.size());
+    const std::size_t copies = 3;
+    std::vector<gpu::PointRaySet> sets(f.fields.size() * copies);
+    for (std::size_t i = 0; i < sets.size(); i++)
+    {
+        gpu::PointRayPacking packing;
+        packing.sum = i % 2 ? NK_SUM_CONE : NK_SUM_COHERENT;
+        gpu::pack_point_rays(*f.fields[i % f.fields.size()], f.reflection[i % f.fields.size()], 1.0, bands, c,
+                sets[i], {}, packing);
+    }
+    gpu::BandEnergies energies(device);
+    std::vector<std::size_t> first;
+    for (const gpu::PointRaySet& set : sets)
+        first.push_back(energies.add(set));
+    energies.submit();
+    const std::vector<double> together = energies.wait();
+
+    std::vector<std::vector<double>> streamed(sets.size());
+    std::vector<int> calls(sets.size(), 0);
+    {
+        gpu::BandStream stream(device, 2, [&](std::size_t tag, const double* energy) {
+            calls[tag]++;
+            streamed[tag].assign(energy, energy + sets[tag].problems());
+        });
+        // Pushed in reverse, tagged by their place.
+        for (std::size_t i = sets.size(); i-- > 0;)
+        {
+            gpu::PointRaySet copy = sets[i];
+            stream.push(i, std::move(copy));
+        }
+        stream.finish();
+    }
+    for (std::size_t i = 0; i < sets.size(); i++)
+    {
+        INFO("set " << i);
+        REQUIRE(calls[i] == 1);
+        REQUIRE(streamed[i].size() == sets[i].problems());
+        for (std::size_t p = 0; p < sets[i].problems(); p++)
+            REQUIRE(streamed[i][p] == together[first[i] + p]);
     }
 }
 

@@ -9,6 +9,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 
 #include "util/constants.hpp"
 
@@ -76,11 +77,11 @@ int Edge::air_by_sign(const Vec3& v) const
 namespace {
 
 // Every ring of a footprint, the outer one first.
-template <typename Fn>
-void for_each_ring(const Footprint& f, Fn fn)
+template <typename F, typename Fn>
+void for_each_ring(F& f, Fn fn)
 {
     fn(f.x, f.y);
-    for (const Ring& hole : f.holes)
+    for (auto& hole : f.holes)
         fn(hole.x, hole.y);
 }
 
@@ -90,6 +91,99 @@ double signed_area(const std::vector<double>& x, const std::vector<double>& y)
     for (std::size_t i = 0, n = x.size(); i < n; i++)
         area += cross2(x[i], y[i], x[(i + 1) % n], y[(i + 1) % n]);
     return 0.5 * area;
+}
+
+// Splits each side at every vertex of another building that lies on it,
+// strictly between its ends, where that building runs along it (one of the
+// vertex's own sides lies on the same line): a side shared in part -- a
+// T-junction, one building's wall against part of another's -- becomes
+// sides shared exactly, which the constructor stands against each other.
+// A building that touches a side at a vertex alone leaves it whole.  The
+// footprints are valid; `bounds` and `grid` are their boxes and the grid on
+// them, which a split leaves as they are.  `tolerance` (m) is how far off a
+// line a point may lie and still be on it.
+void split_at_junctions(std::vector<Footprint>& footprints, const std::vector<double>& bounds,
+        const PlanGrid& grid, double tolerance)
+{
+    struct Insert
+    {
+        std::size_t ring, side;
+        double t, x, y;
+    };
+    std::vector<std::vector<Insert>> inserts(footprints.size());
+    // The vertices of `o` onto the sides of `b`.
+    auto take = [&](std::size_t b, std::size_t o) {
+        std::size_t ring = 0;
+        for_each_ring(footprints[b], [&](const std::vector<double>& x, const std::vector<double>& y) {
+            for (std::size_t i = 0, n = x.size(); i < n; i++)
+            {
+                const std::size_t j = (i + 1) % n;
+                const double dx = x[j] - x[i], dy = y[j] - y[i], length = std::hypot(dx, dy);
+                if (!(length > 4.0 * tolerance))
+                    continue;
+                auto off_line = [&](double px, double py) {
+                    return std::abs(cross2(px - x[i], py - y[i], dx, dy)) / length;
+                };
+                for_each_ring(footprints[o], [&](const std::vector<double>& ox, const std::vector<double>& oy) {
+                    for (std::size_t k = 0, m = ox.size(); k < m; k++)
+                    {
+                        const double t = ((ox[k] - x[i]) * dx + (oy[k] - y[i]) * dy) / (length * length);
+                        if (!(t * length > 2.0 * tolerance && (1.0 - t) * length > 2.0 * tolerance)
+                                || !(off_line(ox[k], oy[k]) < tolerance))
+                            continue;
+                        const std::size_t before = (k + m - 1) % m, after = (k + 1) % m;
+                        if (off_line(ox[before], oy[before]) < tolerance || off_line(ox[after], oy[after]) < tolerance)
+                            inserts[b].push_back({ring, i, t, ox[k], oy[k]});
+                    }
+                });
+            }
+            ring++;
+        });
+    };
+    // Each pair whose boxes meet, once.
+    std::vector<std::size_t> seen(footprints.size(), footprints.size());
+    for (std::size_t b = 0; b < footprints.size(); b++)
+    {
+        const double* box = &bounds[4 * b];
+        grid.box(box[0] - tolerance, box[1] + tolerance, box[2] - tolerance, box[3] + tolerance,
+                [&](const std::uint32_t* first, const std::uint32_t* last) {
+                    for (const std::uint32_t* o = first; o != last; o++)
+                        if (*o > b && seen[*o] != b)
+                        {
+                            seen[*o] = b;
+                            take(b, *o);
+                            take(*o, b);
+                        }
+                });
+    }
+    for (std::size_t b = 0; b < footprints.size(); b++)
+    {
+        std::vector<Insert>& add = inserts[b];
+        if (add.empty())
+            continue;
+        std::sort(add.begin(), add.end(), [](const Insert& u, const Insert& v) {
+            return std::tie(u.ring, u.side, u.t) < std::tie(v.ring, v.side, v.t);
+        });
+        std::size_t ring = 0, next = 0;
+        for_each_ring(footprints[b], [&](std::vector<double>& x, std::vector<double>& y) {
+            std::vector<double> nx, ny;
+            for (std::size_t i = 0; i < x.size(); i++)
+            {
+                nx.push_back(x[i]);
+                ny.push_back(y[i]);
+                for (; next < add.size() && add[next].ring == ring && add[next].side == i; next++)
+                    // Two neighbours' vertices at one point are one vertex.
+                    if (std::hypot(add[next].x - nx.back(), add[next].y - ny.back()) > 2.0 * tolerance)
+                    {
+                        nx.push_back(add[next].x);
+                        ny.push_back(add[next].y);
+                    }
+            }
+            x = std::move(nx);
+            y = std::move(ny);
+            ring++;
+        });
+    }
 }
 
 // Whether (px, py) is inside the ring (even-odd, boundary unspecified).
@@ -108,6 +202,7 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
     : footprints_(std::move(footprints))
     , orientation_tolerance_(orientation_tolerance)
 {
+    ceded_.resize(footprints_.size());
     x_min_ = y_min_ = std::numeric_limits<double>::infinity();
     x_max_ = y_max_ = -std::numeric_limits<double>::infinity();
     // Each side as built, for finding the ones two buildings share: its
@@ -207,19 +302,35 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
         y_min_ = std::min(y_min_, by0);
         y_max_ = std::max(y_max_, by1);
         max_top_ = std::max(max_top_, f.top);
-
+    }
+    // The buildings' grid, its cells about one and a half buildings across;
+    // then the junctions, which the boxes already hold.
+    if (!footprints_.empty())
+    {
+        double building_size = 0.0;
+        for (std::size_t b = 0; b < footprints_.size(); b++)
+            building_size += std::max(bounds_[4 * b + 1] - bounds_[4 * b], bounds_[4 * b + 3] - bounds_[4 * b + 2]);
+        building_grid_ = PlanGrid(bounds_, std::max(1.0, 1.5 * building_size / footprints_.size()));
+    }
+    split_at_junctions(footprints_, bounds_, building_grid_, contact);
+    for (std::size_t b = 0; b < footprints_.size(); b++)
+    {
+        const Footprint& f = footprints_[b];
         for_each_ring(f, [&](const std::vector<double>& x, const std::vector<double>& y) {
             const std::size_t m = x.size();
             // The vertical edge at each vertex where the solid turns convex (a
-            // left turn from the side before it to the side after).
+            // left turn from the side before it to the side after) by more
+            // than its standing within `contact` of the line between its
+            // neighbours, as a vertex a junction adds does.
             std::vector<std::size_t> corner(m, none);
             for (std::size_t i = 0; i < m; i++)
             {
                 const std::size_t j = (i + 1) % m, h = (i + m - 1) % m;
                 const double turn = cross2(x[i] - x[h], y[i] - y[h], x[j] - x[i], y[j] - y[i]);
-                if (turn <= 0.0)
-                    continue;
                 const double len = std::hypot(x[j] - x[i], y[j] - y[i]);
+                const double back = std::hypot(x[h] - x[i], y[h] - y[i]);
+                if (turn <= contact * (len + back))
+                    continue;
                 const Vec3 along((x[j] - x[i]) / len, (y[j] - y[i]) / len, 0.0);
                 Edge e;
                 e.start = Vec3(x[i], y[i], 0.0);
@@ -227,7 +338,6 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
                 e.length = f.top;
                 e.face0 = along;
                 e.air = Vec3(along.y, -along.x, 0.0);
-                const double back = std::hypot(x[h] - x[i], y[h] - y[i]);
                 e.n = e.angle(Vec3((x[h] - x[i]) / back, (y[h] - y[i]) / back, 0.0)) / pi;
                 e.building = b;
                 e.vertical = true;
@@ -284,7 +394,13 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
         shared_sides_++;
         const double top = footprints_[side.building].top;
         const double neighbour = footprints_[sides[other->second].building].top;
-        if (neighbour >= top)
+        // Two roofs level across the side are one roof there: the later
+        // building cedes the side to the earlier, so a bounce on it is the
+        // earlier's alone (on_roof), and neither keeps a wall or an edge on it.
+        const bool level = std::abs(neighbour - top) <= 1e-9;
+        if (level && sides[other->second].building < side.building)
+            ceded_[side.building].push_back({side.x0, side.y0, side.x1, side.y1});
+        if (level || neighbour >= top)
         {
             drop_facade[side.facade] = 1;
             drop_edge[side.roof] = 1;
@@ -322,10 +438,13 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
     }
     for (Edge& e : edges_)
         e.air1 = std::sin(e.n * pi) * e.face0 - std::cos(e.n * pi) * e.air;
+    roof_facade_.assign(footprints_.size(), no_facade);
+    for (std::size_t f = facades_.size(); f-- > 0;)
+        roof_facade_[facade_building_[f]] = f;
 
     // The grids, their cells about one and a half typical items across.
     std::vector<double> facade_boxes;
-    double building_size = 0.0, facade_size = 0.0;
+    double facade_size = 0.0;
     for (const Facade& f : facades_)
     {
         const double length = std::hypot(f.x1 - f.x0, f.y1 - f.y0);
@@ -346,13 +465,8 @@ Buildings::Buildings(std::vector<Footprint> footprints, double orientation_toler
                 {std::min(f.x0, f.x1), std::max(f.x0, f.x1), std::min(f.y0, f.y1), std::max(f.y0, f.y1)});
         facade_size += length;
     }
-    for (std::size_t b = 0; b < footprints_.size(); b++)
-        building_size += std::max(bounds_[4 * b + 1] - bounds_[4 * b], bounds_[4 * b + 3] - bounds_[4 * b + 2]);
-    if (!footprints_.empty())
-    {
-        building_grid_ = PlanGrid(bounds_, std::max(1.0, 1.5 * building_size / footprints_.size()));
+    if (!facades_.empty())
         facade_grid_ = PlanGrid(facade_boxes, std::max(1.0, 1.5 * facade_size / facades_.size()));
-    }
     // The edges were made building by building, and dropping the shared ones
     // kept their order.
     edge_begin_.assign(footprints_.size() + 1, edges_.size());
@@ -387,6 +501,9 @@ bool Buildings::strictly_inside(std::size_t building, double x, double y) const
 
 bool Buildings::on_roof(std::size_t building, double x, double y) const
 {
+    for (const auto& s : ceded_[building])
+        if (distance_to_side(x, y, s[0], s[1], s[2], s[3]) < 1e-9)
+            return false;
     const Footprint& f = footprints_[building];
     bool in = false, side = false;
     for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {

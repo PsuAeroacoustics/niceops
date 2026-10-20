@@ -5,6 +5,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -77,6 +78,10 @@ TEST_CASE("the tabulated transition function is the Faddeeva form", "[wedge]")
         worst = std::max(worst, std::abs(utd_transition(x) - faddeeva_form(x)) / std::abs(faddeeva_form(x)));
     INFO("worst relative " << worst);
     REQUIRE(worst < 2e-11);
+    // NaN passes through rather than indexing the table.
+    const auto nan = utd_transition(std::numeric_limits<double>::quiet_NaN());
+    REQUIRE(std::isnan(nan.real()));
+    REQUIRE(std::isnan(nan.imag()));
 }
 
 // UTD against Sommerfeld's half-plane, across the shadow and reflection

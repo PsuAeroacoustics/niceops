@@ -260,8 +260,8 @@ Recording run(const Grid& g, const CanyonWaveSetup& s)
 }
 
 // run() on the GPU, in float: the same grid, coefficients, pulse and stopping
-// rule, two dispatches a step and the energy every 32 steps as partial sums
-// per group.  The steps go over 1024 at a time, two such batches in flight; a
+// rule, one dispatch a step and the energy every 32 steps as partial sums per
+// group.  The steps go over 1024 at a time, two such batches in flight; a
 // batch past the stop runs on harmlessly (the field never depends on when the
 // run stops), and the recording is cut at the step run() would stop at.
 Recording run_gpu(const Grid& g, const CanyonWaveSetup& s)

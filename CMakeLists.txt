@@ -170,7 +170,8 @@ endif()
 # GPU backend (src/gpu).  AUTO takes Metal on macOS with Clang and none
 # elsewhere (GCC cannot build the Objective-C++ that drives Metal).  The
 # kernels are compiled at run time from source embedded in the binary, so no
-# shader toolchain is needed; a run uses the GPU only when it asks (--gpu).
+# shader toolchain is needed.  Where there is a device the tools that have a
+# GPU path take it by default; --no-gpu keeps the CPU (docs/internals/gpu.md).
 set(NICEOPS_GPU "AUTO" CACHE STRING "GPU backend: AUTO (Metal on macOS with Clang, else none), METAL or OFF")
 set_property(CACHE NICEOPS_GPU PROPERTY STRINGS AUTO METAL OFF)
 if(NICEOPS_GPU STREQUAL "AUTO")
@@ -1290,6 +1291,17 @@ add_test(NAME buildings_sampled_run COMMAND ${URBAN_RUN} --buildings tests/data/
 set_tests_properties(buildings_every_state_run buildings_sampled_run PROPERTIES FIXTURES_SETUP buildings_sampling_runs)
 add_test(NAME buildings_states_sampled COMMAND golden_compare integrated/buildings_sampled.csv integrated/buildings_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_states_sampled PROPERTIES FIXTURES_REQUIRED buildings_sampling_runs)
+# Receivers stand where the run puts any: the same seven microphones given as raised observer points,
+# with no heights, are the same levels; --no-ground_effect is no clash (the run has no ground model
+# among buildings); and a database without spectra is refused, its rays reading each band.
+add_test(NAME buildings_raised_observers_run COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers_raised.csv -L warn --buildings tests/data/urban_buildings.csv --no-gpu -o integrated/buildings_raised.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_no_ground_effect_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --no-ground_effect --no-gpu -o integrated/buildings_no_ground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_raised_observers_run buildings_no_ground_effect_run PROPERTIES FIXTURES_SETUP buildings_receiver_runs)
+add_test(NAME buildings_raised_observers_are_the_heights COMMAND golden_compare integrated/buildings_raised.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_no_ground_effect_is_the_default COMMAND golden_compare integrated/buildings_no_ground.csv integrated/buildings_sampled.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_raised_observers_are_the_heights buildings_no_ground_effect_is_the_default PROPERTIES FIXTURES_REQUIRED "buildings_receiver_runs;buildings_sampling_runs")
+add_test(NAME buildings_refuses_no_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn --buildings tests/data/urban_buildings.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_no_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--buildings needs a database carrying per-band spectra")
 add_test(NAME buildings_refuses_lone_state_tolerance COMMAND ${URBAN_RUN} --state_tolerance 0.1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --state_tolerance, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1300,6 +1312,16 @@ set_tests_properties(buildings_refuses_negative_state_tolerance PROPERTIES PASS_
 add_test(NAME buildings_far_phase_lower_is_the_level COMMAND golden_compare integrated/buildings_far_phase_lower.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME buildings_far_phase_upper_is_the_level COMMAND golden_compare integrated/buildings_far_phase_upper.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_far_phase_lower_is_the_level buildings_far_phase_upper_is_the_level PROPERTIES FIXTURES_REQUIRED buildings_far_runs)
+# The measured coherence through a run: with one ray any sum is that ray's level, so the far
+# building's run is the open one again, at 1e-9; and over the test district the interval's ends
+# bracket every microphone's SEL, some strictly.
+add_test(NAME buildings_far_measured_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --ray_coherence measured --state_tolerance 0 --no-gpu -o integrated/buildings_far_measured.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_measured_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --ray_coherence measured --phase_interval 90 --no-gpu -o integrated/buildings_measured.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_far_measured_run buildings_measured_run PROPERTIES FIXTURES_SETUP buildings_measured_runs)
+add_test(NAME buildings_far_measured_is_open COMMAND golden_compare integrated/buildings_far_measured.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_far_measured_is_open PROPERTIES FIXTURES_REQUIRED "buildings_measured_runs;buildings_far_runs")
+add_test(NAME buildings_measured_interval_brackets COMMAND ${CMAKE_COMMAND} -DLEVEL=integrated/buildings_measured.csv -DLOWER=integrated/buildings_measured_phase_lower.csv -DUPPER=integrated/buildings_measured_phase_upper.csv -P tests/check_interval.cmake WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_measured_interval_brackets PROPERTIES FIXTURES_REQUIRED buildings_measured_runs)
 add_test(NAME buildings_refuses_inside COMMAND niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_inside.csv -L warn --buildings tests/data/urban_buildings.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "observer 2's microphone stands inside building 8")
 add_test(NAME buildings_refuses_urban_table COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --urban_table tables/urban_open_test.nc -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1410,9 +1432,11 @@ else()
   add_test(NAME buildings_gpu_matches_cpu COMMAND golden_compare integrated/buildings_gpu.csv integrated/buildings_sampled.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   add_test(NAME buildings_gpu_every_state_matches_cpu COMMAND golden_compare integrated/buildings_gpu_every_state.csv integrated/buildings_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(buildings_gpu_matches_cpu buildings_gpu_every_state_matches_cpu PROPERTIES FIXTURES_REQUIRED "buildings_gpu_runs;buildings_sampling_runs")
-  # The measured coherence and the phase interval are the CPU's: --gpu asked for is refused there.
+  # The measured coherence and the phase interval are the CPU's: --gpu asked for is refused there,
+  # as the arguments are read rather than track by track.
   add_test(NAME buildings_gpu_refuses_measured COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --ray_coherence measured --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-  set_tests_properties(buildings_gpu_refuses_measured PROPERTIES PASS_REGULAR_EXPRESSION "--gpu: the GPU does not take --ray_coherence measured or --phase_interval")
+  add_test(NAME buildings_gpu_refuses_interval COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --phase_interval 90 --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_gpu_refuses_measured buildings_gpu_refuses_interval PROPERTIES PASS_REGULAR_EXPRESSION "--gpu: the GPU does not take --ray_coherence measured or --phase_interval" FAIL_REGULAR_EXPRESSION "Skipping")
 endif()
 # --atmosphere through a single-level profile holding the vehicle file's own
 # atmosphere has to reproduce the homogeneous run: the whole layered-absorption

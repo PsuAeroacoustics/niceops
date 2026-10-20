@@ -634,14 +634,22 @@ struct About
     double r = 0.0, theta = 0.0, z = 0.0;
 };
 
-About about(const Edge& edge, const Vec3& p)
+// An angle about the edge in its air: one past n pi, which only round-off
+// puts a point in a face's plane at, goes onto the nearer face, 0 or n pi.
+// Without it a point in face 0's plane came out at 0 or just under 2 pi as
+// the rounding went, and a rotated district's partners changed.
+double onto_air(const Edge& edge, double theta)
 {
-    const Edge::Projection q = edge.project(p);
-    double theta = edge.angle(q.normal);
     const double open = edge.n * pi;
     if (theta > open)
         theta = theta - open < 2.0 * pi - theta ? open : 0.0;
-    return {q.normal.norm(), theta, q.along};
+    return theta;
+}
+
+About about(const Edge& edge, const Vec3& p)
+{
+    const Edge::Projection q = edge.project(p);
+    return {q.normal.norm(), onto_air(edge, edge.angle(q.normal)), q.along};
 }
 
 } // namespace
@@ -651,10 +659,10 @@ EdgeFrameEnds edge_frame_ends(const Edge& edge, const Vec3& source, const Vec3& 
     const Edge::Projection s = edge.project(source), r = edge.project(receiver);
     EdgeFrameEnds e;
     e.r_s = s.normal.norm();
-    e.theta_s = edge.angle(s.normal);
+    e.theta_s = onto_air(edge, edge.angle(s.normal));
     e.z_s = s.along;
     e.r_r = r.normal.norm();
-    e.theta_r = edge.angle(r.normal);
+    e.theta_r = onto_air(edge, edge.angle(r.normal));
     e.z_r = r.along;
     return e;
 }
@@ -948,7 +956,7 @@ Vec3 face_n_normal(const Edge& e)
 double angle_about(const Edge& e, const Vec3& p)
 {
     const Vec3 d = p - e.start;
-    return e.angle(d - d.dot(e.direction) * e.direction);
+    return onto_air(e, e.angle(d - d.dot(e.direction) * e.direction));
 }
 
 // Where along `other` a condition on the angle about `edge` of other's point
@@ -1010,8 +1018,16 @@ std::vector<PartnerWave> twice_diffracted_partners(const Edge& first, const Edge
         const Vec3& receiver)
 {
     std::vector<PartnerWave> partners;
-    const auto add = [&](bool over_second, const Vec3& image, const Stretch& part, const Edge& along) {
-        if (part.hi - part.lo > 1e-9 * along.length && (part.lo > 0.0 || part.hi < along.length))
+    // A part reaching within a hair of an end reaches the end: the search
+    // skips a vertex the two edges share, and its bisection toward it stops a
+    // hair short, which made a wave over the whole edge look partial.
+    const auto add = [&](bool over_second, const Vec3& image, Stretch part, const Edge& along) {
+        const double hair = 1e-9 * along.length;
+        if (part.lo <= hair)
+            part.lo = 0.0;
+        if (part.hi >= along.length - hair)
+            part.hi = along.length;
+        if (part.hi - part.lo > hair && (part.lo > 0.0 || part.hi < along.length))
             partners.push_back({over_second, image, part});
     };
     // The first edge's waves at the second edge's points: the incident wave,

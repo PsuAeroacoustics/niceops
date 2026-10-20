@@ -5,6 +5,7 @@
 #include <random>
 #include <vector>
 
+#include "buildings.hpp"
 #include "edge_source.hpp"
 #include "point_paths.hpp"
 #include "util/constants.hpp"
@@ -442,3 +443,89 @@ TEST_CASE("the level-curve spectrum is the nested integral", "[edge_source]")
 }
 
 
+
+namespace {
+
+Footprint turned_box(double x0, double y0, double x1, double y1, double top, double degrees)
+{
+    const double c = std::cos(degrees * pi / 180.0), s = std::sin(degrees * pi / 180.0);
+    Footprint f;
+    for (const auto& [x, y] : {std::make_pair(x0, y0), std::make_pair(x1, y0), std::make_pair(x1, y1),
+                 std::make_pair(x0, y1)})
+    {
+        f.x.push_back(c * x - s * y);
+        f.y.push_back(s * x + c * y);
+    }
+    f.top = top;
+    return f;
+}
+
+} // namespace
+
+// A district turned about the vertical, its source and microphone with it, is
+// the same field under the edge-source integral: a point in an edge's face's
+// plane is on the face whatever the rounding, where the partner search once
+// put it at 0 or just under 2 pi as it went, and moved bands by up to 1 dB.
+TEST_CASE("the edge source is the same with the district turned", "[edge_source]")
+{
+    std::vector<double> bands;
+    for (int i = 0; i <= 19; i++)
+        bands.push_back(125.0 * std::pow(2.0, i / 3.0));
+    std::vector<double> first;
+    for (double degrees : {0.0, 17.0, 61.3})
+    {
+        const double c = std::cos(degrees * pi / 180.0), s = std::sin(degrees * pi / 180.0);
+        const auto turn = [&](const Vec3& p) { return Vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z); };
+        const Buildings city({turned_box(0.0, 0.0, 0.96, 1.0, 0.492, degrees)});
+        PointPathOptions options;
+        options.edge_source = true;
+        const PointSourceField field(city, turn(Vec3(-2.0, 0.5, 1.5)), turn(Vec3(1.46, 0.5, 0.0032)), options);
+        std::vector<double> reflection(city.facades().size() * bands.size(), 1.0), out(bands.size());
+        field.band_levels(reflection, 1.0, bands, 343.2, out.data());
+        if (first.empty())
+            first = out;
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            INFO(degrees << " degrees, " << bands[b] << " Hz");
+            REQUIRE(std::abs(out[b] - first[b]) < 0.005);
+        }
+    }
+}
+
+// A partner's part along an edge that runs to a vertex the two edges share
+// reaches the end exactly: the search skips the shared vertex and bisected to
+// a hair short of it, so a wave over the whole edge was taken as a partner and
+// added in whole, one ray 10-16 dB high.
+TEST_CASE("a partner's part reaches a shared vertex", "[edge_source]")
+{
+    Footprint a, b;
+    a.x = {0.0, 10.0, 10.0, 0.0};
+    a.y = {0.0, 0.0, 10.0, 10.0};
+    a.top = 12.0;
+    b.x = {20.0, 30.0, 30.0, 20.0};
+    b.y = {3.0, 3.0, 13.0, 13.0};
+    b.top = 8.0;
+    const Buildings city({a, b});
+    PointPathOptions options;
+    options.edge_source = true;
+    const PointSourceField field(city, Vec3(-40.0, 5.0, 25.0), Vec3(19.0, 1.0, 7.0), options);
+    std::size_t twice = 0, parts = 0;
+    for (const PointRay& ray : field.rays())
+    {
+        if (ray.wedges != 2)
+            continue;
+        twice++;
+        const Edge g1 = through_floor(city.edges()[ray.edge_source.edges[0]]);
+        const Edge g2 = through_floor(city.edges()[ray.edge_source.edges[1]]);
+        for (const PartnerWave& p : twice_diffracted_partners(g1, g2, ray.edge_source.source, ray.edge_source.microphone))
+        {
+            const double length = (p.over_second ? g2 : g1).length;
+            parts++;
+            INFO("part " << p.part.lo << " to " << p.part.hi << " of " << length);
+            REQUIRE((p.part.lo == 0.0 || p.part.lo > 1e-6 * length));
+            REQUIRE((p.part.hi == length || p.part.hi < length * (1.0 - 1e-6)));
+        }
+    }
+    REQUIRE(twice > 0);
+    REQUIRE(parts > 0);
+}

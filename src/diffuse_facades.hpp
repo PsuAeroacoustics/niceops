@@ -64,6 +64,12 @@ struct DiffuseOptions
     // patches to the microphone; empty for none.  Between patches it is left
     // out.
     std::vector<double> air;
+    // Whether the roofs scatter too, cut into patches facing up, each with
+    // the rho and s of its building's first facade, as a point source's roof
+    // reflection takes them.  A building then scatters as a whole, walls and
+    // roof, where any of its walls is within the radius.  For a model whose
+    // rays reflect in the roofs.
+    bool roofs = false;
 };
 
 class DiffuseFacades
@@ -72,12 +78,16 @@ public:
     struct Patch
     {
         Vec3 center;          // a millimetre out from the face
-        Vec3 normal;          // unit, horizontal, outward
+        Vec3 normal;          // unit, outward: horizontal on a wall, up on a roof
         double area = 0.0;
-        double width = 0.0;   // along the facade
-        double height = 0.0;
+        double width = 0.0;   // along `along`
+        double height = 0.0;  // along `across`
         Vec3 along;           // unit, the facade's base direction
+        Vec3 across {0.0, 0.0, 1.0}; // unit, in the face across `along`
+        // The facade it lies on, or for a roof (`roof`) the facade whose rho
+        // and s the roof takes (Buildings::roof_facade).
         std::size_t facade = 0;
+        bool roof = false;
     };
 
     // `reflection` and `scattering` are [facade][band] for buildings.facades();
@@ -142,13 +152,17 @@ public:
 
     // Whether a facade is within the radius, cut into patches: one whose
     // scattered share this field returns.  A facade outside it reflects its
-    // whole rho specularly.
+    // whole rho specularly.  With DiffuseOptions::roofs, every facade of a
+    // building any of whose facades is in reach, and its roof with them.
     bool scatters(std::size_t facade) const
     {
         return facade < in_reach_.size() && in_reach_[facade] != 0;
     }
 
 private:
+    // The roofs' patches (DiffuseOptions::roofs), once the walls' reach is
+    // known.
+    void add_roof_patches();
     // What the microphone gathers from an irradiance [patch][band].
     void gathered(const std::vector<double>& e, double* out) const;
     // The irradiance on `which` patches per band, [patch][band]: each specular

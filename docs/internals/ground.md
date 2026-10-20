@@ -233,10 +233,21 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
   counterclockwise, holes clockwise), so one code path makes the facades, edges and visibility of
   all of them. A feature raised off the ground is left out, not extruded from the floor.
 - **Shared sides are found exactly** (the same two vertices, run the other way, to a micrometre),
-  as OpenStreetMap terraces share nodes. A side shared only in part keeps its facade and edges;
-  `Buildings::buried` then keeps an edge point or a patch that lies inside the neighbour out of
-  the rays. The lower roof's edge along a taller wall would otherwise diffract as a convex
-  wedge, and it is reentrant.
+  as OpenStreetMap terraces share nodes. The lower roof's edge along a taller wall would otherwise
+  diffract as a convex wedge, and it is reentrant. Two things make that hold for real outlines:
+  - **A side shared in part is split first** (`split_at_junctions`): at each vertex of another
+    building that lies on it, where that building runs along it -- a T-junction, or walls
+    staggered along one line -- so the part they share is shared exactly. Left whole, the long
+    wall kept its facade, roof edge and corners against the neighbour; none of those points lies
+    strictly inside either solid, so `Buildings::buried` passed them, and rays diffracted at the
+    junction's corner and ran along the zero-width seam between the two (a courtyard closed at
+    T-junctions heard a far source at street level). A building touching a side at a vertex
+    alone leaves it whole. No shipped or validation district has a T-junction.
+  - **A vertex within `contact` of the line through its neighbours is no corner**, as a split
+    adds; a corner of n = 1.00001 diffracts nothing and costs the path search.
+  - **Two roofs level across a shared side are one roof there** (`ceded_`): the later building
+    cedes the side, so a bounce on the join is one ray (`on_roof`), where both buildings' roofs
+    took it, 1.4 dB loud.
 - **Round-off is the enemy of aligned geometry, three ways**, each found by reading the demo
   district back from GeoJSON, where 1e-8 m of round-off made walls that were parallel or square
   1e-10 rad off:
@@ -291,7 +302,18 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
   - **Only walls in reach scatter.** A wall beyond `--diffuse_radius` of a microphone has no
     patches to return its share, so for that microphone it keeps its whole rho: the rays' reflections
     are per microphone (`reflection_for`), and `point_field_scattering_out_of_reach_is_specular`
-    holds a run with none in reach to the specular run. `point_energy` is tested against Lambert's law for a source and microphone
+    holds a run with none in reach to the specular run.
+  - **Roofs scatter where the rays reflect in them** (`DiffuseOptions::roofs`, which
+    `niceops_point_field` sets; the plane-wave tables, whose rays leave roofs out, do not). A roof
+    is cut into patches facing up along its outline's longest side, a cell the outline crosses
+    keeping its part on the roof; it takes its building's first wall's rho and s, as a roof's
+    reflection does, so with roofs a building scatters as a whole wherever any of its walls is in
+    reach -- otherwise the roof's specular coefficient and its patches could disagree. Every
+    image of a patch below the floor takes its normal mirrored with it (`transfer`, the
+    lighting), so a roof, lit from above only, gets and sends nothing by the floor; the lighting
+    skips a roof's floor image outright only to save its traces. Faces are tested for facing
+    each other before visibility, which roofs make worth it. Without roofs a rooftop microphone
+    lost 1-2 dB (FIDELITY). `point_energy` is tested against Lambert's law for a source and microphone
     together in front of a wall, rho s / 2 d^2 (0.2% at patches of d / 5).
   - **The coefficient is the relief's, band by band** (`--scattering_spectrum`, from
     `tools/profile_scattering.py`): a constant s is a poor stand-in, the relief scattering nothing
@@ -341,8 +363,8 @@ exactly. What to keep:
   lit by a reflection or the floor, and the comparison needs the same ray set.
 - **Do not range-for over `PointSourceField(...).rays()`.** The temporary dies before the loop
   runs (C++17 does not extend it through a member call); two tests did, and read garbage.
-- `tools/building_input.hpp` is the district and microphone reading both urban tools share; a
-  change to the CSV or GeoJSON rules goes there once.
+- `src/building_input.hpp` is the district and microphone reading the urban tools and the run
+  share; a change to the CSV or GeoJSON rules goes there once.
 
 **Where its time goes, and what not to undo.** On the 49-block benchmark district (a drone 30 m
 up, 185 street microphones, 24 bands) a pair took 1.55 s of CPU and takes 0.04 s, 88% of it the
@@ -418,7 +440,7 @@ it bought:
     on its cut, where its amplitude per unit length goes as 1/sqrt(u − u_c); how much of it the
     first panel misses depends on how far in the node sits. 1e-7 of each wavenumber's own short
     segment is fine; 1e-7 of a 200 m one is not, at 10 kHz, which is why
-    `shared_face_geometry` (the `--gpu` path's aperture, worked out once for every wavenumber)
+    `shared_face_geometry` (the GPU's aperture, worked out once for every wavenumber)
     takes a hair of the shortest aperture instead ([gpu.md](gpu.md)).
   Its second wedge's coefficient comes from a `WedgeSweep`: theta is fixed along the aperture,
   so each term's angle is theta's part plus theta0's, by the angle-addition formulas, two sincos
@@ -576,7 +598,7 @@ Measured and left alone:
   a roof's plane.
 - **Nor does the band average's integral form on the CPU.** Where every pair of rays is within
   the pair sum's reach (the bands up to about 200 Hz on the district), Gauss-Legendre over the
-  sub-band, as `--gpu` takes it, would agree to 1e-12 dB, but the vectorized pair sum takes 0.42 ns
+  sub-band, as the GPU takes it, would agree to 1e-12 dB, but the vectorized pair sum takes 0.42 ns
   a pair there -- 0.54 s for 1.3 billion pairs over the district's 185 microphones -- and the
   integral would take 49 million sincos calls for the same problems.
 - **Neither do cheaper ray sets.** Twice-diffracted rays off the floor at both ends carry 0.1% of
@@ -653,20 +675,24 @@ which marches them. What to keep:
     whose transfer is known at neither end is evaluated outright, or the estimate would leave the
     source's own jump silent. Without it the far building's sampled run missed the reference by
     2.6e-4 dB; with it, 1e-12.
-  - **`--state_tolerance 0` takes the old path**, every state in blocks, and is byte-identical to
-    the run before sampling; the sampled path shares its pair evaluation.
-  - **What it can miss:** a feature narrower than half a stretch, which no middle lands on. On the
-    demo approach one state in the alley is 2.1 dB off; the 99th percentile is 0.13 dB.
+  - **`--state_tolerance 0` takes the unsampled path**, every state in blocks; the sampled path
+    shares its pair evaluation.
+  - **What it can miss:** a feature narrower than half a stretch, which no middle lands on
+    (FIDELITY has the demo approach's).
+  - **A middle no band is heard at is matched by an estimate that hears none.** "Heard" is a band
+    above the floor; a middle with no ray, or every band at the floor, otherwise compared its
+    bands with an estimate it could never match, and every such stretch split to single steps.
+    It cost time, not accuracy.
   - The defaults (32 apart, 0.02 dB, loud bands within 30 dB at 15 times the tolerance) were
     chosen from a simulation over every state's band levels: 0.05 dB evaluated 16% of the pairs
     for LAmax within 0.22 dB, 0.02 dB 27% for LAmax within 0.01.
-- Cost: the demo track's 6,551 states at seven microphones take 1.7 s on the GPU and 3.3 s on 14
-  threads with `--no-gpu`, 12,453 pairs evaluated ([gpu.md](gpu.md)); on the CPU, 10 s with every
-  state, 37 s with every shared face's integral at every wavenumber,
-  70 s before the transition table and the shared nodes above). The run without buildings takes
-  0.2 s. Of an evaluated pair, the coherence sum is about a fifth, the transition function and
-  wedge coefficients another, the sampled shared faces' integrals another, the path search about 6%.
-  What it changes is in FIDELITY.
+- Cost: FIDELITY has the demo track's ([gpu.md](gpu.md) the GPU's share). Of an evaluated pair,
+  the coherence sum is about a fifth, the transition function and wedge coefficients another, the
+  sampled shared faces' integrals another, the path search about 6%.
+- **Microphones are the run's own** (`process_trajectory`'s observer points, raised by the height
+  column where there is one). The floor is the buildings', so `--buildings` turns the ground model
+  off rather than leaving it to put a microphone at its receiver height: the run built ground
+  tables it never used and put observers without a height column 1.2 m up.
 - Tests: `buildings_far_is_open_without_ground` (every state), `buildings_far_sampled_is_open`
   (sampled, at 1e-6 dB), `buildings_states_sampled` (the demo approach sampled against every
   state, within 0.01 dB), the refusals `buildings_refuses_*`, and the launch test above.
@@ -820,9 +846,17 @@ frequency domain, for the point-source model's diffracted rays. What to keep:
   the astigmatic one the curvature gives the second edge broke `the point-source field is
   reciprocal` by 0.04 dB.
 - **CPU only.** `--edge_source` with `--gpu` is refused.
-- **Where its time goes.** DigiCity's four microphones (17 bands, one thread) take 58 s against
-  0.22 s for UTD, nearly all of it the level curves' integrand: two `atan2`, two `sinh` and the
-  `asinh` of the two etas, and the directivities' half-angles. `std::nearbyint` in the
+- **Angles about an edge are clamped onto its air** (`onto_air`): a direction a hair past a face,
+  which rounding puts at θ ≈ 0 or ≈ 2π at a building's corner, is taken on the face. Without it
+  `about()` clamped and `angle_about`/`edge_frame_ends` did not, so the partner search changed
+  with the district's rotation and moved bands by up to 1 dB; `the edge source is the same with
+  the district turned` holds it.
+- **A partner's part reaching a shared vertex ends on it** (`twice_diffracted_partners`' `add`
+  snaps an end within 1e-9 of the edge's length). The solve stopped 1e-20 short, the part read as
+  ending before the vertex, and the partner's whole field was added to its ray, 10-16 dB high;
+  `a partner's part reaches a shared vertex` holds it.
+- **Where its time goes** (FIDELITY has the cost): nearly all of it the level curves' integrand,
+  two `atan2`, two `sinh` and the `asinh` of the two etas, and the directivities' half-angles. `std::nearbyint` in the
   directivity build and `std::hypot` in the geometry together cost 5% of the run.
 
 Guard tests (`tests/test_edge_source.cpp`, and two in `test_point_paths.cpp`): the plane-wave
@@ -861,7 +895,8 @@ tables' low band (THEORY §6.6). What to keep:
   (`spectra`) and each azimuth of a canyon's gains (`canyon_wave_gains`) go to the run's
   threads, the same bits at any count. Serially the gains alone are 11 s of a 20 m canyon's
   79 s to 707 Hz, and fourteen such canyons to 354 Hz take 65 s on 14 threads against 34 s
-  threaded. With `--gpu` the march itself is the GPU's ([gpu.md](gpu.md)).
+  threaded. On the GPU (the default where there is one) the march itself is the GPU's
+  ([gpu.md](gpu.md)).
 - **15 points per wavelength for tables**: 15 against 20 agree within 0.3 dB, 10 within 1.4.
 - **The far-field sum steps its phase by recurrence** over the evenly spaced points: one complex
   multiply per point instead of a sine and a cosine. It is the table build's inner loop.
@@ -908,9 +943,18 @@ scale models. It is not part of any prediction. What to keep:
   canyon solver has, would store three pressures in every cell of a 3-D grid.
 - **The floor and the plane of symmetry are rigid faces, not PML.** `--mirror` halves the grid;
   a source on the plane injects half its strength, its image the other half.
-- **Sources and receivers spread over their eight cells by trilinear weights, renormalised over
-  the air among them.** The spreading filters what a point would radiate: the levels come out
-  0.01-0.09 dB low at 25 cells a wavelength, rising with frequency (`tests/test_fdtd.cpp`).
+- **At second order, and beside a solid, sources and receivers spread over their eight cells by
+  trilinear weights, renormalised over the air among them.** The spreading filters what a point
+  would radiate, low by an amount that rises with frequency (`tests/test_fdtd.cpp`; FIDELITY has
+  how much).
+- **The transfer divides by the march's own time difference** (`FdtdRecording::transfer`): the
+  source term enters the pressure update as a difference over a step, whose symbol is
+  -i (2/dt) sin(omega dt/2). Dividing by -i omega left every level low by 20 lg(sin x/x),
+  x = omega dt/2: 0.05 dB at 8 cells a wavelength. **The air weights Q as it weights p**,
+  exp(-a c (t - t_peak)) on both, which is the transfer at the complex frequency omega + i a c and
+  exact for every arrival; weighting p alone left a bias that grows with the pulse's width
+  (0.013 dB at 500 Hz in the free-field test), and `over a rigid floor the FDTD's field is the two
+  rays'` fails without either. The weight is exact every 256th sample and stepped between.
 - **Absorbing walls are the canyon solver's half-cell impedance** (stable for any Z), on the faces
   flagged as a solid's, from the air cell's side. The floor stays rigid. At fourth order two
   things go with it, and both are needed (`velocity_difference`, `wall_pressure`, `fdtd_dv4`,

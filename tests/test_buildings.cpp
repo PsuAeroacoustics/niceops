@@ -325,6 +325,76 @@ TEST_CASE("terraced buildings stand against each other where they share a side",
     REQUIRE(!equal.buried(Vec3(10.0, 5.0, 5.0) + Vec3(0.0, 5.0, 0.0) + Vec3(0.0, 0.0, 20.0)));
 }
 
+// A wall against part of another's -- a T-junction -- is split there, so the
+// part they share is shared exactly: the lower (or later, as tall) building's
+// facade, roof edge and corners there go, the taller's stand above the lower
+// roof, and the vertices the split adds are no corners.
+TEST_CASE("a wall against part of another's stands against it there", "[buildings]")
+{
+    // A house against the middle of a long block's north wall, as tall.
+    const Buildings equal({box(0.0, 0.0, 30.0, 10.0, 10.0), box(10.0, 10.0, 20.0, 20.0, 10.0)});
+    REQUIRE(equal.footprints()[0].x.size() == 6);
+    REQUIRE(equal.footprints()[1].x.size() == 4);
+    REQUIRE(equal.shared_sides() == 2);
+    REQUIRE(equal.facades().size() == 8);
+    for (const auto& facade : equal.facades())
+        REQUIRE(!(facade.y0 == 10.0 && facade.y1 == 10.0 && std::min(facade.x0, facade.x1) >= 10.0
+                && std::max(facade.x0, facade.x1) <= 20.0));
+    std::size_t corners = 0, roofs = 0;
+    for (const auto& edge : equal.edges())
+    {
+        if (!edge.vertical)
+        {
+            roofs++;
+            continue;
+        }
+        corners++;
+        // At (10, 10) and (20, 10) the walls meet reentrant: no corner there.
+        REQUIRE(!(edge.start.y == 10.0 && edge.start.x > 5.0 && edge.start.x < 25.0));
+    }
+    REQUIRE(corners == 6);
+    REQUIRE(roofs == 8);
+
+    // The house taller: the block's wall under it goes, the house's stands
+    // above the block's roof, its corners there with it.
+    const Buildings taller({box(0.0, 0.0, 30.0, 10.0, 10.0), box(10.0, 10.0, 20.0, 20.0, 16.0)});
+    REQUIRE(taller.facades().size() == 9);
+    std::size_t raised = 0;
+    for (const auto& facade : taller.facades())
+        if (facade.y0 == 10.0 && facade.y1 == 10.0 && std::min(facade.x0, facade.x1) >= 10.0
+                && std::max(facade.x0, facade.x1) <= 20.0)
+        {
+            raised++;
+            REQUIRE(facade.bottom == 10.0);
+            REQUIRE(facade.top == 16.0);
+        }
+    REQUIRE(raised == 1);
+    std::size_t raised_corners = 0;
+    for (const auto& edge : taller.edges())
+        if (edge.vertical && edge.start.y == 10.0 && edge.start.x > 5.0 && edge.start.x < 25.0)
+        {
+            raised_corners++;
+            REQUIRE(edge.start.z == 10.0);
+            REQUIRE(edge.length == 6.0);
+        }
+    REQUIRE(raised_corners == 2);
+
+    // Walls staggered along one line share their overlap.
+    const Buildings staggered({box(0.0, 0.0, 10.0, 10.0, 8.0), box(5.0, 10.0, 15.0, 20.0, 8.0)});
+    REQUIRE(staggered.shared_sides() == 2);
+    REQUIRE(staggered.footprints()[0].x.size() == 5);
+    REQUIRE(staggered.footprints()[1].x.size() == 5);
+
+    // A building touching a wall at one vertex leaves it whole.
+    Footprint diamond;
+    diamond.x = {15.0, 20.0, 15.0, 10.0};
+    diamond.y = {10.0, 15.0, 20.0, 15.0};
+    diamond.top = 10.0;
+    const Buildings touching({box(0.0, 0.0, 30.0, 10.0, 10.0), diamond});
+    REQUIRE(touching.footprints()[0].x.size() == 4);
+    REQUIRE(touching.shared_sides() == 0);
+}
+
 TEST_CASE("holes must lie inside their footprint, apart", "[buildings]")
 {
     Footprint outside = box(0.0, 0.0, 10.0, 10.0, 5.0);

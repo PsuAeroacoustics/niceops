@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <sstream>
+#include <stdexcept>
 
 #include "util/constants.hpp"
 
@@ -71,19 +72,48 @@ double SourceCoherence::delay_length(const Vec3& first, const Vec3& second, cons
     return sound_speed * rotation_sense * d / rotation_rate;
 }
 
-SourceCoherence cone_coherence(double degrees)
+namespace {
+
+// A fit is its scale and exponent together, as the database's reader
+// insists.
+void check_fits(const CoherenceRecord& record, const char* who)
 {
+    if (record.scale.has_value() != record.exponent.has_value()
+            || record.spread_scale.has_value() != record.spread_exponent.has_value())
+        throw std::invalid_argument(std::string(who) + ": a fit's scale without its exponent, or the reverse");
+}
+
+// The record's spread fit and tonal fractions, where it gives them.
+void take_spread(const CoherenceRecord& record, SourceCoherence& c)
+{
+    if (record.spread_scale)
+    {
+        c.spread_scale = *record.spread_scale;
+        c.spread_exponent = *record.spread_exponent;
+    }
+    c.tonal_fraction = record.tonal_fraction;
+    if (record.spread_scale || !record.tonal_fraction.empty())
+        c.spread_source = "the database's" + (record.source.empty() ? std::string() : " (" + record.source + ")");
+}
+
+} // namespace
+
+SourceCoherence cone_coherence(double degrees, const CoherenceRecord& record)
+{
+    check_fits(record, "cone_coherence");
     SourceCoherence c;
     c.sum = RaySum::cone;
     c.cone = degrees;
     std::ostringstream text;
     text << "energy beyond a cone of " << degrees << " deg";
     c.source = text.str();
+    take_spread(record, c);
     return c;
 }
 
 SourceCoherence measured_coherence(const CoherenceRecord& record, double rotation_rate)
 {
+    check_fits(record, "measured_coherence");
     SourceCoherence c;
     c.sum = RaySum::measured;
     const double blades = record.blades.value_or(0.0);
@@ -102,12 +132,7 @@ SourceCoherence measured_coherence(const CoherenceRecord& record, double rotatio
         c.scale = *record.scale;
         c.exponent = *record.exponent;
     }
-    if (record.spread_scale)
-    {
-        c.spread_scale = *record.spread_scale;
-        c.spread_exponent = *record.spread_exponent;
-    }
-    c.tonal_fraction = record.tonal_fraction;
+    take_spread(record, c);
     c.source = record.fitted() ? "the database's measured coherence" : "the measured defaults";
     if (record.fitted() && !record.source.empty())
         c.source += " (" + record.source + ")";

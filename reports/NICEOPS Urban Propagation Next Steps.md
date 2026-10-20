@@ -14,7 +14,6 @@ buildings, judged against what EDGE, DigiCity and the FDTD have shown. Recommend
 
 1. **Facade scattering in the run.** Days of work, with a measured gain.
 2. **A third edge, and reflections between edges.** The largest measured error, and weeks of work.
-3. **The GPU in the run**, in parallel. District-scale maps depend on it.
 
 The rest follow as data and need decide.
 
@@ -48,7 +47,8 @@ boundaries need the same continuity treatment the second order has.
 **The gap.** `--buildings` leaves the scattering coefficients out, with a warning.
 
 **Approach.** Reuse `DiffuseFacades::point_energy` in `UrbanDistrict::levels`, adding the diffuse energy to the ray
-sum's per band. Take the coefficients per building from the district file, or a spectrum per building.
+sum's per band, with the roofs scattering as `niceops_point_field`'s now do (`DiffuseOptions::roofs`). Take the
+coefficients per building from the district file, or a spectrum per building.
 
 **Check.** A CTest that a run with every coefficient 0 is the specular run byte for byte; DigiCity microphone 7 in a
 run matching `niceops_point_field`'s.
@@ -71,8 +71,10 @@ as in the open-ground run. A floor of mixed classes needs each floor bounce's cl
 
 ### 2b. Facade and rooftop microphones, checked against data
 
-**State.** The run already takes microphones at any height outside the buildings, roofs included: a microphone 4 ft
-above a 45 ft roof, and one 0.66 ft off a wall at 20 ft, both run. Neither has been compared with a measurement.
+**State.** The run takes microphones where the observer file puts them, at any height outside the buildings, roofs
+included: a microphone 4 ft above a 45 ft roof, and one 0.66 ft off a wall at 20 ft, both run. Neither has been
+compared with a measurement. In `niceops_point_field` the roofs scatter too, which raises a rooftop microphone by
+1-2 dB over walls scattering alone (FIDELITY, "Scattering walls (point source)").
 
 **Why it matters.** Urban exposure is assessed at facades, not at 1.2 m above the street.
 
@@ -82,10 +84,10 @@ above a 45 ft roof, and one 0.66 ft off a wall at 20 ft, both run. Neither has b
 
 ## 3. Cost, the barrier to district-scale maps
 
-**The numbers.** The demo approach (6,551 states × 7 microphones) takes 1.7 s on the GPU (3.3 s on 14 threads), against
-0.2 s without buildings; an evaluated pair costs about 3 ms of CPU, so a district grid of 10,000 receivers is still far off.
+**The numbers.** The demo approach (6,551 states × 7 microphones) takes 1.2 s on the GPU (3.2 s on 14 threads), against
+0.3 s without buildings; an evaluated pair costs about 3 ms of CPU, so a district grid of 10,000 receivers is still far off.
 
-**Done (Oct 19).** 70 s → 3.3 s on the demo approach (`docs/internals/ground.md`, FIDELITY):
+**Done (Oct 19).** 70 s → 1.2 s on the demo approach (`docs/internals/ground.md`, FIDELITY):
 - the UTD transition function from a table, and a shared face's node geometry worked out once for every wavenumber
   (exact; 70 → 37 s);
 - the shared faces sampled: the integral only where the cascade cannot stand in for it, two thirds of an octave
@@ -94,28 +96,25 @@ above a 45 ft roof, and one 0.66 ft off a wall at 20 ft, both run. Neither has b
   0.003 dB, LAmax within 0.007; 10 → 3.3 s).
 Measured and left out: windowing the coherence sum by the sinc's reach (4%).
 - the GPU in the run, by default wherever there is one (the shared faces sampled there too, the cone's sum in the
-  pair-sum kernel): 3.3 → 1.7 s. The measured coherence and `--phase_interval` stay on the CPU.
+  pair-sum kernel): 3.3 → 1.2 s. The measured coherence and `--phase_interval` stay on the CPU.
 
 **Ray-tracing hardware does not help yet.** RT cores accelerate ray–triangle tests, which here are the path search's
-visibility tests: 1–2% of a `--buildings` run before the sampling below, about 6% of an evaluated pair after it, and
+visibility tests: 1–2% of a `--buildings` run before the sampling above, about 6% of an evaluated pair after it, and
 12% of a pair on the 49-block district. It could pay later for scenes
 of many triangles (LoD2, terrain, trees) or a stochastic diffuse field (`docs/internals/gpu.md`).
 
 In order of payoff:
 
-1. **The GPU in the run.** `niceops_point_field --gpu` sums rays on the GPU (`src/gpu/point_rays`), but `--buildings`
-   does not use it.
-2. **The peak search, back.** It is off because a coherent sum could exceed the straight path's bound. Under the
+1. **The peak search, back.** It is off because a coherent sum could exceed the straight path's bound. Under the
    default (energy beyond a cone) a bound is much easier to state: the energy sum is bounded by the sum of the rays'
    bounds, and the cone's pairs add at most their own cross terms.
-3. **Per-receiver reciprocity tables** (the roadmap's urban step). Trace each microphone's tree of paths once and
+2. **Per-receiver reciprocity tables** (the roadmap's urban step). Trace each microphone's tree of paths once and
    reuse it for every source position.
-4. **The plane-wave table where the source is far** from the buildings. Decided: worth it only where it saves a lot
+3. **The plane-wave table where the source is far** from the buildings. Decided: worth it only where it saves a lot
    and the source is well clear. The switch needs a criterion, such as distance from the nearest building over that
    building's height, measured against the point model.
 
-**Check.** Each must reproduce the CPU point model to the existing tolerances: the GPU to its float tolerance, the
-peak search exactly (as `*_windowed_is_exact` tests do), the tables to a stated dB.
+**Check.** Each must reproduce the CPU point model to the existing tolerances: the peak search exactly (as `*_windowed_is_exact` tests do), the tables to a stated dB.
 
 ## 4. Sources for drones and AAM
 

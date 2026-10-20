@@ -64,18 +64,17 @@ double gamma_p(double k, double x)
     return std::max(0.0, 1.0 - front * h);
 }
 
-// The q-quantile of the gamma distribution with mean `mean` and variance
-// `variance`, by bisection.
-double gamma_quantile(double mean, double variance, double q)
+
+// Where an increasing cdf reaches q in [lo, hi], by bisection to round-off.
+template <typename Cdf>
+double invert(Cdf cdf, double lo, double hi, double q)
 {
-    if (!(variance > 0.0))
-        return mean;
-    const double k = mean * mean / variance, theta = variance / mean;
-    double lo = 0.0, hi = mean + 60.0 * std::sqrt(variance);
     for (int i = 0; i < 200; i++)
     {
         const double mid = 0.5 * (lo + hi);
-        (gamma_p(k, mid / theta) < q ? lo : hi) = mid;
+        if (!(mid > lo && mid < hi))
+            break;
+        (cdf(mid) < q ? lo : hi) = mid;
     }
     return 0.5 * (lo + hi);
 }
@@ -98,6 +97,24 @@ struct PairScratch
 };
 
 } // namespace
+
+double gamma_quantile(double mean, double variance, double q)
+{
+    if (!(variance > 0.0))
+        return mean;
+    const double k = mean * mean / variance, theta = variance / mean;
+    // Past a shape of 1e4 gamma_p's series needs more than its 1000 terms
+    // near the mean, and the Wilson-Hilferty cube is the quantile to 4e-7 dB
+    // at the 0.5th percentile and closer nearer the middle; z is the normal
+    // quantile, by bisection on erfc.
+    if (k > 1e4)
+    {
+        const double z = invert([](double x) { return 0.5 * std::erfc(-x / std::sqrt(2.0)); }, -40.0, 40.0, q);
+        const double cube = 1.0 - 1.0 / (9.0 * k) + z / (3.0 * std::sqrt(k));
+        return mean * cube * cube * cube;
+    }
+    return invert([&](double x) { return gamma_p(k, x / theta); }, 0.0, mean + 60.0 * std::sqrt(variance), q);
+}
 
 void partially_coherent_energies(const PointSourceField& field, const std::vector<double>& reflection,
         double floor_reflection, const std::vector<double>& bands, std::size_t first_band, double sound_speed,
@@ -554,13 +571,14 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         if (field.rays().empty())
             return;
         weigh(field, state, w);
+        // Coherent rays have no unknown phase relation, so no variance.
+        w.variance.assign(nb, 0.0);
         if (coherence.sum == RaySum::coherent)
             field.band_levels(reflection, d.floor_reflection, bands, sound_speed, out.bands.data(), sub_band_air,
                     w.weights.data());
         else
         {
             w.energy.resize(3 * nb);
-            w.variance.resize(nb);
             partially_coherent_energies(field, reflection, d.floor_reflection, bands, first_band, sound_speed,
                     sub_band_air, w.weights.data(), coherence, states[state].frame, w.energy.data(),
                     interval != nullptr ? w.variance.data() : nullptr);
@@ -618,8 +636,10 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         out.assign(todo.size(), Pair {});
         for (Pair& p : out)
             p.bands.assign(nb, silence);
-        std::unique_ptr<gpu::BandStream> stream;
+        // stream_full first: the stream's callbacks write it, and a stream
+        // dropped by an exception drains its queue through them.
         std::vector<double> stream_full(all, silence);
+        std::unique_ptr<gpu::BandStream> stream;
         if (device != nullptr)
             stream = std::make_unique<gpu::BandStream>(*device, block, [&](std::size_t i, const double* energy) {
                 Pair& p = out[i];
@@ -735,6 +755,10 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // the sphere at their own state, plus the transfer interpolated.
     constexpr std::size_t spacing = 32;
     constexpr double loud = 30.0, band_factor = 15.0;
+    // Each band's A-weighting, dB, for the loud-band tests.
+    std::vector<double> gain_db(nb);
+    for (std::size_t q = 0; q < nb; q++)
+        gain_db[q] = 10.0 * std::log10(gains[first_band + q]);
     // A band more than `buried` under the state's loudest free-field band
     // carries nothing to any level, and its transfer means nothing: the
     // database's top bands sit near -1300 dB at some conditions and jump to
@@ -779,7 +803,12 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 + f * (std::isfinite(b) ? std::pow(10.0, 0.1 * b) : 0.0);
         return e > 0.0 && std::isfinite(e) ? 10.0 * std::log10(e) : silence;
     };
-    constexpr double band_floor = -299.0;
+    // A level within a decibel of band_level's floor is at it; a state's
+    // bands are heard where one is above it.
+    const double band_floor = 10.0 * std::log10(band_level_floor) + 1.0;
+    auto heard = [&](const double* bands) {
+        return std::any_of(bands, bands + nb, [&](double v) { return v > band_floor; });
+    };
     struct Known
     {
         Pair pair;
@@ -890,19 +919,20 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 }
                 const Known& at = known_mid->second;
                 const double level = estimate(mid, m, known[m].at(a), a, known[m].at(b), b, w, guess.data());
-                bool good = std::isfinite(level) == std::isfinite(at.pair.level)
-                        && (!std::isfinite(level) || std::abs(level - at.pair.level) <= state_tolerance);
-                // The bands within `loud` of the loudest A-weighted one.
+                // A middle that is silent (no ray) or floored, and an estimate
+                // that is too, agree; one heard and the other not do not.
+                const double* bands = at.pair.bands.data();
+                const bool middle_heard = heard(bands);
+                bool good = heard(guess.data()) == middle_heard
+                        && (!middle_heard || std::abs(level - at.pair.level) <= state_tolerance);
+                // The heard bands within `loud` of the loudest A-weighted one.
                 double top = silence;
                 for (std::size_t q = 0; q < nb; q++)
-                    top = std::max(top, at.pair.bands[q] + 10.0 * std::log10(gains[first_band + q]));
+                    if (bands[q] > band_floor)
+                        top = std::max(top, bands[q] + gain_db[q]);
                 for (std::size_t q = 0; q < nb && good; q++)
-                {
-                    if (!(at.pair.bands[q] + 10.0 * std::log10(gains[first_band + q]) >= top - loud))
-                        continue;
-                    good = std::isfinite(guess[q]) && std::isfinite(at.pair.bands[q])
-                            && std::abs(guess[q] - at.pair.bands[q]) <= band_factor * state_tolerance;
-                }
+                    if (bands[q] > band_floor && bands[q] + gain_db[q] >= top - loud)
+                        good = std::isfinite(guess[q]) && std::abs(guess[q] - bands[q]) <= band_factor * state_tolerance;
                 if (good)
                 {
                     // Its middle, known, splits it for the estimates.
@@ -944,9 +974,9 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                         direct(state, m, w, free.data());
                         double top = silence;
                         for (std::size_t q = 0; q < nb; q++)
-                            top = std::max(top, free[q] + 10.0 * std::log10(gains[first_band + q]));
+                            top = std::max(top, free[q] + gain_db[q]);
                         for (std::size_t q = 0; q < nb; q++)
-                            if (free[q] + 10.0 * std::log10(gains[first_band + q]) >= top - loud
+                            if (free[q] + gain_db[q] >= top - loud
                                     && std::isnan(ka.transfer[q]) && std::isnan(kb.transfer[q]))
                             {
                                 unknown[m].emplace_back(state, m);

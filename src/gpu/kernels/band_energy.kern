@@ -91,8 +91,10 @@ NK_KERNEL(band_pair_sum)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1),
         acc = t;
     }
     const float total = nk_group_sum(scratch, acc, NK_THREAD, NK_THREADS);
+    // A cone's taper is not a positive-definite kernel, so its sum can come
+    // out below zero; the CPU (partially_coherent_energies) takes 0 there.
     if (NK_THREAD == 0u)
-        energy[q] = total;
+        energy[q] = fmax(total, 0.0f);
 }
 
 // As a Gauss-Legendre integral over the band: per node t,

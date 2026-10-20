@@ -121,6 +121,11 @@ public:
     }
 
     std::string name() const;
+    // The largest buffer the device takes, and the memory it can keep in use
+    // at once, bytes: what a caller checks before choosing the GPU for a big
+    // problem.
+    std::size_t max_buffer_bytes() const;
+    std::size_t working_set_bytes() const;
     // Zeroed shared memory of `bytes`.
     Buffer buffer(std::size_t bytes);
     // Entry point `entry` of the program made of the named kernel sources in

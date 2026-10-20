@@ -32,6 +32,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <string>
 #include <vector>
 
 #include "buildings.hpp"
@@ -85,9 +86,12 @@ struct FdtdSetup
     // 2.25 times it and 30 dB at 3.25.
     double pulse_frequency = 4000.0;
     unsigned threads = 1;
-    // March on the GPU (gpu/gpu.hpp), in float as the CPU's; refused where
-    // there is none.
+    // March on the GPU (gpu/gpu.hpp), in float as the CPU's, where there is
+    // one and it holds the grid, and on the CPU otherwise;
+    // FdtdRecording::gpu says which.  With gpu_required the CPU is refused
+    // instead.
     bool gpu = false;
+    bool gpu_required = false;
     // March each step only the cells that matter: those the source can have
     // reached, and from which a receiver can still be reached before the
     // end, at the scheme's fastest group speed and a margin.  Off marches
@@ -117,12 +121,16 @@ struct FdtdRecording
     std::size_t cells = 0;         // nx ny nz
     std::size_t nx = 0, ny = 0, nz = 0;
     double seconds = 0.0;          // the march's wall time
+    bool gpu = false;              // marched on the GPU
+    std::string gpu_declined;      // why not, where the GPU was wanted and there is one
     double marched = 1.0;          // the share of the cell-steps marched (cull)
 
     // H at frequency f for a receiver (above), from the first `used` steps
-    // (0 for all of them), read at grid_frequency(f).  With `attenuation`, the air's, Np/m of amplitude:
-    // every sample after the pulse's peak by exp(-a c (t - t_peak)), which is
-    // exp(-a L) for every arrival of path L, as the ray model absorbs its rays.
+    // (0 for all of them), read at grid_frequency(f).  With `attenuation`,
+    // the air's, Np/m of amplitude: every sample of the pressure and of Q by
+    // exp(-a c (t - t_peak)), which is the transfer at a complex frequency
+    // where every arrival of path L carries exp(-a L), as the ray model
+    // absorbs its rays.
     std::complex<double> transfer(std::size_t receiver, double frequency, std::size_t used = 0,
             double attenuation = 0.0) const;
     // |H|^2 averaged over [f1, f2], on a grid of `per_band` frequencies or one

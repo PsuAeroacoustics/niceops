@@ -27,9 +27,10 @@
 // reflect specularly only rho (1 - s) of what reaches them, and the rest of
 // rho diffusely, by Lambert's law: the urban tables' radiosity
 // (diffuse_facades.hpp), lit by the source's specular paths to each patch and
-// gathered at each microphone, added to the rays' band energy.  Patches are
-// --patch_size at most, over the walls within --diffuse_radius of a
-// microphone.  --scattering_spectrum gives s band by band (as
+// gathered at each microphone, added to the rays' band energy.  The roofs,
+// which the rays reflect in, scatter with their building's coefficients.
+// Patches are --patch_size at most, over the buildings with a wall within
+// --diffuse_radius of a microphone, walls and roofs.  --scattering_spectrum gives s band by band (as
 // tools/profile_scattering.py writes it), and a building's coefficient then
 // weights it.
 //
@@ -122,16 +123,17 @@ int main(int argc, char** argv)
     app.add_option("--database", database_file, "Take the band centers from this database instead.");
     app.add_option("--absorption", absorption, "Walls' energy absorption coefficient where a building gives none "
                                                "(default 0).");
-    app.add_option("--scattering", scattering, "Walls' scattering coefficient where a building gives none (default "
-                                               "0): the share of what a wall reflects that it scatters diffusely.");
+    app.add_option("--scattering", scattering, "Walls' and roofs' scattering coefficient where a building gives none "
+                                               "(default 0): the share of what they reflect that they scatter "
+                                               "diffusely.");
     app.add_option("--scattering_spectrum", scattering_spectrum_file,
             "A CSV of band_hz and s: the scattering coefficient band by band, times each building's scattering "
             "column or --scattering (default 1 with this), interpolated in log frequency.");
     app.add_option("--patch_size", patch_size, "With scattering walls, the diffuse field's patches' size at most, in "
                                                "--units (default 4 m).");
-    app.add_option("--diffuse_radius", diffuse_radius, "With scattering walls, the walls within this horizontal "
-                                                       "distance of a microphone scatter, in --units (default "
-                                                       "--radius).");
+    app.add_option("--diffuse_radius", diffuse_radius, "With scattering walls, a building with a wall within this "
+                                                       "horizontal distance of a microphone scatters, walls and "
+                                                       "roof, in --units (default --radius).");
     app.add_option("--floor_absorption", floor_absorption, "The floor's energy absorption coefficient (default 0).");
     app.add_option("--max_reflections", max_reflections,
             "Facade reflections on a ray that diffracts nowhere (default 4).");
@@ -149,7 +151,7 @@ int main(int argc, char** argv)
                                        "uniform form (double_wedge.hpp), for comparison.");
     app.add_flag("--exact_shared_faces", exact_shared_faces,
             "Over a shared face, the uniform form's integral at every wavenumber, not only where the cascade cannot "
-            "stand in for it: the reference, and what --gpu takes.");
+            "stand in for it: the reference; much slower.");
     app.add_flag("--edge_source", edge_source,
             "Diffraction by the edge-source integral over each edge's whole length (edge_source.hpp), which keeps "
             "the edges' ends that UTD leaves out: every once-diffracted ray, and the twice-diffracted ones near a "
@@ -489,6 +491,8 @@ int main(int argc, char** argv)
             DiffuseOptions diffuse_options;
             diffuse_options.radius = diffuse_radius;
             diffuse_options.patch_size = patch_size;
+            // The rays reflect in the roofs, so the roofs scatter too.
+            diffuse_options.roofs = !no_roofs;
             if (!no_air_absorption)
                 diffuse_options.air = band_air;
             for (std::size_t row = 0; row < nm; row++)
@@ -502,9 +506,10 @@ int main(int argc, char** argv)
             std::cerr << "Diffuse field: " << diffuse_fields[0]->patches().size() << " patches at microphone 1"
                       << std::endl;
         }
-        // Each microphone's walls: those its diffuse field covers give the
-        // rays rho (1 - s), and the rest reflect their whole rho, since nothing
-        // returns what they would scatter.
+        // Each microphone's walls, and the roofs that take their coefficients:
+        // those its diffuse field covers give the rays rho (1 - s), and the
+        // rest reflect their whole rho, since nothing returns what they would
+        // scatter.
         std::vector<std::vector<double>> microphone_reflection(diffuse ? nm : 0);
         for (std::size_t row = 0; row < microphone_reflection.size(); row++)
         {

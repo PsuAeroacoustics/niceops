@@ -99,8 +99,8 @@ Commands and options are in `README.md`; rationale is in
 - **GPU paths are on by default wherever there is a device, and the CPU is their reference.**
   `niceops --buildings`, `niceops_point_field`, `niceops_urban_table --wave_below` and
   `niceops_fdtd_field` take the GPU unless `--no-gpu`, and fall back to the CPU where the GPU does
-  not take the case (`--edge_source`, `--fade`, `--ray_coherence measured`, `--phase_interval`);
-  `--gpu` asks for it and is refused where it cannot run. They work in float (phases in
+  not take the case (`--edge_source`, `--fade`, `--ray_coherence measured`, `--phase_interval`, an
+  FDTD grid the device cannot hold); `--gpu` asks for it and is refused where it cannot run. They work in float (phases in
   float-float), are tested against the CPU at a stated tolerance, never bit-for-bit, and never feed
   a golden: **a test pinned to CPU results passes `--no-gpu`**, or it fails on a Mac and passes on
   Linux CI. Kernels are written once, in the dialect of `src/gpu/kernels`, so another backend takes
@@ -116,16 +116,26 @@ Commands and options are in `README.md`; rationale is in
   Judge a run's length band by band (`truncation_db`), not by the tail's raw energy, and give
   parallel walls their absorption: a rigid canyon's reflections die away as 1/n. Each step
   marches only its light cones' box, which must grow at the scheme's fastest group speed (1.23 c
-  at fourth order), not at c; the GPU kernels are bound by memory, so cut cells, not arithmetic. See
+  at fourth order), not at c; the GPU kernels are bound by memory, so cut cells, not arithmetic. The
+  transfer divides by the march's own time difference, -i (2/dt) sin(omega dt/2), not -i omega, and
+  the air's delay weighting goes on Q as on p (the transfer at a complex frequency); either undone
+  fails the two-ray test at its tightened tolerance. See
   [ground.md](docs/internals/ground.md#the-full-wave-reference-srcfdtd-niceops_fdtd_field).
 - **The point-source model's roofs are the floor at their own height**: a ray reflects in one
   horizontal surface at most, a roof's bounce is tested to round-off (`Buildings::on_roof`, not
   `inside()`) so it meets its edge's reflection boundary, and no ray off a roof diffracts at that
   roof's own edges, whose coefficients carry it already. Each ray's directivity is read along
   `point_ray_launch`, minus its length's gradient in the source position.
+- **Buildings that touch stand against each other as one solid.** A side shared exactly drops the
+  lower building's facade, roof edge and corners there; a side shared in part is split at the
+  neighbour's vertices first (`split_at_junctions`), or rays diffract at a junction's corner and
+  run along the seam between the two. Two level roofs across a shared side are one roof there
+  (`ceded_`), or a bounce on the join counts twice.
 - **`niceops --buildings` with one far building and a floor absorbing everything is the run without
   a ground model** (`buildings_far_is_open_without_ground`); keep each ray's sphere weight on the
-  sphere's own spreading and absorption conventions. `niceops.cpp` cannot include `buildings.hpp`
+  sphere's own spreading and absorption conventions. Its microphones are the run's observer points
+  raised by their height column, as in any run without a ground model: `--buildings` turns the
+  ground model off, and a database without spectra is refused, not run to `-inf`. `niceops.cpp` cannot include `buildings.hpp`
   (its `Ring` clashes with `contour.hpp`'s), so the district stays behind `UrbanDistrict`.
 - **`--buildings` adds rays in energy beyond a 1° cone by default** (`src/source_coherence`;
   THEORY 6.5). Do not assume the source's phase: weighted by A-weighted power the flight data
@@ -135,7 +145,9 @@ Commands and options are in `README.md`; rationale is in
   written by panam's `directional_coherence`) switches to the measured model; the main rotor's
   delay comes from that record only, never the vehicle file. The delay rides on the rays as an
   effective length, the wrap a one-turn shift, and holds only to 4.5 blade-passage frequencies.
-  `--ray_coherence coherent` keeps the old coherent sum to the bit. Do not use `std::polar` with
+  `--ray_coherence coherent` keeps the old coherent sum to the bit. The record's spread fit and
+  tonal fractions set `--phase_interval` under the cone as well (`cone_coherence(angle, record)`):
+  the cone is the mean, the record measures the coherence the interval is about. Do not use `std::polar` with
   the sinc as its magnitude: it can be negative, and libc++ returns NaN.
 - **`--buildings` samples states, not the source** (`--state_tolerance`, 0.02 dB; ground.md "In a
   run"). Each band's transfer -- its level less the direct ray's in free field at that state -- is
@@ -143,7 +155,7 @@ Commands and options are in `README.md`; rationale is in
   where unknown (a band buried 120 dB or at band_level's -300 dB floor) and -infinity where no ray
   arrives; do not merge the two, and do not drop the outright evaluation of a state whose loud band
   has no known transfer (the B407 database's top bands jump by 1000 dB between states).
-  `--state_tolerance 0` is the old every-state path, byte for byte.
+  `--state_tolerance 0` is the every-state path, byte for byte.
 - **Shared faces are sampled** (`PointPathOptions::sample_shared_faces`): the cascade times the
   integral's ratio to it, taken two thirds of an octave apart while the transition parameter is
   under 30. An end's angle off the face's plane counts on either side: with an end in the plane
@@ -151,7 +163,10 @@ Commands and options are in `README.md`; rationale is in
   The GPU samples by the same rule (`shared_face_samples`), its `face_ratios` kernel applying R.
 - **Scattering walls in `niceops_point_field` reuse the urban tables' radiosity**, lit by the
   source's own specular paths to each patch; with s = 0 nothing is built and the run is byte for
-  byte the specular one.
+  byte the specular one. The roofs scatter too (`DiffuseOptions::roofs`), with their building's
+  first wall's coefficients as their reflection takes them, so a building then scatters as a whole
+  where any wall is in reach; a roof patched while its reflection kept its whole rho, or the
+  reverse, would make or lose energy.
 - **The ground model returns a gain, not a loss.**
 - **Compass bearings** are turned into the local frame by `--frame_bearing` through one
   rotation, `CompassToLocal`. The shipped AC tracks need 210.
