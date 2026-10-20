@@ -1365,7 +1365,22 @@ $$
 with $T(x; a, b) = 1$ for $x \le a$, 0 for $x \ge b$, and $\cos^2\!\left(\tfrac\pi2\ln(x/a)/\ln(b/a)\right)$
 between; $\bar X$ the smaller wedge's transition parameter per unit wavenumber,
 $L\sin\beta\,\min_\pm a_\pm$, and $\bar\Delta$ the least excess over the ray's path of a path through
-either edge's end or a partner's boundary point; and $w = 1$ over a shared face.
+either edge's end or a partner's boundary point; and $w = 1$ over a shared face. Where $k\bar X \ge 1$
+at the least wavenumber, out of both transitions everywhere, only the ends can need the integral,
+and the ray takes in its place
+
+$$
+w\,p_\mathrm{casc}\,\rho_1\,\rho_2 + (1 - w)\,p_\mathrm{casc},
+\qquad
+\rho_e = \frac{p_1^{(e)}(\text{edge})}{p_1^{(e)}(\text{line})},
+$$
+
+each edge's once-diffracted integral over its length about the pair's stationary points (the
+first's from the source to the second's point, the second's from the first's to the receiver) over
+the infinite line's UTD ray: two once-diffracted integrals for the twice-diffracted one. Over
+DigiCity and the demo district it is the integral's to 0.012 dB A-weighted. The twice-diffracted
+integral itself is held to $10^{-3}$ in its curves' quadrature and $10^{-4}$ in their interpolation,
+which moves no level by 0.002 dB.
 
 The air absorbs each ray along its length: in each sub-band its amplitude is multiplied by
 $e^{-a L_r}$, $a = \alpha \ln 10 / 20$ with $\alpha$ the ISO 9613-1 coefficient (dB/m, §5) at the

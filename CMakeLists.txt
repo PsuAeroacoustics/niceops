@@ -1309,7 +1309,7 @@ set_tests_properties(buildings_raised_observers_are_the_heights buildings_no_gro
 add_test(NAME buildings_refuses_no_spectra COMMAND niceops -d databases/S-76D_M3.nod -v databases/S-76D.json -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn --buildings tests/data/urban_buildings.csv -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_no_spectra PROPERTIES PASS_REGULAR_EXPRESSION "--buildings needs a database carrying per-band spectra")
 add_test(NAME buildings_refuses_lone_state_tolerance COMMAND ${URBAN_RUN} --state_tolerance 0.1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --state_tolerance, --gpu and --no-gpu go with --buildings")
+set_tests_properties(buildings_refuses_lone_state_tolerance PROPERTIES PASS_REGULAR_EXPRESSION "--exact_shared_faces, --edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_lone_gpu COMMAND ${URBAN_RUN} --no-gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_negative_state_tolerance COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --state_tolerance -1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1376,6 +1376,17 @@ add_test(NAME buildings_refuses_inside COMMAND niceops -d databases/B407_fixed_l
 set_tests_properties(buildings_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "observer 2's microphone stands inside building 8")
 add_test(NAME buildings_refuses_urban_table COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --urban_table tables/urban_open_test.nc -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_urban_table PROPERTIES PASS_REGULAR_EXPRESSION "--buildings does not combine with --urban_table")
+# --edge_source in the run: with one building 1000 km off nothing diffracts, so the edge source changes nothing
+# (to the bit); it goes with --buildings, and not with --gpu.
+add_test(NAME buildings_far_edge_source_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --state_tolerance 0 --edge_source -o integrated/buildings_far_edge_source.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_far_utd_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --floor_absorption 1 --state_tolerance 0 --no-gpu -o integrated/buildings_far_utd.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_far_edge_source_run buildings_far_utd_run PROPERTIES FIXTURES_SETUP buildings_far_edge_source_runs)
+add_test(NAME buildings_far_edge_source_is_utd COMMAND golden_compare integrated/buildings_far_edge_source.csv integrated/buildings_far_utd.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_far_edge_source_is_utd PROPERTIES FIXTURES_REQUIRED buildings_far_edge_source_runs)
+add_test(NAME buildings_refuses_lone_edge_source COMMAND ${URBAN_RUN} --edge_source -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_lone_edge_source PROPERTIES PASS_REGULAR_EXPRESSION "--edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
+add_test(NAME buildings_refuses_edge_source_gpu COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --edge_source --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_edge_source_gpu PROPERTIES PASS_REGULAR_EXPRESSION "--edge_source is the CPU's; --gpu does not take it")
 # A ground model among the buildings (--ground_effect, point_paths.hpp FloorModel) replaces the floor's
 # energy coefficient, and the rays' phases are the source's, not the ground model's turbulence.
 add_test(NAME buildings_refuses_floor_absorption_with_ground COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --ground_effect --floor_absorption 0.2 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

@@ -3147,7 +3147,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         // The GPU wherever there is one and it takes the run's sum; asked for,
         // it must.
         gpu::Device* device = nullptr;
-        if (options.gpu)
+        if (district.edge_source())
+            log("--buildings: the rays diffract by the edge-source integral, on the CPU.");
+        else if (options.gpu)
         {
             const bool supported = UrbanDistrict::gpu_supports(coherence, options.phase_interval > 0.0);
             // What the arguments ask the GPU to refuse is refused as they are
@@ -4920,6 +4922,7 @@ int run(int argc, char* argv[])
     double patch_size = 4.0;      // m
     double diffuse_radius = 0.0;  // m; 0 for the rays' reach
     bool exact_shared_faces = false;
+    bool buildings_edge_source = false;
     double state_tolerance = 0.02;
     bool use_gpu = true;
     std::string ray_coherence;
@@ -5441,6 +5444,9 @@ int run(int argc, char* argv[])
     auto* diffuse_radius_option = app.add_option("--diffuse_radius", diffuse_radius,
             "With scattering facades: a building with a wall within this horizontal distance of a microphone "
             "scatters, walls and roof (default 150 m, the rays' own reach).");
+    app.add_flag("--edge_source", buildings_edge_source,
+            "With --buildings: the rays diffract by the edge-source integral (BTM's, over each edge's length, its ends "
+            "and the transitions the cascade misses), on the CPU, instead of UTD. Tens of times UTD's cost.");
     app.add_flag("--exact_shared_faces", exact_shared_faces,
             "With --buildings: take the integral over a flat roof between its two edges at every wavenumber, not "
             "only where the cascade of the two edges' coefficients cannot stand in for it; the reference, about "
@@ -6286,9 +6292,9 @@ int run(int argc, char* argv[])
             || app.count("--relief_scattering") > 0 || app.count("--grating_reflections") > 0)
         input_error("--facade_scattering, --facade_scattering_spectrum, --facade_relief, --relief_scattering, "
                     "--grating_reflections, --patch_size and --diffuse_radius go with --buildings.");
-    else if (exact_shared_faces || app.count("--state_tolerance") > 0 || app.count("--gpu") > 0
-            || app.count("--no-gpu") > 0)
-        input_error("--exact_shared_faces, --state_tolerance, --gpu and --no-gpu go with --buildings.");
+    else if (exact_shared_faces || buildings_edge_source || app.count("--state_tolerance") > 0
+            || app.count("--gpu") > 0 || app.count("--no-gpu") > 0)
+        input_error("--exact_shared_faces, --edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings.");
     else if (app.count("--ray_coherence") > 0 || app.count("--coherence_angle") > 0
             || app.count("--phase_interval") > 0)
         input_error("--ray_coherence, --coherence_angle and --phase_interval go with --buildings.");
@@ -6613,6 +6619,9 @@ int run(int argc, char* argv[])
         input.diffuse_radius = diffuse_radius;
         input.turbulence = scattering;
         input.exact_shared_faces = exact_shared_faces;
+        input.edge_source = buildings_edge_source;
+        if (buildings_edge_source && use_gpu && app.count("--gpu") > 0)
+            input_error("--edge_source is the CPU's; --gpu does not take it.");
         try
         {
             options.buildings = UrbanDistrict::read(buildings_file, input);

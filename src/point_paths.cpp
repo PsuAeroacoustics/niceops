@@ -16,6 +16,7 @@
 #include "ground_effect.hpp"
 #include "urban.hpp"
 #include "util/constants.hpp"
+#include "util/parallel.hpp"
 #include "wedge.hpp"
 
 namespace niceops {
@@ -707,6 +708,7 @@ PointSourceField::PointSourceField(const Buildings& buildings, const Vec3& sourc
     , edge_source_(options.edge_source)
     , sample_shared_faces_(options.sample_shared_faces)
     , reliefs_(options.reliefs)
+    , edge_source_threads_(options.edge_source_threads)
 {
     trace(buildings, PathEnd(buildings, source, true, options, edges_near(buildings, microphone, options.radius)),
             PathEnd(buildings, microphone, false, options, edges_near(buildings, source, options.radius)), options);
@@ -719,6 +721,7 @@ PointSourceField::PointSourceField(const Buildings& buildings, const PathEnd& so
     , edge_source_(options.edge_source)
     , sample_shared_faces_(options.sample_shared_faces)
     , reliefs_(options.reliefs)
+    , edge_source_threads_(options.edge_source_threads)
 {
     trace(buildings, source, microphone, options);
 }
@@ -2055,6 +2058,44 @@ Edge through_floor(const Edge& g)
     return h;
 }
 
+namespace {
+
+// The ends' effect on a twice-diffracted ray: each edge's once-diffracted
+// integral over its whole length about the two edges' stationary points, the
+// first's from the source to the second's point and the second's from the
+// first's to the receiver, over the infinite edge's UTD ray there, at each
+// wavenumber.  1 for an edge whose ends are many Fresnel zones off.
+void end_ratios(const Edge& g1, const Edge& g2, const Vec3& source, const Vec3& receiver,
+        const std::vector<double>& wavenumbers, std::vector<std::complex<double>>& r1,
+        std::vector<std::complex<double>>& r2)
+{
+    const auto keller = [](const Edge& g, const Vec3& s, const Vec3& r) {
+        const EdgeFrameEnds f = edge_frame_ends(g, s, r);
+        return g.start + (f.z_s + (f.z_r - f.z_s) * f.r_s / (f.r_s + f.r_r)) * g.direction;
+    };
+    // The stationary points, by alternation.
+    Vec3 q2 = keller(g2, source, receiver), q1 = keller(g1, source, q2);
+    for (int iteration = 0; iteration < 200; iteration++)
+    {
+        const Vec3 n1 = keller(g1, source, q2), n2 = keller(g2, n1, receiver);
+        const double moved = (n1 - q1).norm() + (n2 - q2).norm();
+        q1 = n1;
+        q2 = n2;
+        if (moved < 1e-12)
+            break;
+    }
+    r1 = edge_source_spectrum(g1.n, edge_frame_ends(g1, source, q2), 0.0, g1.length, wavenumbers);
+    r2 = edge_source_spectrum(g2.n, edge_frame_ends(g2, q1, receiver), 0.0, g2.length, wavenumbers);
+    constexpr double unbounded = 1e30;
+    for (std::size_t j = 0; j < wavenumbers.size(); j++)
+    {
+        r1[j] /= keller_once_field(g1, source, q2, wavenumbers[j], -unbounded, unbounded);
+        r2[j] /= keller_once_field(g2, q1, receiver, wavenumbers[j], -unbounded, unbounded);
+    }
+}
+
+} // namespace
+
 std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings, const PointRay& ray,
         const std::vector<double>& wavenumbers)
 {
@@ -2150,6 +2191,7 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
             }
             excess = std::min(excess, path - ray.length);
         }
+    const double k_least = *std::min_element(wavenumbers.begin(), wavenumbers.end());
     const bool always = ray.shared || ray.wedge[1].grazing;
     std::vector<double> weight(wavenumbers.size());
     bool any = false;
@@ -2163,14 +2205,34 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
     }
     if (!any)
         return out;
-    const std::vector<std::complex<double>> exact = localized_twice_diffracted_spectrum(g1, g2, u.source, u.microphone,
-            ray.wedge[1].grazing ? 0.5 : 1.0, wavenumbers, PartnerModel::edge_source);
-    out.resize(wavenumbers.size());
-    for (std::size_t j = 0; j < wavenumbers.size(); j++)
+    // Out of both wedges' transitions at every wavenumber the cascade holds
+    // but for the edges' ends: the ray takes it times each edge's
+    // finite-to-infinite once-diffracted ratio about the stationary points
+    // (end_ratios), two once-diffracted integrals in place of the
+    // twice-diffracted one.  Over the demo district and DigiCity within
+    // 0.012 dB of it A-weighted.  Splitting a ray's wavenumbers between the
+    // two at its transition was tried: no faster, the integral's cost being
+    // its geometry's, and 0.09 dB off (THEORY 6.5).
+    if (!always && k_least * transition >= transition_hi)
     {
-        const double k = wavenumbers[j];
-        const std::complex<double> cascade = weight[j] < 1.0 ? point_ray_amplitude(ray, 1.0, k) : 0.0;
-        out[j] = weight[j] * exact[j] * std::polar(1.0 / ray.spreading, -k * ray.length) + (1.0 - weight[j]) * cascade;
+        std::vector<std::complex<double>> r1, r2;
+        end_ratios(g1, g2, u.source, u.microphone, wavenumbers, r1, r2);
+        out.resize(wavenumbers.size());
+        for (std::size_t j = 0; j < wavenumbers.size(); j++)
+            out[j] = (weight[j] * r1[j] * r2[j] + (1.0 - weight[j])) * point_ray_amplitude(ray, 1.0, wavenumbers[j]);
+    }
+    else
+    {
+        const std::vector<std::complex<double>> exact = localized_twice_diffracted_spectrum(g1, g2, u.source,
+                u.microphone, ray.wedge[1].grazing ? 0.5 : 1.0, wavenumbers, PartnerModel::edge_source);
+        out.resize(wavenumbers.size());
+        for (std::size_t j = 0; j < wavenumbers.size(); j++)
+        {
+            const double k = wavenumbers[j];
+            const std::complex<double> cascade = weight[j] < 1.0 ? point_ray_amplitude(ray, 1.0, k) : 0.0;
+            out[j] = weight[j] * exact[j] * std::polar(1.0 / ray.spreading, -k * ray.length)
+                    + (1.0 - weight[j]) * cascade;
+        }
     }
     // A factor that is not finite falls back to the cascade.
     for (const std::complex<double>& v : out)
@@ -2368,8 +2430,10 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
         for (const SubBand& part : sub_bands(band, sound_speed))
             wavenumbers.push_back(0.5 * (part.k1 + part.k2));
     if (edge_source_)
-        for (std::size_t i = 0; i < order.size(); i++)
-            factors[i] = edge_source_factors(*buildings_, rays_[order[i]], wavenumbers);
+        parallel_chunks(order.size(), edge_source_threads_, [&](std::size_t begin, std::size_t end) {
+            for (std::size_t i = begin; i < end; i++)
+                factors[i] = edge_source_factors(*buildings_, rays_[order[i]], wavenumbers);
+        });
     // A floor of finite impedance and the reliefs: each ray's factor from
     // them, every sub-band at once, for the rays they touch (a plate's
     // microphone, every ray).

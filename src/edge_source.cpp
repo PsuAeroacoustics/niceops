@@ -12,6 +12,15 @@ namespace niceops {
 
 namespace {
 
+// The twice-diffracted integral's accuracy: the level-curve integrand's
+// Gauss-Kronrod tolerance, and how closely the Chebyshev pieces must hold G
+// against the segment's integral of |G|.  Each a hundred times looser than
+// first written, together 2.4 times faster on DigiCity and 6 on EDGE's UE06
+// for under 0.002 dB.
+constexpr double twice_quadrature_tolerance = 1e-3;
+constexpr double twice_interpolation_tolerance = 1e-4;
+
+
 using complex = std::complex<double>;
 
 // Gauss-Legendre's eight nodes and weights on [-1, 1].
@@ -1504,7 +1513,9 @@ private:
         // Five panels, graded toward the ends; toward a ridge end down to
         // 1e-10, where beta1's peak narrows without limit as the level nears a
         // point where its pole meets the ridge.  Gauss-Kronrod's |K - G|
-        // overstates K's own error by orders: 1e-5 of it leaves K near 1e-8.
+        // overstates K's own error by orders: 1e-3 of it leaves K near 1e-6,
+        // which moves no level by 0.002 dB (DigiCity, EDGE's UE06) and costs
+        // a sixth of 1e-5's time.
         std::vector<double> cuts {0.0};
         if (rc)
             for (double x = 1e-8; x < 0.04; x *= 30.0)
@@ -1521,7 +1532,7 @@ private:
             cuts.insert(cuts.end(), top.rbegin(), top.rend());
         }
         cuts.push_back(1.0);
-        return adaptive(mapped, cuts, 1e-5, 0.0, 400).real();
+        return adaptive(mapped, cuts, twice_quadrature_tolerance, 0.0, 400).real();
     }
 
     const Edge& first_;
@@ -1677,10 +1688,11 @@ std::vector<complex> twice_diffracted_spectrum(const Edge& first, const Edge& se
                     const double x = u0 + t * (u1 - u0);
                     error = std::max(error, std::abs(f(base + x * x) - curves(base + x * x)));
                 }
-                if (error * width <= 1e-6 * measure)
+                if (error * width <= twice_interpolation_tolerance * measure)
                     break;
             }
-            if (error * width <= 1e-6 * measure || u1 - u0 < 1e-4 * u1 || pieces.size() > 400)
+            if (error * width <= twice_interpolation_tolerance * measure || u1 - u0 < 1e-4 * u1
+                    || pieces.size() > 400)
                 pieces.push_back(std::move(f));
             else
             {

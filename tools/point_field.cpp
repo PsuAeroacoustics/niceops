@@ -466,6 +466,9 @@ int main(int argc, char** argv)
                                        near_microphones = edges_near(city, points, options.radius);
         const unsigned workers = tool_thread_count(threads);
         const std::size_t ns = sources.size(), nm = points.size();
+        // A run of fewer pairs than threads shares each pair's integrals out.
+        if (edge_source && ns * nm < workers)
+            options.edge_source_threads = static_cast<unsigned>((workers + ns * nm - 1) / (ns * nm));
         const double from_meters = 1.0 / to_meters;
 
         ensure_parent_directory(output);

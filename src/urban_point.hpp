@@ -134,6 +134,9 @@ public:
         // A shared face's aperture at every wavenumber, not sampled
         // (PointPathOptions::sample_shared_faces).
         bool exact_shared_faces = false;
+        // Diffraction by the edge-source integral (edge_source.hpp), on the
+        // CPU.
+        bool edge_source = false;
         // Reliefs' grating orders (facade_relief.hpp), each building carrying
         // the one its relief column names, or without the column the first
         // wherever it scatters; how they scatter beyond their specular order,
@@ -159,6 +162,9 @@ public:
     std::vector<double> band_scattering(const std::vector<double>& bands) const;
     // How many walls carry a relief.
     std::size_t relief_walls() const;
+    // Whether the rays diffract by the edge-source integral, which the GPU
+    // does not take.
+    bool edge_source() const;
     // The diffuse field's patch size and reach, metres.
     double patch_size() const;
     double diffuse_radius() const;

@@ -135,6 +135,10 @@ struct PointPathOptions
     // over the edge carries, so that a ray leaving the edge fades rather than
     // stops.  point_field sets it to 100 radians at the lowest band.
     double edge_source_reach = 10.0;
+    // With edge_source, the threads a pair's rays' integrals are shared out
+    // over: for a run of fewer pairs than threads (a few microphones), where
+    // the pairs alone leave cores idle.
+    unsigned edge_source_threads = 1;
     // Over a shared face, the aperture's integral only where the cascade of
     // the two wedges cannot stand in for it (THEORY 6.5): at wavenumbers two
     // thirds of an octave apart, below where the first wedge's transition
@@ -490,6 +494,7 @@ private:
     bool edge_source_ = false;
     bool sample_shared_faces_ = true;
     const std::vector<const FacadeRelief*>* reliefs_ = nullptr;
+    unsigned edge_source_threads_ = 1;
 };
 
 // A ray's factor from the floor in each of `problems` sub-bands, [3 band +

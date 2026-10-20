@@ -184,6 +184,12 @@ Commands and options are in `README.md`; rationale is in
   are roof edges only by default: every edge multiplied the demo run's cost by eight for nothing.
   A middle edge meeting an outer one at a corner is left out (a vertex, not a cascade). The GPU's
   shared-face ray kind is `NK_KIND_FACE`, freeing 3 for three wedge terms.
+- **The edge source's speed** (`--edge_source`, ground.md): its cost is the level curves', not the
+  wavenumbers'. Tolerances 1e-3/1e-4 (`edge_source.cpp`), the cascade times `end_ratios` out of both
+  transitions, and `edge_source_threads` in point_field. Splitting a ray's wavenumbers and giving
+  shared faces their uniform form were measured and rejected (no faster; 0.74 dB off the BEM).
+  It runs in a trajectory (`--buildings --edge_source`, CPU only) but is not the default: ~0.8 s CPU
+  a pair on the demo district.
 - **A facade relief is a grating** (`--relief`, `--facade_relief`; `facade_relief`, `grating_paths`;
   THEORY 6.5). Specular rays that diffract nowhere take its order 0 at the incidence recorded in
   `PointRay::hits`; rays that diffract reflect whole (measured: the other way DigiCity's mic 7 fell

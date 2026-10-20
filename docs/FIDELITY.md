@@ -1255,7 +1255,27 @@ partners the orders leave out -- a leg meeting a third edge, a reflection past
 `--max_edge_reflections` -- which neither model traces.
 
 **Cost.** DigiCity's four microphones, 17 bands, on one thread: 0.22 s without `--edge_source`,
-58 s with it. The long block's 40 cases in its test: 4.9 s, against 0.01 s for the uniform form's 80.
+58 s with it when first written. Since (14 threads, against the integral as first written):
+
+| Case | UTD | Edge source, before | Now | Now against before, A-weighted |
+| --- | --- | --- | --- | --- |
+| DigiCity, four microphones, 160 Hz-6.3 kHz | 1.3 s | 145 s (357 s CPU) | 10.5 s (90 s CPU) | within 0.009 dB (0.09 in a band) |
+| Demo district, 38 states × 7 microphones, 10 Hz-10 kHz | 0.27 s | 497 s (5177 s CPU) | 19 s (211 s CPU) | within 0.012 dB (266 pairs) |
+| EDGE, the 13 scene-source runs against the FDTD | | minutes | 3.6 s | each run's rms within 0.04 dB |
+
+The integral's tolerances a hundred times looser, the cascade times the edges' end ratios out of
+both transitions, and a pair's integrals over threads (THEORY §6.5; ground.md). What is left is the
+twice-diffracted rays near a transition at low frequency and over shared faces, about 0.8 s of CPU a
+pair on the demo district where UTD takes 4 ms: a trajectory's few thousand pairs in a run
+(`niceops --buildings --edge_source`) take minutes, not seconds, so UTD stays the default.
+
+**Where it departs from UTD most, unchecked.** On the demo district 6 of the 266 pairs move by more
+than 1 dB A-weighted, all at one microphone 3500 ft from the source deep behind the tallest
+building, where the levels are 40 dB below the district's: up to +20 dB. Two things carry it there,
+once-diffracted rays kept past a roof edge's end (the corner's wave, which UTD has no ray for) and
+a twice-diffracted ray over a roof edge and the vertical edge it meets, 29 dB above its cascade near
+their shared vertex. Neither has been checked against a full-wave field: the case is a kilometre
+across. The long block's 40 cases in its test: 4.9 s, against 0.01 s for the uniform form's 80.
 
 Taken over [0, L], a vertical edge on the floor has a false end there, a metre or so from every
 street-level ray, which moved microphone 7 by −1.5 dB at 160 Hz. Leaving the integral only to rays

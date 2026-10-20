@@ -189,6 +189,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--buildings`, `--wall_absorption`, `--floor_absorption` | LoD1 buildings around the microphones: every microphone hears the source's own rays among them, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)); the floor rigid, absorbing, or with `--ground_effect` the ground model's at every bounce. Spectral path only, with a database carrying spectra. |
 | `--facade_scattering`, `--facade_scattering_spectrum` | With `--buildings`: the share of what the walls and roofs reflect that they scatter diffusely, where a building gives none (default 0, or 1 with a spectrum), and a CSV of `band_hz` and `s` that multiplies it band by band. |
 | `--facade_relief`, `--relief_scattering`, `--grating_reflections` | With `--buildings`: walls with a periodic relief, reflecting into its grating orders ([Buildings around the microphones](#buildings-around-the-microphones)). |
+| `--edge_source` | With `--buildings`: diffraction by the edge-source integral, on the CPU, as `niceops_point_field --edge_source` takes it. |
 | `--patch_size`, `--diffuse_radius` | With scattering facades: the diffuse field's patches' size at most (default 4 m (13.123 ft)), and the horizontal distance from a microphone within which a building scatters (default 150 m (492.13 ft), the rays' own reach). |
 | `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
 | `--coherence_angle` | With `--buildings`: the cone's half-angle, degrees, within which rays leaving the source add with their phases. Default 1. Given alone, it selects `cone`. |
@@ -1144,6 +1145,10 @@ over a pass as it does in an exposure.
   for the run, so the cost grows with the microphones and the patches, not with the states: on the
   test district, 0.2 s on the GPU and 0.4 s on the CPU. For a corrugated container's s(f), on
   NLR's DigiCity, see [FIDELITY](FIDELITY.md#scattering-walls-point-source).
+- **Diffraction by the edge-source integral** (`--edge_source`), as `niceops_point_field
+  --edge_source` takes it ([niceops_point_field](#niceops_point_field)): the edges' ends and the
+  transitions the cascade misses, on the CPU (with `--gpu` refused). It costs about 0.8 s of CPU a
+  pair on the test district, against UTD's 4 ms, so a trajectory's few thousand pairs take minutes.
 - **Walls with a periodic relief** (`--facade_relief`). Ribs, a sawtooth in plan or a container's
   corrugation do not scatter by Lambert's law: they reflect into grating orders, each on the cone
   of the wave's elevation ([THEORY §6.5](THEORY.md#65-urban-receivers)). `tools/profile_scattering.py
@@ -1970,8 +1975,10 @@ each edge's whole length, so a building's corners and the ends of its roof edges
 ray fades rather than stops as its diffraction point leaves its edge. Every once-diffracted ray
 takes it but one off a roof, which takes UTD's coefficient. A twice-diffracted ray takes it where the cascade of two coefficients cannot be trusted --
 near either edge's shadow or reflection boundary, near an edge's end, over a shared face -- and the
-cascade elsewhere, the two blended smoothly band by band. The run is much slower, and CPU only:
-`--edge_source` is refused with `--gpu`, and keeps a default run on the CPU. Its accuracy and cost are in
+cascade elsewhere, the two blended smoothly band by band; out of both transitions, the cascade times
+each edge's end ratio. It is several times UTD's cost on a few microphones (DigiCity's four, 10.5 s
+against 1.3) and far more over a large district at low frequency, and CPU only: `--edge_source` is
+refused with `--gpu`, and keeps a default run on the CPU. Its accuracy and cost are in
 [FIDELITY](FIDELITY.md#a-point-source-among-buildings).
 
 Walls with relief -- corrugated cladding, balconies, ribs, window bays -- send part of what they

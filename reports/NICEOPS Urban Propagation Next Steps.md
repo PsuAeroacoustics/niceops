@@ -83,7 +83,14 @@ The continuity sweep (20 lines, 3771 positions): 31 → 23 steps over 1 dB, the 
   integral unfolded about the wall, whose end over the front edge is the vertex's wave: R1 −0.1 dB, the scene
   1.0 dB rms, EDGE's 13 runs 1.35 against UTD's 1.95. A Fresnel weight on the reflection would not do it (its
   zone is a few centimetres there: −0.4 dB at 8 kHz). Making it the default needs the edge source on the GPU
-  and cheaper, or a vertex term in UTD (Albani et al. 2009).
+  and cheaper, or a vertex term in UTD (Albani et al. 2009). Cheaper since (Oct 20): looser tolerances, the
+  cascade times the edges' end ratios out of both transitions, and a pair's integrals over threads take
+  DigiCity's four microphones from 145 to 10.5 s and the demo district's 266 pairs from 497 to 19 s, within 0.012
+  dB A-weighted; EDGE's 13 runs take 3.6 s. `niceops --buildings --edge_source` runs it in a trajectory. Still
+  0.8 s of CPU a pair over the demo district (UTD 4 ms): what is left is near-transition rays at low frequency and
+  shared faces, for which a uniform asymptotic form (Capolino and Albani's generalized Fresnel integral) is the
+  step; and its largest departures from UTD, +20 dB deep in a building's shadow by a corner's waves, are
+  unchecked.
 - **Vertex diffraction** in general, more than one reflection between edges,
   reflections on a ray of three edges, and the shared face's aperture on a ray of three (it takes the cascade).
 - **Four edges or more**, which a thin middle row needs (each of its roof edges counts).

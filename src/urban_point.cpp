@@ -462,6 +462,7 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
         d.reflection[f] = 1.0 - d.input.absorption[d.city.facade_building(f)];
     d.floor_reflection = 1.0 - input.floor_absorption;
     d.paths.sample_shared_faces = !input.exact_shared_faces;
+    d.paths.edge_source = input.edge_source;
     if (!input.scattering_file.empty())
         d.scattering_spectrum = read_scattering_spectrum(input.scattering_file, input.units);
     d.scattering_file = input.scattering_file;
@@ -485,6 +486,11 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
         d.paths.reliefs = &d.facade_reliefs;
     }
     return district;
+}
+
+bool UrbanDistrict::edge_source() const
+{
+    return impl_->paths.edge_source;
 }
 
 std::size_t UrbanDistrict::relief_walls() const
@@ -553,11 +559,19 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         throw std::invalid_argument("UrbanDistrict::levels: the floors are not one per microphone");
     if (device != nullptr && !gpu_supports(coherence, interval != nullptr))
         throw std::invalid_argument("UrbanDistrict::levels: the GPU does not take the measured coherence or an interval");
+    if (device != nullptr && impl_->paths.edge_source)
+        throw std::invalid_argument("UrbanDistrict::levels: the edge-source integral is the CPU's");
     const Impl& d = *impl_;
     const Buildings& city = d.city;
     const std::vector<double>& centers = database.band_centers();
     const std::size_t all = centers.size();
     last_band = std::min(last_band, all);
+    // The paths' options for this run's bands: with the edge source, a ray
+    // whose Keller point lies past an end is kept to 100 radians of path
+    // excess at the lowest band, as niceops_point_field keeps it.
+    PointPathOptions paths = d.paths;
+    if (paths.edge_source && first_band < last_band)
+        paths.edge_source_reach = 100.0 / (2.0 * pi * centers[first_band] / sound_speed);
     first_band = std::min(first_band, last_band);
     const std::size_t nb = last_band - first_band, nm = microphones.size(), ns = states.size();
     constexpr double silence = -std::numeric_limits<double>::infinity();
@@ -640,8 +654,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     std::vector<Vec3> sources(ns);
     for (std::size_t k = 0; k < ns; k++)
         sources[k] = states[k].position;
-    const std::vector<std::size_t> near_sources = edges_near(city, sources, d.paths.radius),
-                                   near_microphones = edges_near(city, microphones, d.paths.radius);
+    const std::vector<std::size_t> near_sources = edges_near(city, sources, paths.radius),
+                                   near_microphones = edges_near(city, microphones, paths.radius);
     const unsigned workers = std::max(1u, threads);
     const std::size_t block = std::max<std::size_t>(64, 4 * workers);
 
@@ -675,7 +689,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         options.radius = d.diffuse_radius;
         options.patch_size = d.patch_size;
         // The rays reflect in the roofs, so the roofs scatter too.
-        options.roofs = d.paths.roofs;
+        options.roofs = paths.roofs;
         options.air = nepers;
         if (reliefs && d.relief_lambert)
             options.scattering_at = [&](std::size_t f, double sin_psi, double cos_elevation, std::size_t b) {
@@ -693,7 +707,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             diffuse_fields[m] = std::make_unique<DiffuseFacades>(city, microphones[m], reflection, scatter,
                     std::accumulate(floor_energy[m].begin(), floor_energy[m].end(), 0.0) / static_cast<double>(nb), bands,
                     sound_speed, options, workers);
-            diffuse_fields[m]->prepare_point_lighting(d.paths.max_reflections, workers);
+            diffuse_fields[m]->prepare_point_lighting(paths.max_reflections, workers);
             unconverged += diffuse_fields[m]->converged() ? 0 : 1;
             microphone_reflection[m] = reflection;
             for (std::size_t f = 0; f < d.reflection.size(); f++)
@@ -760,7 +774,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             }
         };
         out.assign(nb, 0.0);
-        diffuse_fields[m]->point_energy(states[state].position, d.paths.max_reflections, nepers, out.data(), 1,
+        diffuse_fields[m]->point_energy(states[state].position, paths.max_reflections, nepers, out.data(), 1,
                 &power);
     };
     // With turbulence, the energy it scatters into the shadow at microphone `m`
@@ -836,7 +850,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         g.reflection = &reflection_for(m);
         g.air = nepers;
         g.max_reflections = d.grating_reflections;
-        g.source_reflections = d.paths.source_reflections;
+        g.source_reflections = paths.source_reflections;
         const FloorModel& floor = floor_of[m];
         if (floor.impedance())
             g.floor = [&](double sin_grazing, double leg, std::size_t b) {
@@ -876,7 +890,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         // Coherent rays have no unknown phase relation, and the diffuse field
         // none either, so neither has variance.
         w.variance.assign(nb, 0.0);
-        const PointSourceField field(city, source, microphone, d.paths);
+        const PointSourceField field(city, source, microphone, paths);
         turbulence_energy(state, m, w, out.scattered);
         // The diffuse field and the grating rays carry energy alone.
         out.diffuse.clear();
@@ -989,7 +1003,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             parallel_chunks(block_states.size(), workers, [&](std::size_t begin, std::size_t end) {
                 for (std::size_t k = begin; k < end; k++)
                     source_ends[k] = std::make_unique<PathEnd>(
-                            city, sources[block_states[k]], true, d.paths, near_microphones);
+                            city, sources[block_states[k]], true, paths, near_microphones);
             });
             work.resize(last - first);
             std::iota(work.begin(), work.end(), first);
@@ -1005,7 +1019,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                         const auto [state, m] = todo[work[i]];
                         if (m != microphone_row)
                         {
-                            microphone = std::make_unique<PathEnd>(city, microphones[m], false, d.paths, near_sources);
+                            microphone = std::make_unique<PathEnd>(city, microphones[m], false, paths, near_sources);
                             microphone_row = m;
                         }
                         if (!stream)
@@ -1013,7 +1027,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                             evaluate(*source_ends[slot[state]], *microphone, state, m, w, out[work[i]]);
                             continue;
                         }
-                        const PointSourceField field(city, *source_ends[slot[state]], *microphone, d.paths);
+                        const PointSourceField field(city, *source_ends[slot[state]], *microphone, paths);
                         // The diffuse energy before the push: the stream's
                         // callback adds it.
                         Pair& p = out[work[i]];

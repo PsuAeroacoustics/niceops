@@ -997,6 +997,24 @@ frequency domain, for the point-source model's diffracted rays. What to keep:
   end are not kept: it would loosen the pair prune and cost a level-curve integral per kept
   ray, and none of the 30 steps above 1 dB in a 3771-position DigiCity sweep was one. Every
   step there was a partner the tracer has no edge, reflection or floor leg for.
+- **The integral's cost is its curves', not its wavenumbers'** (the level-curve integrand and its
+  Gauss-Kronrod panels were 99% of a run). Three things took DigiCity's four microphones from 145
+  to 10.5 s and the demo district's 266 pairs from 497 to 19 s, the levels within 0.012 dB
+  A-weighted of the slow integral's:
+  - **Tolerances a hundred times looser** (`twice_quadrature_tolerance` 1e-3,
+    `twice_interpolation_tolerance` 1e-4 in `edge_source.cpp`): 2.4-6 times, under 0.002 dB. The
+    level-curve test's bound moved from 2e-5 to 5e-4 with them.
+  - **Out of both transitions at the least wavenumber, the cascade times the end ratios**
+    (`end_ratios`). Measured and rejected: splitting a ray's wavenumbers at its transition (no
+    faster -- a curve set costs the same for fewer wavenumbers -- and 0.09 dB off), and a shared
+    face's uniform form times the ratios (its 125 Hz long-block case 0.74 dB off the BEM, where the
+    integral is 0.28). Shared faces keep the integral.
+  - **A pair's integrals over threads** (`PointPathOptions::edge_source_threads`), which
+    `niceops_point_field` sets when it has fewer pairs than threads. A run's pairs fill them.
+  What is left is the twice-diffracted rays near a transition at low frequency and the shared
+  faces: about 0.8 s of CPU a pair on the demo district, against UTD's 4 ms. A uniform asymptotic
+  form there (Capolino, Albani and coworkers' generalized Fresnel integral) is what would make it a
+  default. FIDELITY has the numbers.
 - **Weights, not switches**: once-diffracted rays always take the integral, which matches UTD on
   long edges to p90 0.01 dB; twice-diffracted ones blend into the cascade in each wavenumber's
   transition parameter (0.3 to 1) and path excess (100 to 1000 radians).

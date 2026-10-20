@@ -438,8 +438,9 @@ TEST_CASE("the level-curve spectrum is the nested integral", "[edge_source]")
             const complex nested = twice_diffracted_field(p.e1, p.e2, p.s, p.r, ks[i], {0.0, p.e1.length},
                     {0.0, p.e2.length}, p.plane, 1e-7);
             INFO(p.name << " at k " << ks[i] << ": " << level(spectrum[i]) << " dB against " << level(nested));
-            // Within 4e-6.
-            REQUIRE(std::abs(spectrum[i] - nested) < 2e-5 * std::abs(nested));
+            // Within 1.3e-4 at the integral's own tolerances (1e-3 and 1e-4,
+            // edge_source.cpp), 0.001 dB; 4e-6 a hundred times tighter.
+            REQUIRE(std::abs(spectrum[i] - nested) < 5e-4 * std::abs(nested));
         }
     }
 }
