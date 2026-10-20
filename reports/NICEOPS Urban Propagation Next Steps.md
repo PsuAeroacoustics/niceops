@@ -18,6 +18,22 @@ buildings, judged against what EDGE, DigiCity and the FDTD have shown. Recommend
 
 The rest follow as data and need decide.
 
+**The research review** ([Urban propagation research review 2026-10-20](Urban%20propagation%20research%20review%202026-10-20.md))
+ranks what the literature says would improve the predictions most, for rotorcraft and drones among buildings:
+
+1. **Turbulence scattering into building shadows** (Forssén et al. 2014). Done (Oct 20): `--scattering` γ_T with
+   `--buildings`, off by default; unvalidated, the strength being the weak input. It matters where a microphone
+   stays shielded through an event.
+2. **Finite facades and edge ends treated uniformly**: reflections near a facade's end weighted by their Fresnel
+   zone, the vertex term, and a ray whose partner is beyond the orders faded rather than kept whole (1a's
+   leftover, UE06's R1).
+3. **Facade scattering by incidence and grating order**: s(θ, f) from the BEM, grating orders for periodic relief
+   (UE24-26), and a receiver-side gather that makes the diffuse field affordable on a grid.
+4. **Pitched roofs (LoD2)**, validated on EDGE's measured pitched-roof scenes (UE01-05, 15, 17, 19), unused so far.
+5. **Higher orders with pruning** (1a), and an engineering term for paths beyond the explicit orders.
+
+For drones the review expects the source model to outweigh these until a measured multirotor sphere exists (4a).
+
 ## 1. Paths the ray model misses
 
 ### 1a. A third edge, and reflections between edges

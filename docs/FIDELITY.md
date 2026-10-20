@@ -774,6 +774,17 @@ same run unsampled:
 - **Cost**, 14 threads on an M4 Pro (the development build, asserts on): 3.2 s with `--no-gpu`,
   1.2 s with the rays formed and summed on the GPU, against 0.3 s for the run without buildings.
 
+**Turbulence in the buildings' shadows** (`--scattering` with `--buildings`). Not validated against
+measurement: EDGE's room is still air, and DigiCity's weather is not known. What is checked is the
+implementation. The fit reproduces Forssén et al.'s own Figure 2 (their scattering integral at
+1 kHz, C_v² = 1, d_S = 40 m) at its corners to 2 dB, less the 6 dB of the ground it doubles at both
+ends; the screen's height and distances are the hand-worked ones for a box under a sloping line;
+and in a run, behind a 10 m wall 15 m off with the source 200 m away and 60 m up, γ_T = 10⁻⁵
+(HARMONOISE's strong, C_v² = 0.16) adds 0.07, 0.26 and 0.52 dB at 125, 500 and 2000 Hz, the total
+under open ground's and a microphone in sight untouched to the bit. On the demo approach the same
+strength moves no SEL by 0.003 dB, every microphone seeing the helicopter at some point, for under
+1% of the run's time.
+
 **Facades that scatter** (`--facade_scattering`). For a source the same in every direction, the
 run's band levels are `niceops_point_field --scattering`'s to 1e-9 dB, rays and diffuse field
 together, with one building in the diffuse field's reach and one beyond it; on the GPU, to 1e-6 dB

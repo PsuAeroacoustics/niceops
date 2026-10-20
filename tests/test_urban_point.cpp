@@ -182,3 +182,52 @@ TEST_CASE("a run's diffuse field is niceops_point_field's for an omnidirectional
         REQUIRE(gpu_levels[0] == Catch::Approx(levels[0]).margin(1e-6));
     }
 }
+
+// Turbulence scattering in a run: behind a long wall the microphone gains the
+// energy turbulence scatters over it, more at high frequency than low, and
+// never past open ground's level (the direct path's free field and the
+// floor's reflection); a microphone in sight of the source is untouched, to
+// the bit.
+TEST_CASE("a run's shadows take the energy turbulence scatters into them", "[urban_point]")
+{
+    const std::vector<double> bands {125.0, 500.0, 2000.0};
+    const double level = 90.0;
+    const Database database(write_omnidirectional_database(bands, level, "niceops_omnidirectional_turbulence.nod"));
+    const double radius = database.sphere_radius();
+    const auto district_file = (std::filesystem::temp_directory_path() / "niceops_turbulence_wall.csv").string();
+    {
+        std::ofstream out(district_file);
+        out << "building,x,y,top\n1,-1,-200,10\n1,1,-200,10\n1,1,200,10\n1,-1,200,10\n";
+    }
+    UrbanDistrict::Input still, turbulent;
+    still.units = turbulent.units = "m";
+    still.to_meters = turbulent.to_meters = 1.0;
+    turbulent.turbulence = 1e-5;
+    const auto quiet = UrbanDistrict::read(district_file, still), stirred = UrbanDistrict::read(district_file, turbulent);
+    const Vec3 source(-200.0, 0.0, 30.0 + radius);
+    const std::vector<Vec3> microphones {Vec3(15.0, 0.0, 1.5), Vec3(-15.0, 0.0, 1.5)};
+    const std::vector<Database::SourceState> states {
+            database.source_state(source, Vec3(30.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0), 0.15, -4.0, 0.006)};
+    const std::vector<double> no_absorption(bands.size(), 0.0);
+    const std::vector<double> gains = a_weighting_gains(bands, BandLimits {});
+    SourceCoherence coherence;
+    std::vector<double> levels_quiet, bands_quiet, levels_stirred, bands_stirred;
+    quiet->levels(database, states, microphones, no_absorption.data(), gains, 0, bands.size(), 343.2, 2, coherence,
+            levels_quiet, &bands_quiet, nullptr, nullptr, 0.0);
+    stirred->levels(database, states, microphones, no_absorption.data(), gains, 0, bands.size(), 343.2, 2, coherence,
+            levels_stirred, &bands_stirred, nullptr, nullptr, 0.0);
+    const double r = (microphones[0] - source).norm();
+    const double open = level + 20.0 * std::log10(radius) - 20.0 * std::log10(r) + 10.0 * std::log10(2.0);
+    std::vector<double> gain(bands.size());
+    for (std::size_t b = 0; b < bands.size(); b++)
+    {
+        gain[b] = bands_stirred[b] - bands_quiet[b];
+        REQUIRE(gain[b] >= 0.0);
+        REQUIRE(bands_stirred[b] <= open + 1e-9);
+        // In sight of the source nothing changes.
+        REQUIRE(bands_stirred[bands.size() + b] == bands_quiet[bands.size() + b]);
+    }
+    REQUIRE(gain[2] > 0.3);
+    REQUIRE(gain[2] > gain[0]);
+    REQUIRE(levels_stirred[1] == levels_quiet[1]);
+}

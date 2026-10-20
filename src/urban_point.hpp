@@ -23,6 +23,11 @@
 // source's specular paths to each patch, each path carrying the sphere along
 // its own launch, adds its energy to the rays' in each band.
 //
+// With a turbulence strength, a microphone the buildings shield from the
+// source also takes the energy turbulence scatters into the shadow
+// (turbulence_scattering.hpp), the direct path's free-field energy times the
+// scattered level, the total capped at open ground's.
+//
 // The district is opaque here: the run's translation unit cannot see
 // buildings.hpp, whose Ring is not contour.hpp's.
 
@@ -102,6 +107,10 @@ public:
         // metres; 0 for the rays' own reach (PointPathOptions::radius).
         double patch_size = 4.0;
         double diffuse_radius = 0.0;
+        // The HARMONOISE turbulence strength gamma_T (m^-2/3) whose scattered
+        // energy fills the buildings' shadows (turbulence_scattering.hpp); 0
+        // for none.
+        double turbulence = 0.0;
         // A shared face's aperture at every wavenumber, not sampled
         // (PointPathOptions::sample_shared_faces).
         bool exact_shared_faces = false;

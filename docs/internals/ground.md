@@ -757,6 +757,24 @@ which marches them. What to keep:
   column where there is one). The floor is the buildings', so `--buildings` turns the ground model
   off rather than leaving it to put a microphone at its receiver height: the run built ground
   tables it never used and put observers without a height column 1.2 m up.
+- **Turbulence in the shadows** (`--scattering` with `--buildings`; `turbulence_scattering`). Per
+  pair, `shadow_screen` finds the roof top farthest above the source-microphone line where the
+  line's plan crosses a footprint's side; a pair it does not shield is untouched to the bit. The
+  scattered energy is formed before the rays are summed (`Pair::scattered`, with open ground's
+  energy beside it) and added after them and the diffuse field, held to open ground's, in
+  `evaluate` and in the GPU stream's callback alike. What to keep:
+  - **gamma_T is taken as velocity turbulence**, C_v^2 = (3/22) c0^2 gamma_T, which the cross
+    section's small-angle form justifies for either kind; the paper's temperature coefficients
+    (b1 = -49.6 + 10 lg C_T^2 as reported) would put temperature 3 dB above velocity per unit
+    strength, against the cross section's 7 dB below, and are not used.
+  - **The velocity coefficients come from the published Table IV**, which the author's version
+    lacks; `the scattered level is Forssén et al.'s fit` checks them against that version's
+    Figure 2 to 2 dB.
+  - **No canyon term**: the paper's correction wants a 2-D street's widths and heights, which a
+    district does not carry. It would raise a microphone in a canyon by 7-14 dB plus.
+  - Tests: `the scattered level is Forssén et al.'s fit`, `the shadow's screen is the roof top
+    farthest above the line`, `a run's shadows take the energy turbulence scatters into them`,
+    `buildings_turbulence_*`.
 - **Facades that scatter** (`--facade_scattering`, `--facade_scattering_spectrum`) take
   `niceops_point_field`'s radiosity. Each microphone gets its own `DiffuseFacades`, its patch
   images traced once for the run, and its rays a reflection vector of their own: ρ(1 − s) for the

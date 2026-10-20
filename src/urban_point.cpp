@@ -20,6 +20,7 @@
 #include "buildings.hpp"
 #include "point_paths.hpp"
 #include "source_coherence.hpp"
+#include "turbulence_scattering.hpp"
 #include "util/constants.hpp"
 #include "util/logger.hpp"
 #include "util/parallel.hpp"
@@ -417,6 +418,7 @@ struct UrbanDistrict::Impl
     std::vector<std::pair<double, double>> scattering_spectrum;
     std::string scattering_file;
     double patch_size = 4.0, diffuse_radius = 0.0;
+    double turbulence = 0.0;
 };
 
 UrbanDistrict::UrbanDistrict() : impl_(std::make_unique<Impl>()) {}
@@ -453,6 +455,7 @@ std::shared_ptr<const UrbanDistrict> UrbanDistrict::read(const std::string& file
     d.scattering_file = input.scattering_file;
     d.patch_size = input.patch_size;
     d.diffuse_radius = input.diffuse_radius > 0.0 ? input.diffuse_radius : d.paths.radius;
+    d.turbulence = input.turbulence;
     return district;
 }
 
@@ -610,7 +613,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // scattering walls its diffuse energy per band.
     struct Pair
     {
-        std::vector<double> bands, diffuse;
+        std::vector<double> bands, diffuse, scattered;
         double level = silence, lower = silence, upper = silence;
     };
     struct Scratch
@@ -659,6 +662,54 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         diffuse_fields[m]->point_energy(states[state].position, d.paths.max_reflections, nepers, out.data(), 1,
                 &power);
     };
+    // With turbulence, the energy it scatters into the shadow at microphone `m`
+    // per band, then the energy open ground would give there, into `out`
+    // (empty where the source is in sight): the direct path's free-field
+    // energy, from the sphere along the straight line as a ray's is (weigh),
+    // times the scattered level, its fit's doubling by the ground at either
+    // end taken as the floor's ((1 + R) / 2 each), absorbed along the line.
+    const double turbulence_cv2 = velocity_equivalent(d.turbulence, sound_speed);
+    auto turbulence_energy = [&](std::size_t state, std::size_t m, Scratch& w, std::vector<double>& out) {
+        out.clear();
+        if (!(d.turbulence > 0.0))
+            return;
+        const Vec3& s = states[state].position;
+        const ShadowScreen screen = shadow_screen(city, s, microphones[m]);
+        if (!screen.shielded)
+            return;
+        const Vec3 line = microphones[m] - s;
+        const double r = line.norm();
+        w.lighting.resize(all);
+        database.spectrum_along(states[state], line / r, w.lighting.data(), first_band, last_band,
+                packed != nullptr ? (*packed)[state] : nullptr);
+        const double inside = std::min(r, radius);
+        const double ground = 0.25 * (1.0 + d.floor_reflection) * (1.0 + d.floor_reflection);
+        out.assign(2 * nb, 0.0);
+        for (std::size_t b = 0; b < nb; b++)
+        {
+            const double level = w.lighting[first_band + b];
+            if (!std::isfinite(level))
+                continue;
+            const double free = std::pow(10.0, (level + at_one_metre) / 10.0) * (inside / radius) * (inside / radius)
+                    * std::exp(-2.0 * nepers[b] * (r - inside)) / (r * r);
+            out[b] = free * ground
+                    * std::pow(10.0, 0.1 * scattered_level(screen.h, screen.d_s, screen.d_r, bands[b], turbulence_cv2));
+            out[nb + b] = free * (1.0 + d.floor_reflection);
+        }
+    };
+    // The scattered energy added into band levels, the total held to open
+    // ground's where it is louder.
+    auto add_scattered = [&](const std::vector<double>& energy, std::vector<double>& levels_db) {
+        if (energy.empty())
+            return;
+        for (std::size_t b = 0; b < nb; b++)
+        {
+            const double now = std::pow(10.0, 0.1 * levels_db[b]);
+            const double added = std::min(energy[b], std::max(0.0, energy[nb + b] - now));
+            if (added > 0.0)
+                levels_db[b] = 10.0 * std::log10(now + added);
+        }
+    };
     // The diffuse energy added into band levels.
     auto add_diffuse = [&](const std::vector<double>& energy, std::vector<double>& levels_db) {
         for (std::size_t b = 0; b < energy.size(); b++)
@@ -673,7 +724,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         // none either, so neither has variance.
         w.variance.assign(nb, 0.0);
         const PointSourceField field(city, source, microphone, d.paths);
-        if (field.rays().empty() && !diffuse)
+        turbulence_energy(state, m, w, out.scattered);
+        if (field.rays().empty() && !diffuse && out.scattered.empty())
             return;
         if (!field.rays().empty())
         {
@@ -696,6 +748,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             diffuse_energy(state, m, w, out.diffuse);
             add_diffuse(out.diffuse, out.bands);
         }
+        add_scattered(out.scattered, out.bands);
         w.full.assign(all, silence);
         std::copy(out.bands.begin(), out.bands.end(), w.full.begin() + static_cast<std::ptrdiff_t>(first_band));
         out.level = weighted_level(w.full.data(), gains);
@@ -757,6 +810,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 for (std::size_t b = 0; b < nb; b++)
                     p.bands[b] = band_level(bands[b], parts[b], &energy[3 * b]);
                 add_diffuse(p.diffuse, p.bands);
+                add_scattered(p.scattered, p.bands);
                 std::copy(p.bands.begin(), p.bands.end(), stream_full.begin() + static_cast<std::ptrdiff_t>(first_band));
                 p.level = weighted_level(stream_full.data(), gains);
             });
@@ -811,12 +865,15 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                         Pair& p = out[work[i]];
                         if (diffuse)
                             diffuse_energy(state, m, w, p.diffuse);
+                        turbulence_energy(state, m, w, p.scattered);
                         if (field.rays().empty())
                         {
-                            // The diffuse field alone, where it reaches.
-                            if (diffuse)
+                            // The diffuse and scattered fields alone, where
+                            // they reach.
+                            if (diffuse || !p.scattered.empty())
                             {
                                 add_diffuse(p.diffuse, p.bands);
+                                add_scattered(p.scattered, p.bands);
                                 w.full.assign(all, silence);
                                 std::copy(p.bands.begin(), p.bands.end(),
                                         w.full.begin() + static_cast<std::ptrdiff_t>(first_band));

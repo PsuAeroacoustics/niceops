@@ -5265,8 +5265,9 @@ int run(int argc, char* argv[])
             ->check(CLI::IsMember({"series", "straight", "ray"}));
     app.add_option("--scattering", scattering,
             "Fill refraction shadows with the energy turbulence scatters into them instead of "
-            "--shadow_floor: the HARMONOISE strength gamma_T = C_T^2/T0^2 + 22 C_v^2/(3 c0^2) "
-            "(0, the default, is off). Needs --refraction and --ground_effect.");
+            "--shadow_floor, or with --buildings the buildings' shadows (Forssen et al. 2014): the "
+            "HARMONOISE strength gamma_T = C_T^2/T0^2 + 22 C_v^2/(3 c0^2) (0, the default, is off). "
+            "Needs --refraction and --ground_effect, or --buildings.");
     auto* ground_effect_option = app.add_flag("--ground_effect,!--no-ground_effect", ground_effect,
             "Add excess ground attenuation (Chien-Soroka over a Delany-Bazley impedance) to "
             "the spectral path. On by default wherever the spectral path runs; "
@@ -6314,10 +6315,11 @@ int run(int argc, char* argv[])
     }
     if (shadow_model != "resolved" && (shadow_phase_option->count() > 0 || cramped_ground_option->count() > 0))
         input_error("--shadow_phase and --cramped_ground shape --shadow_model resolved, which is not given.");
-    if (scattering > 0.0 && (refraction == "none" || !ground_effect))
+    if (scattering > 0.0 && buildings_file.empty() && (refraction == "none" || !ground_effect))
     {
         input_error("--scattering fills the shadows --refraction casts, through the shadow-boundary "
-                    "field that --ground_effect's ground model sets up; give both.");
+                    "field that --ground_effect's ground model sets up, or the buildings' (--buildings); "
+                    "give --refraction and --ground_effect, or --buildings.");
     }
     if (!atmosphere_files.empty() && (!temperature_overrides.empty() || !humidity_overrides.empty()))
     {
@@ -6552,6 +6554,7 @@ int run(int argc, char* argv[])
         input.scattering_file = facade_scattering_spectrum;
         input.patch_size = patch_size;
         input.diffuse_radius = diffuse_radius;
+        input.turbulence = scattering;
         input.exact_shared_faces = exact_shared_faces;
         try
         {
@@ -6569,6 +6572,10 @@ int run(int argc, char* argv[])
         else if (!facade_scattering_spectrum.empty())
             warn("--facade_scattering_spectrum ", facade_scattering_spectrum, ": every building's coefficient is 0 "
                     "(--facade_scattering or the district's scattering column), so nothing scatters.");
+        if (scattering > 0.0)
+            log("--buildings: turbulence at gamma_T ", scattering, " m^-2/3 scatters into the buildings' shadows "
+                    "(Forssen et al. 2014, as velocity turbulence of C_v^2 ", 3.0 / 22.0 * 343.2 * 343.2 * scattering,
+                    " m^4/3 s^-2 at 343.2 m/s).");
         options.buildings_path = buildings_file;
         // Unset, the database decides; an angle asks for the cone.
         if (ray_coherence == "cone" || (ray_coherence.empty() && app.count("--coherence_angle") > 0))

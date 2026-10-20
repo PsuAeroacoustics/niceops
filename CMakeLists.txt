@@ -256,6 +256,7 @@ add_library(niceops_core STATIC
   src/geojson_buildings.cpp
   src/point_paths.cpp
   src/urban_point.cpp
+  src/turbulence_scattering.cpp
   src/source_coherence.cpp
   src/edge_visibility.cpp
   src/predicates.cpp
@@ -367,6 +368,7 @@ add_executable(niceops_unit_tests
   tests/test_point_paths.cpp
   tests/test_source_coherence.cpp
   tests/test_urban_point.cpp
+  tests/test_turbulence_scattering.cpp
   tests/test_gpu.cpp
   tests/test_edge_visibility.cpp
   tests/test_atmosphere.cpp
@@ -1332,6 +1334,16 @@ add_test(NAME buildings_refuses_short_scattering_spectrum COMMAND ${URBAN_RUN} -
 set_tests_properties(buildings_refuses_short_scattering_spectrum PROPERTIES PASS_REGULAR_EXPRESSION "covers 100 to 2000 Hz, not the band at")
 add_test(NAME buildings_refuses_lone_scattering COMMAND ${URBAN_RUN} --facade_scattering 0.3 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_scattering PROPERTIES PASS_REGULAR_EXPRESSION "go with --buildings")
+# Turbulence scattering into the buildings' shadows (--scattering under --buildings,
+# turbulence_scattering.hpp): on the demo approach every microphone sees the helicopter at some
+# point, and strong turbulence moves no SEL by 0.01 dB (0.003 measured); without --buildings or
+# --refraction it is still refused.  The library tests hold the fit, the screen and the run.
+add_test(NAME buildings_turbulence_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --scattering 1e-5 --no-gpu -o integrated/buildings_turbulence.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_turbulence_run PROPERTIES FIXTURES_SETUP buildings_turbulence_runs)
+add_test(NAME buildings_turbulence_is_small_on_the_demo COMMAND golden_compare integrated/buildings_turbulence.csv integrated/buildings_sampled.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_turbulence_is_small_on_the_demo PROPERTIES FIXTURES_REQUIRED "buildings_turbulence_runs;buildings_sampling_runs")
+add_test(NAME scattering_refuses_open_ground_without_refraction COMMAND ${URBAN_RUN} --scattering 1e-6 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(scattering_refuses_open_ground_without_refraction PROPERTIES PASS_REGULAR_EXPRESSION "give --refraction and --ground_effect, or --buildings")
 # One ray has no phase to be unsure of: both ends of the interval are the level.
 add_test(NAME buildings_far_phase_lower_is_the_level COMMAND golden_compare integrated/buildings_far_phase_lower.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME buildings_far_phase_upper_is_the_level COMMAND golden_compare integrated/buildings_far_phase_upper.csv integrated/buildings_far_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

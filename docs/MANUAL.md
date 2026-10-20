@@ -158,7 +158,7 @@ is a physical quantity, given here in meters with its value in feet.
 | --- | --- |
 | `--refraction` | `none` (default), `linear` or `stratified`: curved rays through the `--atmosphere` or `--wind` profile ([Refraction](#refraction)). Needs a profile. |
 | `--shadow_floor` | The most a refractive shadow attenuates, dB. Default 20. Past it, energy scattered in by turbulence is taken to dominate. |
-| `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γ<sub>T</sub>, in place of the `--shadow_floor` hold. Default 0 (off). Needs `--refraction` and the ground effect. |
+| `--scattering` | Fill refraction shadows with the energy turbulence scatters into them, at HARMONOISE strength γ<sub>T</sub>, in place of the `--shadow_floor` hold; or, with `--buildings`, the buildings' shadows ([Buildings around the microphones](#buildings-around-the-microphones)). Default 0 (off). Needs `--refraction` and the ground effect, or `--buildings`. |
 | `--shadow_model` | `--refraction stratified` with the ground effect: `legacy` (default) or `resolved` ([Low sources near grazing](#low-sources-near-grazing-the-resolved-shadow)). |
 | `--shadow_phase` | `resolved`: the vertical phase, radians, a band must gather to resolve the profile near the ground. Default 1. |
 | `--cramped_ground` | `resolved`: how a band whose boundary is within two diffraction lengths of the source is filled: `series` (default), `straight` or `ray`. |
@@ -1118,6 +1118,18 @@ over a pass as it does in an exposure.
   `top`, optionally `absorption` and `scattering`) in the run's `--units` and frame, or GeoJSON
   with `--origin` and `--frame_bearing`. A building's coefficients apply to its walls and its
   roof, and `--wall_absorption` and `--facade_scattering` to those that give none.
+- **Turbulence in the buildings' shadows** (`--scattering` γ<sub>T</sub>, off by default). Where
+  the buildings shield a microphone from the source, turbulence scatters energy into the shadow,
+  most at high frequency: Forssén et al.'s engineering model for a thin screen, the roof top
+  farthest above the line from source to microphone
+  ([THEORY §6.5](THEORY.md#65-urban-receivers)), added in energy and held to open ground's level.
+  A microphone in sight of the source is untouched. It matters where a microphone stays shielded
+  through an event -- a courtyard, a street behind a row under a low approach -- and hardly on a
+  pass that each microphone sees at some point: on the demo approach strong turbulence moves no SEL
+  by 0.003 dB. The strength is the weak input: γ<sub>T</sub> of 10<sup>-6</sup> (moderate) to
+  10<sup>-5</sup> (strong) is C<sub>v</sub><sup>2</sup> of 0.016 to 0.16 m<sup>4/3</sup> s<sup>-2</sup>,
+  where measurements beside a barrier in wind have reported 0.4 to 17, and a factor of ten in it
+  is 10 dB of scattered level.
 - **Facades that scatter.** A wall or roof whose scattering coefficient s is above 0 reflects
   specularly only ρ(1 − s) of what reaches it and scatters the rest of ρ diffusely, by Lambert's
   law, as `niceops_point_field --scattering` takes it

@@ -1387,6 +1387,31 @@ the path's length and $\hat l$ the direction from the source to the patch's imag
 path's first leg. Each microphone's weights $\mathbf w$ are solved once for the run, and its
 diffuse energy adds to its rays' at every state evaluated.
 
+**Turbulence scattering into the buildings' shadows** (`--scattering` $\gamma_T$ with
+`--buildings`). Still air leaves a shielded microphone the diffracted rays alone; turbulence
+scatters energy into the shadow, most at high frequency. The scattered level relative to free field
+is the engineering model of Forssén et al. [78], in its form without a canyon,
+
+$$
+L_s = b_1 + b_2 \lg\frac{h}{10\ \mathrm m} + b_3 \lg\left(\frac{h^2}{d_S d_R} + 0.0012\right)
+  + \frac{10}{3} \lg\frac{f}{1\ \mathrm{kHz}},
+$$
+
+with velocity turbulence's coefficients $b_1 = -52.8 + 10\lg C_v^2$, $b_2 = 11.3$, $b_3 = -17.1$
+($C_v^2$ in m$^{4/3}$ s$^{-2}$). $h$ is a thin screen's height above the source–receiver line and
+$d_S$, $d_R$ the distances along it to its foot; the screen is the roof top that stands farthest
+above the line where the line's plan crosses a footprint's side. The fit doubles the energy by the
+ground at both ends; NICEOPS takes $((1 + R)/2)^2$ of that for a floor reflecting $R$, multiplies by
+the direct path's free-field energy, read from the sphere along the straight line as a ray's is,
+and absorbs it along that line. The sum with the rays is held to open ground's, the free field and
+the floor's reflection in energy. NICEOPS's strength is HARMONOISE's $\gamma_T$ (§5.3): through a
+shadow's small scattering angles the cross section goes as
+$C_v^2/c_0^2 \cos^2(\theta/2) + 0.14\,C_T^2/T_0^2$, which per unit $\gamma_T$ is 3/22 for velocity
+turbulence and 0.14 for temperature, so $\gamma_T$ is taken as velocity turbulence of
+$C_v^2 = (3/22)\,c_0^2\gamma_T$, within 0.1 dB of either reading. The paper's temperature
+coefficients are not used. Left out: its canyon correction, whose street widths and heights a
+district does not carry, and turbulence's decorrelation of the rays themselves.
+
 ### 6.6 The canyon's wave solution
 
 Below a few hundred hertz a street is a few wavelengths wide and rays stop describing it.
@@ -2379,3 +2404,4 @@ than for SEL.
 75. Roden, J. A., and Gedney, S. D., "Convolution PML (CPML): An Efficient FDTD Implementation of the CFS–PML for Arbitrary Media," *Microwave and Optical Technology Letters*, Vol. 27, No. 5, 2000, pp. 334–339.
 76. Mommertz, E., "Determination of Scattering Coefficients from the Reflection Directivity of Architectural Surfaces," *Applied Acoustics*, Vol. 60, No. 2, 2000, pp. 201–203.
 77. Yee, K. S., "Numerical Solution of Initial Boundary Value Problems Involving Maxwell's Equations in Isotropic Media," *IEEE Transactions on Antennas and Propagation*, Vol. 14, No. 3, 1966, pp. 302–307. https://doi.org/10.1109/TAP.1966.1138693
+78. Forssén, J., Hornikx, M., Botteldooren, D., Wei, W., Van Renterghem, T., and Ögren, M., "A Model of Sound Scattering by Atmospheric Turbulence for Use in Noise Mapping Calculations," *Acta Acustica united with Acustica*, Vol. 100, No. 5, 2014, pp. 810–815. https://doi.org/10.3813/AAA.918760

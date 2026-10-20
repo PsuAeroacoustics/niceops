@@ -175,6 +175,11 @@ Commands and options are in `README.md`; rationale is in
   are roof edges only by default: every edge multiplied the demo run's cost by eight for nothing.
   A middle edge meeting an outer one at a corner is left out (a vertex, not a cascade). The GPU's
   shared-face ray kind is `NK_KIND_FACE`, freeing 3 for three wedge terms.
+- **`--scattering` with `--buildings` fills the buildings' shadows** (`turbulence_scattering`, Forssén
+  et al. 2014 without its canyon term). gamma_T is taken as velocity turbulence of
+  C_v^2 = (3/22) c0^2 gamma_T; the paper's temperature coefficients are not used (they contradict its
+  own cross section). A pair the buildings do not shield is untouched to the bit, and the total is
+  held to open ground's. Off by default: unvalidated, and the strength is the weak input.
 - **The ground model returns a gain, not a loss.**
 - **Compass bearings** are turned into the local frame by `--frame_bearing` through one
   rotation, `CompassToLocal`. The shipped AC tracks need 210.
