@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <stdexcept>
 
 #include "double_wedge.hpp"
@@ -66,7 +67,7 @@ GpuAperture pack_aperture(const ApertureGeometry& g, double weight, std::vector<
 
 } // namespace
 
-void pack_point_rays(const PointSourceField& field, const std::vector<double>& reflection, double floor_reflection,
+void pack_point_rays(const PointSourceField& field, const std::vector<double>& reflection, const FloorModel& floor,
         const std::vector<double>& bands, double sound_speed, PointRaySet& set, const std::vector<double>& absorption,
         const PointRayPacking& packing)
 {
@@ -93,7 +94,6 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         for (int part = 0; part < 3; part++)
         {
             const SubBand& s = parts[part];
-            set.band.push_back(static_cast<uint32_t>(band));
             set.k1.push_back(s.k1);
             set.k2.push_back(s.k2);
             set.absorption.push_back(absorption.empty() ? 0.0f : static_cast<float>(absorption[3 * band + part]));
@@ -105,6 +105,10 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         for (std::size_t f = 0; f < facades; f++)
             band_reflection[band][f] = reflection[f * nb + band];
 
+    if (floor.impedance() && floor.admittance.size() != centres.size())
+        throw std::invalid_argument("pack_point_rays: the floor's admittance is not three per band");
+    const double floor_reflection = floor.impedance() ? 1.0 : floor.reflection;
+    std::vector<std::complex<double>> floor_factor(centres.size(), 1.0), plate(floor.plate ? 2 * centres.size() : 0);
     std::vector<double> in_plane;
     for (std::size_t index : order)
     {
@@ -112,9 +116,24 @@ void pack_point_rays(const PointSourceField& field, const std::vector<double>& r
         GpuRay r {};
         r.reflected = static_cast<uint32_t>(set.reflected.size());
         r.length = static_cast<float>(ray.length);
+        if (floor.plate)
+        {
+            double elevation, azimuth;
+            point_ray_arrival(ray, elevation, azimuth);
+            floor.plate(elevation, azimuth, plate.data(), plate.data() + centres.size());
+        }
+        floor_factors(ray, floor, centres, floor.plate ? plate.data() : nullptr, floor_factor.data());
         for (std::size_t band = 0; band < nb; band++)
-            set.reflected.push_back(static_cast<float>(reflected_amplitude(ray, band_reflection[band], floor_reflection)
-                    * (packing.weights != nullptr ? packing.weights[index * nb + band] : 1.0)));
+        {
+            const double amplitude = reflected_amplitude(ray, band_reflection[band], floor_reflection)
+                    * (packing.weights != nullptr ? packing.weights[index * nb + band] : 1.0);
+            for (std::size_t part = 0; part < 3; part++)
+            {
+                const std::complex<double> a = amplitude * floor_factor[3 * band + part];
+                set.reflected.push_back(static_cast<float>(a.real()));
+                set.reflected.push_back(static_cast<float>(a.imag()));
+            }
+        }
         const Vec3 launch = point_ray_launch(ray);
         for (double v : {launch.x, launch.y, launch.z})
             set.launch.push_back(static_cast<float>(v));

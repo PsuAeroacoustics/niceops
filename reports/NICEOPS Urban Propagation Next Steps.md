@@ -122,6 +122,21 @@ as in the open-ground run. A floor of mixed classes needs each floor bounce's cl
 **Check.** One far building with the impedance ground equals the open-ground run with the same ground (as
 `buildings_far_is_open_without_ground` does for a rigid floor).
 
+**Done (Oct 20).** `--buildings` takes `--ground_effect`, `--ground_classes` and `--plate_table`. Each ray records
+its floor bounces (leg and grazing angle), and each bounce takes the open-ground model's Q at the sub-band's middle,
+on the CPU and the GPU. A flush microphone on a plate takes P_d on the direct ray and Q P_r on its floor partner.
+`niceops_point_field --flow_resistance` gives the same floor.
+
+- **Checks.** Over open ground with Q held at the band's centre, the ray sum is the open-ground model to 1e-5 dB;
+  Q's change across a band adds up to 0.12 dB. With one far building, the run is the open-ground run to 0.06 dB of
+  SEL (4 ft microphones on grass), 0.14 dB (on concrete) and 0.003 dB (flush microphones on plates); the difference
+  is the floor ray reading the sphere along its own launch. The GPU matches the CPU to 1e-4 dB.
+- **Effect.** On the test district a grass floor takes 0.8 to 4.0 dB off the rigid floor's SELs, the flush
+  microphones most; 5% more time.
+- **Still open.** Each bounce takes the microphone's ground class, as the open-ground model does. A floor that
+  changes along the street (a park beside the road) needs a map of the ground, which `--ground_classes` does not
+  give. The ground model's turbulence is not taken among buildings.
+
 ### 2b. Facade and rooftop microphones, checked against data
 
 **State.** The run takes microphones where the observer file puts them, at any height outside the buildings, roofs

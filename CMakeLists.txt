@@ -1373,8 +1373,26 @@ add_test(NAME buildings_refuses_inside COMMAND niceops -d databases/B407_fixed_l
 set_tests_properties(buildings_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "observer 2's microphone stands inside building 8")
 add_test(NAME buildings_refuses_urban_table COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --urban_table tables/urban_open_test.nc -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_urban_table PROPERTIES PASS_REGULAR_EXPRESSION "--buildings does not combine with --urban_table")
-add_test(NAME buildings_refuses_ground_effect COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --ground_effect -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
-set_tests_properties(buildings_refuses_ground_effect PROPERTIES PASS_REGULAR_EXPRESSION "--buildings does not combine with --ground_effect")
+# A ground model among the buildings (--ground_effect, point_paths.hpp FloorModel) replaces the floor's
+# energy coefficient, and the rays' phases are the source's, not the ground model's turbulence.
+add_test(NAME buildings_refuses_floor_absorption_with_ground COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --ground_effect --floor_absorption 0.2 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_floor_absorption_with_ground PROPERTIES PASS_REGULAR_EXPRESSION "--floor_absorption is the floor's energy coefficient among the buildings, which the ground model")
+add_test(NAME buildings_refuses_ground_turbulence COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --ground_effect --turbulence 1e-4 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_refuses_ground_turbulence PROPERTIES PASS_REGULAR_EXPRESSION "does not take --turbulence or --gamma_t")
+# With one building 1000 km off and the ground model's floor, each microphone hears the direct ray and the
+# floor's, its Q at the sub-bands' middles, every pair's phases known: the open-ground run (--exact_ground)
+# but for the floor's ray reading the sphere along its own launch and Q's change across a band, within
+# 0.1 dB of SEL at the 4 ft microphones (0.060 measured), and the flush ones' plates within 0.003 dB.
+# Over two ground classes, the 4 ft microphones on concrete too, within 0.15 dB (0.141).
+set(URBAN_CLASS_RUN niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers_classes.csv --ground_classes tests/data/ground_classes_two.csv ${URBAN_PLATE} -L warn)
+add_test(NAME buildings_far_ground_run COMMAND ${URBAN_RUN} --buildings tests/data/urban_far_building.csv --ground_effect --ray_coherence coherent --state_tolerance 0 --no-gpu -o integrated/buildings_far_ground.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_far_ground_reference COMMAND ${URBAN_RUN} --ground_effect --exact_ground -o integrated/buildings_far_ground_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_far_classes_run COMMAND ${URBAN_CLASS_RUN} --buildings tests/data/urban_far_building.csv --ray_coherence coherent --state_tolerance 0 --no-gpu -o integrated/buildings_far_classes.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_far_classes_reference COMMAND ${URBAN_CLASS_RUN} --exact_ground -o integrated/buildings_far_classes_reference.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_far_ground_run buildings_far_ground_reference buildings_far_classes_run buildings_far_classes_reference PROPERTIES FIXTURES_SETUP buildings_far_ground_runs)
+add_test(NAME buildings_far_ground_is_open COMMAND golden_compare integrated/buildings_far_ground.csv integrated/buildings_far_ground_reference.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_far_classes_are_open COMMAND golden_compare integrated/buildings_far_classes.csv integrated/buildings_far_classes_reference.csv 0.15 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_far_ground_is_open buildings_far_classes_are_open PROPERTIES FIXTURES_REQUIRED buildings_far_ground_runs)
 add_test(NAME buildings_refuses_lone_absorption COMMAND ${URBAN_RUN} --floor_absorption 0.2 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_absorption PROPERTIES PASS_REGULAR_EXPRESSION "--wall_absorption and --floor_absorption go with --buildings")
 add_test(NAME buildings_refuses_lone_coherence COMMAND ${URBAN_RUN} --ray_coherence energy -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1444,6 +1462,15 @@ add_test(NAME point_field_sources_exact_runs COMMAND niceops_point_field --build
 set_tests_properties(point_field_sources_runs point_field_sources_exact_runs PROPERTIES FIXTURES_SETUP point_field_sources)
 add_test(NAME point_field_shared_faces_sampled COMMAND golden_compare integrated/point_field_sources.csv integrated/point_field_sources_exact.csv 0.1 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_shared_faces_sampled PROPERTIES FIXTURES_REQUIRED point_field_sources)
+# A floor of finite impedance (--flow_resistance) whose flow resistance is enormous reflects as the rigid
+# floor does, to 0.01 dB in every band (0.006 measured), its bounces' Q all but 1; with
+# --floor_absorption it is refused.
+add_test(NAME point_field_hard_floor_runs COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 250 500 1000 -j 2 --humidity 70 --no-gpu --flow_resistance 1e8 -o integrated/point_field_hard_floor.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(point_field_hard_floor_runs PROPERTIES FIXTURES_SETUP point_field_hard_floor)
+add_test(NAME point_field_hard_floor_is_rigid COMMAND golden_compare integrated/point_field_hard_floor.csv integrated/point_field_sources.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(point_field_hard_floor_is_rigid PROPERTIES FIXTURES_REQUIRED "point_field_hard_floor;point_field_sources")
+add_test(NAME point_field_refuses_two_floors COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source 0 0 10 --microphones tests/data/urban_observers.csv --bands 125 --no_air_absorption --flow_resistance 200 --floor_absorption 0.1 -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(point_field_refuses_two_floors PROPERTIES PASS_REGULAR_EXPRESSION "--flow_resistance gives the floor an impedance")
 add_test(NAME point_field_refuses_two_sources COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --source -1000 150 10 --sources tests/data/point_sources.csv --microphones tests/data/urban_observers.csv --bands 125 --no_air_absorption -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(point_field_refuses_two_sources PROPERTIES PASS_REGULAR_EXPRESSION "excludes")
 add_test(NAME point_field_refuses_nonfinite COMMAND niceops_point_field --buildings tests/data/urban_buildings.csv --sources tests/data/point_sources_nan.csv --microphones tests/data/urban_observers.csv --bands 125 --no_air_absorption -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1479,6 +1506,13 @@ else()
   add_test(NAME buildings_gpu_matches_cpu COMMAND golden_compare integrated/buildings_gpu.csv integrated/buildings_sampled.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   add_test(NAME buildings_gpu_every_state_matches_cpu COMMAND golden_compare integrated/buildings_gpu_every_state.csv integrated/buildings_every_state.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
   set_tests_properties(buildings_gpu_matches_cpu buildings_gpu_every_state_matches_cpu PROPERTIES FIXTURES_REQUIRED "buildings_gpu_runs;buildings_sampling_runs")
+  # And with the ground model's floor over two classes, the flush microphones on plates: the GPU takes
+  # each ray's Q and P_d or P_r per sub-band from the CPU, within 0.01 dB of SEL (1e-4 measured).
+  add_test(NAME buildings_ground_gpu_run COMMAND ${URBAN_CLASS_RUN} --buildings tests/data/urban_buildings.csv --gpu -o integrated/buildings_ground_gpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  add_test(NAME buildings_ground_cpu_run COMMAND ${URBAN_CLASS_RUN} --buildings tests/data/urban_buildings.csv --no-gpu -o integrated/buildings_ground_cpu.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_ground_gpu_run buildings_ground_cpu_run PROPERTIES FIXTURES_SETUP buildings_ground_gpu_runs)
+  add_test(NAME buildings_ground_gpu_matches_cpu COMMAND golden_compare integrated/buildings_ground_gpu.csv integrated/buildings_ground_cpu.csv 0.01 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+  set_tests_properties(buildings_ground_gpu_matches_cpu PROPERTIES FIXTURES_REQUIRED buildings_ground_gpu_runs)
   # The measured coherence and the phase interval are the CPU's: --gpu asked for is refused there,
   # as the arguments are read rather than track by track.
   add_test(NAME buildings_gpu_refuses_measured COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --ray_coherence measured --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

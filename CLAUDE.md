@@ -134,8 +134,15 @@ Commands and options are in `README.md`; rationale is in
 - **`niceops --buildings` with one far building and a floor absorbing everything is the run without
   a ground model** (`buildings_far_is_open_without_ground`); keep each ray's sphere weight on the
   sphere's own spreading and absorption conventions. Its microphones are the run's observer points
-  raised by their height column, as in any run without a ground model: `--buildings` turns the
-  ground model off, and a database without spectra is refused, not run to `-inf`. `niceops.cpp` cannot include `buildings.hpp`
+  raised by their height column, as in any run without a ground model: by default `--buildings`
+  turns the ground model off, and a database without spectra is refused, not run to `-inf`.
+- **`--buildings --ground_effect` gives the floor the ground's Q, bounce by bounce**
+  (`FloorModel`, `FloorBounce`; THEORY 6.5). Every place that builds a ray with a floor records
+  each bounce's leg and grazing sine; a new ray kind that does not is silently rigid, and
+  `each floor bounce is its leg's, unfolded` is the check. Held at the band centre, Q gives the
+  open-ground model exactly; the 0.06-0.14 dB `buildings_far_ground` leaves is the floor ray's
+  own launch and Q across a band, not an error. Plates take P_d on the direct ray and Q P_r on
+  its floor partner. The GPU's `reflected` is complex per problem (`BandProblem::slot`). `niceops.cpp` cannot include `buildings.hpp`
   (its `Ring` clashes with `contour.hpp`'s), so the district stays behind `UrbanDistrict`.
 - **`--buildings` adds rays in energy beyond a 1° cone by default** (`src/source_coherence`;
   THEORY 6.5). Do not assume the source's phase: weighted by A-weighted power the flight data

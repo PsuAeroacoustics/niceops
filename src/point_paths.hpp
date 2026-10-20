@@ -223,12 +223,27 @@ struct EdgeSourceTerm
     Stretch stretches[2];
 };
 
+// A ray's bounce on the floor, for a floor of finite impedance (FloorModel):
+// the sine of its grazing angle and the length of the leg it lies on,
+// unfolded, from the source or the edge before it to the edge or the
+// microphone after it, which the spherical-wave reflection coefficient takes
+// as its image path; and whether that leg ends at the microphone (where a
+// flush microphone's plate is).
+struct FloorBounce
+{
+    double sin_grazing = 0.0;
+    double leg = 0.0;
+    bool microphone = false;
+};
+
 struct PointRay
 {
     double length = 0.0;
     double spreading = 0.0;
     std::vector<std::size_t> facades;
     int floor = 0;
+    // Its `floor` bounces, along it from the source.
+    std::array<FloorBounce, 3> floor_bounce {};
     int wedges = 0;
     WedgeTerm wedge[3];
     bool shared = false;
@@ -262,6 +277,40 @@ struct PointRay
     // points in order, the microphone.  A leg off the floor is unfolded below
     // it, so only x and y are the ray's own there.
     std::vector<Vec3> path;
+};
+
+// The floor the rays reflect in (THEORY 6.5).  By default an energy
+// reflection coefficient, the same at every angle and wavenumber: 1 is rigid.
+// With `admittance`, a locally reacting ground: each bounce (FloorBounce)
+// takes the spherical-wave reflection coefficient Q = R_p + F(w)(1 - R_p) of
+// ground_effect.hpp at its own grazing angle, its leg as the image path, at
+// the sub-band's middle wavenumber and the admittance there -- three per
+// band, [3 band + part], as ground_impedance gives them at the sub-bands'
+// middle frequencies -- times the roughness's coherent part,
+// exp(-2 (k sigma sin grazing)^2), as the open-ground model takes it.  The
+// sum over the rays does the band averaging the open-ground model's sinc
+// stands in for.  With a `plate` too, the microphone is flush on a ground
+// plate (plate_receiver.hpp, p / p_free = P_d + Q P_r): a ray that reaches it
+// directly takes P_d, and one that bounces on the floor at it takes P_r with
+// that bounce's Q, both at the elevation and plate-frame azimuth it arrives
+// from: the pair of them, of one length, sum to the plate's level.
+struct FloorModel
+{
+    FloorModel(double reflection = 1.0) : reflection(reflection) {}
+    double reflection = 1.0;
+    std::vector<std::complex<double>> admittance;
+    bool boundary_loss = true;
+    double roughness = 0.0;
+    // P_d and P_r at every sub-band ([3 band + part], into `direct` and
+    // `image`) for a ray arriving at `elevation` above the floor with its
+    // horizontal propagation direction at `azimuth` from +x, radians.
+    using PlateTransfer = std::function<void(double elevation, double azimuth, std::complex<double>* direct,
+            std::complex<double>* image)>;
+    PlateTransfer plate;
+    bool impedance() const
+    {
+        return !admittance.empty();
+    }
 };
 
 // One end of the paths, a source or a microphone, with what does not depend
@@ -374,7 +423,7 @@ public:
     // multiplies each ray's amplitude in each band, [ray][band] in rays()'s
     // order: a directional source's amplitude along the ray's launch
     // (point_ray_launch), the same at every wavenumber of the band.
-    void band_levels(const std::vector<double>& reflection, double floor_reflection, const std::vector<double>& bands,
+    void band_levels(const std::vector<double>& reflection, const FloorModel& floor, const std::vector<double>& bands,
             double sound_speed, double* out, const std::vector<double>& absorption = {},
             const double* weights = nullptr) const;
 
@@ -386,7 +435,7 @@ public:
     // first problem.
     using SubBandProblem = std::function<void(std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
             const std::vector<double>& length, const SubBand& sub_band)>;
-    void sub_band_problems(const std::vector<double>& reflection, double floor_reflection, const std::vector<double>& bands,
+    void sub_band_problems(const std::vector<double>& reflection, const FloorModel& floor, const std::vector<double>& bands,
             double sound_speed, const SubBandProblem& problem, const std::vector<double>& absorption = {},
             const double* weights = nullptr, std::vector<std::size_t>* order = nullptr) const;
 
@@ -414,6 +463,18 @@ private:
     bool edge_source_ = false;
     bool sample_shared_faces_ = true;
 };
+
+// A ray's factor from the floor in each of `problems` sub-bands, [3 band +
+// part], at their middle wavenumbers `k`, into `out`: its bounces' Q and,
+// with a plate, P_d or P_r.  1 for an energy floor, whose coefficient
+// reflected_amplitude takes.  `plate`, when the floor has one, is the ray's
+// P_d and P_r (FloorModel::plate), 2 `problems` of them.
+void floor_factors(const PointRay& ray, const FloorModel& floor, const std::vector<double>& k,
+        const std::complex<double>* plate, std::complex<double>* out);
+// Where a ray arrives at the microphone, as a plate reads it: the elevation
+// of its last leg above the floor and that leg's horizontal direction, from
+// +x, radians.
+void point_ray_arrival(const PointRay& ray, double& elevation, double& azimuth);
 
 // An edge as the edge-source integral takes it: a vertical edge standing on
 // the floor (or ending on it) goes on below it as its mirror image, so the

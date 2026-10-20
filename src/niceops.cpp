@@ -2134,7 +2134,9 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         std::cout << "Physics: "
                   << (spectral ? "spectral, per-band ISO 9613-1 absorption" : "broadband, database EAA factor")
                   << "; ground "
-                  << (options.buildings ? std::string("the buildings' floor (--buildings)")
+                  << (options.buildings ? std::string(ground_effect ? "the buildings' floor (--buildings), its "
+                                                                     "bounces the ground model's"
+                                                                   : "the buildings' floor (--buildings)")
                              : ground_effect
                              ? "on, receiver " + std::to_string(receiver) + " " + options.unit.name + " up"
                              : std::string("off"))
@@ -2407,12 +2409,14 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 }
                 return r_max * 1.01;
             };
+            // Among buildings the rays take the ground bounce by bounce, and no
+            // table is read.
             for (const auto& [height, ground_class] : point_keys)
             {
                 GroundModel model = class_models[ground_class];
                 model.receiver_height = height;
                 point_models.push_back(model);
-                if (!options.exact_ground)
+                if (!options.exact_ground && !options.buildings)
                 {
                     const auto table_start = std::chrono::steady_clock::now();
                     const double r_max = reach();
@@ -2438,7 +2442,7 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
             {
                 plate = options.plate->bound(bands, *ground_model, sound_speed, first_band,
                         last_band);
-                if (!options.exact_ground)
+                if (!options.exact_ground && !options.buildings)
                 {
                     const auto table_start = std::chrono::steady_clock::now();
                     const double r_max = reach();
@@ -3159,12 +3163,31 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
                 log("--buildings: the rays on the CPU (",
                         supported ? "no GPU" : "the GPU does not take this sum or the interval", ").");
         }
+        // With a ground model, each microphone's floor is its class's ground,
+        // a flush one's on its plate.
+        std::vector<MicrophoneFloor> floors;
+        if (ground_effect)
+        {
+            floors.resize(observer_count);
+            for (std::size_t i = 0; i < observer_count; i++)
+            {
+                floors[i].ground = &class_models[class_of[i]];
+                if (on_plate[i])
+                {
+                    floors[i].plate = &*plate;
+                    floors[i].plate_azimuth = options.plate_orientation.outboard
+                            ? outboard_azimuth(observers[i], source_states)
+                            : options.plate_orientation.azimuth;
+                }
+            }
+        }
         const auto started = std::chrono::steady_clock::now();
         const std::size_t evaluated = district.levels(database, source_states, microphones, absorption.data(),
                 band_gains, first_band, last_band, sound_speed,
                 options.thread_count > 0 ? options.thread_count : default_thread_count(), coherence, point_levels,
                 record_bands || want_frames ? &point_bands : nullptr, spectral ? &packed_of_state : nullptr,
-                options.phase_interval > 0.0 ? &interval : nullptr, options.state_tolerance, device);
+                options.phase_interval > 0.0 ? &interval : nullptr, options.state_tolerance, device,
+                floors.empty() ? nullptr : &floors);
         point_lower = std::move(interval.lower);
         point_upper = std::move(interval.upper);
         log("--buildings ", options.buildings_path, ": the rays from ", nt, " states to ", observer_count,
@@ -5376,15 +5399,18 @@ int run(int argc, char* argv[])
             "in the run's frame (--origin, --frame_bearing): every microphone hears the source's own rays among "
             "them, reflected in the facades, the roofs and the floor and diffracted at their edges once, at two in "
             "turn (reflecting in a facade between them or not) or at three roof edges, each reading the sphere in the direction it leaves the source, added as --ray_coherence says. "
-            "The floor is theirs, rigid unless --floor_absorption, with no ground model: a microphone stands where "
-            "the observer file puts it, raised by its height column. States are sampled (--state_tolerance). "
-            "Spectral path, and a database carrying spectra; not with --urban_table, --terrain, --refraction, "
-            "--propagation_table, --plate_table, --ground_classes, --atmosphere, --wind, --ground_effect, "
-            "--db_cutoff or --coverage_file.");
+            "The floor is rigid unless --floor_absorption, and a microphone stands where the observer file puts "
+            "it, raised by its height column; with --ground_effect (or --ground_classes, --plate_table) each floor "
+            "bounce takes the ground's spherical-wave reflection coefficient instead, and the microphones stand as "
+            "in the open-ground run, flush ones on plates with --plate_table. States are sampled "
+            "(--state_tolerance). Spectral path, and a database carrying spectra; not with --urban_table, "
+            "--terrain, --refraction, --propagation_table, --atmosphere, --wind, --db_cutoff or "
+            "--coverage_file.");
     app.add_option("--wall_absorption", wall_absorption,
             "With --buildings: the walls' energy absorption coefficient where a building gives none (default 0).");
     app.add_option("--floor_absorption", floor_absorption,
-            "With --buildings: the floor's energy absorption coefficient (default 0, rigid).");
+            "With --buildings: the floor's energy absorption coefficient (default 0, rigid), without a ground "
+            "model (--ground_effect).");
     app.add_option("--facade_scattering", facade_scattering,
             "With --buildings: the walls' and roofs' scattering coefficient where a building gives none (default 0, "
             "or 1 with --facade_scattering_spectrum): the share of what they reflect that they scatter diffusely, "
@@ -6189,22 +6215,28 @@ int run(int argc, char* argv[])
                 {!terrain_file.empty(), "--terrain: the buildings and their floor stand on the plane z = 0"},
                 {refraction != "none", "--refraction: its rays are straight"},
                 {!propagation_table.empty(), "--propagation_table: each replaces the open-ground model"},
-                {!plate_table.empty(), "--plate_table: the floor among the buildings is theirs (--floor_absorption)"},
-                {!ground_classes_file.empty(),
-                        "--ground_classes: the floor among the buildings is theirs (--floor_absorption)"},
                 {!atmosphere_files.empty() || !wind_texts.empty(),
                         "--atmosphere or --wind: its rays absorb at the run's one set of coefficients"},
-                // The flag's count takes --no-ground_effect too.
-                {ground_effect && app.count("--ground_effect") > 0,
-                        "--ground_effect: the floor among the buildings is theirs (--floor_absorption)"},
                 {!std::isnan(db_cutoff), "--db_cutoff: the cutoff's bound covers the straight path alone"}};
         for (const auto& [clash, why] : clashes)
             if (clash)
                 input_error("--buildings does not combine with ", why, ".");
-        // The floor among the buildings is theirs: no ground model, so a
-        // microphone stands where the observer file puts it, as in any run
-        // without one.
-        ground_effect = false;
+        // The floor among the buildings is an energy coefficient
+        // (--floor_absorption), and a microphone stands where the observer
+        // file puts it, as in any run without a ground model -- unless one is
+        // asked for: --ground_effect, or the grounds --ground_classes and
+        // --plate_table name.  Then each floor bounce takes the ground's
+        // reflection coefficient, and the microphones stand as in the
+        // open-ground run.  (The flag's count takes --no-ground_effect too.)
+        ground_effect = ground_effect
+                && (app.count("--ground_effect") > 0 || !ground_classes_file.empty() || !plate_table.empty());
+        if (ground_effect && app.count("--floor_absorption") > 0)
+            input_error("--floor_absorption is the floor's energy coefficient among the buildings, which the ground "
+                        "model (--ground_effect) replaces; give one or the other.");
+        if (ground_effect && (turbulence > 0.0 || gamma_t > 0.0))
+            input_error("--buildings with --ground_effect does not take --turbulence or --gamma_t: among the "
+                        "buildings how the rays' phases relate is the source's (--ray_coherence), and turbulence "
+                        "scatters into the shadows with --scattering.");
         if (!(wall_absorption >= 0.0 && wall_absorption <= 1.0) || !(floor_absorption >= 0.0 && floor_absorption <= 1.0))
             input_error("--wall_absorption and --floor_absorption are energy coefficients within [0, 1]; given ",
                     wall_absorption, " and ", floor_absorption, ".");

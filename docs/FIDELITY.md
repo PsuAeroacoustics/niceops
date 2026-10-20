@@ -774,6 +774,25 @@ same run unsampled:
 - **Cost**, 14 threads on an M4 Pro (the development build, asserts on): 3.2 s with `--no-gpu`,
   1.2 s with the rays formed and summed on the GPU, against 0.3 s for the run without buildings.
 
+**A ground model's floor** (`--buildings --ground_effect`, each bounce taking Q). Not validated
+against measurement among buildings; what is checked is that it is the open-ground model where it
+should be. Over open ground, with Q held at the band's centre, the ray sum is the open-ground
+model's band average to 1e-5 dB, for grass and concrete and sources 3, 20 and 120 m up; taking Q at
+each sub-band's middle instead moves a band by up to 0.12 dB (a source 3 m up over hard ground,
+where Q changes most across a band). With one building 1000 km off, on the demo approach with every
+phase known, the SELs are the open-ground run's (`--exact_ground`):
+
+| Microphones | SEL, buildings − open ground |
+| --- | --- |
+| 4 ft up, grass (`--flow_resistance 225`) | −0.003 to +0.060 dB |
+| 4 ft up, concrete (`--ground_classes`) | +0.012 to +0.141 dB |
+| Flush on GR1425 plates (`--plate_table`) | −0.003 to 0.000 dB |
+
+The rest is the floor's ray reading the sphere along its own launch, where the open-ground model
+reads it along the direct ray for both. On the test district a grass floor takes 0.8 to 4.0 dB off
+the rigid floor's SELs, the flush microphones most, for 5% more time; the GPU's SELs are the CPU's
+to 1e-4 dB.
+
 **Turbulence in the buildings' shadows** (`--scattering` with `--buildings`). Not validated against
 measurement: EDGE's room is still air, and DigiCity's weather is not known. What is checked is the
 implementation. The fit reproduces Forssén et al.'s own Figure 2 (their scattering integral at

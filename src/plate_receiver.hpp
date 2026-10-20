@@ -108,6 +108,17 @@ public:
     void level_exact(double source_height, double ground_distance, double azimuth,
             double* correction, std::size_t first_band, std::size_t last_band) const;
 
+    // P_d and P_r for a ray arriving at `elevation` above the ground and
+    // `azimuth` in the plate's frame (radians, as level() takes it), at
+    // `count` frequencies, each within band `bands[i]` of the table's: its
+    // bilinear stencil, then linear in log frequency between the band's
+    // sub-frequencies, held beyond its first and last.  For a ray sum that
+    // takes the two apart ray by ray (point_paths.hpp, FloorModel): a ray
+    // reaching the microphone directly takes P_d, and its partner off the
+    // ground beside it Q P_r.
+    void transfer(double elevation, double azimuth, const std::size_t* bands, const double* frequencies,
+            std::size_t count, std::complex<double>* direct, std::complex<double>* image) const;
+
     // Per band, an upper bound on 10^(level/10) over every geometry: the most
     // the plate and ground can add.  Bands outside [first_band, last_band) are
     // left at 1.  Multiplied into the band gains, it keeps the spectral level

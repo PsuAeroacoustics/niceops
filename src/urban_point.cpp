@@ -14,6 +14,8 @@
 #include "building_input.hpp"
 #include "building_paths.hpp"
 #include "diffuse_facades.hpp"
+#include "ground_effect.hpp"
+#include "plate_receiver.hpp"
 #include "gpu/band_stream.hpp"
 #include "gpu/kernels/band_energy_types.h"
 #include "gpu/point_rays.hpp"
@@ -120,7 +122,7 @@ double gamma_quantile(double mean, double variance, double q)
 }
 
 void partially_coherent_energies(const PointSourceField& field, const std::vector<double>& reflection,
-        double floor_reflection, const std::vector<double>& bands, std::size_t first_band, double sound_speed,
+        const FloorModel& floor, const std::vector<double>& bands, std::size_t first_band, double sound_speed,
         const std::vector<double>& air, const double* weights, const SourceCoherence& coherence,
         const SphereFrame& frame, double* energy, double* variance)
 {
@@ -229,7 +231,7 @@ void partially_coherent_energies(const PointSourceField& field, const std::vecto
     for (auto* v : {&length, &re, &im, &sine, &cosine})
         v->resize(n);
     field.sub_band_problems(
-            reflection, floor_reflection, bands, sound_speed,
+            reflection, floor, bands, sound_speed,
             [&](std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
                     const std::vector<double>& sorted_length, const SubBand& s) {
                 const double centre = bands[band];
@@ -513,8 +515,10 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         std::size_t first_band, std::size_t last_band, double sound_speed, unsigned threads,
         const SourceCoherence& coherence, std::vector<double>& levels, std::vector<double>* band_levels,
         const std::vector<const Database::PackedSpectra*>* packed, PhaseInterval* interval,
-        double state_tolerance, gpu::Device* device) const
+        double state_tolerance, gpu::Device* device, const std::vector<MicrophoneFloor>* floors) const
 {
+    if (floors != nullptr && floors->size() != microphones.size())
+        throw std::invalid_argument("UrbanDistrict::levels: the floors are not one per microphone");
     if (device != nullptr && !gpu_supports(coherence, interval != nullptr))
         throw std::invalid_argument("UrbanDistrict::levels: the GPU does not take the measured coherence or an interval");
     const Impl& d = *impl_;
@@ -549,6 +553,52 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         nepers[b] = absorption[first_band + b] * std::log(10.0) / 20.0;
         for (std::size_t part = 0; part < 3; part++)
             sub_band_air[3 * b + part] = nepers[b];
+    }
+    // Each microphone's floor: the district's energy coefficient, or a
+    // ground's admittance at the sub-bands' middles (one per distinct
+    // ground), with a flush microphone's plate; and the energy it reflects of
+    // a diffuse field in each band, for the fields that carry energy alone.
+    std::vector<FloorModel> floor_of(nm, FloorModel(d.floor_reflection));
+    std::vector<std::vector<double>> floor_energy(nm, std::vector<double>(nb, d.floor_reflection));
+    // The sub-bands' middle frequencies, and each one's database band.
+    std::vector<double> middles;
+    std::vector<std::size_t> problem_band;
+    for (std::size_t b = 0; b < nb; b++)
+        for (const SubBand& s : sub_bands(bands[b], sound_speed))
+        {
+            middles.push_back(0.5 * (s.g1 + s.g2));
+            problem_band.push_back(first_band + b);
+        }
+    if (floors != nullptr)
+    {
+        std::map<const GroundModel*, std::vector<std::complex<double>>> admittance;
+        for (std::size_t m = 0; m < nm; m++)
+        {
+            const MicrophoneFloor& f = (*floors)[m];
+            if (f.ground == nullptr)
+                continue;
+            auto found = admittance.find(f.ground);
+            if (found == admittance.end())
+                found = admittance.emplace(f.ground, ground_impedance(*f.ground, middles, sound_speed)).first;
+            FloorModel& floor = floor_of[m];
+            floor.admittance = found->second;
+            floor.boundary_loss = f.ground->boundary_loss_correction;
+            floor.roughness = f.ground->roughness;
+            for (std::size_t b = 0; b < nb; b++)
+                floor_energy[m][b] = diffuse_reflection(floor.admittance[3 * b + 1]);
+            if (f.plate != nullptr)
+            {
+                const PlateReceiver* plate = f.plate;
+                const double offset = f.plate_azimuth;
+                floor.plate = [plate, offset, &middles, &problem_band](double elevation, double azimuth,
+                                      std::complex<double>* direct, std::complex<double>* image) {
+                    // The plate's frame turns the microphone's offset onto +y
+                    // (plate_frame_azimuth).
+                    plate->transfer(elevation, azimuth - offset + 0.5 * pi, problem_band.data(), middles.data(),
+                            middles.size(), direct, image);
+                };
+            }
+        }
     }
     const double radius = database.sphere_radius();
     const double at_one_metre = 20.0 * std::log10(radius);
@@ -591,7 +641,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         for (std::size_t m = 0; m < nm; m++)
         {
             diffuse_fields[m] = std::make_unique<DiffuseFacades>(city, microphones[m], reflection, scatter,
-                    d.floor_reflection, bands, sound_speed, options, workers);
+                    std::accumulate(floor_energy[m].begin(), floor_energy[m].end(), 0.0) / static_cast<double>(nb), bands,
+                    sound_speed, options, workers);
             diffuse_fields[m]->prepare_point_lighting(d.paths.max_reflections, workers);
             unconverged += diffuse_fields[m]->converged() ? 0 : 1;
             microphone_reflection[m] = reflection;
@@ -667,7 +718,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // (empty where the source is in sight): the direct path's free-field
     // energy, from the sphere along the straight line as a ray's is (weigh),
     // times the scattered level, its fit's doubling by the ground at either
-    // end taken as the floor's ((1 + R) / 2 each), absorbed along the line.
+    // end taken as the floor's ((1 + R) / 2 each, R its energy coefficient or
+    // a ground's diffuse_reflection), absorbed along the line.
     const double turbulence_cv2 = velocity_equivalent(d.turbulence, sound_speed);
     auto turbulence_energy = [&](std::size_t state, std::size_t m, Scratch& w, std::vector<double>& out) {
         out.clear();
@@ -683,7 +735,6 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         database.spectrum_along(states[state], line / r, w.lighting.data(), first_band, last_band,
                 packed != nullptr ? (*packed)[state] : nullptr);
         const double inside = std::min(r, radius);
-        const double ground = 0.25 * (1.0 + d.floor_reflection) * (1.0 + d.floor_reflection);
         out.assign(2 * nb, 0.0);
         for (std::size_t b = 0; b < nb; b++)
         {
@@ -692,9 +743,10 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                 continue;
             const double free = std::pow(10.0, (level + at_one_metre) / 10.0) * (inside / radius) * (inside / radius)
                     * std::exp(-2.0 * nepers[b] * (r - inside)) / (r * r);
-            out[b] = free * ground
+            const double floor = floor_energy[m][b];
+            out[b] = free * 0.25 * (1.0 + floor) * (1.0 + floor)
                     * std::pow(10.0, 0.1 * scattered_level(screen.h, screen.d_s, screen.d_r, bands[b], turbulence_cv2));
-            out[nb + b] = free * (1.0 + d.floor_reflection);
+            out[nb + b] = free * (1.0 + floor);
         }
     };
     // The scattered energy added into band levels, the total held to open
@@ -731,12 +783,12 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
         {
             weigh(field, state, w);
             if (coherence.sum == RaySum::coherent)
-                field.band_levels(reflection_for(m), d.floor_reflection, bands, sound_speed, out.bands.data(),
+                field.band_levels(reflection_for(m), floor_of[m], bands, sound_speed, out.bands.data(),
                         sub_band_air, w.weights.data());
             else
             {
                 w.energy.resize(3 * nb);
-                partially_coherent_energies(field, reflection_for(m), d.floor_reflection, bands, first_band,
+                partially_coherent_energies(field, reflection_for(m), floor_of[m], bands, first_band,
                         sound_speed, sub_band_air, w.weights.data(), coherence, states[state].frame, w.energy.data(),
                         interval != nullptr ? w.variance.data() : nullptr);
                 for (std::size_t b = 0; b < nb; b++)
@@ -887,7 +939,7 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
                         packing.weights = w.weights.data();
                         packing.sum = gpu_sum;
                         packing.cone = coherence.cone;
-                        gpu::pack_point_rays(field, reflection_for(m), d.floor_reflection, bands, sound_speed, set,
+                        gpu::pack_point_rays(field, reflection_for(m), floor_of[m], bands, sound_speed, set,
                                 sub_band_air, packing);
                         stream->push(work[i], std::move(set));
                     }

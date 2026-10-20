@@ -985,6 +985,41 @@ the roof, since a roof's own edges carry its reflection in their coefficients. U
 `--edge_source` a ray off a roof takes UTD: the roof's outline bounds the stretch of the edge its
 image sees.
 
+**A floor of finite impedance.** The floor's $\sqrt{1-\alpha}$ is one number for every angle and
+frequency. With a ground model (`--ground_effect`) each bounce instead takes the spherical-wave
+reflection coefficient of §5.2, at its own grazing angle $\psi$ and with its own leg $\ell$ as the
+image path:
+
+$$
+Q_j = R_p(\psi, \beta_j) + \bigl(1 - R_p(\psi, \beta_j)\bigr)\,F(w_j),\qquad
+w_j \text{ at } \kappa = k_j \ell / 2,
+$$
+
+times the roughness's coherent part $e^{-2(k_j\sigma\sin\psi)^2}$, with $k_j$ and the admittance
+$\beta_j$ at sub-band $j$'s middle. The leg runs from the source or the edge before the bounce to
+the edge or the microphone after it, unfolded in the floor: $\sin\psi = (z_a + z_b)/\ell$ for ends
+at heights $z_a$ and $z_b$, which facade reflections on the leg leave as they are, since the facades
+are vertical. A diffracted wave is not a point source's, and taking its leg from the edge is the
+usual engineering choice (Nord2000 takes the same). Over open ground the field is then the direct
+ray and the floor's, summed over the three sub-bands; held at the band's centre, $Q$ gives exactly
+the open-ground model's band average (§5.3, Chessell's), whose sinc is the sub-band
+integral of the same two rays. What separates the two is $Q$'s change across a band: up to 0.12 dB
+in a band for a source 3 m up over hard ground, which the ray sum keeps and the model's single
+$Q$ does not. The ground model's turbulence is not taken: among the buildings how the rays'
+phases relate is the source's (below).
+
+A flush microphone on a ground plate (`--plate_table`) has $p/p_{free} = P_d + Q P_r$ (§6.2) for
+the pair of a ray and its floor partner beside the microphone, which are one length: the ray that
+arrives directly takes $P_d$ and its partner $Q P_r$, both at the elevation and plate-frame azimuth
+the ray arrives from, $P_d$ and $P_r$ interpolated in log frequency to each sub-band's middle. Under
+`--edge_source` a vertical edge standing on the floor is still taken through it (`through_floor`),
+the image half weighted as the ray's own bounces: exact on a rigid floor, and on a soft one the
+edge's foot is left without an end wave of its own, as UTD leaves it.
+
+The diffuse facades and the turbulence's fill of the shadows carry energy alone, and take the
+ground's diffuse-field reflection, $2\int_0^1 |R_p(\mu)|^2\mu\,d\mu$ (one less Paris's statistical
+absorption coefficient), in each band -- the diffuse field its bands' mean.
+
 **In a run** (`niceops --buildings`) the source is the rotor's sphere, and each ray's amplitude in
 band $b$ is multiplied by the sphere's along the direction $\hat d$ the ray leaves the source,
 
@@ -996,7 +1031,8 @@ $L_b(\hat d)$ the sphere's level at its radius $r_s$, $\ell$ the ray's length an
 attenuation of amplitude per metre, so each ray spreads from the sphere and is absorbed beyond it,
 as the straight path is (§4.2). $\hat d$ is $-\nabla_S \ell$, the ray's length being stationary in
 every point between its ends. The microphone is the observer's point raised by its height column,
-as in a run without a ground model, and the floor is the buildings'. With no buildings and a floor
+as in a run without a ground model, and with one (a floor of finite impedance) as in the
+open-ground run. With no buildings and a floor
 that absorbs everything, the one ray left is the straight path and the level is the run's without
 a ground model.
 

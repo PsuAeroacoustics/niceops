@@ -15,7 +15,11 @@
 // conventions (eval_spectrum): it spreads from the sphere's radius, so one
 // shorter than that gains nothing, and absorbs over its length beyond it.
 // With no buildings and a floor that absorbs everything, the one ray left is
-// the straight path, and the level is the run's without a ground model.
+// the straight path, and the level is the run's without a ground model.  The
+// floor is an energy coefficient, or with a microphone's ground
+// (MicrophoneFloor) each bounce takes its spherical-wave reflection
+// coefficient, and a flush microphone stands on a plate (point_paths.hpp,
+// FloorModel).
 //
 // Walls and roofs that scatter reflect specularly only rho (1 - s) of what
 // reaches them, and the rest of rho diffusely, as niceops_point_field takes
@@ -47,6 +51,9 @@ class Device;
 }
 
 class PointSourceField;
+struct FloorModel;
+struct GroundModel;
+class PlateReceiver;
 
 // The q-quantile of the gamma distribution with mean `mean` and variance
 // `variance`: what the interval's ends take (PhaseInterval).
@@ -77,9 +84,22 @@ struct PhaseInterval
 // pair's spread.  Under RaySum::coherent every pair's coherency is 1 at no
 // delay; under RaySum::energy no pair adds.
 void partially_coherent_energies(const PointSourceField& field, const std::vector<double>& reflection,
-        double floor_reflection, const std::vector<double>& bands, std::size_t first_band, double sound_speed,
+        const FloorModel& floor, const std::vector<double>& bands, std::size_t first_band, double sound_speed,
         const std::vector<double>& air, const double* weights, const SourceCoherence& coherence,
         const SphereFrame& frame, double* energy, double* variance = nullptr);
+
+// A microphone's floor under --ground_effect (THEORY 6.5): the ground whose
+// spherical-wave reflection coefficient each of its rays' floor bounces takes
+// (point_paths.hpp, FloorModel), and for a flush microphone on a plate the
+// plate, bound to the run's bands over that ground, and the azimuth of the
+// microphone's offset on it in the run's frame, radians from +x.  Without a
+// ground, the district's energy coefficient (--floor_absorption).
+struct MicrophoneFloor
+{
+    const GroundModel* ground = nullptr;
+    const PlateReceiver* plate = nullptr;
+    double plate_azimuth = 0.0;
+};
 
 class UrbanDistrict
 {
@@ -157,13 +177,19 @@ public:
     // With a `device`, each pair's rays are formed and summed on it
     // (gpu/point_rays.hpp): for rays adding coherently, in a cone or in
     // energy, without an interval -- gpu_supports() says.
+    //
+    // `floors`, when given, is each microphone's floor (MicrophoneFloor).
+    // The diffuse field and the turbulence's fill, which carry energy alone,
+    // take a ground's diffuse_reflection() in each band (the diffuse field one
+    // value, its bands' mean).
     std::size_t levels(const Database& database, const std::vector<Database::SourceState>& states,
             const std::vector<Vec3>& microphones, const double* absorption, const std::vector<double>& gains,
             std::size_t first_band, std::size_t last_band, double sound_speed, unsigned threads,
             const SourceCoherence& coherence, std::vector<double>& levels,
             std::vector<double>* band_levels = nullptr,
             const std::vector<const Database::PackedSpectra*>* packed = nullptr,
-            PhaseInterval* interval = nullptr, double state_tolerance = 0.0, gpu::Device* device = nullptr) const;
+            PhaseInterval* interval = nullptr, double state_tolerance = 0.0, gpu::Device* device = nullptr,
+            const std::vector<MicrophoneFloor>* floors = nullptr) const;
     // Whether levels() can take a GPU for these rays' sum, and an interval or
     // not: the measured coherence and the interval are the CPU's.
     static bool gpu_supports(const SourceCoherence& coherence, bool interval);

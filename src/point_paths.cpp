@@ -12,6 +12,7 @@
 
 #include "edge_visibility.hpp"
 #include "faddeeva.hpp"
+#include "ground_effect.hpp"
 #include "urban.hpp"
 #include "util/constants.hpp"
 #include "wedge.hpp"
@@ -23,6 +24,14 @@ namespace {
 Vec3 below(const Vec3& p)
 {
     return {p.x, p.y, -p.z};
+}
+
+// The bounce on a leg from `from` to `to`, one of them the floor's image of
+// its real point: its grazing angle's sine and the leg's length.
+FloorBounce bounce_on(const Vec3& from, const Vec3& to, bool microphone)
+{
+    const double leg = (to - from).norm();
+    return {leg > 0.0 ? std::abs(to.z - from.z) / leg : 1.0, leg, microphone};
 }
 
 // Where the path through a point on a line is stationary, the point leaving
@@ -778,7 +787,10 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             ray.facades = image.facades;
             ray.floor = floor;
             if (floor)
+            {
                 ray.source_plane = 0.0;
+                ray.floor_bounce[0] = bounce_on(source, below(image.point), true);
+            }
             const std::vector<double> segments {ray.length};
             push_faded(rays_, std::move(ray), pending, segments, buildings, options);
         }
@@ -921,6 +933,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         ray.floor = fa + fb;
                         if (fa)
                             ray.source_plane = 0.0;
+                        int bounces = 0;
+                        if (fa)
+                            ray.floor_bounce[bounces++] = bounce_on(pa, q, false);
+                        if (fb)
+                            ray.floor_bounce[bounces++] = bounce_on(q, pb, true);
                         ray.wedges = 1;
                         ray.wedge[0] = {wedge_angles(edge.n, theta, theta0), sin_beta,
                                 s_in * s_out * sin_beta / (s_in + s_out), false};
@@ -1048,6 +1065,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                             ray.facades = a.facades;
                             ray.facades.insert(ray.facades.end(), b.facades.begin(), b.facades.end());
                             ray.floor = (sa == floor_side) + (sb == floor_side);
+                            int bounces = 0;
+                            if (sa == floor_side)
+                                ray.floor_bounce[bounces++] = bounce_on(pa, q, false);
+                            if (sb == floor_side)
+                                ray.floor_bounce[bounces++] = bounce_on(q, pb, true);
                             for (long side : {sa, sb})
                                 if (side >= 0)
                                     ray.roof_facades.push_back(buildings.roof_facade(static_cast<std::size_t>(side)));
@@ -1361,6 +1383,15 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 ray.floor = fa + fb + (ray.between_floor ? 1 : 0);
                                 if (fa)
                                     ray.source_plane = 0.0;
+                                // Between the edges the second is the floor's
+                                // image, and so is the microphone's end.
+                                int bounces = 0;
+                                if (fa)
+                                    ray.floor_bounce[bounces++] = bounce_on(pa, q1, false);
+                                if (ray.between_floor)
+                                    ray.floor_bounce[bounces++] = bounce_on(q1, q2, false);
+                                if (fb)
+                                    ray.floor_bounce[bounces++] = bounce_on(q2, pb, true);
                                 ray.edge_source.edges[0] = e1;
                                 ray.edge_source.edges[1] = e2;
                                 ray.edge_source.source = pa;
@@ -1606,6 +1637,11 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 ray.floor = fa + fb;
                                 if (fa)
                                     ray.source_plane = 0.0;
+                                int bounces = 0;
+                                if (fa)
+                                    ray.floor_bounce[bounces++] = bounce_on(pa, q1, false);
+                                if (fb)
+                                    ray.floor_bounce[bounces++] = bounce_on(q3, pb, true);
                                 ray.edge_source.edges[0] = e1;
                                 ray.edge_source.edges[1] = e3;
                                 ray.edge_source.source = pa;
@@ -1730,6 +1766,50 @@ double reflected_amplitude(const PointRay& ray, const std::vector<double>& refle
         if (f != PointRay::no_facade)
             amplitude *= std::sqrt(reflection[f]);
     return amplitude;
+}
+
+void point_ray_arrival(const PointRay& ray, double& elevation, double& azimuth)
+{
+    // A leg off the floor is drawn unfolded below it, which leaves its slope
+    // and its horizontal direction as they are.
+    const std::size_t n = ray.path.size();
+    const Vec3 d = n >= 2 ? ray.path[n - 1] - ray.path[n - 2] : Vec3(1.0, 0.0, 0.0);
+    elevation = std::atan2(std::abs(d.z), std::hypot(d.x, d.y));
+    azimuth = std::atan2(d.y, d.x);
+}
+
+void floor_factors(const PointRay& ray, const FloorModel& floor, const std::vector<double>& k,
+        const std::complex<double>* plate, std::complex<double>* out)
+{
+    const std::size_t problems = k.size();
+    if (!floor.impedance())
+    {
+        std::fill(out, out + problems, std::complex<double>(1.0));
+        return;
+    }
+    if (floor.admittance.size() != problems)
+        throw std::invalid_argument("floor_factors: the floor's admittance is not one per sub-band");
+    bool at_microphone = false;
+    for (int b = 0; b < ray.floor; b++)
+        at_microphone = at_microphone || ray.floor_bounce[static_cast<std::size_t>(b)].microphone;
+    for (std::size_t j = 0; j < problems; j++)
+    {
+        std::complex<double> f = plate == nullptr ? 1.0 : plate[at_microphone ? problems + j : j];
+        for (int b = 0; b < ray.floor; b++)
+        {
+            const FloorBounce& bounce = ray.floor_bounce[static_cast<std::size_t>(b)];
+            const std::array<double, 2> q = spherical_reflection_coefficient(bounce.sin_grazing, 0.5 * k[j] * bounce.leg,
+                    floor.admittance[j], floor.boundary_loss);
+            double coherent = 1.0;
+            if (floor.roughness > 0.0)
+            {
+                const double x = k[j] * floor.roughness * bounce.sin_grazing;
+                coherent = std::exp(-2.0 * x * x);
+            }
+            f *= coherent * std::complex<double>(q[0], q[1]);
+        }
+        out[j] = f;
+    }
 }
 
 std::complex<double> point_ray_amplitude(const PointRay& ray, const std::vector<double>& reflection,
@@ -2152,12 +2232,15 @@ std::vector<std::complex<double>> sampled_shared_face_factors(const PointRay& ra
 
 } // namespace
 
-void PointSourceField::sub_band_problems(const std::vector<double>& reflection, double floor_reflection,
+void PointSourceField::sub_band_problems(const std::vector<double>& reflection, const FloorModel& floor,
         const std::vector<double>& bands, double sound_speed, const SubBandProblem& problem,
         const std::vector<double>& absorption, const double* weights, std::vector<std::size_t>* order_out) const
 {
     if (!absorption.empty() && absorption.size() != 3 * bands.size())
         throw std::invalid_argument("sub_band_problems: the absorption is not three per band");
+    if (floor.impedance() && floor.admittance.size() != 3 * bands.size())
+        throw std::invalid_argument("sub_band_problems: the floor's admittance is not three per band");
+    const double floor_reflection = floor.impedance() ? 1.0 : floor.reflection;
     // The rays in order of length, by index: band_averaged_energy wants them
     // sorted, and a ray carries its path.
     std::vector<std::size_t> order(rays_.size());
@@ -2180,6 +2263,24 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     if (edge_source_)
         for (std::size_t i = 0; i < order.size(); i++)
             factors[i] = edge_source_factors(*buildings_, rays_[order[i]], wavenumbers);
+    // A floor of finite impedance: each ray's factor from it, every sub-band
+    // at once, for the rays it touches (a plate's microphone, every ray).
+    std::vector<std::vector<std::complex<double>>> floor_factor(floor.impedance() ? order.size() : 0);
+    std::vector<std::complex<double>> plate(floor.plate ? 2 * wavenumbers.size() : 0);
+    for (std::size_t i = 0; i < floor_factor.size(); i++)
+    {
+        const PointRay& ray = rays_[order[i]];
+        if (ray.floor == 0 && !floor.plate)
+            continue;
+        if (floor.plate)
+        {
+            double elevation, azimuth;
+            point_ray_arrival(ray, elevation, azimuth);
+            floor.plate(elevation, azimuth, plate.data(), plate.data() + wavenumbers.size());
+        }
+        floor_factor[i].resize(wavenumbers.size());
+        floor_factors(ray, floor, wavenumbers, floor.plate ? plate.data() : nullptr, floor_factor[i].data());
+    }
     // A shared face's field at every sub-band at once: sampled where that is
     // allowed and works, or its nodes' geometry shared between them
     // (shared_face_spectrum).
@@ -2223,6 +2324,9 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
                 else
                     amplitude[i] = point_ray_amplitude(ray, reflected[i], kc);
             }
+            for (std::size_t i = 0; i < floor_factor.size(); i++)
+                if (!floor_factor[i].empty())
+                    amplitude[i] *= floor_factor[i][3 * band + part];
             if (!absorption.empty())
                 for (std::size_t i = 0; i < order.size(); i++)
                     amplitude[i] *= std::exp(-absorption[3 * band + part] * length[i]);
@@ -2234,13 +2338,13 @@ void PointSourceField::sub_band_problems(const std::vector<double>& reflection, 
     }
 }
 
-void PointSourceField::band_levels(const std::vector<double>& reflection, double floor_reflection,
+void PointSourceField::band_levels(const std::vector<double>& reflection, const FloorModel& floor,
         const std::vector<double>& bands, double sound_speed, double* out, const std::vector<double>& absorption,
         const double* weights) const
 {
     std::vector<double> energy(3 * bands.size());
     sub_band_problems(
-            reflection, floor_reflection, bands, sound_speed,
+            reflection, floor, bands, sound_speed,
             [&](std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
                     const std::vector<double>& length, const SubBand& s) {
                 energy[3 * band + part] = band_averaged_energy(amplitude, length, s.k1, s.k2);

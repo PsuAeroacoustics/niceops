@@ -14,6 +14,7 @@
 #include "gpu/band_stream.hpp"
 #include "gpu/gpu.hpp"
 #include "gpu/point_rays.hpp"
+#include "ground_effect.hpp"
 #include "point_paths.hpp"
 #include "source_coherence.hpp"
 #include "sphere_database.hpp"
@@ -294,6 +295,8 @@ struct Fields
             {&containers, {8.0, 12.0, 15.0}, {18.0, 2.0, 1.2}},
             {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 1.5}},
             {&blocks, {70.0, 30.0, 5.0}, {110.0, 150.0, 1.5}},
+            // A flush microphone, for a plate.
+            {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 0.0}},
         };
         for (const auto& [city, source, microphone] : cases)
         {
@@ -313,6 +316,8 @@ struct Fields
 // levels against band_levels on the CPU.  With the shared faces' integrals
 // at every wavenumber, and sampled (the cascade at every problem, the
 // integral at the probes, face_ratios between) as the CPU samples them.
+// Every third field's floor is grass, whose bounces take Q, and the flush
+// microphone's is on a plate besides.
 TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
 {
     gpu::Device& device = device_or_skip();
@@ -335,20 +340,37 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     std::vector<std::vector<double>> cpu(count, std::vector<double>(bands.size()));
     gpu::BandEnergies energies(device);
     std::vector<std::size_t> host_first, point_first;
-    std::size_t shared = 0, thrice = 0, between = 0;
+    std::size_t shared = 0, thrice = 0, between = 0, plates = 0;
+    std::vector<double> middles;
+    for (double band : bands)
+        for (const SubBand& s : sub_bands(band, c))
+            middles.push_back(0.5 * (s.g1 + s.g2));
+    FloorModel grass;
+    grass.admittance = ground_impedance(GroundModel {}, middles, c);
+    FloorModel plate = grass;
+    plate.plate = [&](double elevation, double azimuth, std::complex<double>* direct, std::complex<double>* image) {
+        for (std::size_t j = 0; j < middles.size(); j++)
+        {
+            direct[j] = std::polar(1.0 + 0.3 * std::sin(elevation), 0.2 * azimuth + 0.01 * j);
+            image[j] = std::polar(0.9, -0.1 * j);
+        }
+    };
     for (std::size_t i = 0; i < count; i++)
     {
         const std::vector<double>& reflection = f.reflection[i];
         const PointSourceField& field = *f.fields[i];
+        const bool flush = field.rays().front().path.back().z == 0.0;
+        plates += flush;
+        const FloorModel floor = flush ? plate : i % 3 == 1 ? grass : FloorModel(1.0);
         for (const PointRay& ray : field.rays())
         {
             thrice += ray.wedges == 3;
             between += ray.between != PointRay::no_facade;
         }
         const std::vector<double> absorption = i % 2 ? absorbing : std::vector<double> {};
-        field.band_levels(reflection, 1.0, bands, c, cpu[i].data(), absorption);
+        field.band_levels(reflection, floor, bands, c, cpu[i].data(), absorption);
         field.sub_band_problems(
-                reflection, 1.0, bands, c,
+                reflection, floor, bands, c,
                 [&](std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
                         const std::vector<double>& length, const SubBand& s) {
                     if (band == 0 && part == 0)
@@ -357,7 +379,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
                 },
                 absorption);
         host[i].plan();
-        gpu::pack_point_rays(field, reflection, 1.0, bands, c, point[i], absorption);
+        gpu::pack_point_rays(field, reflection, floor, bands, c, point[i], absorption);
         shared += point[i].face_rays.size() + point[i].samples.size();
         host_first.push_back(energies.add(host[i]));
         point_first.push_back(energies.add(point[i]));
@@ -367,6 +389,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     // take the same kernel.
     REQUIRE(thrice > 0);
     REQUIRE(between > 0);
+    REQUIRE(plates == 1);
     energies.submit();
     const std::vector<double>& energy = energies.wait();
     double worst_amplitudes = 0.0, worst_cpu = 0.0;
@@ -460,15 +483,18 @@ TEST_CASE("the GPU's cone sum is not below zero", "[gpu]")
     for (uint32_t i = 0; i < 3; i++)
     {
         set.length.push_back(50.0 + 1e-4 * i);
-        set.rays.push_back(GpuRay {0u, 0u, i, static_cast<float>(set.length.back())});
-        set.reflected.push_back(static_cast<float>(sign[i]));
+        set.rays.push_back(GpuRay {0u, 0u, 6u * i, static_cast<float>(set.length.back())});
+        // Its amplitude after reflections, complex, in each of the three
+        // problems.
+        for (int part = 0; part < 3; part++)
+            for (double v : {sign[i], 0.0})
+                set.reflected.push_back(static_cast<float>(v));
         const double turn = 0.7 * i * pi / 180.0;
         for (double v : {std::cos(turn), std::sin(turn), 0.0})
             set.launch.push_back(static_cast<float>(v));
     }
     for (const SubBand& s : sub_bands(band, c))
     {
-        set.band.push_back(0u);
         set.k1.push_back(s.k1);
         set.k2.push_back(s.k2);
         set.absorption.push_back(0.0f);

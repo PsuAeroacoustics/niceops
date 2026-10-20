@@ -23,7 +23,8 @@ NK_KERNEL(ray_amplitudes)(NK_IN(BandProblem, problems, 0), NK_IN(uint, which, 1)
                 continue;
             terms = 2u;
         }
-        nk_complex a = nk_make(reflected[r.reflected + p.band] * exp(-p.absorption * r.length), 0.0f);
+        const float air = exp(-p.absorption * r.length);
+        nk_complex a = nk_make(reflected[r.reflected + 2u * p.slot] * air, reflected[r.reflected + 2u * p.slot + 1u] * air);
         for (uint w = 0u; w < terms; w++)
         {
             NK_GLOBAL_IN GpuWedge* t = wedges + term + w;
@@ -132,7 +133,8 @@ NK_KERNEL(face_amplitudes)(NK_IN(GpuFaceItem, items, 0), NK_IN(BandProblem, prob
     }
     field = nk_scale(field, 1.0f / weights);
     const GpuRay r = rays[p.rays + item.ray];
-    const nk_complex a = nk_mul(nk_scale(field, reflected[r.reflected + p.band] * exp(-p.absorption * r.length) * s),
+    const nk_complex reflections = nk_make(reflected[r.reflected + 2u * p.slot], reflected[r.reflected + 2u * p.slot + 1u]);
+    const nk_complex a = nk_mul(nk_mul(nk_scale(field, exp(-p.absorption * r.length) * s), reflections),
             nk_cis(nk_phase(kt, kt_lo, f->offset_hi, f->offset_lo)));
     // A sampled face's integral goes to its probe's slot, for face_ratios.
     NK_GLOBAL_OUT float* out = item.probe != 0u ? probe_out + 2u * (item.probe - 1u) : amplitude + 2u * (p.first + item.ray);

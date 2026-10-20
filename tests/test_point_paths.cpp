@@ -12,6 +12,7 @@
 #include "buildings.hpp"
 #include "double_wedge.hpp"
 #include "edge_source.hpp"
+#include "ground_effect.hpp"
 #include "point_paths.hpp"
 #include "urban.hpp"
 #include "util/constants.hpp"
@@ -129,6 +130,184 @@ TEST_CASE("over open ground a point source's field is the direct ray and the flo
                     * (g2 - g1);
         }
         REQUIRE(out[b] == Catch::Approx(10.0 * std::log10(energy / (f2 - f1))).margin(1e-9));
+    }
+}
+
+// The sub-bands' middle frequencies over `bands`, three a band, which a
+// floor's admittance is taken at.
+std::vector<double> sub_band_middles(const std::vector<double>& centres, double c)
+{
+    std::vector<double> out;
+    for (double band : centres)
+        for (const SubBand& s : sub_bands(band, c))
+            out.push_back(0.5 * (s.g1 + s.g2));
+    return out;
+}
+
+// Over impedance ground the floor's ray takes the spherical-wave reflection
+// coefficient at its grazing angle, its whole length the image path, at each
+// sub-band's middle: the two-ray sum to round-off.  With Q held at the band's
+// centre that sum is the open-ground model (excess_ground_attenuation over the
+// direct ray's spreading), to its band constants' six figures; Q's change
+// across a band, which the model leaves out, moves it by up to 0.12 dB here,
+// at a grazing source over hard ground (0.103 measured).
+TEST_CASE("over impedance ground the floor's ray takes the ground's reflection coefficient", "[point_paths]")
+{
+    const Buildings none;
+    const double c = 343.2;
+    for (double flow : {200.0, 20000.0})
+        for (const auto& [s, m] : {std::pair {Vec3(0.0, 0.0, 20.0), Vec3(150.0, 30.0, 1.2)},
+                     std::pair {Vec3(0.0, 0.0, 3.0), Vec3(40.0, -10.0, 1.2)},
+                     std::pair {Vec3(0.0, 0.0, 120.0), Vec3(60.0, 20.0, 1.2)}})
+        {
+            GroundModel ground;
+            ground.flow_resistance = flow;
+            ground.receiver_height = m.z;
+            FloorModel floor;
+            floor.admittance = ground_impedance(ground, sub_band_middles(bands, c), c);
+            const PointSourceField field(none, s, m);
+            REQUIRE(field.rays().size() == 2);
+            std::vector<double> out(bands.size());
+            field.band_levels({}, floor, bands, c, out.data());
+            const double r1 = (m - s).norm(), r2 = (Vec3(m.x, m.y, -m.z) - s).norm();
+            const double sin_grazing = (s.z + m.z) / r2;
+            std::vector<double> centre(bands.size());
+            const double d = std::hypot(m.x - s.x, m.y - s.y);
+            excess_ground_attenuation(ground, ground_impedance(ground, bands, c), s.z, d, c, bands, centre.data());
+            const std::vector<std::complex<double>> at_centre = ground_impedance(ground, bands, c);
+            double worst = 0.0;
+            for (std::size_t b = 0; b < bands.size(); b++)
+            {
+                const std::array<SubBand, 3> parts = sub_bands(bands[b], c);
+                const double open = centre[b] - 20.0 * std::log10(r1);
+                const auto q0 = spherical_reflection_coefficient(sin_grazing, pi * bands[b] * r2 / c, at_centre[b]);
+                double energy[3], held[3];
+                for (int part = 0; part < 3; part++)
+                {
+                    const SubBand& p = parts[part];
+                    const auto q = spherical_reflection_coefficient(sin_grazing, 0.25 * (p.k1 + p.k2) * r2,
+                            floor.admittance[3 * b + part]);
+                    energy[part] = band_averaged_energy({1.0 / r1, std::complex<double>(q[0], q[1]) / r2}, {r1, r2},
+                            p.k1, p.k2);
+                    held[part] = band_averaged_energy({1.0 / r1, std::complex<double>(q0[0], q0[1]) / r2}, {r1, r2},
+                            p.k1, p.k2);
+                }
+                REQUIRE(out[b] == Catch::Approx(band_level(bands[b], parts, energy)).margin(1e-9));
+                REQUIRE(band_level(bands[b], parts, held) == Catch::Approx(open).margin(1e-5));
+                worst = std::max(worst, std::abs(out[b] - open));
+            }
+            INFO("flow resistance " << flow << ", source " << s.z << " m up, " << d << " m off: worst "
+                                    << worst << " dB from the open-ground model");
+            REQUIRE(worst < 0.12);
+        }
+}
+
+// Each floor bounce is its leg's: the leg between the points the ray
+// diffracts at (or its ends), unfolded in the floor, its length and its
+// grazing angle, ending at the microphone or not; and the ray's length is its
+// legs', unfolded where they bounce.  Over the containers of EDGE's district,
+// where rays bounce before, between and after their edges.
+TEST_CASE("each floor bounce is its leg's, unfolded", "[point_paths]")
+{
+    const Buildings containers({box(4.09, 17.66, 6.53, 23.72, 7.77), box(14.81, 17.66, 17.25, 23.72, 7.77),
+            box(1.6, 10.82, 4.04, 16.88, 7.77), box(1.6, 8.38, 13.72, 10.82, 5.18),
+            box(20.21, 3.86, 22.65, 16.0, 7.77), box(13.5, -1.84, 19.56, 0.6, 7.77)});
+    std::size_t checked = 0, kinds[4] = {0, 0, 0, 0};
+    for (const Vec3& microphone : {Vec3(10.5, -1.1, 1.2), Vec3(-3.6, 6.4, 1.2), Vec3(18.0, 2.0, 1.2)})
+    {
+        const PointSourceField field(containers, Vec3(10.5, 20.5, 2.0), microphone);
+        for (const PointRay& ray : field.rays())
+        {
+            if (ray.floor == 0 || !ray.facades.empty() || !ray.roof_facades.empty() || !ray.made_edges.empty())
+                continue;
+            // The points it turns at: its ends and edges, not the bounce
+            // between two edges (on the floor).
+            std::vector<Vec3> nodes;
+            for (const Vec3& p : ray.path)
+                if (p.z > 1e-9)
+                    nodes.push_back(p);
+            REQUIRE(nodes.size() == static_cast<std::size_t>(ray.wedges) + 2);
+            std::vector<bool> used(nodes.size() - 1, false);
+            double length = 0.0;
+            for (int i = 0; i < ray.floor; i++)
+            {
+                const FloorBounce& b = ray.floor_bounce[static_cast<std::size_t>(i)];
+                bool found = false;
+                for (std::size_t k = 0; k + 1 < nodes.size() && !found; k++)
+                {
+                    const Vec3 &p = nodes[k], &q = nodes[k + 1];
+                    const double leg = std::hypot(std::hypot(q.x - p.x, q.y - p.y), p.z + q.z);
+                    if (used[k] || std::abs(leg - b.leg) > 1e-9 * leg)
+                        continue;
+                    REQUIRE(b.sin_grazing == Catch::Approx((p.z + q.z) / leg).epsilon(1e-12));
+                    REQUIRE(b.microphone == (k + 2 == nodes.size()));
+                    used[k] = found = true;
+                    length += leg;
+                }
+                REQUIRE(found);
+            }
+            for (std::size_t k = 0; k + 1 < nodes.size(); k++)
+                if (!used[k])
+                    length += (nodes[k + 1] - nodes[k]).norm();
+            REQUIRE(length == Catch::Approx(ray.length).epsilon(1e-9));
+            checked++;
+            kinds[std::min(ray.wedges, 3)]++;
+        }
+    }
+    INFO(kinds[0] << " specular, " << kinds[1] << " once, " << kinds[2] << " twice, " << kinds[3] << " thrice");
+    REQUIRE(kinds[0] > 0);
+    REQUIRE(kinds[1] > 0);
+    REQUIRE(kinds[2] > 0);
+}
+
+// A flush microphone on a plate: the direct ray takes P_d and the floor's,
+// of the same length, Q P_r, so the band levels are |P_d + Q P_r|^2 over the
+// spreading, from P_d and P_r at the elevation and azimuth the ray arrives
+// from.
+TEST_CASE("a flush microphone's plate takes P_d on the direct ray and Q P_r on the floor's", "[point_paths]")
+{
+    const Buildings none;
+    const double c = 343.2;
+    const Vec3 s(-30.0, 12.0, 25.0), m(50.0, -20.0, 0.0);
+    GroundModel ground;
+    FloorModel floor;
+    floor.admittance = ground_impedance(ground, sub_band_middles(bands, c), c);
+    const std::size_t problems = 3 * bands.size();
+    std::vector<double> elevations, azimuths;
+    auto direct_of = [](std::size_t j) { return std::complex<double>(0.9 + 0.01 * j, -0.05 * j); };
+    auto image_of = [](std::size_t j) { return std::complex<double>(1.1 - 0.02 * j, 0.03 * j); };
+    floor.plate = [&](double elevation, double azimuth, std::complex<double>* direct, std::complex<double>* image) {
+        elevations.push_back(elevation);
+        azimuths.push_back(azimuth);
+        for (std::size_t j = 0; j < problems; j++)
+        {
+            direct[j] = direct_of(j);
+            image[j] = image_of(j);
+        }
+    };
+    const PointSourceField field(none, s, m);
+    REQUIRE(field.rays().size() == 2);
+    std::vector<double> out(bands.size());
+    field.band_levels({}, floor, bands, c, out.data());
+    const double r = (m - s).norm(), d = std::hypot(m.x - s.x, m.y - s.y);
+    REQUIRE(elevations.size() == 2);
+    for (std::size_t i = 0; i < 2; i++)
+    {
+        REQUIRE(elevations[i] == Catch::Approx(std::atan2(s.z, d)).margin(1e-12));
+        REQUIRE(azimuths[i] == Catch::Approx(std::atan2(m.y - s.y, m.x - s.x)).margin(1e-12));
+    }
+    for (std::size_t b = 0; b < bands.size(); b++)
+    {
+        const std::array<SubBand, 3> parts = sub_bands(bands[b], c);
+        double energy[3];
+        for (int part = 0; part < 3; part++)
+        {
+            const std::size_t j = 3 * b + static_cast<std::size_t>(part);
+            const auto q = spherical_reflection_coefficient(s.z / r, 0.25 * (parts[part].k1 + parts[part].k2) * r,
+                    floor.admittance[j]);
+            energy[part] = std::norm(direct_of(j) + std::complex<double>(q[0], q[1]) * image_of(j)) / (r * r);
+        }
+        REQUIRE(out[b] == Catch::Approx(band_level(bands[b], parts, energy)).margin(1e-9));
     }
 }
 

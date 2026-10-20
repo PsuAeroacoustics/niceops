@@ -27,10 +27,12 @@ struct BandProblem
     float reach;
     // The quadrature's centre in the rel lengths, m.
     float centre;
-    // Where the GPU forms the amplitudes itself (point_rays.kern): the band
-    // the problem is in, for the rays' reflections, and the air's attenuation
-    // of an amplitude per metre of path, Np/m (0 for none).
-    uint32_t band;
+    // Where the GPU forms the amplitudes itself (point_rays.kern): the
+    // problem's index within its set, which is where its amplitude after the
+    // reflections sits in each of its rays' rows (PointRaySet::reflected), and
+    // the air's attenuation of an amplitude per metre of path, Np/m (0 for
+    // none).
+    uint32_t slot;
     float absorption;
     // How its rays add (band_pair_sum): NK_SUM_COHERENT, all with their
     // phases; NK_SUM_CONE, with their phases within `cone` degrees of each

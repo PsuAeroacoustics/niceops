@@ -186,7 +186,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--exact_ground` | Evaluate the ground model (or the plate's reflection coefficients) at every observer and state rather than from per-trajectory tables. Slower; for checking the tables. |
 | `--propagation_table` | A propagation loss table (netCDF) that replaces the ground and ray models wherever it covers a pair ([Propagation loss tables](#propagation-loss-tables)). Spectral path only. |
 | `--urban_table` | Urban receivers: for each microphone it holds, what the street around it does to the direct path, and its facades' first-order reflections ([Urban receivers](#urban-receivers)). Built by `niceops_urban_table`. Spectral path only; not with `--terrain`, `--refraction`, `--propagation_table` or `--db_cutoff`. |
-| `--buildings`, `--wall_absorption`, `--floor_absorption` | LoD1 buildings around the microphones: every microphone hears the source's own rays among them, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)). Spectral path only, with a database carrying spectra. |
+| `--buildings`, `--wall_absorption`, `--floor_absorption` | LoD1 buildings around the microphones: every microphone hears the source's own rays among them, in place of the open-ground model ([Buildings around the microphones](#buildings-around-the-microphones)); the floor rigid, absorbing, or with `--ground_effect` the ground model's at every bounce. Spectral path only, with a database carrying spectra. |
 | `--facade_scattering`, `--facade_scattering_spectrum` | With `--buildings`: the share of what the walls and roofs reflect that they scatter diffusely, where a building gives none (default 0, or 1 with a spectrum), and a CSV of `band_hz` and `s` that multiplies it band by band. |
 | `--patch_size`, `--diffuse_radius` | With scattering facades: the diffuse field's patches' size at most (default 4 m (13.123 ft)), and the horizontal distance from a microphone within which a building scatters (default 150 m (492.13 ft), the rays' own reach). |
 | `--ray_coherence` | With `--buildings`: how rays leaving the source in different directions add. `cone`, `measured`, `coherent` or `energy`. Default `measured` where the database records its vehicle's coherence, `cone` otherwise ([Buildings around the microphones](#buildings-around-the-microphones)). |
@@ -1143,11 +1143,30 @@ over a pass as it does in an exposure.
   for the run, so the cost grows with the microphones and the patches, not with the states: on the
   test district, 0.2 s on the GPU and 0.4 s on the CPU. For a corrugated container's s(f), on
   NLR's DigiCity, see [FIDELITY](FIDELITY.md#scattering-walls-point-source).
-- **The floor** is the buildings', rigid unless `--floor_absorption`. The ground model is not used:
-  `--ground_effect` is refused, and `--no-ground_effect` changes nothing.
+- **The floor** is rigid by default, or absorbs `--floor_absorption` of the energy at every angle
+  and frequency. With `--ground_effect` (or `--ground_classes` or `--plate_table`, which name a
+  ground) it is the ground model's instead: each ray's every bounce on the floor -- the floor's
+  own ray, and a diffracted ray's bounces before, between and after its edges -- takes the
+  spherical-wave reflection coefficient Q the open-ground model takes, at that bounce's grazing
+  angle, its leg as the image path, in each third of each band
+  ([THEORY §6.5](THEORY.md#65-urban-receivers)). With one far building the run is the open-ground
+  run to 0.06 dB of SEL on the demo approach: the floor's ray reads the sphere along its own
+  launch, and Q changes across a band. On the test district a grass floor (`--flow_resistance
+  225`) takes 0.8 to 4.0 dB off the rigid floor's SELs, the flush microphones most, and costs 5%
+  more time.
+  `--floor_absorption` with a ground model is refused. Each microphone's floor is its ground class
+  (`--ground_classes`), the ground at the microphone taken for every bounce, as the open-ground
+  model takes it. A flush microphone (height 0) with `--plate_table` is on its plate: a ray
+  reaching it directly takes the plate's P<sub>d</sub>, and the floor's ray beside it
+  Q P<sub>r</sub>, at the elevation and azimuth the ray arrives from, which is the open-ground
+  plate's level where only those two arrive (0.003 dB with one far building). The ground model's
+  `--turbulence` and `--gamma_t` are refused: how the rays' phases relate is the source's (below),
+  and turbulence fills the shadows through `--scattering`. The diffuse facades and that fill carry
+  energy alone, and take the ground's diffuse-field reflection, band by band.
 - **Every microphone** stands where the observer file puts it, raised by its height column where
-  the file has one, as in any run without a ground model; it is not put at `--receiver_height`. A
-  microphone below the floor or inside a building is refused, and so is a source position there.
+  the file has one, as in any run without a ground model; with one it stands as in the open-ground
+  run, at `--receiver_height` unless its height column says otherwise. A microphone below the floor
+  or inside a building is refused, and so is a source position there.
 - **The database** must carry per-band spectra, which each ray reads along its own launch; one
   without them is refused.
 - **How the rays add.** The spheres carry levels, not phases, so how coherent the source is
@@ -1966,6 +1985,7 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--bands`, `--database` | Band centers, given or from a database. |
 | `--absorption` | The walls' energy absorption where a building gives none. Default 0, rigid. |
 | `--floor_absorption` | The floor's. Default 0, rigid. |
+| `--flow_resistance`, `--impedance_model` | A floor of finite impedance instead, as `niceops --buildings --ground_effect` takes it: each bounce takes the ground's Q. The flow resistance in kPa s/m²; the model `delany_bazley` (default) or `miki`, the two that need nothing else. Not with `--floor_absorption`. |
 | `--scattering` | The walls' and roofs' scattering coefficient where a building gives none, 0 to 1. Default 0, specular; 1 with `--scattering_spectrum`. |
 | `--scattering_spectrum` | A CSV of `band_hz` and `s`: the coefficient band by band, each building's weighting it, as above. |
 | `--patch_size` | With scattering walls, the diffuse field's patches' size at most. Default 4 m. |

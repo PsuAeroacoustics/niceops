@@ -728,6 +728,30 @@ which marches them. What to keep:
   absorbing everything give the run without a ground model, at 1e-9 (in fact to the printed digit).
 - **No peak search.** A coherent sum of a source's rays can exceed the straight path's bound by
   20 lg N, so no state is skipped on a bound.
+- **A ground model's floor is per bounce** (`FloorModel`, `FloorBounce`, `floor_factors` in
+  `point_paths`; `MicrophoneFloor` here). What to keep:
+  - **Each ray records its bounces where it is built**: the leg's unfolded length and grazing sine,
+    and whether the leg ends at the microphone. Five places build rays with a floor (specular,
+    once-diffracted with the floor or a roof, twice, thrice); `each floor bounce is its leg's,
+    unfolded` checks every recorded bounce against its leg and the ray's length against its legs'.
+    A new kind of ray with a floor has to record its bounces, or an impedance floor silently takes
+    it as rigid.
+  - **The factor is per sub-band, complex, in the same place the air's is applied**, so the CPU's
+    band sum, the cone sum and the GPU's all take it. The GPU's `reflected` row is complex per
+    problem (`BandProblem::slot`), not real per band; the CPU computes Q and hands it over.
+  - **Held at the band's centre, Q gives the open-ground model exactly** (to its band constants'
+    six figures): the test `over impedance ground the floor's ray takes the ground's reflection
+    coefficient` checks that and bounds what the sub-bands' Q adds. Do not "fix" the 0.06-0.14 dB
+    between `buildings_far_ground` and the open-ground run: it is the floor's ray reading the
+    sphere along its own launch, and Q across a band.
+  - **A plate's pair is two rays of one length**, P<sub>d</sub> on the direct one and
+    Q P<sub>r</sub> on the floor's, read at the arrival elevation and azimuth from the ray's last
+    path segment (`point_ray_arrival`; the floor's leg is drawn unfolded, which keeps its slope).
+    A flush microphone's pair is within the cone, so both sums keep it coherent.
+  - **No ground table is built among buildings**: the rays take Q bounce by bounce, so
+    `process_trajectory` skips the point receivers' tables and the plate's Q table.
+  - **Energy models take the ground's `diffuse_reflection`** (the diffuse facades, one value, its
+    bands' mean; the turbulence fill per band).
 - **The states are sampled, the source is not** (`--state_tolerance`; THEORY 6.5). What varies from
   state to state on a track is mostly the source: its blend follows the track's noisy load factor,
   and the level without buildings moves 0.1-0.3 dB (median) between states 0.02 s apart. What the

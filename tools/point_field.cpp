@@ -59,6 +59,7 @@
 #include "building_input.hpp"
 #include "buildings.hpp"
 #include "diffuse_facades.hpp"
+#include "ground_effect.hpp"
 #include "gpu/band_energy.hpp"
 #include "gpu/band_stream.hpp"
 #include "gpu/point_rays.hpp"
@@ -91,6 +92,8 @@ int main(int argc, char** argv)
     double patch_size = 4.0;
     double diffuse_radius = 0.0;
     double floor_absorption = 0.0;
+    double flow_resistance = std::numeric_limits<double>::quiet_NaN();
+    std::string impedance_model = "delany_bazley";
     double orientation_tolerance = 1.0;
     double sound_speed = 343.2;
     double humidity = std::numeric_limits<double>::quiet_NaN();
@@ -139,6 +142,13 @@ int main(int argc, char** argv)
                                                        "horizontal distance of a microphone scatters, walls and "
                                                        "roof, in --units (default --radius).");
     app.add_option("--floor_absorption", floor_absorption, "The floor's energy absorption coefficient (default 0).");
+    app.add_option("--flow_resistance", flow_resistance,
+            "A floor of finite impedance instead, its flow resistance in kPa s/m^2: each floor bounce takes the "
+            "ground's spherical-wave reflection coefficient, as niceops --buildings --ground_effect does. Not with "
+            "--floor_absorption.");
+    app.add_option("--impedance_model", impedance_model,
+            "With --flow_resistance: delany_bazley (default) or miki, as niceops takes them.")
+            ->check(CLI::IsMember({"delany_bazley", "miki"}));
     app.add_option("--max_reflections", max_reflections,
             "Facade reflections on a ray that diffracts nowhere (default 4).");
     app.add_option("--max_edge_reflections", max_edge_reflections,
@@ -225,6 +235,30 @@ int main(int argc, char** argv)
         }
         if (!(absorption >= 0.0 && absorption <= 1.0) || !(floor_absorption >= 0.0 && floor_absorption <= 1.0))
             throw std::runtime_error("absorption coefficients must lie within [0, 1]");
+        // The floor: an energy coefficient, or a ground's admittance at the
+        // sub-bands' middles (and, for --rays, at the bands' centres), with
+        // what it reflects of a diffuse field for the diffuse facades.
+        FloorModel floor(1.0 - floor_absorption), centre_floor = floor;
+        double floor_energy = 1.0 - floor_absorption;
+        if (app.count("--flow_resistance") > 0)
+        {
+            if (app.count("--floor_absorption") > 0)
+                throw std::runtime_error("--flow_resistance gives the floor an impedance, which --floor_absorption's "
+                                         "energy coefficient would replace; give one");
+            GroundModel ground;
+            ground.flow_resistance = flow_resistance;
+            ground.impedance_model = parse_impedance_model(impedance_model);
+            std::vector<double> middles;
+            for (double band : bands)
+                for (const SubBand& s : sub_bands(band, sound_speed))
+                    middles.push_back(0.5 * (s.g1 + s.g2));
+            floor.admittance = ground_impedance(ground, middles, sound_speed);
+            centre_floor.admittance = ground_impedance(ground, bands, sound_speed);
+            floor_energy = 0.0;
+            for (const std::complex<double>& beta : centre_floor.admittance)
+                floor_energy += diffuse_reflection(beta) / static_cast<double>(bands.size());
+            std::cerr << "Floor: " << impedance_model << " at " << flow_resistance << " kPa s/m^2." << std::endl;
+        }
         // The air's absorption per metre of path: per sub-band for the levels,
         // at each band's centre for --rays.  Refused rather than assumed.
         std::vector<double> air_absorption, band_air(bands.size(), 0.0);
@@ -431,24 +465,25 @@ int main(int argc, char** argv)
                     text << source_row + 1 << ",";
                 text << row + 1 << "," << i + 1 << "," << kind << "," << ray.facades.size() << "," << ray.floor << ","
                      << ray.length * from_meters;
-                // The edge-source factors at the band centres.
+                // The floor's factor and the edge-source factors at the band
+                // centres.
+                std::vector<double> centres(nb);
+                for (std::size_t b = 0; b < nb; b++)
+                    centres[b] = 2.0 * pi * bands[b] / sound_speed;
+                std::vector<std::complex<double>> at_floor(nb);
+                floor_factors(ray, centre_floor, centres, nullptr, at_floor.data());
                 std::vector<std::complex<double>> factors;
                 if (options.edge_source)
-                {
-                    std::vector<double> centres(nb);
-                    for (std::size_t b = 0; b < nb; b++)
-                        centres[b] = 2.0 * pi * bands[b] / sound_speed;
                     factors = edge_source_factors(city, ray, centres);
-                }
                 for (std::size_t b = 0; b < nb; b++)
                 {
                     const double kb = 2.0 * pi * bands[b] / sound_speed;
                     const double a = (factors.empty()
                                              ? std::abs(point_ray_amplitude(ray, band_reflection[b],
-                                                       1.0 - floor_absorption, kb))
-                                             : reflected_amplitude(ray, band_reflection[b], 1.0 - floor_absorption)
+                                                       centre_floor.reflection, kb))
+                                             : reflected_amplitude(ray, band_reflection[b], centre_floor.reflection)
                                                      * std::abs(factors[b]))
-                            * std::exp(-band_air[b] * ray.length);
+                            * std::abs(at_floor[b]) * std::exp(-band_air[b] * ray.length);
                     text << "," << 20.0 * std::log10(std::max(a, 1e-15));
                 }
                 text << ",";
@@ -486,7 +521,7 @@ int main(int argc, char** argv)
             for (std::size_t row = 0; row < nm; row++)
             {
                 diffuse_fields[row] = std::make_unique<DiffuseFacades>(city, points[row], rho, scatter,
-                        1.0 - floor_absorption, bands, sound_speed, diffuse_options, workers);
+                        floor_energy, bands, sound_speed, diffuse_options, workers);
                 diffuse_fields[row]->prepare_point_lighting(max_reflections, workers);
                 if (!diffuse_fields[row]->converged())
                     std::cerr << "Microphone " << row + 1 << ": the diffuse field's solve did not converge." << std::endl;
@@ -553,7 +588,7 @@ int main(int argc, char** argv)
             };
             if (!device)
                 trace_pairs(0, nm * nk, [&](std::size_t, std::size_t pair, const PointSourceField& field) {
-                    field.band_levels(reflection_for(pair % nm), 1.0 - floor_absorption, bands, sound_speed,
+                    field.band_levels(reflection_for(pair % nm), floor, bands, sound_speed,
                             &levels[pair * nb], air_absorption);
                 });
             else
@@ -570,7 +605,7 @@ int main(int argc, char** argv)
                 {
                     trace_pairs(0, nm * nk, [&](std::size_t, std::size_t pair, const PointSourceField& field) {
                         gpu::PointRaySet set;
-                        gpu::pack_point_rays(field, reflection_for(pair % nm), 1.0 - floor_absorption, bands,
+                        gpu::pack_point_rays(field, reflection_for(pair % nm), floor, bands,
                                 sound_speed, set, air_absorption);
                         stream.push(pair, std::move(set));
                     });

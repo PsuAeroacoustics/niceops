@@ -5,7 +5,8 @@
 // PointSourceField::sub_band_problems hands them to the CPU.  What the
 // amplitudes owe to the wavenumber is left to the GPU; everything else is
 // worked out here, in double, once per field: each ray's amplitude after its
-// reflections per band, its wedge terms' angles, and over a shared face the
+// reflections per sub-band (complex, a floor of finite impedance's Q
+// included), its wedge terms' angles, and over a shared face the
 // aperture's nodes for all the run's wavenumbers at once
 // (shared_face_geometry).
 
@@ -17,6 +18,7 @@
 
 namespace niceops {
 class PointSourceField;
+struct FloorModel;
 }
 
 namespace niceops::gpu {
@@ -31,7 +33,9 @@ struct PointRaySet
     std::vector<GpuWedge> wedges;
     std::vector<GpuFace> faces;
     std::vector<GpuPanel> panels;
-    std::vector<float> reflected; // [ray][band]
+    // Each ray's amplitude after its reflections, the floor's included, and
+    // the caller's weights, per problem: [ray][problem][re, im].
+    std::vector<float> reflected;
     // Which rays are over a shared face whose integral is taken at every
     // problem.
     std::vector<uint32_t> face_rays;
@@ -44,7 +48,6 @@ struct PointRaySet
     std::vector<GpuFaceItem> probe_items;
     // The problems: per band, its three sub-bands in order, and the air's
     // attenuation in each (Np/m, 0 for none).
-    std::vector<uint32_t> band;
     std::vector<double> k1, k2;
     std::vector<float> absorption;
     // As RaySet::nodes (band_energy.hpp).
@@ -76,7 +79,7 @@ struct PointRayPacking
 // [facade][band] and the air's absorption (sub_band_absorption, or empty) as
 // band_levels takes them, and plans the problems.  Throws
 // std::invalid_argument for no bands.
-void pack_point_rays(const PointSourceField& field, const std::vector<double>& reflection, double floor_reflection,
+void pack_point_rays(const PointSourceField& field, const std::vector<double>& reflection, const FloorModel& floor,
         const std::vector<double>& bands, double sound_speed, PointRaySet& set,
         const std::vector<double>& absorption = {}, const PointRayPacking& packing = {});
 
