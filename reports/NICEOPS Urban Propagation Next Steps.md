@@ -154,7 +154,8 @@ cases.
   geometry matches the other's measured changes to about 1 dB. Other explanations: the models measured differed from
   those documented, or another experimental fault. A question for the authors, if wanted
   (pascal.palenda@akustik.rwth-aachen.de).
-- **Schiphol courtyards and MOTUS:** data requests, for 2b.
+- **Schiphol courtyards and MOTUS:** data requests, for 2b. The cases, what each tests and whom to ask are in
+  [Urban propagation validation cases 2026-10-18](Urban%20propagation%20validation%20cases%202026-10-18.md).
 
 ## Decisions that bound this work
 
@@ -176,4 +177,4 @@ cases.
 | Measurements | `docs/FIDELITY.md` |
 | Harness: DigiCity, EDGE, continuity sweep | `urban/digicity/`, `urban/edge/`, `urban/continuity.py` |
 | Harness: coherence | `coherence/` |
-| Validation leads | the harness's `urban/README.md` |
+| Validation leads | [Urban propagation validation cases 2026-10-18](Urban%20propagation%20validation%20cases%202026-10-18.md) |
