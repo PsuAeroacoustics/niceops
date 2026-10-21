@@ -185,10 +185,11 @@ Still open in this step: end -> slope -> walls -> edge; walls on a bounce side o
 bounces at both ends; roofs on thrice and chain rays. Step 3's roof-reflected diffuse lighting
 remains separate.
 
-Found on the way, not step 2's: on the suburb one ray between the two rakes of a slope, with the
-microphone exactly in that slope's plane, is "over a shared face" or not depending on the
-compiler (GCC or clang), and its level 30 dB apart (up to 10 dB at that microphone); and the GPU
-and the CPU differ by up to 3.4 dB there. Both are being looked at next.
+Found on the way, not step 2's, and fixed: with a microphone exactly in a slope's extended plane,
+the shared face's aperture had one end on the line between the edges and lost its precision
+(GCC against clang up to 10 dB; GPU against CPU 3.4 dB). It is now taken at its limit; the
+compilers agree 1 µm off the plane and the GPU is within 0.04 dB. Left: at the exact point the
+tracer admits grazing rays that exist nowhere else (up to 6 dB off the field 1 µm away).
 
 **Original scope.** Three kinds of path were missing:
 

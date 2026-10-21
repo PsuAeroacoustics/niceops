@@ -512,6 +512,17 @@ exactly. What to keep:
   tenths of the other; a plain average switches to one of them when an end crosses the plane, a
   0.3-1 dB step. The angle weights go smoothly to the evaluation that remains, and swap with the
   ends, so reciprocity holds to round-off.
+- **An aperture's source within 1e-3 rad of the line is taken at 1e-3 rad**, at its own distance
+  (`off_the_line`, in `aperture`, `aperture_spectrum` and `aperture_geometry`, so the GPU's
+  sampled geometry too); its weight stays its own angle. With the receiver above the line the
+  end-point terms, each as 1/g, stop cancelling in double precision: the field strays from 3e-5
+  rad, the Keller ratio switches off below sin g = 1e-6, and the result grows to 6-13 dB over the
+  direct wave. The weights hide it while both ends apply; with the other end above the line the
+  near one's evaluation is the whole field. On the gable suburb a microphone 1.5 m up lay exactly
+  in a slope's extended plane: GCC put it a rounding error below (the aperture, 10 dB high), clang
+  above (the cascade), and the GPU, sampling other wavenumbers, a third value 3.4 dB off the CPU.
+  The field is flat in g to 0.2 dB below 1e-3 rad (`an end at the line between the edges keeps
+  the shared face's limit`).
 - **Across a step it is the same aperture, its wedges' faces tilted off the line** (`SharedFace`'s
   `drop1`, `drop2`; `tilted_pair` in `point_paths.cpp`). EDGE's pent-roofed terrace was 4-5 dB low
   from the drone by the cascade over its ridge and deck edge, and the measurements read high by as

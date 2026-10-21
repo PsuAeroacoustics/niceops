@@ -1940,6 +1940,17 @@ measurable cost. Over DigiCity's flat containers (20 drone positions, 5632 point
 move 1.6% of the band levels by more than 0.1 dB, at most 3.1 dB, mean +0.0004 dB, for 6% more
 time (122 to 130 s).
 
+**An end in a slope's plane.** Two of the suburb's microphones, 1.5 m up, lie exactly in a slope's
+extended plane, so a ray over that slope's two rakes has one end on the line between them, where
+the shared face's aperture lost its precision (THEORY §6.5): GCC and clang disagreed there by up to
+10 dB, and the GPU and the CPU by 3.4 dB. Taken at its limit, the shared face is flat to 0.2 dB
+from 1e-3 rad to 1e-12 (`an end at the line between the edges keeps the shared face's limit`), the
+GPU is within 0.04 dB of the CPU over the whole suburb, and the compilers agree to the bit 1 µm
+either side of the plane. Across the plane the level still steps by up to 0.7 dB at 125 Hz, the
+aperture's limit against the cascade. At the exact point the compilers are 0.55 dB apart, and the
+field there is up to 6 dB off its neighbours 1 µm away: rays grazing exactly along the plane are
+admitted there and nowhere else.
+
 ### Microphones on roofs and walls
 
 A source or a microphone lying on a wall or a flat roof (THEORY §6.5, "Ends on a surface"), against
@@ -2570,7 +2581,9 @@ range-dependent source fit would confound descent state drift with path loss.
   is up to 3.7 dB off the edge-source integral, no better than with the edge unending
   ([A point source among buildings](#a-point-source-among-buildings)). A pitched roof's
   slopes reflect with walls, and a level roof or a slope at one bare end of a twice-diffracted ray,
-  but not with walls on that ray, nor on rays diffracted three times or more; over a roof of nearly flat wedges whose pairs share the faces
+  but not with walls on that ray, nor on rays diffracted three times or more; an end exactly in a
+  slope's extended plane admits rays grazing along it that exist nowhere else, up to 6 dB off the
+  field 1 µm away; over a roof of nearly flat wedges whose pairs share the faces
   the ray runs along (a mansard's) the cascade is 3-4 dB rms off the exact field; the FDTD's
   staircase makes it no reference for a sloped roof below 1.5 mm cells at EDGE's scale
   ([Pitched roofs](#pitched-roofs)).

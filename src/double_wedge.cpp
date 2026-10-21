@@ -577,8 +577,29 @@ private:
     double keller_scale_ = 0.5;
 };
 
+// Where the receiver is above the line between the edges and the
+// aperture's source within about 1e-5 rad below it, the aperture's end-point
+// terms, each growing as 1/g, no longer cancel in double precision: the field
+// strays by decibels and then grows without bound, to 6-13 dB over the direct
+// wave on a suburban street.  Above about 1e-4 rad it has reached its limit
+// as g goes to zero (within 0.2 dB from 1e-3 rad), so a source nearer the line
+// than nearest_angle is taken at that angle, at its own distance.  Its weight
+// stays its own angle.
+constexpr double nearest_angle = 1e-3;
+
+void off_the_line(double& sx, double& sz)
+{
+    const double s1 = std::hypot(sx, sz);
+    if (-sz < s1 * std::sin(nearest_angle))
+    {
+        sx = -s1 * std::cos(nearest_angle);
+        sz = -s1 * std::sin(nearest_angle);
+    }
+}
+
 complex aperture(const SharedFace& face, double sx, double sz, double rx, double rz, double k)
 {
+    off_the_line(sx, sz);
     const Aperture a(face, sx, sz, rx, rz);
     return a.at(k, [&](double t, const int* count) { return a.node(t, count); });
 }
@@ -588,6 +609,7 @@ complex aperture(const SharedFace& face, double sx, double sz, double rx, double
 void aperture_spectrum(const SharedFace& face, double sx, double sz, double rx, double rz,
         const std::vector<double>& wavenumbers, NodeTable& table, complex* out)
 {
+    off_the_line(sx, sz);
     const Aperture a(face, sx, sz, rx, rz);
     table.clear();
     auto nodes = [&](double t, const int* count) -> const NodeAt& {
@@ -602,6 +624,7 @@ void aperture_spectrum(const SharedFace& face, double sx, double sz, double rx, 
 ApertureGeometry aperture_geometry(const SharedFace& face, double sx, double sz, double rx, double rz,
         const std::vector<double>& wavenumbers)
 {
+    off_the_line(sx, sz);
     ApertureGeometry g;
     const ApertureFrame f = aperture_frame(face, sx, sz, rx, rz);
     const double w = f.w, s1 = f.s1;

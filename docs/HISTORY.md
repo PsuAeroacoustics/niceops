@@ -4,6 +4,14 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## A shared face with an end at its line (October 2026)
+
+Where one end of a ray over a shared face lay within about 1e-5 rad of the line between the edges
+and the other above it, the aperture's field lost its precision and grew, to 6-13 dB over the
+direct wave; it is now taken at its limit. Only such ends move: on the gable suburb, microphones
+1.5 m up that lie exactly in a slope's extended plane, by up to 10 dB, which used to depend on the
+compiler (GCC against clang) and on the device (the GPU 3.4 dB off the CPU).
+
 ## Twice-diffracted rays off a roof (October 2026)
 
 A twice-diffracted ray now reflects in a level roof or a slope between one end and its edge,

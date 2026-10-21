@@ -1561,6 +1561,45 @@ TEST_CASE("the shared face's spectrum is its field at each wavenumber", "[point_
     REQUIRE(compared == 7 * 72);
 }
 
+// An end within a hair of the line between the edges, the other above it:
+// the aperture's end-point terms, each as 1/g, once failed to cancel there,
+// so the field strayed from 3e-5 rad and grew without bound below 1e-6 (to
+// 13 dB over the direct wave on a suburban street, where a microphone lay in a
+// slope's plane).  It now holds the limit it reaches by 1e-3 rad, through the
+// field, the spectrum and the sampled geometry alike.
+TEST_CASE("an end at the line between the edges keeps the shared face's limit", "[point_paths]")
+{
+    struct Face
+    {
+        double width, d, r, a, n;
+    };
+    const std::vector<Face> faces {{15.7, 31.4, 100.0, 0.5, 1.5}, {10.0, 20.0, 30.0, 0.05, 1.5},
+            {5.0, 50.0, 10.0, 0.3, 1.5}, {15.7, 31.4, 100.0, 0.5, 1.9}};
+    const std::vector<double> wavenumbers {2.3, 9.2, 36.6};
+    for (const Face& f : faces)
+    {
+        const SharedFace face {f.width, f.n, f.n};
+        const double rx = f.width + f.r * std::cos(f.a), rz = f.r * std::sin(f.a);
+        auto level = [&](double g, double k) {
+            return 20.0 * std::log10(std::abs(shared_face_field(face, -f.d * std::cos(g), -f.d * std::sin(g), rx, rz, k)));
+        };
+        for (const double g : {1e-4, 3e-5, 1e-6, 1e-8, 1e-12})
+        {
+            const double sx = -f.d * std::cos(g), sz = -f.d * std::sin(g);
+            const auto spectrum = shared_face_spectrum(face, sx, sz, rx, rz, wavenumbers);
+            const SharedFaceGeometry geometry = shared_face_geometry(face, sx, sz, rx, rz, wavenumbers);
+            for (std::size_t j = 0; j < wavenumbers.size(); j++)
+            {
+                const double k = wavenumbers[j];
+                INFO("width " << f.width << ", g " << g << ", k " << k);
+                CHECK(std::abs(level(g, k) - level(3e-3, k)) < 0.3);
+                CHECK(std::abs(20.0 * std::log10(std::abs(spectrum[j])) - level(g, k)) < 1e-9);
+                CHECK(std::abs(20.0 * std::log10(std::abs(shared_face_field_at(geometry, k))) - level(g, k)) < 0.05);
+            }
+        }
+    }
+}
+
 // The diffracted paths ruled out before they are solved or checked are only
 // those that could not have been rays: among DigiCity's containers, a block
 // of a district, and a grid of blocks of mixed heights over several of

@@ -1332,7 +1332,10 @@ incident and the face-reflected waves, is that field in the aperture's own appro
 subtracted. Either end below the face's plane can be the aperture's source, the other then being
 the receiver; the two evaluations are weighted by their source's angle below the plane,
 $u = (\gamma_S u_S + \gamma_R u_R)/(\gamma_S + \gamma_R)$, which is reciprocal and gives way smoothly as either end
-reaches the plane. With both ends above it, the cascade stands. In space the ray is the field in
+reaches the plane. With both ends above it, the cascade stands. An aperture whose source lies
+within $10^{-3}$ rad of the plane is evaluated at that angle: its limit as $\gamma \to 0$, which
+double precision cannot reach directly, its end-point terms each growing as $1/\gamma$; its weight
+stays its own $\gamma$. In space the ray is the field in
 the plane at $k\sin\beta$ times $\sin\beta/\sqrt{\ell_t}$, $\ell_t$ the ray's length in the plane: a
 wave $e^{ik_t\ell_t}/\sqrt{\ell_t}$ in the plane is $e^{ik\ell}/\ell$ in space, $\ell = \ell_t/\sin\beta$.
 
