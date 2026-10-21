@@ -40,13 +40,6 @@ Vec3 below(const Vec3& p)
     return Vec3(p.x, p.y, -p.z);
 }
 
-// A direction mirrored in a facade's plane, z kept.
-Vec3 mirrored(const Facade& f, const Vec3& v)
-{
-    const Vec3 h = mirror_direction(f, Vec3(v.x, v.y, 0.0));
-    return Vec3(h.x, h.y, v.z);
-}
-
 } // namespace
 
 bool grating_point(const Facade& facade, const Vec3& a, const Vec3& b, double kick, double& x, double& z)
@@ -252,17 +245,16 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                             const Vec3 p(fr.start.x + x * fr.along.x, fr.start.y + x * fr.along.y, z);
                             const double r1 = (p - pa).norm(), r2 = (pb - p).norm();
                             const Vec3 u1 = (p - pa) / r1, u2 = (pb - p) / r2;
-                            const double horizontal = std::hypot(u1.x, u1.y);
-                            if (!(horizontal > 1e-9))
+                            const FacadeHit hit = facade_hit(facade, u1);
+                            if (!(hit.cos_elevation > 1e-9))
                                 continue;
                             // The order's share, the mean over the band's
                             // three sub-bands.
-                            const double sin_psi = -fr.along.dot(u1) / horizontal;
                             double share = 0.0;
                             for (const SubBand& part : sub_bands(f_band, input.sound_speed))
                             {
-                                relief.orders(sin_psi, 0.5 * (part.g1 + part.g2) * horizontal, input.sound_speed,
-                                        shares);
+                                relief.orders(hit.sin_psi, 0.5 * (part.g1 + part.g2) * hit.cos_elevation,
+                                        input.sound_speed, shares);
                                 for (const auto& [mm, v] : shares)
                                     if (mm == order)
                                         share += v / 3.0;
@@ -280,7 +272,7 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                             for (std::size_t k = a_chain.size(); k-- > 0;)
                             {
                                 const std::size_t g = a_chain[k];
-                                d = mirrored(facades[g], d);
+                                d = mirror_direction(facades[g], d);
                                 energy *= rho[g * nb + band];
                                 if (is_relief(g))
                                 {
@@ -300,7 +292,7 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                                     const double hz = std::hypot(d.x, d.y);
                                     energy *= reliefs[g]->specular(-gf.along.dot(d) / hz, f_band * hz, input.sound_speed);
                                 }
-                                d = mirrored(facades[g], d);
+                                d = mirror_direction(facades[g], d);
                             }
                             // The floor's bounces and a plate, with their
                             // phases; `d` is now the direction it arrives in.
@@ -357,7 +349,7 @@ void grating_rays(const Buildings& buildings, const PathEnd& source, const PathE
                             // the source's facades.
                             Vec3 launch = fa ? Vec3(u1.x, u1.y, -u1.z) : u1;
                             for (std::size_t k = a_chain.size(); k-- > 0;)
-                                launch = mirrored(facades[a_chain[k]], launch);
+                                launch = mirror_direction(facades[a_chain[k]], launch);
                             ray.launch = launch;
                             ray.path = {s};
                             ray.path.insert(ray.path.end(), to_source.rbegin(), to_source.rend());

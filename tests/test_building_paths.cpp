@@ -370,3 +370,49 @@ TEST_CASE("a street half a degree out of parallel keeps its long bounce chains",
     REQUIRE(longest_exact < 5);
     REQUIRE(longest_tolerant > 20);
 }
+
+// A microphone flush on a wall takes the wall's reflection there, as one on
+// the floor takes the floor's: in front of a long wall each ray and its
+// floor partner arrive doubled, (1 + R)^2 in energy, and the table carries
+// the reflection the run would otherwise evaluate.  Over rigid walls it hears
+// what a microphone a hair off the wall hears with the wall's rays traced --
+// in front, obliquely, either side of grazing, and over the roof's edge and
+// round the corners behind it, where the edges have the wall as a face and
+// their coefficients hold its reflection already (to 0.001 dB measured; a
+// departure into the wall's own building once let a source behind it through
+// at full strength, 15 dB loud).
+TEST_CASE("a microphone on a wall takes the wall's reflection", "[building_paths]")
+{
+    const Buildings city({box(0.0, -30.0, 20.0, 30.0, 12.0)});
+    const Vec3 on(0.0, 4.0, 1.5), off(-1e-5, 4.0, 1.5);
+    REQUIRE(city.support(on).kind == Buildings::Support::Kind::facade);
+    BuildingPathOptions specular;
+    specular.diffraction = false;
+    const BuildingReceiver flat(city, on, {}, specular);
+    REQUIRE(flat.surface() != BuildingReceiver::no_surface);
+    const std::vector<double> absorbing(city.facades().size(), 0.81);
+    const double r = 0.9;
+    for (double azimuth : {150.0, 180.0, 200.0})
+        for (double elevation : {5.0, 30.0, 70.0})
+        {
+            std::vector<double> out(1);
+            flat.ratio(direction(azimuth, elevation), absorbing, 0.7, {1000.0}, 343.2, out.data());
+            REQUIRE(out[0] == Catch::Approx((1.0 + r) * (1.0 + r)).epsilon(1e-9));
+        }
+    const BuildingReceiver at(city, on, {}, BuildingPathOptions {}), near(city, off, {}, BuildingPathOptions {});
+    REQUIRE(near.surface() == BuildingReceiver::no_surface);
+    const std::vector<double> bands {125.0, 500.0, 2000.0};
+    const std::vector<double> rigid(city.facades().size() * bands.size(), 1.0);
+    double worst = 0.0;
+    for (double azimuth : {0.0, 30.0, 89.9999, 90.0001, 150.0, 180.0, 300.0})
+        for (double elevation : {5.0, 30.0, 70.0})
+        {
+            std::vector<double> a(bands.size()), b(bands.size());
+            at.ratio(direction(azimuth, elevation), rigid, 0.7, bands, 343.2, a.data());
+            near.ratio(direction(azimuth, elevation), rigid, 0.7, bands, 343.2, b.data());
+            for (std::size_t i = 0; i < bands.size(); i++)
+                worst = std::max(worst, std::abs(10.0 * std::log10(a[i] / b[i])));
+        }
+    INFO("worst " << worst << " dB");
+    REQUIRE(worst < 0.01);
+}

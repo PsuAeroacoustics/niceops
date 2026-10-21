@@ -276,15 +276,13 @@ int main(int argc, char** argv)
             GroundModel ground;
             ground.flow_resistance = flow_resistance;
             ground.impedance_model = parse_impedance_model(impedance_model);
-            std::vector<double> middles;
-            for (double band : bands)
-                for (const SubBand& s : sub_bands(band, sound_speed))
-                    middles.push_back(0.5 * (s.g1 + s.g2));
-            floor.admittance = ground_impedance(ground, middles, sound_speed);
+            floor.admittance = ground_impedance(ground, sub_band_middles(bands, sound_speed), sound_speed);
             centre_floor.admittance = ground_impedance(ground, bands, sound_speed);
+            // The diffuse field's floor, each band's at its middle sub-band,
+            // as a run takes it.
             floor_energy = 0.0;
-            for (const std::complex<double>& beta : centre_floor.admittance)
-                floor_energy += diffuse_reflection(beta) / static_cast<double>(bands.size());
+            for (std::size_t b = 0; b < bands.size(); b++)
+                floor_energy += diffuse_reflection(floor.admittance[3 * b + 1]) / static_cast<double>(bands.size());
             std::cerr << "Floor: " << impedance_model << " at " << flow_resistance << " kPa s/m^2." << std::endl;
         }
         // The air's absorption per metre of path: per sub-band for the levels,
@@ -363,6 +361,12 @@ int main(int argc, char** argv)
         const std::size_t nb = bands.size();
         std::vector<double> rho(city.facades().size() * nb), scatter(rho.size()), reflection(rho.size());
         std::vector<const FacadeRelief*> reliefs(city.facades().size(), nullptr);
+        // Each relief table's random-incidence s per band, once.
+        std::vector<std::vector<double>> random_s(relief_tables.size(), std::vector<double>(nb, 0.0));
+        if (relief_scattering != "orders")
+            for (std::size_t t = 0; t < relief_tables.size(); t++)
+                for (std::size_t b = 0; b < nb; b++)
+                    random_s[t][b] = relief_tables[t].random_incidence(bands[b], sound_speed);
         bool diffuse = false;
         for (std::size_t f = 0; f < city.facades().size(); f++)
             for (std::size_t b = 0; b < nb; b++)
@@ -374,8 +378,7 @@ int main(int argc, char** argv)
                 {
                     const FacadeRelief& r = relief_tables[static_cast<std::size_t>(which - 1)];
                     reliefs[f] = &r;
-                    scatter[f * nb + b]
-                            = relief_scattering != "orders" ? r.random_incidence(bands[b], sound_speed) : 0.0;
+                    scatter[f * nb + b] = random_s[static_cast<std::size_t>(which - 1)][b];
                     reflection[f * nb + b] = rho[f * nb + b];
                 }
                 else

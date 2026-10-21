@@ -492,6 +492,9 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
     , run_facades_(std::move(run_facades))
     , options_(options)
 {
+    const Buildings::Support on = buildings.support(microphone);
+    if (on.kind == Buildings::Support::Kind::facade)
+        surface_ = on.index;
     edges_ = edges_near(buildings, microphone, options.radius);
     planes_ = orientations_near(buildings, microphone, options.radius);
     ImageTree tree = image_tree(buildings, microphone, options.radius,
@@ -541,10 +544,19 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
     // max_turns changes of orientation could turn into u.
     const auto departures = specular_departures(*buildings_, planes_, u, options_.max_turns, options_.max_departures);
     const Vec3 floor_image(microphone_.x, microphone_.y, -microphone_.z);
+    // A microphone on a wall hears nothing through it: a departure into the
+    // wall's own building, which the trace would start past the wall it
+    // stands on, is no ray.
+    const auto into_wall = [&](const Vec3& w) {
+        return surface_ != no_surface
+                && facade_side(facades[surface_], microphone_ + w) < facade_side(facades[surface_], microphone_);
+    };
     SpecularTrace trace;
     for (int floor = 0; floor < 2; floor++)
         for (const Vec3& w : departures)
         {
+            if (into_wall(w))
+                continue;
             if (!trace_specular(*buildings_, floor ? floor_image : microphone_, w, u, floor == 1, options_.max_order,
                         trace))
                 continue;
@@ -611,8 +623,14 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
                 const Vec3 target = floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point;
                 const Vec3 q = edge.start + t * edge.direction;
                 const Vec3 out = target - q;
-                const double theta = edge.angle(out - out.dot(edge.direction) * edge.direction);
-                if (!(theta > 0.0 && theta < edge.n * pi))
+                // A microphone on one of the wedge's faces (a wall it lies
+                // on) is at that face's angle exactly, not a hair to either
+                // side of it.
+                const int face = surface_ != no_surface && image.facades.empty() ? edge_face(edge, target) : -1;
+                const double theta = face == 0 ? 0.0
+                        : face == 1        ? edge.n * pi
+                                           : edge.angle(out - out.dot(edge.direction) * edge.direction);
+                if (face < 0 && !(theta > 0.0 && theta < edge.n * pi))
                     continue;
                 // A point of an edge inside a neighbour (footprints that
                 // overlap, or share a side only in part) diffracts nothing.
@@ -666,6 +684,15 @@ std::complex<double> ray_amplitude(const BuildingRay& ray, const std::vector<dou
     return ray_amplitude(ray, reflected_amplitude(ray, reflection, floor_reflection), k);
 }
 
+double BuildingReceiver::surface_factor(const BuildingRay& ray, double r) const
+{
+    if (surface_ == no_surface)
+        return 1.0;
+    const Vec3 end = ray.floor ? Vec3(microphone_.x, microphone_.y, -microphone_.z) : microphone_;
+    const bool on_face = ray.diffracted && ray.facades.empty() && edge_face(buildings_->edges()[ray.edge], end) >= 0;
+    return on_face ? 0.5 * (1.0 + r) : 1.0 + r;
+}
+
 void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflection, double floor_reflection,
         const std::vector<double>& bands, double sound_speed, double* out, const DiffuseFacades* diffuse) const
 {
@@ -683,6 +710,14 @@ void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflec
     std::sort(kept.begin(), kept.end(), [](const BuildingRay& a, const BuildingRay& b) { return a.length < b.length; });
     const std::size_t facade_count = buildings_->facades().size();
     std::vector<double> band_reflection(facade_count);
+    // On a wall, its amplitude reflection in each band; the diffuse field
+    // arrives with the wall's partner too, coherently at the wall, (1 + R)^2
+    // in energy.
+    auto surface_r = [&](std::size_t band) {
+        return surface_ == no_surface ? 0.0 : std::sqrt(reflection[surface_ * bands.size() + band]);
+    };
+    for (std::size_t band = 0; band < bands.size() && surface_ != no_surface; band++)
+        scattered[band] *= (1.0 + surface_r(band)) * (1.0 + surface_r(band));
     if (!options_.diffraction)
     {
         for (std::size_t band = 0; band < bands.size(); band++)
@@ -691,7 +726,8 @@ void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflec
                 band_reflection[f] = reflection[f * bands.size() + band];
             double total = scattered[band];
             for (const auto& ray : kept)
-                total += std::norm(ray_amplitude(ray, band_reflection, floor_reflection, 0.0));
+                total += std::norm(surface_factor(ray, surface_r(band))
+                        * ray_amplitude(ray, band_reflection, floor_reflection, 0.0));
             out[band] = std::max(total / (1.0 + floor_reflection), 1e-30);
         }
         return;
@@ -711,7 +747,8 @@ void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflec
         // What the reflections leave of each ray is the same at every
         // wavenumber of the band.
         for (std::size_t i = 0; i < kept.size(); i++)
-            reflected[i] = reflected_amplitude(kept[i], band_reflection, floor_reflection);
+            reflected[i] = reflected_amplitude(kept[i], band_reflection, floor_reflection)
+                    * surface_factor(kept[i], surface_r(band));
         const double f1 = bands[band] / half, f2 = bands[band] * half;
         double total = scattered[band] * (f2 - f1), open = 0.0;
         for (int part = 0; part < 3; part++)

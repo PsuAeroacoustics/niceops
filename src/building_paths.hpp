@@ -195,6 +195,13 @@ class BuildingReceiver
 public:
     // `microphone` in the local frame, z above the floor; `run_facades` are
     // indices into buildings.facades().  The buildings must outlive this.
+    // A microphone on a wall (Buildings::support) takes the wall's reflection
+    // at the microphone as one on the floor takes the floor's: every ray
+    // arrives with its partner off the wall, of one length, 1 + R its factor
+    // (R the wall's amplitude reflection), halved for a ray diffracted at an
+    // edge with that wall as a face, whose coefficient holds the reflection
+    // already.  The run must then leave it no first-order reflections of its
+    // own (run_facades empty), since they too take the factor.
     BuildingReceiver(const Buildings& buildings, const Vec3& microphone, std::vector<std::size_t> run_facades,
             const BuildingPathOptions& options);
 
@@ -227,6 +234,13 @@ public:
         return truncated_;
     }
 
+    // The wall the microphone lies on, or no_surface.
+    static constexpr std::size_t no_surface = static_cast<std::size_t>(-1);
+    std::size_t surface() const
+    {
+        return surface_;
+    }
+
 private:
     const Buildings* buildings_;
     Vec3 microphone_;
@@ -254,6 +268,11 @@ private:
     };
     std::vector<std::vector<Foot>> image_feet_;
     bool truncated_ = false;
+    std::size_t surface_ = no_surface;
+    // A ray's factor from the surface, R its amplitude reflection: 1 + R, or
+    // (1 + R) / 2 where the ray's last wedge has the surface as a face; 1 off
+    // every surface.
+    double surface_factor(const BuildingRay& ray, double r) const;
 };
 
 // A ray's complex amplitude at wavenumber k, `reflection` being the facades'

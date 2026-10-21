@@ -357,10 +357,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     gpu::BandEnergies energies(device);
     std::vector<std::size_t> host_first, point_first;
     std::size_t shared = 0, thrice = 0, chained = 0, between = 0, plates = 0, roof_plates = 0;
-    std::vector<double> middles;
-    for (double band : bands)
-        for (const SubBand& s : sub_bands(band, c))
-            middles.push_back(0.5 * (s.g1 + s.g2));
+    const std::vector<double> middles = sub_band_middles(bands, c);
     FloorModel grass;
     grass.admittance = ground_impedance(GroundModel {}, middles, c);
     FloorModel plate = grass;

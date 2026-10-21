@@ -322,12 +322,22 @@ int main(int argc, char** argv)
                 const double height = r[rh] * to_meters;
                 if (!(height >= 0.0))
                     throw std::runtime_error(where + "the microphone's height must not be negative");
-                if (city.inside(x, y) < city.size())
-                    throw std::runtime_error(where + "the microphone stands inside building "
-                            + ids[city.inside(x, y)]);
                 // The builder's frame: the local x and y, z above this ground.
+                // A microphone on a wall takes the wall's reflection there, and
+                // the table carries its first-order reflections too
+                // (BuildingReceiver); the tables have no roofs, so one on or
+                // over a roof is refused, as is one on an edge.
                 const Vec3 local(x, y, height);
-                const auto run = facing_facades(city, local, facade_radius);
+                const Buildings::Support on = city.support(local);
+                if (on.kind == Buildings::Support::Kind::edge)
+                    throw std::runtime_error(where + "the microphone lies on a building's edge, or where two of its "
+                                                     "surfaces meet: move it off by a millimetre or more");
+                const bool on_wall = on.kind == Buildings::Support::Kind::facade;
+                if (!on_wall && city.inside(x, y) < city.size())
+                    throw std::runtime_error(where + "the microphone stands inside building "
+                            + ids[city.inside(x, y)]
+                            + " or over its roof, which the tables do not model (niceops --buildings does)");
+                const auto run = on_wall ? std::vector<std::size_t> {} : facing_facades(city, local, facade_radius);
                 const BuildingReceiver receiver(city, local, run, options);
                 truncated += receiver.truncated();
                 std::unique_ptr<DiffuseFacades> diffuse;
@@ -346,8 +356,9 @@ int main(int argc, char** argv)
                 for (std::size_t f : run)
                 {
                     Facade facade = city.facades()[f];
-                    facade.bottom += floor;
-                    facade.top += floor;
+                    for (double* z : {&facade.bottom, &facade.top, &facade.top_start, &facade.top_end,
+                                 &facade.bottom_start, &facade.bottom_end})
+                        *z += floor;
                     out.facades.push_back(facade);
                     out.reflection.insert(out.reflection.end(), specular.begin() + static_cast<std::ptrdiff_t>(f * nb),
                             specular.begin() + static_cast<std::ptrdiff_t>((f + 1) * nb));

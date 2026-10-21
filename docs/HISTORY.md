@@ -381,6 +381,20 @@ old and new results only with them in mind.
   Beyond a microphone's diffuse reach a Lambert relief reflects whole, and a relief building's
   roof no longer scatters. On EDGE's reliefs the hybrid went from 1.39, 1.76 and 1.98 dB rms
   (UE24-26) to 1.25, 1.70 and 1.80, and DigiCity's microphone 7 from −1.97 / 2.72 to −1.91 / 2.64.
+- **`--edge_source`'s twice-diffracted rays decide each wavenumber alone**, and its end ratios let
+  the other edge's point slide. The choice between the cascade-times-ratios and the integral was
+  made at a run's least wavenumber, so a 1-2 kHz band moved 0.7-1.8 dB with whether 125 Hz was in
+  the run; the ratios held the other edge's stationary point fixed, 1-3 dB off on coupled edges
+  with one end near; and a ray with both edges' ends near, or near a partner's boundary, now takes
+  the integral. DigiCity moved by up to 0.09 dB in a band (now within 0.001 of the slow integral)
+  and the demo district by up to 0.7 (now 0.06); DigiCity's run takes 17 s where it took 10.5.
+- **`niceops_urban_table` takes a microphone flush on a wall**: the wall's reflection at the
+  microphone, `1 + sqrt(rho)`, on every ray and the first-order reflections the run would have
+  evaluated, which the table now holds for it. One on or over a roof is refused by name. Before,
+  such a microphone was refused as inside the building or took no doubling, by which side of the
+  wall's line it rounded to.
+- **`niceops_point_field --flow_resistance`'s diffuse floor** takes each band's absorption at its
+  middle sub-band, as the run does; it took it at the band's centre (a few thousandths of a dB).
 - **`--export_sphere` carries `rotor_rpm`**, as it carried the coherence record: a run on an
   exported sphere took the rotor's rate from the vehicle file instead, which also moved the band
   up to which the measured model's rotor delay holds.

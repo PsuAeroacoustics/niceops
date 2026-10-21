@@ -20,6 +20,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <tuple>
 #include <vector>
 
 #include "plan_grid.hpp"
@@ -80,6 +81,13 @@ inline double roof_height(const Footprint& f, double x, double y)
 
 // A pitched roof's highest point over its footprint (`roof` not empty).
 double roof_top(const Footprint& f);
+
+// The stretches of the segment from (ax, ay) to (bx, by) over which one plane
+// of a pitched roof (`roof` not empty) is the least, as (t0, t1, plane), t
+// from 0 at a to 1 at b, neighbours of one plane merged: the roof's profile
+// along it is straight over each.
+std::vector<std::tuple<double, double, std::size_t>> roof_stretches(const Footprint& f, double ax, double ay,
+        double bx, double by);
 
 // A straight edge where a building diffracts: the roof edge along each side of
 // its footprint, and the vertical edge at each convex corner.  The edge runs
@@ -362,5 +370,10 @@ private:
     std::vector<std::vector<std::array<double, 4>>> ceded_;
     double x_min_ = 0.0, x_max_ = 0.0, y_min_ = 0.0, y_max_ = 0.0;
 };
+
+// The face of the edge's wedge that p lies on, within Buildings::contact of
+// its plane and on its side of the edge: 0 for face0, 1 for the other, -1
+// for none.
+int edge_face(const Edge& e, const Vec3& p);
 
 } // namespace niceops

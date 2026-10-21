@@ -238,7 +238,9 @@ TEST_CASE("a ray that diffracts reflects in a relief whole", "[facade_relief]")
     for (const PointRay& ray : field.rays())
     {
         const bool on_wall = std::find(ray.facades.begin(), ray.facades.end(), wall) != ray.facades.end();
-        REQUIRE(ray.hits.size() == ray.facades.size());
+        // A specular ray records how it meets each facade; a diffracted one
+        // has no use for it.
+        REQUIRE(ray.hits.size() == (ray.wedges == 0 ? ray.facades.size() : 0));
         REQUIRE(meets_relief(ray, &reliefs) == (on_wall && ray.wedges == 0));
         specular += on_wall && ray.wedges == 0;
         diffracted += on_wall && ray.wedges > 0;

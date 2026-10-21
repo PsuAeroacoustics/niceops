@@ -858,11 +858,11 @@ which marches them. What to keep:
 - **A ground model's floor is per bounce** (`FloorModel`, `FloorBounce`, `floor_factors` in
   `point_paths`; `MicrophoneFloor` here). What to keep:
   - **Each ray records its bounces where it is built**: the leg's unfolded length and grazing sine,
-    and whether the leg ends at the microphone. Five places build rays with a floor (specular,
-    once-diffracted with the floor or a roof, twice, thrice); `each floor bounce is its leg's,
-    unfolded` checks every recorded bounce against its leg and the ray's length against its legs'.
-    A new kind of ray with a floor has to record its bounces, or an impedance floor silently takes
-    it as rigid.
+    and whether the leg ends at the microphone. Six places build rays with a floor (specular,
+    once-diffracted with the floor or a roof, twice, thrice, chains); `each floor bounce is its
+    leg's, unfolded` checks every recorded bounce against its leg and the ray's length against its
+    legs'. `add_floor_bounce` is the only way a bounce is counted (`PointRay::floor`), so a bounce
+    cannot be counted without its geometry; a new kind of ray with a floor calls it per bounce.
   - **The factor is per sub-band, complex, in the same place the air's is applied**, so the CPU's
     band sum, the cone sum and the GPU's all take it. The GPU's `reflected` row is complex per
     problem (`BandProblem::slot`), not real per band; the CPU computes Q and hands it over.
@@ -1105,11 +1105,27 @@ frequency domain, for the point-source model's diffracted rays. What to keep:
   - **Tolerances a hundred times looser** (`twice_quadrature_tolerance` 1e-3,
     `twice_interpolation_tolerance` 1e-4 in `edge_source.cpp`): 2.4-6 times, under 0.002 dB. The
     level-curve test's bound moved from 2e-5 to 5e-4 with them.
-  - **Out of both transitions at the least wavenumber, the cascade times the end ratios**
-    (`end_ratios`). Measured and rejected: splitting a ray's wavenumbers at its transition (no
-    faster -- a curve set costs the same for fewer wavenumbers -- and 0.09 dB off), and a shared
-    face's uniform form times the ratios (its 125 Hz long-block case 0.74 dB off the BEM, where the
-    integral is 0.28). Shared faces keep the integral.
+  - **Out of both transitions, the cascade times the end ratios** (`end_ratios`), wavenumber by
+    wavenumber. Three conditions, each measured (a probe of 4320 band-ray cases on stepped roofs,
+    gapped blocks and screens, and an S-bend round two corners, `the edge source's end ratios hold
+    for coupled edges`):
+    - **Each wavenumber its own.** It was decided at the least wavenumber, so a 1-2 kHz band moved
+      0.7-1.8 dB with whether 125 Hz was in the run. Splitting costs nothing, the integral's cost
+      being its curves'.
+    - **The other edge's point slides** (the effective distance from A - C^2/B). Held at the
+      stationary point the ratio was 1-3 dB off with one end near on parallel edges, which couple
+      strongly (rho = C / sqrt(A B) of 0.5-0.9 is usual). The curvature fit is exact along
+      parallel edges; fitting the effective point to the near end's excess instead changed nothing
+      measurable, so the curvature's simpler form stays.
+    - **Not at a corner, nor near a partner.** With both edges' ends within the excess window's
+      near side (100 rad) no product holds (median 1 dB, up to 11 off), and a partner's boundary
+      the ratios do not model; both take the integral. This is the cost: DigiCity's containers
+      put both ends near on many rays, 10.5 -> 16.9 s (90 -> 155 s CPU), within 0.0001 dB
+      A-weighted of the slow integral (0.009 before, 0.09 in a band); the demo district 19 -> 20 s,
+      its worst band 0.75 -> 0.06 dB. Any threshold costs the same: the rays that pay have both
+      ends within 10 rad at 160 Hz.
+    Measured and rejected: a shared face's uniform form times the ratios (its 125 Hz long-block
+    case 0.74 dB off the BEM, where the integral is 0.28). Shared faces keep the integral.
   - **A pair's integrals over threads** (`PointPathOptions::edge_source_threads`), which
     `niceops_point_field` sets when it has fewer pairs than threads. A run's pairs fill them.
   What is left is the twice-diffracted rays near a transition at low frequency and the shared

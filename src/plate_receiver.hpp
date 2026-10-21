@@ -132,6 +132,16 @@ public:
     std::string description() const;
 
 private:
+    // The table's bilinear stencil at a direction: its four corners' spectra
+    // (P_d and P_r, real and imaginary, per sub-frequency) and their weights,
+    // the elevation (degrees) held at the table's ends and the azimuth
+    // (radians) wrapped.
+    struct Stencil
+    {
+        const double* corner[4];
+        double weight[4];
+    };
+    Stencil stencil(double elevation_degrees, double azimuth) const;
     template <bool exact, bool as_ratio = false>
     void evaluate(double source_height, double ground_distance, double azimuth,
             double* correction, std::size_t first_band, std::size_t last_band) const;

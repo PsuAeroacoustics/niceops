@@ -230,6 +230,10 @@ struct SubBand
     double g1 = 0.0, g2 = 0.0, k1 = 0.0, k2 = 0.0;
 };
 std::array<SubBand, 3> sub_bands(double band, double sound_speed);
+// Each band's three sub-bands' middle frequencies, (g1 + g2) / 2, in band
+// order: the frequencies a floor's admittance and the air's absorption are
+// taken at, sub-band by sub-band.
+std::vector<double> sub_band_middles(const std::vector<double>& bands, double sound_speed);
 // A band's level, dB, from its sub-bands' band-averaged energies, floored at
 // an energy of band_level_floor.
 constexpr double band_level_floor = 1e-30;
@@ -256,16 +260,6 @@ struct EdgeSourceTerm
     Stretch stretches[2];
 };
 
-// How a ray meets a facade it reflects in, for a relief's share there: the
-// sine of its incidence in the facade's horizontal plane, positive where it
-// travels toward the facade's -along (FacadeRelief), and the cosine of its
-// elevation, by which a relief sees its frequency.
-struct FacadeHit
-{
-    double sin_psi = 0.0;
-    double cos_elevation = 1.0;
-};
-
 // A ray's bounce on the floor, for a floor of finite impedance (FloorModel):
 // the sine of its grazing angle and the length of the leg it lies on,
 // unfolded, from the source or the edge before it to the edge or the
@@ -287,8 +281,9 @@ struct PointRay
     int floor = 0;
     // Its `floor` bounces, along it from the source.
     std::array<FloorBounce, 3> floor_bounce {};
-    // With reliefs (PointPathOptions::reliefs), how it meets each of its
-    // `facades`, in their order; empty without.
+    // With reliefs (PointPathOptions::reliefs), how a specular ray meets
+    // each of its `facades`, in their order; empty without, and on a
+    // diffracted ray, which reflects in a relief whole (meets_relief).
     std::vector<FacadeHit> hits;
     int wedges = 0;
     WedgeTerm wedge[3];
@@ -605,9 +600,6 @@ Edge through_floor(const Edge& g);
 std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings, const PointRay& ray,
         const std::vector<double>& wavenumbers);
 
-// A twice-diffracted ray's cascade from the source's image pa by g1 at q1 and
-// g2 at q2 to the microphone's image pb: its length, spreading and wedge
-// terms; the rest of the record is the caller's.
 // Which face of a diffracted ray's first or last wedge its end lies on, 0 or
 // 1 (within Buildings::contact of it; edge_face), -1 for none: the angle there
 // is the face's, and the ray records it (PointRay::source_on_face,
@@ -617,10 +609,9 @@ struct EndFaces
     int source = -1;
     int microphone = -1;
 };
-// The face of the edge's wedge that p lies on, within Buildings::contact of
-// its plane and on its side of the edge: 0 for face0, 1 for the other, -1
-// for none.
-int edge_face(const Edge& e, const Vec3& p);
+// A twice-diffracted ray's cascade from the source's image pa by g1 at q1 and
+// g2 at q2 to the microphone's image pb: its length, spreading and wedge
+// terms; the rest of the record is the caller's.
 PointRay twice_diffracted_ray(const Edge& g1, const Edge& g2, const Vec3& pa, const Vec3& pb, const Vec3& q1,
         const Vec3& q2, EndFaces ends = {});
 // The same through three edges.  Each edge's diffracted wave spreads from its
@@ -644,9 +635,11 @@ PointRay chain_diffracted_ray(const std::vector<const Edge*>& g, const Vec3& pa,
         const std::vector<Vec3>& q, EndFaces ends = {});
 // The parameters t along the edges g, from their starts, where a path from a
 // over each in turn to b is stationary: the least of its length, a convex
-// function of them, by damped Newton from `t`.  False where it does not settle
-// strictly within every edge.
-bool chain_points(const std::vector<const Edge*>& g, const Vec3& a, const Vec3& b, std::vector<double>& t);
+// function of them, by damped Newton from `t`.  False where it does not settle,
+// or, with on_edges, settles other than strictly within every edge (without,
+// the edges are taken as their whole lines).
+bool chain_points(const std::vector<const Edge*>& g, const Vec3& a, const Vec3& b, std::vector<double>& t,
+        bool on_edges = true);
 
 // The unit direction a ray leaves the source in, which a directional source
 // is read along.  A specular ray leaves toward its first hit, or toward the

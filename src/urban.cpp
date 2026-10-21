@@ -172,6 +172,15 @@ Vec3 mirror_direction(const Facade& facade, const Vec3& v)
     return Vec3(v.x - 2.0 * d * f.nx, v.y - 2.0 * d * f.ny, v.z);
 }
 
+FacadeHit facade_hit(const Facade& facade, const Vec3& d)
+{
+    const double dx = facade.x1 - facade.x0, dy = facade.y1 - facade.y0, length = std::hypot(dx, dy);
+    const double horizontal = std::hypot(d.x, d.y), norm = d.norm();
+    if (!(horizontal > 0.0) || !(length > 0.0))
+        return {0.0, 0.0};
+    return {-(d.x * dx + d.y * dy) / (length * horizontal), horizontal / norm};
+}
+
 bool blocks(const Facade& facade, const Vec3& a, const Vec3& b)
 {
     const double da = facade_side(facade, a);

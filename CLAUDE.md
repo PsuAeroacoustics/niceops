@@ -186,8 +186,11 @@ Commands and options are in `README.md`; rationale is in
   shared-face ray kind is `NK_KIND_FACE`, freeing 3 for three wedge terms.
 - **The edge source's speed** (`--edge_source`, ground.md): its cost is the level curves', not the
   wavenumbers'. Tolerances 1e-3/1e-4 (`edge_source.cpp`), the cascade times `end_ratios` out of both
-  transitions, and `edge_source_threads` in point_field. Splitting a ray's wavenumbers and giving
-  shared faces their uniform form were measured and rejected (no faster; 0.74 dB off the BEM).
+  transitions, and `edge_source_threads` in point_field. The choice is per wavenumber (a band must
+  not depend on the run's others); the ratios let the other edge's point slide (A - C^2/B), and a
+  corner (both edges' ends near) or a partner's boundary takes the integral -- that rule is
+  DigiCity's 10.5 -> 17 s. Giving shared faces their uniform form was measured and rejected (0.74 dB
+  off the BEM).
   It runs in a trajectory (`--buildings --edge_source`, CPU only) but is not the default: ~0.8 s CPU
   a pair on the demo district.
 - **A facade relief is a grating** (`--relief`, `--facade_relief`; `facade_relief`, `grating_paths`;
@@ -218,7 +221,11 @@ Commands and options are in `README.md`; rationale is in
   geometrically, `edge_face`, never by an angular slack). A plate on a roof takes `P_d + R P_r`.
   Slopes and edges are refused. In a run each microphone's floor is at its observer's z unless it
   stands on z = 0 or a surface of the district (`floor_height`); each floor is evaluated with the
-  source lowered by it.
+  source lowered by it. The plane-wave tables take a microphone on a wall the same way
+  (`BuildingReceiver::surface_factor`): the table then holds its first-order reflections (no run
+  facades), a departure into the wall's own building is no ray (else a source behind it came through
+  at full strength), and an end on a wedge's face is at that face's angle. They refuse one on or over
+  a roof: the tables have no roofs.
 - **Four roof edges and more are a chain** (`max_chain`, default 8, at most 14 for the GPU's ray
   kind): the corners of the taut string in the vertical plane through the ends, the path the
   convex least of its length. Only chains of more than three (fewer are the double and triple

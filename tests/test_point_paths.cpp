@@ -133,17 +133,6 @@ TEST_CASE("over open ground a point source's field is the direct ray and the flo
     }
 }
 
-// The sub-bands' middle frequencies over `bands`, three a band, which a
-// floor's admittance is taken at.
-std::vector<double> sub_band_middles(const std::vector<double>& centres, double c)
-{
-    std::vector<double> out;
-    for (double band : centres)
-        for (const SubBand& s : sub_bands(band, c))
-            out.push_back(0.5 * (s.g1 + s.g2));
-    return out;
-}
-
 // Over impedance ground the floor's ray takes the spherical-wave reflection
 // coefficient at its grazing angle, its whole length the image path, at each
 // sub-band's middle: the two-ray sum to round-off.  With Q held at the band's
@@ -1813,4 +1802,60 @@ TEST_CASE("with the edge source a corner's adjacent edges give a finite field", 
             REQUIRE((std::isfinite(v.real()) && std::isfinite(v.imag())));
     }
     REQUIRE(adjacent > 0);
+}
+
+// A path that bends round one block's corner and then the next block's
+// opposite one (an S-bend) is a twice-diffracted ray of two parallel edges,
+// and they are coupled: as the first edge's point moves, the path through the
+// second is least at a point of the second's own.  With the low block's
+// corner ending a metre or two above the ray and the tall one's ends far off,
+// out of both transitions, the ray takes the cascade times each edge's end
+// ratio, and these hold the integral to 0.3 dB (0.27 measured, at 4 kHz with
+// the end 1.5 m off and within a Fresnel zone; 0.04 with it 2.5 m off);
+// taken about the other edge's fixed stationary point they were 0.94 dB off.
+// And each wavenumber's factor is its own, whatever others it is asked with:
+// the cascade's place was once decided by the least, so a band moved with
+// the run's band limits.
+TEST_CASE("the edge source's end ratios hold for coupled edges, and each band is its own",
+        "[point_paths][edge_source]")
+{
+    const Buildings city({box(0.0, 0.0, 10.0, 20.0, 40.0), box(12.0, -20.0, 22.0, 3.46, 200.0)});
+    std::vector<double> ks;
+    for (double f : {500.0, 1000.0, 2000.0, 4000.0})
+        ks.push_back(2.0 * pi * f / 343.2);
+    PointPathOptions options;
+    options.edge_source = true;
+    std::size_t checked = 0;
+    for (double z : {37.5, 38.5})
+    {
+        const PointSourceField field(city, Vec3(-20.0, -1.0, z), Vec3(40.0, 10.0, z), options);
+        for (const PointRay& ray : field.rays())
+        {
+            if (ray.wedges != 2 || ray.shared || ray.floor > 0 || ray.between != PointRay::no_facade
+                    || !ray.facades.empty())
+                continue;
+            const Edge g1 = through_floor(city.edges()[ray.edge_source.edges[0]]);
+            const Edge g2 = through_floor(city.edges()[ray.edge_source.edges[1]]);
+            const std::vector<std::complex<double>> factors = edge_source_factors(city, ray, ks);
+            const std::vector<std::complex<double>> exact = localized_twice_diffracted_spectrum(g1, g2,
+                    ray.edge_source.source, ray.edge_source.microphone, 1.0, ks, PartnerModel::edge_source);
+            REQUIRE(factors.size() == ks.size());
+            for (std::size_t j = 0; j < ks.size(); j++)
+            {
+                const std::complex<double> reference = exact[j] * std::polar(1.0 / ray.spreading, -ks[j] * ray.length);
+                INFO(ks[j] * 343.2 / (2.0 * pi) << " Hz, the ends " << z << " m up");
+                REQUIRE(std::abs(20.0 * std::log10(std::abs(factors[j] / reference))) < 0.3);
+                REQUIRE(std::abs(std::arg(factors[j] / reference)) < 0.03);
+                // Asked alone, and with the lowest band of a run beside it.
+                for (const std::vector<double>& with : {std::vector<double> {ks[j]},
+                             std::vector<double> {2.0 * pi * 125.0 / 343.2, ks[j]}})
+                {
+                    const std::complex<double> v = edge_source_factors(city, ray, with).back();
+                    REQUIRE(std::abs(20.0 * std::log10(std::abs(v / factors[j]))) < 0.01);
+                }
+            }
+            checked++;
+        }
+    }
+    REQUIRE(checked >= 2);
 }

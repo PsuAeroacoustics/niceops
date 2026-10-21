@@ -430,14 +430,6 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
     e.assign(patches_.size() * bands_, 0.0);
     const auto& at = options_.scattering_at;
     const auto& facades = buildings_->facades();
-    // How a wave travelling along d meets facade f: the sine of its
-    // incidence and the cosine of its elevation.
-    auto meet = [&](std::size_t f, const Vec3& d, double& sin_psi, double& cos_elevation) {
-        const Facade& g = facades[f];
-        const double ax = g.x1 - g.x0, ay = g.y1 - g.y0, length = std::hypot(ax, ay), h = std::hypot(d.x, d.y);
-        sin_psi = h > 0.0 ? -(d.x * ax + d.y * ay) / (length * h) : 0.0;
-        cos_elevation = h / d.norm();
-    };
     parallel_chunks(active_.size(), threads, [&](std::size_t begin, std::size_t end) {
         std::vector<Vec3> hits;
         std::vector<PatchImage> scratch;
@@ -474,26 +466,24 @@ void DiffuseFacades::point_irradiance(const Vec3& source, std::size_t max_order,
                     {
                         std::fill(by_incidence.begin(), by_incidence.end(), 1.0);
                         Vec3 d = (target - source) / length;
-                        double sin_psi, cos_elevation;
                         for (std::size_t k = image.facades.size(); k-- > 0;)
                         {
                             const std::size_t f = image.facades[k];
-                            meet(f, d, sin_psi, cos_elevation);
+                            const FacadeHit hit = facade_hit(facades[f], d);
                             for (std::size_t b = 0; b < bands_; b++)
                             {
-                                const double s = at(f, sin_psi, cos_elevation, b);
+                                const double s = at(f, hit.sin_psi, hit.cos_elevation, b);
                                 if (s >= 0.0 && specular_[f * bands_ + b] > 0.0)
                                     by_incidence[b] *= rho_of(f, b) * (1.0 - s) / specular_[f * bands_ + b];
                             }
-                            const Vec3 h = mirror_direction(facades[f], Vec3(d.x, d.y, 0.0));
-                            d = Vec3(h.x, h.y, d.z);
+                            d = mirror_direction(facades[f], d);
                         }
                         if (!patch.roof)
                         {
-                            meet(patch.facade, d, sin_psi, cos_elevation);
+                            const FacadeHit hit = facade_hit(facades[patch.facade], d);
                             for (std::size_t b = 0; b < bands_; b++)
                             {
-                                const double s = at(patch.facade, sin_psi, cos_elevation, b);
+                                const double s = at(patch.facade, hit.sin_psi, hit.cos_elevation, b);
                                 const double nominal = rho_s_[p * bands_ + b] / rho_[p * bands_ + b];
                                 if (s >= 0.0 && nominal > 0.0)
                                     by_incidence[b] *= s / nominal;

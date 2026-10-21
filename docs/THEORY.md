@@ -918,10 +918,17 @@ off it is -- so the table evaluates each direction $10^{-6}$ rad clockwise of it
 whose orientations agree within a tolerance (1° by default) reflect a direction alike: in a street
 whose walls are a degree out of parallel the specular candidates stay those of a canyon, and a ray
 bounces up it as up the canyon it nearly is, at a cost of up to twice the tolerance per reflection
-in its direction. The first-order reflections the run evaluates are exact. Among buildings the rays
+in its direction. The first-order reflections the run evaluates are exact. A microphone flush on
+a wall takes the wall's reflection at the microphone, as the point source's ends do (below): every
+ray arrives with its partner off the wall, of the same length, and takes $1 + \sqrt{\rho_w}$, or
+half that where it was diffracted at an edge with the wall as a face, whose coefficient holds the
+wall's reflection already; its diffuse energy takes $(1 + \sqrt{\rho_w})^2$. Since the run's
+first-order reflections would need the factor too, the table holds them for such a microphone, and
+the run evaluates none. Over rigid walls this is a microphone a hair off the wall with the wall's
+rays traced, to 0.001 dB. Among buildings the rays
 leave out, beyond the canyon's list: diffraction at two edges in turn, an edge lit only by a
 reflected wave or off the floor, a diffraction point off the end of its edge (the corner's own
-diffraction), and roofs as reflectors.
+diffraction), and roofs as reflectors (a microphone on or over a roof is refused).
 
 **Diffuse reflection** (`--facade_scattering`, among buildings). A facade reflects the fraction
 $\rho$ of the energy reaching it and scatters the share $s$ of that diffusely, by Lambert's law;
@@ -1392,9 +1399,11 @@ $$
 with $T(x; a, b) = 1$ for $x \le a$, 0 for $x \ge b$, and $\cos^2\!\left(\tfrac\pi2\ln(x/a)/\ln(b/a)\right)$
 between; $\bar X$ the smaller wedge's transition parameter per unit wavenumber,
 $L\sin\beta\,\min_\pm a_\pm$, and $\bar\Delta$ the least excess over the ray's path of a path through
-either edge's end or a partner's boundary point; and $w = 1$ over a shared face. Where $k\bar X \ge 1$
-at the least wavenumber, out of both transitions everywhere, only the ends can need the integral,
-and the ray takes in its place
+either edge's end (the other edge's point free) or a partner's boundary point; and $w = 1$ over a
+shared face. Each wavenumber is decided on its own, so a band does not depend on which others a run
+takes. Where $k\bar X \ge 1$, out of both transitions, no partner's boundary point is within the
+excess window, and one of the edges has both ends past its near side ($k\Delta \ge 100$), only
+the other's ends can need the integral, and the ray takes in its place
 
 $$
 w\,p_\mathrm{casc}\,\rho_1\,\rho_2 + (1 - w)\,p_\mathrm{casc},
@@ -1402,10 +1411,18 @@ w\,p_\mathrm{casc}\,\rho_1\,\rho_2 + (1 - w)\,p_\mathrm{casc},
 \rho_e = \frac{p_1^{(e)}(\text{edge})}{p_1^{(e)}(\text{line})},
 $$
 
-each edge's once-diffracted integral over its length about the pair's stationary points (the
-first's from the source to the second's point, the second's from the first's to the receiver) over
-the infinite line's UTD ray: two once-diffracted integrals for the twice-diffracted one. Over
-DigiCity and the demo district it is the integral's to 0.012 dB A-weighted. The twice-diffracted
+each edge's once-diffracted integral over its length over the infinite line's UTD ray: two
+once-diffracted integrals for the twice-diffracted one. The two edges are coupled -- as the first
+edge's point moves, the path through the second is least at a point of the second's own, which
+takes the path's curvature along the first from $A$ to $A - C^2/B$ ($A$, $B$, $C$ its second
+derivatives in the two edges' parameters at the stationary points) -- so the first edge's integral
+runs from the source not to the second's stationary point but to a point on the leg beyond it at
+the distance with that curvature: for parallel edges the unfolded path's, exact all along the edge.
+Likewise the second's. Held at the stationary point, the ratio was 1-3 dB off the integral with one
+end near; this way 0.3 dB at worst, with the end within a Fresnel zone of the ray. With both edges'
+ends near, at a corner of their parameters, no product of the two holds (up to 11 dB off) and the
+ray takes the integral, as it does near a partner's boundary point, which the ratios know nothing
+of. Over DigiCity and the demo district it is the integral's to 0.012 dB A-weighted. The twice-diffracted
 integral itself is held to $10^{-3}$ in its curves' quadrature and $10^{-4}$ in their interpolation,
 which moves no level by 0.002 dB.
 

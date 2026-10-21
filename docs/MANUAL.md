@@ -1896,7 +1896,12 @@ agree with the CPU's.
 **Buildings.** `--buildings` gives the buildings as footprints extruded to flat roofs, either as a
 CSV with one row per footprint vertex (below) or as GeoJSON; `--receivers` gives the microphones,
 with the run's observer-file columns (`x`, `y`, `z`, `height`; build from the run's own observer
-file). The buildings stand on the ground at each receiver's `z`.
+file). The buildings stand on the ground at each receiver's `z`. A microphone flush on a wall (within
+a micrometre of it) takes the wall's reflection there, as one on the floor takes the floor's: a ray
+from in front arrives doubled, `1 + sqrt(rho)` in amplitude, and the table then holds the
+first-order reflections the run would otherwise evaluate itself, which take it too. The tables have
+no roofs, so a microphone on or over a roof is refused (`niceops --buildings` takes it), as is one
+on a building's edge.
 
 ```sh
 niceops_urban_table --buildings district.csv --receivers observers.csv \

@@ -148,10 +148,7 @@ TEST_CASE("a plate on a roof takes the roof's reflection", "[microphone_surfaces
     const Buildings city({box(0.0, 0.0, 200.0, 200.0, 10.0)});
     const Vec3 source(100.0, 100.0, 60.0), microphone(110.0, 95.0, 10.0);
     const double rho = 0.81, r = std::sqrt(rho);
-    std::vector<double> middles;
-    for (double band : bands)
-        for (const SubBand& s : sub_bands(band, c))
-            middles.push_back(0.5 * (s.g1 + s.g2));
+    const std::vector<double> middles = sub_band_middles(bands, c);
     FloorModel ground;
     ground.admittance = ground_impedance(GroundModel {}, middles, c);
     const std::complex<double> pd(0.8, 0.1), pr(0.6, -0.2);

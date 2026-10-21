@@ -9,7 +9,6 @@
 #include <map>
 #include <limits>
 #include <stdexcept>
-#include <tuple>
 #include <string>
 #include <tuple>
 
@@ -219,9 +218,8 @@ std::size_t active_plane(const Footprint& f, double x, double y)
     return best;
 }
 
-// The stretches of the side from (ax, ay) to (bx, by) over which one plane of a
-// pitched roof is the least, as (t0, t1, plane), t from 0 at a to 1 at b:
-// where two planes cross over the side the least may change.
+} // namespace
+
 std::vector<std::tuple<double, double, std::size_t>> roof_stretches(const Footprint& f, double ax, double ay,
         double bx, double by)
 {
@@ -253,6 +251,8 @@ std::vector<std::tuple<double, double, std::size_t>> roof_stretches(const Footpr
     }
     return out;
 }
+
+namespace {
 
 // A pitched roof's ridges: where two of its planes cross and are both the
 // least, over the footprint.  The roof is the least of its planes, so every
@@ -958,8 +958,8 @@ Buildings::Support Buildings::support(const Vec3& p) const
             continue;
         roofed = true;
         surfaces++;
-        const bool level = f.roof.empty() || (f.roof[active_plane(f, p.x, p.y)].a == 0.0
-                                                     && f.roof[active_plane(f, p.x, p.y)].b == 0.0);
+        const RoofPlane* plane = f.roof.empty() ? nullptr : &f.roof[active_plane(f, p.x, p.y)];
+        const bool level = plane == nullptr || (plane->a == 0.0 && plane->b == 0.0);
         if (out.kind == Support::Kind::none)
             out = {level ? Support::Kind::roof : Support::Kind::slope, b};
     }
@@ -1156,14 +1156,8 @@ void Buildings::section(const Vec3& a, const Vec3& b, std::vector<SectionSpan>& 
             {
                 if (!(cuts[k + 1] > cuts[k]))
                     continue;
-                const double t = 0.5 * (cuts[k] + cuts[k + 1]), x = a.x + t * dx, y = a.y + t * dy;
-                bool in = false;
-                for_each_ring(f, [&](const std::vector<double>& rx, const std::vector<double>& ry) {
-                    for (std::size_t m = 0, n = rx.size(), h = n - 1; m < n; h = m++)
-                        if ((ry[m] > y) != (ry[h] > y) && x < rx[h] + (y - ry[h]) * (rx[m] - rx[h]) / (ry[m] - ry[h]))
-                            in = !in;
-                });
-                if (!in)
+                const double t = 0.5 * (cuts[k] + cuts[k + 1]);
+                if (!in_footprint(f, a.x + t * dx, a.y + t * dy))
                     continue;
                 if (!out.empty() && out.back().building == *i && out.back().d1 == cuts[k] * span)
                     out.back().d1 = cuts[k + 1] * span;
@@ -1258,6 +1252,18 @@ bool Buildings::escapes(const Vec3& a, const Vec3& direction, bool below_floor) 
     if (!std::isfinite(t_far))
         return true; // straight up or down through nothing finite: no footprint in reach
     return !blocked(a, a + (t_far + 1.0) * direction, below_floor);
+}
+
+int edge_face(const Edge& e, const Vec3& p)
+{
+    const Vec3 v = e.project(p).normal;
+    const double c = std::cos(e.n * pi), s = std::sin(e.n * pi);
+    const Vec3 other = c * e.face0 + s * e.air, other_normal = -s * e.face0 + c * e.air;
+    if (std::abs(v.dot(e.air)) <= Buildings::contact && v.dot(e.face0) > 0.0)
+        return 0;
+    if (std::abs(v.dot(other_normal)) <= Buildings::contact && v.dot(other) > 0.0)
+        return 1;
+    return -1;
 }
 
 } // namespace niceops

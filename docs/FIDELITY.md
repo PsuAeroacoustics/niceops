@@ -1259,12 +1259,17 @@ partners the orders leave out -- a leg meeting a third edge, a reflection past
 
 | Case | UTD | Edge source, before | Now | Now against before, A-weighted |
 | --- | --- | --- | --- | --- |
-| DigiCity, four microphones, 160 Hz-6.3 kHz | 1.3 s | 145 s (357 s CPU) | 10.5 s (90 s CPU) | within 0.009 dB (0.09 in a band) |
-| Demo district, 38 states × 7 microphones, 10 Hz-10 kHz | 0.27 s | 497 s (5177 s CPU) | 19 s (211 s CPU) | within 0.012 dB (266 pairs) |
+| DigiCity, four microphones, 160 Hz-6.3 kHz | 1.3 s | 145 s (357 s CPU) | 16.9 s (155 s CPU) | within 0.0001 dB (0.001 in a band) |
+| Demo district, 38 states × 7 microphones, 10 Hz-10 kHz | 0.27 s | 497 s (5177 s CPU) | 20 s (223 s CPU) | within 0.012 dB (266 pairs; 0.06 in a band) |
 | EDGE, the 13 scene-source runs against the FDTD | | minutes | 3.6 s | each run's rms within 0.04 dB |
 
 The integral's tolerances a hundred times looser, the cascade times the edges' end ratios out of
-both transitions, and a pair's integrals over threads (THEORY §6.5; ground.md). What is left is the
+both transitions, and a pair's integrals over threads (THEORY §6.5; ground.md). The ratios once
+held the other edge's point fixed and were chosen at the run's least wavenumber: 10.5 s on DigiCity
+then, but 0.09 dB off in a band there and 0.75 on the demo district, up to 3 dB with one end near
+on coupled edges, and a band moved with the run's band limits. Each wavenumber now decides alone,
+the other edge's point slides, and a ray with both edges' ends near takes the integral, which
+DigiCity's small containers pay for. What is left is the
 twice-diffracted rays near a transition at low frequency and over shared faces, about 0.8 s of CPU a
 pair on the demo district where UTD takes 4 ms: a trajectory's few thousand pairs in a run
 (`niceops --buildings --edge_source`) take minutes, not seconds, so UTD stays the default.
@@ -1455,7 +1460,7 @@ receivers each, on the floor). Model − FDTD over every band level, mean and rm
 | UE00 (one row 0.49 m high), floor | rigid, 3 mm | −0.26, 0.36 (−1.0 to 0.0) | −0.20, 0.34 | Over one long row the model is the full-wave field |
 | UE00, drone | | +0.02, 0.05 (−0.1 to +0.1) | +0.01, 0.05 | |
 | UE23 (deep canyon), floor | walls 0.05, 4 mm, 90 ms; line of sight | −0.24, 0.37 (−0.8 to +0.4) | −0.25, 0.38 | With 12 reflections −0.3 to +0.6: a canyon's field is right with orders enough |
-| UE06 (five houses, the middle tall), floor | rigid, 3 mm | +0.77, 2.77 (−2.6 to +8.7) | −0.68, 1.02 (−1.7 to +2.4) | The low roofs' notches reflect between their edges: R2-R4 within 1.6 dB rms; behind the tall house +4.7 dB by UTD, −0.1 with the edge source (below) |
+| UE06 (five houses, the middle tall), floor | rigid, 3 mm | +0.77, 2.77 (−2.6 to +8.7) | −0.67, 1.01 (−1.6 to +2.4) | The low roofs' notches reflect between their edges: R2-R4 within 1.6 dB rms; behind the tall house +4.7 dB by UTD, −0.1 with the edge source (below) |
 | UE06, drone | | −0.03, 2.03 (−3.3 to +4.1) | −0.09, 1.20 | |
 | UE07 (the middle low), floor | | +1.08, 3.87 (−10.5 to +6.9) | −0.49, 2.52 (−7.2 to +5.0) | |
 | UE07, drone | | −0.16, 2.45 (−4.5 to +6.1) | −0.01, 0.85 (−2.6 to +1.9) | A 1 m roof edge between taller houses: its ends count; the low roof reflects |
@@ -1747,7 +1752,7 @@ scenes' line-of-sight pairs. Measured − predicted, mean and rms (dB), 1.6-20 k
 
 | Scene, source | Band levels | Roof planes, UTD | Edge source | Flat at the mean height | Flat at the ridge |
 | --- | --- | --- | --- | --- | --- |
-| UE01 half gable, floor | 32 | +0.50, 2.37 | +0.49, 2.38 | +7.14, 8.39 | +9.04, 10.20 |
+| UE01 half gable, floor | 32 | +0.50, 2.37 | +0.48, 2.38 | +7.14, 8.39 | +9.04, 10.20 |
 | UE01, drone | 48 | +1.90, 3.53 | +1.92, 3.53 | −3.85, 4.27 | +0.61, 3.12 |
 | UE02 pent, floor | 32 | −0.06, 2.81 | −0.04, 2.83 | +5.04, 6.43 | +9.68, 10.65 |
 | UE02, drone | 48 | +3.89, 4.30 | +3.06, 3.65 | −2.34, 3.10 | +0.42, 2.09 |
@@ -1755,7 +1760,7 @@ scenes' line-of-sight pairs. Measured − predicted, mean and rms (dB), 1.6-20 k
 | UE03, drone | 48 | +0.74, 2.53 | +0.67, 2.50 | −0.63, 2.73 | +1.66, 3.99 |
 | UE04 mansard, floor | 31 | −2.29, 4.47 | −2.29, 4.48 | +5.00, 6.19 | +7.07, 8.12 |
 | UE04, drone | 48 | +1.31, 2.44 | +1.03, 2.40 | +0.02, 2.71 | +1.52, 3.59 |
-| UE05 shed, floor | 31 | −0.47, 3.14 | −0.45, 3.15 | +3.06, 4.63 | +5.06, 6.41 |
+| UE05 shed, floor | 31 | −0.47, 3.14 | −0.47, 3.15 | +3.06, 4.63 | +5.06, 6.41 |
 | UE05, drone | 48 | +0.25, 1.86 | +0.23, 1.86 | −1.39, 2.18 | +0.21, 2.00 |
 | UE15 detached gable, floor | 30 | +0.18, 1.79 | +0.24, 1.82 | +0.88, 2.90 | +1.25, 3.44 |
 | UE15, drone | 48 | +0.25, 2.25 | +0.15, 2.19 | −0.18, 2.56 | +0.77, 3.82 |

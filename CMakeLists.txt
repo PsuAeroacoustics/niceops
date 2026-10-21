@@ -1169,6 +1169,7 @@ set_tests_properties(propagation_table_plate_warns_raised_row PROPERTIES FIXTURE
 # no CTest that fails without it: on this database the table's own largest gain and the bound's
 # slack already cover the images (docs/internals/testing.md).
 set(URBAN_RUN niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tracks/S-76D/197421AC.csv --frame_bearing 210 -b tests/data/urban_observers.csv -L warn)
+set(URBAN_SHORT_BARE niceops -d databases/B407_fixed_load_factor.nod -v databases/B407.json --humidity 20 -t tests/data/urban_track_short.csv --frame_bearing 210 -b tests/data/urban_shadow_observers.csv -L warn)
 set(URBAN_PLATE --flow_resistance 225 --ground_effect --plate_table plates/gr1425_db225.nc)
 add_test(NAME urban_table_build COMMAND niceops_urban_table --canyons tests/data/urban_canyons.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 -o tables/urban_canyon_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 add_test(NAME urban_table_open_build COMMAND niceops_urban_table --canyons tests/data/urban_open.csv --database databases/B407_fixed_load_factor.nod --frame_bearing 210 -o tables/urban_open_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
@@ -1400,6 +1401,13 @@ add_test(NAME buildings_far_utd_run COMMAND ${URBAN_RUN} --buildings tests/data/
 set_tests_properties(buildings_far_edge_source_run buildings_far_utd_run PROPERTIES FIXTURES_SETUP buildings_far_edge_source_runs)
 add_test(NAME buildings_far_edge_source_is_utd COMMAND golden_compare integrated/buildings_far_edge_source.csv integrated/buildings_far_utd.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_far_edge_source_is_utd PROPERTIES FIXTURES_REQUIRED buildings_far_edge_source_runs)
+# And with a building between the track and two microphones in its shadow it is wired through: the
+# edge source moves their levels from UTD's (by ~1e-3 dB; golden_compare's mismatch is the pass).
+add_test(NAME buildings_near_edge_source_run COMMAND ${URBAN_SHORT_BARE} --buildings tests/data/urban_near_building.csv --edge_source -o integrated/buildings_near_edge_source.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME buildings_near_utd_run COMMAND ${URBAN_SHORT_BARE} --buildings tests/data/urban_near_building.csv --no-gpu -o integrated/buildings_near_utd.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_near_edge_source_run buildings_near_utd_run PROPERTIES FIXTURES_SETUP buildings_near_edge_source_runs)
+add_test(NAME buildings_edge_source_is_wired COMMAND golden_compare integrated/buildings_near_edge_source.csv integrated/buildings_near_utd.csv 1e-7 WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(buildings_edge_source_is_wired PROPERTIES FIXTURES_REQUIRED buildings_near_edge_source_runs PASS_REGULAR_EXPRESSION "mismatch at value")
 add_test(NAME buildings_refuses_lone_edge_source COMMAND ${URBAN_RUN} --edge_source -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(buildings_refuses_lone_edge_source PROPERTIES PASS_REGULAR_EXPRESSION "--edge_source, --state_tolerance, --gpu and --no-gpu go with --buildings")
 add_test(NAME buildings_refuses_edge_source_gpu COMMAND ${URBAN_RUN} --buildings tests/data/urban_buildings.csv --edge_source --gpu -o integrated/never.csv WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

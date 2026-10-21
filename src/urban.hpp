@@ -95,9 +95,21 @@ double facade_side(const Facade& facade, const Vec3& p);
 // `p` mirrored in the facade's plane; z is unchanged.
 Vec3 mirror_in(const Facade& facade, const Vec3& p);
 
-// A horizontal vector mirrored in the facade's plane (no translation): how a
-// direction turns on reflection.
+// A vector mirrored in the facade's plane (no translation), z unchanged: how
+// a direction turns on reflection.
 Vec3 mirror_direction(const Facade& facade, const Vec3& v);
+
+// How a wave travelling along `d` meets a facade, for a relief's share or
+// scattering there: the sine of its incidence in the facade's horizontal
+// plane, positive where it travels toward the facade's -along
+// (FacadeRelief), and the cosine of its elevation, by which a relief sees
+// its frequency.  Both 0 for a vertical direction.
+struct FacadeHit
+{
+    double sin_psi = 0.0;
+    double cos_elevation = 1.0;
+};
+FacadeHit facade_hit(const Facade& facade, const Vec3& d);
 
 // Whether the segment from `a` to `b` passes through the facade's rectangle:
 // its ends strictly on opposite sides of the plane, and the crossing within the

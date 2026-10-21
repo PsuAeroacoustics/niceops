@@ -617,31 +617,38 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     std::vector<FloorModel> floor_of(nm, FloorModel(d.floor_reflection));
     std::vector<std::vector<double>> floor_energy(nm, std::vector<double>(nb, d.floor_reflection));
     // The sub-bands' middle frequencies, and each one's database band.
-    std::vector<double> middles;
+    const std::vector<double> middles = sub_band_middles(bands, sound_speed);
     std::vector<std::size_t> problem_band;
     for (std::size_t b = 0; b < nb; b++)
-        for (const SubBand& s : sub_bands(bands[b], sound_speed))
-        {
-            middles.push_back(0.5 * (s.g1 + s.g2));
-            problem_band.push_back(first_band + b);
-        }
+        problem_band.insert(problem_band.end(), 3, first_band + b);
     if (floors != nullptr)
     {
-        std::map<const GroundModel*, std::vector<std::complex<double>>> admittance;
+        // Per ground, its admittance in each sub-band and its diffuse
+        // reflection in each band (at the band's middle sub-band).
+        struct Ground
+        {
+            std::vector<std::complex<double>> admittance;
+            std::vector<double> diffuse;
+        };
+        std::map<const GroundModel*, Ground> grounds;
         for (std::size_t m = 0; m < nm; m++)
         {
             const MicrophoneFloor& f = (*floors)[m];
             if (f.ground == nullptr)
                 continue;
-            auto found = admittance.find(f.ground);
-            if (found == admittance.end())
-                found = admittance.emplace(f.ground, ground_impedance(*f.ground, middles, sound_speed)).first;
+            auto found = grounds.find(f.ground);
+            if (found == grounds.end())
+            {
+                Ground g {ground_impedance(*f.ground, middles, sound_speed), std::vector<double>(nb)};
+                for (std::size_t b = 0; b < nb; b++)
+                    g.diffuse[b] = diffuse_reflection(g.admittance[3 * b + 1]);
+                found = grounds.emplace(f.ground, std::move(g)).first;
+            }
             FloorModel& floor = floor_of[m];
-            floor.admittance = found->second;
+            floor.admittance = found->second.admittance;
             floor.boundary_loss = f.ground->boundary_loss_correction;
             floor.roughness = f.ground->roughness;
-            for (std::size_t b = 0; b < nb; b++)
-                floor_energy[m][b] = diffuse_reflection(floor.admittance[3 * b + 1]);
+            floor_energy[m] = found->second.diffuse;
             if (f.plate != nullptr)
             {
                 const PlateReceiver* plate = f.plate;
@@ -700,15 +707,32 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     bool diffuse = false;
     const bool reliefs = !d.facade_reliefs.empty();
     auto relief_at = [&](std::size_t f) { return reliefs ? d.facade_reliefs[f] : nullptr; };
+    // A relief's random-incidence s per band, once for every wall it is on.
+    std::map<const FacadeRelief*, std::vector<double>> random_s;
     for (std::size_t f = 0; f < d.reflection.size(); f++)
+    {
+        const FacadeRelief* r = relief_at(f);
+        const std::vector<double>* relief_s = nullptr;
+        if (r != nullptr && d.relief_lambert)
+        {
+            auto found = random_s.find(r);
+            if (found == random_s.end())
+            {
+                std::vector<double> v(nb);
+                for (std::size_t b = 0; b < nb; b++)
+                    v[b] = r->random_incidence(bands[b], sound_speed);
+                found = random_s.emplace(r, std::move(v)).first;
+            }
+            relief_s = &found->second;
+        }
         for (std::size_t b = 0; b < nb; b++)
         {
-            const FacadeRelief* r = relief_at(f);
-            scatter[f * nb + b] = r != nullptr ? (d.relief_lambert ? r->random_incidence(bands[b], sound_speed) : 0.0)
-                    : reliefs                  ? 0.0
-                                               : d.input.scattering[city.facade_building(f)] * band_s[b];
+            scatter[f * nb + b] = relief_s != nullptr ? (*relief_s)[b]
+                    : reliefs                         ? 0.0
+                                                      : d.input.scattering[city.facade_building(f)] * band_s[b];
             diffuse = diffuse || scatter[f * nb + b] > 0.0;
         }
+    }
     std::vector<std::unique_ptr<DiffuseFacades>> diffuse_fields(diffuse ? nm : 0);
     std::vector<std::vector<double>> microphone_reflection(diffuse ? nm : 0);
     if (diffuse)
