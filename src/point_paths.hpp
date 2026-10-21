@@ -310,6 +310,12 @@ struct PointRay
     // side -- anywhere along it for a specular ray, before its first edge for
     // a diffracted one -- 0 for the floor, NaN for none (point_ray_launch).
     double source_plane = std::numeric_limits<double>::quiet_NaN();
+    // A source lying on the floor whose ray bounces there first: the bounce is
+    // at the source itself, which the path leaves out (no zero-length leg),
+    // and the ray leaves into the floor, along its first leg mirrored in it
+    // (point_ray_launch).  For rays whose path is real from the source, a
+    // slope's.
+    bool launch_mirrored = false;
     // For each roof it reflects in, a facade of the roof's building, whose
     // reflection coefficient the roof takes (the building's walls and roof
     // absorb alike); no_facade for a building with none, a rigid roof.
@@ -469,11 +475,28 @@ public:
     {
         return options_;
     }
+    // The slopes a once-diffracted ray may reflect in on this end's side
+    // (options.roofs): each pitched roof's sloping plane within reach, with
+    // the floor before it at this end or not, where the end (or its floor
+    // image) is on the plane's air side, and the end's image in it.  None for
+    // a source traced without its reflections.  Worked out once, for every
+    // partner.
+    struct Slope
+    {
+        std::size_t building = 0, plane = 0;
+        int floor = 0;
+        Vec3 image;
+    };
+    const std::vector<Slope>& slopes() const
+    {
+        return slopes_;
+    }
 
 private:
     Vec3 point_;
     bool source_ = false;
     std::size_t surface_ = PointRay::no_surface;
+    std::vector<Slope> slopes_;
     PointPathOptions options_;
     std::vector<std::size_t> near_;
     std::vector<std::size_t> candidates_;

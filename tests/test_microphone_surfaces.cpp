@@ -301,7 +301,7 @@ TEST_CASE("a slope's rays carry their floor bounces and real directions", "[micr
     Footprint gable = box(0.0, 0.0, 10.0, 20.0, 9.0);
     gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
     const Buildings city({gable});
-    std::size_t rays = 0, with_floor = 0, on_floor = 0;
+    std::size_t rays = 0, with_floor = 0, on_floor = 0, into_floor = 0;
     // A source high to the west, over the ridge onto the east slope, which
     // sends it east and a little down to microphones about 40 m out; and the
     // same turned round, the source on the floor.
@@ -348,17 +348,27 @@ TEST_CASE("a slope's rays carry their floor bounces and real directions", "[micr
                 }
                 with_floor += ray.floor > 0;
                 on_floor += source.z == 0.0 || microphone.z == 0.0;
+                // The launch: along the first leg, or, from a source on the
+                // floor that bounces there first, that leg mirrored into it.
+                bool bounces_first = false;
+                for (int i = 0; i < ray.floor; i++)
+                    bounces_first = bounces_first || !ray.floor_bounce[static_cast<std::size_t>(i)].microphone;
+                const Vec3 leg = ray.path[1] - source;
+                const Vec3 expected = bounces_first && source.z == 0.0 ? Vec3(leg.x, leg.y, -leg.z) : leg;
                 const Vec3 launch = point_ray_launch(ray);
-                REQUIRE(launch.norm() == Catch::Approx(1.0));
+                REQUIRE((launch - expected / expected.norm()).norm() < 1e-12);
+                into_floor += bounces_first && source.z == 0.0;
                 double elevation = 0.0, azimuth = 0.0;
                 point_ray_arrival(ray, elevation, azimuth);
                 const Vec3 last = ray.path[ray.path.size() - 1] - ray.path[ray.path.size() - 2];
                 REQUIRE(elevation == Catch::Approx(std::atan2(std::abs(last.z), std::hypot(last.x, last.y))));
             }
         }
-    INFO(rays << " slope rays, " << with_floor << " with the floor, " << on_floor << " with an end on it");
+    INFO(rays << " slope rays, " << with_floor << " with the floor, " << on_floor << " with an end on it, "
+              << into_floor << " launched into it");
     REQUIRE(with_floor > 0);
     REQUIRE(on_floor > 0);
+    REQUIRE(into_floor > 0);
 }
 
 // Where another building's edge cuts off a slope's reflection -- the wave on
@@ -405,4 +415,38 @@ TEST_CASE("an edge that cuts off a slope's reflection leaves the field continuou
         INFO("the edge at x = " << edge.x << ": worst " << worst << " dB");
         REQUIRE(worst < 0.05);
     }
+}
+
+// The same for a slope's diffracted partner: a source on the floor east of a
+// gable, its east slope reflecting it up and west to a tall block's edge,
+// which diffracts it to a microphone above and beyond the block.  Off the floor first, at the source itself,
+// the ray leaves into the floor; straight to the slope, along the leg.
+TEST_CASE("a slope's diffracted partners leave a source on the floor the right way", "[microphone_surfaces]")
+{
+    Footprint gable = box(0.0, 0.0, 10.0, 20.0, 9.0);
+    gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
+    const Buildings city({gable, box(-12.0, -20.0, -10.0, 40.0, 25.0)});
+    const Vec3 source(30.0, 10.0, 0.0), microphone(-30.0, 10.0, 30.0);
+    const PointSourceField field(city, source, microphone);
+    std::size_t into = 0, along = 0;
+    for (const PointRay& ray : field.rays())
+    {
+        if (ray.wedges != 1 || ray.roof_facades.empty() || ray.path.size() < 3)
+            continue;
+        // Partners with the slope on the source's side: the slope's point
+        // first.
+        const RoofPlane& east = gable.roof[1];
+        if (!(std::abs(east.above(ray.path[1])) < 1e-9))
+            continue;
+        bool bounces_first = false;
+        for (int i = 0; i < ray.floor; i++)
+            bounces_first = bounces_first || !ray.floor_bounce[static_cast<std::size_t>(i)].microphone;
+        const Vec3 leg = ray.path[1] - source;
+        const Vec3 expected = bounces_first ? Vec3(leg.x, leg.y, -leg.z) : leg;
+        REQUIRE((point_ray_launch(ray) - expected / expected.norm()).norm() < 1e-12);
+        (bounces_first ? into : along)++;
+    }
+    INFO(into << " into the floor, " << along << " along the leg");
+    REQUIRE(into > 0);
+    REQUIRE(along > 0);
 }

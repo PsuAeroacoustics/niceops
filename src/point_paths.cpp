@@ -782,6 +782,28 @@ PathEnd::PathEnd(const Buildings& buildings, const Vec3& point, bool source, con
         surface_ = on.index;
     else if (on.kind == Buildings::Support::Kind::roof || on.kind == Buildings::Support::Kind::slope)
         surface_ = buildings.roof_facade(on.index);
+    if (options.roofs && options.diffraction && options.max_edge_reflections > 0
+            && (!source || options.source_reflections))
+    {
+        std::vector<std::uint32_t> near;
+        buildings.near_box(point.x - options.radius, point.x + options.radius, point.y - options.radius,
+                point.y + options.radius, near);
+        std::sort(near.begin(), near.end());
+        for (const std::uint32_t b : near)
+        {
+            const Footprint& f = buildings.footprints()[b];
+            for (std::size_t i = 0; i < f.roof.size(); i++)
+                for (int floor = 0; floor < (options.max_edge_reflections > 1 ? 2 : 1); floor++)
+                {
+                    const RoofPlane& plane = f.roof[i];
+                    const Vec3 from = floor ? Vec3(point.x, point.y, -point.z) : point;
+                    const double d = plane.above(from);
+                    if (plane.level() || !(d > Buildings::contact))
+                        continue;
+                    slopes_.push_back({b, i, floor, from - (2.0 * d) * plane.normal()});
+                }
+        }
+    }
     // Each image's places about its edges, and the stretch of each edge an
     // image to one reflection can see, once for every partner: among
     // buildings, most of what the diffracted searches would otherwise solve
@@ -1069,6 +1091,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         ray.path.push_back(source);
                         if (fa && (qa - source).norm() > Buildings::contact)
                             ray.path.push_back(qa);
+                        else if (fa)
+                            ray.launch_mirrored = true;
                         ray.path.push_back(p);
                         if (fb && (qb - microphone).norm() > Buildings::contact)
                             ray.path.push_back(qb);
@@ -1381,40 +1405,9 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     // take UTD, as the roofs' do.
     if (options.roofs && options.max_edge_reflections > 0 && !src.images.empty() && !mic.images.empty())
     {
-        struct Slope
-        {
-            std::size_t building = 0, plane = 0;
-            int floor = 0;
-            Vec3 image;
-        };
-        // Each end's slopes within reach: the end, or its floor image, on the
-        // plane's air side.
-        auto slopes_of = [&](const Vec3& end, bool allowed, std::vector<Slope>& out) {
-            out.clear();
-            if (!allowed)
-                return;
-            thread_local std::vector<std::uint32_t> near;
-            buildings.near_box(end.x - options.radius, end.x + options.radius, end.y - options.radius,
-                    end.y + options.radius, near);
-            std::sort(near.begin(), near.end());
-            for (const std::uint32_t b : near)
-            {
-                const Footprint& f = buildings.footprints()[b];
-                for (std::size_t i = 0; i < f.roof.size(); i++)
-                    for (int floor = 0; floor < (options.max_edge_reflections > 1 ? 2 : 1); floor++)
-                    {
-                        const RoofPlane& plane = f.roof[i];
-                        const Vec3 from = floor ? below(end) : end;
-                        const double d = plane.above(from);
-                        if (plane.level() || !(d > Buildings::contact))
-                            continue;
-                        out.push_back({b, i, floor, from - (2.0 * d) * plane.normal()});
-                    }
-            }
-        };
-        thread_local std::vector<Slope> source_slopes, microphone_slopes;
-        slopes_of(source, options.source_reflections, source_slopes);
-        slopes_of(microphone, true, microphone_slopes);
+        using Slope = PathEnd::Slope;
+        const std::vector<Slope>& source_slopes = source_end.slopes();
+        const std::vector<Slope>& microphone_slopes = microphone_end.slopes();
         // A slope side's real points from the edge's point q to the end, or
         // false where the reflection misses the slope or a leg is blocked.
         auto slope_leg = [&](const Slope& sl, const Vec3& q, const Vec3& end, std::vector<Vec3>& points) {
@@ -1504,7 +1497,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         if (slope_at_source)
                         {
                             if (sl.floor)
+                            {
                                 slope_bounce(false);
+                                // A source on the floor is its own bounce,
+                                // left out of the path.
+                                ray.launch_mirrored = to_source.size() == 1;
+                            }
                             if (other_floor)
                                 add_floor_bounce(ray, q, pb, true);
                         }
@@ -2378,7 +2376,9 @@ Vec3 point_ray_launch(const PointRay& ray)
     const Vec3& first = ray.path[1];
     Vec3 d;
     const double h = ray.source_plane;
-    if (ray.wedges == 0)
+    if (ray.launch_mirrored)
+        d = Vec3(first.x - source.x, first.y - source.y, -first.z - source.z);
+    else if (ray.wedges == 0)
         d = (ray.path.size() == 2 && !std::isnan(h) ? Vec3(first.x, first.y, 2.0 * h - first.z) : first) - source;
     else if (!std::isnan(h))
         d = Vec3(first.x - source.x, first.y - source.y, 2.0 * h - first.z - source.z);

@@ -445,3 +445,27 @@ TEST_CASE("a point source lights a slope's diffuse field as Lambert's law says",
         }
     REQUIRE(energy == Catch::Approx(0.9 * 0.5 * d * d / pi * integral).epsilon(5e-3));
 }
+
+// A roof's patches cover it once: each sample of a cell lies on one surface,
+// so a row of samples on a ridge, which is on both planes, counts for the
+// first only.  A gable 4 m square whose ridge runs where a row of samples
+// falls (1.5 m in, slopes of 1 either side): its patches' area is the roof's,
+// 16 sqrt(2) m^2, where counting the ridge row on both slopes gave a quarter
+// of a cell's samples twice.
+TEST_CASE("a roof's patches cover a ridge once", "[diffuse]")
+{
+    Footprint gable = box(0.0, 0.0, 4.0, 4.0, 20.0);
+    gable.roof = {{1.0, 0.0, 6.0}, {-1.0, 0.0, 9.0}};
+    const Buildings city({gable});
+    const std::vector<double> rho(city.facades().size(), 0.9), s(city.facades().size(), 0.5);
+    DiffuseOptions options;
+    options.radius = 50.0;
+    options.patch_size = 4.0;
+    options.roofs = true;
+    const DiffuseFacades diffuse(city, Vec3(-5.0, 2.0, 12.0), rho, s, 0.0, {1000.0}, 343.2, options);
+    double area = 0.0;
+    for (const auto& p : diffuse.patches())
+        if (p.roof)
+            area += p.area;
+    REQUIRE(area == Catch::Approx(16.0 * std::sqrt(2.0)).epsilon(1e-12));
+}

@@ -286,8 +286,15 @@ public:
     bool on_roof(std::size_t building, double x, double y) const;
     // Whether (x, y) lies on the given plane of a building's pitched roof,
     // where that plane is the roof: within the footprint as on_roof, and the
-    // plane the least there.
+    // plane the least there.  Inclusive at a ridge, where both planes are:
+    // a reflection there is either's.
     bool on_plane(std::size_t building, std::size_t plane, double x, double y) const;
+    // The one surface of a building's roof over (x, y): the level roof (a flat
+    // one, or a pitched one's deck) as `level`, a slope by its plane, or
+    // `none` off the roof; at a ridge the first of the planes there.  For
+    // cutting the roof into parts that do not overlap.
+    static constexpr long roof_level = -1, roof_none = -2;
+    long roof_surface(std::size_t building, double x, double y) const;
 
     // Whether `p` lies strictly inside a building's solid: inside a footprint
     // and between the floor and its roof, by `contact` or more.

@@ -885,6 +885,17 @@ bool Buildings::on_roof(std::size_t building, double x, double y) const
     return over(building, x, y);
 }
 
+long Buildings::roof_surface(std::size_t building, double x, double y) const
+{
+    if (!over(building, x, y))
+        return roof_none;
+    const Footprint& f = footprints_[building];
+    if (f.roof.empty())
+        return roof_level;
+    const std::size_t plane = active_plane(f, x, y);
+    return f.roof[plane].level() ? roof_level : static_cast<long>(plane);
+}
+
 bool Buildings::on_plane(std::size_t building, std::size_t plane, double x, double y) const
 {
     const Footprint& f = footprints_[building];

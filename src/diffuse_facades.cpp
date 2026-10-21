@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 
 #include "building_paths.hpp"
 #include "util/constants.hpp"
@@ -274,9 +275,8 @@ void DiffuseFacades::add_roof_patches()
         if (f == Buildings::no_facade || !in_reach_[f])
             continue;
         // A flat roof, a pitched roof's level deck and each of its slopes, cut
-        // alike in plan: each cell lies on the deck (on_roof) or on one plane
-        // where that plane is the roof (on_plane), and is that surface's patch,
-        // tilted with it.
+        // alike in plan: each sample lies on one of them (roof_surface), and a
+        // slope's patch is tilted with it.
         const Footprint& footprint = buildings.footprints()[b];
         const std::size_t m = footprint.x.size();
         // The patches run along the outline's longest side, so that a
@@ -311,45 +311,41 @@ void DiffuseFacades::add_roof_patches()
         const auto nv = static_cast<std::size_t>(std::max(1.0, std::ceil((v1 - v0) / options_.patch_size)));
         const double du = (u1 - u0) / static_cast<double>(nu), dv = (v1 - v0) / static_cast<double>(nv);
         const int k = 4;
-        // The level parts (no plane: the flat roof or the deck), then each
-        // slope.
-        std::vector<std::size_t> surfaces {footprint.roof.size()};
-        for (std::size_t plane = 0; plane < footprint.roof.size(); plane++)
-            if (!footprint.roof[plane].level())
-                surfaces.push_back(plane);
-        for (const std::size_t plane : surfaces)
+        // Each cell's samples, each on one surface (roof_surface): the level
+        // roof, or one slope -- a sample on a ridge is the first plane's, so
+        // no area is counted twice.  A cell becomes a patch on each surface
+        // its samples lie on, at their middle, of their share of its area.
+        struct Part
         {
-            const bool slope = plane < footprint.roof.size();
-            const RoofPlane flat {0.0, 0.0, footprint.top};
-            const RoofPlane& r = slope ? footprint.roof[plane] : flat;
-            const auto lift = [&](const Vec3& d) { return Vec3(d.x, d.y, r.a * d.x + r.b * d.y); };
-            const Vec3 along3 = lift(along), across3 = lift(across);
-            for (std::size_t i = 0; i < nu; i++)
-                for (std::size_t j = 0; j < nv; j++)
+            int on = 0;
+            double cu = 0.0, cv = 0.0;
+        };
+        std::map<long, Part> parts;
+        for (std::size_t i = 0; i < nu; i++)
+            for (std::size_t j = 0; j < nv; j++)
+            {
+                parts.clear();
+                for (int s = 0; s < k; s++)
+                    for (int t = 0; t < k; t++)
+                    {
+                        const double u = u0 + (static_cast<double>(i) + (s + 0.5) / k) * du;
+                        const double v = v0 + (static_cast<double>(j) + (t + 0.5) / k) * dv;
+                        const long surface = buildings.roof_surface(b, ox + u * along.x + v * across.x,
+                                oy + u * along.y + v * across.y);
+                        if (surface == Buildings::roof_none)
+                            continue;
+                        Part& part = parts[surface];
+                        part.on++;
+                        part.cu += u;
+                        part.cv += v;
+                    }
+                for (const auto& [surface, part] : parts)
                 {
-                    int on = 0;
-                    double cu = 0.0, cv = 0.0;
-                    for (int s = 0; s < k; s++)
-                        for (int t = 0; t < k; t++)
-                        {
-                            const double u = u0 + (static_cast<double>(i) + (s + 0.5) / k) * du;
-                            const double v = v0 + (static_cast<double>(j) + (t + 0.5) / k) * dv;
-                            const double x = ox + u * along.x + v * across.x, y = oy + u * along.y + v * across.y;
-                            if (slope ? buildings.on_plane(b, plane, x, y) : buildings.on_roof(b, x, y))
-                            {
-                                on++;
-                                cu += u;
-                                cv += v;
-                            }
-                        }
-                    if (on == 0)
-                        continue;
-                    cu /= on;
-                    cv /= on;
+                    const double cu = part.cu / part.on, cv = part.cv / part.on;
                     Patch p;
                     p.width = du;
                     p.height = dv;
-                    p.area = du * dv * on / (k * k);
+                    p.area = du * dv * part.on / (k * k);
                     p.along = along;
                     p.across = across;
                     p.normal = Vec3(0.0, 0.0, 1.0);
@@ -357,11 +353,14 @@ void DiffuseFacades::add_roof_patches()
                     p.roof = true;
                     const double x = ox + cu * along.x + cv * across.x, y = oy + cu * along.y + cv * across.y;
                     p.center = Vec3(x, y, footprint.top + 1e-3);
-                    if (slope)
+                    if (surface != Buildings::roof_level)
                     {
                         // A slope's cell is its plan cell lifted onto the
                         // plane: its sides along the lifted directions, its
                         // area the plan's over the plane's cosine.
+                        const RoofPlane& r = footprint.roof[static_cast<std::size_t>(surface)];
+                        const auto lift = [&](const Vec3& d) { return Vec3(d.x, d.y, r.a * d.x + r.b * d.y); };
+                        const Vec3 along3 = lift(along), across3 = lift(across);
                         p.width = du * along3.norm();
                         p.height = dv * across3.norm();
                         p.area *= std::sqrt(1.0 + r.a * r.a + r.b * r.b);
@@ -373,7 +372,7 @@ void DiffuseFacades::add_roof_patches()
                     if (!buildings.buried(p.center))
                         patches_.push_back(p);
                 }
-        }
+            }
     }
 }
 
