@@ -927,8 +927,13 @@ first-order reflections would need the factor too, the table holds them for such
 the run evaluates none. Over rigid walls this is a microphone a hair off the wall with the wall's
 rays traced ([FIDELITY](FIDELITY.md#microphones-on-roofs-and-walls)). Among buildings the rays
 leave out, beyond the canyon's list: diffraction at two edges in turn, an edge lit only by a
-reflected wave or off the floor, a diffraction point off the end of its edge (the corner's own
-diffraction), and roofs as reflectors (a microphone on or over a roof is refused).
+reflected wave or off the floor, and a diffraction point off the end of its edge (the corner's own
+diffraction). The roofs below a microphone over them reflect as the point source's do: a specular
+ray off one level roof anywhere along its facades, traced down from the microphone to the first
+roof top it meets and up from there, or off a slope next to the microphone, the departure mirrored
+in its plane; and a diffracted ray to the microphone's mirror in a level roof (its facade images'
+too) or in a slope. A microphone on a roof or a slope takes that surface's reflection there as one
+on a wall does. With them the plane wave's diffuse lighting reflects in a level roof too.
 
 **Diffuse reflection** (`--facade_scattering`, among buildings). A facade reflects the fraction
 $\rho$ of the energy reaching it and scatters the share $s$ of that diffusely, by Lambert's law;

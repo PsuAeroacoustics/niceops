@@ -1986,6 +1986,21 @@ same backscatter (the ridge's wave down the slope, off the eave and back). In th
 tables a receiver on a wall is one a hair off it, the wall's rays traced, to 0.001 dB over rigid
 walls in every direction, either side of grazing included.
 
+**Tables over roofs.** A plane-wave table for a microphone 3 m over a flat roof, 2 m over a slope,
+or lying on either, is the point-source field of a source 10⁸ m off along the wave, relative to
+open ground, to 0.002 dB in four directions from 5° to 60° up, 125 Hz-4 kHz, absorbing walls and
+roofs (ρ = 0.85): the same specular, roof and diffracted rays, the corners' end waves included
+(`a far point source is the plane wave over a roof`). At 10⁶ m the floor's reflection, which a
+microphone 23 m up hears from 130 m away, keeps a millimetre of curvature in its path, enough to
+miss that tolerance by a few thousandths of a decibel. On a
+rigid roof or slope the table is the one 0.1 mm above it to 0.01 dB with the edges' ends left out;
+with them a wall corner's end wave from its top, on the roof's plane, is doubled on the roof and
+not over it, 0.09 dB at 125 Hz, as in the point-source model. Over an absorbing roof the roof's own
+edges diffract as hard wedges, whose face doubles a wave a hair over it where the roof gives
+1 + √ρ on it: 0.1 dB at ρ = 0.85. The plane wave's diffuse lighting off a level roof is a far
+point source's to 1e-5 (`the plane wave lights the walls off a roof as a far source does`), and
+adds a seventh to a quarter to the wall's diffuse energy there.
+
 **Each microphone's floor.** On the demo district and a 4 s stretch of the demo track, observers
 raised 5 ft (on no roof or wall) give the levels the same observers at z = 0 give under the track
 lowered 5 ft, to 1e-10 dB (`buildings_floor_at_observer_z`); with half of them raised, each half

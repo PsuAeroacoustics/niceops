@@ -219,6 +219,24 @@ long buildings reproduce `canyon_ratio` to 1e-9 dB (FIDELITY, Buildings). What t
   sub-bands. `hard_wedge_coefficient(n, theta, theta0, k, r)` is the split form to the bit. With
   the pair sum and the foot prefilters this took a builder receiver from 1.75 to 0.77 s on the
   49-block benchmark district (`niceops_urban_table`, 72 by 33 directions, 31 bands).
+- **Roofs in the table** (`BuildingPathOptions::roofs`, `--no_roofs`): the receiver lists the
+  level roofs and slopes it stands over within `radius` (`roofs_`), but the one it lies on, and a
+  microphone on a roof or a slope (`Buildings::support`) takes its reflection as one on a wall
+  does (`on_surface_`, the surface's outward normal and facade; a rigid roof's R is 1). A
+  specular ray off a level roof is `trace_off_roof`: from the microphone along each departure
+  turned down, through facades, to the first roof top a leg comes down on (`near_box` over the
+  leg, `on_roof`), every falling leg tested whole (`blocked`, since it can come down through a
+  pitched roof or into a building's top), then `trace_specular` up from the roof. A slope's
+  specular ray is the departure mirrored in its plane, straight from the microphone to it. The
+  diffracted body is one lambda, `diffract`, for an image off the floor or not and for its mirror
+  in a level roof (any image; `folded_roof_path_open`) or a slope (the microphone's own; the leg
+  through the crossing), the edge's point over the plane. `foot.air` no longer rejects with the
+  edges' ends on: over a roof a microphone is in a corner's solid sector in plan, where the
+  corner top's end wave still reaches it (the exact tests stand behind). Tests: `a far point
+  source is the plane wave over a roof` (2e-3 dB; the source 1e8 m off, since a 23 m microphone's
+  floor reflection comes from 130 m and 1e6 m leaves a millimetre of path) and `a table on a roof
+  is the table a hair above it`. Not done: a slope with facades between it and the microphone;
+  the plane wave's diffuse lighting off a slope.
 - **The run's facades are the table's exclusions.** The tool writes the facades within
   `--facade_radius` that face the microphone, and passes the same list as `run_facades`, so the
   table leaves out exactly the first-order reflections (and floor partners) the run evaluates.

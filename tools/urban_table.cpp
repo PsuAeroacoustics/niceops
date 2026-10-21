@@ -41,7 +41,8 @@
 //
 // The table is the canyon's under plane-wave incidence (canyon_ratio): the
 // specular rays from above and off the floor and the roof edges' diffracted
-// rays, summed coherently and band-averaged, but the first-order reflections,
+// rays -- for a microphone over a roof, off the roof too; --roofs gives a CSV
+// district's pitched roofs -- summed coherently and band-averaged, but the first-order reflections,
 // relative to open ground; the run adds the first-order reflections itself,
 // from the two walls written beside the table, each --facade_length long.  The file is SI and records --frame_bearing, the
 // compass bearing of the local +x axis, which the run checks against its own.
@@ -81,6 +82,8 @@ int main(int argc, char** argv)
     CLI::App app {"Build an urban table for niceops --urban_table."};
     std::string canyons_file;
     std::string buildings_file;
+    std::string roofs_file;
+    bool no_roofs = false;
     std::string receivers_file;
     std::size_t max_order = 64;
     std::size_t max_diffracted_order = 6;
@@ -174,6 +177,12 @@ int main(int argc, char** argv)
             ->check(CLI::PositiveNumber);
     app.add_flag("--no_diffraction", no_diffraction,
             "Leave out the roof edges' diffraction and sum the specular rays in energy (for comparison).");
+    app.add_option("--roofs", roofs_file,
+            "Pitched roofs (LoD2) for a CSV district: one row per roof plane, building (its id), x, y and z (a "
+            "point on the plane) and slope_x and slope_y (its rise along x and y). A building's roof is the "
+            "least of its planes, capped at its top; one given none stays flat.");
+    app.add_flag("--no_roofs", no_roofs,
+            "The roofs reflect nothing, and a receiver on or over one is refused (for comparison).");
     app.add_option("--wave_below", wave_below,
             "Solve each flush-roof canyon by the wave equation (src/canyon_wave) and take its table for the "
             "bands centered at or below this, Hz (default 0, none).")
@@ -261,6 +270,7 @@ int main(int argc, char** argv)
             input.default_height_given = app.count("--default_height") > 0;
             input.absorption = absorption;
             input.scattering = facade_scattering;
+            input.roofs = roofs_file;
             const BuildingInput district = read_buildings(buildings_file, input);
             const std::vector<Footprint>& footprints = district.footprints;
             const std::vector<double>& building_absorption = district.absorption;
@@ -299,6 +309,8 @@ int main(int argc, char** argv)
             diffuse_options.radius = diffuse_radius;
             diffuse_options.patch_size = patch_size;
             diffuse_options.max_order = max_order;
+            // The rays reflect in the roofs, so the roofs scatter too.
+            diffuse_options.roofs = !no_roofs;
 
             const LabeledCsv rcsv = read_rows(receivers_file, "receivers");
             const std::size_t rx = column_of(rcsv, receivers_file, "x", true, true);
@@ -310,6 +322,7 @@ int main(int argc, char** argv)
             options.max_diffracted_order = max_diffracted_order;
             options.radius = radius;
             options.diffraction = !no_diffraction;
+            options.roofs = !no_roofs;
             std::vector<UrbanTable::Receiver> receivers;
             std::vector<double> gains;
             std::size_t truncated = 0, unconverged = 0, patches = 0;
@@ -323,21 +336,29 @@ int main(int argc, char** argv)
                 if (!(height >= 0.0))
                     throw std::runtime_error(where + "the microphone's height must not be negative");
                 // The builder's frame: the local x and y, z above this ground.
-                // A microphone on a wall takes the wall's reflection there, and
-                // the table carries its first-order reflections too
-                // (BuildingReceiver); the tables have no roofs, so one on or
-                // over a roof is refused, as is one on an edge.
+                // A microphone on a wall, a roof or a slope takes the surface's
+                // reflection there, and the table carries its first-order
+                // reflections too (BuildingReceiver); one on an edge is
+                // refused, and with --no_roofs one on or over a roof.
                 const Vec3 local(x, y, height);
                 const Buildings::Support on = city.support(local);
                 if (on.kind == Buildings::Support::Kind::edge)
                     throw std::runtime_error(where + "the microphone lies on a building's edge, or where two of its "
                                                      "surfaces meet: move it off by a millimetre or more");
                 const bool on_wall = on.kind == Buildings::Support::Kind::facade;
+                const bool on_roof = on.kind == Buildings::Support::Kind::roof || on.kind == Buildings::Support::Kind::slope;
                 if (!on_wall && city.inside(x, y) < city.size())
-                    throw std::runtime_error(where + "the microphone stands inside building "
-                            + ids[city.inside(x, y)]
-                            + " or over its roof, which the tables do not model (niceops --buildings does)");
-                const auto run = on_wall ? std::vector<std::size_t> {} : facing_facades(city, local, facade_radius);
+                {
+                    const std::size_t b = city.inside(x, y);
+                    const bool over = on_roof || height > roof_height(city.footprints()[b], x, y);
+                    if (!over)
+                        throw std::runtime_error(where + "the microphone stands inside building " + ids[b]);
+                    if (no_roofs)
+                        throw std::runtime_error(where + "the microphone stands on or over the roof of building "
+                                + ids[b] + ", which the tables model only with their roofs (not --no_roofs)");
+                }
+                const auto run = on_wall || on_roof ? std::vector<std::size_t> {}
+                                                    : facing_facades(city, local, facade_radius);
                 const BuildingReceiver receiver(city, local, run, options);
                 truncated += receiver.truncated();
                 std::unique_ptr<DiffuseFacades> diffuse;
@@ -381,6 +402,9 @@ int main(int argc, char** argv)
                           << std::endl;
             std::map<std::string, std::string> provenance {
                     {"buildings", buildings_file},
+                    {"roofs", no_roofs ? "none; receivers on or over them refused"
+                                       : (roofs_file.empty() ? "flat" : roofs_file)
+                                    + std::string("; level roofs and slopes reflect")},
                     {"receivers", receivers_file},
                     {"diffraction",
                             no_diffraction ? "none; specular rays in energy" : "UTD at roof and corner edges, coherent"},

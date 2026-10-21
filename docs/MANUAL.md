@@ -1903,9 +1903,12 @@ with the run's observer-file columns (`x`, `y`, `z`, `height`; build from the ru
 file). The buildings stand on the ground at each receiver's `z`. A microphone flush on a wall (within
 a micrometre of it) takes the wall's reflection there, as one on the floor takes the floor's: a ray
 from in front arrives doubled, `1 + sqrt(rho)` in amplitude, and the table then holds the
-first-order reflections the run would otherwise evaluate itself, which take it too. The tables have
-no roofs, so a microphone on or over a roof is refused (`niceops --buildings` takes it), as is one
-on a building's edge.
+first-order reflections the run would otherwise evaluate itself, which take it too. A microphone
+over a roof hears it as `niceops --buildings` does, specularly and off its edges, and one flush on
+a roof or a slope takes its reflection there as one on a wall does; `--roofs` gives a CSV
+district's pitched roofs as `niceops --roofs` takes them, and `--no_roofs` leaves the roofs'
+reflections out and refuses a microphone on or over one, for comparison. One on a building's
+edge, or inside one, is refused.
 
 ```sh
 niceops_urban_table --buildings district.csv --receivers observers.csv \

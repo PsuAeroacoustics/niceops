@@ -221,6 +221,69 @@ bool trace_specular(const Buildings& buildings, const Vec3& start, const Vec3& d
     return std::abs(dir.x - u.x) <= 1e-7 && std::abs(dir.y - u.y) <= 1e-7;
 }
 
+bool trace_off_roof(const Buildings& buildings, const Vec3& start, const Vec3& departure, const Vec3& u,
+        std::size_t max_order, SpecularTrace& trace, std::size_t& roof)
+{
+    trace.facades.clear();
+    trace.travelled = 0.0;
+    if (!(departure.z < 0.0))
+        return false;
+    const auto& footprints = buildings.footprints();
+    thread_local std::vector<std::uint32_t> near;
+    Vec3 pos = start, dir = departure;
+    for (;;)
+    {
+        Vec3 hit;
+        const std::size_t f = buildings.first_hit(pos, dir, false, hit);
+        // The leg ends at the facade, or at the floor.
+        const bool walled = f < buildings.facades().size();
+        const Vec3 end = walled ? hit : pos + (pos.z / -dir.z) * dir;
+        // The first level roof the leg comes down on, if any.
+        buildings.near_box(std::min(pos.x, end.x), std::max(pos.x, end.x), std::min(pos.y, end.y),
+                std::max(pos.y, end.y), near);
+        double best = std::numeric_limits<double>::infinity();
+        std::size_t found = buildings.size();
+        for (const std::uint32_t b : near)
+        {
+            const double h = footprints[b].top;
+            if (!(pos.z > h + Buildings::contact) || !(end.z < h))
+                continue;
+            const double t = (pos.z - h) / -dir.z;
+            const Vec3 p = pos + t * dir;
+            if (t < best && buildings.on_roof(b, p.x, p.y))
+            {
+                best = t;
+                found = b;
+            }
+        }
+        if (found < buildings.size())
+        {
+            Vec3 p = pos + best * dir;
+            p.z = footprints[found].top;
+            if (buildings.blocked(pos, p))
+                return false;
+            trace.travelled += (p - pos).norm();
+            roof = found;
+            SpecularTrace rest;
+            if (!trace_specular(buildings, p, Vec3(dir.x, dir.y, -dir.z), u, false, max_order - trace.facades.size(),
+                        rest))
+                return false;
+            trace.facades.insert(trace.facades.end(), rest.facades.begin(), rest.facades.end());
+            trace.travelled += rest.travelled;
+            trace.exit = rest.exit;
+            return true;
+        }
+        // Falling, a leg can come down on a roof that is not level, or into a
+        // building through its top.
+        if (!walled || trace.facades.size() == max_order || buildings.blocked(pos, hit))
+            return false;
+        trace.travelled += (hit - pos).norm();
+        pos = hit;
+        dir = buildings.reflect(f, dir);
+        trace.facades.push_back(f);
+    }
+}
+
 ImageTree image_tree(const Buildings& buildings, const Vec3& point, double radius, std::size_t max_order,
         std::size_t max_images, bool beams, const std::vector<std::size_t>& candidate_edges, std::size_t edge_order)
 {
@@ -494,7 +557,47 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
 {
     const Buildings::Support on = buildings.support(microphone);
     if (on.kind == Buildings::Support::Kind::facade)
+    {
         surface_ = on.index;
+        on_surface_ = true;
+        surface_facade_ = on.index;
+        const Frame fr = frame_of(buildings.facades()[on.index]);
+        surface_normal_ = Vec3(fr.nx, fr.ny, 0.0);
+    }
+    else if (options.roofs && (on.kind == Buildings::Support::Kind::roof || on.kind == Buildings::Support::Kind::slope))
+    {
+        on_surface_ = true;
+        surface_building_ = on.index;
+        surface_facade_ = buildings.roof_facade(on.index);
+        surface_normal_ = Vec3(0.0, 0.0, 1.0);
+        const Footprint& f = buildings.footprints()[on.index];
+        if (on.kind == Buildings::Support::Kind::slope)
+            for (std::size_t i = 0; i < f.roof.size(); i++)
+                if (!f.roof[i].level() && std::abs(f.roof[i].above(microphone)) <= Buildings::contact
+                        && buildings.on_plane(on.index, i, microphone.x, microphone.y))
+                    surface_normal_ = f.roof[i].normal();
+    }
+    if (options.roofs)
+    {
+        std::vector<std::uint32_t> near;
+        buildings.near_box(microphone.x - options.radius, microphone.x + options.radius,
+                microphone.y - options.radius, microphone.y + options.radius, near);
+        std::sort(near.begin(), near.end());
+        for (const std::uint32_t b : near)
+        {
+            const Footprint& f = buildings.footprints()[b];
+            const bool deck = f.roof.empty()
+                    || std::any_of(f.roof.begin(), f.roof.end(), [](const RoofPlane& q) { return q.level(); });
+            if (deck && microphone.z > f.top + Buildings::contact)
+                roofs_.push_back({b, level_roof, Vec3(0.0, 0.0, 1.0), microphone.z - f.top});
+            for (std::size_t i = 0; i < f.roof.size(); i++)
+            {
+                const double d = f.roof[i].above(microphone);
+                if (!f.roof[i].level() && d > Buildings::contact)
+                    roofs_.push_back({b, i, f.roof[i].normal(), d});
+            }
+        }
+    }
     edges_ = edges_near(buildings, microphone, options.radius);
     planes_ = orientations_near(buildings, microphone, options.radius);
     ImageTree tree = image_tree(buildings, microphone, options.radius,
@@ -510,27 +613,29 @@ BuildingReceiver::BuildingReceiver(const Buildings& buildings, const Vec3& micro
         {
             const Edge& edge = buildings.edges()[e];
             for (int floor = 0; floor < 2; floor++)
-            {
-                const Vec3 target = floor ? Vec3(p.x, p.y, -p.z) : p;
-                const Edge::Projection place = edge.project(target);
-                Foot foot;
-                foot.along = place.along;
-                foot.across = place.normal.norm();
-                if (foot.across >= 1e-9)
-                {
-                    // t = along - cot(beta) across within [0, length].
-                    const double low = (foot.along - edge.length) / foot.across, high = foot.along / foot.across;
-                    foot.low = low - 1e-9 * std::max(1.0, std::abs(low));
-                    foot.high = high + 1e-9 * std::max(1.0, std::abs(high));
-                    const double theta = edge.angle(place.normal);
-                    // Edge::angle is in [0, 2 pi), so the face-0 side's slack
-                    // is at the top.
-                    foot.air = theta < edge.n * pi + 1e-9 || theta > 2.0 * pi - 1e-9;
-                }
-                image_feet_[i].push_back(foot);
-            }
+                image_feet_[i].push_back(foot_of(edge, floor ? Vec3(p.x, p.y, -p.z) : p));
         }
     }
+}
+
+BuildingReceiver::Foot BuildingReceiver::foot_of(const Edge& edge, const Vec3& target)
+{
+    const Edge::Projection place = edge.project(target);
+    Foot foot;
+    foot.along = place.along;
+    foot.across = place.normal.norm();
+    if (foot.across >= 1e-9)
+    {
+        // t = along - cot(beta) across within [0, length].
+        const double low = (foot.along - edge.length) / foot.across, high = foot.along / foot.across;
+        foot.low = low - 1e-9 * std::max(1.0, std::abs(low));
+        foot.high = high + 1e-9 * std::max(1.0, std::abs(high));
+        const double theta = edge.angle(place.normal);
+        // Edge::angle is in [0, 2 pi), so the face-0 side's slack
+        // is at the top.
+        foot.air = theta < edge.n * pi + 1e-9 || theta > 2.0 * pi - 1e-9;
+    }
+    return foot;
 }
 
 std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
@@ -547,10 +652,7 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
     // A microphone on a wall hears nothing through it: a departure into the
     // wall's own building, which the trace would start past the wall it
     // stands on, is no ray.
-    const auto into_wall = [&](const Vec3& w) {
-        return surface_ != no_surface
-                && facade_side(facades[surface_], microphone_ + w) < facade_side(facades[surface_], microphone_);
-    };
+    const auto into_wall = [&](const Vec3& w) { return on_surface_ && w.dot(surface_normal_) < 0.0; };
     SpecularTrace trace;
     for (int floor = 0; floor < 2; floor++)
         for (const Vec3& w : departures)
@@ -566,10 +668,51 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
             ray.floor = floor;
             rays.push_back(std::move(ray));
         }
+    // Off a roof below the microphone: falling from it to a level roof,
+    // through facades or not, and up from there; or straight down to a
+    // slope, the departure mirrored in its plane, and up from there.
+    const auto off_roof = [&](std::size_t building) {
+        BuildingRay ray;
+        ray.length = -u.dot(trace.exit) + trace.travelled;
+        ray.facades = trace.facades;
+        ray.roof = true;
+        ray.roof_facade = buildings_->roof_facade(building);
+        rays.push_back(std::move(ray));
+    };
+    if (std::any_of(roofs_.begin(), roofs_.end(), [](const Roof& r) { return r.plane == level_roof; }))
+        for (const Vec3& w : departures)
+        {
+            const Vec3 down(w.x, w.y, -w.z);
+            std::size_t building = 0;
+            if (into_wall(down)
+                    || !trace_off_roof(*buildings_, microphone_, down, u, options_.max_order, trace, building))
+                continue;
+            off_roof(building);
+        }
+    for (const Roof& roof : roofs_)
+    {
+        if (roof.plane == level_roof)
+            continue;
+        for (const Vec3& w : departures)
+        {
+            const double wn = w.dot(roof.normal);
+            if (!(wn > 0.0))
+                continue;
+            const Vec3 v = w - (2.0 * wn) * roof.normal;
+            const double t = roof.depth / wn;
+            const Vec3 p = microphone_ + t * v;
+            if (into_wall(v) || !buildings_->on_plane(roof.building, roof.plane, p.x, p.y)
+                    || buildings_->blocked(microphone_, p)
+                    || !trace_specular(*buildings_, p, w, u, false, options_.max_order, trace))
+                continue;
+            trace.travelled += t;
+            off_roof(roof.building);
+        }
+    }
     // The run's own first-order reflections, and their floor partners where
     // the reflection from above is open too.
     for (auto& ray : rays)
-        if (ray.floor == 0 && ray.facades.size() == 1
+        if (ray.floor == 0 && !ray.roof && ray.facades.size() == 1
                 && std::find(run_facades_.begin(), run_facades_.end(), ray.facades[0]) != run_facades_.end())
         {
             ray.run_evaluates = true;
@@ -600,6 +743,129 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
         in.lit = in.sin_beta >= 1e-6 && in.theta0 > 0.0 && in.theta0 < edge.n * pi;
         in.cot = in.lit ? in.c / in.sin_beta : 0.0;
     }
+    // How far a point stands over a roof's plane, along its normal.
+    const auto height_over = [&](const Roof& roof, const Vec3& p) {
+        return roof.plane == level_roof ? p.z - buildings_->footprints()[roof.building].top
+                                        : buildings_->footprints()[roof.building].roof[roof.plane].above(p);
+    };
+    // The microphone's image in a roof's plane: in a level roof, any of its
+    // images in the facades; in a slope, the microphone's own.
+    const auto mirrored = [&](const Roof& roof, const Vec3& p) {
+        return p - (2.0 * height_over(roof, p)) * roof.normal;
+    };
+    // The real path from an edge's point q off a roof to the microphone:
+    // through the image's facades off a level roof (folded_roof_path_open),
+    // or straight to the slope where the line to the image `target` crosses
+    // it, and up.
+    const auto roof_open = [&](const Roof& roof, const Vec3& q, const Vec3& target, const Image& image) {
+        if (roof.plane == level_roof)
+            return folded_roof_path_open(*buildings_, q, microphone_, image.facades, roof.building);
+        const double dq = height_over(roof, q), dt = -height_over(roof, target);
+        const Vec3 p = q + (dq / (dq + dt)) * (target - q);
+        return buildings_->on_plane(roof.building, roof.plane, p.x, p.y) && !buildings_->blocked(q, p)
+                && !buildings_->blocked(p, microphone_);
+    };
+    // One diffracted ray from edge e on Keller's cone to `target`: the image
+    // `image` off the floor or not, or mirrored in `roof` (the floor then
+    // left out), standing about the edge as `foot` says.
+    const auto diffract = [&](std::size_t e, const Foot& foot, const Image& image, int floor, const Vec3& target,
+                                  const Roof* roof) {
+        const Incidence& in = incidence[e];
+        const Edge& edge = buildings_->edges()[e];
+        // The bounds keep the Keller point on the edge; with its ends
+        // the reach decides past them (below).
+        if (foot.across < 1e-9 || (!options_.edge_ends && (!foot.air || in.cot < foot.low || in.cot > foot.high)))
+            return;
+        // On Keller's cone: the diffracted ray leaves at the incident
+        // ray's angle to the edge.  Past an end the end's wave goes on
+        // (ended_wedge_coefficient), and the end stands in for the
+        // Keller point in every check, within the reach.
+        const double t = foot.along - in.c * foot.across / in.sin_beta;
+        // Past an end that the line goes on beyond (Edge::beyond),
+        // the point is another piece's or its image's.
+        const bool outside = t < 0.0 || t > edge.length;
+        const bool past = outside && past_true_end(edge, t);
+        if ((outside && !(past && options_.edge_ends)) || (!outside && !in.lit))
+            return;
+        const Vec3 keller = edge.start + t * edge.direction;
+        const Vec3 q = past ? edge.start + std::clamp(t, 0.0, edge.length) * edge.direction : keller;
+        // The plane wave's path through x, less the Keller path.
+        const double s_keller = (target - keller).norm();
+        const auto excess = [&](const Vec3& x) { return -u.dot(x - keller) + (target - x).norm() - s_keller; };
+        if (past && (keller.z < 0.0 || excess(q) > options_.end_reach))
+            return;
+        // Off a roof, the edge's point stands over its plane.
+        if (roof != nullptr && !(height_over(*roof, q) > Buildings::contact))
+            return;
+        const Vec3 out = target - q;
+        // A microphone on one of the wedge's faces (a wall it lies
+        // on) is at that face's angle exactly, not a hair to either
+        // side of it.
+        const int face = on_surface_ && image.facades.empty() && roof == nullptr ? edge_face(edge, target) : -1;
+        double theta = face == 0 ? 0.0
+                : face == 1        ? edge.n * pi
+                                   : edge.angle(out - out.dot(edge.direction) * edge.direction);
+        // Past an end the end wave goes wherever the end sees, at the
+        // nearer face's angle beyond its plane (point_paths.cpp's
+        // onto_air).
+        const double raw_theta = theta;
+        if (past && face < 0 && theta > edge.n * pi)
+            theta = theta - edge.n * pi < 2.0 * pi - theta ? edge.n * pi : 0.0;
+        if (face < 0 && !past && !(theta > 0.0 && theta < edge.n * pi))
+            return;
+        // A point of an edge inside a neighbour (footprints that
+        // overlap, or share a side only in part) diffracts nothing.
+        if (buildings_->buried(q))
+            return;
+        Vec3 unused;
+        if (buildings_->first_hit(q, u, false, unused) != facades.size())
+            return; // the wave does not reach this point of the edge
+        if (roof == nullptr ? !folded_path_open(*buildings_, q, microphone_, image.facades, floor == 1)
+                            : !roof_open(*roof, q, target, image))
+            return;
+        BuildingRay ray;
+        ray.diffracted = true;
+        ray.edge = e;
+        ray.angles = wedge_angles(edge.n, theta,
+                in.theta0 <= edge.n * pi ? in.theta0 : in.theta0 - edge.n * pi < 2.0 * pi - in.theta0 ? edge.n * pi : 0.0);
+        ray.sin_beta = in.sin_beta;
+        ray.s = s_keller;
+        ray.length = -u.dot(q) + out.norm();
+        if (options_.edge_ends)
+        {
+            // The edge's whole line (continued); its ends' excesses.  The
+            // amplitude is the Keller ray's (s), so past an end the
+            // scale is 1 and only the phase is the end's.
+            const Edge g = continued(edge);
+            const double tg = t + (edge.start - g.start).dot(g.direction);
+            if (std::isfinite(g.beyond[0]))
+                ray.ends.lo = excess(g.start);
+            if (std::isfinite(g.beyond[1]))
+                ray.ends.hi = excess(g.start + g.length * g.direction);
+            ray.ends.past = tg < 0.0 ? -1 : tg > g.length ? 1 : 0;
+            // In the wedge's solid side, the end wave weighed as the
+            // point-source model weighs it (weigh_vertex), the plane
+            // wave's transition distance the receiver's.
+            const auto depth = [&](double a) {
+                return a <= edge.n * pi ? 0.0 : std::min(a - edge.n * pi, 2.0 * pi - a);
+            };
+            const double deepest = std::max(depth(in.theta0), depth(raw_theta));
+            if (ray.ends.past != 0 && deepest > 0.0)
+            {
+                const double near = std::max(ray.ends.past < 0 ? ray.ends.lo : ray.ends.hi, 1e-300);
+                const double sine = std::sin(0.5 * deepest);
+                ray.ends.scale /= std::sqrt(1.0 + out.norm() * 2.0 * sine * sine / near);
+            }
+        }
+        ray.facades = image.facades;
+        ray.floor = floor;
+        if (roof != nullptr)
+        {
+            ray.roof = true;
+            ray.roof_facade = buildings_->roof_facade(roof->building);
+        }
+        rays.push_back(std::move(ray));
+    };
     for (std::size_t i = 0; i < images_.size(); i++)
     {
         const Image& image = images_[i];
@@ -611,96 +877,15 @@ std::vector<BuildingRay> BuildingReceiver::rays(const Vec3& u_in) const
             // waves, where they see it (below).
             if (!in.lit && !(options_.edge_ends && in.sin_beta >= 1e-6))
                 continue;
-            const Edge& edge = buildings_->edges()[e];
             for (int floor = 0; floor < 2; floor++)
-            {
-                const Foot& foot = image_feet_[i][2 * j + floor];
-                // The bounds keep the Keller point on the edge; with its ends
-                // the reach decides past them (below).
-                if (!foot.air || (!options_.edge_ends && (in.cot < foot.low || in.cot > foot.high)))
-                    continue;
-                // On Keller's cone: the diffracted ray leaves at the incident
-                // ray's angle to the edge.  Past an end the end's wave goes on
-                // (ended_wedge_coefficient), and the end stands in for the
-                // Keller point in every check, within the reach.
-                const double t = foot.along - in.c * foot.across / in.sin_beta;
-                // Past an end that the line goes on beyond (Edge::beyond),
-                // the point is another piece's or its image's.
-                const bool outside = t < 0.0 || t > edge.length;
-                const bool past = outside && past_true_end(edge, t);
-                if ((outside && !(past && options_.edge_ends)) || (!outside && !in.lit))
-                    continue;
-                const Vec3 target = floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point;
-                const Vec3 keller = edge.start + t * edge.direction;
-                const Vec3 q = past ? edge.start + std::clamp(t, 0.0, edge.length) * edge.direction : keller;
-                // The plane wave's path through x, less the Keller path.
-                const double s_keller = (target - keller).norm();
-                const auto excess = [&](const Vec3& x) { return -u.dot(x - keller) + (target - x).norm() - s_keller; };
-                if (past && (keller.z < 0.0 || excess(q) > options_.end_reach))
-                    continue;
-                const Vec3 out = target - q;
-                // A microphone on one of the wedge's faces (a wall it lies
-                // on) is at that face's angle exactly, not a hair to either
-                // side of it.
-                const int face = surface_ != no_surface && image.facades.empty() ? edge_face(edge, target) : -1;
-                double theta = face == 0 ? 0.0
-                        : face == 1        ? edge.n * pi
-                                           : edge.angle(out - out.dot(edge.direction) * edge.direction);
-                // Past an end the end wave goes wherever the end sees, at the
-                // nearer face's angle beyond its plane (point_paths.cpp's
-                // onto_air).
-                const double raw_theta = theta;
-                if (past && face < 0 && theta > edge.n * pi)
-                    theta = theta - edge.n * pi < 2.0 * pi - theta ? edge.n * pi : 0.0;
-                if (face < 0 && !past && !(theta > 0.0 && theta < edge.n * pi))
-                    continue;
-                // A point of an edge inside a neighbour (footprints that
-                // overlap, or share a side only in part) diffracts nothing.
-                if (buildings_->buried(q))
-                    continue;
-                Vec3 unused;
-                if (buildings_->first_hit(q, u, false, unused) != facades.size())
-                    continue; // the wave does not reach this point of the edge
-                if (!folded_path_open(*buildings_, q, microphone_, image.facades, floor == 1))
-                    continue;
-                BuildingRay ray;
-                ray.diffracted = true;
-                ray.edge = e;
-                ray.angles = wedge_angles(edge.n, theta,
-                        in.theta0 <= edge.n * pi ? in.theta0 : in.theta0 - edge.n * pi < 2.0 * pi - in.theta0 ? edge.n * pi : 0.0);
-                ray.sin_beta = in.sin_beta;
-                ray.s = s_keller;
-                ray.length = -u.dot(q) + out.norm();
-                if (options_.edge_ends)
+                diffract(e, image_feet_[i][2 * j + floor], image, floor,
+                        floor ? Vec3(image.point.x, image.point.y, -image.point.z) : image.point, nullptr);
+            for (const Roof& roof : roofs_)
+                if (roof.plane == level_roof || i == 0)
                 {
-                    // The edge's whole line (continued); its ends' excesses.  The
-                    // amplitude is the Keller ray's (s), so past an end the
-                    // scale is 1 and only the phase is the end's.
-                    const Edge g = continued(edge);
-                    const double tg = t + (edge.start - g.start).dot(g.direction);
-                    if (std::isfinite(g.beyond[0]))
-                        ray.ends.lo = excess(g.start);
-                    if (std::isfinite(g.beyond[1]))
-                        ray.ends.hi = excess(g.start + g.length * g.direction);
-                    ray.ends.past = tg < 0.0 ? -1 : tg > g.length ? 1 : 0;
-                    // In the wedge's solid side, the end wave weighed as the
-                    // point-source model weighs it (weigh_vertex), the plane
-                    // wave's transition distance the receiver's.
-                    const auto depth = [&](double a) {
-                        return a <= edge.n * pi ? 0.0 : std::min(a - edge.n * pi, 2.0 * pi - a);
-                    };
-                    const double deepest = std::max(depth(in.theta0), depth(raw_theta));
-                    if (ray.ends.past != 0 && deepest > 0.0)
-                    {
-                        const double near = std::max(ray.ends.past < 0 ? ray.ends.lo : ray.ends.hi, 1e-300);
-                        const double sine = std::sin(0.5 * deepest);
-                        ray.ends.scale /= std::sqrt(1.0 + out.norm() * 2.0 * sine * sine / near);
-                    }
+                    const Vec3 target = mirrored(roof, image.point);
+                    diffract(e, foot_of(buildings_->edges()[e], target), image, 0, target, &roof);
                 }
-                ray.facades = image.facades;
-                ray.floor = floor;
-                rays.push_back(std::move(ray));
-            }
         }
     }
     return rays;
@@ -713,6 +898,8 @@ double reflected_amplitude(const BuildingRay& ray, const std::vector<double>& re
         amplitude *= std::sqrt(reflection[f]);
     for (int i = 0; i < ray.floor; i++)
         amplitude *= std::sqrt(floor_reflection);
+    if (ray.roof && ray.roof_facade != Buildings::no_facade)
+        amplitude *= std::sqrt(reflection[ray.roof_facade]);
     return amplitude;
 }
 
@@ -735,7 +922,7 @@ std::complex<double> ray_amplitude(const BuildingRay& ray, const std::vector<dou
 
 double BuildingReceiver::surface_factor(const BuildingRay& ray, double r) const
 {
-    if (surface_ == no_surface)
+    if (!on_surface_)
         return 1.0;
     const Vec3 end = ray.floor ? Vec3(microphone_.x, microphone_.y, -microphone_.z) : microphone_;
     const bool on_face = ray.diffracted && ray.facades.empty() && edge_face(buildings_->edges()[ray.edge], end) >= 0;
@@ -763,9 +950,11 @@ void BuildingReceiver::ratio(const Vec3& u_in, const std::vector<double>& reflec
     // arrives with the wall's partner too, coherently at the wall, (1 + R)^2
     // in energy.
     auto surface_r = [&](std::size_t band) {
-        return surface_ == no_surface ? 0.0 : std::sqrt(reflection[surface_ * bands.size() + band]);
+        return !on_surface_                             ? 0.0
+                : surface_facade_ == Buildings::no_facade ? 1.0
+                                                          : std::sqrt(reflection[surface_facade_ * bands.size() + band]);
     };
-    for (std::size_t band = 0; band < bands.size() && surface_ != no_surface; band++)
+    for (std::size_t band = 0; band < bands.size() && on_surface_; band++)
         scattered[band] *= (1.0 + surface_r(band)) * (1.0 + surface_r(band));
     if (!options_.diffraction)
     {

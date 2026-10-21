@@ -30,10 +30,13 @@
 // `run_facades` with a first-order reflection open from above, and that
 // reflection's floor partner when it is open too.
 //
+// With `roofs`, the level roofs and slopes below the microphone reflect: a
+// specular ray off one, and a diffracted ray to the microphone's mirror in
+// one; a microphone on one takes its reflection there.
+//
 // Left out: diffraction at two edges in turn, an edge lit only by a reflected
-// wave or by the floor, diffraction at an edge's ends (a ray whose
-// diffraction point falls off the edge is dropped), reflections off roofs
-// (the microphone is on the floor), and everything canyon_ratio leaves out.
+// wave or by the floor, a slope with facades between it and the microphone,
+// and everything canyon_ratio leaves out.
 
 #include <complex>
 #include <cstddef>
@@ -79,6 +82,13 @@ struct BuildingPathOptions
     // model takes them (PointPathOptions).
     bool edge_ends = true;
     double end_reach = 10.0;
+    // The level roofs and slopes below the microphone reflect, as the floor
+    // does: a specular ray off one (a level roof anywhere along its facades, a
+    // slope next to the microphone), and a diffracted ray to the
+    // microphone's mirror in one (in a level roof, its images' too); and a
+    // microphone on a roof or a slope takes that surface's reflection there,
+    // as one on a wall does.  Off, for comparison.
+    bool roofs = true;
 };
 
 // One ray of the field at the microphone.  Its phase is k times `length` (the
@@ -107,6 +117,11 @@ struct BuildingRay
     EdgeEnds ends;
     // The run's first-order reflection or its floor partner.
     bool run_evaluates = false;
+    // Whether it reflects in a level roof or a slope (BuildingPathOptions::
+    // roofs), and the facade whose reflection the roof takes
+    // (Buildings::roof_facade; no_facade for a rigid one).
+    bool roof = false;
+    std::size_t roof_facade = Buildings::no_facade;
 };
 
 // The departures a specular ray may leave a point along, for the plane wave
@@ -142,6 +157,15 @@ struct SpecularTrace
 // through a real one -- so there each leg is tested whole.
 bool trace_specular(const Buildings& buildings, const Vec3& start, const Vec3& departure, const Vec3& u,
         bool below_floor, std::size_t max_order, SpecularTrace& trace);
+
+// The same with one level roof's reflection: from `start` down along
+// `departure` (falling) through facades to the first roof top the ray
+// meets, which must be a level roof (Buildings::on_roof) with every leg to it
+// open, and from there up as trace_specular goes, through up to `max_order`
+// facades in all; `roof` gets the roof's building.  A ray that reaches the
+// floor, or meets anything else first, is none.
+bool trace_off_roof(const Buildings& buildings, const Vec3& start, const Vec3& departure, const Vec3& u,
+        std::size_t max_order, SpecularTrace& trace, std::size_t& roof);
 
 // A point mirrored in facades: the image, and the facades it was mirrored in,
 // the point's side first.
@@ -277,8 +301,29 @@ private:
         bool air = false;
     };
     std::vector<std::vector<Foot>> image_feet_;
+    static Foot foot_of(const Edge& edge, const Vec3& target);
     bool truncated_ = false;
     std::size_t surface_ = no_surface;
+    // The surface the microphone lies on -- a wall, or with options.roofs a
+    // level roof or a slope -- its outward normal, the facade whose
+    // reflection it takes (no_facade for a rigid roof), and for a roof its
+    // building.
+    bool on_surface_ = false;
+    Vec3 surface_normal_;
+    std::size_t surface_facade_ = Buildings::no_facade;
+    std::size_t surface_building_ = no_surface;
+    // With options.roofs, the level roofs (plane level_roof) and slopes the
+    // microphone stands over within the radius, but the one it lies on: the
+    // planes its rays may reflect in.
+    static constexpr std::size_t level_roof = static_cast<std::size_t>(-1);
+    struct Roof
+    {
+        std::size_t building = 0;
+        std::size_t plane = level_roof;
+        Vec3 normal {0.0, 0.0, 1.0};
+        double depth = 0.0; // the microphone's height over the plane, along its normal
+    };
+    std::vector<Roof> roofs_;
     // A ray's factor from the surface, R its amplitude reflection: 1 + R, or
     // (1 + R) / 2 where the ray's last wedge has the surface as a face; 1 off
     // every surface.

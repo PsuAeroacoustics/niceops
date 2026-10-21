@@ -1448,6 +1448,11 @@ add_test(NAME buildings_refuses_angle_without_cone COMMAND ${URBAN_RUN} --buildi
 set_tests_properties(buildings_refuses_angle_without_cone PROPERTIES PASS_REGULAR_EXPRESSION "--coherence_angle goes with --ray_coherence cone")
 add_test(NAME urban_buildings_refuses_inside COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_inside.csv --bands 1000 --frame_bearing 210 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_buildings_refuses_inside PROPERTIES PASS_REGULAR_EXPRESSION "row 2: the microphone stands inside building 8")
+# Receivers over and on roofs, flat and pitched (BuildingPathOptions::roofs): the table takes their
+# reflections; without its roofs (--no_roofs) the builder refuses them.
+add_test(NAME urban_buildings_roof_receivers_build COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --roofs tests/data/urban_roofs.csv --receivers tests/data/urban_over_roofs.csv --bands 250 1000 --frame_bearing 210 -j 2 -o tables/urban_roof_receivers_test.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+add_test(NAME urban_buildings_no_roofs_refuses_roof_receiver COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_over_roofs.csv --bands 1000 --frame_bearing 210 --no_roofs -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+set_tests_properties(urban_buildings_no_roofs_refuses_roof_receiver PROPERTIES PASS_REGULAR_EXPRESSION "row 1: the microphone stands on or over the roof of building 1")
 add_test(NAME urban_buildings_refuses_wave COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --receivers tests/data/urban_observers.csv --bands 50 63 --wave_below 63 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
 set_tests_properties(urban_buildings_refuses_wave PROPERTIES PASS_REGULAR_EXPRESSION "--wave_below solves ideal canyons only, not --buildings")
 add_test(NAME urban_buildings_needs_receivers COMMAND niceops_urban_table --buildings tests/data/urban_buildings.csv --bands 1000 -o integrated/never.nc WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})

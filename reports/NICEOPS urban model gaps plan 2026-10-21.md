@@ -249,6 +249,14 @@ the total diffuse energy should rise by what the roof reflections carry.
 
 ## Step 4: roofs in the plane-wave tables
 
+**Done (2026-10-21).** The tables reflect in the level roofs and slopes below a microphone
+(`trace_off_roof`; a slope next to the microphone; diffracted rays to its mirror in a roof), a
+microphone on a roof or a slope takes its reflection there, `--roofs` and `--no_roofs` in the
+builder, and the roofs scatter and light the plane wave's diffuse field off a level roof. Against a
+point source 1e8 m off: 0.002 dB over a flat roof and a slope, on and over each; flush against
+0.1 mm above, 0.01 dB on rigid roofs. Left: a slope with facades between it and the microphone,
+and the plane wave's lighting off a slope.
+
 **What is wrong.** `niceops_urban_table` traces walls and the floor only, and it refuses a receiver on or over a
 roof. It also takes no `--roofs`. A rooftop or window-level microphone therefore needs `niceops --buildings`, which is
 slower for long tracks.

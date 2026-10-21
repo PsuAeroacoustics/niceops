@@ -864,6 +864,101 @@ TEST_CASE("a far point source is the plane wave", "[point_paths]")
     }
 }
 
+// The same over the roofs (BuildingPathOptions::roofs): a microphone 3 m over
+// a flat roof and 2 m over a slope, and one lying on each.  The plane wave's
+// rays off the roof -- specular, and diffracted to the microphone's mirror in
+// it -- are the far point source's, and a microphone on the roof takes the
+// roof's reflection as one on a wall does.  The source is 1e8 m off: the
+// floor's reflection reaches a microphone 23 m up from 130 m away, where
+// 1e6 m leaves a millimetre of curvature in its path.
+TEST_CASE("a far point source is the plane wave over a roof", "[point_paths]")
+{
+    Footprint shed = box(0.0, 0.0, 30.0, 12.0, 40.0);
+    shed.roof = {{0.0, 0.4, 14.0}};
+    const RoofPlane& slope = shed.roof.front();
+    const Vec3 on_slope(15.0, 6.0, slope.at(15.0, 6.0));
+    struct Case
+    {
+        Buildings city;
+        Vec3 microphone;
+        bool over; // over the roof, not on it
+    };
+    const std::vector<Case> cases {{Buildings({box(0.0, 0.0, 30.0, 12.0, 20.0)}), Vec3(15.0, 6.0, 23.0), true},
+            {Buildings({box(0.0, 0.0, 30.0, 12.0, 20.0)}), Vec3(15.0, 6.0, 20.0), false},
+            {Buildings({shed}), on_slope + 2.0 * slope.normal(), true}, {Buildings({shed}), on_slope, false}};
+    const double range = 1e8;
+    BuildingPathOptions plane;
+    plane.max_diffracted_order = 2;
+    PointPathOptions point;
+    point.double_diffraction = false;
+    point.source_reflections = false;
+    point.max_edge_reflections = 2;
+    point.radius = 2e6;
+    for (const Case& c : cases)
+    {
+        const BuildingReceiver receiver(c.city, c.microphone, {}, plane);
+        const std::vector<double> reflection(c.city.facades().size() * bands.size(), 0.85);
+        std::size_t off_roof = 0;
+        for (const Vec3 u : {local_direction(250.0, 10.0, 90.0), local_direction(80.0, 30.0, 90.0),
+                     local_direction(120.0, 5.0, 90.0), local_direction(10.0, 60.0, 90.0)})
+        {
+            for (const BuildingRay& ray : receiver.rays(u))
+                off_roof += ray.roof;
+            std::vector<double> ratio(bands.size());
+            receiver.ratio(u, reflection, 0.9, bands, 343.2, ratio.data());
+            const auto far = levels(c.city, c.microphone + range * u, c.microphone, 0.85, 0.9, point);
+            const auto open = levels(Buildings {}, c.microphone + range * u, c.microphone, 0.85, 0.9, point);
+            for (std::size_t b = 0; b < bands.size(); b++)
+            {
+                INFO("microphone " << c.microphone.x << ", " << c.microphone.y << ", " << c.microphone.z << "; u "
+                                   << u.x << ", " << u.y << ", " << u.z << "; band " << bands[b]);
+                CHECK(far[b] - open[b] == Catch::Approx(10.0 * std::log10(ratio[b])).margin(2e-3));
+            }
+        }
+        // Over a roof some rays are off it; on one, none.
+        CHECK((off_roof > 0) == c.over);
+    }
+}
+
+// A microphone lying on a roof, flat or a slope, and one 0.1 mm over it: the
+// roof's reflection taken at the microphone (1 + R) is the reflected ray the
+// other hears from 0.1 mm below, so over rigid surfaces their tables are one.
+// (An absorbing roof's own edges diffract as hard wedges, whose face doubles
+// the wave a hair above it where the roof gives 1 + R on it: 0.1 dB at
+// R^2 = 0.85.  A wall corner's end wave from its top, on the roof's plane, is
+// doubled on the roof and not over it, the point-source model's choice too:
+// 0.09 dB at 125 Hz here, so the edges' ends are left out.  Within contact,
+// 1e-6 m, a point is on the roof.)
+TEST_CASE("a table on a roof is the table a hair above it", "[point_paths]")
+{
+    Footprint shed = box(0.0, 0.0, 30.0, 12.0, 40.0);
+    shed.roof = {{0.0, 0.4, 14.0}};
+    const RoofPlane& slope = shed.roof.front();
+    const Vec3 on_slope(15.0, 6.0, slope.at(15.0, 6.0));
+    const Buildings flat({box(0.0, 0.0, 30.0, 12.0, 20.0)}), pitched({shed});
+    for (const auto& [city, on, normal] : {std::tuple {&flat, Vec3(15.0, 6.0, 20.0), Vec3(0.0, 0.0, 1.0)},
+                 std::tuple {&pitched, on_slope, slope.normal()}})
+    {
+        BuildingPathOptions options;
+        options.max_diffracted_order = 2;
+        options.edge_ends = false;
+        const BuildingReceiver lying(*city, on, {}, options), hair(*city, on + 1e-4 * normal, {}, options);
+        const std::vector<double> reflection(city->facades().size() * bands.size(), 1.0);
+        for (const Vec3 u : {local_direction(250.0, 10.0, 90.0), local_direction(80.0, 30.0, 90.0),
+                     local_direction(10.0, 60.0, 90.0)})
+        {
+            std::vector<double> a(bands.size()), b(bands.size());
+            lying.ratio(u, reflection, 0.9, bands, 343.2, a.data());
+            hair.ratio(u, reflection, 0.9, bands, 343.2, b.data());
+            for (std::size_t k = 0; k < bands.size(); k++)
+            {
+                INFO("u " << u.x << ", " << u.y << ", " << u.z << "; band " << bands[k]);
+                CHECK(10.0 * std::log10(a[k] / b[k]) == Catch::Approx(0.0).margin(0.01));
+            }
+        }
+    }
+}
+
 // Where every boundary's partner is traced the field is continuous: a ray
 // that appears or vanishes there hands its share to an edge's diffracted
 // ray.  West of a tall box, a source; north of it, lines of microphones 2.5 cm

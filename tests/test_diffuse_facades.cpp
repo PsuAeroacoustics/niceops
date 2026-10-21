@@ -528,3 +528,41 @@ TEST_CASE("a point source lights a wall off a roof, by its mirror in the roof", 
         CHECK(off_roof > 100);
     }
 }
+
+// The plane wave lights the patches off a level roof as a far point source
+// does (point_irradiance, pinned to image theory above): a tall block over a
+// low one's roof, the microphone over the roof in front of the tall wall, the
+// wave from over the low block.  Scaled by the range squared, the far source's
+// diffuse energy is the plane wave's, with the roof's lighting and without.
+TEST_CASE("the plane wave lights the walls off a roof as a far source does", "[diffuse]")
+{
+    const Buildings city({box(-100.0, -100.0, 0.0, 100.0, 10.0), box(0.0, -100.0, 10.0, 100.0, 60.0)});
+    const Vec3 microphone(-20.0, 0.0, 15.0);
+    const std::vector<double> bands {1000.0};
+    const std::vector<double> rho(city.facades().size(), 0.8), s(city.facades().size(), 0.3);
+    double with[2] = {}, without[2] = {};
+    for (const bool lighting : {true, false})
+    {
+        DiffuseOptions options;
+        options.radius = 150.0;
+        options.patch_size = 5.0;
+        options.roofs = true;
+        options.roof_lighting = lighting;
+        options.max_order = 2;
+        const DiffuseFacades diffuse(city, microphone, rho, s, 0.0, bands, 343.2, options, 4);
+        int k = 0;
+        for (const Vec3& u : {direction(180.0, 30.0), direction(160.0, 50.0)})
+        {
+            double plane = 0.0, point = 0.0;
+            diffuse.energy(u, &plane);
+            (lighting ? with : without)[k++] = plane;
+            const double range = 1e7;
+            diffuse.point_energy(microphone + range * u, 2, {}, &point, 4);
+            INFO("roof lighting " << lighting << ", u " << u.x << ", " << u.y << ", " << u.z);
+            CHECK(point * range * range == Catch::Approx(plane).epsilon(1e-5));
+        }
+    }
+    // The roof lights the wall by a seventh to a quarter more again.
+    for (int k = 0; k < 2; k++)
+        CHECK(with[k] > 1.1 * without[k]);
+}

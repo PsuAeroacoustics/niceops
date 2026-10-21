@@ -408,6 +408,27 @@ void DiffuseFacades::irradiance(const Vec3& u, const std::vector<std::size_t>& w
                 }
             }
         }
+        // Off a level roof below the patch, falling from it and up from the
+        // roof (trace_off_roof), with the roof's rho (1 - s): a wall over a
+        // lower roof.  A level roof's own patches face up, away from it.
+        if (!options_.roofs || !options_.roof_lighting || patch.normal.z == 1.0)
+            continue;
+        for (const Vec3& w : departures)
+        {
+            const Vec3 down(w.x, w.y, -w.z);
+            const double c = down.dot(patch.normal);
+            std::size_t roof = 0;
+            if (c <= 0.0 || !trace_off_roof(*buildings_, patch.center, down, u, options_.max_order, trace, roof))
+                continue;
+            const std::size_t rf = buildings_->roof_facade(roof);
+            for (std::size_t b = 0; b < bands_; b++)
+            {
+                double carried = c * (rf == Buildings::no_facade ? 1.0 : specular_[rf * bands_ + b]);
+                for (std::size_t f : trace.facades)
+                    carried *= specular_[f * bands_ + b];
+                e[p * bands_ + b] += carried;
+            }
+        }
     }
 }
 

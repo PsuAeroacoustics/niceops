@@ -4,6 +4,17 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Plane-wave tables over roofs (October 2026)
+
+`niceops_urban_table` now takes a microphone on or over a roof, which it used to refuse: the roofs
+below it reflect, specularly and to the diffracted rays, a microphone on a roof or a slope takes its
+reflection there, `--roofs` reads a CSV district's pitched roofs, and the roofs scatter and light
+the walls' diffuse field. A corner's end wave toward a microphone, or a facade's image of one, in
+its solid sector in plan, which a prefilter used to drop before the exact tests, is kept as the
+point-source model keeps it. On the test district's run that moves the levels by 0.001 dB at most,
+and the roofs' scattering by 0.005 dB more with `--facade_scattering`. `--no_roofs` restores the
+refusal, for comparison.
+
 ## Roofs light the scattering walls (October 2026)
 
 With scattering, a point source now lights the walls' and roofs' patches off a level roof or a
