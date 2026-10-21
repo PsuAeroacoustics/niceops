@@ -167,7 +167,15 @@ which is why it is measured before it is built.
 
 ## Step 2: the slope and roof paths that are missing
 
-**What is wrong.** Three kinds of path are not traced at all:
+**Slope–wall milestone (2026-10-21).** Specular wall chains on either side of one slope, and
+single-edge paths with end -> walls -> slope -> edge on either side, are implemented. The
+source's specular tree is independent of the diffraction switch; floor partners fold into real
+coordinates. Oblique image theory, reciprocal paths, floor-contact launch, pruning agreement
+and a screened reflection boundary are checked; measured results belong in FIDELITY.
+Still open in this step: end -> slope -> walls -> edge, and level-roof/slope reflections on
+multiply-diffracted paths. Step 3's roof-reflected diffuse lighting remains separate.
+
+**Original scope.** Three kinds of path were missing:
 
 - a slope's reflection together with a facade's (wall then slope, or slope then wall);
 - a twice- or thrice-diffracted ray with a roof or slope bounce on a side (level roofs have the same gap: "Not done:

@@ -116,8 +116,15 @@ struct PointPathOptions
     // edge must stand above it (the roof's own edges carry its reflection in
     // their coefficients already).  A pitched roof's slope reflects too, as a
     // mirror in its plane, between the source and the microphone with the
-    // floor at either end or not, and no facade.  Off, for comparison.
+    // floor at either end or not, with facades when slope_facades is on.
+    // Off, for comparison.
     bool roofs = true;
+    // A slope's reflection with facades on its ray (with roofs): a specular
+    // ray off walls and a slope, the slope between the source's chain and the
+    // microphone's, and a once-diffracted ray with walls and a slope on one
+    // side, the slope between that side's chain and the edge.  Off, for
+    // comparison.
+    bool slope_facades = true;
     // Facades and edges within this horizontal distance of the source or the
     // microphone (m).
     double radius = 150.0;

@@ -1143,8 +1143,9 @@ over a pass as it does in an exposure.
   other, judged along the side wherever the two roofs' profiles cross or break. A level deck
   reflects and scatters as a flat roof does. Its walls stand up to the roof, its eaves, rakes, ridges and hips diffract as wedges of their own
   angles, and every path the flat roofs take applies; a slope reflects specularly, as a mirror in its
-  plane with the floor at either end and on either side of a once-diffracted ray, though not with a
-  wall's reflection, and scatters diffusely as the walls do, with its building's coefficients
+  plane with the floor at either end, with walls before or after it. A once-diffracted ray
+  may reflect in walls and then a slope on its way from either end to the edge. Slopes
+  scatter diffusely as the walls do, with their building's coefficients
   ([THEORY §6.5](THEORY.md#65-urban-receivers)). A building given no plane keeps
   its flat roof. On EDGE's measured pitched scenes the planes are 3.1 dB rms where the same houses
   as flat blocks are 4.5 at the mean height and 5.8 at the ridge
@@ -1980,8 +1981,10 @@ and the buildings stand on a flat floor. `--roofs` gives a CSV district pitched 
 [`niceops --roofs`](#buildings-around-the-microphones) takes them, and a ray over four roof edges
 or more -- a mansard heard from low beside it, several rows of roofs -- is traced up to
 `--max_chain` of them. Roofs reflect as the floor does, with their building's
-absorption: a ray reflects in one of them or in the floor at most, and from a roof it reaches only
-a microphone above that roof, directly or by an edge that stands higher still. `--microphones` is a CSV with `x`, `y` and `height`
+absorption: a level roof replaces the floor, and reaches an end or an edge above it. A slope
+may reflect with walls and the floor on either side, or next to the edge of a once-diffracted
+ray. `--no_slope_facades` omits paths combining slopes and walls for comparison;
+`--unending_edges` omits UTD's finite-edge correction. `--microphones` is a CSV with `x`, `y` and `height`
 columns, the height above the floor: a microphone (or a source) at a flat roof's height over it, or
 on a wall, lies on that surface and takes its reflection there, as one on the floor takes the
 floor's, and one on a pitched roof's slope the slope's; one on a building's edge is refused. Each output row is a microphone's `x`, `y` and `height`, then one level per band, dB, the

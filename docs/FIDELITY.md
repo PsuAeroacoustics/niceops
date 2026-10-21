@@ -1912,6 +1912,19 @@ there without the reflection it is half of. 115 s on the GPU, 110 without either
 reflection leaves the field continuous`.) A slope's diffuse field is Lambert's law over the tilted
 surface to 0.5% (`a point source lights a slope's diffuse field as Lambert's law says`).
 
+**Walls with a slope.** Composite-image checks for a wall perpendicular to a slope and for
+oblique mirrors hold the specular length to round-off, including the reciprocal path and the
+same paths with diffraction disabled. Specular and once-diffracted floor partners have real
+legs summing to their ray length, reciprocal lengths, and the correct floor-contact launch.
+A screen cutting off a wall–slope reflection leaves less than 0.05 dB between microphones
+0.1 mm either side of its boundary, in both directions, at 125–2000 Hz; this also holds with
+only one reflection allowed on each side of the edge.
+
+An on/off check of the added slope–wall paths on EDGE's UE01–05, UE15, UE17 and UE19, all
+provided source/receiver pairs at 1.6, 3.15, 6.3, 12.5 and 20 kHz, leaves all 360 band levels
+unchanged. This is an omnidirectional, rigid, no-air check of path impact, not a new fit to the
+loudspeaker measurements.
+
 ### Microphones on roofs and walls
 
 A source or a microphone lying on a wall or a flat roof (THEORY §6.5, "Ends on a surface"), against
@@ -2541,7 +2554,7 @@ range-dependent source fit would confound descent state drift with path loss.
   500 Hz; and by UTD an edge's end, where its transition meets a face's plane through the vertex,
   is up to 3.7 dB off the edge-source integral, no better than with the edge unending
   ([A point source among buildings](#a-point-source-among-buildings)). A pitched roof's
-  slopes reflect no specular ray, and over a roof of nearly flat wedges whose pairs share the faces
+  slopes reflect with walls, but not on multiply-diffracted rays; over a roof of nearly flat wedges whose pairs share the faces
   the ray runs along (a mansard's) the cascade is 3-4 dB rms off the exact field; the FDTD's
   staircase makes it no reference for a sloped roof below 1.5 mm cells at EDGE's scale
   ([Pitched roofs](#pitched-roofs)).

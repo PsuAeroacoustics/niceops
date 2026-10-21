@@ -4,6 +4,15 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Walls with sloped-roof reflections (October 2026)
+
+The point model now traces specular paths through a slope between two facade chains, and
+once-diffracted paths with facade reflections between an endpoint and its slope reflection.
+These paths were previously absent. Their floor partners record real reflection points and
+retain a downward launch for a floor-contact source. Specular source images are traced even
+when diffraction is disabled. The comparison switch is `--no_slope_facades` in point_field;
+`--unending_edges` also exposes the existing finite-edge comparison there.
+
 ## Lateral-offset validation fixes (October 2026)
 
 The fold check for WGS84 tracks with velocity columns mixed recorded velocity with

@@ -1323,6 +1323,16 @@ void Buildings::facades_in_box(double x_min, double x_max, double y_min, double 
     out.clear();
     if (facades_.empty())
         return;
+    // Between-edge reflection searches often cover the whole district.
+    // Every facade is then a candidate, already in ascending order: avoid
+    // walking its grid cells, deduplicating their entries and sorting them.
+    if (x_min <= x_min_ && x_max >= x_max_ && y_min <= y_min_ && y_max >= y_max_)
+    {
+        out.resize(facades_.size());
+        for (std::size_t i = 0; i < out.size(); i++)
+            out[i] = static_cast<std::uint32_t>(i);
+        return;
+    }
     thread_local Stamps seen;
     seen.next(facades_.size());
     facade_grid_.box(x_min, x_max, y_min, y_max, [&](const std::uint32_t* first, const std::uint32_t* last) {

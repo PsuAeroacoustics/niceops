@@ -60,6 +60,36 @@ void meeting_toward(const Buildings& buildings, const std::vector<std::size_t>& 
     }
 }
 
+// Fold a facade chain and its floor partner into real coordinates. Unlike
+// the older rays' unfolded drawings, a slope joins two independent floor
+// images, so all points at that join must be in the real half-space. Return
+// the interior points only, with a floor crossing inserted when it is not
+// already an endpoint. A floor-contact source keeps its launch separately.
+bool physical_chain(const Buildings& buildings, const Vec3& from, const Vec3& to,
+        const std::vector<std::size_t>& chain, bool floor, std::vector<Vec3>& points)
+{
+    thread_local std::vector<Vec3> hits;
+    if (!folded_path_open(buildings, from, to, chain, floor, &hits))
+        return false;
+    hits.push_back(floor ? below(to) : to);
+    points.clear();
+    Vec3 previous = from;
+    for (std::size_t i = 0; i < hits.size(); i++)
+    {
+        const Vec3& next = hits[i];
+        if (previous.z * next.z < 0.0)
+        {
+            const Vec3 bounce = previous + (previous.z / (previous.z - next.z)) * (next - previous);
+            if ((bounce - from).norm() > Buildings::contact && (bounce - to).norm() > Buildings::contact)
+                points.push_back(bounce);
+        }
+        if (i + 1 < hits.size())
+            points.emplace_back(next.x, next.y, std::abs(next.z));
+        previous = next;
+    }
+    return true;
+}
+
 // Where the path through a point on a line is stationary, the point leaving
 // toward b at the angle a arrives at: from a's and b's places about the line
 // (along it, and their distances off it), the parameter along it.  False
@@ -724,11 +754,20 @@ std::size_t edge_order(const PointPathOptions& options)
 // order, as the microphone's side, so the ray set is the same with the ends
 // swapped -- and with reliefs to the grating rays' order and one, whose
 // images the diffracted searches pass over by their own orders.
-std::size_t tree_order(bool source, const PointPathOptions& options)
+std::size_t tree_order(const Buildings& buildings, bool source, const PointPathOptions& options)
 {
     const std::size_t gratings = options.reliefs != nullptr ? options.grating_reflections + 1 : 0;
     if (source)
-        return std::max(options.diffraction && options.source_reflections ? edge_order(options) : 0, gratings);
+    {
+        // Specular wall -> slope paths need source images even with
+        // diffraction (or source-side diffraction reflections) disabled.
+        const bool slopes = options.roofs && options.slope_facades && options.max_reflections > 1
+                && std::any_of(buildings.footprints().begin(), buildings.footprints().end(), [](const Footprint& f) {
+                    return std::any_of(f.roof.begin(), f.roof.end(), [](const RoofPlane& p) { return !p.level(); });
+                });
+        return std::max({options.diffraction && options.source_reflections ? edge_order(options) : 0,
+                gratings, slopes ? options.max_reflections - 1 : 0});
+    }
     return std::max(options.max_reflections, edge_order(options));
 }
 
@@ -975,7 +1014,8 @@ bool same_tracing(const PointPathOptions& a, const PointPathOptions& b)
             && a.triple_diffraction == b.triple_diffraction && a.max_thrice_reflections == b.max_thrice_reflections && a.double_diffraction == b.double_diffraction
             && a.source_reflections == b.source_reflections && a.radius == b.radius && a.max_images == b.max_images
             && a.prune == b.prune && (a.reliefs != nullptr) == (b.reliefs != nullptr)
-            && a.grating_reflections == b.grating_reflections && a.roofs == b.roofs;
+            && a.grating_reflections == b.grating_reflections && a.roofs == b.roofs
+            && a.slope_facades == b.slope_facades;
 }
 
 } // namespace
@@ -987,7 +1027,7 @@ PathEnd::PathEnd(const Buildings& buildings, const Vec3& point, bool source, con
     , options_(options)
     , near_(edges_near(buildings, point, options.radius))
     , candidates_(joined(near_, ascending(partners)))
-    , tree_(image_tree(buildings, point, options.radius, tree_order(source, options), options.max_images, true,
+    , tree_(image_tree(buildings, point, options.radius, tree_order(buildings, source, options), options.max_images, true,
               candidates_, edge_order(options)))
 {
     // A wall, a level roof or a slope the point lies on gives every ray its
@@ -1123,7 +1163,12 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     keep(microphone_end, mic_edges, mic_at);
     for (std::size_t e : near_edges)
         is_near[e] = 0;
-    const Ends src {source_end.tree().images, src_edges, src_at, source_end.views()},
+    // Specular tracing may need source images even when diffraction may not
+    // use them. Keep that option's meaning for every diffracted search.
+    std::vector<PointImage> direct_source;
+    if (!options.source_reflections)
+        direct_source.push_back(source_end.tree().images.front());
+    const Ends src {options.source_reflections ? source_end.tree().images : direct_source, src_edges, src_at, source_end.views()},
             mic {microphone_end.tree().images, mic_edges, mic_at, microphone_end.views()};
     const Vec3& source = source_end.point();
     const Vec3& microphone = microphone_end.point();
@@ -1328,6 +1373,107 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         }
                         if (fb)
                             add_floor_bounce(ray, std::abs(pb.z - p.z) / (pb - p).norm(), ray.length, true);
+                        rays_.push_back(std::move(ray));
+                    }
+            }
+        }
+    }
+
+    // A slope between two chains of facades: the source's image through its
+    // chain (src) and the microphone's through its (mic), each with the
+    // floor or without, mirrored in the slope's plane between them -- a
+    // tilted mirror does not commute with the walls' vertical ones, but with
+    // the slope between the chains it need not -- each chain traced back
+    // from the reflection, with the slope to max_reflections in all; the
+    // chains both empty are the loop above's. Edge candidates are not a roof
+    // visibility proof: a beam can reach a roof whose edges were out of range.
+    if (options.roofs && options.slope_facades && options.max_reflections > 1)
+    {
+        const auto& source_images = source_end.tree().images;
+        thread_local std::vector<std::uint32_t> near;
+        buildings.near_box(std::min(source.x, microphone.x) - options.radius,
+                std::max(source.x, microphone.x) + options.radius, std::min(source.y, microphone.y) - options.radius,
+                std::max(source.y, microphone.y) + options.radius, near);
+        std::sort(near.begin(), near.end());
+        struct Candidate
+        {
+            std::size_t image;
+            int floor;
+            Vec3 point;
+            double above;
+        };
+        std::vector<Candidate> source_side, microphone_side;
+        std::vector<std::size_t> reversed_chain;
+        std::vector<Vec3> from_source, to_microphone;
+        for (const std::uint32_t b : near)
+        {
+            const Footprint& f = buildings.footprints()[b];
+            if (f.roof.empty())
+                continue;
+            for (std::size_t i = 0; i < f.roof.size(); i++)
+            {
+                const RoofPlane& plane = f.roof[i];
+                if (plane.level())
+                    continue;
+                const Vec3 n = plane.normal();
+                // Each side's images on the plane's air side.
+                const auto gather = [&](const std::vector<PointImage>& images, std::vector<Candidate>& out) {
+                    out.clear();
+                    for (std::size_t k = 0; k < images.size(); k++)
+                    {
+                        if (images[k].facades.size() + 1 > options.max_reflections)
+                            continue;
+                        for (int fl = 0; fl < 2; fl++)
+                        {
+                            const Vec3 pt = fl ? below(images[k].point) : images[k].point;
+                            const double d = plane.above(pt);
+                            if (d > Buildings::contact)
+                                out.push_back({k, fl, pt, d});
+                        }
+                    }
+                };
+                gather(source_images, source_side);
+                gather(mic.images, microphone_side);
+                for (const Candidate& a : source_side)
+                    for (const Candidate& c : microphone_side)
+                    {
+                        const std::vector<std::size_t>& chain_a = source_images[a.image].facades;
+                        const std::vector<std::size_t>& chain_b = mic.images[c.image].facades;
+                        if ((chain_a.empty() && chain_b.empty())
+                                || chain_a.size() + chain_b.size() + 1 > options.max_reflections)
+                            continue;
+                        const Vec3 image = a.point - (2.0 * a.above) * n;
+                        const Vec3 p = image + (a.above / (a.above + c.above)) * (c.point - image);
+                        if (!buildings.on_plane(b, i, p.x, p.y))
+                            continue;
+                        // The source's side traced from the source, so that
+                        // its first leg is its launch. Both chains are
+                        // folded into the real half-space at the slope.
+                        reversed_chain.assign(chain_a.rbegin(), chain_a.rend());
+                        if (!physical_chain(buildings, source, p, reversed_chain, a.floor == 1, from_source)
+                                || !physical_chain(buildings, p, microphone, chain_b, c.floor == 1, to_microphone))
+                            continue;
+                        PointRay ray;
+                        ray.path.push_back(source);
+                        ray.launch_mirrored = a.floor && source.z <= Buildings::contact;
+                        ray.path.insert(ray.path.end(), from_source.begin(), from_source.end());
+                        ray.path.push_back(p);
+                        ray.path.insert(ray.path.end(), to_microphone.begin(), to_microphone.end());
+                        ray.path.push_back(microphone);
+                        ray.length = (c.point - image).norm();
+                        ray.spreading = 1.0 / ray.length;
+                        ray.facades = chain_a;
+                        ray.facades.insert(ray.facades.end(), chain_b.begin(), chain_b.end());
+                        ray.roof_facades = {buildings.roof_facade(b)};
+                        if (a.floor)
+                            add_floor_bounce(ray, std::abs(p.z - a.point.z) / (p - a.point).norm(), ray.length, false);
+                        if (c.floor)
+                            add_floor_bounce(ray, std::abs(c.point.z - p.z) / (c.point - p).norm(), ray.length, true);
+                        if (options.reliefs != nullptr)
+                        {
+                            meeting_toward(buildings, chain_a, a.point - p, ray.hits);
+                            meeting_toward(buildings, chain_b, c.point - p, ray.hits);
+                        }
                         rays_.push_back(std::move(ray));
                     }
             }
@@ -1796,6 +1942,220 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         ray.path.push_back(microphone);
                         rays_.push_back(std::move(ray));
                     }
+            }
+        }
+    }
+
+    // The same with facades on either side: the slope between its side's
+    // chain and the edge -- that end's image through the chain, after the
+    // floor or not, mirrored in the slope's plane -- and the other side any
+    // image of its end.  The slope's side to max_edge_reflections with the
+    // slope and its floor, the other to max_edge_reflections; both chains
+    // empty is the loop above's. The slope's box must cross the box of the
+    // edge and the slope's image; the actual chains are checked at the bounce.
+    if (options.roofs && options.slope_facades && options.max_edge_reflections > 0)
+    {
+        struct SlopeImage
+        {
+            std::size_t image;
+            int floor;
+            std::uint32_t building;
+            std::size_t plane;
+            Vec3 point; // the end's image through its chain, after the floor or not
+            Vec3 mirrored;
+        };
+        const auto slope_images = [&](const Ends& end) {
+            std::vector<SlopeImage> out;
+            thread_local std::vector<std::uint32_t> near_b;
+            buildings.near_box(std::min(source.x, microphone.x) - options.radius,
+                    std::max(source.x, microphone.x) + options.radius,
+                    std::min(source.y, microphone.y) - options.radius,
+                    std::max(source.y, microphone.y) + options.radius, near_b);
+            std::sort(near_b.begin(), near_b.end());
+            for (std::size_t i = 0; i < end.images.size(); i++)
+            {
+                for (int fl = 0; fl < 2; fl++)
+                {
+                    if (end.images[i].facades.size() + 1 + fl > options.max_edge_reflections)
+                        continue;
+                    const Vec3 pt = fl ? below(end.images[i].point) : end.images[i].point;
+                    for (const std::uint32_t b : near_b)
+                    {
+                        const Footprint& f = buildings.footprints()[b];
+                        if (f.roof.empty())
+                            continue;
+                        for (std::size_t pl = 0; pl < f.roof.size(); pl++)
+                        {
+                            const RoofPlane& plane = f.roof[pl];
+                            const double d = plane.above(pt);
+                            if (plane.level() || !(d > Buildings::contact))
+                                continue;
+                            out.push_back({i, fl, b, pl, pt, pt - (2.0 * d) * plane.normal()});
+                        }
+                    }
+                }
+            }
+            return out;
+        };
+        const std::vector<SlopeImage> source_slope_images = slope_images(src);
+        const std::vector<SlopeImage> microphone_slope_images = slope_images(mic);
+        std::vector<Vec3> to_source, to_microphone;
+        std::vector<std::size_t> reversed_chain;
+        for (int side = 0; side < 2; side++)
+        {
+            const bool slope_at_source = side == 0;
+            if (slope_at_source && !options.source_reflections)
+                continue;
+            const std::vector<SlopeImage>& slopes = slope_at_source ? source_slope_images : microphone_slope_images;
+            const Ends& slope_end = slope_at_source ? src : mic;
+            const Ends& plain = slope_at_source ? mic : src;
+            const PathEnd& plain_path_end = slope_at_source ? microphone_end : source_end;
+            const Vec3& slope_point = slope_at_source ? source : microphone;
+            const Vec3& plain_point = slope_at_source ? microphone : source;
+            const int plain_floors = slope_at_source ? 2 : source_floors;
+            for (const SlopeImage& sl : slopes)
+            {
+                const std::vector<std::size_t>& chain_a = slope_end.images[sl.image].facades;
+                const RoofPlane& plane = buildings.footprints()[sl.building].roof[sl.plane];
+                const double* box = buildings.bounds(sl.building);
+                for (std::size_t j = 0; j < plain.images.size(); j++)
+                {
+                    const std::vector<std::size_t>& chain_b = plain.images[j].facades;
+                    if ((chain_a.empty() && chain_b.empty()) || chain_b.size() > options.max_edge_reflections)
+                        continue;
+                    for (std::size_t k = 0; k < plain.edges[j].size(); k++)
+                    {
+                        const std::size_t e = plain.edges[j][k];
+                        const Edge& edge = edges[e];
+                        const Vec3 end_point = edge.start + edge.length * edge.direction;
+                        // The slope's box against the edge's and its image's.
+                        if (std::max({edge.start.x, end_point.x, sl.mirrored.x}) < box[0]
+                                || std::min({edge.start.x, end_point.x, sl.mirrored.x}) > box[1]
+                                || std::max({edge.start.y, end_point.y, sl.mirrored.y}) < box[2]
+                                || std::min({edge.start.y, end_point.y, sl.mirrored.y}) > box[3]
+                                || !(std::max(plane.above(edge.start), plane.above(end_point)) > Buildings::contact))
+                            continue;
+                        for (int fo = 0; fo < plain_floors; fo++)
+                        {
+                            const Vec3 plain_image = fo ? below(plain.images[j].point) : plain.images[j].point;
+                            const Vec3 pa = slope_at_source ? sl.mirrored : plain_image;
+                            const Vec3 pb = slope_at_source ? plain_image : sl.mirrored;
+                            const PathEnd::View vs = view_from(edge, sl.mirrored, true, 0.0, edge.length);
+                            const PathEnd::View& vp = plain.view(j, k, fo);
+                            const PathEnd::View& va = slope_at_source ? vs : vp;
+                            const PathEnd::View& vb = slope_at_source ? vp : vs;
+                            double t;
+                            if (!keller_point(va.along, va.off, vb.along, vb.off, t))
+                                continue;
+                            const bool past = options.edge_ends && past_true_end(edge, t);
+                            const double tq = past ? std::clamp(t, 0.0, edge.length) : t;
+                            if (!va.visible || !vb.visible || tq < std::max(va.from, vb.from)
+                                    || tq > std::min(va.to, vb.to))
+                                continue;
+                            const Vec3 q = edge.start + tq * edge.direction, keller = edge.start + t * edge.direction;
+                            if (q.z < 0.0 || buildings.buried(q)
+                                    || (past && !end_within_reach(pa, pb, q, keller, options.end_reach)))
+                                continue;
+                            const Vec3 in = pa - q, out = pb - q;
+                            const int on_plain = end_face(plain_path_end, edge, chain_b, fo);
+                            const int on_a = slope_at_source ? -1 : on_plain;
+                            const int on_b = slope_at_source ? on_plain : -1;
+                            if ((!past
+                                        && (!end_air(edge, normal_part(edge, in), on_a)
+                                                || !end_air(edge, normal_part(edge, out), on_b)))
+                                    || doubles_back(edge, on_a, pb) || doubles_back(edge, on_b, pa))
+                                continue;
+                            // The slope's side: q to the reflection, and from
+                            // there by the chain to its end -- traced from the
+                            // source when it is the source's, so that the first
+                            // leg is the launch, as a specular ray's.
+                            const double dq = plane.above(q), di = -plane.above(sl.mirrored);
+                            if (!(dq > Buildings::contact) || !(di > 0.0))
+                                continue;
+                            const Vec3 p = q + (dq / (dq + di)) * (sl.mirrored - q);
+                            if (!buildings.on_plane(sl.building, sl.plane, p.x, p.y) || buildings.blocked(q, p))
+                                continue;
+                            std::vector<Vec3>& slope_points = slope_at_source ? to_source : to_microphone;
+                            std::vector<Vec3>& plain_points = slope_at_source ? to_microphone : to_source;
+                            slope_points.clear();
+                            bool open;
+                            if (slope_at_source)
+                            {
+                                reversed_chain.assign(chain_a.rbegin(), chain_a.rend());
+                                open = physical_chain(buildings, slope_point, p, reversed_chain, sl.floor == 1,
+                                        slope_points);
+                            }
+                            else
+                                open = physical_chain(buildings, p, slope_point, chain_a, sl.floor == 1, slope_points);
+                            if (!open || !physical_chain(buildings, q, plain_point, chain_b, fo == 1, plain_points))
+                                continue;
+                            PointRay ray;
+                            ray.launch_mirrored = (slope_at_source ? sl.floor : fo)
+                                    && source.z <= Buildings::contact;
+                            const double raw0 = end_angle(edge, in, on_a, ray.source_on_face);
+                            const double raw = end_angle(edge, out, on_b, ray.microphone_on_face);
+                            const double theta0 = onto_air(raw0, edge.n), theta = onto_air(raw, edge.n);
+                            const double s_in = in.norm(), s_out = out.norm();
+                            const double s_in_k = (pa - keller).norm(), s_out_k = (pb - keller).norm();
+                            const double sin_beta = normal_part(edge, in).norm() / s_in_k;
+                            ray.length = s_in + s_out;
+                            ray.spreading = 1.0 / std::sqrt(s_in * s_out * (s_in + s_out));
+                            // The floor's bounces, along the ray from the
+                            // source: the slope side's over its whole unfolded
+                            // leg, the slope a mirror; the plain side's leg from
+                            // the edge.
+                            const auto slope_bounce = [&](bool at_microphone) {
+                                add_floor_bounce(ray, std::abs(sl.point.z - p.z) / (sl.point - p).norm(),
+                                        (sl.mirrored - q).norm(), at_microphone);
+                            };
+                            if (slope_at_source)
+                            {
+                                if (sl.floor)
+                                    slope_bounce(false);
+                                if (fo)
+                                    add_floor_bounce(ray, q, pb, true);
+                            }
+                            else
+                            {
+                                if (fo)
+                                {
+                                    add_floor_bounce(ray, pa, q, false);
+                                }
+                                if (sl.floor)
+                                    slope_bounce(true);
+                            }
+                            ray.facades = slope_at_source ? chain_a : chain_b;
+                            const std::vector<std::size_t>& later = slope_at_source ? chain_b : chain_a;
+                            ray.facades.insert(ray.facades.end(), later.begin(), later.end());
+                            ray.roof_facades = {buildings.roof_facade(sl.building)};
+                            ray.wedges = 1;
+                            ray.wedge[0] = {wedge_angles(edge.n, theta, theta0), sin_beta,
+                                    s_in_k * s_out_k * sin_beta / (s_in_k + s_out_k), false};
+                            if (options.edge_ends)
+                            {
+                                ray.wedge[0].ends = edge_ends(edge, pa, pb, t);
+                                weigh_vertex(ray.wedge[0].ends, raw0, raw, edge.n, s_in, s_out);
+                            }
+                            ray.edge_source.edges[0] = e;
+                            ray.edge_source.source = pa;
+                            ray.edge_source.microphone = pb;
+                            ray.edge_source.stretches[0] = {std::max(va.from, vb.from), std::min(va.to, vb.to)};
+                            ray.path = {source};
+                            if (slope_at_source)
+                                ray.path.insert(ray.path.end(), to_source.begin(), to_source.end());
+                            else
+                                ray.path.insert(ray.path.end(), to_source.rbegin(), to_source.rend());
+                            if (slope_at_source)
+                                ray.path.push_back(p);
+                            ray.path.push_back(q);
+                            if (!slope_at_source)
+                                ray.path.push_back(p);
+                            ray.path.insert(ray.path.end(), to_microphone.begin(), to_microphone.end());
+                            ray.path.push_back(microphone);
+                            rays_.push_back(std::move(ray));
+                        }
+                    }
+                }
             }
         }
     }

@@ -1646,16 +1646,27 @@ sharing sides. Its geometry follows:
   coefficient: the source mirrored in the plane, the line from the image to the microphone crossing
   the plane where that plane is the roof, both ends on its air side and every leg open, with the
   floor or without at either end. The floor's spherical-wave coefficient takes the whole unfolded
-  path as its image's, the slope being a mirror and not a new source. No facade reflection goes with
-  it: a slope turns a ray up or down, so the walls' images, vertical, no longer unfold the path.
+  path as its image's, the slope being a mirror and not a new source. Facade reflections may
+  precede or follow the slope. If $A$ and $B$ are the ends' images through their respective
+  facade chains (and the floor, if present), the slope reflection is the intersection of
+  $M_S(A)B$ with the slope, where $M_S$ mirrors in its plane. The path length is
+  $|B-M_S(A)|$. Both chains are folded back from that intersection and checked against the
+  actual walls and buildings. The order matters: a tilted mirror generally does not commute
+  with a vertical one. There is one slope per ray, within the specular reflection order;
+  the floor may occur on either side.
   Where the reflection point reaches the slope's edge -- the eave, the ridge, a hip -- is that
   edge's reflection boundary, across which each edge's coefficient carries half the reflection, so
   the field is continuous there. Where another building's edge cuts off the wave reaching the slope,
   or leaving it, the partner is the ray diffracted at that edge with the slope's reflection on that
   side: a once-diffracted ray takes a slope on either side of its edge as it takes a level roof, the
   end (after the floor or not) mirrored in the plane, the reflection where the line from the edge to
-  that image crosses the plane where it is the roof, the edge on the plane's air side, with no
-  facade on that side and one slope a ray (FIDELITY has both boundaries). §6.5's level roof
+  that image crosses the plane where it is the roof, the edge on the plane's air side.
+  The end may first reflect in facades before reaching the slope; the other side of the edge
+  may also contain facade reflections. The slope is adjacent to the edge on its side, and
+  counts with that side's floor and facade reflections toward the single-edge reflection
+  limit. Its coefficient remains UTD, including the finite-edge correction, also when the
+  edge-source option is selected. A slope followed by facades before reaching the edge,
+  and roof reflections on multiply-diffracted rays, are not traced. §6.5's level roof
   reflection is a mansard's deck's, which reflects and scatters as a flat roof does.
 - **What a slope scatters.** The slopes scatter as the walls and the level roofs do, with their
   building's $\rho$ and $s$, so that their rays' $\rho(1 - s)$ loses nothing: each is cut into

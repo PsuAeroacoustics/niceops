@@ -386,21 +386,39 @@ checks. What to keep:
   where its least plane is level (a deck), which gives the deck the roof reflection and the
   diffuse patches. A slope reflects specular rays of its own (`on_plane`, the slope rays after the
   flat roofs' in `PointSourceField`): the source's image in the plane, the reflection point where
-  that plane is the roof, the floor at either end or not, no facades; the floor's bounce on such a
+  that plane is the roof, the floor at either end or not; the floor's bounce on such a
   ray records the whole unfolded length as its leg (`add_floor_bounce` by sine and leg), and an
   end on the floor is its own bounce, no zero-length leg left in the path (the arrival reads it);
   a source there that bounces first launches into the floor (`PointRay::launch_mirrored`), which
   a directional source reads. Once-diffracted rays take a slope on either side of the edge (the
   slope partners after the level roofs' in `PointSourceField`): each end's slopes within reach,
   the end or its floor image above the plane (`PathEnd::slopes`, worked out once per end), and the
-  leg from the edge's point through the reflection (`slope_leg`); no facade on that side, the
-  other bare or off the floor. They are what keeps the field continuous where another edge cuts a
+  leg from the edge's point through the reflection (`slope_leg`); the bare-end search has no facade on that side,
+  the other bare or off the floor. The wall-chain extension is described below. They are what keeps the field continuous where another edge cuts a
   slope's reflection off. Slopes scatter: `add_roof_patches` puts each sample of a cell on one
   surface (`roof_surface`: the deck, or one slope, a ridge the first plane's) and lifts a slope's
   patch onto its plane; `on_plane`, inclusive at a ridge, is for the rays. Only a level patch
   (normal straight up) skips the floor's lighting. `RoofPlane::normal`,
   `above` and `level` are the one spelling of a plane's geometry. `roof_ridges` keeps a line only
   where its two planes are each the least on one side.
+- **Walls and a slope** (`PointPathOptions::slope_facades`): specular rays place one slope
+  between the two ends' facade chains; the sum of their orders plus one is bounded by
+  `max_reflections`. A source's image tree therefore also reaches `max_reflections - 1`
+  in pitched scenes, even with diffraction disabled. The diffracted searches still respect
+  `source_reflections`; the extra specular images must not enable source-side diffraction
+  reflections when that option is off. Cached ends require the same `slope_facades` option.
+  Single-edge paths allow end -> facades -> slope -> edge on either side, with ordinary
+  facade/floor paths on the other. They keep the slope rays' UTD and finite-edge factors.
+  `physical_chain` folds their wall hits into the real half-space and inserts the floor
+  crossing, omitting an endpoint crossing and keeping its launch in `launch_mirrored`.
+  Do not join a real slope point to a wall hit left below the floor. The floor coefficient
+  uses the whole specular length, or the whole unfolded side of the diffracted ray.
+  Nearby diffraction edges are not a conservative roof candidate set: a beam can reach a
+  roof whose boundary edges are outside the radius. The new searches check the actual
+  reflection and folded chains, with a box rejection on edge-to-slope legs.
+  Tests cover oblique (noncommuting) mirrors with diffraction disabled, floor-contact
+  launches, reciprocal specular/diffracted lengths and a screen cutting the reflected path.
+  Still absent: end -> slope -> facades -> edge, and roof reflections on double/triple paths.
 - **The pruning proof takes the roof planes** (`prism_planes`): the prism cut by each, mirrored in
   a facade and in the floor as the footprint is. Proving with the prism to the top hides real rays,
   and `pruning finds every ray among pitched houses` fails then (checked by making that change).

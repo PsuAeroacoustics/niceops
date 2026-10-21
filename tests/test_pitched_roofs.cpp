@@ -608,8 +608,8 @@ TEST_CASE("pruning finds every ray among pitched houses", "[pitched_roofs]")
     const std::vector<std::pair<Vec3, Vec3>> pairs {{{-12.0, 8.0, 1.0}, {14.0, 8.0, 1.2}},
             {{-12.0, 8.0, 1.0}, {34.0, 25.0, 1.2}}, {{24.0, -10.0, 1.5}, {24.0, 12.0, 1.2}},
             {{14.0, 40.0, 30.0}, {14.0, -6.0, 1.2}}, {{-6.0, 27.0, 2.0}, {36.0, 4.0, 1.2}},
-            {{12.0, 27.0, 1.2}, {34.0, 25.0, 1.2}}};
-    std::size_t diffracted = 0;
+            {{12.0, 27.0, 1.2}, {34.0, 25.0, 1.2}}, {{39.6, 3.7, 30.0}, {16.5, 4.5, 5.2}}};
+    std::size_t diffracted = 0, walls_and_slopes = 0;
     for (const auto& [s, m] : pairs)
     {
         INFO("source " << s.x << ", " << s.y << ", " << s.z << "; microphone " << m.x << ", " << m.y << ", " << m.z);
@@ -620,12 +620,15 @@ TEST_CASE("pruning finds every ray among pitched houses", "[pitched_roofs]")
         REQUIRE(pruned.rays().size() == every.rays().size());
         for (std::size_t i = 0; i < every.rays().size(); i++)
         {
-            REQUIRE(pruned.rays()[i].length == every.rays()[i].length);
-            REQUIRE(pruned.rays()[i].wedges == every.rays()[i].wedges);
-            diffracted += every.rays()[i].wedges >= 2;
+            const PointRay& ray = every.rays()[i];
+            REQUIRE(pruned.rays()[i].length == ray.length);
+            REQUIRE(pruned.rays()[i].wedges == ray.wedges);
+            diffracted += ray.wedges >= 2;
+            walls_and_slopes += ray.wedges == 0 && !ray.facades.empty() && !ray.roof_facades.empty();
         }
     }
     REQUIRE(diffracted > 100);
+    REQUIRE(walls_and_slopes > 0);
 }
 
 namespace {
@@ -804,4 +807,216 @@ TEST_CASE("a cap at the ridge, and a deck below it", "[pitched_roofs]")
     REQUIRE(!decked.on_roof(0, 1.0, 10.0));
     REQUIRE(roof_rays(decked) == 1);
     REQUIRE(roof_rays(level) == 1);
+}
+
+// A wall square to a slope: the two mirrors commute, so the ray off both is
+// the source's image in the one and then the other, and its length that
+// image's distance from the microphone, to round-off (image theory).  A shed
+// roof rising 0.3 in y, and a tall wall standing against its end x = 30.
+TEST_CASE("a wall square to a slope reflects as the two mirrors' image", "[pitched_roofs]")
+{
+    Footprint shed;
+    shed.x = {0.0, 30.0, 30.0, 0.0};
+    shed.y = {0.0, 0.0, 10.0, 10.0};
+    shed.roof = {{0.0, 0.3, 6.0}};
+    shed.top = 9.0;
+    Footprint wall;
+    wall.x = {30.0, 32.0, 32.0, 30.0};
+    wall.y = {-30.0, -30.0, 40.0, 40.0};
+    wall.top = 40.0;
+    const Buildings city({shed, wall});
+    for (const auto& [s, m] : std::vector<std::pair<Vec3, Vec3>> {{{10.0, 2.0, 12.0}, {20.0, 7.0, 12.0}},
+                 {{20.0, 7.0, 12.0}, {10.0, 2.0, 12.0}}, {{24.0, 1.0, 15.0}, {12.0, 8.0, 10.5}}})
+    {
+        INFO("source " << s.x << ", " << s.y << ", " << s.z);
+        // In the wall x = 30, then in the slope's plane.
+        const Vec3 in_wall(60.0 - s.x, s.y, s.z);
+        const RoofPlane plane = shed.roof[0];
+        const Vec3 image = in_wall - (2.0 * plane.above(in_wall)) * plane.normal();
+        const PointSourceField field(city, s, m);
+        std::size_t found = 0;
+        for (const PointRay& ray : field.rays())
+            if (ray.wedges == 0 && ray.floor == 0 && ray.facades.size() == 1 && ray.roof_facades.size() == 1)
+            {
+                found++;
+                REQUIRE(ray.length == Catch::Approx((m - image).norm()).epsilon(1e-12));
+                REQUIRE(ray.spreading == Catch::Approx(1.0 / ray.length).epsilon(1e-12));
+                // The path: source, the wall or the slope, the other, microphone.
+                REQUIRE(ray.path.size() == 4);
+                double drawn = 0.0;
+                for (std::size_t k = 1; k < ray.path.size(); k++)
+                    drawn += (ray.path[k] - ray.path[k - 1]).norm();
+                REQUIRE(drawn == Catch::Approx(ray.length).epsilon(1e-12));
+            }
+        REQUIRE(found == 1);
+    }
+}
+
+// Oblique mirrors do not commute. Construct a wall -> slope ray from its
+// two reflection points, then check its reciprocal and the diffraction-off
+// path against the composite image, not against another traced ray.
+TEST_CASE("oblique slope wall rays survive without diffraction", "[pitched_roofs]")
+{
+    Footprint shed;
+    shed.x = {0.0, 30.0, 30.0, 0.0};
+    shed.y = {0.0, 0.0, 20.0, 20.0};
+    shed.roof = {{0.3, 0.2, 6.0}};
+    shed.top = 19.0;
+    Footprint wall;
+    wall.x = {30.0, 32.0, 32.0, 30.0};
+    wall.y = {-30.0, -30.0, 40.0, 40.0};
+    wall.top = 50.0;
+    const Buildings city({shed, wall});
+    const RoofPlane plane = shed.roof.front();
+    const Vec3 p(20.0, 10.0, plane.at(20.0, 10.0)), w(30.0, 8.0, 20.0);
+    const Vec3 d = (p - w) / (p - w).norm();
+    const Vec3 s = w - 8.0 * Vec3(-d.x, d.y, d.z);
+    const Vec3 m = p + 10.0 * (d - 2.0 * d.dot(plane.normal()) * plane.normal());
+    const Vec3 wall_image(60.0 - s.x, s.y, s.z);
+    const Vec3 image = wall_image - 2.0 * plane.above(wall_image) * plane.normal();
+    const double expected = (m - image).norm();
+    for (bool reverse : {false, true})
+        for (bool diffraction : {false, true})
+            for (bool source_reflections : {false, true})
+            {
+                PointPathOptions options;
+                options.diffraction = diffraction;
+                options.source_reflections = source_reflections;
+                options.max_reflections = 2;
+                const Vec3 a = reverse ? m : s, b = reverse ? s : m;
+                const PointSourceField field(city, a, b, options);
+                std::size_t found = 0;
+                for (const PointRay& ray : field.rays())
+                    if (ray.wedges == 0 && ray.floor == 0 && ray.facades.size() == 1 && !ray.roof_facades.empty()
+                            && std::abs(ray.length - expected) < 1e-8)
+                    {
+                        found++;
+                        REQUIRE(ray.path.size() == 4);
+                        REQUIRE((ray.path[1] - (reverse ? p : w)).norm() < 1e-9);
+                        REQUIRE((ray.path[2] - (reverse ? w : p)).norm() < 1e-9);
+                        const Vec3 launch = ((reverse ? p : w) - a) / ((reverse ? p : w) - a).norm();
+                        REQUIRE((point_ray_launch(ray) - launch).norm() < 1e-12);
+                    }
+                INFO(reverse << ", diffraction " << diffraction << ", source reflections " << source_reflections);
+                REQUIRE(found == 1);
+            }
+}
+
+TEST_CASE("slope wall paths keep real floor legs and reciprocal lengths", "[pitched_roofs]")
+{
+    Footprint gable;
+    gable.x = {0.0, 10.0, 10.0, 0.0};
+    gable.y = {0.0, 0.0, 20.0, 20.0};
+    gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
+    gable.top = 9.0;
+    Footprint wall;
+    wall.x = {-60.0, 60.0, 60.0, -60.0};
+    wall.y = {25.0, 25.0, 27.0, 27.0};
+    wall.top = 50.0;
+    Footprint screen;
+    screen.x = {-8.0, -6.0, -6.0, -8.0};
+    screen.y = {-20.0, -20.0, 24.0, 24.0};
+    screen.top = 26.0;
+
+    std::size_t specular = 0, diffracted = 0, floors = 0, contact = 0;
+    for (bool screened : {false, true})
+    {
+        const Buildings city(screened ? std::vector<Footprint>{gable, wall, screen} : std::vector<Footprint>{gable, wall});
+        for (double y : {5.0, 15.0, 22.0})
+            for (double height : {0.0, 1.5, 8.0})
+                for (bool reverse : {false, true})
+                {
+                    const Vec3 high(-20.0, y, 40.0), low(42.0, 10.0, height);
+                    const Vec3 s = reverse ? low : high, m = reverse ? high : low;
+                    PointPathOptions options;
+                    options.double_diffraction = false;
+                    options.max_reflections = 2;
+                    const PointSourceField field(city, s, m, options), reciprocal(city, m, s, options);
+                    for (const PointRay& ray : field.rays())
+                    {
+                        if (ray.roof_facades.empty() || ray.facades.empty())
+                            continue;
+                        specular += ray.wedges == 0;
+                        diffracted += ray.wedges == 1;
+                        floors += ray.floor > 0;
+                        contact += ray.launch_mirrored;
+                        double drawn = 0.0;
+                        for (std::size_t k = 1; k < ray.path.size(); k++)
+                        {
+                            REQUIRE(ray.path[k].z >= -1e-10);
+                            REQUIRE((ray.path[k] - ray.path[k - 1]).norm() > 1e-9);
+                            drawn += (ray.path[k] - ray.path[k - 1]).norm();
+                        }
+                        REQUIRE(drawn == Catch::Approx(ray.length).epsilon(1e-10));
+                        Vec3 launch = ray.path[1] - s;
+                        if (ray.launch_mirrored)
+                            launch.z = -launch.z;
+                        launch /= launch.norm();
+                        REQUIRE((point_ray_launch(ray) - launch).norm() < 1e-10);
+                        REQUIRE(std::any_of(reciprocal.rays().begin(), reciprocal.rays().end(), [&](const PointRay& r) {
+                            return r.wedges == ray.wedges && r.floor == ray.floor && r.facades.size() == ray.facades.size()
+                                    && r.roof_facades == ray.roof_facades && std::abs(r.length - ray.length) < 1e-8;
+                        }));
+                        if (ray.wedges == 0)
+                            for (int f = 0; f < ray.floor; f++)
+                                REQUIRE(ray.floor_bounce[f].leg == Catch::Approx(ray.length).epsilon(1e-12));
+                    }
+                }
+    }
+    INFO(specular << " specular, " << diffracted << " diffracted, " << floors << " floor, " << contact << " contact");
+    REQUIRE(specular > 0);
+    REQUIRE(diffracted > 0);
+    REQUIRE(floors > 0);
+    REQUIRE(contact > 0);
+}
+
+TEST_CASE("an edge cutting a wall slope reflection keeps its diffracted partner", "[pitched_roofs]")
+{
+    Footprint shed;
+    shed.x = {0.0, 30.0, 30.0, 0.0};
+    shed.y = {0.0, 0.0, 20.0, 20.0};
+    shed.roof = {{0.3, 0.2, 6.0}};
+    shed.top = 19.0;
+    Footprint wall;
+    wall.x = {30.0, 32.0, 32.0, 30.0};
+    wall.y = {-30.0, -30.0, 40.0, 40.0};
+    wall.top = 50.0;
+    const RoofPlane plane = shed.roof.front();
+    const Vec3 p(20.0, 10.0, plane.at(20.0, 10.0)), w(30.0, 8.0, 20.0);
+    const Vec3 d = (p - w) / (p - w).norm();
+    const Vec3 s = w - 8.0 * Vec3(-d.x, d.y, d.z);
+    const Vec3 r = d - 2.0 * d.dot(plane.normal()) * plane.normal();
+    const Vec3 m = p + 10.0 * r, q = 0.5 * (w + p);
+    const Vec3 across = Vec3(0.0, 1.0, 0.0).cross(r) / Vec3(0.0, 1.0, 0.0).cross(r).norm();
+    Footprint screen;
+    screen.x = {q.x, q.x + 1.5, q.x + 1.5, q.x};
+    screen.y = {-20.0, -20.0, 40.0, 40.0};
+    screen.top = q.z;
+    const Buildings city({shed, wall, screen});
+    const std::vector<double> bands {125.0, 250.0, 500.0, 1000.0, 2000.0};
+    const std::vector<double> rho(city.facades().size() * bands.size(), 1.0);
+    for (bool reverse : {false, true})
+    {
+        std::vector<double> levels[2];
+        std::size_t specular[2] = {};
+        for (int side = 0; side < 2; side++)
+        {
+            const Vec3 receiver = m + (side == 0 ? -1e-4 : 1e-4) * across;
+            PointPathOptions options;
+            // One reflection on each side: a wall on the source's, a slope
+            // on the receiver's. Neither side needs two reflections.
+            options.max_edge_reflections = 1;
+            const PointSourceField field(city, reverse ? receiver : s, reverse ? s : receiver, options);
+            for (const PointRay& ray : field.rays())
+                specular[side] += ray.wedges == 0 && !ray.facades.empty() && !ray.roof_facades.empty();
+            levels[side].resize(bands.size());
+            field.band_levels(rho, 1.0, bands, 343.2, levels[side].data());
+        }
+        REQUIRE(specular[0] != specular[1]);
+        for (std::size_t b = 0; b < bands.size(); b++)
+        {
+            INFO("reverse " << reverse << ", band " << bands[b]);
+            REQUIRE(std::abs(levels[0][b] - levels[1][b]) < 0.05);
+        }
+    }
 }

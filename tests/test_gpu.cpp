@@ -293,6 +293,11 @@ struct Fields
         f.roof = {{1.0, 0.0, 6.0}, {0.4, 0.0, 6.9}, {-0.4, 0.0, 11.7}, {-1.0, 0.0, 18.0}};
         return f;
     }()}};
+    Buildings slopes {{[] {
+        Footprint f = block(0.0, 0.0, 10.0, 20.0, 9.0);
+        f.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
+        return f;
+    }(), block(-60.0, 25.0, 60.0, 27.0, 50.0), block(-8.0, -20.0, -6.0, 24.0, 26.0)}};
     std::vector<std::unique_ptr<PointSourceField>> fields;
     std::vector<std::vector<double>> reflection;
     // Per field, whether its microphone lies on a roof (PointRay::
@@ -310,6 +315,8 @@ struct Fields
             // A flush microphone, for a plate.
             {&blocks, {70.0, 70.0, 30.0}, {30.0, 70.0, 0.0}},
             {&mansard, {-15.0, 0.0, 0.5}, {14.0, 1.0, 0.5}},
+            {&slopes, {-20.0, 15.0, 40.0}, {42.0, 10.0, 1.5}},
+            {&slopes, {42.0, 10.0, 1.5}, {-20.0, 15.0, 40.0}},
             // A flush microphone on a roof, behind its edge from a low source.
             {&blocks, {-20.0, 30.0, 5.0}, {30.0, 30.0, 20.0}},
         };
@@ -356,7 +363,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     std::vector<std::vector<double>> cpu(count, std::vector<double>(bands.size()));
     gpu::BandEnergies energies(device);
     std::vector<std::size_t> host_first, point_first;
-    std::size_t shared = 0, thrice = 0, chained = 0, between = 0, plates = 0, roof_plates = 0;
+    std::size_t shared = 0, thrice = 0, chained = 0, between = 0, plates = 0, roof_plates = 0, slope_walls = 0;
     const std::vector<double> middles = sub_band_middles(bands, c);
     FloorModel grass;
     grass.admittance = ground_impedance(GroundModel {}, middles, c);
@@ -381,6 +388,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
         const FloorModel floor = flush ? plate : f.on_roof[i] ? on_roof : i % 3 == 1 ? grass : FloorModel(1.0);
         for (const PointRay& ray : field.rays())
         {
+            slope_walls += !ray.roof_facades.empty() && !ray.facades.empty();
             thrice += ray.wedges == 3;
             chained += ray.wedges > 3;
             between += ray.between != PointRay::no_facade;
@@ -408,6 +416,7 @@ TEST_CASE("the GPU's point-source amplitudes are the CPU's", "[gpu]")
     REQUIRE(thrice > 0);
     REQUIRE(chained > 0);
     REQUIRE(between > 0);
+    REQUIRE(slope_walls > 0);
     REQUIRE(plates == 1);
     REQUIRE(roof_plates == 1);
     energies.submit();

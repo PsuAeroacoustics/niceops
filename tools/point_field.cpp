@@ -122,6 +122,8 @@ int main(int argc, char** argv)
     bool no_diffraction = false;
     bool no_double_diffraction = false;
     bool no_roofs = false;
+    bool no_slope_facades = false;
+    bool unending_edges = false;
     bool exact_shared_faces = false;
     bool cascade = false;
     std::string rays_file;
@@ -198,6 +200,11 @@ int main(int argc, char** argv)
             "microphone, a mansard's or several rows of roofs from low beside them.")
             ->check(CLI::Range(3, 14));
     app.add_flag("--no_roofs", no_roofs, "Roofs do not reflect, for comparison.");
+    app.add_flag("--no_slope_facades", no_slope_facades,
+            "No ray off both a slope and a wall, for comparison: no specular ray off walls and a slope, and no "
+            "once-diffracted ray with walls and a slope on one side.");
+    app.add_flag("--unending_edges", unending_edges,
+            "UTD's edges without their ends, each taken as its whole infinite line, for comparison.");
     app.add_flag("--no_prune", no_prune,
             "Solve and check every diffracted path rather than ruling most out first: the same rays, slower; for "
             "checking the pruning.");
@@ -443,6 +450,8 @@ int main(int argc, char** argv)
         options.diffraction = !no_diffraction;
         options.double_diffraction = !no_double_diffraction;
         options.roofs = !no_roofs;
+        options.slope_facades = !no_slope_facades;
+        options.edge_ends = !unending_edges;
         options.shared_face = !cascade;
         options.sample_shared_faces = !exact_shared_faces;
         options.prune = !no_prune;
