@@ -1781,15 +1781,25 @@ cost 2.2 times the same houses flat (1408 against 637 s of CPU from 60 m up), mo
 eleven edges against eight; before the pruning took their roof planes it was 3.2 times (2051 s),
 with the same levels to the bit.
 
-**Slopes reflect.** A slope is a mirror in its plane (THEORY §6.5), with the floor at either end.
-EDGE's pitched rows above do not move with it: every microphone there is low in a house's shadow,
-where no slope reflects, and the drone is below the plane of the slope that faces them. In the
-suburb above, from 60 m up, 2 of the 162 garden microphones take a slope's reflection -- a
-neighbour's slope reflecting into the gap between two houses, the reflection point 0.6 m from its
-ridge -- and move by up to 5.2 dB in a band (10 of 810 band levels by more than 0.1 dB), at no cost
-measurable (110 s either way on the GPU). Without it the field stepped across the ridge's
-reflection boundary, by the reflection's level; with it the field is continuous there to 0.02 dB
-(`a slope's reflection ends where its edges' boundaries are`).
+**Slopes reflect and scatter.** A slope is a mirror in its plane, with the floor at either end and
+on either side of a once-diffracted ray, and scatters as the walls do (THEORY §6.5). EDGE's
+pitched rows above do not move with it: every microphone there is low in a house's shadow, where no
+slope reflects, and the drone is below the plane of the slope that faces them. In the suburb above,
+from 60 m up, 2 of the 162 garden microphones take a slope's specular reflection -- a neighbour's
+slope reflecting into the gap between two houses, the reflection point 0.6 m from its ridge -- and
+move by up to 5.2 dB in a band; with the once-diffracted rays that reflect in a slope, 197 of the
+810 band levels move by more than 0.1 dB, from −3.7 to +1.8 dB, the largest at 125 Hz. Those rays
+are a slope's reflection reaching an edge -- a corner, an eave -- whose ridge's diffracted wave was
+there without the reflection it is half of. 115 s on the GPU, 110 without either. The boundaries:
+
+| Boundary | Step with the slope's rays | Without them |
+| --- | --- | --- |
+| The slope's own edge (eave, ridge) cuts off its reflection | under 0.02 dB | the reflection's level |
+| Another building's edge cuts off the wave to the slope, or from it, 0.1 mm either side | under 0.05 dB | 8.1 dB |
+
+(`a slope's reflection ends where its edges' boundaries are`, `an edge that cuts off a slope's
+reflection leaves the field continuous`.) A slope's diffuse field is Lambert's law over the tilted
+surface to 0.5% (`a point source lights a slope's diffuse field as Lambert's law says`).
 
 ### Microphones on roofs and walls
 
@@ -1809,7 +1819,12 @@ its corner, behind the building and oblique to it, six bands from 125 Hz to 4 kH
 0.062 dB, the largest at 125 Hz in the building's shadow, where a hair off the face carries an
 edge's backscatter along it that the end on the face leaves out. An absorbing roof (ρ = 0.6)
 overhead gives the free field times (1 + √ρ)² to 0.05 dB, as above it. The GPU's levels for a
-microphone on a roof with a plate are the CPU's (`[gpu]`).
+microphone on a roof with a plate are the CPU's (`[gpu]`). On a gable's slope, five sources
+overhead, in front, below the eave, beyond the ridge and oblique, the end on the slope and the
+source on it, within 0.155 dB of a hair above it, the largest at 125 Hz beyond the ridge from the
+same backscatter (the ridge's wave down the slope, off the eave and back). In the plane-wave
+tables a receiver on a wall is one a hair off it, the wall's rays traced, to 0.001 dB over rigid
+walls in every direction, either side of grazing included.
 
 **Each microphone's floor.** On the demo district and a 4 s stretch of the demo track, observers
 raised 5 ft (on no roof or wall) give the levels the same observers at z = 0 give under the track

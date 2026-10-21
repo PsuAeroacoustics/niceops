@@ -288,3 +288,121 @@ TEST_CASE("a slope's reflection ends where its edges' boundaries are", "[microph
         }
     }
 }
+
+// A slope's rays as the floor models read them: the reflection point on the
+// plane at equal angles, a floor bounce on z = 0 at either end or not, each
+// bounce recording the whole unfolded path as its leg (the slope a mirror,
+// not a new source) and its grazing sine at the floor, and the legs summing
+// to the ray's length.  An end on the floor is its own bounce: no zero-length
+// leg is left in the path, so its launch and arrival are the slope's, which a
+// directional source and a plate read.
+TEST_CASE("a slope's rays carry their floor bounces and real directions", "[microphone_surfaces]")
+{
+    Footprint gable = box(0.0, 0.0, 10.0, 20.0, 9.0);
+    gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
+    const Buildings city({gable});
+    std::size_t rays = 0, with_floor = 0, on_floor = 0;
+    // A source high to the west, over the ridge onto the east slope, which
+    // sends it east and a little down to microphones about 40 m out; and the
+    // same turned round, the source on the floor.
+    const std::vector<std::pair<Vec3, Vec3>> pairs {{{-20.0, 10.0, 40.0}, {42.0, 10.0, 0.0}},
+            {{-20.0, 10.0, 40.0}, {40.0, 12.0, 1.5}}, {{-18.0, 7.0, 36.0}, {45.0, 9.0, 0.0}},
+            {{42.0, 10.0, 0.0}, {-20.0, 10.0, 40.0}}, {{40.0, 12.0, 1.5}, {-20.0, 10.0, 40.0}}};
+    for (const auto& [source, microphone] : pairs)
+        {
+            const PointSourceField field(city, source, microphone);
+            for (const PointRay& ray : field.rays())
+            {
+                if (ray.roof_facades.empty() || ray.wedges > 0)
+                    continue;
+                rays++;
+                REQUIRE(ray.path.front().x == source.x);
+                REQUIRE(ray.path.back().x == microphone.x);
+                double length = 0.0;
+                for (std::size_t k = 0; k + 1 < ray.path.size(); k++)
+                {
+                    const double leg = (ray.path[k + 1] - ray.path[k]).norm();
+                    REQUIRE(leg > 1e-6);
+                    length += leg;
+                }
+                REQUIRE(length == Catch::Approx(ray.length).epsilon(1e-9));
+                // The slope's point, and the mirror law there.
+                std::size_t at = 0;
+                for (std::size_t k = 1; k + 1 < ray.path.size(); k++)
+                    if (ray.path[k].z > 1e-9)
+                        at = k;
+                REQUIRE(at > 0);
+                const Vec3& p = ray.path[at];
+                const RoofPlane& plane = p.x < 5.0 ? gable.roof[0] : gable.roof[1];
+                REQUIRE(plane.above(p) == Catch::Approx(0.0).margin(1e-9));
+                const Vec3 in = (p - ray.path[at - 1]) / (p - ray.path[at - 1]).norm();
+                const Vec3 out = (ray.path[at + 1] - p) / (ray.path[at + 1] - p).norm();
+                REQUIRE(-in.dot(plane.normal()) == Catch::Approx(out.dot(plane.normal())).epsilon(1e-9));
+                for (int i = 0; i < ray.floor; i++)
+                {
+                    const FloorBounce& b = ray.floor_bounce[static_cast<std::size_t>(i)];
+                    REQUIRE(b.leg == Catch::Approx(ray.length).epsilon(1e-12));
+                    // The leg between the slope and the floor's side end.
+                    const Vec3 d = b.microphone ? ray.path[at + 1] - p : ray.path[at - 1] - p;
+                    REQUIRE(b.sin_grazing == Catch::Approx(std::abs(d.z) / d.norm()).epsilon(1e-9));
+                }
+                with_floor += ray.floor > 0;
+                on_floor += source.z == 0.0 || microphone.z == 0.0;
+                const Vec3 launch = point_ray_launch(ray);
+                REQUIRE(launch.norm() == Catch::Approx(1.0));
+                double elevation = 0.0, azimuth = 0.0;
+                point_ray_arrival(ray, elevation, azimuth);
+                const Vec3 last = ray.path[ray.path.size() - 1] - ray.path[ray.path.size() - 2];
+                REQUIRE(elevation == Catch::Approx(std::atan2(std::abs(last.z), std::hypot(last.x, last.y))));
+            }
+        }
+    INFO(rays << " slope rays, " << with_floor << " with the floor, " << on_floor << " with an end on it");
+    REQUIRE(with_floor > 0);
+    REQUIRE(on_floor > 0);
+}
+
+// Where another building's edge cuts off a slope's reflection -- the wave on
+// its way to the slope, or on its way from it to the microphone -- the field
+// is continuous: the edge's once-diffracted ray with the slope's reflection on
+// that side is the partner that carries half of it either side of the
+// boundary.  A box's top edge is put on the reflected path, and the
+// microphone moved 0.1 mm either side of the boundary it casts (a
+// micrometre is within the visibility test's contact).
+// Without those partners the level stepped by the reflection's.
+TEST_CASE("an edge that cuts off a slope's reflection leaves the field continuous", "[microphone_surfaces]")
+{
+    Footprint gable = box(0.0, 0.0, 10.0, 20.0, 9.0);
+    gable.roof = {{0.6, 0.0, 6.0}, {-0.6, 0.0, 12.0}};
+    const RoofPlane& east = gable.roof[1];
+    const Vec3 s(-20.0, 10.0, 40.0), p(7.5, 10.0, east.at(7.5, 10.0));
+    const Vec3 d = (p - s) / (p - s).norm();
+    const Vec3 r = d - (2.0 * d.dot(east.normal())) * east.normal();
+    const Vec3 m = p + 30.0 * r;
+    const Vec3 across = Vec3(0.0, 1.0, 0.0).cross(r) / Vec3(0.0, 1.0, 0.0).cross(r).norm();
+    // A box under the incoming leg, its east top edge on it, the leg grazing
+    // over it; then one under the outgoing leg.
+    const Vec3 before = s + 0.6 * (p - s), after = p + 0.5 * (m - p);
+    for (const Vec3& edge : {before, after})
+    {
+        const Buildings city({gable, box(edge.x - 1.5, -20.0, edge.x, 40.0, edge.z)});
+        // The slope's reflection is there on one side and not on the other.
+        const auto slope_rays = [&](double side) {
+            std::size_t n = 0;
+            const PointSourceField field(city, s, m + side * across);
+            for (const PointRay& ray : field.rays())
+                n += !ray.roof_facades.empty() && ray.wedges == 0 && ray.floor == 0;
+            return n;
+        };
+        REQUIRE(slope_rays(1e-4) != slope_rays(-1e-4));
+        double worst = 0.0;
+        const auto at = [&](double side) { return levels(city, s, m + side * across); };
+        const auto a = at(1e-4), b = at(-1e-4);
+        for (std::size_t i = 0; i < bands.size(); i++)
+        {
+            REQUIRE(std::isfinite(a[i]));
+            worst = std::max(worst, std::abs(a[i] - b[i]));
+        }
+        INFO("the edge at x = " << edge.x << ": worst " << worst << " dB");
+        REQUIRE(worst < 0.05);
+    }
+}

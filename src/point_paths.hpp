@@ -318,8 +318,8 @@ struct PointRay
     // A partner made by the fade: the edges it diffracts at besides the
     // ray's own (its length includes their detours).
     std::vector<MadeEdge> made_edges;
-    // The surface a raised end lies on -- a wall or a level roof, never the
-    // floor, whose partners are traced -- by the facade whose reflection
+    // The surface a raised end lies on -- a wall, a level roof or a slope,
+    // never the floor, whose partners are traced -- by the facade whose reflection
     // coefficient it takes (no_facade: a rigid one), or no_surface.  Every
     // ray arriving there has a partner reflected at the end itself, of one
     // length, so the ray carries (1 + R) for it; halved where the ray's wedge
@@ -404,8 +404,8 @@ class PathEnd
 {
 public:
     // Throws std::invalid_argument where `partners` is not ascending without
-    // repeats, and where the point lies on a pitched roof's slope or on an
-    // edge (Buildings::support), whose reflection the model does not hold.
+    // repeats, and where the point lies on an edge (Buildings::support), where
+    // no one surface's reflection stands for it.
     PathEnd(const Buildings& buildings, const Vec3& point, bool source, const PointPathOptions& options,
             const std::vector<std::size_t>& partners);
 
@@ -454,9 +454,9 @@ public:
     {
         return source_;
     }
-    // Whether it lies on a wall or a level roof (Buildings::support), and the
-    // facade whose reflection coefficient that surface takes (no_facade for a
-    // rigid roof; PointRay::no_surface where it lies on neither).
+    // Whether it lies on a wall, a level roof or a slope (Buildings::support),
+    // and the facade whose reflection coefficient that surface takes
+    // (no_facade for a rigid roof; PointRay::no_surface where it lies on none).
     bool on_surface() const
     {
         return surface_ != PointRay::no_surface;

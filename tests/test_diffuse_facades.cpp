@@ -396,3 +396,52 @@ TEST_CASE("a point source lights a roof's diffuse field as Lambert's law says", 
     REQUIRE(from_roofs > 0.0);
     REQUIRE(from_walls_floored > from_walls_bare);
 }
+
+// A slope scatters as a level roof does, its patches tilted with it: a shed
+// 20 m square whose roof rises 0.3 a metre along x, the source and the
+// microphone together d along the slope's normal above its middle, no floor.
+// In the plane the surface is a 20 sqrt(1.09) by 20 m rectangle centred under
+// them, so the microphone gathers rho s d^2 / pi times the integral of
+// dA / (d^2 + u^2 + v^2)^3 over it.  The slope's rays take rho (1 - s), so
+// the share s must come back here, or a slope's reflection loses it.
+TEST_CASE("a point source lights a slope's diffuse field as Lambert's law says", "[diffuse]")
+{
+    const double d = 2.0;
+    Footprint shed = box(-10.0, -10.0, 10.0, 10.0, 20.0);
+    shed.roof = {{0.3, 0.0, 6.0}};
+    const Buildings city({shed});
+    const Vec3 normal = shed.roof[0].normal();
+    const Vec3 point = Vec3(0.0, 0.0, 6.0) + d * normal;
+    const std::vector<double> bands {1000.0};
+    const std::vector<double> rho(city.facades().size(), 0.9), s(city.facades().size(), 0.5);
+    DiffuseOptions options;
+    options.radius = 50.0;
+    options.patch_size = 0.4;
+    options.roofs = true;
+    const DiffuseFacades diffuse(city, point, rho, s, 0.0, bands, 343.2, options, 4);
+    double area = 0.0;
+    std::size_t slope = 0;
+    for (const auto& p : diffuse.patches())
+        if (p.roof)
+        {
+            slope++;
+            area += p.area;
+            REQUIRE(p.normal.x == Catch::Approx(normal.x));
+            REQUIRE(p.normal.z == Catch::Approx(normal.z));
+            REQUIRE(shed.roof[0].above(p.center) == Catch::Approx(1e-3));
+        }
+    REQUIRE(slope == 50 * 50);
+    const double width = 20.0 * std::sqrt(1.09);
+    REQUIRE(area == Catch::Approx(width * 20.0));
+    double energy = 0.0;
+    diffuse.point_energy(point, 2, {}, &energy, 4);
+    double integral = 0.0;
+    const int n = 1000;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+        {
+            const double u = -0.5 * width + (i + 0.5) * width / n, v = -10.0 + (j + 0.5) * 20.0 / n;
+            integral += (width / n) * (20.0 / n) / std::pow(d * d + u * u + v * v, 3);
+        }
+    REQUIRE(energy == Catch::Approx(0.9 * 0.5 * d * d / pi * integral).epsilon(5e-3));
+}

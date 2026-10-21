@@ -888,7 +888,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     const Vec3& source = source_end.point();
     const Vec3& microphone = microphone_end.point();
     const int source_floors = options.source_reflections ? 2 : 1;
-    // An end on a wall or a level roof is reached along the face of an edge
+    // An end on a wall, a level roof or a slope is reached along the face of an edge
     // of that surface by a leg straight from the wedge, with no facade
     // between: end_face, that face (edge_face) or -1, its floor image's off
     // the floor (on a wall's face too).  Its leg is then on the face, every
@@ -1022,7 +1022,13 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
     // walls' images, vertical, then no longer hold.  An end on the slope
     // takes its reflection at the end itself (PathEnd::surface).
     if (options.roofs && options.max_reflections > 0)
-        for (std::size_t b = 0; b < buildings.size(); b++)
+    {
+        thread_local std::vector<std::uint32_t> near;
+        buildings.near_box(std::min(source.x, microphone.x) - options.radius,
+                std::max(source.x, microphone.x) + options.radius, std::min(source.y, microphone.y) - options.radius,
+                std::max(source.y, microphone.y) + options.radius, near);
+        std::sort(near.begin(), near.end());
+        for (const std::uint32_t b : near)
         {
             const Footprint& f = buildings.footprints()[b];
             const double* box = buildings.bounds(b);
@@ -1034,16 +1040,14 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
             for (std::size_t i = 0; i < f.roof.size(); i++)
             {
                 const RoofPlane& plane = f.roof[i];
-                if (plane.a == 0.0 && plane.b == 0.0)
+                if (plane.level())
                     continue;
-                const double scale = std::sqrt(1.0 + plane.a * plane.a + plane.b * plane.b);
-                const Vec3 n(-plane.a / scale, -plane.b / scale, 1.0 / scale);
-                const auto above = [&](const Vec3& p) { return (p.z - plane.at(p.x, p.y)) / scale; };
-                for (int fa = 0; fa < source_floors; fa++)
+                const Vec3 n = plane.normal();
+                for (int fa = 0; fa < 2; fa++)
                     for (int fb = 0; fb < 2; fb++)
                     {
                         const Vec3 pa = fa ? below(source) : source, pb = fb ? below(microphone) : microphone;
-                        const double da = above(pa), db = above(pb);
+                        const double da = plane.above(pa), db = plane.above(pb);
                         if (!(da > Buildings::contact && db > Buildings::contact))
                             continue;
                         const Vec3 image = pa - (2.0 * da) * n;
@@ -1051,7 +1055,8 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         if (!buildings.on_plane(b, i, p.x, p.y))
                             continue;
                         // The floor's bounce on either side, where the
-                        // unfolded leg crosses it.
+                        // unfolded leg crosses it; an end on the floor is its
+                        // own bounce.
                         const Vec3 qa = fa ? pa + (-pa.z / (p.z - pa.z)) * (p - pa) : source;
                         const Vec3 qb = fb ? p + (p.z / (p.z - pb.z)) * (pb - p) : microphone;
                         if ((fa && (buildings.inside(qa.x, qa.y) < buildings.size() || buildings.blocked(source, qa)))
@@ -1062,10 +1067,10 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                             continue;
                         PointRay ray;
                         ray.path.push_back(source);
-                        if (fa)
+                        if (fa && (qa - source).norm() > Buildings::contact)
                             ray.path.push_back(qa);
                         ray.path.push_back(p);
-                        if (fb)
+                        if (fb && (qb - microphone).norm() > Buildings::contact)
                             ray.path.push_back(qb);
                         ray.path.push_back(microphone);
                         ray.length = (pb - image).norm();
@@ -1085,6 +1090,7 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                     }
             }
         }
+    }
 
     if (!options.diffraction)
         return;
@@ -1362,6 +1368,173 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                         }
                 }
             }
+    }
+
+    // Diffracted once with a slope's reflection on one side: the partners a
+    // slope's specular rays need where an edge cuts off the wave that reaches
+    // the slope, or the one that leaves it.  As for those rays, no facade:
+    // the end, after the floor or not, mirrored in the slope's plane, and the
+    // reflection where the line from the edge's point to that image crosses
+    // the plane where that plane is the roof, the edge on the plane's air
+    // side and every leg open; the other side bare or off the floor.  One
+    // slope a ray, counted with its floor as that side's reflections.  They
+    // take UTD, as the roofs' do.
+    if (options.roofs && options.max_edge_reflections > 0 && !src.images.empty() && !mic.images.empty())
+    {
+        struct Slope
+        {
+            std::size_t building = 0, plane = 0;
+            int floor = 0;
+            Vec3 image;
+        };
+        // Each end's slopes within reach: the end, or its floor image, on the
+        // plane's air side.
+        auto slopes_of = [&](const Vec3& end, bool allowed, std::vector<Slope>& out) {
+            out.clear();
+            if (!allowed)
+                return;
+            thread_local std::vector<std::uint32_t> near;
+            buildings.near_box(end.x - options.radius, end.x + options.radius, end.y - options.radius,
+                    end.y + options.radius, near);
+            std::sort(near.begin(), near.end());
+            for (const std::uint32_t b : near)
+            {
+                const Footprint& f = buildings.footprints()[b];
+                for (std::size_t i = 0; i < f.roof.size(); i++)
+                    for (int floor = 0; floor < (options.max_edge_reflections > 1 ? 2 : 1); floor++)
+                    {
+                        const RoofPlane& plane = f.roof[i];
+                        const Vec3 from = floor ? below(end) : end;
+                        const double d = plane.above(from);
+                        if (plane.level() || !(d > Buildings::contact))
+                            continue;
+                        out.push_back({b, i, floor, from - (2.0 * d) * plane.normal()});
+                    }
+            }
+        };
+        thread_local std::vector<Slope> source_slopes, microphone_slopes;
+        slopes_of(source, options.source_reflections, source_slopes);
+        slopes_of(microphone, true, microphone_slopes);
+        // A slope side's real points from the edge's point q to the end, or
+        // false where the reflection misses the slope or a leg is blocked.
+        auto slope_leg = [&](const Slope& sl, const Vec3& q, const Vec3& end, std::vector<Vec3>& points) {
+            const RoofPlane& plane = buildings.footprints()[sl.building].roof[sl.plane];
+            const double dq = plane.above(q), di = -plane.above(sl.image);
+            if (!(dq > Buildings::contact) || !(di > 0.0))
+                return false;
+            const Vec3 p = q + (dq / (dq + di)) * (sl.image - q);
+            if (!buildings.on_plane(sl.building, sl.plane, p.x, p.y))
+                return false;
+            const Vec3 target = sl.floor ? below(end) : end;
+            const Vec3 bounce = sl.floor ? p + (p.z / (p.z - target.z)) * (target - p) : end;
+            if (buildings.blocked(q, p) || buildings.blocked(p, bounce)
+                    || (sl.floor && (buildings.inside(bounce.x, bounce.y) < buildings.size()
+                                            || buildings.blocked(bounce, end))))
+                return false;
+            points = {p};
+            if (sl.floor && (bounce - end).norm() > Buildings::contact)
+                points.push_back(bounce);
+            return true;
+        };
+        const auto& source_keep = src.edges[0];
+        const auto& microphone_keep = mic.edges[0];
+        std::size_t next = 0;
+        std::vector<Vec3> to_source, to_microphone;
+        for (std::size_t ki = 0; ki < source_keep.size() && !(source_slopes.empty() && microphone_slopes.empty());
+                ki++)
+        {
+            const std::size_t e = source_keep[ki];
+            while (next < microphone_keep.size() && microphone_keep[next] < e)
+                next++;
+            if (next == microphone_keep.size() || microphone_keep[next] != e)
+                continue;
+            const Edge& edge = edges[e];
+            // The source's side and the microphone's: a slope (its index into
+            // that end's list) or the end bare (-1) or off the floor (-2).
+            for (int side = 0; side < 2; side++)
+            {
+                const auto& slopes = side == 0 ? source_slopes : microphone_slopes;
+                for (std::size_t k = 0; k < slopes.size(); k++)
+                    for (int other_floor = 0; other_floor < (side == 1 ? source_floors : 2); other_floor++)
+                    {
+                        const Slope& sl = slopes[k];
+                        const bool slope_at_source = side == 0;
+                        const Vec3 other_end = slope_at_source ? microphone : source;
+                        const Vec3 pa = slope_at_source ? sl.image : (other_floor ? below(source) : source);
+                        const Vec3 pb = slope_at_source ? (other_floor ? below(microphone) : microphone) : sl.image;
+                        const PathEnd::View va = slope_at_source ? view_from(edge, pa, true, 0.0, edge.length)
+                                                                 : src.view(0, ki, other_floor);
+                        const PathEnd::View vb = slope_at_source ? mic.view(0, next, other_floor)
+                                                                 : view_from(edge, pb, true, 0.0, edge.length);
+                        double t;
+                        if (!keller_point(va.along, va.off, vb.along, vb.off, t) || !va.visible || !vb.visible
+                                || t < std::max(va.from, vb.from) || t > std::min(va.to, vb.to))
+                            continue;
+                        const Vec3 q = edge.start + t * edge.direction;
+                        if (q.z < 0.0 || buildings.buried(q))
+                            continue;
+                        const Vec3 in = pa - q, out = pb - q;
+                        const int on_a = slope_at_source ? -1 : end_face(source_end, edge, {}, other_floor);
+                        const int on_b = slope_at_source ? end_face(microphone_end, edge, {}, other_floor) : -1;
+                        if (!end_air(edge, normal_part(edge, in), on_a) || !end_air(edge, normal_part(edge, out), on_b)
+                                || doubles_back(edge, on_a, pb) || doubles_back(edge, on_b, pa))
+                            continue;
+                        std::vector<Vec3>& slope_points = slope_at_source ? to_source : to_microphone;
+                        std::vector<Vec3>& plain_points = slope_at_source ? to_microphone : to_source;
+                        if (!slope_leg(sl, q, slope_at_source ? source : microphone, slope_points)
+                                || !folded_path_open(buildings, q, other_end, {}, other_floor == 1, &plain_points))
+                            continue;
+                        PointRay ray;
+                        const double theta0 = end_angle(edge, in, on_a, ray.source_on_face);
+                        const double theta = end_angle(edge, out, on_b, ray.microphone_on_face);
+                        const double s_in = in.norm(), s_out = out.norm();
+                        const double sin_beta = normal_part(edge, in).norm() / s_in;
+                        ray.length = s_in + s_out;
+                        ray.spreading = 1.0 / std::sqrt(s_in * s_out * (s_in + s_out));
+                        // The floor's bounces, along the ray from the source:
+                        // on the plain side, its leg from the edge; on the
+                        // slope's, the whole unfolded leg through the slope,
+                        // the slope a mirror and not a new source.
+                        const auto slope_bounce = [&](bool at_microphone) {
+                            const Vec3& p = slope_points.front();
+                            const Vec3 target = below(at_microphone ? microphone : source);
+                            add_floor_bounce(ray, std::abs(target.z - p.z) / (target - p).norm(),
+                                    (sl.image - q).norm(), at_microphone);
+                        };
+                        if (slope_at_source)
+                        {
+                            if (sl.floor)
+                                slope_bounce(false);
+                            if (other_floor)
+                                add_floor_bounce(ray, q, pb, true);
+                        }
+                        else
+                        {
+                            if (other_floor)
+                            {
+                                ray.source_plane = 0.0;
+                                add_floor_bounce(ray, pa, q, false);
+                            }
+                            if (sl.floor)
+                                slope_bounce(true);
+                        }
+                        ray.roof_facades = {buildings.roof_facade(sl.building)};
+                        ray.wedges = 1;
+                        ray.wedge[0] = {wedge_angles(edge.n, theta, theta0), sin_beta,
+                                s_in * s_out * sin_beta / (s_in + s_out), false};
+                        ray.edge_source.edges[0] = e;
+                        ray.edge_source.source = pa;
+                        ray.edge_source.microphone = pb;
+                        ray.edge_source.stretches[0] = {std::max(va.from, vb.from), std::min(va.to, vb.to)};
+                        ray.path = {source};
+                        ray.path.insert(ray.path.end(), to_source.rbegin(), to_source.rend());
+                        ray.path.push_back(q);
+                        ray.path.insert(ray.path.end(), to_microphone.begin(), to_microphone.end());
+                        ray.path.push_back(microphone);
+                        rays_.push_back(std::move(ray));
+                    }
+            }
+        }
     }
 
     if (!options.double_diffraction)

@@ -65,9 +65,10 @@ struct DiffuseOptions
     // patches to the microphone; empty for none.  Between patches it is left
     // out.
     std::vector<double> air;
-    // Whether the roofs scatter too, cut into patches facing up, each with
-    // the rho and s of its building's first facade, as a point source's roof
-    // reflection takes them.  A building then scatters as a whole, walls and
+    // Whether the roofs scatter too, cut into patches facing up, or along a
+    // slope's normal on a pitched roof, each with the rho and s of its
+    // building's first facade, as a point source's roof and slope reflections
+    // take them.  A building then scatters as a whole, walls and
     // roof, where any of its walls is within the radius.  For a model whose
     // rays reflect in the roofs.
     bool roofs = false;
@@ -94,7 +95,7 @@ public:
     struct Patch
     {
         Vec3 center;          // a millimetre out from the face
-        Vec3 normal;          // unit, outward: horizontal on a wall, up on a roof
+        Vec3 normal;          // unit, outward: horizontal on a wall, up on a level roof, the plane's on a slope
         double area = 0.0;
         double width = 0.0;   // along `along`
         double height = 0.0;  // along `across`

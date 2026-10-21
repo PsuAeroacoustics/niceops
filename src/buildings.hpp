@@ -17,6 +17,7 @@
 // starts on an edge where it diffracts, or grazes along a wall -- is not.
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -46,6 +47,20 @@ struct RoofPlane
     double at(double x, double y) const
     {
         return a * x + b * y + c;
+    }
+    // Its unit normal, upward: toward the air above it.
+    Vec3 normal() const
+    {
+        return Vec3(-a, -b, 1.0) / std::sqrt(a * a + b * b + 1.0);
+    }
+    // The signed distance of p above it, along the normal.
+    double above(const Vec3& p) const
+    {
+        return (p.z - at(p.x, p.y)) / std::sqrt(a * a + b * b + 1.0);
+    }
+    bool level() const
+    {
+        return a == 0.0 && b == 0.0;
     }
 };
 

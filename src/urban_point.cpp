@@ -664,17 +664,16 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
             }
         }
     }
-    // A microphone on a wall or a level roof: that surface is its own end's
-    // reflector (raised, by the facade whose coefficient it takes) -- for the
-    // turbulent field's doubling at the receiver, and for a plate there, R in
-    // P_d + R P_r (FloorModel::surface, below).
+    // A microphone on a wall, a level roof or a slope: that surface is its own
+    // end's reflector (raised, by the facade whose coefficient it takes) -- for
+    // the turbulent field's doubling at the receiver, and for a plate on a
+    // level roof, R in P_d + R P_r (FloorModel::surface, below).
     std::vector<std::vector<double>> receiver_energy = floor_energy;
     std::vector<std::size_t> raised(nm, PointRay::no_surface);
     for (std::size_t m = 0; m < nm; m++)
     {
         const Buildings::Support on = city.support(microphones[m]);
-        if (on.kind != Buildings::Support::Kind::facade && on.kind != Buildings::Support::Kind::roof
-                && on.kind != Buildings::Support::Kind::slope)
+        if (on.kind == Buildings::Support::Kind::none || on.kind == Buildings::Support::Kind::edge)
             continue;
         if (floor_of[m].plate && on.kind != Buildings::Support::Kind::roof)
             throw std::invalid_argument("microphone " + std::to_string(m + 1)
@@ -864,8 +863,8 @@ std::size_t UrbanDistrict::levels(const Database& database, const std::vector<Da
     // energy, from the sphere along the straight line as a ray's is (weigh),
     // times the scattered level, its fit's doubling by the ground at either
     // end taken as the floor's ((1 + R) / 2 each, R its energy coefficient or
-    // a ground's diffuse_reflection; at a microphone on a wall or a level roof,
-    // that surface's), absorbed along the line.
+    // a ground's diffuse_reflection; at a microphone on a wall, a level roof
+    // or a slope, that surface's), absorbed along the line.
     const double turbulence_cv2 = velocity_equivalent(d.turbulence, sound_speed);
     auto turbulence_energy = [&](std::size_t state, std::size_t m, Scratch& w, std::vector<double>& out) {
         out.clear();

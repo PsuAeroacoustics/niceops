@@ -383,11 +383,14 @@ old and new results only with them in mind.
   (UE24-26) to 1.25, 1.70 and 1.80, and DigiCity's microphone 7 from −1.97 / 2.72 to −1.91 / 2.64.
 - **A pitched roof's slopes reflect** (`--roofs`), as mirrors in their planes, with the floor at
   either end; and a source or microphone may lie on a slope, taking its reflection there (a plate
-  on a slope is refused, as on a wall). They reflected nothing, so the field stepped across each
-  slope edge's reflection boundary, and a point on a slope was refused. EDGE's pitched scenes do not
-  move: every microphone there is low in a house's shadow, which no slope reflection reaches. In a
-  suburb of 64 gable houses heard from a drone 60 m up, 2 of 162 garden microphones moved, by up
-  to 5.2 dB in a band, where a neighbour's slope reflects into the gap near its ridge.
+  on a slope is refused, as on a wall). Once-diffracted rays take a slope's reflection on either
+  side of the edge, and slopes scatter, with tilted diffuse patches. They reflected and scattered
+  nothing, so the field stepped across each slope edge's reflection boundary and across every
+  boundary another edge cast on a slope's reflection (8 dB in the test), a scattering slope's
+  rays lost its share s, and a point on a slope was refused. EDGE's pitched scenes do not move:
+  every microphone there is low in a house's shadow, which no slope reflection reaches. In a
+  suburb of 64 gable houses heard from a drone 60 m up, 197 of 810 garden band levels moved by
+  more than 0.1 dB, from −3.7 to +1.8 dB.
 - **`--edge_source`'s twice-diffracted rays decide each wavenumber alone**, and its end ratios let
   the other edge's point slide. The choice between the cascade-times-ratios and the integral was
   made at a run's least wavenumber, so a 1-2 kHz band moved 0.7-1.8 dB with whether 125 Hz was in

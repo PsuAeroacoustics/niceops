@@ -363,8 +363,7 @@ Edge roof_edge(const Vec3& a, const Vec3& b, const RoofPlane& plane, const Vec3&
     const Vec3 in(inward.x, inward.y, plane.a * inward.x + plane.b * inward.y);
     const Vec3 face0 = in - in.dot(e.direction) * e.direction;
     e.face0 = face0 / face0.norm();
-    const Vec3 up(-plane.a, -plane.b, 1.0);
-    e.air = up / up.norm();
+    e.air = plane.normal();
     const Vec3 other = second - second.dot(e.direction) * e.direction;
     e.n = e.angle(other / other.norm()) / pi;
     e.building = building;

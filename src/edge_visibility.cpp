@@ -152,7 +152,8 @@ bool prism_planes(const Footprint& f, double z_low, const Facade* mirror, std::v
             if (up < 0.0 && z_low >= 0.0)
                 continue;
             const double norm = std::sqrt(r.a * r.a + r.b * r.b + 1.0);
-            double mx = -r.a / norm, my = -r.b / norm, c = r.c / norm;
+            const Vec3 normal = r.normal();
+            double mx = normal.x, my = normal.y, c = r.c / norm;
             if (mirror)
             {
                 const double k = mx * nx + my * ny;

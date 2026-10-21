@@ -387,9 +387,17 @@ checks. What to keep:
   diffuse patches. A slope reflects specular rays of its own (`on_plane`, the slope rays after the
   flat roofs' in `PointSourceField`): the source's image in the plane, the reflection point where
   that plane is the roof, the floor at either end or not, no facades; the floor's bounce on such a
-  ray records the whole unfolded length as its leg (`add_floor_bounce` by sine and leg). Slopes
-  scatter nothing. `roof_ridges` keeps a line only where its two planes are each the least on one
-  side.
+  ray records the whole unfolded length as its leg (`add_floor_bounce` by sine and leg), and an
+  end on the floor is its own bounce, no zero-length leg left in the path (the launch and the
+  arrival read it). Once-diffracted rays take a slope on either side of the edge (the slope
+  partners after the level roofs' in `PointSourceField`): each end's slopes within reach, the end
+  or its floor image above the plane (`slopes_of`), and the leg from the edge's point through the
+  reflection (`slope_leg`); no facade on that side, the other bare or off the floor. They are what
+  keeps the field continuous where another edge cuts a slope's reflection off. Slopes scatter:
+  `add_roof_patches` cuts each plane's cells in plan and lifts them onto it (`on_plane` per cell),
+  and only a level patch (normal straight up) skips the floor's lighting. `RoofPlane::normal`,
+  `above` and `level` are the one spelling of a plane's geometry. `roof_ridges` keeps a line only
+  where its two planes are each the least on one side.
 - **The pruning proof takes the roof planes** (`prism_planes`): the prism cut by each, mirrored in
   a facade and in the floor as the footprint is. Proving with the prism to the top hides real rays,
   and `pruning finds every ray among pitched houses` fails then (checked by making that change).

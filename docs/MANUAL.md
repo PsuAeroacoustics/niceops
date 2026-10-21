@@ -1143,8 +1143,9 @@ over a pass as it does in an exposure.
   other, judged along the side wherever the two roofs' profiles cross or break. A level deck
   reflects and scatters as a flat roof does. Its walls stand up to the roof, its eaves, rakes, ridges and hips diffract as wedges of their own
   angles, and every path the flat roofs take applies; a slope reflects specularly, as a mirror in its
-  plane with the floor at either end, though not with a wall's reflection nor after an edge, and
-  scatters nothing diffusely ([THEORY §6.5](THEORY.md#65-urban-receivers)). A building given no plane keeps
+  plane with the floor at either end and on either side of a once-diffracted ray, though not with a
+  wall's reflection, and scatters diffusely as the walls do, with its building's coefficients
+  ([THEORY §6.5](THEORY.md#65-urban-receivers)). A building given no plane keeps
   its flat roof. On EDGE's measured pitched scenes the planes are 3.1 dB rms where the same houses
   as flat blocks are 4.5 at the mean height and 5.8 at the ridge
   ([FIDELITY](FIDELITY.md#pitched-roofs)).

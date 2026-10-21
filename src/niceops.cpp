@@ -3089,11 +3089,11 @@ Trajectory process_trajectory(const Database& database, const PathJob& job,
         const UrbanDistrict& district = *options.buildings;
         // Each microphone's floor, the plane the buildings stand on for it: the
         // district's own, z = 0, where its observer stands there or on a
-        // surface of the district (a roof or a wall); otherwise the observer's
-        // own z, as open ground and the urban tables take an observer's ground.
-        // A microphone stands where the run puts any, the observer's point
-        // raised by its height -- on the floor, a roof, a wall or a pole -- so
-        // long as it is in the air or on a wall or a level roof.
+        // surface of the district (a roof, a slope or a wall); otherwise the
+        // observer's own z, as open ground and the urban tables take an
+        // observer's ground.  A microphone stands where the run puts any, the
+        // observer's point raised by its height -- on the floor, a roof, a
+        // slope, a wall or a pole -- so long as it is not on an edge.
         std::vector<double> floor_height(observer_count);
         for (std::size_t i = 0; i < observer_count; i++)
             floor_height[i] = district.floor_height(observers[i]);

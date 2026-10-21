@@ -925,7 +925,7 @@ half that where it was diffracted at an edge with the wall as a face, whose coef
 wall's reflection already; its diffuse energy takes $(1 + \sqrt{\rho_w})^2$. Since the run's
 first-order reflections would need the factor too, the table holds them for such a microphone, and
 the run evaluates none. Over rigid walls this is a microphone a hair off the wall with the wall's
-rays traced, to 0.001 dB. Among buildings the rays
+rays traced ([FIDELITY](FIDELITY.md#microphones-on-roofs-and-walls)). Among buildings the rays
 leave out, beyond the canyon's list: diffraction at two edges in turn, an edge lit only by a
 reflected wave or off the floor, a diffraction point off the end of its edge (the corner's own
 diffraction), and roofs as reflectors (a microphone on or over a roof is refused).
@@ -1047,9 +1047,9 @@ turbulent fill's doubling at the receiver is the surface's. A plate on a roof ta
 $P_d + R\,P_r$ on each ray where the floor's takes $P_d$ and its partner $Q\,P_r$. A pitched
 roof's slope is such a surface too, with the roof's reflection. An end on an edge, where no one
 surface stands for it, is refused, as is a plate on a wall or a slope: a plate lies level. A point
-a hair off the surface, whose partners are traced, hears the same within 0.06 dB on a wall or a
-level roof and 0.16 on a slope, the residue in each the edge's backscatter along the face, which
-the point on the face leaves out.
+a hair off the surface, whose partners are traced, hears the same but for an edge's backscatter
+along the face, which the point on the face leaves out
+([FIDELITY](FIDELITY.md#microphones-on-roofs-and-walls)).
 
 **Each microphone's floor.** In a run, a microphone's floor is the plane the buildings stand on for
 it: the district's own, $z = 0$, where its observer stands there or on a surface of the district;
@@ -1564,13 +1564,21 @@ sharing sides. Its geometry follows:
   the plane where that plane is the roof, both ends on its air side and every leg open, with the
   floor or without at either end. The floor's spherical-wave coefficient takes the whole unfolded
   path as its image's, the slope being a mirror and not a new source. No facade reflection goes with
-  it: a slope turns a ray up or down, so the walls' images, vertical, no longer unfold the path,
-  and no diffracted ray reflects in a slope. Where the reflection point reaches the slope's edge --
-  the eave, the ridge, a hip -- the edge's reflection boundary is, and the field is continuous
-  across it to 0.02 dB; with no slope reflection it stepped there by the reflection's level, since
-  each edge's coefficient carries half of it either side. §6.5's level roof reflection is a
-  mansard's deck's, which reflects and scatters as a flat roof does. The slopes scatter no diffuse
-  energy, and a wall's patches stop at its top.
+  it: a slope turns a ray up or down, so the walls' images, vertical, no longer unfold the path.
+  Where the reflection point reaches the slope's edge -- the eave, the ridge, a hip -- is that
+  edge's reflection boundary, across which each edge's coefficient carries half the reflection, so
+  the field is continuous there. Where another building's edge cuts off the wave reaching the slope,
+  or leaving it, the partner is the ray diffracted at that edge with the slope's reflection on that
+  side: a once-diffracted ray takes a slope on either side of its edge as it takes a level roof, the
+  end (after the floor or not) mirrored in the plane, the reflection where the line from the edge to
+  that image crosses the plane where it is the roof, the edge on the plane's air side, with no
+  facade on that side and one slope a ray (FIDELITY has both boundaries). §6.5's level roof
+  reflection is a mansard's deck's, which reflects and scatters as a flat roof does.
+- **What a slope scatters.** The slopes scatter as the walls and the level roofs do, with their
+  building's $\rho$ and $s$, so that their rays' $\rho(1 - s)$ loses nothing: each is cut into
+  patches in plan, each lifted onto the plane, its area the plan cell's over the plane's cosine, its
+  normal the plane's. A slope can face what the floor sends up, which a level roof cannot, so its
+  patches are lit off the floor too. A wall's patches stop at its top.
   A ridge is a line with one of its two planes least on either side, so a level plane through a
   ridge makes no second one. The
   turbulence screen's height is the roof's over the crossing. The pruning's visibility proof takes
