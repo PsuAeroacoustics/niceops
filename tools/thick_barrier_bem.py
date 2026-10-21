@@ -33,6 +33,12 @@ there, rays diffracted at four edges and more):
     tools/thick_barrier_bem.py --width 12 --height 6 --roof '1.5,7.5;5.25,9;6.75,9;10.5,7.5' \
         --sources='-15,0.5;-30,2' --behind 2,6,15 --heights 0.5,1.5,4 --per_wavelength 60 --out mansard60.csv
 
+With --blocks, more flat blocks beyond the first, and receivers --behind the last of them (a street, the
+rays crossing it diffracted between two buildings' edges):
+
+    tools/thick_barrier_bem.py --width 10 --height 10 --blocks '20,30,10' --sources='-100,12;-50,15' \
+        --behind 2,5,10 --heights 1.2 --frequencies 125,250,500 --per_wavelength 30 --out street30.csv
+
 Needs numpy and scipy.  --check compares against the exact series for a rigid circular cylinder
 (0.005 dB at 800 Hz with 800 elements).
 """
@@ -122,14 +128,20 @@ def solve(a, b, normal, k, source, ground, chief):
 
 
 def block_case(args):
-    width, height, f, source, receivers, per_wavelength, roof = args
+    width, height, f, source, receivers, per_wavelength, roof, blocks = args
     k = 2 * np.pi * f / C
-    # The roof's corners between the eaves (none for a flat roof), far to near.
-    profile = [(width, 0.0), (width, height), *roof[::-1], (0.0, height), (0.0, 0.0)]
-    a, b, normal = mesh(profile, min(C / f / per_wavelength, 0.25), closed=False, grade=3)
+    h = min(C / f / per_wavelength, 0.25)
     rng = np.random.default_rng(1)
-    chief = np.stack([rng.uniform(0.1 * width, 0.9 * width, 12), rng.uniform(0.1 * height, 0.9 * height, 12)], axis=1)
-    field = solve(a, b, normal, k, np.asarray(source, float), True, chief)
+    meshes, chief = [], []
+    # The roof's corners between the eaves (none for a flat roof), far to near; then any more flat
+    # blocks (x0, x1, height), each its own profile and CHIEF points.
+    for x0, x1, top, corners in [(0.0, width, height, roof), *[(x0, x1, top, []) for x0, x1, top in blocks]]:
+        profile = [(x1, 0.0), (x1, top), *corners[::-1], (x0, top), (x0, 0.0)]
+        meshes.append(mesh(profile, h, closed=False, grade=3))
+        chief.append(np.stack([rng.uniform(x0 + 0.1 * (x1 - x0), x1 - 0.1 * (x1 - x0), 12),
+                               rng.uniform(0.1 * top, 0.9 * top, 12)], axis=1))
+    a, b, normal = (np.concatenate(parts) for parts in zip(*meshes))
+    field = solve(a, b, normal, k, np.asarray(source, float), True, np.concatenate(chief))
     return [(width, f, source[0], source[1], x, z, p.real, p.imag) for (x, z), p in zip(receivers, field(receivers))]
 
 
@@ -157,7 +169,8 @@ def main():
     parser.add_argument('--sources', default='-10,2;-25,4.5;-15,6.5', help='x,z;x,z;... (m, the block at 0 < x < width)')
     parser.add_argument('--ridge', type=float, help='a gable roof, its ridge this high over the middle (m)')
     parser.add_argument('--roof', help="the roof's corners between the eaves, near to far: x,z;x,z;... (m)")
-    parser.add_argument('--behind', default='2,5,10,25', help='receivers this far past the block (m)')
+    parser.add_argument('--blocks', help='more flat blocks beyond the first: x0,x1,height;... (m)')
+    parser.add_argument('--behind', default='2,5,10,25', help='receivers this far past the last block (m)')
     parser.add_argument('--heights', default='1.2,4.8,5.1,5.26,5.6,6.5,8', help='receiver heights (m)')
     parser.add_argument('--frequencies', default='125,250,500,1000')
     parser.add_argument('--per_wavelength', type=float, default=60.0)
@@ -168,11 +181,13 @@ def main():
         check()
         return
     sources = [tuple(float(v) for v in s.split(',')) for s in args.sources.split(';')]
-    receivers = np.array([(args.width + float(d), float(z)) for d in args.behind.split(',') for z in args.heights.split(',')])
+    blocks = [tuple(float(v) for v in b.split(',')) for b in args.blocks.split(';')] if args.blocks else []
+    far = max([args.width] + [x1 for _, x1, _ in blocks])
+    receivers = np.array([(far + float(d), float(z)) for d in args.behind.split(',') for z in args.heights.split(',')])
     roof = [] if args.ridge is None else [(0.5 * args.width, args.ridge)]
     if args.roof:
         roof = [tuple(float(v) for v in p.split(',')) for p in args.roof.split(';')]
-    jobs = [(args.width, args.height, float(f), s, receivers, args.per_wavelength, roof)
+    jobs = [(args.width, args.height, float(f), s, receivers, args.per_wavelength, roof, blocks)
             for f, s in itertools.product(args.frequencies.split(','), sources)]
     with Pool(args.j) as pool:
         rows = sorted(row for rows in pool.imap_unordered(block_case, jobs) for row in rows)

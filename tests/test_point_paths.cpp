@@ -1134,6 +1134,236 @@ TEST_CASE("over a long block the edge-source field is the boundary-element solut
     REQUIRE(std::sqrt(square / count) < 0.15);
 }
 
+namespace {
+
+// A step: a long block 10 m across and 10 m high, then one 10 m across and
+// 7 m high against it.  The boundary-element solutions (tools/thick_barrier_bem.py
+// --width 20 --height 7 --roof '0,10;10,10;10,7', 45 elements a wavelength,
+// converged to 0.15 dB against 30), BlockCase's columns, the microphone's
+// distance behind the lower block; none on the line through the two blocks'
+// far edges, where the uniform form's level steps (FIDELITY, "Across a step").
+const std::vector<BlockCase>& step_cases()
+{
+    static const std::vector<BlockCase> cases {
+        {125, -100, 10.5, 2, 1.2, -15.69},
+        {250, -100, 10.5, 2, 1.2, -31.37},
+        {125, -100, 10.5, 2, 4, -15.20},
+        {250, -100, 10.5, 2, 4, -33.29},
+        {500, -100, 10.5, 2, 4, -24.19},
+        {125, -100, 10.5, 5, 1.2, -17.64},
+        {250, -100, 10.5, 5, 1.2, -36.33},
+        {500, -100, 10.5, 5, 1.2, -25.87},
+        {125, -100, 10.5, 5, 2, -14.84},
+        {250, -100, 10.5, 5, 2, -31.09},
+        {500, -100, 10.5, 5, 2, -28.46},
+        {125, -100, 10.5, 5, 3, -15.08},
+        {250, -100, 10.5, 5, 3, -33.67},
+        {500, -100, 10.5, 5, 3, -23.36},
+        {125, -100, 10.5, 5, 4, -15.39},
+        {250, -100, 10.5, 5, 4, -28.41},
+        {500, -100, 10.5, 5, 4, -22.33},
+        {125, -100, 10.5, 5, 5, -11.03},
+        {250, -100, 10.5, 5, 5, -24.25},
+        {500, -100, 10.5, 5, 5, -19.56},
+        {125, -100, 10.5, 5, 6, -10.68},
+        {250, -100, 10.5, 5, 6, -20.51},
+        {500, -100, 10.5, 5, 6, -15.14},
+        {125, -100, 10.5, 5, 7, -7.24},
+        {250, -100, 10.5, 5, 7, -16.53},
+        {500, -100, 10.5, 5, 7, -12.58},
+        {125, -100, 10.5, 10, 1.2, -28.02},
+        {250, -100, 10.5, 10, 1.2, -22.62},
+        {500, -100, 10.5, 10, 1.2, -21.94},
+        {125, -100, 10.5, 10, 2, -12.14},
+        {250, -100, 10.5, 10, 2, -26.72},
+        {500, -100, 10.5, 10, 2, -26.24},
+        {125, -100, 10.5, 10, 3, -13.65},
+        {250, -100, 10.5, 10, 3, -28.73},
+        {500, -100, 10.5, 10, 3, -19.90},
+        {125, -100, 10.5, 10, 5, -8.63},
+        {250, -100, 10.5, 10, 5, -17.94},
+        {500, -100, 10.5, 10, 5, -15.30},
+        {125, -100, 10.5, 10, 6, -10.81},
+        {250, -100, 10.5, 10, 6, -16.46},
+        {500, -100, 10.5, 10, 6, -14.55},
+        {125, -100, 10.5, 10, 7, -6.35},
+        {250, -100, 10.5, 10, 7, -15.76},
+        {500, -100, 10.5, 10, 7, -10.88},
+        {125, -60, 12, 5, 1.2, -23.26},
+        {250, -60, 12, 5, 1.2, -29.28},
+        {500, -60, 12, 5, 1.2, -26.15},
+        {125, -60, 12, 5, 4, -20.89},
+        {250, -60, 12, 5, 4, -21.35},
+        {500, -60, 12, 5, 4, -22.60},
+        {125, -60, 12, 10, 1.2, -33.14},
+        {250, -60, 12, 10, 1.2, -15.50},
+        {500, -60, 12, 10, 1.2, -22.13},
+        {125, -30, 15, 2, 1.2, -14.40},
+        {250, -30, 15, 2, 1.2, -22.77},
+        {500, -30, 15, 2, 1.2, -27.48},
+        {125, -30, 15, 2, 4, -13.97},
+        {250, -30, 15, 2, 4, -24.82},
+        {500, -30, 15, 2, 4, -18.74},
+        {125, -30, 15, 5, 1.2, -16.19},
+        {250, -30, 15, 5, 1.2, -27.71},
+        {500, -30, 15, 5, 1.2, -20.24},
+        {125, -30, 15, 5, 2, -13.40},
+        {250, -30, 15, 5, 2, -22.41},
+        {500, -30, 15, 5, 2, -22.82},
+        {125, -30, 15, 5, 3, -13.59},
+        {250, -30, 15, 5, 3, -24.89},
+        {500, -30, 15, 5, 3, -17.70},
+        {125, -30, 15, 5, 4, -13.92},
+        {250, -30, 15, 5, 4, -19.53},
+        {500, -30, 15, 5, 4, -16.63},
+        {125, -30, 15, 5, 5, -9.48},
+        {250, -30, 15, 5, 5, -15.34},
+        {500, -30, 15, 5, 5, -13.78},
+        {125, -30, 15, 5, 6, -9.20},
+        {250, -30, 15, 5, 6, -11.57},
+        {500, -30, 15, 5, 6, -9.20},
+        {125, -30, 15, 5, 7, -5.69},
+        {250, -30, 15, 5, 7, -7.82},
+        {500, -30, 15, 5, 7, -6.33},
+        {125, -30, 15, 10, 1.2, -25.72},
+        {250, -30, 15, 10, 1.2, -13.60},
+        {500, -30, 15, 10, 1.2, -16.02},
+        {125, -30, 15, 10, 2, -10.26},
+        {250, -30, 15, 10, 2, -17.54},
+        {500, -30, 15, 10, 2, -20.19},
+        {125, -30, 15, 10, 3, -11.88},
+        {250, -30, 15, 10, 3, -19.31},
+        {500, -30, 15, 10, 3, -13.91},
+        {125, -30, 15, 10, 5, -6.78},
+        {250, -30, 15, 10, 5, -8.77},
+        {500, -30, 15, 10, 5, -8.95},
+        {125, -30, 15, 10, 6, -8.87},
+        {250, -30, 15, 10, 6, -7.11},
+        {500, -30, 15, 10, 6, -7.76},
+        {125, -30, 15, 10, 7, -4.41},
+        {250, -30, 15, 10, 7, -6.64},
+        {500, -30, 15, 10, 7, -4.01},
+    };
+    return cases;
+}
+
+// The line source's level, dB re the free field, over long buildings: every
+// ray times the root of its length.
+double line_source_level(const Buildings& city, const Vec3& s, const Vec3& m, double f, const PointPathOptions& options)
+{
+    const double k = 2.0 * pi * f / 343.2;
+    const std::vector<double> reflection(city.facades().size(), 1.0);
+    const PointSourceField field(city, s, m, options);
+    std::complex<double> sum(0.0, 0.0);
+    for (const PointRay& ray : field.rays())
+        sum += point_ray_amplitude(ray, reflection, 1.0, k) * std::sqrt(ray.length) * std::polar(1.0, k * ray.length);
+    return 20.0 * std::log10(std::abs(sum) * std::sqrt((m - s).norm()));
+}
+
+Footprint long_block(double y0, double y1, double top)
+{
+    Footprint b;
+    b.x = {-4000.0, 4000.0, 4000.0, -4000.0};
+    b.y = {y0, y0, y1, y1};
+    b.top = top;
+    return b;
+}
+
+} // namespace
+
+// Over the step the sound from above crosses the taller block's far edge and
+// then the lower one's, which share no face: the line between them touches
+// both wedges from above, the lower roof tilted 16.7 degrees below it, and the
+// aperture over the pair (double_wedge.hpp) takes the transition the cascade
+// loses.  98 cases, sources 10.5-15 m up and 30-100 m off, microphones 2-10 m
+// behind and 1.2-7 m up, 125-500 Hz: within 2.2 dB, rms 0.53, mean +0.03,
+// where the cascade is rms 0.80 and its mean 0.37 dB low.
+TEST_CASE("over a step down to a lower roof the pair of edges is uniform", "[point_paths]")
+{
+    const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    double square[2] {0.0, 0.0}, mean[2] {0.0, 0.0}, worst = 0.0;
+    const std::vector<BlockCase>& cases = step_cases();
+    for (const BlockCase& c : cases)
+    {
+        const Vec3 s(0.0, c.source_y, c.source_z), m(0.0, 20.0 + c.behind, c.z);
+        for (int uniform = 0; uniform < 2; uniform++)
+        {
+            PointPathOptions options;
+            options.shared_face = uniform == 1;
+            const double error = line_source_level(city, s, m, c.f, options) - c.exact;
+            square[uniform] += error * error;
+            mean[uniform] += error;
+            if (uniform == 1)
+            {
+                INFO(c.f << " Hz, source " << c.source_y << " m, " << c.source_z << " m up, microphone " << c.behind
+                          << " m behind, " << c.z << " m up");
+                REQUIRE(std::abs(error) < 2.5);
+                worst = std::max(worst, std::abs(error));
+            }
+        }
+    }
+    const double n = static_cast<double>(cases.size());
+    INFO("uniform rms " << std::sqrt(square[1] / n) << " mean " << mean[1] / n << " worst " << worst << "; cascade rms "
+                        << std::sqrt(square[0] / n) << " mean " << mean[0] / n);
+    REQUIRE(std::sqrt(square[1] / n) < 0.8);
+    REQUIRE(std::abs(mean[1] / n) < 0.25);
+    REQUIRE(std::sqrt(square[0] / n) > std::sqrt(square[1] / n) + 0.2);
+}
+
+// EDGE's pent-roofed terrace (UE02) at model scale: a ridge 0.732 m up over a
+// slope from the eaves, a step down to a deck 0.612 m up, the deck's edge,
+// and a 45-degree slope to the far eave.  The drone's sound (1.5 m up, 2 m
+// before the terrace) and the floor source's (2.9 cm up, 1.5 m before)
+// cross the ridge and then the deck's edge, 1.2 degrees inside the ridge's
+// shadow boundary from the drone; the microphone on the floor 1.25 m behind.
+// Boundary elements (45 elements a wavelength, converged to 0.1 dB): the
+// uniform form is within 0.6 dB, where the cascade is 4-5 dB low from the
+// drone -- the bias EDGE's measurements show there (FIDELITY, "Pitched
+// roofs").
+TEST_CASE("EDGE's pent-roofed terrace takes its ridge and deck edge uniformly", "[point_paths]")
+{
+    Footprint ridge = long_block(0.0, 0.48, 0.732);
+    ridge.roof = {{0.0, 0.5, 0.492}};
+    Footprint deck = long_block(0.48, 0.96, 0.612);
+    deck.roof = {{0.0, -1.0, 1.452}, {0.0, 0.0, 0.612}};
+    const Buildings city({ridge, deck});
+    struct Case
+    {
+        double f, sy, sz, exact;
+    };
+    const Case cases[] {{1600, -2.0, 1.5, -2.66}, {3150, -2.0, 1.5, -3.54}, {6300, -2.0, 1.5, -5.35},
+            {1600, -1.5, 0.02925, -7.78}, {3150, -1.5, 0.02925, -11.81}, {6300, -1.5, 0.02925, -20.95}};
+    double cascade_worst = 0.0;
+    for (const Case& c : cases)
+    {
+        const Vec3 s(0.0, c.sy, c.sz), m(0.0, 0.96 + 1.25, 0.00318);
+        INFO(c.f << " Hz, source " << c.sz << " m up");
+        REQUIRE(std::abs(line_source_level(city, s, m, c.f, PointPathOptions()) - c.exact) < 0.6);
+        PointPathOptions cascade;
+        cascade.shared_face = false;
+        cascade_worst = std::max(cascade_worst, std::abs(line_source_level(city, s, m, c.f, cascade) - c.exact));
+    }
+    REQUIRE(cascade_worst > 4.0);
+}
+
+// A microphone on the line through the step's far edges is seen from the
+// first past the second -- the path search traces the first's ray grazing
+// past -- so the aperture takes that ray's field back out there as it does
+// just above.  Taking the microphone as below the line there counted the
+// field twice, 9-13 dB high.
+TEST_CASE("on the line through a stepped pair the field is the field just above it", "[point_paths]")
+{
+    const Buildings city({long_block(0.0, 10.0, 10.0), long_block(10.0, 20.0, 7.0)});
+    const Vec3 s(0.0, -100.0, 10.5);
+    for (double f : {125.0, 250.0, 500.0})
+    {
+        INFO(f << " Hz");
+        const double on = line_source_level(city, s, Vec3(0.0, 30.0, 4.0), f, PointPathOptions());
+        const double above = line_source_level(city, s, Vec3(0.0, 30.0, 4.001), f, PointPathOptions());
+        REQUIRE(std::abs(on - above) < 0.05);
+    }
+}
+
 // The aperture's Filon rule against the midpoint rule at a 192nd of a
 // wavelength, on shared faces from DigiCity and a district: both ends below
 // the face's plane, the receiver above it, a source in the plane (the reverse

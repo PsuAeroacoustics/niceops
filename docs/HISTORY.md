@@ -408,6 +408,16 @@ old and new results only with them in mind.
 - **`--export_sphere` carries `rotor_rpm`**, as it carried the coherence record: a run on an
   exported sphere took the rotor's rate from the vehicle file instead, which also moved the band
   up to which the measured model's rotor delay holds.
+- **Two edges across a step take the uniform form**: a ridge or a taller roof's far edge above a
+  step down to a lower roof's edge, where the faces below the line between the edges meet beneath
+  it. They took the cascade of two coefficients, which against boundary elements was 4.0-5.0 dB
+  low from the drone 1.25 m behind EDGE's pent-roofed terrace (UE02) and 0.96 dB rms, 0.58 dB low,
+  over a full-scale step; now 0.15-0.53 dB there and 0.71 rms, unbiased. EDGE's UE02 drone row,
+  measured minus predicted, went from +3.89 dB (4.30 rms) to +1.93 (3.33), UE01's from +1.90
+  (3.53) to +1.41 (3.34), and the pitched scenes' 554 band levels from +0.72 (3.08) to +0.47
+  (2.96); the flat-roofed scenes did not move. DigiCity's microphone 7 moved by under 0.1 dB.
+  Under `--edge_source` such a pair takes its transition from the uniform form too: the
+  integral, which it took before, was 1-3 dB low there.
 
 ### Inputs
 

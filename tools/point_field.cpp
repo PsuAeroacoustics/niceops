@@ -529,8 +529,10 @@ int main(int argc, char** argv)
                                                              : ray.wedges == 3 ? "diffracted three times"
                                                              : ray.wedges > 3  ? "diffracted " + std::to_string(ray.wedges)
                                                                            + " times"
-                                                             : ray.shared      ? "diffracted twice over a shared face"
-                                                                               : "diffracted twice")
+                                                             : ray.shared && ray.wedge[1].grazing
+                                                                     ? "diffracted twice over a shared face"
+                                                             : ray.shared ? "diffracted twice uniformly over the pair"
+                                                                          : "diffracted twice")
                         + (ray.made_edges.empty() ? "" : " (made partner)");
                 if (!sources_file.empty())
                     text << source_row + 1 << ",";

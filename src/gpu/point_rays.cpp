@@ -37,6 +37,7 @@ GpuAperture pack_aperture(const ApertureGeometry& g, double weight, std::vector<
     a.cos_g = static_cast<float>(g.cos_g);
     put_angles(g.keller, a.keller_cot, a.keller_c);
     a.n1 = static_cast<float>(g.keller.n);
+    a.keller_scale = static_cast<float>(g.keller_scale);
     for (std::size_t s = 0; s + 1 < g.segments.size(); s++)
         for (std::size_t i = g.segments[s]; i + 2 < g.segments[s + 1]; i += 2)
         {

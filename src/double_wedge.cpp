@@ -22,7 +22,8 @@ double wrap(double angle)
     return angle < 0.0 ? angle + 2.0 * pi : angle;
 }
 
-// From the first edge, the shared face along +x; from the second, along -x.
+// From the first edge, the line to the second along +x; from the second,
+// along -x.  Each wedge's own angles add its face's `drop` (from_face).
 double angle1(double x, double z)
 {
     return wrap(std::atan2(z, x));
@@ -31,6 +32,70 @@ double angle1(double x, double z)
 double angle2(double x, double z)
 {
     return wrap(std::atan2(z, -x));
+}
+
+// Buildings::contact: a path within this of an edge grazes past it.
+constexpr double contact = 1e-6;
+
+// An angle from the line between the edges turned to one from a wedge's face
+// `drop` below it.
+double from_face(double angle, double drop)
+{
+    angle += drop;
+    return angle >= 2.0 * pi ? angle - 2.0 * pi : angle;
+}
+
+// The end correction's share of the first wedge's Keller coefficient toward
+// the second edge: half on a face the wedges share, where the second wedge's
+// grazing coefficient doubles the wave that the first's, on its own face,
+// has doubled already; all of it where the second edge stands off the first
+// wedge's faces.
+double keller_scale(const SharedFace& face)
+{
+    return face.drop1 == 0.0 ? 0.5 : 1.0;
+}
+
+// The pair seen from the second edge, for the aperture there.
+SharedFace reversed(const SharedFace& face)
+{
+    return {face.width, face.n2, face.n1, face.drop2, face.drop1};
+}
+
+// Whether the aperture at the first edge applies, and its weight: the source
+// below the line between the edges and before the first, weighted by its angle
+// below the line, the receiver past the aperture.  Where the second wedge's
+// face toward the first is tilted
+// below the line, the source can see that face's plane; with the receiver in
+// the reflection of the first edge's wave off it, the unbounded field the
+// aperture takes back out would hold the source's own reflection off the
+// face's plane past the second edge, which no ray carries, and the aperture
+// at that end does not apply.
+double forward_weight(const SharedFace& face, double sx, double sz, double rx, double rz)
+{
+    if (!(sz < 0.0 && sx < 0.0))
+        return 0.0;
+    if (face.drop2 > 0.0)
+    {
+        // The aperture parts the source from the receiver.  On a shared face
+        // the receiver is always past it; tilted, a reflection on the
+        // receiver's side in the first wedge's face toward the second (a step's
+        // wall) puts its image behind the first edge.
+        if (!(rx > 0.0))
+            return 0.0;
+        const double drop = face.drop2;
+        const double theta = from_face(angle2(rx - face.width, rz), drop);
+        const bool reflected = theta + drop < pi;
+        const bool sees_face = sz * std::cos(drop) - (sx - face.width) * std::sin(drop) > 0.0;
+        if (reflected && sees_face)
+            return 0.0;
+    }
+    return std::atan2(-sz, -sx);
+}
+
+// The same from the second edge's end.
+double reverse_weight(const SharedFace& face, double sx, double sz, double rx, double rz)
+{
+    return forward_weight(reversed(face), face.width - rx, rz, face.width - sx, sz);
 }
 
 // The moments' power series below a radian of phase: m_j, the integral of
@@ -138,12 +203,16 @@ struct NodeGeometry
 };
 
 // The aperture's fixed geometry: the second wedge's receiver angle theta and
-// distance s3, and the direction of its other face.
+// distance s3, the direction of its other face, and its face toward the first
+// edge's tilt below the line between them.  `above`: the receiver sees the
+// first edge past the second; `above_face`: the reflection of the first edge's
+// wave off that face reaches it.
 struct ApertureFrame
 {
     double w = 0.0, sx = 0.0, sz = 0.0, rx = 0.0, rz = 0.0;
     double s1 = 0.0, theta = 0.0, s3 = 0.0, fx = 0.0, fz = 0.0;
-    bool above = false;
+    double drop = 0.0, cos_drop = 1.0, sin_drop = 0.0;
+    bool above = false, above_face = false;
 };
 
 ApertureFrame aperture_frame(const SharedFace& face, double sx, double sz, double rx, double rz)
@@ -155,12 +224,23 @@ ApertureFrame aperture_frame(const SharedFace& face, double sx, double sz, doubl
     f.rx = rx;
     f.rz = rz;
     f.s1 = std::hypot(sx, sz);
-    f.theta = angle2(rx - f.w, rz);
+    f.drop = face.drop2;
+    f.cos_drop = std::cos(face.drop2);
+    f.sin_drop = std::sin(face.drop2);
+    f.theta = from_face(angle2(rx - f.w, rz), f.drop);
     f.s3 = std::hypot(rx - f.w, rz);
     // The second wedge's other face, for the reflection off it.
-    f.fx = -std::cos(face.n2 * pi);
-    f.fz = std::sin(face.n2 * pi);
-    f.above = rz > 0.0;
+    f.fx = -std::cos(face.n2 * pi - f.drop);
+    f.fz = std::sin(face.n2 * pi - f.drop);
+    // On a shared face the receiver sees the first edge, and the face's
+    // reflection of its wave reaches it, above the face's plane.  Tilted, the
+    // line between the edges touches both wedges from above, so the receiver
+    // sees the first edge on or above that line -- on it within the path
+    // search's contact tolerance, which traces the first edge's ray grazing
+    // past the second there -- and the face's reflection reaches it where
+    // hard_wedge_field's test says, the first edge at drop from the face.
+    f.above = face.drop2 == 0.0 ? rz > 0.0 : rz > -contact;
+    f.above_face = face.drop2 == 0.0 ? rz > 0.0 : f.theta + f.drop < pi;
     return f;
 }
 
@@ -171,7 +251,7 @@ NodeGeometry node_geometry(const ApertureFrame& f, double t, const int* count)
     n.r = std::hypot(f.w, t);
     n.obliquity = 0.5 * (-f.sx / n.in + f.w / n.r);
     const double rate = (t - f.sz) / n.in;
-    n.theta0 = std::atan2(t, f.w);
+    n.theta0 = std::atan2(t, f.w) + f.drop;
     n.length[0] = n.in + n.r + f.s3;
     n.rate[0] = rate + t / n.r;
     n.root[0] = std::sqrt(n.r * f.s3);
@@ -184,9 +264,16 @@ NodeGeometry node_geometry(const ApertureFrame& f, double t, const int* count)
     }
     if (count[2])
     {
-        const double d = std::hypot(f.rx, f.rz + t);
+        // The aperture point mirrored in the plane of the second wedge's face
+        // toward the first edge: through (w, 0), tilted `drop` below the line.
+        // Along the aperture the image moves by (2 sin cos, 2 sin^2 - 1).
+        const double along = f.w * f.cos_drop - t * f.sin_drop;
+        const double ix = 2.0 * f.w - 2.0 * along * f.cos_drop, iz = -2.0 * along * f.sin_drop - t;
+        const double d = std::hypot(f.rx - ix, f.rz - iz);
         n.length[2] = n.in + d;
-        n.rate[2] = rate + (t + f.rz) / d;
+        n.rate[2] = rate
+                - ((f.rx - ix) * (2.0 * f.sin_drop * f.cos_drop) + (f.rz - iz) * (2.0 * f.sin_drop * f.sin_drop - 1.0))
+                        / d;
         n.root[2] = std::sqrt(d);
     }
     if (count[3])
@@ -210,23 +297,29 @@ void boundary_cuts(const SharedFace& face, const ApertureFrame& f, double extent
 {
     const double theta = f.theta;
     for (double boundary : {theta - pi, pi - theta, (face.n2 - 1.0) * pi, (2.0 * face.n2 - 1.0) * pi - theta})
-        if (boundary > 0.0 && boundary < 0.5 * pi && f.w * std::tan(boundary) < extent)
+    {
+        // theta0 = atan(t / w) + drop.
+        const double off_line = boundary - f.drop;
+        if (off_line > 0.0 && off_line < 0.5 * pi && f.w * std::tan(off_line) < extent)
         {
-            cuts.push_back(f.w * std::tan(boundary));
+            cuts.push_back(f.w * std::tan(off_line));
             features.push_back(cuts.back());
         }
+    }
 }
 
 // Which waves reach the receiver between the cuts a and b (hard_wedge_field's
-// tests), each +1, -1 or 0: above the face's plane the incident and
-// face-reflected waves count one less (aperture() has why).
+// tests), each +1, -1 or 0: where the receiver sees the first edge the
+// incident wave counts one less, and where the second wedge's face toward it
+// reflects the first edge's wave to the receiver the reflection off that face
+// does (aperture() has why).
 void wave_counts(const SharedFace& face, const ApertureFrame& f, double a, double b, int* count)
 {
-    const double middle = std::atan2(0.5 * (a + b), f.w);
+    const double middle = std::atan2(0.5 * (a + b), f.w) + f.drop;
     const double theta = f.theta;
     count[0] = 1;
     count[1] = (std::abs(theta - middle) < pi ? 1 : 0) - (f.above ? 1 : 0);
-    count[2] = (theta < pi - middle ? 1 : 0) - (f.above ? 1 : 0);
+    count[2] = (theta < pi - middle ? 1 : 0) - (f.above_face ? 1 : 0);
     count[3] = middle > (face.n2 - 1.0) * pi && theta > (2.0 * face.n2 - 1.0) * pi - middle ? 1 : 0;
 }
 
@@ -332,7 +425,7 @@ private:
     unsigned generation_ = 0;
 };
 
-// The source below the face's plane and before the first edge.  The aperture
+// The source below the line between the edges and before the first.  The aperture
 // is the half-line x = 0, z > 0, out to 30 wavelengths or three Fresnel zones,
 // its far half tapered.  Each of its points sends a line source's wave to the
 // second wedge, whose field -- the geometrical-optics waves past it and its
@@ -340,8 +433,8 @@ private:
 //
 // The integrand is four waves, each a smooth amplitude times exp(i k l), l a
 // path length that grows along the aperture: the second wedge's diffracted
-// wave, the incident wave, and its reflections off the shared face and off
-// the wedge's other face.  Each geometrical-optics wave reaches the receiver
+// wave, the incident wave, and its reflections off the wedge's face toward
+// the first edge and off its other face.  Each geometrical-optics wave reaches the receiver
 // or not, and the coefficient jumps, only where the second wedge's shadow and
 // reflection boundaries cross the aperture, so it is cut there and between the
 // cuts each wave is integrated by Filon's rule in its own path length, the
@@ -365,7 +458,8 @@ public:
         sin_g_ = -sz / f_.s1;
         cos_g_ = -sx / f_.s1;
         if (sin_g_ > 1e-6)
-            keller_ = wedge_angles(face.n1, 0.0, angle1(sx, sz));
+            keller_ = wedge_angles(face.n1, face.drop1, from_face(angle1(sx, sz), face.drop1));
+        keller_scale_ = keller_scale(face);
     }
 
     NodeAt node(double t, const int* count) const
@@ -380,15 +474,17 @@ public:
         const double w = f.w, s1 = f.s1;
         const double extent = aperture_extent(std::max(s1, w), k);
         const complex launch = std::sqrt(k / (2.0 * pi)) * std::polar(1.0, -0.25 * pi);
-        // Above the face's plane the receiver sees the first edge, and the
-        // aperture's waves past the second edge hold that wedge's whole field --
-        // the source's own wave where the wedge does not shadow it, and the edge's
-        // diffracted wave with the face's reflection of it -- which the rays of
-        // the first edge carry already.  The same aperture with the face going on
-        // past the second edge is that field alone, in the aperture's own
-        // approximation, and is taken back out: what remains is what the second
-        // edge does to it.  So above the plane the incident and face-reflected
-        // waves are counted less one, the unbounded field's (wave_counts).
+        // Above the line between the edges the receiver sees the first edge,
+        // and the aperture's waves past the second edge hold that wedge's whole
+        // field -- the source's own wave where the wedge does not shadow it, and
+        // the edge's diffracted wave with the face's reflection of it -- which
+        // the rays of the first edge carry already.  The same aperture with the
+        // face going on past the second edge is that field alone, in the
+        // aperture's own approximation, and is taken back out: what remains is
+        // what the second edge does to it.  So there the incident wave is
+        // counted less one, the unbounded field's, and where the face's
+        // reflection of the first edge's wave reaches the receiver, that
+        // reflection is too (wave_counts).
 
         // The cuts: where theta0, the aperture point's angle at the second wedge,
         // crosses one of hard_wedge_field's boundaries.  The taper's start is a
@@ -448,7 +544,7 @@ public:
                         // lengths grow along the aperture wherever a wave counts:
                         // its stationary point, the straight path through the
                         // aperture, lies where the second wedge shadows it, or
-                        // below the face's plane.
+                        // below the line between the edges.
                         sum += filon_panel(k, first[j].length, middle_wave[j].length, last[j].length,
                                 first[j].amplitude / first[j].rate, middle_wave[j].amplitude / middle_wave[j].rate,
                                 last[j].amplitude / last[j].rate);
@@ -458,14 +554,16 @@ public:
         }
         // The end point at the edge gives the aperture's own coefficient,
         // (1 + cos g) / 2 exp(i pi/4) / (sqrt(2 pi k) sin g), g the source's angle
-        // below the face; the wedge's is half its Keller coefficient on the face,
-        // the face doubling it.  Both grow as 1/g, and their ratio tends to 1.
+        // below the line between the edges; the wedge's is its Keller
+        // coefficient toward the second edge, half of it on a shared face, the
+        // face doubling it (keller_scale).  Both grow as 1/g, and their ratio
+        // tends to 1.
         if (sin_g_ > 1e-6)
         {
             const complex kirchhoff
                     = 0.5 * (1.0 + cos_g_) * std::polar(1.0, 0.25 * pi) / (std::sqrt(2.0 * pi * k) * sin_g_);
             const complex keller = hard_wedge_coefficient(keller_, k, 1e9);
-            sum *= 0.5 * keller / kirchhoff;
+            sum *= keller_scale_ * keller / kirchhoff;
         }
         return sum;
     }
@@ -476,6 +574,7 @@ private:
     WedgeSweep sweep_;
     double sin_g_ = 0.0, cos_g_ = 0.0;
     WedgeAngles keller_;
+    double keller_scale_ = 0.5;
 };
 
 complex aperture(const SharedFace& face, double sx, double sz, double rx, double rz, double k)
@@ -580,7 +679,8 @@ ApertureGeometry aperture_geometry(const SharedFace& face, double sx, double sz,
     g.segments.push_back(g.nodes.size());
     g.sin_g = -sz / s1;
     g.cos_g = -sx / s1;
-    g.keller = wedge_angles(face.n1, 0.0, angle1(sx, sz));
+    g.keller = wedge_angles(face.n1, face.drop1, from_face(angle1(sx, sz), face.drop1));
+    g.keller_scale = keller_scale(face);
     return g;
 }
 
@@ -611,7 +711,7 @@ complex aperture_at(const ApertureGeometry& g, double k)
     if (g.sin_g > 1e-6)
     {
         const complex kirchhoff = 0.5 * (1.0 + g.cos_g) * std::polar(1.0, 0.25 * pi) / (std::sqrt(2.0 * pi * k) * g.sin_g);
-        sum *= 0.5 * hard_wedge_coefficient(g.keller, k, 1e9) / kirchhoff;
+        sum *= g.keller_scale * hard_wedge_coefficient(g.keller, k, 1e9) / kirchhoff;
     }
     return sum;
 }
@@ -620,24 +720,24 @@ complex aperture_at(const ApertureGeometry& g, double k)
 
 bool shared_face_applies(const SharedFace& face, double sx, double sz, double rx, double rz)
 {
-    return (sz < 0.0 && sx < 0.0) || (rz < 0.0 && rx > face.width);
+    return forward_weight(face, sx, sz, rx, rz) > 0.0 || reverse_weight(face, sx, sz, rx, rz) > 0.0;
 }
 
 std::complex<double> shared_face_field(const SharedFace& face, double sx, double sz, double rx, double rz, double k)
 {
-    // Each end below the face's plane can be the aperture's source; each
-    // evaluation is weighted by its source's angle below the plane, so that
-    // the one whose source nears the plane gives way to the other smoothly,
-    // and the weights swap with the ends.
-    const double forward = sz < 0.0 && sx < 0.0 ? std::atan2(-sz, -sx) : 0.0;
-    const double reverse = rz < 0.0 && rx > face.width ? std::atan2(-rz, rx - face.width) : 0.0;
+    // Each end below the line between the edges can be the aperture's source;
+    // each evaluation is weighted by its source's angle below the line, so that
+    // the one whose source nears it gives way to the other smoothly, and the
+    // weights swap with the ends.
+    const double forward = forward_weight(face, sx, sz, rx, rz);
+    const double reverse = reverse_weight(face, sx, sz, rx, rz);
     if (forward + reverse <= 0.0)
         return {std::numeric_limits<double>::quiet_NaN(), 0.0};
     complex sum(0.0, 0.0);
     if (forward > 0.0)
         sum += forward * aperture(face, sx, sz, rx, rz, k);
     if (reverse > 0.0)
-        sum += reverse * aperture({face.width, face.n2, face.n1}, face.width - rx, rz, face.width - sx, sz, k);
+        sum += reverse * aperture(reversed(face), face.width - rx, rz, face.width - sx, sz, k);
     return sum / (forward + reverse);
 }
 
@@ -645,8 +745,8 @@ std::vector<std::complex<double>> shared_face_spectrum(const SharedFace& face, d
         double rz, const std::vector<double>& wavenumbers)
 {
     // As shared_face_field, wavenumber by wavenumber.
-    const double forward = sz < 0.0 && sx < 0.0 ? std::atan2(-sz, -sx) : 0.0;
-    const double reverse = rz < 0.0 && rx > face.width ? std::atan2(-rz, rx - face.width) : 0.0;
+    const double forward = forward_weight(face, sx, sz, rx, rz);
+    const double reverse = reverse_weight(face, sx, sz, rx, rz);
     std::vector<complex> out(wavenumbers.size(), {std::numeric_limits<double>::quiet_NaN(), 0.0});
     if (forward + reverse <= 0.0)
         return out;
@@ -660,7 +760,7 @@ std::vector<std::complex<double>> shared_face_spectrum(const SharedFace& face, d
     if (forward > 0.0)
         aperture_spectrum(face, sx, sz, rx, rz, wavenumbers, table, forward_field.data());
     if (reverse > 0.0)
-        aperture_spectrum({face.width, face.n2, face.n1}, face.width - rx, rz, face.width - sx, sz, wavenumbers, table,
+        aperture_spectrum(reversed(face), face.width - rx, rz, face.width - sx, sz, wavenumbers, table,
                 reverse_field.data());
     for (std::size_t j = 0; j < wavenumbers.size(); j++)
     {
@@ -686,12 +786,12 @@ SharedFaceGeometry shared_face_geometry(const SharedFace& face, double sx, doubl
     if (wavenumbers.empty() || *std::min_element(wavenumbers.begin(), wavenumbers.end()) <= 0.0)
         throw std::invalid_argument("shared_face_geometry: the wavenumbers must be positive, and there must be some");
     SharedFaceGeometry g;
-    g.forward_weight = sz < 0.0 && sx < 0.0 ? std::atan2(-sz, -sx) : 0.0;
-    g.reverse_weight = rz < 0.0 && rx > face.width ? std::atan2(-rz, rx - face.width) : 0.0;
+    g.forward_weight = forward_weight(face, sx, sz, rx, rz);
+    g.reverse_weight = reverse_weight(face, sx, sz, rx, rz);
     if (g.forward_weight > 0.0)
         g.forward = aperture_geometry(face, sx, sz, rx, rz, wavenumbers);
     if (g.reverse_weight > 0.0)
-        g.reverse = aperture_geometry({face.width, face.n2, face.n1}, face.width - rx, rz, face.width - sx, sz, wavenumbers);
+        g.reverse = aperture_geometry(reversed(face), face.width - rx, rz, face.width - sx, sz, wavenumbers);
     return g;
 }
 

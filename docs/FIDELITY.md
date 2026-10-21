@@ -1107,6 +1107,58 @@ a block 10 m thick. Against the boundary elements either side of the plane the s
 within ±0.6 dB, the exact field moving by 0.1 dB; the cascade steps by 5 to 15 dB. A source above
 the roof steps by up to 4.9 dB, where the cascade takes over above the plane.
 
+**Across a step** (THEORY §6.5; a long block 10 m across and 10 m high against one 10 m across
+and 7 m high, rigid ground, boundary elements at 45 elements a wavelength, the cases not converged
+to 0.15 dB against 30 left out; 125-500 Hz). The sound from above crosses the taller block's far
+edge and then the lower one's, which share no face; the lower roof is 16.7° below the line between
+them. Error re the exact level, dB:
+
+| Microphones | Sources | Cases | Uniform form: rms, mean, worst | Cascade |
+| --- | --- | --- | --- | --- |
+| Below the lower roof, 2-10 m behind, 1.2-7 m up | 10.5-15 m up, 30-100 m off | 229 | 0.71, +0.18, +2.42 | 0.96, −0.58, −3.65 |
+| The same | 1.5 m up, 20 m off | 30 | 0.88, −0.67, −2.20 | the same |
+| Above it, 8-11 m up | 10.5-15 m up | 72 | 2.55, +0.36, +10.76 | 2.53, +0.40, +10.16 |
+
+The first row includes the same step with the taller block 9 m high. From the low source the
+pair is not tilted -- the sound crosses the taller block's roof as a shared face first -- and nothing
+moves.
+Above the lower roof both are as far off, nearly all of it at the lower roof's reflection
+boundary for the first edge's wave (8.5 m up at 5 m behind, 10 m at 10), where the ray set steps
+by up to 6 dB with either form: the first edge's ray reflected off the lower roof switching on
+is not matched by the pair's partner. Across the line through the two edges the uniform form's
+level steps by 0.45 to 2.1 dB from 1 mm below to 1 mm above, the cascade's by 0.02 to 1.5. The
+worst is a source 0.26° over the taller block's roof: the end correction is 2.1 there, the
+first wedge's coefficient taking that roof's reflection as if the roof went on, which the
+three edges over it (its near edge too) would put right and two do not. Where the microphone's
+image in the step's own wall lies behind the first edge, or the source sees the lower roof's plane
+while the microphone takes that roof's reflection, the cascade stands; THEORY has why.
+
+**EDGE's stepped terraces** (model scale; boundary elements at 45 elements a wavelength, converged
+to 0.1 dB; the drone and the floor source, microphones on the floor 0.46 and 1.25 m behind,
+1.6, 3.15 and 6.3 kHz, 12 cases each). Worst and rms, dB:
+
+| Terrace | Uniform form | Edge source | Cascade |
+| --- | --- | --- | --- |
+| UE01, half gable: ridge, a 0.24 m step down to a flat roof | −0.42, 0.23 | −0.42, 0.23 | −1.63, 0.66 |
+| UE02, pent: ridge, a 0.12 m step down to a deck, its edge | −2.75, 1.33 | −2.75, 1.33 | −4.99, 2.68 |
+| UE03, gable: a shared face | −0.30, 0.13 | +0.20, 0.07 | the same |
+
+UE02's drone row at 1.25 m goes from 4.0-5.0 dB low to 0.15-0.53; its rows at 0.46 m are left,
+2.75 dB at worst: there the microphone is 6 mm inside the far eave's shadow from the deck's edge,
+three edges whose pairs are each in transition. The edge source's own integral was 1-3 dB low across
+these steps, and leaves them to the uniform form (THEORY §6.5).
+
+**Across a street at grazing** (two blocks 10 m across and 10 m high, 10 m apart, a source 1.1°
+above the roofs 100 m off, microphones 2-10 m behind the second at 1.2 m; 125-500 Hz). The model is
+1.2-1.6 dB low at 125 and 250 Hz and 7.9-8.0 dB high at 500 Hz, the same at every microphone, so
+the error is in what reaches the second block's far edge; 5.7° above the roofs it is within 1.3 dB,
+and with the second block 2 m lower, 1.2-3.2 dB high. The four roof edges in a row are each in the
+others' transition regions, and the cascades of two, three and more edges do not converge: leaving
+out the thrice-diffracted rays moves the mean error from +1.1 to −3.8 dB. No uniform form for
+more than two edges is in the model. Nor is a street a step: taken as one (the near block's far
+edge and the lower block's far one, the street read as roof), the second block 2 m lower read
+0.5 dB higher still, rms 2.0 dB against the cascade's 1.9, and the cascade stands there.
+
 **On the GPU** (the default on a Mac, an M4 Pro), which works in single precision:
 
 - **The sums.** Against double-precision sums of the same amplitudes, over ray sets of 200 to 1100
@@ -1752,27 +1804,49 @@ scenes' line-of-sight pairs. Measured − predicted, mean and rms (dB), 1.6-20 k
 
 | Scene, source | Band levels | Roof planes, UTD | Edge source | Flat at the mean height | Flat at the ridge |
 | --- | --- | --- | --- | --- | --- |
-| UE01 half gable, floor | 32 | +0.50, 2.37 | +0.48, 2.38 | +7.14, 8.39 | +9.04, 10.20 |
-| UE01, drone | 48 | +1.90, 3.53 | +1.92, 3.53 | −3.85, 4.27 | +0.61, 3.12 |
-| UE02 pent, floor | 32 | −0.06, 2.81 | −0.04, 2.83 | +5.04, 6.43 | +9.68, 10.65 |
-| UE02, drone | 48 | +3.89, 4.30 | +3.06, 3.65 | −2.34, 3.10 | +0.42, 2.09 |
+| UE01 half gable, floor | 32 | +0.29, 2.46 | +0.42, 2.38 | +7.14, 8.39 | +9.04, 10.20 |
+| UE01, drone | 48 | +1.41, 3.34 | +1.60, 3.36 | −4.11, 4.49 | +0.18, 3.15 |
+| UE02 pent, floor | 32 | −0.35, 2.87 | −0.20, 2.84 | +5.04, 6.43 | +9.68, 10.65 |
+| UE02, drone | 48 | +1.93, 3.33 | +2.16, 3.43 | −2.22, 2.99 | −0.15, 2.11 |
 | UE03 gable, floor | 32 | −0.28, 2.06 | −0.30, 2.07 | +6.44, 7.60 | +9.46, 10.51 |
 | UE03, drone | 48 | +0.74, 2.53 | +0.67, 2.50 | −0.63, 2.73 | +1.66, 3.99 |
 | UE04 mansard, floor | 31 | −2.29, 4.47 | −2.29, 4.48 | +5.00, 6.19 | +7.07, 8.12 |
 | UE04, drone | 48 | +1.31, 2.44 | +1.03, 2.40 | +0.02, 2.71 | +1.52, 3.59 |
-| UE05 shed, floor | 31 | −0.47, 3.14 | −0.47, 3.15 | +3.06, 4.63 | +5.06, 6.41 |
-| UE05, drone | 48 | +0.25, 1.86 | +0.23, 1.86 | −1.39, 2.18 | +0.21, 2.00 |
+| UE05 shed, floor | 31 | −0.54, 3.14 | −0.50, 3.16 | +3.06, 4.63 | +5.06, 6.41 |
+| UE05, drone | 48 | +0.28, 1.85 | +0.24, 1.86 | −1.39, 2.18 | +0.21, 2.00 |
 | UE15 detached gable, floor | 30 | +0.18, 1.79 | +0.24, 1.82 | +0.88, 2.90 | +1.25, 3.44 |
 | UE15, drone | 48 | +0.25, 2.25 | +0.15, 2.19 | −0.18, 2.56 | +0.77, 3.82 |
 | UE17 detached gable (1/5), floor | 31 | +0.61, 2.04 | +0.54, 1.98 | +2.22, 4.21 | +2.30, 4.10 |
 | UE17, drone | 47 | +1.12, 4.73 | +1.05, 4.71 | +0.71, 3.66 | +1.86, 4.92 |
-| All | 554 | +0.72, 3.08 | +0.60, 3.00 | +1.03, 4.51 | +3.11, 5.82 |
+| All | 554 | +0.47, 2.96 | +0.48, 2.96 | +1.02, 4.53 | +3.02, 5.82 |
 
 From the floor, where the roof's shape sets the path, the planes are 1.8-4.5 dB rms where a flat
 block is 2.9-10.7; from the drone, which sees over the roofs, they and the flat block at the mean
 height are alike. UE04's floor source was 7.8 dB low, 14.3 rms, before chains: its microphones
 close behind are reached over four edges. UE17's drone source is the one row a flat block does
 better, by 1.1 dB.
+
+**What the drone rows leave, receiver by receiver.** The part of the drone rows' error that is the
+model's is the pair over a step, UE01's and UE02's: by the cascade the boundary elements put it
+0.2-1.6 and 4.0-5.0 dB low, against the measurements' 4.3-4.9 dB high at UE02's R2, and the
+uniform form within 0.53 dB at R2's distance ("EDGE's stepped terraces", above). What remains is
+receiver by receiver, and may be the receivers':
+
+- **R3 and R4 above 8 kHz.** R4 reads up to 10-13 dB high at 20 kHz and R3 up to 5 dB low in every
+  pitched scene, UE03 included, where the model matches the exact 2-D field. EDGE's equipment table
+  gives R1 and R2 as B&K 4136 pressure-field capsules and R3 and R4 as G.R.A.S. 40BF free-field
+  ones, and the calibration is per loudspeaker and band, not per receiver: the trends may be the
+  40BF's response off its axis, or the receivers' positions. The data do not say which.
+- **R1, 1-2 dB high in most pitched scenes.** Against the FDTD on UE15 (second order, 3 and 2 mm,
+  extrapolated to zero cell for its stepped slopes, which are first order in the cell), the model is
+  within 0.4 dB at R3 and R4 and ±2.3 dB at R1 and R2, the FDTD reproducing the measurements' band
+  shape at R1 (+2.3 dB at 2.5 kHz, measured +3.6). At R1 the FDTD is 0.45 dB above the model on
+  average over 1.6-8 kHz where the measurements are 2.25 dB above: about 1.8 dB lies outside the
+  full-wave field.
+- **UE17's R1** (the detached house at 1/5 scale, 1 m behind it on its axis): measured minus
+  predicted +7 dB, rising to +12 at 20 kHz, its level falling with frequency like one diffraction
+  where the model's paths diffract twice. The FDTD at these cells does not fit a scene that size;
+  it is open.
 
 **Cost.** Chains cost nothing measurable: a suburb of 64 gable houses (10 by 15 m, eaves 6 m, ridge
 9 m, 25 m apart) to 162 microphones in its gardens took 166.1 s with them and 165.9 s without from

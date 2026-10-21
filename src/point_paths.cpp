@@ -111,6 +111,67 @@ bool in_air(double theta, double n, bool faces)
                  : theta > slack && theta < n * pi - slack;
 }
 
+// From the direction `toward` in the plane normal to an edge, how far it is
+// to the wedge's face reached turning toward -z, and to the one reached
+// turning toward +z (radians).  The wedge's angle grows from face0 toward air.
+void faces_either_side(const Edge& e, const Vec3& toward, const Vec3& z, double& below, double& above)
+{
+    const double a = e.angle(toward);
+    const bool grows_up = toward.dot(e.face0) * z.dot(e.air) - toward.dot(e.air) * z.dot(e.face0) > 0.0;
+    below = grows_up ? a : e.n * pi - a;
+    above = grows_up ? e.n * pi - a : a;
+}
+
+// Two parallel edges a ray diffracts at in turn, sharing no face, as
+// shared_face_field takes them (double_wedge.hpp): x along the line from the
+// first edge (at q1) to the second in the plane normal to them, z off it on
+// the side away from the first wedge's nearer face, and each wedge's face on
+// the other side of the line tilted below it.  The line must touch both
+// wedges from above, as a shared face does -- each wedge's other face half a
+// turn or more round from it -- or the aperture's field past the second edge
+// takes in waves the rays never would; no face may lie along it; and the two
+// faces below it must meet, a step closed beneath the line, as the aperture's
+// second wedge takes its face to run back to the first's.  Across a street
+// the lower roof stops short and the street opens below.
+bool tilted_pair(const Buildings& buildings, const Edge& g1, const Edge& g2, const Vec3& q1, double width,
+        const Vec3& x, Vec3& z, SharedFace& face)
+{
+    double below1, above1, below2, above2;
+    faces_either_side(g1, x, z, below1, above1);
+    if (below1 > above1)
+    {
+        z = -1.0 * z;
+        std::swap(below1, above1);
+    }
+    faces_either_side(g2, -1.0 * x, z, below2, above2);
+    const double slack = 1e-9;
+    if (!(below1 > slack && below2 > slack && above1 >= pi && above2 >= pi && below1 + below2 < pi))
+        return false;
+    // Where the faces' lines meet, C, and the notch between them and the line:
+    // its middle in air, and the solid just behind each face, a quarter, half
+    // and three quarters of the way from its edge to C.
+    const Vec3 down1 = std::cos(below1) * x - std::sin(below1) * z;
+    const Vec3 down2 = -std::cos(below2) * x - std::sin(below2) * z;
+    const double reach1 = width * std::sin(below2) / std::sin(below1 + below2);
+    const double reach2 = width * std::sin(below1) / std::sin(below1 + below2);
+    const Vec3 q2 = q1 + width * x, corner = q1 + reach1 * down1;
+    const Vec3 middle = (q1 + q2 + corner) / 3.0;
+    if (buildings.buried(middle))
+        return false;
+    const double behind = 1e-3 * std::min(reach1, reach2);
+    for (const auto& [edge, down, reach] : {std::tuple(q1, down1, reach1), std::tuple(q2, down2, reach2)})
+        for (double part : {0.25, 0.5, 0.75})
+        {
+            const Vec3 p = edge + part * reach * down;
+            Vec3 out = (p - middle) - (p - middle).dot(down) * down;
+            out = out / out.norm();
+            if (!buildings.buried(p + behind * out))
+                return false;
+        }
+    face = {width, g1.n, g2.n, below1, below2};
+    return true;
+}
+
 // An angle on a face (within round-off) taken exactly on it.
 double onto_face(double theta, double n, bool& on_face)
 {
@@ -1849,29 +1910,38 @@ void PointSourceField::trace(const Buildings& buildings, const PathEnd& source_e
                                 ray.path.push_back(q2_real);
                                 ray.path.insert(ray.path.end(), to_microphone.begin(), to_microphone.end());
                                 ray.path.push_back(microphone);
-                                if (ray.wedge[1].grazing && options.shared_face
-                                        && std::abs(g1.direction.dot(h2.direction)) > 1.0 - 1e-9)
+                                if (options.shared_face && std::abs(g1.direction.dot(h2.direction)) > 1.0 - 1e-9)
                                 {
                                     // The plane normal to the edges: x from edge 1 toward
-                                    // edge 2, z into the air off the face.
+                                    // edge 2, z into the air off the face they share, or
+                                    // for two that share none (a ridge over a step down to
+                                    // a lower roof's edge), off the line between them.
                                     const Vec3 across_face = normal_part(g1, mid);
                                     const double width = across_face.norm();
                                     const Vec3 x = across_face / width;
                                     Vec3 z = g1.direction.cross(x);
-                                    if (!in_air(g1.angle(normal_part(g1, x + 1e-3 * z)), g1.n, false))
-                                        z = -1.0 * z;
-                                    const Vec3 sa = pa - q1, sb = pb - q1;
-                                    // There each wedge's angles run from the shared face;
-                                    // the hard wedge is symmetric, so which of its faces
-                                    // that is does not matter.
+                                    // There each wedge's angles run from the face below
+                                    // the line; the hard wedge is symmetric, so which of
+                                    // its faces that is does not matter.
                                     SharedFaceTerm term;
-                                    term.face = {width, g1.n, h2.n};
+                                    bool pair = false;
+                                    if (ray.wedge[1].grazing)
+                                    {
+                                        if (!in_air(g1.angle(normal_part(g1, x + 1e-3 * z)), g1.n, false))
+                                            z = -1.0 * z;
+                                        term.face = {width, g1.n, h2.n};
+                                        pair = true;
+                                    }
+                                    else
+                                        pair = via == nullptr
+                                                && tilted_pair(buildings, g1, h2, q1, width, x, z, term.face);
+                                    const Vec3 sa = pa - q1, sb = pb - q1;
                                     term.sx = sa.dot(x);
                                     term.sz = sa.dot(z);
                                     term.rx = sb.dot(x);
                                     term.rz = sb.dot(z);
                                     term.sin_beta = ray.wedge[0].sin_beta;
-                                    if (shared_face_applies(term.face, term.sx, term.sz, term.rx, term.rz))
+                                    if (pair && shared_face_applies(term.face, term.sx, term.sz, term.rx, term.rz))
                                     {
                                         ray.shared = true;
                                         ray.shared_face = term;
@@ -2754,7 +2824,12 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
         for (double z : {p.part.lo, p.part.hi})
             if (z > 0.0 && z < (p.over_second ? g2 : g1).length)
                 partners = std::min(partners, std::max((p.over_second ? via_second(z) : via_first(z)) - ray.length, 0.0));
-    const bool always = ray.shared || ray.wedge[1].grazing;
+    // Over a shared face always.  A pair that shares none has its transition
+    // in the aperture (shared_face_field), which against boundary elements is
+    // within 0.5 dB on EDGE's stepped terraces where the integral is 1-3 dB
+    // low; it takes the integral for its ends and partners alone.
+    const bool always = ray.wedge[1].grazing;
+    const bool tilted = ray.shared && !always;
     // Each wavenumber on its own, so that a band's level does not depend on
     // which others the run takes.  Out of both wedges' transitions, with no
     // partner's boundary point within the excess window and either edge's
@@ -2769,7 +2844,7 @@ std::vector<std::complex<double>> edge_source_factors(const Buildings& buildings
     for (std::size_t j = 0; j < nk; j++)
     {
         const double k = wavenumbers[j];
-        const double in_transition = trust_taper(k * transition, transition_lo, transition_hi);
+        const double in_transition = tilted ? 0.0 : trust_taper(k * transition, transition_lo, transition_hi);
         const double by_partner = trust_taper(k * partners, excess_lo, excess_hi);
         const double by_ends = trust_taper(k * std::min(first_ends, second_ends), excess_lo, excess_hi);
         weight[j] = always ? 1.0 : std::max({in_transition, by_partner, by_ends});

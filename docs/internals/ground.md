@@ -477,6 +477,42 @@ exactly. What to keep:
   tenths of the other; a plain average switches to one of them when an end crosses the plane, a
   0.3-1 dB step. The angle weights go smoothly to the evaluation that remains, and swap with the
   ends, so reciprocity holds to round-off.
+- **Across a step it is the same aperture, its wedges' faces tilted off the line** (`SharedFace`'s
+  `drop1`, `drop2`; `tilted_pair` in `point_paths.cpp`). EDGE's pent-roofed terrace was 4-5 dB low
+  from the drone by the cascade over its ridge and deck edge, and the measurements read high by as
+  much (FIDELITY, "Pitched roofs"). The frame is the line between the edges, so the second edge
+  stays on the x axis and Kirchhoff's end coefficient, the GPU's included, is unchanged; the second
+  wedge's angles, cuts and face reflection take `drop2`, and `c` is the first wedge's coefficient
+  toward the second edge, whole (`keller_scale`: a half only on a shared face). With both drops 0
+  the arithmetic is the shared face's to the bit. What has to hold, each found by a failure:
+  - **The line touches both wedges from above** (each other face at least half a turn round).
+    Two building corners whose connecting line leaves each diagonally, faces 135° off it, passed a
+    weaker test (the aperture normal to the line in air) and were 4-77 dB off their own cascade,
+    not converging with frequency: the second wedge's far face rises past the line there.
+  - **"Sees the first edge" is the receiver on or above the line, within Buildings::contact.**
+    The path search traces the first edge's ray grazing past the second's corner; judging the
+    receiver below the line there counted that field twice, 9-13 dB high on a BEM receiver that
+    sat exactly on the line (`on the line through a stepped pair ...`).
+  - **Each end's aperture only with the other end past it** (`forward_weight`). A reflection on the
+    microphone's side in the step's own wall puts the microphone's image behind the first edge.
+  - **The step is closed beneath the line** (`tilted_pair`): the faces below it meet, the notch
+    between them in air and solid just behind each face. The aperture's second wedge takes its
+    face to run back toward the first; across a street the lower roof stops short, and taking a
+    street as a step (a 2 m lower block 10 m on) moved its BEM error 0.5 dB the wrong way.
+  - **The source that sees the tilted face's plane drops its end's aperture where the receiver is
+    in that face's reflection** (`forward_weight`'s guard): the subtracted field would hold the
+    source's reflection off the plane past the second edge, which no ray carries. It moved BEM
+    cases above a lower roof by up to 1.9 dB, mostly the right way; small, but principled.
+  - **Under `--edge_source` a step takes its transition from the aperture**, not the integral:
+    on UE01 and UE02 the integral was 1-3 dB low where the aperture is within 0.5.
+  Known: across the line the level steps by 0.5-2 dB where the cascade steps 0-1.5. The end
+  correction `c` reaches 2.1 for a source grazing the first wedge's other face (a flat roof), whose
+  reflection UTD takes as infinite; on a shared face `c` is near 1 wherever the edges are in
+  transition, so its subtraction matches the traced ray and it is continuous. Fixing it means the
+  three-edge chain over that roof, the multi-edge gap. Tried and dropped: slope diffraction
+  (Holm's higher-order series, rederived; diverged from the second order, the transition
+  function's kinks in a(beta) making high derivatives meaningless), and the first wedge's lit
+  face's reflection in the aperture (over a 10 m roof at grazing it covers 4.5 cm of aperture).
 - **The 2-D field converts to 3-D per ray, by sin(beta)/sqrt(l_t).** At beta = 90° that is exact
   for every kind of ray, which is what lets a 2-D BEM test the whole 3-D implementation
   (`over a long block the point-source field is the boundary-element solution's`); it also

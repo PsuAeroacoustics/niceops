@@ -134,7 +134,7 @@ NK_KERNEL(face_amplitudes)(NK_IN(GpuFaceItem, items, 0), NK_IN(BandProblem, prob
             const float kk = 0.5f * (1.0f + end->cos_g) / (sqrt(2.0f * pi * kt) * end->sin_g) * half_root2;
             const nk_complex kirchhoff = nk_make(kk, kk);
             const nk_complex keller = nk_wedge_coefficient(end->keller_cot, end->keller_c, end->n1, kt, 1e9f);
-            v = nk_mul(v, nk_scale(nk_div(keller, kirchhoff), 0.5f));
+            v = nk_mul(v, nk_scale(nk_div(keller, kirchhoff), end->keller_scale));
         }
         field = nk_add(field, nk_scale(v, end->weight));
         weights += end->weight;

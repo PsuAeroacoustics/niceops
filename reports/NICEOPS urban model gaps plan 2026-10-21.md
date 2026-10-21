@@ -9,8 +9,10 @@ when it is done. The [next-steps report](NICEOPS%20Urban%20Propagation%20Next%20
 
 | Step | Gap | Why here |
 | --- | --- | --- |
-| 0 | EDGE's pitched drone rows read low (diagnosis) | Cheap, and its answer sets how much step 2 matters |
+| 0 | EDGE's pitched drone rows read low (diagnosis) | Cheap, and its answer sets how much step 2 matters. **Done** (below) |
+| 1a | Two edges across a step take the cascade | Found by step 0: most of UE02's bias. **Done** (below) |
 | 1 | No vertex (corner) term in UTD | Affects every district, flat or pitched; the most visible artifact |
+| 1b | Three or more edges in each other's transitions (a street at grazing, a roof's near edge with a step) | Found by step 0; the largest error left in the BEM checks |
 | 2 | Missing slope and roof paths | Needs step 1's end treatment for its own edges' ends |
 | 3 | Roofs and slopes do not light the diffuse field | Reuses step 2's roof and slope images |
 | 4 | The plane-wave tables have no roofs | Independent of 1-3; can run alongside |
@@ -41,6 +43,51 @@ below the plane of the slope that faces them.
 
 **Done when** the bias is assigned to the data (source, calibration, geometry), to specific missing paths, or to
 neither, with the numbers in FIDELITY. If it is missing paths, step 2 is ordered by which ones.
+
+**Result (2026-10-21).** Assigned, and not to missing paths:
+
+- **UE02's drone bias is the model's**: the twice-diffracted ray over the ridge and the deck's edge, which share no face
+  (a 0.12 m step between them), took the cascade. The deck's edge lies 1.2° inside the ridge's shadow boundary. Against
+  the exact 2-D field (boundary elements, converged to 0.1 dB) the cascade was 4.0-5.0 dB low at R2's distance, where
+  the measurements read 4.3-4.9 high; UE01's step explains 0.2-1.6 dB of its +1.9. UE03-05 share faces and were
+  already uniform. The fix is step 1a.
+- **R3 and R4 are G.R.A.S. 40BF free-field capsules, R1 and R2 B&K 4136 pressure ones** (EDGE's equipment table).
+  Above 8 kHz R4 reads up to 10-13 dB high and R3 5 dB low in every pitched scene, UE03 included, where the 2-D model
+  is exact; the calibration is per loudspeaker, not per receiver. These may be the capsules' response off axis, or
+  their positions: the data do not say which.
+- **UE15 against the FDTD** (3 and 2 mm cells, extrapolated to zero cell for the stepped slopes): R3 and R4 within
+  0.4 dB of the model, R1 and R2 within ±2.3; at R1 the FDTD is 0.45 dB above the model on average where the
+  measurements are 2.25 above, so about 1.8 dB of R1's excess lies outside the full-wave field. R1 reads 1-2 dB high
+  in most pitched scenes. It may be the receiver.
+- **UE17's R1** (+7 dB, rising to +12 at 20 kHz, a 1/5-scale detached house) is too large for the FDTD at these
+  cells, and stays open.
+- **Found on the way: a street at grazing.** Two 10 m blocks 10 m apart, a source 1.1° above the roofs: the model is
+  up to 8 dB high at 500 Hz, and its cascades over two, three and four edges do not converge (dropping the
+  thrice-diffracted rays moves the mean from +1.1 to −3.8 dB). That is step 1b.
+
+Slope diffraction (Holm's higher-order series, rederived) was tried for the transitions and diverged from the second
+order; the Kirchhoff aperture, generalized, is what worked.
+
+## Step 1a: two edges across a step
+
+**Done (2026-10-21).** The shared face's aperture (`double_wedge`) generalized to a pair whose faces below the line
+between the edges are tilted off it and meet beneath it, a closed step, with the line touching both wedges from above.
+Against boundary elements: UE02's drone row at 1.25 m from 4.0-5.0 dB low to within 0.53, UE01 from rms 0.66 to 0.23,
+a full-scale step's 229 cases from rms 0.96 (0.58 low) to 0.71 (unbiased). What it leaves: the level steps 0.5-2 dB
+across the line through the two edges (the cascade 0-1.5), worst for a source grazing the taller roof, which the
+three edges over that roof would put right (step 1b). FIDELITY has the tables ("A point source among buildings").
+
+## Step 1b: three or more edges in transition
+
+**What is wrong.** Where three or more roof edges lie in each other's transition regions -- a row of roofs at
+grazing, a step whose taller roof the source grazes -- the cascades of two, three and four edges each carry a share
+of the field and do not converge. The street at grazing is 8 dB high at 500 Hz.
+
+**Approach.** Measure first, as in step 1's part 2. Candidates: the aperture applied in turn at each intermediate edge
+(a multiple Kirchhoff integral over the taut string's corners, as Vogler's multiple knife-edge integral does for
+screens; costly per pair, but only where the chain is in transition); Tzaras and Saunders's heuristic for the
+transition functions' distance parameters; and the edge source's higher orders. The boundary-element tool now takes
+several blocks (`--blocks`), so streets and rows can be solved exactly.
 
 ## Step 1: a vertex term for UTD
 
@@ -174,3 +221,6 @@ move, and HISTORY says what moved and why. The next-steps report is updated as e
   measure first and recommend then.
 - **Step 0's FDTD runs** take GPU time (minutes to tens of minutes a scene at 3 mm). Fine to spend?
 - **Order**: steps 1 and 4 are independent; if rooftop receivers in tables are wanted soon, step 4 can go first.
+- **Step 1a was taken before step 1**, as step 0 found it behind the largest measured bias; step 1 (the vertex term)
+  is next unless step 1b is wanted first.
+- **Step 1b**: which multi-edge form, measured on streets and rows against boundary elements before any is built.

@@ -35,10 +35,11 @@ struct GpuRay
     float length;
 };
 
-// One end's aperture of a shared face (ApertureGeometry): its panels
-// [panel, panel + panels), the end's weight (0 where it has none), its extent
-// scale, and its end correction's angle below the face (sin, cos) and Keller
-// coefficient's angles (n1 the first wedge's).
+// One end's aperture of a pair of parallel edges (ApertureGeometry): its
+// panels [panel, panel + panels), the end's weight (0 where it has none), its
+// extent scale, and its end correction's angle below the line between the
+// edges (sin, cos), Keller coefficient's angles (n1 the first wedge's) and
+// share of that coefficient (keller_scale).
 struct GpuAperture
 {
     uint32_t panel;
@@ -50,7 +51,7 @@ struct GpuAperture
     float keller_cot[4];
     float keller_c[4];
     float n1;
-    float unused;
+    float keller_scale;
 };
 
 // A ray over a shared face: its two ends' apertures, sin(beta), and the

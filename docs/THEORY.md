@@ -1280,6 +1280,28 @@ reaches the plane. With both ends above it, the cascade stands. In space the ray
 the plane at $k\sin\beta$ times $\sin\beta/\sqrt{\ell_t}$, $\ell_t$ the ray's length in the plane: a
 wave $e^{ik_t\ell_t}/\sqrt{\ell_t}$ in the plane is $e^{ik\ell}/\ell$ in space, $\ell = \ell_t/\sin\beta$.
 
+**Across a step.** Two parallel edges that share no face -- a ridge above a step down to a lower
+roof's edge, a taller block's far edge above a lower neighbour's -- take the same integral where the
+line between them touches both wedges from above: each wedge's face toward the other lies below the
+line, tilted off it by $\delta_1$ at the first edge and $\delta_2$ at the second, and its other face
+half a turn or more round -- and where the two faces below the line meet, the step closed beneath
+it, as the aperture's second wedge takes its face to run back to the first's. Across a street, where
+the lower roof stops short of the taller block, the cascade stands. The plane's frame is the line's,
+the first edge at the origin and the second at $(w, 0)$, and the aperture is normal to the line, so
+Kirchhoff's end-point coefficient stays as above. The second wedge's angles are measured from its
+tilted face, $\theta_0(P_t) = \arctan(t/w) + \delta_2$; its face reflections are taken in that
+face's plane, and the cuts lie where $\theta_0$ meets its boundaries. The end correction $c$ is the
+first wedge's coefficient toward the second edge, $\delta_1$ off its face, whole: no face between
+the edges doubles it. The receiver sees the first edge on or above the line, within the path
+search's contact distance, where the first edge's ray grazes past the second; the face's reflection
+of the first edge's wave reaches it where $\theta + \delta_2 < \pi$. The unbounded field subtracted
+holds the incident wave in the first case and its reflection in the second. A source that sees the
+tilted face's plane would leave its own reflection off that plane, past the second edge, in the
+subtracted field in the second case, a wave no ray carries; its end's aperture is not taken there.
+Each end's aperture is taken only with the other end past it, a receiver behind the first edge -- an
+image in the step's own wall -- being on the source's side. With $\delta_1 = \delta_2 = 0$ all of
+this is the shared face's.
+
 **The shared face sampled.** The integral is needed only where the second edge lies in the first's
 transition region. Its transition parameter there is
 
@@ -1287,8 +1309,9 @@ $$
 X(k) = k\sin\beta\;\frac{s\,w}{s + w}\,(1 - \cos g),
 $$
 
-$g$ an end's angle off the face's plane -- above it or below, the face's reflection boundary leaving
-the edge as far above as its shadow boundary below -- and $s$ its distance from its edge, taken over
+$g$ an end's angle off the face's plane (across a step, off the line between the edges) -- above it
+or below, the face's reflection boundary leaving the edge as far above as its shadow boundary below
+-- and $s$ its distance from its edge, taken over
 the ends before the first edge and past the second, the smaller. The field is the cascade's $u_c$
 times $R = u/u_c$, the integral taken at the run's wavenumbers $k_j$: the lowest, then each the first
 at least $2^{2/3}$ times the last taken, while $X < 30$, and the last with $X < 30$. $R$ is 1 from the
@@ -1398,14 +1421,17 @@ w\,p_2^\mathrm{loc} + (1 - w)\,p_\mathrm{casc},
 w = \max\left(T(k\bar X;\ 0.3, 1),\ T(k\bar\Delta;\ 100, 1000)\right),
 $$
 
-with $T(x; a, b) = 1$ for $x \le a$, 0 for $x \ge b$, and $\cos^2\!\left(\tfrac\pi2\ln(x/a)/\ln(b/a)\right)$
-between; $\bar X$ the smaller wedge's transition parameter per unit wavenumber,
-$L\sin\beta\,\min_\pm a_\pm$, and $\bar\Delta$ the least excess over the ray's path of a path through
-either edge's end (the other edge's point free) or a partner's boundary point; and $w = 1$ over a
-shared face. Each wavenumber is decided on its own, so a band does not depend on which others a run
-takes. Where $k\bar X \ge 1$, out of both transitions, no partner's boundary point is within the
-excess window, and one of the edges has both ends past its near side ($k\Delta \ge 100$), only
-the other's ends can need the integral, and the ray takes in its place
+with $T(x; a, b) = 1$ for $x \le a$, 0 for $x \ge b$, and
+$\cos^2\!\left(\tfrac\pi2\ln(x/a)/\ln(b/a)\right)$ between; $\bar X$ the smaller wedge's transition
+parameter per unit wavenumber, $L\sin\beta\,\min_\pm a_\pm$, and $\bar\Delta$ the least excess over
+the ray's path of a path through either edge's end (the other edge's point free) or a partner's
+boundary point; and $w = 1$ over a shared face. Across a step the aperture holds the transition:
+$T(k\bar X)$ is left out of $w$, and $p_\mathrm{casc}$ there is the aperture's field
+([FIDELITY](FIDELITY.md#a-point-source-among-buildings) has why). Each wavenumber is decided on its
+own, so a band does not depend on which others a run takes. Where $k\bar X \ge 1$, out of both
+transitions, no partner's boundary point is within the excess window, and one of the edges has both
+ends past its near side ($k\Delta \ge 100$), only the other's ends can need the integral, and the
+ray takes in its place
 
 $$
 w\,p_\mathrm{casc}\,\rho_1\,\rho_2 + (1 - w)\,p_\mathrm{casc},

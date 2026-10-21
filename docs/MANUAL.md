@@ -196,7 +196,7 @@ is a physical quantity, given here in meters with its value in feet.
 | `--coherence_angle` | With `--buildings`: the cone's half-angle, degrees, within which rays leaving the source add with their phases. Default 1. Given alone, it selects `cone`. |
 | `--phase_interval` | With `--buildings`, under `cone` or `measured`: also write the SEL at each end of this percent interval over the source's unknown phases, as `<output>_phase_lower` and `<output>_phase_upper`. |
 | `--state_tolerance` | With `--buildings`: dB by which the buildings' effect, taken linearly between the states evaluated, may miss a state's A-weighted level. Default 0.02; 0 evaluates every state ([Buildings around the microphones](#buildings-around-the-microphones)). |
-| `--exact_shared_faces` | With `--buildings`: take the integral over a flat roof between its two edges at every wavenumber, not only where the cascade of the two edges cannot stand in for it. The reference; much slower. |
+| `--exact_shared_faces` | With `--buildings`: take the integral over a flat roof between its two edges, or down a step between two roofs' edges, at every wavenumber, not only where the cascade of the two edges cannot stand in for it. The reference; much slower. |
 | `--gpu`, `--no-gpu` | With `--buildings`: form and sum each state's rays on the GPU (Metal, on a Mac), the default wherever there is one and the rays add `cone`, `coherent` or `energy` without `--phase_interval`; `measured` and the interval are the CPU's. `--gpu` asks for it and is refused where it cannot run; `--no-gpu` keeps the CPU. |
 | `--terrain` | A bare-earth elevation grid (netCDF, for example USGS 3DEP) ([Terrain](#terrain)). Needs the run's frame: `--origin` (with `--frame_bearing` for rotated axes; the AC tracks use 210), or a geodetic track. Not with `--refraction`. The three rows below are refused without it. |
 | `--terrain_offset` | Added to every terrain height to put the grid on the trajectory's vertical datum. Default 0. |
@@ -1268,11 +1268,11 @@ over a pass as it does in an exposure.
   the CPU, and the measured coherence and `--phase_interval` always do: `--gpu` with
   `--ray_coherence measured` or `--phase_interval` is refused, and with a database whose recorded
   coherence selects the measured model the run stops at that track.
-- **Flat roofs and walls between two corners** are crossed by the uniform form's integral only
-  where the cascade of the two edges' coefficients cannot stand in for it -- the lower bands, and
-  sources or microphones near the roof's plane -- at wavenumbers two thirds of an octave apart,
-  and the cascade carries it in between and beyond. `--exact_shared_faces` takes the integral at
-  every wavenumber.
+- **Flat roofs and walls between two corners**, and a step from one roof's edge down to a lower
+  roof's, are crossed by the uniform form's integral only where the cascade of the two edges'
+  coefficients cannot stand in for it -- the lower bands, and sources or microphones near the line
+  between the edges -- at wavenumbers two thirds of an octave apart, and the cascade carries it in
+  between and beyond. `--exact_shared_faces` takes the integral at every wavenumber.
 - **Not with** `--urban_table`, `--terrain`, `--refraction`, `--propagation_table`,
   `--plate_table`, `--ground_classes`, `--atmosphere`, `--wind`, `--db_cutoff` or `--coverage_file`.
 
@@ -2011,17 +2011,18 @@ while the CPU leaves out the pairs that the averaging has all but cancelled. The
 single precision. `--gpu` asks for it, and is refused by a build without a GPU backend or a
 machine without a GPU.
 
-`--edge_source` takes the diffracted rays' fields from the edge-source integral
-([THEORY §6.5](THEORY.md#65-urban-receivers)) instead of UTD's coefficients. The integral runs over
-each edge's whole length, so a building's corners and the ends of its roof edges diffract too, and a
-ray fades rather than stops as its diffraction point leaves its edge. Every once-diffracted ray
-takes it but one off a roof, which takes UTD's coefficient. A twice-diffracted ray takes it where the cascade of two coefficients cannot be trusted --
-near either edge's shadow or reflection boundary, near an edge's end, over a shared face -- and the
-cascade elsewhere, the two blended smoothly band by band; out of both transitions, the cascade times
-each edge's end ratio. It is several times UTD's cost on a few microphones (DigiCity's four, 10.5 s
-against 1.3) and far more over a large district at low frequency, and CPU only: `--edge_source` is
-refused with `--gpu`, and keeps a default run on the CPU. Its accuracy and cost are in
-[FIDELITY](FIDELITY.md#a-point-source-among-buildings).
+`--edge_source` takes the diffracted rays' fields from the edge-source integral ([THEORY
+§6.5](THEORY.md#65-urban-receivers)) instead of UTD's coefficients. The integral runs over each
+edge's whole length, so a building's corners and the ends of its roof edges diffract too, and a ray
+fades rather than stops as its diffraction point leaves its edge. Every once-diffracted ray takes it
+but one off a roof, which takes UTD's coefficient. A twice-diffracted ray takes it where the cascade
+of two coefficients cannot be trusted -- near either edge's shadow or reflection boundary (but not
+down a step, where the uniform form holds the transition better), near an edge's end, over a shared
+face -- and the cascade elsewhere, the two blended smoothly band by band; out of both transitions,
+the cascade times each edge's end ratio. It is several times UTD's cost on a few microphones
+(DigiCity's four, 10.5 s against 1.3) and far more over a large district at low frequency, and CPU
+only: `--edge_source` is refused with `--gpu`, and keeps a default run on the CPU. Its accuracy and
+cost are in [FIDELITY](FIDELITY.md#a-point-source-among-buildings).
 
 Walls with relief -- corrugated cladding, balconies, ribs, window bays -- send part of what they
 reflect in every direction rather than specularly. A wall's scattering coefficient `s`, from a
@@ -2073,8 +2074,8 @@ not cover is refused. The patches cost time and memory as the square of their nu
 | `--fade` | Where a boundary leaves the field to an order the run does not trace -- a third reflection about an edge, a reflection between two edges -- make that ray from the one it partners, so the level does not step there (specular and once-diffracted rays). Not with `--edge_source` or `--gpu`. |
 | `--fade_reach` | With `--fade`, the largest detour by an edge a partner is made for. Default: where the lowest band's Fresnel parameter reaches 3, at most 0.5 m. |
 | `--fade_incident` | With `--fade`, the made partner's coefficient from the incident wave's terms alone. For comparison. |
-| `--cascade` | Over a shared face (a roof from edge to edge, a wall from corner to corner), the cascade of two edge coefficients instead of the uniform form. For comparison only. |
-| `--exact_shared_faces` | Over a shared face, the uniform form's integral at every wavenumber rather than only where the cascade cannot stand in for it, as `niceops --buildings --exact_shared_faces` does. The reference; much slower. |
+| `--cascade` | Over a shared face (a roof from edge to edge, a wall from corner to corner) or a step (a roof's edge down to a lower roof's), the cascade of two edge coefficients instead of the uniform form. For comparison only. |
+| `--exact_shared_faces` | Over a shared face or a step, the uniform form's integral at every wavenumber rather than only where the cascade cannot stand in for it, as `niceops --buildings --exact_shared_faces` does. The reference; much slower. |
 | `--edge_source` | Diffraction by the edge-source integral, which keeps the edges' ends, as above. Not with `--gpu`. |
 | `--orientation_tolerance` | As `niceops_urban_table`'s. Default 1 degree. |
 | `--sound_speed` | m/s. Default 343.2. |
