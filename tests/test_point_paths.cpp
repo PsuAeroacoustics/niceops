@@ -796,10 +796,16 @@ TEST_CASE("rays off a roof are reciprocal and leave along minus their length's g
     {
         if (ray.roof_facades.empty())
             continue;
+        // A twice-diffracted ray off a roof draws its bounce and has no
+        // source_plane (NaN).
         auto same = [&](const PointRay& other) {
             return other.facades == ray.facades && other.floor == ray.floor && other.wedges == ray.wedges
-                    && other.roof_facades == ray.roof_facades && other.source_plane == ray.source_plane
-                    && (ray.wedges == 0 || other.edge_source.edges[0] == ray.edge_source.edges[0]);
+                    && other.roof_facades == ray.roof_facades && other.between_floor == ray.between_floor
+                    && (other.source_plane == ray.source_plane
+                            || (std::isnan(other.source_plane) && std::isnan(ray.source_plane)))
+                    && (ray.wedges == 0 || other.edge_source.edges[0] == ray.edge_source.edges[0])
+                    && (ray.wedges < 2 || other.edge_source.edges[1] == ray.edge_source.edges[1])
+                    && other.path.size() == ray.path.size();
         };
         double gradient[3];
         bool matched = true;

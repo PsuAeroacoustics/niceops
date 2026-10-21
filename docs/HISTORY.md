@@ -4,6 +4,15 @@ How NICEOPS got to its current form, and why old results differ from new ones. F
 tool does now, see the [README](../README.md) and the [manual](MANUAL.md); for how accurate it
 is, see [FIDELITY](FIDELITY.md).
 
+## Twice-diffracted rays off a roof (October 2026)
+
+A twice-diffracted ray now reflects in a level roof or a slope between one end and its edge,
+where it used to be traced only off the floor. These are the partners a once-diffracted ray's
+roof reflection needs where a second edge cuts it off; without them the field stepped there by
+the whole ray. Results with roofs move accordingly: on the gable suburb up to 2.4 dB at 125 Hz
+(mean +0.07 dB), on DigiCity's flyover up to 3.1 dB in 1.6% of band levels. `--no_twice_roofs`
+in point_field leaves them out, for comparison.
+
 ## Walls with sloped-roof reflections (October 2026)
 
 The point model now traces specular paths through a slope between two facade chains, and

@@ -211,7 +211,9 @@ Commands and options are in `README.md`; rationale is in
   rays; `pruning finds every ray among pitched houses`). A slope reflects as a mirror in its plane
   (`on_plane`; floor at either end, facade chains on both sides), and once-diffracted rays take a slope on either side
   of the edge: the partners that keep the field continuous where another edge cuts a slope's
-  reflection off (8 dB steps without). Slopes scatter (tilted patches in `add_roof_patches`), or
+  reflection off (8 dB steps without); twice-diffracted rays take a level roof or a slope between
+  one bare end and its edge (`PathEnd::bounces`, the beam through the roof's box; one `twice`
+  lambda over `TwiceEnd`s). Slopes scatter (tilted patches in `add_roof_patches`), or
   their rays' rho (1 - s) would lose s; a level
   deck reflects and scatters (`on_roof`). A shared side is judged along its profile: cut where
   either roof breaks or the two cross, each wall piece straight-topped and straight-bottomed

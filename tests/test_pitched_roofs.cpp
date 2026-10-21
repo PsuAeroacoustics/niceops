@@ -609,7 +609,7 @@ TEST_CASE("pruning finds every ray among pitched houses", "[pitched_roofs]")
             {{-12.0, 8.0, 1.0}, {34.0, 25.0, 1.2}}, {{24.0, -10.0, 1.5}, {24.0, 12.0, 1.2}},
             {{14.0, 40.0, 30.0}, {14.0, -6.0, 1.2}}, {{-6.0, 27.0, 2.0}, {36.0, 4.0, 1.2}},
             {{12.0, 27.0, 1.2}, {34.0, 25.0, 1.2}}, {{39.6, 3.7, 30.0}, {16.5, 4.5, 5.2}}};
-    std::size_t diffracted = 0, walls_and_slopes = 0;
+    std::size_t diffracted = 0, walls_and_slopes = 0, roofs_twice = 0;
     for (const auto& [s, m] : pairs)
     {
         INFO("source " << s.x << ", " << s.y << ", " << s.z << "; microphone " << m.x << ", " << m.y << ", " << m.z);
@@ -625,10 +625,12 @@ TEST_CASE("pruning finds every ray among pitched houses", "[pitched_roofs]")
             REQUIRE(pruned.rays()[i].wedges == ray.wedges);
             diffracted += ray.wedges >= 2;
             walls_and_slopes += ray.wedges == 0 && !ray.facades.empty() && !ray.roof_facades.empty();
+            roofs_twice += ray.wedges == 2 && !ray.roof_facades.empty();
         }
     }
     REQUIRE(diffracted > 100);
     REQUIRE(walls_and_slopes > 0);
+    REQUIRE(roofs_twice > 0);
 }
 
 namespace {
@@ -1018,5 +1020,99 @@ TEST_CASE("an edge cutting a wall slope reflection keeps its diffracted partner"
             INFO("reverse " << reverse << ", band " << bands[b]);
             REQUIRE(std::abs(levels[0][b] - levels[1][b]) < 0.05);
         }
+    }
+}
+
+// A ray diffracted once round a tower's corner and reflected in a lower
+// building's roof, flat or a slope, toward a microphone over it, cut off
+// between the corner and the roof by a second tower's sharp corner: across
+// that corner's shadow boundary the ray diffracted at both corners and
+// reflected in the same roof takes over, so the field is continuous.  The
+// corners are vertical, so for a roof sloping along x the boundary is where
+// the microphone's image in the roof's plane lines up with them in plan.
+// The step is measured in the field itself, against the cut-off ray: at a
+// null of the whole field, as at 125 Hz here, the twice-diffracted ray's
+// percent or so of UTD's own error is a fraction of a decibel.  The tower
+// runs out of reach northward, or the pair of its corners along its west
+// wall would be cut off too, whose partner needs three edges.
+TEST_CASE("a roof's reflection after two edges carries on where a second edge cuts it off", "[pitched_roofs]")
+{
+    Footprint tower;
+    tower.x = {10.0, 20.0, 20.0, 10.0};
+    tower.y = {10.0, 10.0, 400.0, 400.0};
+    tower.top = 100.0;
+    // A sharp corner pointing north at (25, 7): a single wedge.
+    Footprint spike;
+    spike.x = {25.0, 22.0, 28.0};
+    spike.y = {7.0, -10.0, -10.0};
+    spike.top = 100.0;
+    const Vec3 source(5.0, 40.0, 20.0);
+    const std::vector<double> bands {125.0, 250.0, 500.0, 1000.0, 2000.0};
+    for (const bool slope : {false, true})
+    {
+        Footprint low;
+        low.x = {30.0, 80.0, 80.0, 30.0};
+        low.y = {-40.0, -40.0, 40.0, 40.0};
+        low.top = slope ? 25.0 : 10.0;
+        if (slope)
+            low.roof = {{0.15, 0.0, 5.5}};
+        const Buildings city({tower, spike, low});
+        const std::vector<double> rho(city.facades().size() * bands.size(), 1.0);
+        // The microphone's image in the roof's plane, and where it lines up
+        // with the corners (10, 10) and (25, 7) in plan.
+        Vec3 microphone(60.0, 0.0, slope ? 17.0 : 13.0);
+        Vec3 image(microphone.x, microphone.y, 20.0 - microphone.z);
+        if (slope)
+        {
+            const RoofPlane& plane = low.roof.front();
+            image = microphone - (2.0 * plane.above(microphone)) * plane.normal();
+        }
+        microphone.y = 10.0 - 3.0 * (image.x - 10.0) / 15.0;
+        for (const bool reverse : {false, true})
+            for (const bool twice_roofs : {true, false})
+            {
+                // Per sub-band, the field at its middle wavenumber, and on
+                // the lit side the once-diffracted roof ray's amplitude.
+                std::vector<std::complex<double>> p[2];
+                std::vector<double> once(3 * bands.size(), 0.0);
+                std::size_t roof_twice = 0;
+                for (int side = 0; side < 2; side++)
+                {
+                    const Vec3 m = microphone + Vec3(0.0, side == 0 ? 1e-4 : -1e-4, 0.0);
+                    PointPathOptions options;
+                    options.twice_roofs = twice_roofs;
+                    const PointSourceField field(city, reverse ? m : source, reverse ? source : m, options);
+                    p[side].assign(3 * bands.size(), 0.0);
+                    std::vector<std::size_t> order;
+                    field.sub_band_problems(
+                            rho, 1.0, bands, 343.2,
+                            [&](std::size_t band, int part, const std::vector<std::complex<double>>& amplitude,
+                                    const std::vector<double>& length, const SubBand& sub) {
+                                const double k = 0.5 * (sub.k1 + sub.k2);
+                                for (std::size_t i = 0; i < amplitude.size(); i++)
+                                {
+                                    p[side][3 * band + part] += amplitude[i] * std::polar(1.0, -k * length[i]);
+                                    const PointRay& ray = field.rays()[order[i]];
+                                    if (side == 0 && ray.wedges == 1 && !ray.roof_facades.empty())
+                                        once[3 * band + part] = std::max(once[3 * band + part], std::abs(amplitude[i]));
+                                }
+                            },
+                            {}, nullptr, &order);
+                    for (const PointRay& ray : field.rays())
+                        roof_twice += side == 1 && ray.wedges == 2 && !ray.roof_facades.empty();
+                }
+                INFO("slope " << slope << ", reverse " << reverse << ", twice_roofs " << twice_roofs);
+                double step = 0.0;
+                for (std::size_t k = 0; k < once.size(); k++)
+                {
+                    REQUIRE(once[k] > 0.0);
+                    step = std::max(step, std::abs(p[0][k] - p[1][k]) / once[k]);
+                }
+                CHECK((roof_twice > 0) == twice_roofs);
+                if (twice_roofs)
+                    CHECK(step < 0.02);
+                else
+                    CHECK(step > 0.9);
+            }
     }
 }

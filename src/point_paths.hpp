@@ -125,6 +125,10 @@ struct PointPathOptions
     // side, the slope between that side's chain and the edge.  Off, for
     // comparison.
     bool slope_facades = true;
+    // A level roof's or a slope's reflection on a twice-diffracted ray (with
+    // roofs): between an end, bare, and its edge, after the floor or not for
+    // a slope, counted as that side's reflections.  Off, for comparison.
+    bool twice_roofs = true;
     // Facades and edges within this horizontal distance of the source or the
     // microphone (m).
     double radius = 150.0;
@@ -508,12 +512,37 @@ public:
     {
         return slopes_;
     }
+    // The level roofs and slopes a twice-diffracted ray may reflect in on
+    // this end's side (options.twice_roofs): each flat roof or level deck
+    // below the end and each slope the end stands over, after the floor or
+    // not where max_twice_reflections allows, with the end's image in its
+    // plane and the candidate edges that image lights whose lines to it cross
+    // the plane within the building's box -- a beam through the roof, which
+    // no other edge can reach it by -- each with the image's view of it.  The
+    // end bare; none for a source traced without its reflections.  Worked out
+    // once, for every partner.
+    struct Bounce
+    {
+        std::size_t building = 0;
+        // The slope's plane, or none for a level roof at the building's top.
+        static constexpr std::size_t level = static_cast<std::size_t>(-1);
+        std::size_t plane = level;
+        int floor = 0;
+        Vec3 image;
+        std::vector<std::size_t> edges;
+        std::vector<View> views;
+    };
+    const std::vector<Bounce>& bounces() const
+    {
+        return bounces_;
+    }
 
 private:
     Vec3 point_;
     bool source_ = false;
     std::size_t surface_ = PointRay::no_surface;
     std::vector<Slope> slopes_;
+    std::vector<Bounce> bounces_;
     PointPathOptions options_;
     std::vector<std::size_t> near_;
     std::vector<std::size_t> candidates_;

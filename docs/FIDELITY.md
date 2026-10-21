@@ -1925,6 +1925,21 @@ provided source/receiver pairs at 1.6, 3.15, 6.3, 12.5 and 20 kHz, leaves all 36
 unchanged. This is an omnidirectional, rigid, no-air check of path impact, not a new fit to the
 loudspeaker measurements.
 
+**Twice-diffracted rays off a roof.** Where a second edge cuts off a once-diffracted ray's roof
+reflection -- a tower's corner, then a sharp corner across the leg to a lower roof, flat or
+sloped -- the ray diffracted at both corners and reflected in the same roof carries the field
+across the boundary: the field steps by 1.9% (flat; the rays without the roof switch there too)
+and 1.4% (slope) of the cut-off ray's amplitude between microphones 0.1 mm either side, at
+125-2000 Hz, both ways round, and by 100% without these rays (`a roof's reflection after two
+edges carries on where a second edge cuts it off`). The percent is UTD's own at a second edge's
+shadow boundary: the same handover without a roof leaves the same. In dB it depends on the rest
+of the field; at a 125 Hz null there it is 0.3 dB. On the gable suburb (162 street
+microphones, source at 60 m) they move 236 of 810 band levels by more than 0.1 dB, at most
+2.4 dB (125 Hz, at a microphone in a near-null), mean +0.07 dB, with 7.5% more rays and no
+measurable cost. Over DigiCity's flat containers (20 drone positions, 5632 points, 17 bands) they
+move 1.6% of the band levels by more than 0.1 dB, at most 3.1 dB, mean +0.0004 dB, for 6% more
+time (122 to 130 s).
+
 ### Microphones on roofs and walls
 
 A source or a microphone lying on a wall or a flat roof (THEORY §6.5, "Ends on a surface"), against
@@ -2554,7 +2569,8 @@ range-dependent source fit would confound descent state drift with path loss.
   500 Hz; and by UTD an edge's end, where its transition meets a face's plane through the vertex,
   is up to 3.7 dB off the edge-source integral, no better than with the edge unending
   ([A point source among buildings](#a-point-source-among-buildings)). A pitched roof's
-  slopes reflect with walls, but not on multiply-diffracted rays; over a roof of nearly flat wedges whose pairs share the faces
+  slopes reflect with walls, and a level roof or a slope at one bare end of a twice-diffracted ray,
+  but not with walls on that ray, nor on rays diffracted three times or more; over a roof of nearly flat wedges whose pairs share the faces
   the ray runs along (a mansard's) the cascade is 3-4 dB rms off the exact field; the FDTD's
   staircase makes it no reference for a sloped roof below 1.5 mm cells at EDGE's scale
   ([Pitched roofs](#pitched-roofs)).

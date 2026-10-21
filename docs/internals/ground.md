@@ -418,7 +418,24 @@ checks. What to keep:
   reflection and folded chains, with a box rejection on edge-to-slope legs.
   Tests cover oblique (noncommuting) mirrors with diffraction disabled, floor-contact
   launches, reciprocal specular/diffracted lengths and a screen cutting the reflected path.
-  Still absent: end -> slope -> facades -> edge, and roof reflections on double/triple paths.
+  Still absent: end -> slope -> facades -> edge, and roofs on thrice- and chain-diffracted paths.
+- **Twice-diffracted rays off a roof** (`PointPathOptions::twice_roofs`): `PathEnd::bounces`, once
+  per end, holds each flat roof or deck below the end and each slope it stands over (after the
+  floor where `max_twice_reflections` > 1), with the end's image in the plane and the candidate
+  edges that image lights whose lines to it cross the plane within the building's box: the beam
+  through the roof, an exact rejection, so it holds with `--no_prune` too. `trace` keeps the ones
+  near the pair (`keep_bounces`). The twice body is one lambda, `twice`, over two `TwiceEnd`s
+  (an image through its chain off the floor or not, or a bounce), and `twice_pair` runs the ways
+  between the edges and the reach pre-checks for any of them; the image loop and the two bounce
+  loops (a bounce at the source's end against the microphone's images, and the reverse) share
+  both. A bounce side's leg is `roof_leg`, which the once-diffracted slope sides use too: the
+  reflection on the roof, then the floor's bounce. Its end takes no face (`end_face` -1), and
+  its floor records the whole unfolded leg, as a slope's does. Not done: facades on a bounce
+  side, bounces at both ends, and thrice or chains. Tests: `a roof's reflection after two edges
+  carries on where a second edge cuts it off` measures the step in the field against the cut-off
+  ray, not in dB: at a null of the whole field UTD's own percent or so at a second edge's shadow
+  boundary is a fraction of a decibel (the same ray without a roof does the same). `pruning
+  finds every ray among pitched houses` requires some of these rays.
 - **The pruning proof takes the roof planes** (`prism_planes`): the prism cut by each, mirrored in
   a facade and in the floor as the footprint is. Proving with the prism to the top hides real rays,
   and `pruning finds every ray among pitched houses` fails then (checked by making that change).
@@ -805,7 +822,7 @@ Measured and left alone:
   - **`point_ray_launch` reads `source_plane`**, which floor rays set to 0 as well. Telling a floor
     bounce by the source image's sign could not tell a roof, whose image may lie above z = 0.
   - Cost: 4% on `--buildings`' district run (60.0 to 62.5 s).
-  - Not done: twice-diffracted rays off a roof; roofs in the plane-wave tables, where a street
+  - Not done: roofs in the plane-wave tables, where a street
     microphone would see a roof's ray only through an edge lit by a reflected wave, which they leave
     out; and a reflection between two edges, which UE06's floor source needs (FIDELITY).
   - Tests: `a roof reflects as the floor does`, `the field is continuous where a roof's edge hides

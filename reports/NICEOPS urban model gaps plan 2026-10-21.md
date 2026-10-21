@@ -172,8 +172,23 @@ single-edge paths with end -> walls -> slope -> edge on either side, are impleme
 source's specular tree is independent of the diffraction switch; floor partners fold into real
 coordinates. Oblique image theory, reciprocal paths, floor-contact launch, pruning agreement
 and a screened reflection boundary are checked; measured results belong in FIDELITY.
-Still open in this step: end -> slope -> walls -> edge, and level-roof/slope reflections on
-multiply-diffracted paths. Step 3's roof-reflected diffuse lighting remains separate.
+Committed ee2644e.
+
+**Twice-diffracted roof milestone (2026-10-21).** A twice-diffracted ray takes a level roof or a
+slope (after the floor or not) between one bare end and its edge (`twice_roofs`,
+`--no_twice_roofs`). Where a second edge cuts off a once-diffracted roof ray the field now steps
+by 1-2% of that ray (UTD's own error at the second edge; the same without a roof) instead of
+100%. Suburb: 236 of 810 band levels > 0.1 dB, max 2.4 dB, no cost; DigiCity flyover: 1.6% of
+band levels > 0.1 dB, max 3.1 dB, +6% time. FIDELITY has the numbers.
+
+Still open in this step: end -> slope -> walls -> edge; walls on a bounce side of a twice ray;
+bounces at both ends; roofs on thrice and chain rays. Step 3's roof-reflected diffuse lighting
+remains separate.
+
+Found on the way, not step 2's: on the suburb one ray between the two rakes of a slope, with the
+microphone exactly in that slope's plane, is "over a shared face" or not depending on the
+compiler (GCC or clang), and its level 30 dB apart (up to 10 dB at that microphone); and the GPU
+and the CPU differ by up to 3.4 dB there. Both are being looked at next.
 
 **Original scope.** Three kinds of path were missing:
 

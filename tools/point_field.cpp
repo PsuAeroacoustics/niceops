@@ -123,6 +123,7 @@ int main(int argc, char** argv)
     bool no_double_diffraction = false;
     bool no_roofs = false;
     bool no_slope_facades = false;
+    bool no_twice_roofs = false;
     bool unending_edges = false;
     bool exact_shared_faces = false;
     bool cascade = false;
@@ -203,6 +204,8 @@ int main(int argc, char** argv)
     app.add_flag("--no_slope_facades", no_slope_facades,
             "No ray off both a slope and a wall, for comparison: no specular ray off walls and a slope, and no "
             "once-diffracted ray with walls and a slope on one side.");
+    app.add_flag("--no_twice_roofs", no_twice_roofs,
+            "No level roof's or slope's reflection on a twice-diffracted ray, for comparison.");
     app.add_flag("--unending_edges", unending_edges,
             "UTD's edges without their ends, each taken as its whole infinite line, for comparison.");
     app.add_flag("--no_prune", no_prune,
@@ -451,6 +454,7 @@ int main(int argc, char** argv)
         options.double_diffraction = !no_double_diffraction;
         options.roofs = !no_roofs;
         options.slope_facades = !no_slope_facades;
+        options.twice_roofs = !no_twice_roofs;
         options.edge_ends = !unending_edges;
         options.shared_face = !cascade;
         options.sample_shared_faces = !exact_shared_faces;

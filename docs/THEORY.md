@@ -1043,7 +1043,9 @@ surface, and once it leaves one rising it keeps rising, so it reflects in one ho
 at most: the floor, or a roof below both ends of its stretch. A roof at height $h$ takes the
 floor's place, its image $(x, y, 2h - z)$, the bounce on the roof's footprint, and
 $\sqrt{1 - \alpha}$ for its building's absorption, on a specular ray and on either side of a
-once-diffracted one, where it counts as one of that side's reflections. The edge must stand above
+once-diffracted one, where it counts as one of that side's reflections. A twice-diffracted ray
+takes a roof between a bare end and its edge, on either side but not both: the end's image in the
+roof's plane stands in for the end. The edge must stand above
 the roof, since a roof's own edges carry its reflection in their coefficients. Under
 `--edge_source` a ray off a roof takes UTD: the roof's outline bounds the stretch of the edge its
 image sees.
@@ -1665,8 +1667,10 @@ sharing sides. Its geometry follows:
   may also contain facade reflections. The slope is adjacent to the edge on its side, and
   counts with that side's floor and facade reflections toward the single-edge reflection
   limit. Its coefficient remains UTD, including the finite-edge correction, also when the
-  edge-source option is selected. A slope followed by facades before reaching the edge,
-  and roof reflections on multiply-diffracted rays, are not traced. §6.5's level roof
+  edge-source option is selected. A twice-diffracted ray takes a slope, as it takes a level
+  roof, between a bare end (after the floor or not) and its edge, on one side. Not traced: a
+  slope followed by facades before the edge, a roof with facades on a twice-diffracted ray's
+  side, roofs at both of its ends, and roofs on rays diffracted three times or more. §6.5's level roof
   reflection is a mansard's deck's, which reflects and scatters as a flat roof does.
 - **What a slope scatters.** The slopes scatter as the walls and the level roofs do, with their
   building's $\rho$ and $s$, so that their rays' $\rho(1 - s)$ loses nothing: each is cut into
